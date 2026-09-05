@@ -40,6 +40,8 @@ Agent VM must store each complete VM image artifact set exactly once per `<agent
 
 Incomplete builds must never be observable as complete cache hits. Concurrent builders for the same fingerprint must not corrupt or replace a complete artifact set.
 
+Before publication, required image assets must be regular non-empty files with a supported manifest and matching SHA-256 checksums. Cache hits and configured startup use structural validation of those files and manifest, without rehashing multi-gigabyte image contents. This avoids image-size-dependent startup reads; corruption introduced after publication that preserves valid file structure is not detected by cache admission.
+
 ### R2 — Deployment-owned image selections
 
 Each configured image family and profile must publish a deployment-owned selection record that identifies the selected fingerprint in the configured shared artifact root. Gateway and Tool VM startup must never guess or rebuild that selection. When the record is missing, malformed, mismatched, or references an incomplete artifact, startup must fail with an instruction to run `agent-vm build`. [U1, U3]
@@ -76,7 +78,7 @@ The change must not move, delete, reinterpret, or broaden access to controller s
 
 If the shared artifact root is unavailable or unsafe, build and startup fail with the affected path and do not fall back to a deployment-local image copy.
 
-If an image build fails, no selection record is advanced to the incomplete fingerprint. Existing complete artifacts and selections remain usable. An incomplete or corrupt final fingerprint directory fails closed with its exact path; automatic preparation does not delete, quarantine, or replace it.
+If an image build fails, no selection record is advanced to the incomplete fingerprint. Existing complete artifacts and selections remain usable. A final fingerprint directory that fails structural validation fails closed with its exact path; automatic preparation does not delete, quarantine, or replace it. Publication-time checksum failure rejects the staged image and leaves prior selections unchanged.
 
 If configured Gateway or Tool VM startup cannot validate its deployment selection, no VM is created and the error identifies the affected family/profile and instructs the operator to run `agent-vm build`.
 

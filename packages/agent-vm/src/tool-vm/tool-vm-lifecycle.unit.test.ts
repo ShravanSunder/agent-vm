@@ -20,7 +20,17 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { configuredImageSelectionRecordPath } from '../build/prepared-gondolin-image-cache.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+} from '../config/system-config.js';
+import {
+	createInvalidImageSelectionFixture,
+	invalidImageSelectionKinds,
+} from '../testing/image-selection-test-fixture.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -183,6 +193,56 @@ async function createToolVm(
 }
 
 const createdDirectories: string[] = [];
+
+describe('Tool VM invalid image selection admission', () => {
+	it.each(invalidImageSelectionKinds)(
+		'rejects %s selection before creating a VM',
+		async (invalidKind) => {
+			const systemConfig = await createInvalidImageSelectionFixture({
+				systemConfig: await createToolVmSystemConfig(),
+				family: 'toolVm',
+				profileName: 'default',
+				invalidKind,
+			});
+			const profile = systemConfig.toolVmProfiles.standard;
+			const imageProfile = systemConfig.imageProfiles.toolVms.default;
+			if (profile === undefined || imageProfile === undefined)
+				throw new Error('Expected Tool VM fixture profiles.');
+			const hostWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'selection-proof');
+			const createManagedVm = vi.fn();
+			const composition = createManagedVmRuntimeComposition();
+
+			await expect(
+				createToolVm(
+					{
+						agentId: 'sun',
+						profile,
+						systemConfig,
+						zoneId: 'shravan',
+						secretResolver: createSecretResolver({}),
+						hostWorkspaceRoot,
+					},
+					{
+						createManagedVm,
+						prepareImage: async () =>
+							await composition.managedVmImages.prepareImage({
+								artifactCacheDirectory: sharedImageCacheDirForSystemConfig(systemConfig),
+								recipePath: imageProfile.buildConfig,
+								selectionRecordPath: configuredImageSelectionRecordPath({
+									deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+										systemConfig.storageRootDir,
+									),
+									family: 'toolVm',
+									profileName: 'default',
+								}),
+							}),
+					},
+				),
+			).rejects.toThrow(/Run agent-vm build/u);
+			expect(createManagedVm).not.toHaveBeenCalled();
+		},
+	);
+});
 const testToolVmProcessIdentity = {
 	command: 'qemu-system-aarch64 -name tool-vm-test',
 	lstart: 'Sat Jul 11 18:00:00 2026',

@@ -3755,6 +3755,30 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
+	test.each(['state', 'zone-files', 'runtime', 'backup', 'gateway-config'])(
+		'rejects a protected %s symlink into the central cache',
+		async (protectedKind) => {
+			const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-protected-'));
+			createdDirectories.push(fixtureRoot);
+			const deploymentRoot = path.join(fixtureRoot, 'deployment');
+			const cacheTarget = path.join(fixtureRoot, 'cache', 'protected-target');
+			const config = createValidSystemConfigInput();
+			config.storageRootDir = deploymentRoot;
+			const zoneId = config.zones[0].id;
+			const protectedPath = path.join(deploymentRoot, zoneId, protectedKind);
+			await mkdir(path.dirname(protectedPath), { recursive: true });
+			await mkdir(cacheTarget, { recursive: true });
+			await symlink(cacheTarget, protectedPath);
+			if (protectedKind === 'backup') config.zones[0].gateway.backupDir = protectedPath;
+			if (protectedKind === 'gateway-config') {
+				config.zones[0].gateway.config = path.join(protectedPath, 'config.yaml');
+			}
+			const configPath = await writeSystemConfigForTest('agent-vm-cache-protected-config-', config);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/cacheDir must not overlap/u);
+		},
+	);
+
 	test('rejects an explicit backupDir nested under stateDir', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].gateway.backupDir = '../storage/shravan/state/explicit-backups';

@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
 import {
 	configuredImageSelectionRecordPath,
@@ -146,12 +146,7 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 async function writeFakeImageAssets(imagePath: string): Promise<void> {
-	await fs.mkdir(imagePath, { recursive: true });
-	await Promise.all(
-		managedVmImageAssetFileNames.map(
-			async (fileName) => await fs.writeFile(path.join(imagePath, fileName), '', 'utf8'),
-		),
-	);
+	await writeImageArtifactFixture(imagePath);
 }
 
 async function createGatewayImageCacheFixture(

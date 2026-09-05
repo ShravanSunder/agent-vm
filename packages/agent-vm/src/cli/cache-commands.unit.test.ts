@@ -145,7 +145,9 @@ describe('runCacheCommand', () => {
 		});
 		expect(removeDirectory).toHaveBeenCalledTimes(2);
 		expect(removeDirectory).toHaveBeenCalledWith(path.join(deploymentCacheDir, 'docker-contexts'));
-		expect(removeDirectory).toHaveBeenCalledWith(path.join(deploymentCacheDir, 'zones'));
+		expect(removeDirectory).toHaveBeenCalledWith(
+			path.join(deploymentCacheDir, 'zones', 'worker', 'framework-cache'),
+		);
 		expect(events[0]).toBe('lock');
 		expect(events.at(-1)).toBe('release');
 		expect(events.join('\n')).not.toContain(

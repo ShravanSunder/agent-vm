@@ -24,6 +24,7 @@ import { describe, expect, it } from 'vitest';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import {
 	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
 	type LoadedSystemConfig,
 } from '../config/system-config.js';
 import type {
@@ -350,6 +351,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				authoredConfigDir: configDir,
 				declaredAgentIds: [trustedPrincipal.agentId, 'secondary', 'mediated'],
 				effectiveHostConfigDir,
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(imageFixture.project.systemConfig),
 				managedVmImages: {
 					prepareImage: async () => ({
 						built: false,

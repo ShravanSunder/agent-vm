@@ -43,6 +43,15 @@ The system-config loader exclusively owns path derivation and isolation checks. 
 
 The Gondolin image builder owns immutable artifact publication at `<sharedImageCacheDir>/<fingerprint>`. A complete artifact directory is a cache hit. Builds occur in a unique sibling staging directory and publish by rename only after every required asset exists. A losing concurrent publisher validates the complete winner, discards its staging directory, and consumes the winner.
 
+The image-artifact validator owns the admission predicate. It requires regular non-empty assets, a supported version-one manifest, fixed required asset filenames, and well-formed checksum entries. It rejects asset symlinks and path traversal. Publication additionally streams each asset through SHA-256 and compares the manifest checksum before rename. Cache hits, losing-publisher admission, and selection reads reuse only the structural predicate; they do not rescan large binary contents. Later same-structure binary corruption is outside this fast-path guarantee.
+
+```text
+staged build -> structural validation -> streamed checksums -> atomic publication
+published image -> structural validation -> cache hit / selection admission
+local build failure -> remove owned staging, even if another publisher won
+incomplete-winner publication failure -> preserve final and staging evidence
+```
+
 Only the atomic absent-to-complete transition is supported. An incomplete final fingerprint directory is corrupt evidence: preparation fails with the exact path and does not delete or quarantine it. `forceRebuild` may refresh upstream Docker inputs and thereby produce a different fingerprint, but it never replaces a complete shared artifact with the same fingerprint.
 
 ### Deployment image selections

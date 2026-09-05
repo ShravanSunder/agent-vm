@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { imageArtifactFixtureFileContent } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
 	managedVmImageAssetFileNames,
@@ -807,7 +808,11 @@ describe('findReusableGatewayImageDirectory', () => {
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
 			managedVmImageAssetFileNames.map(async (fileName) => {
-				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+				await fs.writeFile(
+					path.join(reusableImageDirectory, fileName),
+					imageArtifactFixtureFileContent(fileName),
+					'utf8',
+				);
 			}),
 		);
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
@@ -830,7 +835,7 @@ describe('findReusableGatewayImageDirectory', () => {
 		const activeImageDirectory = path.join(activeCacheDir, 'vm-images', fingerprint);
 		await expect(
 			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
-		).resolves.toBe('manifest.json\n');
+		).resolves.toBe(imageArtifactFixtureFileContent('manifest.json'));
 	});
 });
 
@@ -1075,7 +1080,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
 			managedVmImageAssetFileNames.map(async (fileName) => {
-				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+				await fs.writeFile(
+					path.join(reusableImageDirectory, fileName),
+					imageArtifactFixtureFileContent(fileName),
+					'utf8',
+				);
 			}),
 		);
 		const buildConfigs: LoadedSystemConfig[] = [];
@@ -1099,7 +1108,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 		expect(buildConfigs).toEqual([project.systemConfig]);
 		await expect(
 			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
-		).resolves.toBe('manifest.json\n');
+		).resolves.toBe(imageArtifactFixtureFileContent('manifest.json'));
 	});
 
 	it('materializes prepared records from the e2e manifest for an equivalent temp deployment', async () => {
@@ -1155,7 +1164,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 								await Promise.all(
 									managedVmImageAssetFileNames.map(
 										async (fileName) =>
-											await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+											await fs.writeFile(
+												path.join(imagePath, fileName),
+												imageArtifactFixtureFileContent(fileName),
+												'utf8',
+											),
 									),
 								);
 								await writePreparedManagedVmImage({
@@ -1308,7 +1321,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
@@ -1410,7 +1423,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
@@ -1448,7 +1461,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
@@ -1600,7 +1613,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 			await Promise.all(
 				managedVmImageAssetFileNames.map(
 					async (fileName) =>
-						await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+						await fs.writeFile(
+							path.join(imagePath, fileName),
+							imageArtifactFixtureFileContent(fileName),
+							'utf8',
+						),
 				),
 			);
 			await writePreparedManagedVmImage({
@@ -1662,7 +1679,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 									await Promise.all(
 										managedVmImageAssetFileNames.map(
 											async (fileName) =>
-												await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+												await fs.writeFile(
+													path.join(imagePath, fileName),
+													imageArtifactFixtureFileContent(fileName),
+													'utf8',
+												),
 										),
 									);
 									await writePreparedManagedVmImage({

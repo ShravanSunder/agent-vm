@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -97,6 +98,24 @@ afterEach(async () => {
 });
 
 describe('runCacheCommand filesystem boundaries', () => {
+	it('refuses a cache ancestor symlink before deleting any target', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-alias-'));
+		temporaryDirectories.push(root);
+		const systemConfig = await createSystemConfig(root, 'deployment');
+		const deploymentCacheDir = deploymentCacheDirForSystemConfig(systemConfig);
+		const dockerMarker = path.join(deploymentCacheDir, 'docker-contexts', 'preserve-on-refusal');
+		const protectedMarker = path.join(root, 'durable', 'worker', 'framework-cache', 'protected');
+		await Promise.all([writeMarker(dockerMarker), writeMarker(protectedMarker)]);
+		await symlink(path.join(root, 'durable'), path.join(deploymentCacheDir, 'zones'));
+
+		await expect(
+			runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, createIo()),
+		).rejects.toThrow(/cache cleanup target/u);
+		await expect(Promise.all([dockerMarker, protectedMarker].map(pathExists))).resolves.toEqual([
+			true,
+			true,
+		]);
+	});
 	it('deletes only the invoking deployment cache scope and preserves shared and durable roots', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-clean-integration-'));
 		temporaryDirectories.push(root);
@@ -111,6 +130,7 @@ describe('runCacheCommand filesystem boundaries', () => {
 			path.join(firstDeploymentCacheDir, 'zones', 'worker', 'framework-cache', 'cache-entry'),
 		];
 		const preservedMarkers = [
+			path.join(firstDeploymentCacheDir, 'zones', 'worker', 'preserve-me'),
 			path.join(secondDeploymentCacheDir, 'docker-contexts', 'gateway', 'worker', 'context'),
 			path.join(secondDeploymentCacheDir, 'zones', 'worker', 'framework-cache', 'cache-entry'),
 			path.join(

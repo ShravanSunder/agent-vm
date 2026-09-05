@@ -6,6 +6,8 @@ import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { imageArtifactFixtureFileContent } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
@@ -34,11 +36,8 @@ function createTemporaryDirectory(): string {
 	return temporaryDirectory;
 }
 
-function writeFakeImageAssets(imagePath: string, contentPrefix: string): void {
-	fs.mkdirSync(imagePath, { recursive: true });
-	for (const fileName of buildImageAssetFileNames) {
-		fs.writeFileSync(path.join(imagePath, fileName), `${contentPrefix}:${fileName}\n`, 'utf8');
-	}
+async function writeFakeImageAssets(imagePath: string, contentPrefix: string): Promise<void> {
+	await writeImageArtifactFixture(imagePath, contentPrefix);
 }
 
 function createSharedToolVmSystemConfig(options: {
@@ -320,7 +319,7 @@ async function runBuildCommand(
 					) => {
 						const result = await suppliedBuildManagedVmImage(buildOptions);
 						const imagePath = path.join(buildOptions.cacheDir, result.fingerprint);
-						writeFakeImageAssets(imagePath, 'managed');
+						await writeFakeImageAssets(imagePath, 'managed');
 						return { ...result, imagePath };
 					},
 				}),
@@ -683,17 +682,7 @@ describe('runBuildCommand', () => {
 							: { managedGatewayBoot: options.managedGatewayBoot },
 					);
 					const imagePath = path.join(options.cacheDir, fingerprint);
-					await mkdir(imagePath, { recursive: true });
-					await Promise.all(
-						buildImageAssetFileNames.map(
-							async (fileName) =>
-								await writeFile(
-									path.join(imagePath, fileName),
-									`managed-boot-fingerprint:${fileName}\n`,
-									'utf8',
-								),
-						),
-					);
+					await writeImageArtifactFixture(imagePath, 'managed-boot-fingerprint');
 					observedFingerprints.push(fingerprint);
 					return { built: true, fingerprint, imagePath };
 				},
@@ -852,12 +841,7 @@ describe('runBuildCommand', () => {
 		});
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const fingerprintComputations: string[] = [];
-		const writeFakeAssets = (imagePath: string): void => {
-			fs.mkdirSync(imagePath, { recursive: true });
-			for (const fileName of buildImageAssetFileNames) {
-				fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
-			}
-		};
+		const writeFakeAssets = writeImageArtifactFixture;
 
 		await runBuildCommand(
 			{
@@ -874,7 +858,7 @@ describe('runBuildCommand', () => {
 							? '4444444444444444'
 							: builtFingerprint;
 					const imagePath = path.join(options.cacheDir, fingerprint);
-					writeFakeAssets(imagePath);
+					await writeFakeAssets(imagePath);
 					return { built: true, fingerprint, imagePath };
 				},
 				computeManagedVmFingerprint: async (options) => {
@@ -1044,7 +1028,11 @@ describe('runBuildCommand', () => {
 					const imagePath = path.join(options.cacheDir, fingerprint);
 					fs.mkdirSync(imagePath, { recursive: true });
 					for (const fileName of buildImageAssetFileNames) {
-						fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
+						fs.writeFileSync(
+							path.join(imagePath, fileName),
+							imageArtifactFixtureFileContent(fileName),
+							'utf8',
+						);
 					}
 					return { built: true, fingerprint, imagePath };
 				},
@@ -1122,7 +1110,11 @@ describe('runBuildCommand', () => {
 					const imagePath = path.join(options.cacheDir, sharedFingerprint);
 					fs.mkdirSync(imagePath, { recursive: true });
 					for (const fileName of buildImageAssetFileNames) {
-						fs.writeFileSync(path.join(imagePath, fileName), `${fileName}\n`, 'utf8');
+						fs.writeFileSync(
+							path.join(imagePath, fileName),
+							imageArtifactFixtureFileContent(fileName),
+							'utf8',
+						);
 					}
 					return { built: true, fingerprint: sharedFingerprint, imagePath };
 				},
@@ -1201,7 +1193,7 @@ describe('runBuildCommand', () => {
 				},
 				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, '9999999999999999');
-					writeFakeImageAssets(imagePath, options.cacheDir);
+					await writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
 						built: true,
 						fingerprint: '9999999999999999',
@@ -1276,7 +1268,7 @@ describe('runBuildCommand', () => {
 				},
 				buildManagedVmImage: async (options) => {
 					const imagePath = path.join(options.cacheDir, '9999999999999999');
-					writeFakeImageAssets(imagePath, options.cacheDir);
+					await writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
 						built: true,
 						fingerprint: '9999999999999999',
@@ -1558,7 +1550,7 @@ describe('runBuildCommand', () => {
 					gondolinBuilds.push(options.buildConfigPath);
 					const fingerprint = 'aaaaaaaaaaaaaaa5';
 					const imagePath = path.join(options.cacheDir, fingerprint);
-					writeFakeImageAssets(imagePath, 'zig');
+					await writeFakeImageAssets(imagePath, 'zig');
 					return { built: true, fingerprint, imagePath };
 				},
 				computeManagedVmFingerprint: async () => 'aaaaaaaaaaaaaaa5',

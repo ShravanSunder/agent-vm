@@ -1,7 +1,5 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-
-import { buildImage, buildImageAssetFileNames } from '../build-pipeline.js';
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
+import { buildImage } from '../build-pipeline.js';
 
 const [cacheDir, publisherId] = process.argv.slice(2);
 if (cacheDir === undefined || publisherId === undefined) {
@@ -29,11 +27,8 @@ const result = await buildImage(
 					resolve();
 				});
 			});
-			await Promise.all(
-				buildImageAssetFileNames.map(async (fileName) => {
-					await fs.writeFile(path.join(outputDirectory, fileName), `${publisherId}\n`, 'utf8');
-				}),
-			);
+			await writeImageArtifactFixture(outputDirectory, `${publisherId}\n`);
+			if (publisherId === 'failing') throw new Error('publisher failed before publication');
 		},
 		gondolinVersion: 'cross-process-publication-proof',
 	},

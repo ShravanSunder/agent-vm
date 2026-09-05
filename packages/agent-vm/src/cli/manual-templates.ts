@@ -134,6 +134,8 @@ Do not edit generated Docker build contexts under cacheDir/deployments/<deployme
 
 Agent VM stores complete immutable VM images once under cacheDir/vm-images/<fingerprint>. A deployment's small image selections live under storageRootDir/generated/image-selections. Controller and Tool VM startup validate those selections and tell you to run agent-vm build when one is missing or stale.
 
+New images are checksum-verified before publication. Reuse validates manifest and file structure without hashing large images again; it does not detect every later binary corruption. Never repair or replace shared fingerprint directories by hand.
+
 For managed Worker and Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
 
 For Hermes images, the generated deployment Dockerfile comes from the installed Hermes recipe and embeds the installed agent-vm package version plus the immutable Hermes distribution inputs. Review the generated recipe and build plan before debugging Docker output. Do not copy the recipe into a second version owner.

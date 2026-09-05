@@ -99,6 +99,24 @@ async function removeDeploymentCacheDirectory(directoryPath: string): Promise<vo
 	await fs.rm(directoryPath, { force: true, recursive: true });
 }
 
+async function assertCleanupTargetIdentity(cacheDir: string, target: string): Promise<void> {
+	let canonicalTarget: string;
+	try {
+		canonicalTarget = await fs.realpath(target);
+	} catch (error) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')
+			return;
+		throw error;
+	}
+	const canonicalCacheDir = await fs.realpath(cacheDir);
+	const expectedTarget = path.join(canonicalCacheDir, path.relative(cacheDir, target));
+	if (canonicalTarget !== expectedTarget) {
+		throw new Error(
+			`Unsafe cache cleanup target '${target}': symbolic links change its storage identity.`,
+		);
+	}
+}
+
 async function releaseOwnershipLockAfterOperation(options: {
 	readonly lock: ControllerOwnershipLock;
 	readonly operation: () => Promise<void>;
@@ -162,7 +180,9 @@ export async function runCacheCommand(
 	if (options.subcommand === 'clean') {
 		const cleanupTargets = [
 			path.join(deploymentCacheDir, 'docker-contexts'),
-			path.join(deploymentCacheDir, 'zones'),
+			...options.systemConfig.zones.map((zone) =>
+				path.join(deploymentCacheDir, 'zones', zone.id, 'framework-cache'),
+			),
 		] as const;
 		if (!options.confirm) {
 			io.stderr.write(
@@ -180,6 +200,12 @@ export async function runCacheCommand(
 		await releaseOwnershipLockAfterOperation({
 			lock: ownershipLock,
 			operation: async () => {
+				await Promise.all(
+					cleanupTargets.map(
+						async (target) =>
+							await assertCleanupTargetIdentity(options.systemConfig.cacheDir, target),
+					),
+				);
 				await Promise.all(cleanupTargets.map(async (target) => await removeDirectory(target)));
 			},
 		});

@@ -19,8 +19,8 @@ import {
 } from '@agent-vm/gateway-control-contracts';
 import { describe, expect, it } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	configuredImageSelectionRecordPath,
 	writePreparedManagedVmImage,
@@ -757,12 +757,7 @@ async function createAgentVmProofFixture(collectorHttpPort: number): Promise<Age
 	]);
 	const gatewayImageFingerprint = await computeFingerprintFromConfigPath(buildConfigPath);
 	const gatewayImagePath = path.join(gatewayImageCacheDirectory, gatewayImageFingerprint);
-	await mkdir(gatewayImagePath, { recursive: true });
-	await Promise.all(
-		managedVmImageAssetFileNames.map((fileName) =>
-			writeFile(path.join(gatewayImagePath, fileName), ''),
-		),
-	);
+	await writeImageArtifactFixture(gatewayImagePath);
 	await writePreparedManagedVmImage({
 		buildConfigPath,
 		fingerprint: gatewayImageFingerprint,

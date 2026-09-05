@@ -11,6 +11,11 @@ the Gondolin VFS boundary.
 For the concrete Hermes and Worker Gateway path matrix, see
 [Storage Matrix](storage-matrix.md).
 
+New immutable VM images are published only after streamed SHA-256 verification
+against their manifest. Reuse checks supported manifest structure and regular,
+non-empty asset files without rehashing image contents. Later binary corruption
+that preserves those structural properties is not detected on the cache fast path.
+
 ## Config-Level Path Map
 
 `storageRootDir` is the sole authored standard operational storage path. The

@@ -106,12 +106,29 @@ describe('shared image publication across processes', () => {
 		const [imagePath] = new Set(results.map((result) => result.imagePath));
 		if (imagePath === undefined) throw new Error('Expected one published image path.');
 		const assetContents = await Promise.all(
-			buildImageAssetFileNames.map(
-				async (fileName) => await fs.readFile(path.join(imagePath, fileName), 'utf8'),
-			),
+			buildImageAssetFileNames
+				.filter((fileName) => fileName !== 'manifest.json')
+				.map(async (fileName) => await fs.readFile(path.join(imagePath, fileName), 'utf8')),
 		);
 		expect(new Set(assetContents).size).toBe(1);
 		const cacheEntries = await fs.readdir(cacheDir);
 		expect(cacheEntries).toEqual([results[0]?.fingerprint]);
+	});
+
+	it('removes failed staging after the other process publishes successfully', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-failed-publication-'));
+		temporaryDirectories.push(root);
+		const cacheDir = path.join(root, 'vm-images');
+		const winner = startPublisher({ cacheDir, publisherId: 'winner' });
+		const failing = startPublisher({ cacheDir, publisherId: 'failing' });
+		const settledResults = Promise.allSettled([winner.result, failing.result]);
+		await Promise.all([winner.ready, failing.ready]);
+		winner.release();
+		const winnerResult = await winner.result;
+		failing.release();
+
+		const results = await settledResults;
+		expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+		await expect(fs.readdir(cacheDir)).resolves.toEqual([winnerResult.fingerprint]);
 	});
 });

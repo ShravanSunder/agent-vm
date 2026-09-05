@@ -5,6 +5,9 @@ import path from 'node:path';
 import type { BuildConfig, BuildOptions } from '@earendil-works/gondolin';
 import { validateBuildConfig } from '@earendil-works/gondolin';
 
+import { hasBuiltImageAssets, verifyBuiltImageIntegrity } from './image-artifact-validation.js';
+export { buildImageAssetFileNames, hasBuiltImageAssets } from './image-artifact-validation.js';
+
 import {
 	prepareBuildConfigWithAgentVmRootfsInitExtra,
 	resolveRootfsInitExtra,
@@ -60,13 +63,6 @@ export interface GondolinImageBuildTooling {
 	): Promise<BuildImageResult>;
 	computeFingerprint(options: GondolinImageFingerprintOptions): Promise<string>;
 }
-
-export const buildImageAssetFileNames = [
-	'manifest.json',
-	'rootfs.ext4',
-	'initramfs.cpio.lz4',
-	'vmlinuz-virt',
-] as const;
 
 function requireValidBuildConfig(buildConfig: unknown): BuildConfig {
 	if (!validateBuildConfig(buildConfig)) {
@@ -145,16 +141,6 @@ async function pathExists(filePath: string): Promise<boolean> {
 		}
 		return false;
 	}
-}
-
-export async function hasBuiltImageAssets(outputDirectoryPath: string): Promise<boolean> {
-	for (const fileName of buildImageAssetFileNames) {
-		// oxlint-disable-next-line no-await-in-loop -- each missing file points at the same image generation
-		if (!(await pathExists(path.join(outputDirectoryPath, fileName)))) {
-			return false;
-		}
-	}
-	return true;
 }
 
 async function loadBuildAssets(): Promise<
@@ -304,8 +290,9 @@ export async function buildImage(
 			`.${fingerprint}.staging-${process.pid}-${crypto.randomUUID()}`,
 		);
 		await fs.mkdir(stagingImagePath);
-		const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
+		let preserveStagingEvidence = false;
 		try {
+			const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
 			const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
 				buildConfig: options.buildConfig,
 				imagePath: stagingImagePath,
@@ -327,7 +314,7 @@ export async function buildImage(
 				await fs.rm(gondolinWorkDir, { recursive: true, force: true });
 			}
 
-			if (!(await hasBuiltImageAssets(stagingImagePath))) {
+			if (!(await verifyBuiltImageIntegrity(stagingImagePath))) {
 				throw new Error(`Expected Gondolin assets to be written to ${stagingImagePath}.`);
 			}
 
@@ -343,6 +330,7 @@ export async function buildImage(
 					throw error;
 				}
 				if (!(await hasBuiltImageAssets(imagePath))) {
+					preserveStagingEvidence = true;
 					throw new Error(
 						`Concurrent image publication left an incomplete shared image artifact at ${imagePath}; staging evidence remains at ${stagingImagePath}.`,
 						{ cause: error },
@@ -362,7 +350,7 @@ export async function buildImage(
 				imagePath,
 			};
 		} catch (error) {
-			if (!(await pathExists(imagePath))) {
+			if (!preserveStagingEvidence) {
 				await fs.rm(stagingImagePath, { recursive: true, force: true });
 			}
 			throw error;

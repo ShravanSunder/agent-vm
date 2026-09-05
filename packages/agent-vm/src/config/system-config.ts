@@ -1874,6 +1874,29 @@ async function canonicalizeStorageRootPath(
 		controllerStateDir: resolvedConfig.controllerStateDir,
 		protectedPaths,
 	});
+	const cacheProtectedPaths = await Promise.all(
+		[
+			...protectedPaths.filter(
+				({ label }) => label !== 'cacheDir' && label !== 'system config parent directory',
+			),
+			{ label: 'deployment storageRootDir', path: storageRootDir },
+			{ label: 'controllerStateDir', path: resolvedConfig.controllerStateDir },
+			...resolvedConfig.zones.map((zone) => ({
+				label: `zoneRuntimeDir for zone '${zone.id}'`,
+				path: zone.gateway.zoneRuntimeDir,
+			})),
+		].map(
+			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
+				label: protectedPath.label,
+				path: await resolveCanonicalPathIdentity(protectedPath.path),
+			}),
+		),
+	);
+	for (const protectedPath of cacheProtectedPaths) {
+		if (pathsOverlap(canonicalCacheDir, protectedPath.path)) {
+			throw new Error(`cacheDir must not overlap ${protectedPath.label}.`);
+		}
+	}
 	return { ...resolvedConfig, systemConfigPath: config.systemConfigPath };
 }
 

@@ -53,13 +53,14 @@ async function terminateVmRuntime(
 
 async function createMediatedEnvSystemConfig(options: {
 	readonly cacheDir: string;
+	readonly storageRootDir: string;
 	readonly temporaryDirectory: string;
 	readonly toolVmBuildConfigPath: string;
 }): Promise<LoadedSystemConfig> {
 	const systemConfig = createLoadedSystemConfig(
 		{
 			schemaVersion: 2,
-			storageRootDir: options.temporaryDirectory,
+			storageRootDir: options.storageRootDir,
 			host: {
 				controllerPort: 18800,
 				projectNamespace: 'mediated-env-live',
@@ -215,6 +216,7 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		}
 		const systemConfig = await createMediatedEnvSystemConfig({
 			cacheDir: project.systemConfig.cacheDir,
+			storageRootDir: project.systemConfig.storageRootDir,
 			temporaryDirectory,
 			toolVmBuildConfigPath: preparedToolVmImageProfile.buildConfig,
 		});
