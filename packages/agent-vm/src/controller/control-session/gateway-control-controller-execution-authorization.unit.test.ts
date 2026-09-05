@@ -545,12 +545,7 @@ async function oauthApprovalReservation(props: {
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<GatewayRuntimeControllerExecutionDispatchReservation> {
 	const admission = await loadGatewayRuntimePortalAdmissionFile(
-		path.join(
-			props.systemConfig.cacheDir,
-			'gateways',
-			acceptedSession.zoneId,
-			'tool-portal-effective',
-		),
+		effectiveToolPortalConfigDirectory(props.systemConfig),
 	);
 	const operationId = deterministicOperationId({
 		callId: props.callId,
