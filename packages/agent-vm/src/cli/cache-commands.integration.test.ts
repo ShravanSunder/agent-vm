@@ -128,9 +128,11 @@ describe('runCacheCommand filesystem boundaries', () => {
 		const deletedMarkers = [
 			path.join(firstDeploymentCacheDir, 'docker-contexts', 'gateway', 'worker', 'context'),
 			path.join(firstDeploymentCacheDir, 'zones', 'worker', 'framework-cache', 'cache-entry'),
+			path.join(firstDeploymentCacheDir, 'zones', 'retired-zone', 'framework-cache', 'cache-entry'),
 		];
 		const preservedMarkers = [
 			path.join(firstDeploymentCacheDir, 'zones', 'worker', 'preserve-me'),
+			path.join(firstDeploymentCacheDir, 'zones', 'retired-zone', 'preserve-me'),
 			path.join(secondDeploymentCacheDir, 'docker-contexts', 'gateway', 'worker', 'context'),
 			path.join(secondDeploymentCacheDir, 'zones', 'worker', 'framework-cache', 'cache-entry'),
 			path.join(
@@ -154,7 +156,11 @@ describe('runCacheCommand filesystem boundaries', () => {
 			createIo(),
 		);
 
-		await expect(Promise.all(deletedMarkers.map(pathExists))).resolves.toEqual([false, false]);
+		await expect(Promise.all(deletedMarkers.map(pathExists))).resolves.toEqual([
+			false,
+			false,
+			false,
+		]);
 		await expect(Promise.all(preservedMarkers.map(pathExists))).resolves.toEqual(
 			preservedMarkers.map(() => true),
 		);

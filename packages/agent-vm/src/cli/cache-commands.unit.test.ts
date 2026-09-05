@@ -134,6 +134,9 @@ describe('runCacheCommand', () => {
 			events.push(`remove:${directoryPath}`);
 		});
 		const deploymentCacheDir = deploymentCacheDirForSystemConfig(systemConfig);
+		await fs.mkdir(path.join(deploymentCacheDir, 'zones', 'worker', 'framework-cache'), {
+			recursive: true,
+		});
 
 		await runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, io, {
 			acquireControllerOwnershipLock,

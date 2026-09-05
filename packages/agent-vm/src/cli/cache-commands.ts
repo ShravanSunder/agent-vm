@@ -117,6 +117,31 @@ async function assertCleanupTargetIdentity(cacheDir: string, target: string): Pr
 	}
 }
 
+async function resolveDeploymentCleanupTargets(
+	cacheDir: string,
+	deploymentCacheDir: string,
+): Promise<readonly string[]> {
+	const zonesDirectory = path.join(deploymentCacheDir, 'zones');
+	await assertCleanupTargetIdentity(cacheDir, zonesDirectory);
+	const targets = [path.join(deploymentCacheDir, 'docker-contexts')];
+	try {
+		const zoneEntries = await fs.readdir(zonesDirectory, { withFileTypes: true });
+		for (const entry of zoneEntries) {
+			if (entry.isDirectory())
+				targets.push(path.join(zonesDirectory, entry.name, 'framework-cache'));
+		}
+	} catch (error) {
+		if (
+			typeof error !== 'object' ||
+			error === null ||
+			!('code' in error) ||
+			error.code !== 'ENOENT'
+		)
+			throw error;
+	}
+	return targets;
+}
+
 async function releaseOwnershipLockAfterOperation(options: {
 	readonly lock: ControllerOwnershipLock;
 	readonly operation: () => Promise<void>;
@@ -178,13 +203,11 @@ export async function runCacheCommand(
 	}
 
 	if (options.subcommand === 'clean') {
-		const cleanupTargets = [
-			path.join(deploymentCacheDir, 'docker-contexts'),
-			...options.systemConfig.zones.map((zone) =>
-				path.join(deploymentCacheDir, 'zones', zone.id, 'framework-cache'),
-			),
-		] as const;
 		if (!options.confirm) {
+			const cleanupTargets = await resolveDeploymentCleanupTargets(
+				options.systemConfig.cacheDir,
+				deploymentCacheDir,
+			);
 			io.stderr.write(
 				`[cache] Deployment cache cleanup targets:\n${cleanupTargets.map((target) => `  ${target}`).join('\n')}\n[cache] Shared VM images and deployment-generated metadata are preserved. Run with --confirm while the controller is stopped.\n`,
 			);
@@ -200,6 +223,10 @@ export async function runCacheCommand(
 		await releaseOwnershipLockAfterOperation({
 			lock: ownershipLock,
 			operation: async () => {
+				const cleanupTargets = await resolveDeploymentCleanupTargets(
+					options.systemConfig.cacheDir,
+					deploymentCacheDir,
+				);
 				await Promise.all(
 					cleanupTargets.map(
 						async (target) =>
