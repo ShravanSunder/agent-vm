@@ -1,29 +1,18 @@
 import fs from 'node:fs';
-import fsPromises, { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-	buildManagedVmImage,
-	computeFingerprintFromConfigPath,
-} from '../build/gondolin-image-builder.js';
+import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames as buildImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
 	createLoadedSystemConfig,
 	type LoadedSystemConfig,
 	type SystemConfigInput,
 } from '../config/system-config.js';
-import {
-	createControllerStateRoot,
-	resolveControllerGatewayStateRoot,
-} from '../controller/durable-state/controller-state-paths.js';
-import {
-	resolveControllerGatewayRecordTargets,
-	resolveControllerWorkerTaskRuntimeRecordTarget,
-} from '../controller/durable-state/controller-state-record-paths.js';
 import {
 	managedGatewayBootProjectionForGatewayType,
 	runBuildCommand as runBuildCommandDefault,
@@ -45,12 +34,6 @@ function createTemporaryDirectory(): string {
 	return temporaryDirectory;
 }
 
-function createFileSystemError(code: string, message: string): NodeJS.ErrnoException {
-	const error = new Error(message) as NodeJS.ErrnoException;
-	error.code = code;
-	return error;
-}
-
 function writeFakeImageAssets(imagePath: string, contentPrefix: string): void {
 	fs.mkdirSync(imagePath, { recursive: true });
 	for (const fileName of buildImageAssetFileNames) {
@@ -67,7 +50,7 @@ function createSharedToolVmSystemConfig(options: {
 	return createLoadedSystemConfig(
 		{
 			...baseConfig,
-			storageRootDir: path.dirname(options.cacheDirectory),
+			storageRootDir: path.join(path.dirname(options.cacheDirectory), 'deployment'),
 			imageProfiles: {
 				gateways: {
 					hermes: {
@@ -109,8 +92,43 @@ function createSharedToolVmSystemConfig(options: {
 }
 
 function createTestSystemConfigInput(): SystemConfigInput {
+	const testRoot = createTemporaryDirectory();
+	const gatewayBuildConfigPath = path.join(
+		testRoot,
+		'vm-images',
+		'gateways',
+		'hermes',
+		'build-config.json',
+	);
+	const gatewayDockerfilePath = path.join(
+		testRoot,
+		'vm-images',
+		'gateways',
+		'hermes',
+		'Dockerfile',
+	);
+	const toolVmBuildConfigPath = path.join(
+		testRoot,
+		'vm-images',
+		'tool-vms',
+		'default',
+		'build-config.json',
+	);
+	fs.mkdirSync(path.dirname(gatewayBuildConfigPath), { recursive: true });
+	fs.mkdirSync(path.dirname(toolVmBuildConfigPath), { recursive: true });
+	fs.writeFileSync(
+		gatewayBuildConfigPath,
+		JSON.stringify({ arch: 'aarch64', distro: 'alpine', oci: { image: 'gateway:test' } }),
+		'utf8',
+	);
+	fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
+	fs.writeFileSync(
+		toolVmBuildConfigPath,
+		JSON.stringify({ arch: 'aarch64', distro: 'alpine', oci: { image: 'tool-vm:test' } }),
+		'utf8',
+	);
 	return {
-		storageRootDir: '/',
+		storageRootDir: path.join(testRoot, 'deployment'),
 		host: {
 			controllerPort: 18800,
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
@@ -120,14 +138,14 @@ function createTestSystemConfigInput(): SystemConfigInput {
 			gateways: {
 				hermes: {
 					type: 'hermes',
-					buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
-					dockerfile: '/project/vm-images/gateways/hermes/Dockerfile',
+					buildConfig: gatewayBuildConfigPath,
+					dockerfile: gatewayDockerfilePath,
 				},
 			},
 			toolVms: {
 				default: {
 					type: 'toolVm',
-					buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
+					buildConfig: toolVmBuildConfigPath,
 				},
 			},
 		},
@@ -187,8 +205,9 @@ function createTestSystemConfigInput(): SystemConfigInput {
 }
 
 function createTestSystemConfig(): LoadedSystemConfig {
-	return createLoadedSystemConfig(createTestSystemConfigInput(), {
-		systemConfigPath: '/project/config/system.json',
+	const input = createTestSystemConfigInput();
+	return createLoadedSystemConfig(input, {
+		systemConfigPath: path.join(path.dirname(input.storageRootDir), 'config', 'system.json'),
 	});
 }
 
@@ -277,9 +296,12 @@ async function runBuildCommand(
 	options: Parameters<typeof runBuildCommandDefault>[0],
 	dependencies: BuildCommandDependencies = {},
 ): Promise<void> {
+	const suppliedBuildManagedVmImage = dependencies.buildManagedVmImage;
 	await runBuildCommandDefault(options, {
 		computeManagedVmFingerprint: async (fingerprintOptions) =>
-			`test-fingerprint:${fingerprintOptions.buildConfigPath}`,
+			fingerprintOptions.buildConfigPath.includes('/gateways/')
+				? '1111111111111111'
+				: '2222222222222222',
 		resolveDockerRootfsIdentity: async (imageTag) => ({
 			architecture: 'arm64',
 			layers: [`sha256:test-layer:${imageTag}`],
@@ -288,6 +310,20 @@ async function runBuildCommand(
 		resolveRequiredZigVersion: async () => '0.15.2',
 		resolveZigVersion: async () => '0.15.2',
 		...dependencies,
+		...(suppliedBuildManagedVmImage === undefined
+			? {}
+			: {
+					buildManagedVmImage: async (
+						buildOptions: Parameters<
+							NonNullable<BuildCommandDependencies['buildManagedVmImage']>
+						>[0],
+					) => {
+						const result = await suppliedBuildManagedVmImage(buildOptions);
+						const imagePath = path.join(buildOptions.cacheDir, result.fingerprint);
+						writeFakeImageAssets(imagePath, 'managed');
+						return { ...result, imagePath };
+					},
+				}),
 	});
 }
 
@@ -302,6 +338,7 @@ describe('runBuildCommand', () => {
 
 	it('builds Docker image when dockerfile is configured', async () => {
 		const dockerBuilds: { dockerfilePath: string; imageTag: string }[] = [];
+		const systemConfig = createTestSystemConfig();
 		const dependencies: BuildCommandDependencies = {
 			runTask: async (_title, fn) => fn(),
 			buildDockerImage: async (options) => {
@@ -309,16 +346,18 @@ describe('runBuildCommand', () => {
 			},
 			buildManagedVmImage: async () => ({
 				built: true,
-				fingerprint: 'abc123',
+				fingerprint: 'aaaaaaaaaaaaaaaa',
 				imagePath: '/cache/abc123',
 			}),
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 		};
 
-		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
+		await runBuildCommand({ systemConfig }, dependencies);
 
 		expect(dockerBuilds).toHaveLength(1);
-		expect(dockerBuilds[0]?.dockerfilePath).toBe('/project/vm-images/gateways/hermes/Dockerfile');
+		expect(dockerBuilds[0]?.dockerfilePath).toBe(
+			systemConfig.imageProfiles.gateways.hermes?.dockerfile,
+		);
 		expect(dockerBuilds[0]?.imageTag).toBe('agent-vm-gateway:latest');
 	});
 
@@ -338,13 +377,12 @@ describe('runBuildCommand', () => {
 				events.push('gondolin');
 				return {
 					built: true,
-					fingerprint: 'abc123',
+					fingerprint: 'aaaaaaaaaaaaaaaa',
 					imagePath: '/cache/abc123',
 				};
 			},
 			prepareObservabilityStack,
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-			findPrunableImageDirectories: async () => [],
 		};
 
 		await runBuildCommand({ systemConfig: createObservabilitySystemConfig() }, dependencies);
@@ -361,12 +399,11 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {},
 			buildManagedVmImage: async () => ({
 				built: true,
-				fingerprint: 'abc123',
+				fingerprint: 'aaaaaaaaaaaaaaaa',
 				imagePath: '/cache/abc123',
 			}),
 			prepareObservabilityStack,
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-			findPrunableImageDirectories: async () => [],
 		};
 
 		await runBuildCommand(
@@ -386,12 +423,11 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {},
 			buildManagedVmImage: async () => ({
 				built: true,
-				fingerprint: 'abc123',
+				fingerprint: 'aaaaaaaaaaaaaaaa',
 				imagePath: '/cache/abc123',
 			}),
 			prepareObservabilityStack,
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-			findPrunableImageDirectories: async () => [],
 		};
 
 		await runBuildCommand(
@@ -413,12 +449,11 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {},
 			buildManagedVmImage: async () => ({
 				built: true,
-				fingerprint: 'abc123',
+				fingerprint: 'aaaaaaaaaaaaaaaa',
 				imagePath: '/cache/abc123',
 			}),
 			prepareObservabilityStack,
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-			findPrunableImageDirectories: async () => [],
 		};
 
 		const baseConfig = createTestSystemConfigInput();
@@ -451,12 +486,11 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {},
 			buildManagedVmImage: async () => ({
 				built: true,
-				fingerprint: 'abc123',
+				fingerprint: 'aaaaaaaaaaaaaaaa',
 				imagePath: '/cache/abc123',
 			}),
 			prepareObservabilityStack,
 			resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-			findPrunableImageDirectories: async () => [],
 		};
 
 		await runBuildCommand(
@@ -478,7 +512,7 @@ describe('runBuildCommand', () => {
 			},
 			buildManagedVmImage: async () => ({
 				built: false,
-				fingerprint: 'cached',
+				fingerprint: 'bbbbbbbbbbbbbbbb',
 				imagePath: '/cache/cached',
 			}),
 			resolveOciImageTag: async () => 'agent-vm-tool:latest',
@@ -490,6 +524,7 @@ describe('runBuildCommand', () => {
 	});
 
 	it('builds shared Gondolin assets once per image type into the shared cache dir', async () => {
+		const systemConfig = createTestSystemConfig();
 		const gondolinBuilds: {
 			cacheDir: string;
 			fullReset: boolean | undefined;
@@ -502,25 +537,26 @@ describe('runBuildCommand', () => {
 					cacheDir: options.cacheDir,
 					fullReset: options.fullReset,
 				});
-				return { built: true, fingerprint: 'f1', imagePath: '/cache/f1' };
+				return { built: true, fingerprint: 'cccccccccccccccc', imagePath: '/cache/f1' };
 			},
 			resolveOciImageTag: async () => 'tag:latest',
 		};
 
-		await runBuildCommand({ systemConfig: createTestSystemConfig() }, dependencies);
+		await runBuildCommand({ systemConfig }, dependencies);
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds[0]).toEqual({
-			cacheDir: '/cache/gateway-images/hermes',
+			cacheDir: path.join(systemConfig.cacheDir, 'vm-images'),
 			fullReset: undefined,
 		});
 		expect(gondolinBuilds[1]).toEqual({
-			cacheDir: '/cache/tool-vm-images/default',
+			cacheDir: path.join(systemConfig.cacheDir, 'vm-images'),
 			fullReset: undefined,
 		});
 	});
 
 	it('uses Docker rootfs identity as fingerprint input for Docker-backed targets', async () => {
+		const systemConfig = createTestSystemConfig();
 		const fingerprintInputs: {
 			fingerprintInput: unknown;
 			managedGatewayBoot: unknown;
@@ -538,7 +574,7 @@ describe('runBuildCommand', () => {
 		};
 
 		await runBuildCommand(
-			{ systemConfig: createTestSystemConfig() },
+			{ systemConfig },
 			{
 				buildDockerImage: async () => {},
 				buildManagedVmImage: async (options) => {
@@ -550,9 +586,8 @@ describe('runBuildCommand', () => {
 					});
 					return {
 						built: true,
-						fingerprint: options.cacheDir.includes('gateway-images')
-							? 'gateway-rootfs-fingerprint'
-							: 'tool-fingerprint',
+						fingerprint:
+							options.managedGatewayBoot === undefined ? '2222222222222222' : '1111111111111111',
 						imagePath: '/cache/docker-refresh',
 					};
 				},
@@ -561,9 +596,7 @@ describe('runBuildCommand', () => {
 						fingerprintInput: options.fingerprintInput,
 						managedGatewayBoot: options.managedGatewayBoot,
 					});
-					return options.fingerprintInput === undefined
-						? 'tool-fingerprint'
-						: 'gateway-rootfs-fingerprint';
+					return options.fingerprintInput === undefined ? '2222222222222222' : '1111111111111111';
 				},
 				resolveOciImageTag: async () => 'tag:latest',
 				resolveDockerRootfsIdentity: async () => dockerRootfsIdentity,
@@ -586,7 +619,7 @@ describe('runBuildCommand', () => {
 		]);
 		expect(gondolinBuilds).toEqual([
 			{
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: path.join(systemConfig.cacheDir, 'vm-images'),
 				fingerprintInput: {
 					dockerRootfsIdentity,
 					schemaVersion: 1,
@@ -598,7 +631,7 @@ describe('runBuildCommand', () => {
 				},
 			},
 			{
-				cacheDir: '/cache/tool-vm-images/default',
+				cacheDir: path.join(systemConfig.cacheDir, 'vm-images'),
 				fingerprintInput: undefined,
 				fullReset: undefined,
 				managedGatewayBoot: undefined,
@@ -624,7 +657,7 @@ describe('runBuildCommand', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				storageRootDir: path.dirname(cacheDirectory),
+				storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
 				imageProfiles: {
 					gateways: {
 						hermes: { type: 'hermes', buildConfig: buildConfigPath },
@@ -664,7 +697,6 @@ describe('runBuildCommand', () => {
 					observedFingerprints.push(fingerprint);
 					return { built: true, fingerprint, imagePath };
 				},
-				findPrunableImageDirectories: async () => [],
 				resolveRequiredZigVersion: async () => '0.15.2',
 				resolveZigVersion: async () => '0.15.2',
 				runTask: async (_title, fn) => await fn(),
@@ -709,7 +741,7 @@ describe('runBuildCommand', () => {
 			buildDockerImage: async () => {},
 			buildManagedVmImage: async (options) => {
 				gondolinBuilds.push({ cacheDir: options.cacheDir });
-				return { built: true, fingerprint: 'zone-fp', imagePath: '/cache/zone-fp' };
+				return { built: true, fingerprint: '3333333333333333', imagePath: '/cache/zone-fp' };
 			},
 			resolveOciImageTag: async () => 'tag:latest',
 		};
@@ -718,8 +750,8 @@ describe('runBuildCommand', () => {
 
 		expect(gondolinBuilds).toHaveLength(2);
 		expect(gondolinBuilds.map((build) => build.cacheDir)).toEqual([
-			'/cache/gateway-images/hermes',
-			'/cache/tool-vm-images/default',
+			path.join(multiZoneConfig.cacheDir, 'vm-images'),
+			path.join(multiZoneConfig.cacheDir, 'vm-images'),
 		]);
 	});
 
@@ -773,7 +805,7 @@ describe('runBuildCommand', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				storageRootDir: path.dirname(cacheDirectory),
+				storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
 				imageProfiles: {
 					gateways: {
 						hermes: {
@@ -837,29 +869,18 @@ describe('runBuildCommand', () => {
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
 					});
-					const fingerprint = options.cacheDir.includes('gateway-images')
-						? 'gateway-fingerprint'
-						: builtFingerprint;
+					const fingerprint =
+						options.buildConfigPath === gatewayBuildConfigPath
+							? '4444444444444444'
+							: builtFingerprint;
 					const imagePath = path.join(options.cacheDir, fingerprint);
 					writeFakeAssets(imagePath);
 					return { built: true, fingerprint, imagePath };
 				},
-				findPrunableImageDirectories: async (options) => {
-					expect(options.currentFingerprints.gateways).toEqual({
-						hermes: 'gateway-fingerprint',
-					});
-					expect(options.currentFingerprints.toolVms).toEqual({
-						default: builtFingerprint,
-						shravan: builtFingerprint,
-						alevtina: builtFingerprint,
-						sun: builtFingerprint,
-					});
-					return [];
-				},
 				computeManagedVmFingerprint: async (options) => {
 					fingerprintComputations.push(options.buildConfigPath);
 					return options.buildConfigPath === gatewayBuildConfigPath
-						? 'gateway-fingerprint'
+						? '4444444444444444'
 						: builtFingerprint;
 				},
 				runTask: async (_title, fn) => fn(),
@@ -869,199 +890,18 @@ describe('runBuildCommand', () => {
 		expect(fingerprintComputations).toEqual([gatewayBuildConfigPath, buildConfigPath]);
 		expect(gondolinBuilds).toEqual([
 			{
-				cacheDir: path.join(cacheDirectory, 'gateway-images', 'hermes'),
+				cacheDir: path.join(cacheDirectory, 'vm-images'),
 				fullReset: undefined,
 			},
 			{
-				cacheDir: path.join(cacheDirectory, 'tool-vm-images', 'default'),
+				cacheDir: path.join(cacheDirectory, 'vm-images'),
 				fullReset: undefined,
 			},
 		]);
-		for (const profileName of toolProfileNames) {
-			const imagePath = path.join(cacheDirectory, 'tool-vm-images', profileName, builtFingerprint);
-			for (const fileName of buildImageAssetFileNames) {
-				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
-			}
+		const sharedImagePath = path.join(cacheDirectory, 'vm-images', builtFingerprint);
+		for (const fileName of buildImageAssetFileNames) {
+			expect(fs.existsSync(path.join(sharedImagePath, fileName))).toBe(true);
 		}
-		const duplicateProfileCacheResult = await buildManagedVmImage(
-			{
-				buildConfigPath,
-				cacheDir: path.join(cacheDirectory, 'tool-vm-images', 'sun'),
-			},
-			{
-				resolveRuntimeBuildVersionTag: async () => runtimeBuildVersionTag,
-			},
-		);
-		expect(duplicateProfileCacheResult).toEqual({
-			built: false,
-			fingerprint: builtFingerprint,
-			imagePath: path.join(cacheDirectory, 'tool-vm-images', 'sun', builtFingerprint),
-		});
-	});
-
-	it('surfaces duplicate alias asset access failures', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const cacheDirectory = path.join(temporaryDirectory, 'cache');
-		const buildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'shared',
-			'build-config.jsonc',
-		);
-		const fingerprint = 'shared-access-fingerprint';
-		const deniedAssetPath = path.join(
-			cacheDirectory,
-			'tool-vm-images',
-			'sun',
-			fingerprint,
-			'manifest.json',
-		);
-		const systemConfig = createSharedToolVmSystemConfig({
-			buildConfigPath,
-			cacheDirectory,
-			toolProfileNames: ['default', 'sun'],
-		});
-		const originalAccess = fsPromises.access;
-		vi.spyOn(fsPromises, 'access').mockImplementation(
-			async (...accessArgs: Parameters<typeof fsPromises.access>): Promise<void> => {
-				if (path.resolve(String(accessArgs[0])) === path.resolve(deniedAssetPath)) {
-					throw createFileSystemError('EACCES', `permission denied: ${deniedAssetPath}`);
-				}
-				await originalAccess(...accessArgs);
-			},
-		);
-
-		await expect(
-			runBuildCommand(
-				{ systemConfig },
-				{
-					buildManagedVmImage: async (options) => {
-						const imagePath = path.join(options.cacheDir, fingerprint);
-						writeFakeImageAssets(imagePath, 'canonical');
-						return { built: true, fingerprint, imagePath };
-					},
-					computeManagedVmFingerprint: async () => fingerprint,
-					findPrunableImageDirectories: async () => [],
-					runTask: async (_title, fn) => fn(),
-				},
-			),
-		).rejects.toMatchObject({ code: 'EACCES' });
-	});
-
-	it('falls back to copying duplicate aliases when hardlinking is unavailable', async () => {
-		for (const hardlinkErrorCode of ['EXDEV', 'ENOTSUP'] as const) {
-			vi.restoreAllMocks();
-			const temporaryDirectory = createTemporaryDirectory();
-			const cacheDirectory = path.join(temporaryDirectory, 'cache');
-			const buildConfigPath = path.join(
-				temporaryDirectory,
-				'vm-images',
-				`shared-${hardlinkErrorCode}`,
-				'build-config.jsonc',
-			);
-			const fingerprint = `shared-copy-fingerprint-${hardlinkErrorCode}`;
-			const duplicateImagePath = path.join(cacheDirectory, 'tool-vm-images', 'sun', fingerprint);
-			const systemConfig = createSharedToolVmSystemConfig({
-				buildConfigPath,
-				cacheDirectory,
-				toolProfileNames: ['default', 'sun'],
-			});
-			const copiedTargets: string[] = [];
-			const originalCopyFile = fsPromises.copyFile;
-			vi.spyOn(fsPromises, 'link').mockImplementation(async (): Promise<void> => {
-				throw createFileSystemError(hardlinkErrorCode, `${hardlinkErrorCode}: hardlink denied`);
-			});
-			vi.spyOn(fsPromises, 'copyFile').mockImplementation(
-				async (...copyFileArgs: Parameters<typeof fsPromises.copyFile>): Promise<void> => {
-					copiedTargets.push(String(copyFileArgs[1]));
-					await originalCopyFile(...copyFileArgs);
-				},
-			);
-
-			// oxlint-disable-next-line no-await-in-loop -- each iteration installs process-wide fs spies
-			await runBuildCommand(
-				{ systemConfig },
-				{
-					buildManagedVmImage: async (options) => {
-						const imagePath = path.join(options.cacheDir, fingerprint);
-						writeFakeImageAssets(imagePath, `canonical-${hardlinkErrorCode}`);
-						return { built: true, fingerprint, imagePath };
-					},
-					computeManagedVmFingerprint: async () => fingerprint,
-					findPrunableImageDirectories: async () => [],
-					runTask: async (_title, fn) => fn(),
-				},
-			);
-
-			expect(copiedTargets.toSorted()).toEqual(
-				buildImageAssetFileNames
-					.map((fileName) => path.join(duplicateImagePath, fileName))
-					.toSorted(),
-			);
-			expect(fs.readFileSync(path.join(duplicateImagePath, 'manifest.json'), 'utf8')).toBe(
-				`canonical-${hardlinkErrorCode}:manifest.json\n`,
-			);
-		}
-	});
-
-	it('adds asset paths to duplicate alias materialization failures', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const cacheDirectory = path.join(temporaryDirectory, 'cache');
-		const buildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'shared',
-			'build-config.jsonc',
-		);
-		const fingerprint = 'shared-link-error-fingerprint';
-		const sourceAssetPath = path.join(
-			cacheDirectory,
-			'tool-vm-images',
-			'default',
-			fingerprint,
-			'manifest.json',
-		);
-		const targetAssetPath = path.join(
-			cacheDirectory,
-			'tool-vm-images',
-			'sun',
-			fingerprint,
-			'manifest.json',
-		);
-		const systemConfig = createSharedToolVmSystemConfig({
-			buildConfigPath,
-			cacheDirectory,
-			toolProfileNames: ['default', 'sun'],
-		});
-		vi.spyOn(fsPromises, 'link').mockImplementation(async (): Promise<void> => {
-			throw createFileSystemError('EIO', 'link failed');
-		});
-
-		let thrownError: unknown;
-		try {
-			await runBuildCommand(
-				{ systemConfig },
-				{
-					buildManagedVmImage: async (options) => {
-						const imagePath = path.join(options.cacheDir, fingerprint);
-						writeFakeImageAssets(imagePath, 'canonical');
-						return { built: true, fingerprint, imagePath };
-					},
-					computeManagedVmFingerprint: async () => fingerprint,
-					findPrunableImageDirectories: async () => [],
-					runTask: async (_title, fn) => fn(),
-				},
-			);
-		} catch (error) {
-			thrownError = error;
-		}
-
-		expect(thrownError).toBeInstanceOf(Error);
-		expect((thrownError as Error).message).toContain(sourceAssetPath);
-		expect((thrownError as Error).message).toContain(targetAssetPath);
-		expect((thrownError as Error & { readonly cause?: unknown }).cause).toMatchObject({
-			code: 'EIO',
-		});
 	});
 
 	it('rejects Gondolin builds whose result fingerprint differs from the precomputed fingerprint', async () => {
@@ -1084,9 +924,9 @@ describe('runBuildCommand', () => {
 				{ systemConfig },
 				{
 					buildManagedVmImage: async (options) => {
-						const fingerprint = options.cacheDir.includes('gateway-images')
-							? 'gateway-fingerprint'
-							: 'actual-fingerprint';
+						const fingerprint = options.buildConfigPath.includes('gateway-build-config')
+							? '4444444444444444'
+							: '5555555555555555';
 						return {
 							built: true,
 							fingerprint,
@@ -1095,104 +935,17 @@ describe('runBuildCommand', () => {
 					},
 					computeManagedVmFingerprint: async (options) =>
 						options.buildConfigPath.includes('gateway-build-config')
-							? 'gateway-fingerprint'
-							: 'precomputed-fingerprint',
-					findPrunableImageDirectories: async () => [],
+							? '4444444444444444'
+							: '6666666666666666',
 					runTask: async (_title, fn) => fn(),
 				},
 			),
 		).rejects.toThrow(
-			"Fingerprint mismatch for image profile 'toolVm/default': precomputed 'precomputed-fingerprint' but build returned 'actual-fingerprint'.",
+			"Fingerprint mismatch for image profile 'toolVm/default': precomputed '6666666666666666' but build returned '5555555555555555'.",
 		);
 	});
 
-	it('replaces stale duplicate alias assets when forceRebuild dedupes profiles', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const cacheDirectory = path.join(temporaryDirectory, 'cache');
-		const buildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'shared',
-			'build-config.jsonc',
-		);
-		const fingerprint = 'shared-force-fingerprint';
-		const duplicateImagePath = path.join(cacheDirectory, 'tool-vm-images', 'sun', fingerprint);
-		const staleOnlyPath = path.join(duplicateImagePath, 'stale-only.txt');
-		fs.mkdirSync(duplicateImagePath, { recursive: true });
-		writeFakeImageAssets(duplicateImagePath, 'stale');
-		fs.writeFileSync(staleOnlyPath, 'remove me\n', 'utf8');
-		const systemConfig = createSharedToolVmSystemConfig({
-			buildConfigPath,
-			cacheDirectory,
-			toolProfileNames: ['default', 'sun'],
-		});
-
-		await runBuildCommand(
-			{ forceRebuild: true, systemConfig },
-			{
-				buildManagedVmImage: async (options) => {
-					const imagePath = path.join(options.cacheDir, fingerprint);
-					writeFakeImageAssets(imagePath, 'fresh-force');
-					return { built: true, fingerprint, imagePath };
-				},
-				computeManagedVmFingerprint: async () => fingerprint,
-				findPrunableImageDirectories: async () => [],
-				runTask: async (_title, fn) => fn(),
-			},
-		);
-
-		for (const fileName of buildImageAssetFileNames) {
-			expect(fs.readFileSync(path.join(duplicateImagePath, fileName), 'utf8')).toBe(
-				`fresh-force:${fileName}\n`,
-			);
-		}
-		expect(fs.existsSync(staleOnlyPath)).toBe(false);
-	});
-
-	it('rematerializes partial duplicate alias directories', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const cacheDirectory = path.join(temporaryDirectory, 'cache');
-		const buildConfigPath = path.join(
-			temporaryDirectory,
-			'vm-images',
-			'shared',
-			'build-config.jsonc',
-		);
-		const fingerprint = 'shared-partial-fingerprint';
-		const duplicateImagePath = path.join(cacheDirectory, 'tool-vm-images', 'sun', fingerprint);
-		const staleOnlyPath = path.join(duplicateImagePath, 'stale-only.txt');
-		fs.mkdirSync(duplicateImagePath, { recursive: true });
-		fs.writeFileSync(path.join(duplicateImagePath, 'manifest.json'), 'stale manifest\n', 'utf8');
-		fs.writeFileSync(staleOnlyPath, 'remove me\n', 'utf8');
-		const systemConfig = createSharedToolVmSystemConfig({
-			buildConfigPath,
-			cacheDirectory,
-			toolProfileNames: ['default', 'sun'],
-		});
-
-		await runBuildCommand(
-			{ systemConfig },
-			{
-				buildManagedVmImage: async (options) => {
-					const imagePath = path.join(options.cacheDir, fingerprint);
-					writeFakeImageAssets(imagePath, 'fresh-partial');
-					return { built: true, fingerprint, imagePath };
-				},
-				computeManagedVmFingerprint: async () => fingerprint,
-				findPrunableImageDirectories: async () => [],
-				runTask: async (_title, fn) => fn(),
-			},
-		);
-
-		for (const fileName of buildImageAssetFileNames) {
-			expect(fs.readFileSync(path.join(duplicateImagePath, fileName), 'utf8')).toBe(
-				`fresh-partial:${fileName}\n`,
-			);
-		}
-		expect(fs.existsSync(staleOnlyPath)).toBe(false);
-	});
-
-	it('does not dedupe identical fingerprints across different build config paths', async () => {
+	it('dedupes identical fingerprints across different build config paths', async () => {
 		const temporaryDirectory = createTemporaryDirectory();
 		const configDirectory = path.join(temporaryDirectory, 'config');
 		const cacheDirectory = path.join(temporaryDirectory, 'cache');
@@ -1257,7 +1010,7 @@ describe('runBuildCommand', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				storageRootDir: path.dirname(cacheDirectory),
+				storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
 				imageProfiles: {
 					gateways: {
 						hermes: {
@@ -1284,9 +1037,10 @@ describe('runBuildCommand', () => {
 			{
 				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push(options.cacheDir);
-					const fingerprint = options.cacheDir.includes('gateway-images')
-						? 'gateway-fingerprint'
-						: 'same-tool-fingerprint';
+					const fingerprint =
+						options.buildConfigPath === gatewayBuildConfigPath
+							? '4444444444444444'
+							: '7777777777777777';
 					const imagePath = path.join(options.cacheDir, fingerprint);
 					fs.mkdirSync(imagePath, { recursive: true });
 					for (const fileName of buildImageAssetFileNames) {
@@ -1296,16 +1050,15 @@ describe('runBuildCommand', () => {
 				},
 				computeManagedVmFingerprint: async (options) =>
 					options.buildConfigPath === gatewayBuildConfigPath
-						? 'gateway-fingerprint'
-						: 'same-tool-fingerprint',
+						? '4444444444444444'
+						: '7777777777777777',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
 
 		expect(gondolinBuilds).toEqual([
-			path.join(cacheDirectory, 'gateway-images', 'hermes'),
-			path.join(cacheDirectory, 'tool-vm-images', 'first'),
-			path.join(cacheDirectory, 'tool-vm-images', 'second'),
+			path.join(cacheDirectory, 'vm-images'),
+			path.join(cacheDirectory, 'vm-images'),
 		]);
 	});
 
@@ -1332,7 +1085,7 @@ describe('runBuildCommand', () => {
 		const systemConfig = createLoadedSystemConfig(
 			{
 				...baseConfig,
-				storageRootDir: path.dirname(cacheDirectory),
+				storageRootDir: path.join(path.dirname(cacheDirectory), 'deployment'),
 				imageProfiles: {
 					gateways: {
 						hermes: {
@@ -1351,7 +1104,7 @@ describe('runBuildCommand', () => {
 			},
 			{ systemConfigPath: path.join(configDirectory, 'system.json') },
 		);
-		const sharedFingerprint = 'shared-gateway-tool-fingerprint';
+		const sharedFingerprint = '8888888888888888';
 		const dockerBuilds: string[] = [];
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 
@@ -1374,13 +1127,6 @@ describe('runBuildCommand', () => {
 					return { built: true, fingerprint: sharedFingerprint, imagePath };
 				},
 				computeManagedVmFingerprint: async () => sharedFingerprint,
-				findPrunableImageDirectories: async (options) => {
-					expect(options.currentFingerprints).toEqual({
-						gateways: { hermes: sharedFingerprint },
-						toolVms: { default: sharedFingerprint },
-					});
-					return [];
-				},
 				resolveOciImageTag: async () => 'agent-vm-shared:latest',
 				runTask: async (_title, fn) => fn(),
 			},
@@ -1389,14 +1135,11 @@ describe('runBuildCommand', () => {
 		expect(dockerBuilds).toEqual(['agent-vm-shared:latest']);
 		expect(gondolinBuilds).toEqual([
 			{
-				cacheDir: path.join(cacheDirectory, 'gateway-images', 'hermes'),
+				cacheDir: path.join(cacheDirectory, 'vm-images'),
 				fullReset: undefined,
 			},
 		]);
-		for (const imagePath of [
-			path.join(cacheDirectory, 'gateway-images', 'hermes', sharedFingerprint),
-			path.join(cacheDirectory, 'tool-vm-images', 'default', sharedFingerprint),
-		]) {
+		for (const imagePath of [path.join(cacheDirectory, 'vm-images', sharedFingerprint)]) {
 			for (const fileName of buildImageAssetFileNames) {
 				expect(fs.existsSync(path.join(imagePath, fileName))).toBe(true);
 			}
@@ -1409,10 +1152,14 @@ describe('runBuildCommand', () => {
 		const toolVmImageDirectory = path.join(temporaryDirectory, 'vm-images', 'tool-vms', 'default');
 		const gatewayDockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
 		const toolVmDockerfilePath = path.join(toolVmImageDirectory, 'Dockerfile');
+		const gatewayBuildConfigPath = path.join(gatewayImageDirectory, 'build-config.json');
+		const toolVmBuildConfigPath = path.join(toolVmImageDirectory, 'build-config.json');
 		fs.mkdirSync(gatewayImageDirectory, { recursive: true });
 		fs.mkdirSync(toolVmImageDirectory, { recursive: true });
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
+		fs.writeFileSync(gatewayBuildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' }));
+		fs.writeFileSync(toolVmBuildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' }));
 
 		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
@@ -1423,14 +1170,14 @@ describe('runBuildCommand', () => {
 					gateways: {
 						hermes: {
 							type: 'hermes',
-							buildConfig: path.join(gatewayImageDirectory, 'build-config.json'),
+							buildConfig: gatewayBuildConfigPath,
 							dockerfile: gatewayDockerfilePath,
 						},
 					},
 					toolVms: {
 						default: {
 							type: 'toolVm',
-							buildConfig: path.join(toolVmImageDirectory, 'build-config.json'),
+							buildConfig: toolVmBuildConfigPath,
 							dockerfile: toolVmDockerfilePath,
 						},
 					},
@@ -1453,11 +1200,11 @@ describe('runBuildCommand', () => {
 					activeDockerBuilds -= 1;
 				},
 				buildManagedVmImage: async (options) => {
-					const imagePath = path.join(options.cacheDir, 'fingerprint');
+					const imagePath = path.join(options.cacheDir, '9999999999999999');
 					writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
 						built: true,
-						fingerprint: 'fingerprint',
+						fingerprint: '9999999999999999',
 						imagePath,
 					};
 				},
@@ -1479,10 +1226,14 @@ describe('runBuildCommand', () => {
 		const toolVmImageDirectory = path.join(temporaryDirectory, 'vm-images', 'tool-vms', 'default');
 		const gatewayDockerfilePath = path.join(gatewayImageDirectory, 'Dockerfile');
 		const toolVmDockerfilePath = path.join(toolVmImageDirectory, 'Dockerfile');
+		const gatewayBuildConfigPath = path.join(gatewayImageDirectory, 'build-config.json');
+		const toolVmBuildConfigPath = path.join(toolVmImageDirectory, 'build-config.json');
 		fs.mkdirSync(gatewayImageDirectory, { recursive: true });
 		fs.mkdirSync(toolVmImageDirectory, { recursive: true });
 		fs.writeFileSync(gatewayDockerfilePath, 'FROM scratch\n', 'utf8');
 		fs.writeFileSync(toolVmDockerfilePath, 'FROM scratch\n', 'utf8');
+		fs.writeFileSync(gatewayBuildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' }));
+		fs.writeFileSync(toolVmBuildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' }));
 
 		const baseConfig = createTestSystemConfigInput();
 		const systemConfig = createLoadedSystemConfig(
@@ -1493,14 +1244,14 @@ describe('runBuildCommand', () => {
 					gateways: {
 						default: {
 							type: 'hermes',
-							buildConfig: path.join(gatewayImageDirectory, 'build-config.json'),
+							buildConfig: gatewayBuildConfigPath,
 							dockerfile: gatewayDockerfilePath,
 						},
 					},
 					toolVms: {
 						default: {
 							type: 'toolVm',
-							buildConfig: path.join(toolVmImageDirectory, 'build-config.json'),
+							buildConfig: toolVmBuildConfigPath,
 							dockerfile: toolVmDockerfilePath,
 						},
 					},
@@ -1524,11 +1275,11 @@ describe('runBuildCommand', () => {
 					dockerBuilds.push(options.imageTag);
 				},
 				buildManagedVmImage: async (options) => {
-					const imagePath = path.join(options.cacheDir, 'fingerprint');
+					const imagePath = path.join(options.cacheDir, '9999999999999999');
 					writeFakeImageAssets(imagePath, options.cacheDir);
 					return {
 						built: true,
-						fingerprint: 'fingerprint',
+						fingerprint: '9999999999999999',
 						imagePath,
 					};
 				},
@@ -1549,11 +1300,12 @@ describe('runBuildCommand', () => {
 	it('passes fullReset to shared Gondolin builds when forceRebuild is enabled', async () => {
 		const gondolinBuilds: { cacheDir: string; fullReset: boolean | undefined }[] = [];
 		const taskTitles: string[] = [];
+		const systemConfig = createTestSystemConfig();
 
 		await runBuildCommand(
 			{
 				forceRebuild: true,
-				systemConfig: createTestSystemConfig(),
+				systemConfig,
 			},
 			{
 				buildDockerImage: async () => {},
@@ -1562,7 +1314,7 @@ describe('runBuildCommand', () => {
 						cacheDir: options.cacheDir,
 						fullReset: options.fullReset,
 					});
-					return { built: true, fingerprint: 'force-fp', imagePath: '/cache/force-fp' };
+					return { built: true, fingerprint: 'aaaaaaaaaaaaaaa1', imagePath: '/cache/force-fp' };
 				},
 				resolveOciImageTag: async () => 'tag:latest',
 				runTask: async (title, fn) => {
@@ -1573,8 +1325,8 @@ describe('runBuildCommand', () => {
 		);
 
 		expect(gondolinBuilds).toEqual([
-			{ cacheDir: '/cache/gateway-images/hermes', fullReset: true },
-			{ cacheDir: '/cache/tool-vm-images/default', fullReset: true },
+			{ cacheDir: path.join(systemConfig.cacheDir, 'vm-images'), fullReset: true },
+			{ cacheDir: path.join(systemConfig.cacheDir, 'vm-images'), fullReset: true },
 		]);
 		expect(taskTitles).toContain('Gondolin: gateway/hermes');
 		expect(taskTitles).toContain('Gondolin: toolVm/default');
@@ -1615,7 +1367,7 @@ describe('runBuildCommand', () => {
 						'Extracting OCI rootfs from agent-vm-gateway:latest (docker)...\n',
 					);
 					options.streamPreview?.write('Creating rootfs ext4 image...\n');
-					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
+					return { built: true, fingerprint: 'aaaaaaaaaaaaaaa2', imagePath: '/cache/interactive' };
 				},
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 				runTask: async (_title, fn) => {
@@ -1654,20 +1406,16 @@ describe('runBuildCommand', () => {
 		const gondolinBuildStarted = new Promise<void>((resolve) => {
 			signalGondolinBuildStarted = resolve;
 		});
+		const baseSystemConfig = createTestSystemConfig();
 
 		const buildPromise = runBuildCommand(
 			{
 				forceRebuild: true,
 				systemConfig: {
-					...createTestSystemConfig(),
+					...baseSystemConfig,
 					imageProfiles: {
 						gateways: {},
-						toolVms: {
-							default: {
-								type: 'toolVm',
-								buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
-							},
-						},
+						toolVms: baseSystemConfig.imageProfiles.toolVms,
 					},
 				},
 			},
@@ -1677,7 +1425,7 @@ describe('runBuildCommand', () => {
 					await new Promise<void>((resolve) => {
 						finishGondolinBuild = resolve;
 					});
-					return { built: true, fingerprint: 'interactive-fp', imagePath: '/cache/interactive' };
+					return { built: true, fingerprint: 'aaaaaaaaaaaaaaa2', imagePath: '/cache/interactive' };
 				},
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 				runTask: async (_title, fn) => {
@@ -1728,7 +1476,7 @@ describe('runBuildCommand', () => {
 				buildDockerImage: async () => {},
 				buildManagedVmImage: async () => ({
 					built: false,
-					fingerprint: 'cached-fp',
+					fingerprint: 'aaaaaaaaaaaaaaa3',
 					imagePath: '/cache/cached',
 				}),
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
@@ -1746,379 +1494,6 @@ describe('runBuildCommand', () => {
 
 		expect(taskStatuses).toContain('checking vm assets');
 		expect(taskStatuses).toContain('vm assets cache hit');
-	});
-
-	it('auto-prunes old image generations after successful builds', async () => {
-		const deleteStaleImageDirectories = vi.fn(async () => {});
-		const findPrunableImageDirectories = vi.fn(async () => [
-			{
-				absolutePath: '/cache/gateway-images/hermes/old',
-				family: 'gateway' as const,
-				fingerprint: 'old',
-				modifiedAtMs: 1,
-				profileName: 'hermes',
-				sizeBytes: 1024,
-			},
-		]);
-		const statusMessages: string[] = [];
-
-		await runBuildCommand(
-			{
-				systemConfig: createTestSystemConfig(),
-			},
-			{
-				buildDockerImage: async () => {},
-				buildManagedVmImage: async (options) => ({
-					built: false,
-					fingerprint: options.cacheDir.includes('gateway-images')
-						? 'current-gateway'
-						: 'current-tool',
-					imagePath: path.join(options.cacheDir, 'current'),
-				}),
-				deleteStaleImageDirectories,
-				findPrunableImageDirectories,
-				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: true,
-						setOutput: () => {},
-						setStatus: (status) => {
-							if (status) {
-								statusMessages.push(status);
-							}
-						},
-					});
-				},
-			},
-		);
-
-		expect(findPrunableImageDirectories).toHaveBeenCalledWith({
-			cacheDir: '/cache',
-			currentFingerprints: {
-				gateways: { hermes: 'current-gateway' },
-				toolVms: { default: 'current-tool' },
-			},
-			retainStaleGenerationsPerProfile: 2,
-		});
-		expect(deleteStaleImageDirectories).toHaveBeenCalledWith([
-			expect.objectContaining({
-				absolutePath: '/cache/gateway-images/hermes/old',
-			}),
-		]);
-		expect(statusMessages).toContain('deleted 1 old image generation');
-	});
-
-	it('waits for every Gondolin image target before auto-pruning', async () => {
-		const buildOrder: string[] = [];
-
-		await runBuildCommand(
-			{
-				systemConfig: createTestSystemConfig(),
-			},
-			{
-				buildDockerImage: async () => {},
-				buildManagedVmImage: async (options) => {
-					buildOrder.push(`gondolin:${options.cacheDir}`);
-					return {
-						built: false,
-						fingerprint: options.cacheDir.includes('gateway-images')
-							? 'current-gateway'
-							: 'current-tool',
-						imagePath: path.join(options.cacheDir, 'current'),
-					};
-				},
-				deleteStaleImageDirectories: async () => {},
-				findPrunableImageDirectories: async () => {
-					buildOrder.push('prune');
-					return [];
-				},
-				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: false,
-						setOutput: () => {},
-						setStatus: () => {},
-					});
-				},
-			},
-		);
-
-		expect(buildOrder).toEqual([
-			'gondolin:/cache/gateway-images/hermes',
-			'gondolin:/cache/tool-vm-images/default',
-			'prune',
-		]);
-	});
-
-	it('does not auto-prune when a Docker build fails', async () => {
-		const deleteStaleImageDirectories = vi.fn(async () => {});
-		const findPrunableImageDirectories = vi.fn(async () => []);
-
-		await expect(
-			runBuildCommand(
-				{
-					systemConfig: createTestSystemConfig(),
-				},
-				{
-					buildDockerImage: async () => {
-						throw new Error('docker failed');
-					},
-					buildManagedVmImage: async () => ({
-						built: false,
-						fingerprint: 'current',
-						imagePath: '/cache/current',
-					}),
-					deleteStaleImageDirectories,
-					findPrunableImageDirectories,
-					resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-					runTask: async (_title, fn) => {
-						await fn({
-							interactive: false,
-							setOutput: () => {},
-							setStatus: () => {},
-						});
-					},
-				},
-			),
-		).rejects.toThrow('docker failed');
-
-		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
-		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
-	});
-
-	it('does not auto-prune when a Gondolin build fails', async () => {
-		const deleteStaleImageDirectories = vi.fn(async () => {});
-		const findPrunableImageDirectories = vi.fn(async () => []);
-
-		await expect(
-			runBuildCommand(
-				{
-					systemConfig: createTestSystemConfig(),
-				},
-				{
-					buildDockerImage: async () => {},
-					buildManagedVmImage: async () => {
-						throw new Error('gondolin failed');
-					},
-					deleteStaleImageDirectories,
-					findPrunableImageDirectories,
-					resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-					runTask: async (_title, fn) => {
-						await fn({
-							interactive: false,
-							setOutput: () => {},
-							setStatus: () => {},
-						});
-					},
-				},
-			),
-		).rejects.toThrow('gondolin failed');
-
-		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
-		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
-	});
-
-	it('warns without failing when post-build auto-prune deletion fails', async () => {
-		const outputMessages: string[] = [];
-		const statusMessages: string[] = [];
-
-		await runBuildCommand(
-			{
-				systemConfig: createTestSystemConfig(),
-			},
-			{
-				buildDockerImage: async () => {},
-				buildManagedVmImage: async (options) => ({
-					built: false,
-					fingerprint: options.cacheDir.includes('gateway-images')
-						? 'current-gateway'
-						: 'current-tool',
-					imagePath: path.join(options.cacheDir, 'current'),
-				}),
-				deleteStaleImageDirectories: async () => {
-					throw new Error('file busy');
-				},
-				findPrunableImageDirectories: async () => [
-					{
-						absolutePath: '/cache/tool-vm-images/default/old',
-						family: 'toolVm',
-						fingerprint: 'old',
-						modifiedAtMs: 1,
-						profileName: 'default',
-						sizeBytes: 1024,
-					},
-				],
-				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: true,
-						setOutput: (output) => {
-							outputMessages.push(typeof output === 'string' ? output : output.message);
-						},
-						setStatus: (status) => {
-							if (status) {
-								statusMessages.push(status);
-							}
-						},
-					});
-				},
-			},
-		);
-
-		expect(outputMessages).toContain(
-			'Image cache auto-prune failed after build succeeded: file busy',
-		);
-		expect(statusMessages).toContain('image cache auto-prune failed');
-	});
-
-	it('skips auto-prune when a current managed Gateway runtime record exists', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const controllerStateDirectory = path.join(temporaryDirectory, 'controller-state');
-		const gatewayStateRoot = resolveControllerGatewayStateRoot({
-			controllerStateRoot: createControllerStateRoot({
-				controllerStateDirectoryPath: controllerStateDirectory,
-			}),
-			zoneId: 'test-zone',
-		});
-		const runtimeRecordTarget = resolveControllerGatewayRecordTargets({
-			gatewayStateRoot,
-		}).managedGatewayRuntimeRecord;
-		fs.mkdirSync(path.dirname(runtimeRecordTarget.filePath), { recursive: true });
-		fs.writeFileSync(runtimeRecordTarget.filePath, '{}\n', 'utf8');
-		const deleteStaleImageDirectories = vi.fn(async () => {});
-		const findPrunableImageDirectories = vi.fn(async () => []);
-		const outputMessages: string[] = [];
-		const statusMessages: string[] = [];
-		const systemConfig = createTestSystemConfig();
-		const baseZone = systemConfig.zones[0];
-		if (!baseZone || baseZone.gateway.type !== 'hermes') {
-			throw new Error('Expected a Hermes test zone.');
-		}
-
-		await runBuildCommand(
-			{
-				systemConfig: {
-					...systemConfig,
-					controllerStateDir: controllerStateDirectory,
-				},
-			},
-			{
-				buildDockerImage: async () => {},
-				buildManagedVmImage: async (options) => ({
-					built: false,
-					fingerprint: options.cacheDir.includes('gateway-images')
-						? 'current-gateway'
-						: 'current-tool',
-					imagePath: path.join(options.cacheDir, 'current'),
-				}),
-				deleteStaleImageDirectories,
-				findPrunableImageDirectories,
-				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: true,
-						setOutput: (output) => {
-							outputMessages.push(typeof output === 'string' ? output : output.message);
-						},
-						setStatus: (status) => {
-							if (status) {
-								statusMessages.push(status);
-							}
-						},
-					});
-				},
-			},
-		);
-
-		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
-		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
-		expect(outputMessages).toContain(
-			'Image cache auto-prune skipped because gateway runtime records exist for zone(s): test-zone. Stop the controller before pruning old image generations.',
-		);
-		expect(statusMessages).toContain('image cache auto-prune skipped');
-	});
-
-	it('skips auto-prune when a current Worker runtime record collection is non-empty', async () => {
-		const temporaryDirectory = createTemporaryDirectory();
-		const controllerStateDirectory = path.join(temporaryDirectory, 'controller-state');
-		const gatewayStateRoot = resolveControllerGatewayStateRoot({
-			controllerStateRoot: createControllerStateRoot({
-				controllerStateDirectoryPath: controllerStateDirectory,
-			}),
-			zoneId: 'test-zone',
-		});
-		const workerRecordTarget = resolveControllerWorkerTaskRuntimeRecordTarget({
-			gatewayStateRoot,
-			taskId: 'task-1',
-		});
-		fs.mkdirSync(path.dirname(workerRecordTarget.filePath), { recursive: true });
-		fs.writeFileSync(workerRecordTarget.filePath, '{}\n', 'utf8');
-		const deleteStaleImageDirectories = vi.fn(async () => {});
-		const findPrunableImageDirectories = vi.fn(async () => []);
-		const outputMessages: string[] = [];
-		const systemConfig = createTestSystemConfig();
-		const baseZone = systemConfig.zones[0];
-		if (!baseZone) {
-			throw new Error('Expected a test zone.');
-		}
-		const workerSystemConfig = {
-			...systemConfig,
-			controllerStateDir: controllerStateDirectory,
-			imageProfiles: {
-				...systemConfig.imageProfiles,
-				gateways: {
-					worker: {
-						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
-						type: 'worker',
-					},
-				},
-			},
-			zones: [
-				{
-					egressHosts: baseZone.egressHosts,
-					gateway: {
-						config: '/project/config/test/worker.json',
-						cpus: 2,
-						imageProfile: 'worker',
-						memory: '2G',
-						port: 18791,
-						stateDir: path.join(temporaryDirectory, 'worker-state'),
-						type: 'worker',
-						zoneRuntimeDir: path.join(temporaryDirectory, 'worker-runtime'),
-					},
-					id: baseZone.id,
-					secrets: {},
-				},
-			],
-		} satisfies LoadedSystemConfig;
-
-		await runBuildCommand(
-			{ systemConfig: workerSystemConfig },
-			{
-				buildManagedVmImage: async (options) => ({
-					built: false,
-					fingerprint: 'current-worker',
-					imagePath: path.join(options.cacheDir, 'current'),
-				}),
-				deleteStaleImageDirectories,
-				findPrunableImageDirectories,
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: true,
-						setOutput: (output) => {
-							outputMessages.push(typeof output === 'string' ? output : output.message);
-						},
-						setStatus: () => {},
-					});
-				},
-			},
-		);
-
-		expect(findPrunableImageDirectories).not.toHaveBeenCalled();
-		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
-		expect(outputMessages).toContain(
-			'Image cache auto-prune skipped because gateway runtime records exist for zone(s): test-zone. Stop the controller before pruning old image generations.',
-		);
 	});
 
 	it('rejects legacy controller record evidence before any build mutation', async () => {
@@ -2154,7 +1529,7 @@ describe('runBuildCommand', () => {
 				{
 					buildDockerImage,
 					buildManagedVmImage: buildManagedVmImageForLegacyRejection,
-					computeManagedVmFingerprint: async () => 'unreachable-fingerprint',
+					computeManagedVmFingerprint: async () => 'aaaaaaaaaaaaaaa4',
 				},
 			),
 		).rejects.toThrow(
@@ -2164,59 +1539,16 @@ describe('runBuildCommand', () => {
 		expect(buildManagedVmImageForLegacyRejection).not.toHaveBeenCalled();
 	});
 
-	it('warns without failing when post-build auto-prune discovery fails', async () => {
-		const outputMessages: string[] = [];
-		const statusMessages: string[] = [];
-
-		await runBuildCommand(
-			{
-				systemConfig: createTestSystemConfig(),
-			},
-			{
-				buildDockerImage: async () => {},
-				buildManagedVmImage: async (options) => ({
-					built: false,
-					fingerprint: options.cacheDir.includes('gateway-images')
-						? 'current-gateway'
-						: 'current-tool',
-					imagePath: path.join(options.cacheDir, 'current'),
-				}),
-				deleteStaleImageDirectories: async () => {},
-				findPrunableImageDirectories: async () => {
-					throw new Error('cache scan failed');
-				},
-				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
-				runTask: async (_title, fn) => {
-					await fn({
-						interactive: true,
-						setOutput: (output) => {
-							outputMessages.push(typeof output === 'string' ? output : output.message);
-						},
-						setStatus: (status) => {
-							if (status) {
-								statusMessages.push(status);
-							}
-						},
-					});
-				},
-			},
-		);
-
-		expect(outputMessages).toContain(
-			'Image cache auto-prune failed after build succeeded: cache scan failed',
-		);
-		expect(statusMessages).toContain('image cache auto-prune failed');
-	});
-
 	it('does not require Zig for the normal published-helper Gondolin path', async () => {
 		const dockerBuilds: string[] = [];
 		const gondolinBuilds: string[] = [];
 		const resolveRequiredZigVersion = vi.fn(async () => '0.15.2');
 		const resolveZigVersion = vi.fn(async () => undefined);
+		const systemConfig = createTestSystemConfig();
 
 		await runBuildCommandDefault(
 			{
-				systemConfig: createTestSystemConfig(),
+				systemConfig,
 			},
 			{
 				buildDockerImage: async (options) => {
@@ -2224,9 +1556,12 @@ describe('runBuildCommand', () => {
 				},
 				buildManagedVmImage: async (options) => {
 					gondolinBuilds.push(options.buildConfigPath);
-					return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
+					const fingerprint = 'aaaaaaaaaaaaaaa5';
+					const imagePath = path.join(options.cacheDir, fingerprint);
+					writeFakeImageAssets(imagePath, 'zig');
+					return { built: true, fingerprint, imagePath };
 				},
-				computeManagedVmFingerprint: async () => 'zig-fp',
+				computeManagedVmFingerprint: async () => 'aaaaaaaaaaaaaaa5',
 				resolveOciImageTag: async () => 'agent-vm-gateway:latest',
 				resolveDockerRootfsIdentity: async () => ({
 					architecture: 'arm64',
@@ -2244,10 +1579,7 @@ describe('runBuildCommand', () => {
 		expect(resolveRequiredZigVersion).not.toHaveBeenCalled();
 		expect(resolveZigVersion).not.toHaveBeenCalled();
 		expect(dockerBuilds).toEqual(['agent-vm-gateway:latest']);
-		expect(gondolinBuilds).toEqual([
-			'/project/vm-images/gateways/hermes/build-config.json',
-			'/project/vm-images/tool-vms/default/build-config.json',
-		]);
+		expect(gondolinBuilds).toEqual([systemConfig.imageProfiles.gateways.hermes?.buildConfig]);
 	});
 
 	it('fails before image builds when source-built sandbox helpers need Zig and Zig is missing', async () => {
@@ -2268,7 +1600,7 @@ describe('runBuildCommand', () => {
 						},
 						buildManagedVmImage: async (options) => {
 							gondolinBuilds.push(options.buildConfigPath);
-							return { built: true, fingerprint: 'zig-fp', imagePath: '/cache/zig' };
+							return { built: true, fingerprint: 'aaaaaaaaaaaaaaa5', imagePath: '/cache/zig' };
 						},
 						resolveRequiredZigVersion: async () => '0.15.2',
 						resolveZigVersion: async () => undefined,
@@ -2329,9 +1661,10 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				buildManagedVmImage: async () => ({
 					built: true,
-					fingerprint: 'fp',
+					fingerprint: 'aaaaaaaaaaaaaaa6',
 					imagePath: '/cache/fp',
 				}),
+				computeManagedVmFingerprint: async () => 'aaaaaaaaaaaaaaa6',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -2379,9 +1712,10 @@ describe('resolveOciImageTagFromConfig', () => {
 				},
 				buildManagedVmImage: async () => ({
 					built: true,
-					fingerprint: 'fp',
+					fingerprint: 'aaaaaaaaaaaaaaa6',
 					imagePath: '/cache/fp',
 				}),
+				computeManagedVmFingerprint: async () => 'aaaaaaaaaaaaaaa6',
 				runTask: async (_title, fn) => fn(),
 			},
 		);
@@ -2416,7 +1750,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					buildDockerImage: async () => {},
 					buildManagedVmImage: async () => ({
 						built: true,
-						fingerprint: 'fp',
+						fingerprint: 'aaaaaaaaaaaaaaa6',
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
@@ -2465,7 +1799,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					buildDockerImage: async () => {},
 					buildManagedVmImage: async () => ({
 						built: true,
-						fingerprint: 'fp',
+						fingerprint: 'aaaaaaaaaaaaaaa6',
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
@@ -2507,7 +1841,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					buildDockerImage: async () => {},
 					buildManagedVmImage: async () => ({
 						built: true,
-						fingerprint: 'fp',
+						fingerprint: 'aaaaaaaaaaaaaaa6',
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
@@ -2543,7 +1877,7 @@ describe('resolveOciImageTagFromConfig', () => {
 					buildDockerImage: async () => {},
 					buildManagedVmImage: async () => ({
 						built: true,
-						fingerprint: 'fp',
+						fingerprint: 'aaaaaaaaaaaaaaa6',
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),
@@ -2578,7 +1912,7 @@ describe('resolveOciImageTagFromConfig', () => {
 				{
 					buildManagedVmImage: async () => ({
 						built: true,
-						fingerprint: 'fp',
+						fingerprint: 'aaaaaaaaaaaaaaa6',
 						imagePath: '/cache/fp',
 					}),
 					runTask: async (_title, fn) => fn(),

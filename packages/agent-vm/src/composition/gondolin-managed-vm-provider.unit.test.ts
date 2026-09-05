@@ -19,6 +19,10 @@ const { configureHostNetworkDefaults } = vi.hoisted(() => ({
 vi.mock('@agent-vm/gondolin-vm-adapter', () => ({
 	buildImageAssetFileNames: ['disk.raw'],
 	configureHostNetworkDefaults,
+	createGondolinImageBuildTooling: vi.fn(() => ({
+		buildImage: vi.fn(),
+		computeFingerprint: vi.fn(),
+	})),
 	createGondolinManagedVmProvider,
 	hasBuiltImageAssets: vi.fn(async () => false),
 }));
@@ -62,7 +66,7 @@ describe('createManagedVmRuntimeComposition', () => {
 		});
 		expect(composition.managedVmImages).not.toBe(images);
 		await composition.managedVmImages.prepareImage({
-			cacheDirectory: '/tmp/missing-managed-vm-image-cache',
+			artifactCacheDirectory: '/tmp/missing-managed-vm-image-cache',
 			recipePath: '/tmp/gateway-build-config.json',
 		});
 		expect(images.prepareImage).toHaveBeenCalledOnce();

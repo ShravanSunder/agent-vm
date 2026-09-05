@@ -28,4 +28,8 @@ export const projectNamespaceSchema = z
 	.regex(
 		/^[a-z0-9][a-z0-9-]*$/u,
 		'projectNamespace must use lowercase letters, numbers, and hyphens only',
+	)
+	.refine(
+		(projectNamespace) => projectNamespace !== 'cache',
+		'projectNamespace is reserved for host-shared storage',
 	);

@@ -583,7 +583,6 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 		const vm = await createToolVm(
 			{
 				agentId: 'gateway-agent',
-				cacheDir: project.systemConfig.cacheDir,
 				profile: toolVmProfile,
 				rootBinding: {
 					hostGitDirectoryRoot: sharedHostGitDirectoryRoot,

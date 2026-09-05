@@ -712,7 +712,11 @@ describe('scaffoldAgentVmProject', () => {
 		const storageRootDir = path.join(targetDir, '.agent-vm', systemConfig.host.projectNamespace);
 
 		expect(await pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone'))).toBe(true);
-		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(true);
+		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(false);
+		expect(await pathExists(path.join(path.dirname(storageRootDir), 'cache', 'vm-images'))).toBe(
+			true,
+		);
+		expect(await pathExists(path.join(storageRootDir, 'generated'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-state'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-runtime'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'my-zone', 'state'))).toBe(true);
@@ -788,7 +792,9 @@ describe('scaffoldAgentVmProject', () => {
 			systemConfig.host.projectNamespace,
 		);
 		expect(loadedSystemConfig.storageRootDir).toBe(expectedCanonicalStorageRoot);
-		expect(loadedSystemConfig.cacheDir).toBe(path.join(expectedCanonicalStorageRoot, 'cache'));
+		expect(loadedSystemConfig.cacheDir).toBe(
+			path.join(path.dirname(expectedCanonicalStorageRoot), 'cache'),
+		);
 		expect(loadedSystemConfig.controllerStateDir).toBe(
 			path.join(expectedCanonicalStorageRoot, 'controller-state'),
 		);
@@ -843,7 +849,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 
 		// user-dir profile SHOULD create the dirs it advertises in system.json
-		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(true);
+		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(false);
+		expect(await pathExists(path.join(path.dirname(storageRootDir), 'cache', 'vm-images'))).toBe(
+			true,
+		);
+		expect(await pathExists(path.join(storageRootDir, 'generated'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-state'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-runtime'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'shravan', 'state'))).toBe(true);

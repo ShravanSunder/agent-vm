@@ -21,7 +21,10 @@ import {
 	directDispatchFingerprint,
 } from '@agent-vm/tool-portal/dispatch-authority';
 
-import type { SystemConfig } from '../../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type SystemConfig,
+} from '../../config/system-config.js';
 import { loadGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
 import type { ControllerCredentialedRuntimeRegistryPublisher } from '../credentialed-runtime/credentialed-runtime-registry.js';
@@ -142,10 +145,9 @@ export async function authorizeGatewayControlControllerExecution(
 		);
 	}
 	const effectiveConfigDirectory = path.join(
-		request.systemConfig.cacheDir,
-		'gateways',
+		deploymentGeneratedDirForStorageRoot(request.systemConfig.storageRootDir),
+		'gateway-effective',
 		zone.id,
-		'tool-portal-effective',
 	);
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
 	let portalAdmission: Awaited<ReturnType<typeof loadGatewayRuntimePortalAdmissionFile>>;

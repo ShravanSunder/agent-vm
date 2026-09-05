@@ -1,135 +1,129 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
-	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
-	findStaleImageDirectories as findStaleImageDirectoriesDefault,
-	type CurrentImageFingerprints,
-	type StaleImageEntry,
-} from '../build/stale-image-cleaner.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
+	configuredImageSelectionRecordPath,
+	readPreparedManagedVmImage,
+} from '../build/prepared-gondolin-image-cache.js';
+import {
+	deploymentCacheDirForSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
+import {
+	acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault,
+	type ControllerOwnershipLock,
+} from '../controller/vm-ownership/controller-ownership-lock.js';
 
 interface CacheCommandIo {
 	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
 	readonly stdout: Pick<NodeJS.WriteStream, 'write'>;
 }
 
-interface CacheEntry {
-	readonly current: boolean;
-	readonly fingerprint: string;
-}
-
-type ImageProfileFamily = 'gateway' | 'toolVm';
-
-function recordFromEntries<TValue>(
-	entries: readonly (readonly [string, TValue])[],
-): Record<string, TValue> {
-	return Object.fromEntries(entries) as Record<string, TValue>;
+interface ImageSelectionStatus {
+	readonly fingerprint: string | null;
+	readonly recordPath: string;
+	readonly status: 'invalid-or-missing' | 'ready';
 }
 
 export interface CacheCommandDependencies {
-	readonly computeFingerprintFromConfigPath?: (buildConfigPath: string) => Promise<string>;
-	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
-	readonly findStaleImageDirectories?: (options: {
-		readonly cacheDir: string;
-		readonly currentFingerprints: CurrentImageFingerprints;
-	}) => Promise<readonly StaleImageEntry[]>;
-	readonly listCacheEntries?: (
-		cacheDir: string,
-		family: ImageProfileFamily,
-		profileName: string,
-		currentFingerprint: string,
-	) => Promise<readonly CacheEntry[]>;
+	readonly acquireControllerOwnershipLock?: typeof acquireControllerOwnershipLockDefault;
+	readonly removeDirectory?: (directoryPath: string) => Promise<void>;
 }
 
-export function imageProfileCacheDirectoryName(family: ImageProfileFamily): string {
-	return family === 'gateway' ? 'gateway-images' : 'tool-vm-images';
-}
-
-function formatBytes(sizeBytes: number): string {
-	if (sizeBytes < 1024 * 1024) {
-		return `${Math.round(sizeBytes / 1024)}KB`;
-	}
-
-	if (sizeBytes < 1024 * 1024 * 1024) {
-		return `${(sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
-	}
-
-	return `${(sizeBytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
-}
-
-async function listCacheEntries(
-	cacheDir: string,
-	family: ImageProfileFamily,
-	profileName: string,
-	currentFingerprint: string,
-): Promise<readonly CacheEntry[]> {
-	const typeDirectory = path.join(cacheDir, imageProfileCacheDirectoryName(family), profileName);
-	let entries: { readonly name: string; isDirectory(): boolean }[];
+async function listSharedImageFingerprints(
+	sharedImageCacheDir: string,
+): Promise<readonly string[]> {
 	try {
-		entries = await fs.readdir(typeDirectory, { withFileTypes: true });
+		return (await fs.readdir(sharedImageCacheDir, { withFileTypes: true }))
+			.filter((entry) => entry.isDirectory() && /^[a-f0-9]{16}$/u.test(entry.name))
+			.map((entry) => entry.name)
+			.toSorted();
 	} catch (error) {
-		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
 			return [];
 		}
 		throw error;
 	}
-
-	return entries
-		.filter((entry) => entry.isDirectory())
-		.map((entry) => ({
-			current: entry.name === currentFingerprint,
-			fingerprint: entry.name,
-		}));
 }
 
-async function resolveCurrentFingerprints(
-	systemConfig: LoadedSystemConfig,
-	dependencies: Pick<CacheCommandDependencies, 'computeFingerprintFromConfigPath'>,
-): Promise<CurrentImageFingerprints> {
-	const computeFingerprint =
-		dependencies.computeFingerprintFromConfigPath ?? computeFingerprintFromConfigPath;
+async function resolveImageSelectionStatuses(systemConfig: LoadedSystemConfig): Promise<{
+	readonly gateways: Readonly<Record<string, ImageSelectionStatus>>;
+	readonly toolVms: Readonly<Record<string, ImageSelectionStatus>>;
+}> {
+	const deploymentGeneratedDir = deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir);
+	const sharedImageCacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
+	const resolveFamily = async (
+		family: 'gateway' | 'toolVm',
+		profiles: Readonly<Record<string, { readonly buildConfig: string }>>,
+	): Promise<Readonly<Record<string, ImageSelectionStatus>>> =>
+		Object.fromEntries(
+			await Promise.all(
+				Object.entries(profiles).map(async ([profileName, profile]) => {
+					const selectionRecordPath = configuredImageSelectionRecordPath({
+						deploymentGeneratedDir,
+						family,
+						profileName,
+					});
+					const preparedImage = await readPreparedManagedVmImage({
+						buildConfigPath: profile.buildConfig,
+						selectionRecordPath,
+						sharedImageCacheDir,
+					});
+					return [
+						profileName,
+						preparedImage === undefined
+							? ({
+									fingerprint: null,
+									recordPath: selectionRecordPath,
+									status: 'invalid-or-missing',
+								} satisfies ImageSelectionStatus)
+							: ({
+									fingerprint: preparedImage.fingerprint,
+									recordPath: selectionRecordPath,
+									status: 'ready',
+								} satisfies ImageSelectionStatus),
+					] as const;
+				}),
+			),
+		);
 
 	return {
-		gateways: recordFromEntries(
-			await Promise.all(
-				Object.entries(systemConfig.imageProfiles.gateways).map(async ([profileName, profile]) => [
-					profileName,
-					await computeFingerprint(profile.buildConfig),
-				]),
-			),
-		),
-		toolVms: recordFromEntries(
-			await Promise.all(
-				Object.entries(systemConfig.imageProfiles.toolVms).map(async ([profileName, profile]) => [
-					profileName,
-					await computeFingerprint(profile.buildConfig),
-				]),
-			),
-		),
+		gateways: await resolveFamily('gateway', systemConfig.imageProfiles.gateways),
+		toolVms: await resolveFamily('toolVm', systemConfig.imageProfiles.toolVms),
 	};
 }
 
-async function listEntriesByProfile(options: {
-	readonly cacheDir: string;
-	readonly currentFingerprints: Record<string, string>;
-	readonly family: ImageProfileFamily;
-	readonly listEntries: NonNullable<CacheCommandDependencies['listCacheEntries']>;
-}): Promise<Record<string, readonly CacheEntry[]>> {
-	return recordFromEntries<readonly CacheEntry[]>(
-		await Promise.all(
-			Object.entries(options.currentFingerprints).map(async ([profileName, currentFingerprint]) => [
-				profileName,
-				await options.listEntries(
-					options.cacheDir,
-					options.family,
-					profileName,
-					currentFingerprint,
-				),
-			]),
-		),
-	);
+async function removeDeploymentCacheDirectory(directoryPath: string): Promise<void> {
+	await fs.rm(directoryPath, { force: true, recursive: true });
+}
+
+async function releaseOwnershipLockAfterOperation(options: {
+	readonly lock: ControllerOwnershipLock;
+	readonly operation: () => Promise<void>;
+}): Promise<void> {
+	let operationError: unknown;
+	try {
+		await options.operation();
+	} catch (error) {
+		operationError = error;
+	}
+	let releaseError: unknown;
+	try {
+		await options.lock.release();
+	} catch (error) {
+		releaseError = error;
+	}
+	if (operationError !== undefined && releaseError !== undefined) {
+		throw new AggregateError(
+			[operationError, releaseError],
+			'Cache cleanup and controller ownership lock release both failed',
+			{ cause: operationError },
+		);
+	}
+	if (operationError !== undefined) throw operationError;
+	if (releaseError !== undefined) throw releaseError;
 }
 
 export async function runCacheCommand(
@@ -141,27 +135,22 @@ export async function runCacheCommand(
 	io: CacheCommandIo,
 	dependencies: CacheCommandDependencies = {},
 ): Promise<void> {
-	const currentFingerprints = await resolveCurrentFingerprints(options.systemConfig, dependencies);
+	const deploymentCacheDir = deploymentCacheDirForSystemConfig(options.systemConfig);
+	const sharedImageCacheDir = sharedImageCacheDirForSystemConfig(options.systemConfig);
+	const deploymentGeneratedDir = deploymentGeneratedDirForStorageRoot(
+		options.systemConfig.storageRootDir,
+	);
 
 	if (options.subcommand === 'list') {
-		const listEntries = dependencies.listCacheEntries ?? listCacheEntries;
 		io.stdout.write(
 			`${JSON.stringify(
 				{
 					cacheDir: options.systemConfig.cacheDir,
-					currentFingerprints,
-					gateways: await listEntriesByProfile({
-						cacheDir: options.systemConfig.cacheDir,
-						currentFingerprints: currentFingerprints.gateways,
-						family: 'gateway',
-						listEntries,
-					}),
-					toolVms: await listEntriesByProfile({
-						cacheDir: options.systemConfig.cacheDir,
-						currentFingerprints: currentFingerprints.toolVms,
-						family: 'toolVm',
-						listEntries,
-					}),
+					deploymentCacheDir,
+					deploymentGeneratedDir,
+					imageSelections: await resolveImageSelectionStatuses(options.systemConfig),
+					sharedImageCacheDir,
+					sharedImageFingerprints: await listSharedImageFingerprints(sharedImageCacheDir),
 				},
 				null,
 				2,
@@ -171,34 +160,30 @@ export async function runCacheCommand(
 	}
 
 	if (options.subcommand === 'clean') {
-		const findStaleDirectories =
-			dependencies.findStaleImageDirectories ?? findStaleImageDirectoriesDefault;
-		const staleEntries = await findStaleDirectories({
-			cacheDir: options.systemConfig.cacheDir,
-			currentFingerprints,
-		});
-
-		if (staleEntries.length === 0) {
-			io.stderr.write('[cache] No stale images found.\n');
-			return;
-		}
-
-		io.stderr.write(`[cache] ${staleEntries.length} stale image(s):\n`);
-		for (const entry of staleEntries) {
-			io.stderr.write(
-				`  ${imageProfileCacheDirectoryName(entry.family)}/${entry.profileName}/${entry.fingerprint} (${formatBytes(entry.sizeBytes)})\n`,
-			);
-		}
-
+		const cleanupTargets = [
+			path.join(deploymentCacheDir, 'docker-contexts'),
+			path.join(deploymentCacheDir, 'zones'),
+		] as const;
 		if (!options.confirm) {
-			io.stderr.write('\n[cache] Run with --confirm to delete. Stop the controller first.\n');
+			io.stderr.write(
+				`[cache] Deployment cache cleanup targets:\n${cleanupTargets.map((target) => `  ${target}`).join('\n')}\n[cache] Shared VM images and deployment-generated metadata are preserved. Run with --confirm while the controller is stopped.\n`,
+			);
 			return;
 		}
 
-		const deleteStaleDirectories =
-			dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
-		await deleteStaleDirectories(staleEntries);
-		io.stderr.write(`[cache] Deleted ${staleEntries.length} stale image(s).\n`);
+		const acquireControllerOwnershipLock =
+			dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault;
+		const removeDirectory = dependencies.removeDirectory ?? removeDeploymentCacheDirectory;
+		const ownershipLock = await acquireControllerOwnershipLock({
+			runtimeDirectory: options.systemConfig.controllerRuntimeDir,
+		});
+		await releaseOwnershipLockAfterOperation({
+			lock: ownershipLock,
+			operation: async () => {
+				await Promise.all(cleanupTargets.map(async (target) => await removeDirectory(target)));
+			},
+		});
+		io.stderr.write("[cache] Deleted this deployment's Docker contexts and framework caches.\n");
 		return;
 	}
 

@@ -34,10 +34,11 @@ function createAuthoritativeManagedVmImageCapability(
 ): ManagedVmImageCapability {
 	return {
 		async prepareImage(request: ManagedVmImageBuildRequest): Promise<ManagedVmImageBuildResult> {
-			if (request.forceRebuild !== true) {
+			if (request.selectionRecordPath !== undefined) {
 				const preparedImage = await readPreparedManagedVmImage({
 					buildConfigPath: request.recipePath,
-					cacheDir: request.cacheDirectory,
+					selectionRecordPath: request.selectionRecordPath,
+					sharedImageCacheDir: request.artifactCacheDirectory,
 				});
 				if (preparedImage !== undefined) {
 					return {
@@ -46,6 +47,9 @@ function createAuthoritativeManagedVmImageCapability(
 						imageReference: preparedImage.imagePath,
 					};
 				}
+				throw new Error(
+					`Managed VM image selection is missing or invalid for '${request.recipePath}'. Run agent-vm build before starting the controller.`,
+				);
 			}
 			return await providerImages.prepareImage(request);
 		},

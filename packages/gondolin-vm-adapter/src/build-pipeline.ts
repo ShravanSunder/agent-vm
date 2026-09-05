@@ -286,50 +286,87 @@ export async function buildImage(
 	const fingerprint = effectiveBuildFingerprint.fingerprint;
 	const imagePath = path.join(options.cacheDir, fingerprint);
 	const buildImageForFingerprint = async (): Promise<BuildImageResult> => {
-		if (options.fullReset) {
-			await fs.rm(imagePath, { recursive: true, force: true });
-		}
-
-		if (await hasBuiltImageAssets(imagePath)) {
+		const finalImagePathExists = await pathExists(imagePath);
+		if (finalImagePathExists && (await hasBuiltImageAssets(imagePath))) {
 			return {
 				built: false,
 				fingerprint,
 				imagePath,
 			};
 		}
+		if (finalImagePathExists) {
+			throw new Error(`Incomplete shared image artifact at ${imagePath}.`);
+		}
 
-		await fs.mkdir(imagePath, { recursive: true });
+		await fs.mkdir(options.cacheDir, { recursive: true });
+		const stagingImagePath = path.join(
+			options.cacheDir,
+			`.${fingerprint}.staging-${process.pid}-${crypto.randomUUID()}`,
+		);
+		await fs.mkdir(stagingImagePath);
 		const buildAssetsImplementation = dependencies.buildAssets ?? (await loadBuildAssets());
-		const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
-			buildConfig: options.buildConfig,
-			imagePath,
-			rootfsInitExtraContent: effectiveBuildFingerprint.rootfsInitExtraContent,
-		});
-		const gondolinWorkDir = path.join(imagePath, gondolinWorkDirectoryName);
-		await fs.rm(gondolinWorkDir, { recursive: true, force: true });
 		try {
-			await withCapturedBuildOutput(options.output, async () => {
-				await buildAssetsImplementation(
-					effectiveBuildConfig,
-					imagePath,
-					options.configDir,
-					gondolinWorkDir,
-					options.output !== undefined,
-				);
+			const effectiveBuildConfig = await prepareBuildConfigWithAgentVmRootfsInitExtra({
+				buildConfig: options.buildConfig,
+				imagePath: stagingImagePath,
+				rootfsInitExtraContent: effectiveBuildFingerprint.rootfsInitExtraContent,
 			});
-		} finally {
+			const gondolinWorkDir = path.join(stagingImagePath, gondolinWorkDirectoryName);
 			await fs.rm(gondolinWorkDir, { recursive: true, force: true });
-		}
+			try {
+				await withCapturedBuildOutput(options.output, async () => {
+					await buildAssetsImplementation(
+						effectiveBuildConfig,
+						stagingImagePath,
+						options.configDir,
+						gondolinWorkDir,
+						options.output !== undefined,
+					);
+				});
+			} finally {
+				await fs.rm(gondolinWorkDir, { recursive: true, force: true });
+			}
 
-		if (!(await hasBuiltImageAssets(imagePath))) {
-			throw new Error(`Expected Gondolin assets to be written to ${imagePath}.`);
-		}
+			if (!(await hasBuiltImageAssets(stagingImagePath))) {
+				throw new Error(`Expected Gondolin assets to be written to ${stagingImagePath}.`);
+			}
 
-		return {
-			built: true,
-			fingerprint,
-			imagePath,
-		};
+			try {
+				await fs.rename(stagingImagePath, imagePath);
+			} catch (error) {
+				if (
+					typeof error !== 'object' ||
+					error === null ||
+					!('code' in error) ||
+					(error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY')
+				) {
+					throw error;
+				}
+				if (!(await hasBuiltImageAssets(imagePath))) {
+					throw new Error(
+						`Concurrent image publication left an incomplete shared image artifact at ${imagePath}; staging evidence remains at ${stagingImagePath}.`,
+						{ cause: error },
+					);
+				}
+				await fs.rm(stagingImagePath, { recursive: true, force: true });
+				return {
+					built: false,
+					fingerprint,
+					imagePath,
+				};
+			}
+
+			return {
+				built: true,
+				fingerprint,
+				imagePath,
+			};
+		} catch (error) {
+			if (!(await pathExists(imagePath))) {
+				await fs.rm(stagingImagePath, { recursive: true, force: true });
+			}
+			throw error;
+		}
 	};
 
 	if (options.output) {

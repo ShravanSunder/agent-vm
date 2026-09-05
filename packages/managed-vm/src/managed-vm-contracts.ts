@@ -370,9 +370,10 @@ export interface ManagedVmFactory {
 }
 
 export interface ManagedVmImageBuildRequest {
-	readonly cacheDirectory: string;
+	readonly artifactCacheDirectory: string;
 	readonly forceRebuild?: boolean;
 	readonly recipePath: string;
+	readonly selectionRecordPath?: string;
 }
 
 export interface ManagedVmImageBuildResult {

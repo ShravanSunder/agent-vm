@@ -4,8 +4,15 @@ import type { ManagedVmImageBuildResult } from '@agent-vm/managed-vm';
 
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
-import { readPreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
-import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	configuredImageSelectionRecordPath,
+	readPreparedManagedVmImage,
+} from '../../build/prepared-gondolin-image-cache.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../../config/system-config.js';
 import type { ControllerRuntime } from '../../controller/controller-runtime-types.js';
 import { resolveControllerTelemetryIdentity } from '../../observability/controller-telemetry-identity.js';
 import { createControllerTelemetryResourceAttributes } from '../../observability/controller-telemetry.js';
@@ -68,14 +75,14 @@ async function resolveCachedGatewayImage(
 	if (!gatewayImageProfile) {
 		throw new Error(`Gateway image profile '${zone.gateway.imageProfile}' is not configured.`);
 	}
-	const gatewayProfileCacheDirectory = path.join(
-		systemConfig.cacheDir,
-		'gateway-images',
-		zone.gateway.imageProfile,
-	);
 	const preparedGatewayImage = await readPreparedManagedVmImage({
 		buildConfigPath: gatewayImageProfile.buildConfig,
-		cacheDir: gatewayProfileCacheDirectory,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			family: 'gateway',
+			profileName: zone.gateway.imageProfile,
+		}),
+		sharedImageCacheDir: sharedImageCacheDirForSystemConfig(systemConfig),
 	});
 	if (preparedGatewayImage === undefined) {
 		return undefined;

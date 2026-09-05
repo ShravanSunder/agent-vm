@@ -17,7 +17,10 @@ import {
 } from '@agent-vm/tool-portal/dispatch-authority';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../../config/system-config.js';
 import {
 	loadGatewayRuntimePortalAdmissionFile,
 	writeGatewayRuntimePortalAdmissionFile,
@@ -78,6 +81,14 @@ const trustedCallerContext = {
 	stablePrincipal: deriveGatewayControlStablePrincipal({ principal: trustedPrincipal }),
 	zoneId: acceptedSession.zoneId,
 } satisfies GatewayControlTrustedCallerContext;
+
+function effectiveToolPortalConfigDirectory(systemConfig: LoadedSystemConfig): string {
+	return path.join(
+		deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+		'gateway-effective',
+		acceptedSession.zoneId,
+	);
+}
 
 const configuredCliInvocation = {
 	callId: 'configured-cli-call-a',
@@ -380,12 +391,7 @@ async function writeEffectiveToolPortalSnapshot(
 		allowedRawEnvSecretNames: ['TEST_GATEWAY_SECRET'],
 		authoredConfigDir: zone.toolPortal.configDir,
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
-		effectiveHostConfigDir: path.join(
-			systemConfig.cacheDir,
-			'gateways',
-			acceptedSession.zoneId,
-			'tool-portal-effective',
-		),
+		effectiveHostConfigDir: effectiveToolPortalConfigDirectory(systemConfig),
 		secretResolver: noSecretResolutionDuringTest,
 		workspaceGitPushAgentEligibility: {
 			eligibleAgentIds:
@@ -396,12 +402,7 @@ async function writeEffectiveToolPortalSnapshot(
 		},
 		zoneId: acceptedSession.zoneId,
 	});
-	const effectiveHostConfigDir = path.join(
-		systemConfig.cacheDir,
-		'gateways',
-		acceptedSession.zoneId,
-		'tool-portal-effective',
-	);
+	const effectiveHostConfigDir = effectiveToolPortalConfigDirectory(systemConfig);
 	const portalAdmission = materializeGatewayRuntimePortalAdmission({
 		agentProjections: Object.entries(effectivePlan.effectiveToolPortalConfig.agents).map(
 			([agentId, agent]) => ({
@@ -432,7 +433,7 @@ async function configuredCliDirectAuthority(
 	>['authority']
 > {
 	const admission = await loadGatewayRuntimePortalAdmissionFile(
-		path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		effectiveToolPortalConfigDirectory(systemConfig),
 	);
 	const call = {
 		arguments: input,
@@ -464,7 +465,7 @@ async function configuredCliApprovalReservation(
 	input: { readonly argv: string[]; readonly reason: string },
 ): Promise<GatewayRuntimeControllerExecutionDispatchReservation> {
 	const admission = await loadGatewayRuntimePortalAdmissionFile(
-		path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+		effectiveToolPortalConfigDirectory(systemConfig),
 	);
 	const operationId = deterministicOperationId({
 		callId: configuredCliInvocation.callId,
@@ -595,7 +596,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		const systemConfig = await createSystemConfigFixture({ configDir });
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
 		const effectiveConfig = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+			effectiveToolPortalConfigDirectory(systemConfig),
 		);
 		const currentApprovalReservation = {
 			...approvalReservation,
@@ -806,7 +807,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
 		const currentSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+			effectiveToolPortalConfigDirectory(systemConfig),
 		);
 
 		await expect(
@@ -856,7 +857,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		});
 		await writeEffectiveToolPortalSnapshot(systemConfig);
 		const currentSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+			effectiveToolPortalConfigDirectory(systemConfig),
 		);
 
 		await expect(
@@ -996,7 +997,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		const systemConfig = await createSystemConfigFixture({ configDir, workspaceGit: false });
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
 		const originalSnapshot = await loadMcpPortalEffectiveToolPortalConfigSnapshot(
-			path.join(systemConfig.cacheDir, 'gateways', acceptedSession.zoneId, 'tool-portal-effective'),
+			effectiveToolPortalConfigDirectory(systemConfig),
 		);
 		const originalReservation = {
 			...approvalReservation,

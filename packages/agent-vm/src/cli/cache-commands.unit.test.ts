@@ -1,299 +1,174 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
-import { runCacheCommand, type CacheCommandDependencies } from './cache-commands.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-function createCacheCommandSystemConfig(): LoadedSystemConfig {
+import {
+	createLoadedSystemConfig,
+	deploymentCacheDirForSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
+import { runCacheCommand } from './cache-commands.js';
+
+const temporaryDirectories: string[] = [];
+
+async function createSystemConfig(): Promise<LoadedSystemConfig> {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-command-'));
+	temporaryDirectories.push(root);
+	const storageRootDir = path.join(root, 'deployment');
+	const buildConfigPath = path.join(root, 'build-config.jsonc');
+	await fs.mkdir(storageRootDir, { recursive: true });
+	await fs.writeFile(
+		buildConfigPath,
+		JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
+		'utf8',
+	);
 	return createLoadedSystemConfig(
 		{
-			storageRootDir: '/storage',
-			host: {
-				controllerPort: 18800,
-				projectNamespace: 'agent-vm-tests-a1b2c3d4',
-				secretsProvider: {
-					type: '1password',
-					tokenSource: { type: 'env' },
-				},
-			},
+			schemaVersion: 2,
+			storageRootDir,
+			host: { controllerPort: 18800, projectNamespace: 'cache-command-test' },
 			imageProfiles: {
-				gateways: {
-					hermes: {
-						type: 'hermes',
-						buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
-					},
-				},
-				toolVms: {
-					default: {
-						type: 'toolVm',
-						buildConfig: '/project/vm-images/tool-vms/default/build-config.json',
-					},
-				},
-			},
-			tcpPool: {
-				basePort: 19000,
-				size: 5,
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
+				gateways: { worker: { type: 'worker', buildConfig: buildConfigPath } },
+				toolVms: { default: { type: 'toolVm', buildConfig: buildConfigPath } },
 			},
 			zones: [
 				{
-					egressHosts: ['api.anthropic.com'].map((host) => ({
-						host,
-						audience: 'gateway' as const,
-					})),
+					id: 'worker',
 					gateway: {
-						type: 'hermes',
-						profileSecretProjectionsByAgent: {
-							main: {
-								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
-								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
-							},
-						},
-						profilesByAgent: { main: 'main' },
-						imageProfile: 'hermes',
-						cpus: 2,
-						memory: '2G',
-						config: './config/shravan/hermes.yaml',
+						type: 'worker',
+						imageProfile: 'worker',
+						config: path.join(root, 'worker.jsonc'),
+						cpus: 1,
+						memory: '1G',
 						port: 18791,
 					},
-					id: 'shravan',
-					agents: [{ id: 'main' }],
-					secrets: {
-						API_SERVER_KEY_MAIN: {
-							source: 'environment',
-							envVar: 'API_SERVER_KEY_MAIN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-						DISCORD_BOT_TOKEN_MAIN: {
-							source: 'environment',
-							envVar: 'DISCORD_BOT_TOKEN_MAIN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-					},
-					defaultToolVmProfile: 'standard',
-					agentToolVmProfiles: {},
+					secrets: {},
+					egressHosts: [{ audience: 'gateway', host: 'example.com' }],
 				},
 			],
+			toolVmProfiles: {
+				standard: { cpus: 1, imageProfile: 'default', memory: '1G' },
+			},
+			tcpPool: { basePort: 19000, size: 2 },
 		},
-		{ systemConfigPath: '/project/config/system.json' },
+		{ systemConfigPath: path.join(root, 'config', 'system.jsonc') },
 	);
 }
 
+function createIo(): {
+	readonly io: {
+		readonly stderr: { write(value: string | Uint8Array): boolean };
+		readonly stdout: { write(value: string | Uint8Array): boolean };
+	};
+	readonly stderr: string[];
+	readonly stdout: string[];
+} {
+	const stderr: string[] = [];
+	const stdout: string[] = [];
+	return {
+		io: {
+			stderr: { write: (value: string | Uint8Array) => stderr.push(String(value)) > 0 },
+			stdout: { write: (value: string | Uint8Array) => stdout.push(String(value)) > 0 },
+		},
+		stderr,
+		stdout,
+	};
+}
+
+afterEach(async () => {
+	await Promise.all(
+		temporaryDirectories
+			.splice(0)
+			.map(async (directoryPath) => await fs.rm(directoryPath, { recursive: true, force: true })),
+	);
+});
+
 describe('runCacheCommand', () => {
-	it('lists cached fingerprints and marks the current ones', async () => {
-		const stdoutChunks: string[] = [];
-		const computeFingerprintFromConfigPath = vi.fn(async (buildConfigPath: string) =>
-			buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-		);
+	it('lists one central cache, one deployment scope, and generated selections', async () => {
+		const systemConfig = await createSystemConfig();
+		const { io, stdout } = createIo();
 
-		await runCacheCommand(
-			{
-				subcommand: 'list',
-				systemConfig: createCacheCommandSystemConfig(),
-			},
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						stdoutChunks.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				computeFingerprintFromConfigPath,
-				listCacheEntries: async () => [
-					{ current: true, fingerprint: 'gateway-current' },
-					{ current: false, fingerprint: 'stale-fingerprint' },
-				],
-			},
-		);
+		await runCacheCommand({ subcommand: 'list', systemConfig }, io);
 
-		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
-			'/project/vm-images/gateways/hermes/build-config.json',
-		);
-		expect(computeFingerprintFromConfigPath).toHaveBeenCalledWith(
-			'/project/vm-images/tool-vms/default/build-config.json',
-		);
-		expect(stdoutChunks.join('')).toContain('"gateway-current"');
-		expect(stdoutChunks.join('')).toContain('"stale-fingerprint"');
+		const output = JSON.parse(stdout.join('')) as Record<string, unknown>;
+		expect(output).toMatchObject({
+			cacheDir: systemConfig.cacheDir,
+			deploymentCacheDir: deploymentCacheDirForSystemConfig(systemConfig),
+			deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			sharedImageCacheDir: sharedImageCacheDirForStorageRoot(systemConfig.storageRootDir),
+			sharedImageFingerprints: [],
+		});
 	});
 
-	it('warns and does not delete stale images without --confirm', async () => {
-		const stderrChunks: string[] = [];
-		const deleteStaleImageDirectories = vi.fn();
-		const dependencies: CacheCommandDependencies = {
-			computeFingerprintFromConfigPath: async (buildConfigPath) =>
-				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-			deleteStaleImageDirectories,
-			findStaleImageDirectories: async () => [
-				{
-					absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
-					family: 'gateway',
-					fingerprint: 'stale-fingerprint',
-					modifiedAtMs: 1,
-					profileName: 'hermes',
-					sizeBytes: 1024,
-				},
-			],
-		};
+	it('reports deployment cleanup targets without deleting when confirmation is absent', async () => {
+		const systemConfig = await createSystemConfig();
+		const { io, stderr } = createIo();
+		const acquireControllerOwnershipLock = vi.fn();
+		const removeDirectory = vi.fn();
 
-		await runCacheCommand(
-			{
-				subcommand: 'clean',
-				systemConfig: createCacheCommandSystemConfig(),
-			},
-			{
-				stderr: {
-					write: (chunk: string | Uint8Array) => {
-						stderrChunks.push(String(chunk));
-						return true;
-					},
-				},
-				stdout: { write: () => true },
-			},
-			dependencies,
+		await runCacheCommand({ subcommand: 'clean', systemConfig }, io, {
+			acquireControllerOwnershipLock,
+			removeDirectory,
+		});
+
+		expect(stderr.join('')).toContain(
+			'Shared VM images and deployment-generated metadata are preserved',
 		);
-
-		expect(deleteStaleImageDirectories).not.toHaveBeenCalled();
-		expect(stderrChunks.join('')).toContain('Run with --confirm to delete');
+		expect(acquireControllerOwnershipLock).not.toHaveBeenCalled();
+		expect(removeDirectory).not.toHaveBeenCalled();
 	});
 
-	it('deletes stale images when --confirm is provided', async () => {
-		const deleteStaleImageDirectories = vi.fn();
-		const dependencies: CacheCommandDependencies = {
-			computeFingerprintFromConfigPath: async (buildConfigPath) =>
-				buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-			deleteStaleImageDirectories,
-			findStaleImageDirectories: async () => [
-				{
-					absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
-					family: 'gateway',
-					fingerprint: 'stale-fingerprint',
-					modifiedAtMs: 1,
-					profileName: 'hermes',
-					sizeBytes: 1024,
-				},
-			],
-		};
+	it('acquires the deployment ownership lock before deleting only scoped cache roots', async () => {
+		const systemConfig = await createSystemConfig();
+		const { io } = createIo();
+		const events: string[] = [];
+		const acquireControllerOwnershipLock = vi.fn(async () => {
+			events.push('lock');
+			return { release: async () => void events.push('release') };
+		});
+		const removeDirectory = vi.fn(async (directoryPath: string) => {
+			events.push(`remove:${directoryPath}`);
+		});
+		const deploymentCacheDir = deploymentCacheDirForSystemConfig(systemConfig);
 
-		await runCacheCommand(
-			{
-				confirm: true,
-				subcommand: 'clean',
-				systemConfig: createCacheCommandSystemConfig(),
-			},
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			dependencies,
+		await runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, io, {
+			acquireControllerOwnershipLock,
+			removeDirectory,
+		});
+
+		expect(acquireControllerOwnershipLock).toHaveBeenCalledWith({
+			runtimeDirectory: systemConfig.controllerRuntimeDir,
+		});
+		expect(removeDirectory).toHaveBeenCalledTimes(2);
+		expect(removeDirectory).toHaveBeenCalledWith(path.join(deploymentCacheDir, 'docker-contexts'));
+		expect(removeDirectory).toHaveBeenCalledWith(path.join(deploymentCacheDir, 'zones'));
+		expect(events[0]).toBe('lock');
+		expect(events.at(-1)).toBe('release');
+		expect(events.join('\n')).not.toContain(
+			sharedImageCacheDirForStorageRoot(systemConfig.storageRootDir),
 		);
-
-		expect(deleteStaleImageDirectories).toHaveBeenCalledWith([
-			{
-				absolutePath: '/cache/gateway-images/hermes/stale-fingerprint',
-				family: 'gateway',
-				fingerprint: 'stale-fingerprint',
-				modifiedAtMs: 1,
-				profileName: 'hermes',
-				sizeBytes: 1024,
-			},
-		]);
+		expect(events.join('\n')).not.toContain(
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+		);
 	});
 
-	it('manual clean deletes every stale image returned by the stale-image scanner', async () => {
-		const deleteStaleImageDirectories = vi.fn();
-		const staleEntries = [
-			{
-				absolutePath: '/cache/gateway-images/hermes/stale-oldest',
-				family: 'gateway' as const,
-				fingerprint: 'stale-oldest',
-				modifiedAtMs: 1,
-				profileName: 'hermes',
-				sizeBytes: 1024,
-			},
-			{
-				absolutePath: '/cache/gateway-images/hermes/stale-newest',
-				family: 'gateway' as const,
-				fingerprint: 'stale-newest',
-				modifiedAtMs: 2,
-				profileName: 'hermes',
-				sizeBytes: 1024,
-			},
-		];
+	it('does not delete when the controller ownership lock refuses admission', async () => {
+		const systemConfig = await createSystemConfig();
+		const { io } = createIo();
+		const removeDirectory = vi.fn();
 
-		await runCacheCommand(
-			{
-				confirm: true,
-				subcommand: 'clean',
-				systemConfig: createCacheCommandSystemConfig(),
-			},
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				computeFingerprintFromConfigPath: async (buildConfigPath) =>
-					buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-				deleteStaleImageDirectories,
-				findStaleImageDirectories: async () => staleEntries,
-			},
-		);
-
-		expect(deleteStaleImageDirectories).toHaveBeenCalledWith(staleEntries);
-	});
-
-	it('prints a friendly message when no stale images are found', async () => {
-		const stderrChunks: string[] = [];
-
-		await runCacheCommand(
-			{
-				subcommand: 'clean',
-				systemConfig: createCacheCommandSystemConfig(),
-			},
-			{
-				stderr: {
-					write: (chunk: string | Uint8Array) => {
-						stderrChunks.push(String(chunk));
-						return true;
-					},
-				},
-				stdout: { write: () => true },
-			},
-			{
-				computeFingerprintFromConfigPath: async (buildConfigPath) =>
-					buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-				findStaleImageDirectories: async () => [],
-			},
-		);
-
-		expect(stderrChunks.join('')).toContain('No stale images found.');
-	});
-
-	it('throws for an unknown cache subcommand', async () => {
 		await expect(
-			runCacheCommand(
-				{
-					subcommand: 'prune',
-					systemConfig: createCacheCommandSystemConfig(),
+			runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, io, {
+				acquireControllerOwnershipLock: async () => {
+					throw new Error('controller-already-active');
 				},
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				{
-					computeFingerprintFromConfigPath: async (buildConfigPath) =>
-						buildConfigPath.includes('gateway') ? 'gateway-current' : 'tool-current',
-				},
-			),
-		).rejects.toThrow("Unknown cache subcommand 'prune'.");
+				removeDirectory,
+			}),
+		).rejects.toThrow('controller-already-active');
+		expect(removeDirectory).not.toHaveBeenCalled();
 	});
 });

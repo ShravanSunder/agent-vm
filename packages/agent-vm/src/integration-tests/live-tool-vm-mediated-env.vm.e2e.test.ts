@@ -242,7 +242,6 @@ describeLiveVmIntegration('live: Tool VM mediated placeholder environment', () =
 		const toolVm = await createToolVm(
 			{
 				agentId: 'shravan',
-				cacheDir: systemConfig.cacheDir,
 				profile,
 				rootBinding: {
 					hostGitDirectoryRoot: hostAgentGitDirectoryRoot,

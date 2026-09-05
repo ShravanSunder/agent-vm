@@ -6,13 +6,15 @@ export interface GatewayImageBuilderDependencies {
 
 export async function buildGatewayImage(
 	options: {
+		readonly artifactCacheDirectory: string;
 		readonly buildConfigPath: string;
-		readonly cacheDir: string;
+		readonly selectionRecordPath: string;
 	},
 	dependencies: GatewayImageBuilderDependencies,
 ): Promise<ManagedVmImageBuildResult> {
 	return await dependencies.managedVmImages.prepareImage({
-		cacheDirectory: options.cacheDir,
+		artifactCacheDirectory: options.artifactCacheDirectory,
 		recipePath: options.buildConfigPath,
+		selectionRecordPath: options.selectionRecordPath,
 	});
 }

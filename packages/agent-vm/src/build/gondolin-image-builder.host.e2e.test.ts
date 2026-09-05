@@ -59,7 +59,7 @@ process.on('message', () => {
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 			},
 			streamPreview: {
 				write(chunk) {
@@ -103,7 +103,7 @@ process.on('message', () => {
 			childModuleUrl: pathToFileURL(childModulePath),
 			request: {
 				buildConfigPath: '/project/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 			},
 			streamPreview: {
 				write() {
@@ -140,7 +140,7 @@ process.exit(1);
 				childModuleUrl: pathToFileURL(childModulePath),
 				request: {
 					buildConfigPath: '/project/build-config.json',
-					cacheDir: '/cache/gateway-images/hermes',
+					cacheDir: '/cache/vm-images',
 				},
 				streamPreview: {
 					write() {
@@ -181,7 +181,7 @@ process.exit(1);
 		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 				fullReset: true,
 				streamPreview: {
 					write(chunk) {
@@ -199,7 +199,7 @@ process.exit(1);
 			{
 				request: {
 					buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-					cacheDir: '/cache/gateway-images/hermes',
+					cacheDir: '/cache/vm-images',
 					fullReset: true,
 					previewOutput: true,
 				},
@@ -226,7 +226,7 @@ process.exit(1);
 		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 			},
 			dependencies,
 		);
@@ -236,7 +236,7 @@ process.exit(1);
 		expect(childBuildRequests).toEqual([
 			{
 				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 			},
 		]);
 	});
@@ -284,7 +284,7 @@ process.exit(1);
 		const result = await buildManagedVmImage(
 			{
 				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 				fullReset: true,
 			},
 			dependencies,
@@ -293,7 +293,7 @@ process.exit(1);
 		expect(result.fingerprint).toBe('abc123');
 		expect(buildImageCalls).toEqual([
 			{
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 				configDir: '/project/vm-images/gateways/hermes',
 				fullReset: true,
 				gondolinVersion: 'runtime@1',
@@ -323,7 +323,7 @@ process.exit(1);
 		const result = await runManagedVmImageBuildRequest(
 			{
 				buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-				cacheDir: '/cache/gateway-images/hermes',
+				cacheDir: '/cache/vm-images',
 				previewOutput: true,
 			},
 			dependencies,
@@ -368,7 +368,7 @@ process.exit(1);
 				return await runManagedVmImageBuildRequest(
 					{
 						buildConfigPath: '/project/vm-images/gateways/hermes/build-config.json',
-						cacheDir: '/cache/gateway-images/hermes',
+						cacheDir: '/cache/vm-images',
 						previewOutput: true,
 					},
 					dependencies,

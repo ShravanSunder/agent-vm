@@ -31,8 +31,9 @@ and immutable upstream pin               gateway package        release-owned
 root config, profiles, framework         durable framework home
 state; profile .env paths are tmpfs
 
-/home/hermes/.cache                      RealFS cacheDir        no
+/home/hermes/.cache                      RealFS deployment     no
 repair/download caches                  rebuildable
+                                       cache scope
 
 zoneFilesDir/agents/<agentId>           host durable RealFS    yes
 selected agent workspace                projected to Tool VM
@@ -99,8 +100,9 @@ large temp, TMPDIR target               disposable disk
 /work/cache                             rootfs/COW             no
 npm/pnpm/uv/pip per-task cache          disposable
 
-/cache                                  RealFS cacheDir        no
+/cache                                  RealFS deployment     no
 optional cross-task repair cache        rebuildable
+                                       cache scope
 
 /tmp, /run, /var/log                    guest tmpfs            no
 tiny scratch only                       memory-pressure

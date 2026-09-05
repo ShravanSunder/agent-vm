@@ -38,7 +38,12 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	createLoadedSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	gatewayFrameworkCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	GatewayControlBindingPublicationSource,
 	GatewayControlLeaseRpcOperations,
@@ -1609,7 +1614,7 @@ describe('startGatewayZone', () => {
 					},
 					'/home/hermes/.cache': {
 						access: 'read-write',
-						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
+						hostPath: gatewayFrameworkCacheDirForSystemConfig(systemConfig, 'shravan'),
 						kind: 'host-directory',
 					},
 				}),
@@ -2889,10 +2894,9 @@ describe('startGatewayZone', () => {
 		const { managedVm } = createHealthyGatewayVmStub('vm-portal-admission', 28_293);
 		const toolPortal = createGatewayZoneToolPortalConfig(configDir);
 		const admissionFilePath = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 			GATEWAY_RUNTIME_PORTAL_ADMISSION_FILE_NAME,
 		);
 
@@ -3141,10 +3145,9 @@ describe('startGatewayZone', () => {
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const effectiveConfigDir = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 		);
 
 		await preflightGatewayZoneStart(

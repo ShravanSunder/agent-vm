@@ -72,7 +72,7 @@ leaseIdleTtl
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `controllerPort` | yes | TCP port for the controller HTTP API. |
-| `projectNamespace` | yes | Lowercase namespace used for deployment identity, generated storage isolation, runtime labels, and cache separation. |
+| `projectNamespace` | yes | Lowercase namespace used for deployment identity, scaffold naming, and runtime labels. Cache isolation uses the canonical storage-root digest. |
 | `secretsProvider` | when using `source: "1password"` | How the host resolves 1Password-backed secrets. |
 | `githubToken` | no | Host-only token for clone and push. Never enters the VM. |
 | `observability` | no | Host-owned Victoria/OpenTelemetry stack used by opted-in Hermes zones. |
@@ -332,36 +332,51 @@ canonicalizes it, then derives the tree below without appending or recomputing
 `controllerStateDir`, `runtimeDir`, `zones[].gateway.stateDir`, and
 `zones[].gateway.zoneFilesDir` fields.
 
-The controller derives this exact tree:
+The controller derives this exact tree. `<deploymentCacheKey>` is the full
+SHA-256 digest of the canonical `storageRootDir`; VM image fingerprints are
+16 hexadecimal characters derived from the effective image inputs.
 
 ```text
-<storageRootDir>/
+<dirname(storageRootDir)>/
 ├── cache/                              cacheDir
-├── controller-state/                   controllerStateDir
-│   └── zones/<zoneId>/
-├── controller-runtime/                 controllerRuntimeDir
-│   ├── vm-ownership/
-│   ├── controller-health/
-│   └── observability/<projectNamespace>/
-└── <zoneId>/
-    ├── state/                          stateDir
-    ├── zone-files/                     zoneFilesDir for Hermes
-    └── runtime/                        zoneRuntimeDir
-        ├── logs/
-        ├── gitdirs/agents/<agentId>/
-        ├── worker-tasks/<taskId>/
-        └── control-sessions/
+│   ├── vm-images/<fingerprint>/        shared immutable image artifacts
+│   └── deployments/<deploymentCacheKey>/
+│       ├── docker-contexts/<family>/<profile>/
+│       └── zones/<zoneId>/framework-cache/
+└── <storageRootDir basename>/
+    ├── generated/                      generatedDir
+    │   ├── image-selections/<family>/<profile>.json
+    │   └── gateway-effective/<zoneId>/
+    ├── controller-state/               controllerStateDir
+    │   └── zones/<zoneId>/
+    ├── controller-runtime/             controllerRuntimeDir
+    │   ├── vm-ownership/
+    │   ├── controller-health/
+    │   └── observability/<projectNamespace>/
+    └── <zoneId>/
+        ├── state/                      stateDir
+        ├── zone-files/                 zoneFilesDir for Hermes
+        └── runtime/                    zoneRuntimeDir
+            ├── logs/
+            ├── gitdirs/agents/<agentId>/
+            ├── worker-tasks/<taskId>/
+            └── control-sessions/
 ```
 
-`cache`, `controller-state`, and `controller-runtime` are reserved and invalid
-as zone IDs. Independent controller deployments on one host must select
-different storage roots.
+`cache`, `controller-state`, `controller-runtime`, and `generated` are reserved
+and invalid as zone IDs. Independent controller deployments on one host must
+select different storage roots. Startup rejects direct or symlink-resolved
+overlap between the shared cache, deployment root, and protected descendants.
 
 ## Derived cacheDir
 
-`cacheDir` stores rebuildable artifacts. It is intentionally outside encrypted
-zone backups. Current uses include Gondolin image outputs and per-zone gateway
-repair/download caches.
+`cacheDir` is `<dirname(storageRootDir)>/cache`. It is the one rebuildable cache
+and is intentionally outside encrypted zone backups. Complete VM images live
+once under `cacheDir/vm-images/<fingerprint>`. Potentially large deployment
+artifacts live under
+`cacheDir/deployments/<deploymentCacheKey>/`: Docker build contexts under
+`docker-contexts/<family>/<profile>` and mutable Gateway framework cache under
+`zones/<zoneId>/framework-cache`.
 
 Do not place durable secrets or user state under `cacheDir`. Do not place
 rebuildable dependency trees under `stateDir` just to make them survive gateway
@@ -371,25 +386,28 @@ instead.
 Do not put active worker gitdirs here; unpushed commits are not rebuildable
 cache.
 
-`agent-vm build` automatically prunes old image-cache generations after every
-successful build. For each gateway or Tool VM image profile, it keeps the
-current fingerprint plus the two newest previous fingerprint directories. The
-retention count is fixed; there is no `system.jsonc` cache retention field.
-Failed builds do not prune cache entries. Manual `agent-vm cache clean
---confirm` remains more aggressive and deletes every stale image generation.
-When multiple image profiles share the same resolved build config path and
-effective Gondolin fingerprint in one build, the first profile performs the
-expensive asset build and later profiles materialize profile-local cache entries
-from those assets.
+`agent-vm build` publishes a complete fingerprint atomically and never replaces
+or automatically prunes a complete shared fingerprint. When multiple profiles
+or deployments resolve the same effective fingerprint, they use the same
+immutable directory. Host-wide shared-image garbage collection is not part of
+the current contract.
 
 For Docker-backed image profiles, the effective Gondolin fingerprint includes
 the inspected Docker rootfs layer identity after the Docker build completes.
 This lets unchanged Docker outputs reuse cached Gondolin assets without forcing
 a rebuild on every `agent-vm build`, while Dockerfile or overlay changes that
 alter the image layers still produce a new image generation. Each successful
-profile build also writes a profile-local prepared-image record under
-`cacheDir`; gateway and Tool VM startup may use that record when the matching
-assets still exist.
+configured profile build writes a small selection record under
+`<storageRootDir>/generated/image-selections/<family>/<profile>.json`.
+Gateway and Tool VM startup validate that record against current recipe inputs
+and the complete shared artifact. Missing or invalid selections fail before VM
+creation and instruct the operator to run `agent-vm build`.
+
+`agent-vm cache clean --confirm` acquires the deployment's controller ownership
+lock and refuses while its controller is active. It deletes only that
+deployment digest scope's Docker contexts and zone framework caches. It
+preserves shared VM images, generated metadata, sibling deployment scopes,
+durable/runtime roots, and legacy deployment-local cache paths.
 
 ## Derived controllerStateDir
 
@@ -927,8 +945,10 @@ use their own release line and are intentionally separate from npm package
 versions.
 The deployment overlay is intentionally small; use it for extra apt packages,
 copy steps, post-base commands, and explicit per-image package overrides.
-`agent-vm build` regenerates Dockerfiles under
-`cacheDir/generated-dockerfiles/...`; do not edit generated Dockerfiles by hand.
+`agent-vm build` regenerates Docker build contexts, including their Dockerfiles,
+under
+`cacheDir/deployments/<deploymentCacheKey>/docker-contexts/<family>/<profile>/`;
+do not edit those generated build inputs by hand.
 Managed Worker and Tool VM deployments should omit `packageOverrides` when the
 managed default package set is acceptable. Use `packageOverrides.npm` for
 direct npm packages such as `@openai/codex`, and

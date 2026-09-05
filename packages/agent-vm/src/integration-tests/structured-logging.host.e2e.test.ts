@@ -21,7 +21,10 @@ import { describe, expect, it } from 'vitest';
 
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import { managedVmImageAssetFileNames } from '../build/gondolin-managed-vm-build-tooling.js';
-import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
+import {
+	configuredImageSelectionRecordPath,
+	writePreparedManagedVmImage,
+} from '../build/prepared-gondolin-image-cache.js';
 import { withProtocolDeadline } from './e2e-protocol-wait.js';
 
 interface ChildResult {
@@ -744,9 +747,9 @@ async function createAgentVmProofFixture(collectorHttpPort: number): Promise<Age
 	const controllerPort = await allocateTcpPort();
 	const configDirectory = path.join(canonicalRoot, 'config');
 	const storageDirectory = path.join(canonicalRoot, 'storage');
-	const cacheDirectory = path.join(storageDirectory, 'cache');
+	const cacheDirectory = path.join(canonicalRoot, 'cache');
 	const buildConfigPath = path.join(canonicalRoot, 'worker-build-config.json');
-	const gatewayImageCacheDirectory = path.join(cacheDirectory, 'gateway-images', 'worker');
+	const gatewayImageCacheDirectory = path.join(cacheDirectory, 'vm-images');
 	await Promise.all([
 		mkdir(configDirectory),
 		mkdir(storageDirectory),
@@ -762,9 +765,14 @@ async function createAgentVmProofFixture(collectorHttpPort: number): Promise<Age
 	);
 	await writePreparedManagedVmImage({
 		buildConfigPath,
-		cacheDir: gatewayImageCacheDirectory,
 		fingerprint: gatewayImageFingerprint,
 		imagePath: gatewayImagePath,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir: path.join(storageDirectory, 'generated'),
+			family: 'gateway',
+			profileName: 'worker',
+		}),
+		sharedImageCacheDir: gatewayImageCacheDirectory,
 	});
 	const configPath = path.join(configDirectory, 'system.json');
 	await writeFile(

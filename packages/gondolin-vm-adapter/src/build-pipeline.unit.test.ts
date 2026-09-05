@@ -74,7 +74,7 @@ describe('buildImage', () => {
 		};
 		let effectiveRootfsInitExtraPath: string | undefined;
 
-		await buildImage(
+		const result = await buildImage(
 			{
 				buildConfig,
 				cacheDir: cacheDirectory,
@@ -92,11 +92,12 @@ describe('buildImage', () => {
 		);
 
 		expect(effectiveRootfsInitExtraPath).toBeDefined();
-		const rootfsInitExtraContent = await fsPromises.readFile(
-			effectiveRootfsInitExtraPath ?? '',
-			'utf8',
+		const publishedRootfsInitExtraPath = path.join(
+			result.imagePath,
+			'agent-vm-rootfs-init-extra.sh',
 		);
-		const rootfsInitExtraStat = await fsPromises.stat(effectiveRootfsInitExtraPath ?? '');
+		const rootfsInitExtraContent = await fsPromises.readFile(publishedRootfsInitExtraPath, 'utf8');
+		const rootfsInitExtraStat = await fsPromises.stat(publishedRootfsInitExtraPath);
 
 		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd /dev/fd');
 		expect(rootfsInitExtraContent).toContain('ln -sfn /proc/self/fd/0 /dev/stdin');
@@ -124,7 +125,7 @@ describe('buildImage', () => {
 		};
 		let effectiveRootfsInitExtraPath: string | undefined;
 
-		await buildImage(
+		const result = await buildImage(
 			{
 				buildConfig,
 				cacheDir: cacheDirectory,
@@ -144,7 +145,7 @@ describe('buildImage', () => {
 
 		expect(effectiveRootfsInitExtraPath).toBeDefined();
 		const rootfsInitExtraContent = await fsPromises.readFile(
-			effectiveRootfsInitExtraPath ?? '',
+			path.join(result.imagePath, 'agent-vm-rootfs-init-extra.sh'),
 			'utf8',
 		);
 
@@ -249,6 +250,82 @@ describe('buildImage', () => {
 		expect(secondResult.fingerprint).toBe(firstResult.fingerprint);
 		expect(secondResult.imagePath).toBe(firstResult.imagePath);
 		expect(fakeBuildIntoDirectory).toHaveBeenCalledTimes(1);
+	});
+
+	it('publishes a completed build from a staging directory', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		let observedBuildDirectory: string | undefined;
+
+		const result = await buildImage(
+			{
+				buildConfig: { arch: 'aarch64', distro: 'alpine' },
+				cacheDir: cacheDirectory,
+			},
+			{
+				buildAssets: async (_buildConfig, outputDirectory): Promise<void> => {
+					observedBuildDirectory = outputDirectory;
+					await writeFakeAssets(outputDirectory);
+				},
+				gondolinVersion: 'gondolin@1',
+			},
+		);
+
+		expect(observedBuildDirectory).not.toBe(result.imagePath);
+		expect(path.basename(observedBuildDirectory ?? '')).toContain('.staging-');
+		await expect(fsPromises.access(result.imagePath)).resolves.toBeUndefined();
+		await expect(fsPromises.access(observedBuildDirectory ?? '')).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+	});
+
+	it('does not replace a complete immutable fingerprint during a forced rebuild', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const fakeBuildIntoDirectory = vi.fn(
+			async (_buildConfig: BuildConfig, outputDirectory: string): Promise<void> => {
+				await writeFakeAssets(outputDirectory);
+			},
+		);
+		const options = {
+			buildConfig: { arch: 'aarch64', distro: 'alpine' } satisfies BuildConfig,
+			cacheDir: cacheDirectory,
+		};
+
+		const firstResult = await buildImage(options, {
+			buildAssets: fakeBuildIntoDirectory,
+			gondolinVersion: 'gondolin@1',
+		});
+		const forcedResult = await buildImage(
+			{ ...options, fullReset: true },
+			{ buildAssets: fakeBuildIntoDirectory, gondolinVersion: 'gondolin@1' },
+		);
+
+		expect(firstResult.built).toBe(true);
+		expect(forcedResult).toEqual({ ...firstResult, built: false });
+		expect(fakeBuildIntoDirectory).toHaveBeenCalledOnce();
+	});
+
+	it('fails closed when the final fingerprint directory is incomplete', async () => {
+		const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gondolin-adapter-build-cache-'));
+		temporaryDirectories.push(cacheDirectory);
+		const buildConfig = { arch: 'aarch64', distro: 'alpine' } satisfies BuildConfig;
+		const { fingerprint } = await computeEffectiveBuildFingerprint({
+			buildConfig,
+			gondolinVersion: 'gondolin@1',
+		});
+		const incompleteImagePath = path.join(cacheDirectory, fingerprint);
+		await fsPromises.mkdir(incompleteImagePath, { recursive: true });
+		await fsPromises.writeFile(path.join(incompleteImagePath, 'manifest.json'), '{}', 'utf8');
+		const fakeBuildIntoDirectory = vi.fn();
+
+		await expect(
+			buildImage(
+				{ buildConfig, cacheDir: cacheDirectory },
+				{ buildAssets: fakeBuildIntoDirectory, gondolinVersion: 'gondolin@1' },
+			),
+		).rejects.toThrow(new RegExp(`Incomplete shared image artifact.*${fingerprint}`, 'u'));
+		expect(fakeBuildIntoDirectory).not.toHaveBeenCalled();
 	});
 
 	it('dedupes concurrent identical image builds in process', async () => {

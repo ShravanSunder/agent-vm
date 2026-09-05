@@ -21,7 +21,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
@@ -234,11 +237,9 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				'utf8',
 			);
 			const effectiveHostConfigDir = path.join(
-				imageFixture.project.tempRoot,
-				'cache',
-				'gateways',
+				deploymentGeneratedDirForStorageRoot(imageFixture.project.systemConfig.storageRootDir),
+				'gateway-effective',
 				acceptedSession.zoneId,
-				'tool-portal-effective',
 			);
 			const effectivePlan = await writeMcpPortalEffectiveConfig({
 				approvalAccessConfigured: true,

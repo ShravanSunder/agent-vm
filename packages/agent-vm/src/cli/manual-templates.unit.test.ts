@@ -109,7 +109,11 @@ describe('manual templates', () => {
 		);
 		expect(imageVersioning).toContain('immutable upstream distribution pin');
 		expect(imageVersioning).toContain('packageOverrides.npm');
-		expect(imageVersioning).toContain('Do not edit cacheDir/generated-dockerfiles');
+		expect(imageVersioning).toContain(
+			'Do not edit generated Docker build contexts under cacheDir/deployments',
+		);
+		expect(imageVersioning).toContain('cacheDir/vm-images/<fingerprint>');
+		expect(imageVersioning).toContain('storageRootDir/generated/image-selections');
 		expect(imageVersioning).not.toContain('packageOverrides.pnpm');
 
 		expect(ingress).toContain('zones[].gateway.port');

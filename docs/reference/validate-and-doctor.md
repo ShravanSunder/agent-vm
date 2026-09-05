@@ -163,10 +163,11 @@ because the generated paths are local relative paths.
 
 ## Image Cache Cleanup
 
-`agent-vm build` performs a retention prune after successful builds. For each
-gateway or Tool VM image profile, it keeps the current fingerprint plus the two
-newest previous generations. Failed builds do not prune cache entries.
+`agent-vm build` publishes complete VM-image fingerprints atomically into the
+shared image cache. It does not prune or replace complete fingerprints.
 
-`agent-vm cache clean --confirm` is an explicit manual cleanup command. It
-deletes every stale image generation that is not the current fingerprint, so it
-is more aggressive than the automatic build cleanup.
+`agent-vm cache clean --confirm` is an explicit deployment-scoped cleanup
+command. It acquires the same ownership lock as the controller, refuses while
+that controller is active, and deletes only the invoking deployment's Docker
+contexts and zone framework caches. Shared VM images, generated image
+selections, sibling deployment scopes, and durable/runtime roots are preserved.

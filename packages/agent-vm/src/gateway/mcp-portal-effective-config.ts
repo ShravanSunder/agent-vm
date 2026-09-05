@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -35,6 +35,7 @@ export interface McpPortalEffectiveConfigProps {
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages?: ManagedVmImageCapability;
+	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
@@ -48,6 +49,7 @@ export interface McpPortalEffectiveConfigFromConfigProps {
 	readonly effectiveHostConfigDir: string;
 	readonly mcpConfig: McpConfig;
 	readonly managedVmImages?: ManagedVmImageCapability;
+	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
 	readonly toolPortalConfig: ToolPortalConfig;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
@@ -112,6 +114,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages: ManagedVmImageCapability | undefined;
 	readonly mcpConfig: McpConfig;
+	readonly sharedImageCacheDir: string | undefined;
 	readonly toolPortalConfig: ToolPortalConfig;
 }): Promise<PreparedManagedToolPortalConfig> {
 	const effectiveConfig = structuredClone(props.toolPortalConfig);
@@ -138,7 +141,9 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	const managedVmImages = props.managedVmImages;
 	if (
 		ephemeralTargets.length > 0 &&
-		(authoredConfigDir === undefined || managedVmImages === undefined)
+		(authoredConfigDir === undefined ||
+			managedVmImages === undefined ||
+			props.sharedImageCacheDir === undefined)
 	) {
 		throw new Error(
 			'tool-portal: ephemeral managed VM operations require the existing Managed VM image preparation capability.',
@@ -156,13 +161,11 @@ async function prepareConfiguredCliManagedVmImages(props: {
 			const recipePath = path.resolve(authoredConfigDir, target.imageReference);
 			let preparedImage = preparedImagesByRecipePath.get(recipePath);
 			if (preparedImage === undefined) {
-				const recipePathDigest = createHash('sha256').update(recipePath).digest('hex');
+				if (props.sharedImageCacheDir === undefined) {
+					throw new Error('Tool Portal shared Managed VM image cache is unavailable.');
+				}
 				preparedImage = managedVmImages.prepareImage({
-					cacheDirectory: path.join(
-						props.effectiveHostConfigDir,
-						'controller-execution-images',
-						recipePathDigest,
-					),
+					artifactCacheDirectory: props.sharedImageCacheDir,
 					recipePath,
 				});
 				preparedImagesByRecipePath.set(recipePath, preparedImage);
@@ -752,6 +755,7 @@ async function buildEffectivePlanFromConfig(
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,
 		mcpConfig: props.mcpConfig,
+		sharedImageCacheDir: props.sharedImageCacheDir,
 		toolPortalConfig: props.toolPortalConfig,
 	});
 	const compiledCredentialedRuntimeConfig = compileCredentialedRuntimeConfig({

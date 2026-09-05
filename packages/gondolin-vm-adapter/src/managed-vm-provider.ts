@@ -604,7 +604,7 @@ export function createGondolinManagedVmProvider(): ManagedVmProvider {
 				}
 				const result = await buildImage({
 					buildConfig: parsedRecipe,
-					cacheDir: request.cacheDirectory,
+					cacheDir: request.artifactCacheDirectory,
 					configDir: path.dirname(request.recipePath),
 					...(request.forceRebuild === undefined ? {} : { fullReset: request.forceRebuild }),
 				});

@@ -1,5 +1,4 @@
 import { generateKeyPairSync } from 'node:crypto';
-import path from 'node:path';
 
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
@@ -12,8 +11,15 @@ import {
 } from '@agent-vm/gateway-control-contracts';
 import type { ManagedVm, ManagedVmFinalizableMemoryFile } from '@agent-vm/managed-vm';
 
-import { readPreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
+import {
+	configuredImageSelectionRecordPath,
+	readPreparedManagedVmImage,
+} from '../build/prepared-gondolin-image-cache.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+} from '../config/system-config.js';
 import { prepareGatewayE2eProjectImages, removeE2eTempRoot } from './e2e-harness.js';
 import {
 	scaffoldHermesE2eProject,
@@ -215,7 +221,14 @@ export async function createManagedGatewayImageBootFixture(props: {
 		await prepareGatewayE2eProjectImages({ imageFamilies: ['gateway'], project });
 		const preparedImage = await readPreparedManagedVmImage({
 			buildConfigPath: gatewayProfile.buildConfig,
-			cacheDir: path.join(project.systemConfig.cacheDir, 'gateway-images', profileName),
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+					project.systemConfig.storageRootDir,
+				),
+				family: 'gateway',
+				profileName,
+			}),
+			sharedImageCacheDir: sharedImageCacheDirForSystemConfig(project.systemConfig),
 		});
 		if (preparedImage === undefined) {
 			throw new Error('Hermes image preparation did not publish a prepared-image receipt.');

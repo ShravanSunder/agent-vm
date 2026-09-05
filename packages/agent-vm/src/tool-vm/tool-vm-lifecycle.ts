@@ -1,5 +1,4 @@
 import { realpath } from 'node:fs/promises';
-import path from 'node:path';
 
 import {
 	buildToolSessionLabel,
@@ -20,7 +19,12 @@ import {
 } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import { configuredImageSelectionRecordPath } from '../build/prepared-gondolin-image-cache.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type { ToolVmProfile } from '../controller/leases/lease-manager.js';
 import { validateControllerSelectedToolVmDirectory as validateControllerSelectedToolVmDirectoryDefault } from '../controller/leases/lease-work-mount-paths.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
@@ -326,7 +330,6 @@ async function writeToolVmMediatedEnvBootstrap(
 export async function createUnstartedToolVm(
 	options: {
 		readonly agentId: string;
-		readonly cacheDir: string;
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
@@ -396,14 +399,16 @@ export async function createUnstartedToolVm(
 		audience: 'tool-vm',
 		logPrefix: 'tool-vm-secrets',
 	});
-	const toolImageCacheDir = path.join(
-		options.cacheDir,
-		'tool-vm-images',
-		options.profile.imageProfile,
-	);
 	const toolImage = await dependencies.managedVmImages.prepareImage({
-		cacheDirectory: toolImageCacheDir,
+		artifactCacheDirectory: sharedImageCacheDirForSystemConfig(options.systemConfig),
 		recipePath: toolImageProfile.buildConfig,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+				options.systemConfig.storageRootDir,
+			),
+			family: 'toolVm',
+			profileName: options.profile.imageProfile,
+		}),
 	});
 	const sshEgress = createManagedAgentGitReadOnlySshEgress({
 		agentId: options.agentId,
