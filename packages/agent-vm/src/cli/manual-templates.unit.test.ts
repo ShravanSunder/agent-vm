@@ -77,6 +77,10 @@ describe('manual templates', () => {
 		const hermes = findManual(files, 'docs/manual/hermes.md');
 		const layout = findManual(files, 'docs/manual/layout.md');
 		const imageVersioning = findManual(files, 'docs/manual/image-versioning.md');
+		expect(imageVersioning).toContain('New images are checksum-verified before publication.');
+		expect(imageVersioning).toContain(
+			'Reuse validates manifest and file structure without hashing large images again',
+		);
 		const ingress = findManual(files, 'docs/manual/gateway-ingress.md');
 		const secrets = findManual(files, 'docs/manual/secrets.md');
 		const channels = findManual(files, 'docs/manual/channels.md');

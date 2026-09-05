@@ -221,6 +221,7 @@ describe('Tool VM invalid image selection admission', () => {
 						zoneId: 'shravan',
 						secretResolver: createSecretResolver({}),
 						hostWorkspaceRoot,
+						tcpSlot: 19000,
 					},
 					{
 						createManagedVm,
