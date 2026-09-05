@@ -23,10 +23,17 @@ _OPERATION_LINES = (
 _WORKFLOW_LINE = "Workflow: list or search, describe the exact capability schema, then call it."
 
 
+def _orientation_child_text(value: str) -> str:
+    if any(ord(character) < 32 or character in "\u007f\u2028\u2029" for character in value):
+        return encode_canonical_json(value)
+    return value
+
+
 def _candidate_orientation(
     inventory: NamespaceInventory,
     *,
     displayed_count: int,
+    displayed_tool_counts: tuple[int, ...],
 ) -> str:
     total_count = len(inventory.namespaces)
     omitted_count = total_count - displayed_count
@@ -38,10 +45,19 @@ def _candidate_orientation(
     if total_count == 0:
         lines.append("- (none admitted)")
     else:
-        for item in sorted_namespaces[:displayed_count]:
-            lines.append(f"- {encode_canonical_json(item.namespace)}: {item.status}")
+        for item_index, item in enumerate(sorted_namespaces[:displayed_count]):
+            lines.append(f"Namespace: {encode_canonical_json(item.namespace)}")
             if item.summary is not None:
-                lines.append(f"  summary: {encode_canonical_json(item.summary)}")
+                lines.append(f"Summary: {encode_canonical_json(item.summary)}")
+            displayed_tool_count = displayed_tool_counts[item_index]
+            if displayed_tool_count > 0:
+                lines.append("Tools:")
+                for tool in item.tools[:displayed_tool_count]:
+                    lines.append(f"  {_orientation_child_text(tool.name)}")
+                    if tool.description is not None:
+                        lines.append(f"    {_orientation_child_text(tool.description)}")
+            if displayed_tool_count < len(item.tools) or item.has_more_tools:
+                lines.append("  Additional tools are available through list/search.")
     if omitted_count > 0:
         lines.append(
             f"{omitted_count} namespace names omitted; use tool_portal_list "
@@ -62,23 +78,52 @@ def render_orientation(
 
     total_count = len(inventory.namespaces)
     maximum_displayed_count = min(MAX_DISPLAYED_NAMESPACE_COUNT, total_count)
+    selected_displayed_count: int | None = None
     for displayed_count in range(maximum_displayed_count, -1, -1):
         orientation = _candidate_orientation(
             inventory,
             displayed_count=displayed_count,
+            displayed_tool_counts=(0,) * displayed_count,
         )
         utf8_byte_count = len(orientation.encode("utf-8"))
         if utf8_byte_count <= max_utf8_bytes:
-            return RenderedOrientation(
-                inventory_id=inventory.inventory_id,
-                orientation=orientation,
-                utf8_byte_count=utf8_byte_count,
-                displayed_count=displayed_count,
-                total_count=total_count,
-                omitted_count=total_count - displayed_count,
-            )
+            selected_displayed_count = displayed_count
+            break
 
-    zero_prefix = _candidate_orientation(inventory, displayed_count=0)
+    if selected_displayed_count is not None:
+        displayed_tool_counts = [0] * selected_displayed_count
+        sorted_namespaces = tuple(sorted(inventory.namespaces, key=lambda item: item.namespace))
+        for namespace_index, namespace in enumerate(sorted_namespaces[:selected_displayed_count]):
+            for tool_count in range(1, len(namespace.tools) + 1):
+                candidate_counts = list(displayed_tool_counts)
+                candidate_counts[namespace_index] = tool_count
+                candidate = _candidate_orientation(
+                    inventory,
+                    displayed_count=selected_displayed_count,
+                    displayed_tool_counts=tuple(candidate_counts),
+                )
+                if len(candidate.encode("utf-8")) > max_utf8_bytes:
+                    break
+                displayed_tool_counts = candidate_counts
+        orientation = _candidate_orientation(
+            inventory,
+            displayed_count=selected_displayed_count,
+            displayed_tool_counts=tuple(displayed_tool_counts),
+        )
+        return RenderedOrientation(
+            inventory_id=inventory.inventory_id,
+            orientation=orientation,
+            utf8_byte_count=len(orientation.encode("utf-8")),
+            displayed_count=selected_displayed_count,
+            total_count=total_count,
+            omitted_count=total_count - selected_displayed_count,
+        )
+
+    zero_prefix = _candidate_orientation(
+        inventory,
+        displayed_count=0,
+        displayed_tool_counts=(),
+    )
     return OrientationRenderFailure(
         inventory_id=inventory.inventory_id,
         minimum_required_bytes=len(zero_prefix.encode("utf-8")),

@@ -20,6 +20,7 @@ export interface GatewayControlCallerContextRegistrationRequest {
 	readonly purpose?:
 		| 'tool_portal_approval_decision'
 		| 'tool_portal_controller_execution'
+		| 'tool_portal_oauth_availability'
 		| 'tool_vm_lease';
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }

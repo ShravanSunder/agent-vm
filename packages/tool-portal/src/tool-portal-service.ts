@@ -7,12 +7,15 @@ import {
 	type PortalCallRequest,
 	type PortalCallResult,
 	PortalDescribeRequestSchema,
+	PortalDescribeResultSchema,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
 	PortalListRequestSchema,
+	PortalListResultSchema,
 	type PortalListRequest,
 	type PortalListResult,
 	PortalSearchRequestSchema,
+	PortalSearchResultSchema,
 	type PortalSearchRequest,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
@@ -41,6 +44,15 @@ import {
 	type GatewayRuntimeTrustedInvocationContext,
 	type GatewayRuntimeTrustedInvocationPrincipal,
 } from '@agent-vm/gateway-control-contracts';
+import {
+	oauthToolAvailabilityBatchRequestSchema,
+	oauthToolAvailabilityBatchResultSchema,
+	type OAuthAccountProfileToolRequirement,
+	type OAuthToolAvailability,
+	type OAuthToolAvailabilityBatchRequest,
+	type OAuthToolAvailabilityBatchResult,
+	type OAuthToolRequirement,
+} from '@agent-vm/oauth-broker-contracts';
 
 import type {
 	StandaloneToolPortalApprovalArmResult,
@@ -68,6 +80,7 @@ import {
 	approvalRequiredItem,
 	callPolicyDecision,
 	canonicalJson,
+	capabilityDiscoveryMetadata,
 	capabilityDeniedItem,
 	deepFreeze,
 	deterministicOperationId,
@@ -167,6 +180,14 @@ export interface ToolPortalApprovalPort {
 	}) => Promise<GatewayRuntimeApprovalAdmissionResult>;
 }
 
+export interface ToolPortalOAuthAvailabilityPort {
+	readonly resolve: (props: {
+		readonly request: OAuthToolAvailabilityBatchRequest;
+		readonly signal?: AbortSignal | undefined;
+		readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
+	}) => Promise<OAuthToolAvailabilityBatchResult>;
+}
+
 export interface ToolPortalCapabilityCore<TMode extends ToolPortalServiceMode = 'managed'> {
 	readonly semanticSnapshot: ToolPortalSemanticSnapshot<TMode>;
 	readonly call: (
@@ -200,7 +221,67 @@ export interface CreateManagedToolPortalCapabilityCoreProps {
 		readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 	};
 	readonly config: GatewayRuntimeManagedToolPortalConfig;
+	readonly oauthAvailabilityPort?: ToolPortalOAuthAvailabilityPort | undefined;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
+}
+
+interface OAuthDiscoveryCapability {
+	readonly oauthAvailability?: OAuthToolAvailability | undefined;
+	readonly oauthRequirement?: OAuthToolRequirement | undefined;
+}
+
+function oauthRequirementIdentity(requirement: OAuthAccountProfileToolRequirement): string {
+	return [requirement.applicationId, requirement.serviceId, requirement.minimumPermission].join(
+		'\u0000',
+	);
+}
+
+async function resolveOAuthAvailabilityByRequirement(props: {
+	readonly capabilities: readonly OAuthDiscoveryCapability[];
+	readonly operationOptions: ToolPortalInvocationOptions;
+	readonly port: ToolPortalOAuthAvailabilityPort | undefined;
+}): Promise<ReadonlyMap<string, OAuthToolAvailability>> {
+	const requirementsByIdentity = new Map<string, OAuthAccountProfileToolRequirement>();
+	for (const capability of props.capabilities) {
+		const requirement = capability.oauthRequirement;
+		if (requirement?.kind !== 'oauth-account-profile') continue;
+		requirementsByIdentity.set(oauthRequirementIdentity(requirement), requirement);
+	}
+	if (requirementsByIdentity.size === 0) return new Map();
+	if (props.port === undefined) return new Map();
+	try {
+		const request = oauthToolAvailabilityBatchRequestSchema.parse({
+			requirements: [...requirementsByIdentity.values()],
+		});
+		const result = oauthToolAvailabilityBatchResultSchema.parse(
+			await props.port.resolve({
+				request,
+				...(props.operationOptions.signal === undefined
+					? {}
+					: { signal: props.operationOptions.signal }),
+				trustedContext: props.operationOptions.trustedContext,
+			}),
+		);
+		return new Map(
+			result.items.map((item) => [oauthRequirementIdentity(item.requirement), item.availability]),
+		);
+	} catch {
+		return new Map();
+	}
+}
+
+function capabilityWithOAuthAvailability<TCapability extends OAuthDiscoveryCapability>(
+	capability: TCapability,
+	availabilityByRequirement: ReadonlyMap<string, OAuthToolAvailability>,
+): TCapability | (TCapability & { readonly oauthAvailability: OAuthToolAvailability }) {
+	const requirement = capability.oauthRequirement;
+	if (requirement?.kind !== 'oauth-account-profile') return capability;
+	return {
+		...capability,
+		oauthAvailability: availabilityByRequirement.get(oauthRequirementIdentity(requirement)) ?? {
+			kind: 'authorization-status-unavailable',
+		},
+	};
 }
 
 export interface CreateStandaloneV1ToolPortalServiceProps {
@@ -311,6 +392,12 @@ function managedBackendEntriesForInvocation(props: {
 	}
 	return [...namespacesByBackendKind].map(([backendKind, namespaces]) => ({
 		backend: backendPortForKind(props.backendPorts, backendKind),
+		capabilityMetadata: ({ name, namespace }) => {
+			const namespacePolicy = profileConfig.namespaces[namespace];
+			return namespacePolicy === undefined
+				? undefined
+				: capabilityDiscoveryMetadata({ policy: namespacePolicy, toolName: name });
+		},
 		namespaceDiscovery: [...namespaces]
 			.map((namespace) => ({
 				...profileConfig.namespaces[namespace]?.discovery,
@@ -658,28 +745,97 @@ export function createManagedToolPortalCapabilityCore(
 		describe: async (request, options) => {
 			const parsedRequest = PortalDescribeRequestSchema.parse(request);
 			const invocation = invocationState(options);
-			return await mergeToolPortalDescribe({
+			const result = await mergeToolPortalDescribe({
 				entries: invocation.entries,
 				operationOptions: invocation.operationOptions,
 				request: parsedRequest,
+			});
+			const availabilityByRequirement = await resolveOAuthAvailabilityByRequirement({
+				capabilities: result.items.flatMap((item) =>
+					item.status === 'ok' ? item.value.tools : [],
+				),
+				operationOptions: invocation.operationOptions,
+				port: props.oauthAvailabilityPort,
+			});
+			return PortalDescribeResultSchema.parse({
+				...result,
+				items: result.items.map((item) =>
+					item.status === 'error'
+						? item
+						: {
+								...item,
+								value: {
+									...item.value,
+									tools: item.value.tools.map((tool) =>
+										capabilityWithOAuthAvailability(tool, availabilityByRequirement),
+									),
+								},
+							},
+				),
 			});
 		},
 		list: async (request, options) => {
 			const parsedRequest = PortalListRequestSchema.parse(request);
 			const invocation = invocationState(options);
-			return await mergeToolPortalList({
+			const result = await mergeToolPortalList({
 				entries: invocation.entries,
 				operationOptions: invocation.operationOptions,
 				request: parsedRequest,
+			});
+			const availabilityByRequirement = await resolveOAuthAvailabilityByRequirement({
+				capabilities: result.items.flatMap((item) =>
+					item.status === 'ok' ? item.value.tools : [],
+				),
+				operationOptions: invocation.operationOptions,
+				port: props.oauthAvailabilityPort,
+			});
+			return PortalListResultSchema.parse({
+				...result,
+				items: result.items.map((item) =>
+					item.status === 'error'
+						? item
+						: {
+								...item,
+								value: {
+									...item.value,
+									tools: item.value.tools.map((tool) =>
+										capabilityWithOAuthAvailability(tool, availabilityByRequirement),
+									),
+								},
+							},
+				),
 			});
 		},
 		search: async (request, options) => {
 			const parsedRequest = PortalSearchRequestSchema.parse(request);
 			const invocation = invocationState(options);
-			return await mergeToolPortalSearch({
+			const result = await mergeToolPortalSearch({
 				entries: invocation.entries,
 				operationOptions: invocation.operationOptions,
 				request: parsedRequest,
+			});
+			const availabilityByRequirement = await resolveOAuthAvailabilityByRequirement({
+				capabilities: result.items.flatMap((item) =>
+					item.status === 'ok' ? item.value.tools : [],
+				),
+				operationOptions: invocation.operationOptions,
+				port: props.oauthAvailabilityPort,
+			});
+			return PortalSearchResultSchema.parse({
+				...result,
+				items: result.items.map((item) =>
+					item.status === 'error'
+						? item
+						: {
+								...item,
+								value: {
+									...item.value,
+									tools: item.value.tools.map((tool) =>
+										capabilityWithOAuthAvailability(tool, availabilityByRequirement),
+									),
+								},
+							},
+				),
 			});
 		},
 		semanticSnapshot,

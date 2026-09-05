@@ -34,6 +34,7 @@ import {
 	approvalRequiredItem,
 	callPolicyDecision,
 	canonicalJson,
+	capabilityDiscoveryMetadata,
 	capabilityDeniedItem,
 	deepFreeze,
 	deterministicOperationId,
@@ -137,6 +138,12 @@ function backendEntriesForInvocation(props: {
 	return [
 		{
 			backend: props.backendPort,
+			capabilityMetadata: ({ name, namespace }) => {
+				const namespacePolicy = profileConfig.namespaces[namespace];
+				return namespacePolicy === undefined
+					? undefined
+					: capabilityDiscoveryMetadata({ policy: namespacePolicy, toolName: name });
+			},
 			namespaceDiscovery: (
 				props.semanticSnapshot.namespaceDiscoveryByProfile[props.profileId] ?? []
 			).filter((entry) => namespaces.has(entry.namespace)),

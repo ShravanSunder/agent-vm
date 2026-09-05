@@ -179,14 +179,18 @@ describe('tool portal config contract', () => {
 					executablePath: '/usr/local/bin/inspect',
 					executionTarget: {
 						allowedHosts: [],
-						credentialBinding: 'google',
-						credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-						credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+						credentialProjection: {
+							credentialBinding: 'google',
+							credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+							credentialFiles: [
+								{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' },
+							],
+							kind: 'file_binding',
+						},
 						environment: { kind: 'empty' },
 						guestCwd: '/run',
 						imageReference: '../../vm-images/controller-runners/default/build-config.json',
 						kind: 'ephemeral_managed_vm',
-						runtimeId: 'google-workspace',
 					},
 					kind: 'configured_cli',
 					mandatoryArgvPrefix: [],
@@ -287,14 +291,16 @@ describe('tool portal config contract', () => {
 			executablePath: '/usr/local/bin/gog',
 			executionTarget: {
 				allowedHosts: ['www.googleapis.com'],
-				credentialBinding: 'google',
-				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				credentialProjection: {
+					credentialBinding: 'google',
+					credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+					credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+					kind: 'file_binding',
+				},
 				environment: { kind: 'empty' },
 				guestCwd: '/work',
 				imageReference: '../../vm-images/controller-runners/gog/build-config.json',
 				kind: 'ephemeral_managed_vm',
-				runtimeId: 'google-workspace',
 			},
 			kind: 'configured_cli',
 			mandatoryArgvPrefix: [],
@@ -346,6 +352,26 @@ describe('tool portal config contract', () => {
 		} as const;
 
 		expect(toolPortalConfigSchema.safeParse(config).success).toBe(true);
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...config,
+				agents: { sun: { profile: 'google-enabled' } },
+				profiles: {
+					'google-enabled': {
+						namespaces: {
+							google: {
+								...config.profiles['google-enabled'].namespaces.google,
+								calls: {
+									requiresApproval: { allow: [], deny: [] },
+									withoutApproval: { allow: [], deny: [] },
+								},
+								tools: { allow: [], deny: [] },
+							},
+						},
+					},
+				},
+			}).success,
+		).toBe(true);
 		expect(
 			toolPortalConfigSchema.safeParse({
 				...config,
@@ -882,9 +908,12 @@ describe('tool portal config contract', () => {
 			executablePath: '/usr/bin/inspect-host',
 			executionTarget: {
 				allowedHosts: [],
-				credentialBinding: 'google',
-				credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
-				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				credentialProjection: {
+					credentialBinding: 'google',
+					credentialEnvironment: { GOG_DATA_DIR: { kind: 'credential_root' } },
+					credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+					kind: 'file_binding',
+				},
 				environment: { kind: 'empty' },
 				guestCwd: '/run/operation',
 				imageReference: encodeConfiguredCliPreparedImageIdentity({
@@ -893,7 +922,6 @@ describe('tool portal config contract', () => {
 					schemaVersion: 1,
 				}),
 				kind: 'ephemeral_managed_vm',
-				runtimeId: 'google-workspace',
 			},
 			kind: 'configured_cli',
 			mandatoryArgvPrefix: ['--fixed'],

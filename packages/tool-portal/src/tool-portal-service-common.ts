@@ -1,4 +1,8 @@
-import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
+import type {
+	CapabilityDiscoveryMetadata,
+	PortalCallRequest,
+	PortalCallResult,
+} from '@agent-vm/agent-portal-sdk';
 import type {
 	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
@@ -9,7 +13,9 @@ import type {
 } from '@agent-vm/config-contracts';
 import {
 	openConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
+	quickOAuthConfiguredCliInputSchema,
 } from '@agent-vm/config-contracts';
 export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
 
@@ -166,6 +172,78 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 	);
 }
 
+export function capabilityDiscoveryMetadata(props: {
+	readonly policy:
+		| GatewayRuntimeManagedToolPortalConfig['profiles'][string]['namespaces'][string]
+		| ToolPortalConfig['profiles'][string]['namespaces'][string];
+	readonly toolName: string;
+}): CapabilityDiscoveryMetadata | undefined {
+	if (!selectorIncludesTool(props.policy.tools, props.toolName)) return undefined;
+	const withoutApproval = selectorIncludesTool(props.policy.calls.withoutApproval, props.toolName);
+	const requiresApproval = selectorIncludesTool(
+		props.policy.calls.requiresApproval,
+		props.toolName,
+	);
+	if (!withoutApproval && !requiresApproval) return undefined;
+	const discoveryRequiresApproval = !withoutApproval && requiresApproval;
+	if (props.policy.backend.kind !== 'controller_execution') {
+		return {
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
+		};
+	}
+	const operation = props.policy.backend.operations[props.toolName];
+	if (operation === undefined) {
+		return {
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
+		};
+	}
+	if (operation.kind !== 'configured_cli') {
+		return {
+			callDisposition: {
+				kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval',
+			},
+		};
+	}
+	const hasInvocationApprovalRules = operation.calls.requiresApproval.length > 0;
+	const oauthRequirement = ((): CapabilityDiscoveryMetadata['oauthRequirement'] | undefined => {
+		if (operation.authorization?.kind !== 'oauth_account_profile') return undefined;
+		const firstRequirement = operation.authorization.rules[0]?.requirement;
+		if (
+			firstRequirement?.kind === 'oauth' &&
+			operation.authorization.rules.every(
+				(rule) =>
+					rule.requirement.kind === 'oauth' &&
+					rule.requirement.applicationId === firstRequirement.applicationId &&
+					rule.requirement.serviceId === firstRequirement.serviceId &&
+					rule.requirement.minimumPermission === firstRequirement.minimumPermission,
+			)
+		) {
+			return {
+				applicationId: firstRequirement.applicationId,
+				kind: 'oauth-account-profile',
+				minimumPermission: firstRequirement.minimumPermission,
+				serviceId: firstRequirement.serviceId,
+			};
+		}
+		return {
+			accountProfileArgument: 'accountProfile',
+			describeBeforeCall: true,
+			kind: 'invocation-dependent-oauth-account-profile',
+		};
+	})();
+	return {
+		callDisposition:
+			discoveryRequiresApproval || !hasInvocationApprovalRules
+				? { kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval' }
+				: { describeBeforeCall: true, kind: 'invocation-dependent' },
+		...(oauthRequirement === undefined ? {} : { oauthRequirement }),
+	};
+}
+
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
 	readonly config:
@@ -202,9 +280,13 @@ export function callPolicyDecision(props: {
 		const operation = policy.backend.operations[props.call.name];
 		if (operation?.kind === 'configured_cli') {
 			const inputSchema =
-				operation.timeout.kind === 'quick'
-					? quickConfiguredCliInputSchema
-					: openConfiguredCliInputSchema;
+				operation.authorization?.kind === 'oauth_account_profile'
+					? operation.timeout.kind === 'quick'
+						? quickOAuthConfiguredCliInputSchema
+						: openOAuthConfiguredCliInputSchema
+					: operation.timeout.kind === 'quick'
+						? quickConfiguredCliInputSchema
+						: openConfiguredCliInputSchema;
 			const parsedInput = inputSchema.safeParse(props.call.arguments);
 			if (!parsedInput.success) return { kind: 'denied' };
 			const evaluation = evaluateCliAllowanceInvocation({

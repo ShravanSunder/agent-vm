@@ -40,6 +40,16 @@ export function createPlainRunTask(io: CliIo): RunTaskFn {
 	};
 }
 
+export function createSilentRunTask(): RunTaskFn {
+	return async (_title, fn) => {
+		await fn({
+			interactive: false,
+			setOutput: () => {},
+			setStatus: () => {},
+		});
+	};
+}
+
 export async function createRunTask(io: CliIo): Promise<RunTaskFn> {
 	if (process.stdout.isTTY) {
 		const { default: task } = await import('tasuku');

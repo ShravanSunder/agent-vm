@@ -725,7 +725,8 @@
 												"enum": [
 													"tool_vm_lease",
 													"tool_portal_controller_execution",
-													"tool_portal_approval_decision"
+													"tool_portal_approval_decision",
+													"tool_portal_oauth_availability"
 												]
 											},
 											"zoneId": {
@@ -2023,6 +2024,1957 @@
 														},
 														"required": ["actionId", "callerContext", "correlation"],
 														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.list"
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.begin"
+															},
+															"accountProfileId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"suggestedSelections": {
+																"readOnly": true,
+																"type": "object",
+																"propertyNames": {
+																	"type": "string",
+																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																},
+																"additionalProperties": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																	},
+																	"additionalProperties": {
+																		"type": "string",
+																		"enum": ["none", "read", "write"]
+																	}
+																}
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"accountProfileId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.status"
+															},
+															"transactionId": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9_-]{32,256}$"
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"transactionId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.cancel"
+															},
+															"transactionId": {
+																"type": "string",
+																"pattern": "^[A-Za-z0-9_-]{32,256}$"
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"transactionId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.reauthorize"
+															},
+															"accountProfileId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"applicationId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"suggestedSelections": {
+																"readOnly": true,
+																"type": "object",
+																"propertyNames": {
+																	"type": "string",
+																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																},
+																"additionalProperties": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																	},
+																	"additionalProperties": {
+																		"type": "string",
+																		"enum": ["none", "read", "write"]
+																	}
+																}
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"accountProfileId",
+															"applicationId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"actionId": {
+																"type": "string",
+																"const": "oauth_authorization.revoke"
+															},
+															"accountProfileId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"applicationId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"authority": {
+																"oneOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"bindingRevision": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"fingerprint": {
+																				"type": "string",
+																				"pattern": "^sha256:[a-f0-9]{64}$"
+																			},
+																			"kind": {
+																				"type": "string",
+																				"const": "without_approval"
+																			},
+																			"operationId": {
+																				"type": "string",
+																				"format": "uuid",
+																				"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																			}
+																		},
+																		"required": [
+																			"bindingRevision",
+																			"fingerprint",
+																			"kind",
+																			"operationId"
+																		],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"kind": {
+																				"type": "string",
+																				"const": "controller_approval_reservation"
+																			},
+																			"reservation": {
+																				"type": "object",
+																				"properties": {
+																					"approvalId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"authorityContext": {
+																						"type": "object",
+																						"properties": {
+																							"controllerEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"frameworkEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"gatewayEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"runtimeEpoch": {
+																								"type": "string",
+																								"minLength": 1
+																							},
+																							"zoneId": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"controllerEpoch",
+																							"frameworkEpoch",
+																							"gatewayEpoch",
+																							"runtimeEpoch",
+																							"zoneId"
+																						],
+																						"additionalProperties": false
+																					},
+																					"expiresAt": {
+																						"type": "string",
+																						"format": "date-time",
+																						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																					},
+																					"fingerprint": {
+																						"type": "string",
+																						"pattern": "^sha256:[a-f0-9]{64}$"
+																					},
+																					"operationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"stablePrincipal": {
+																						"type": "string",
+																						"pattern": "^[a-f0-9]{64}$"
+																					},
+																					"backendKind": {
+																						"type": "string",
+																						"const": "controller_execution"
+																					},
+																					"bindingRevision": {
+																						"type": "string",
+																						"minLength": 1
+																					},
+																					"reservationId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					}
+																				},
+																				"required": [
+																					"approvalId",
+																					"authorityContext",
+																					"expiresAt",
+																					"fingerprint",
+																					"operationId",
+																					"stablePrincipal",
+																					"backendKind",
+																					"bindingRevision",
+																					"reservationId"
+																				],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["kind", "reservation"],
+																		"additionalProperties": false
+																	}
+																]
+															},
+															"callerContext": {
+																"type": "object",
+																"properties": {
+																	"callerContextId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["callerContextId"],
+																"additionalProperties": false
+															},
+															"correlation": {
+																"type": "object",
+																"properties": {
+																	"causationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"correlationId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"requestId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"runId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"sessionKeyDigest": {
+																		"type": "string",
+																		"minLength": 32
+																	},
+																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"traceId": {
+																		"type": "string",
+																		"pattern": "^[0-9a-f]{32}$"
+																	},
+																	"capability": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"namespace": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["name", "namespace"],
+																		"additionalProperties": false
+																	}
+																},
+																"additionalProperties": false
+															},
+															"invocation": {
+																"type": "object",
+																"properties": {
+																	"callId": {
+																		"type": "string",
+																		"minLength": 1
+																	},
+																	"surfaceClass": {
+																		"type": "string",
+																		"enum": ["mcp", "protected_uds"]
+																	},
+																	"trustedContext": {
+																		"type": "object",
+																		"properties": {
+																			"correlation": {
+																				"type": "object",
+																				"properties": {
+																					"runId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"sessionKey": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"additionalProperties": false
+																			},
+																			"principal": {
+																				"type": "object",
+																				"properties": {
+																					"agentId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"frameworkIdentity": {
+																						"readOnly": true,
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "hermes"
+																							},
+																							"profileName": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							}
+																						},
+																						"required": ["kind", "profileName"],
+																						"additionalProperties": false
+																					},
+																					"profileAssignmentRevision": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"toolPortalProfileId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": [
+																					"agentId",
+																					"frameworkIdentity",
+																					"profileAssignmentRevision",
+																					"toolPortalProfileId"
+																				],
+																				"additionalProperties": false
+																			},
+																			"requester": {
+																				"type": "object",
+																				"properties": {
+																					"authenticatedSubjectId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					}
+																				},
+																				"required": ["authenticatedSubjectId"],
+																				"additionalProperties": false
+																			}
+																		},
+																		"required": ["principal"],
+																		"additionalProperties": false
+																	}
+																},
+																"required": ["callId", "surfaceClass", "trustedContext"],
+																"additionalProperties": false
+															}
+														},
+														"required": [
+															"actionId",
+															"accountProfileId",
+															"applicationId",
+															"authority",
+															"callerContext",
+															"correlation",
+															"invocation"
+														],
+														"additionalProperties": false
 													}
 												]
 											},
@@ -2242,61 +4194,134 @@
 											"input": {
 												"anyOf": [
 													{
-														"type": "object",
-														"properties": {
-															"argv": {
-																"minItems": 1,
-																"maxItems": 100,
-																"type": "array",
-																"items": {
-																	"type": "string",
-																	"minLength": 1,
-																	"maxLength": 4096
-																}
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	}
+																},
+																"required": ["argv", "reason"],
+																"additionalProperties": false
 															},
-															"reason": {
-																"type": "string",
-																"minLength": 1,
-																"maxLength": 2000
-															},
-															"stdin": {
-																"type": "string",
-																"maxLength": 1048576
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"timeoutMs": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 28800000
+																	}
+																},
+																"required": ["argv", "reason"],
+																"additionalProperties": false
 															}
-														},
-														"required": ["argv", "reason"],
-														"additionalProperties": false
+														]
 													},
 													{
-														"type": "object",
-														"properties": {
-															"argv": {
-																"minItems": 1,
-																"maxItems": 100,
-																"type": "array",
-																"items": {
-																	"type": "string",
-																	"minLength": 1,
-																	"maxLength": 4096
-																}
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"accountProfile": {
+																		"type": "string",
+																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																	}
+																},
+																"required": ["argv", "reason", "accountProfile"],
+																"additionalProperties": false
 															},
-															"reason": {
-																"type": "string",
-																"minLength": 1,
-																"maxLength": 2000
-															},
-															"stdin": {
-																"type": "string",
-																"maxLength": 1048576
-															},
-															"timeoutMs": {
-																"type": "integer",
-																"exclusiveMinimum": 0,
-																"maximum": 28800000
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"accountProfile": {
+																		"type": "string",
+																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																	},
+																	"timeoutMs": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 28800000
+																	}
+																},
+																"required": ["argv", "reason", "accountProfile"],
+																"additionalProperties": false
 															}
-														},
-														"required": ["argv", "reason"],
-														"additionalProperties": false
+														]
 													}
 												]
 											},
@@ -2426,6 +4451,105 @@
 										"additionalProperties": false
 									}
 								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_oauth_availability"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"request": {
+										"type": "object",
+										"properties": {
+											"requirements": {
+												"readOnly": true,
+												"minItems": 1,
+												"maxItems": 256,
+												"type": "array",
+												"items": {
+													"type": "object",
+													"properties": {
+														"applicationId": {
+															"type": "string",
+															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+														},
+														"kind": {
+															"type": "string",
+															"const": "oauth-account-profile"
+														},
+														"minimumPermission": {
+															"type": "string",
+															"enum": ["read", "write"]
+														},
+														"serviceId": {
+															"type": "string",
+															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+														}
+													},
+													"required": ["applicationId", "kind", "minimumPermission", "serviceId"],
+													"additionalProperties": false
+												}
+											}
+										},
+										"required": ["requirements"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["callerContext", "request"],
+								"additionalProperties": false
 							}
 						},
 						"required": ["kind", "operation", "payload"],
@@ -4103,6 +6227,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -4153,6 +6280,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -4291,6 +6421,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -4341,6 +6474,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -4464,6 +6600,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -4614,6 +6753,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -4694,6 +6836,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -4833,6 +6978,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -4962,6 +7110,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -5042,6 +7193,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5181,6 +7335,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -5258,6 +7415,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5340,6 +7500,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5564,6 +7727,434 @@
 																		},
 																		"required": ["actionId", "result"],
 																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"actionId": {
+																				"type": "string",
+																				"enum": [
+																					"oauth_authorization.begin",
+																					"oauth_authorization.cancel",
+																					"oauth_authorization.list",
+																					"oauth_authorization.reauthorize",
+																					"oauth_authorization.revoke",
+																					"oauth_authorization.status"
+																				]
+																			},
+																			"result": {
+																				"oneOf": [
+																					{
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-list"
+																							},
+																							"profiles": {
+																								"readOnly": true,
+																								"type": "array",
+																								"items": {
+																									"type": "object",
+																									"properties": {
+																										"accountLabel": {
+																											"type": "string",
+																											"minLength": 1,
+																											"maxLength": 320
+																										},
+																										"accountProfileId": {
+																											"type": "string",
+																											"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																										},
+																										"applications": {
+																											"readOnly": true,
+																											"type": "array",
+																											"items": {
+																												"type": "object",
+																												"properties": {
+																													"applicationId": {
+																														"type": "string",
+																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																													},
+																													"grantedScopes": {
+																														"readOnly": true,
+																														"type": "array",
+																														"items": {
+																															"type": "string",
+																															"pattern": "^[\\u0021-\\u007e]{1,512}$"
+																														}
+																													},
+																													"lifecycle": {
+																														"oneOf": [
+																															{
+																																"type": "object",
+																																"properties": {
+																																	"kind": {
+																																		"type": "string",
+																																		"const": "active"
+																																	}
+																																},
+																																"required": ["kind"],
+																																"additionalProperties": false
+																															},
+																															{
+																																"type": "object",
+																																"properties": {
+																																	"failureClass": {
+																																		"type": "string",
+																																		"minLength": 1,
+																																		"maxLength": 128
+																																	},
+																																	"kind": {
+																																		"type": "string",
+																																		"const": "degraded"
+																																	},
+																																	"nextRefreshEligibleAt": {
+																																		"type": "string",
+																																		"format": "date-time",
+																																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																																	}
+																																},
+																																"required": [
+																																	"failureClass",
+																																	"kind",
+																																	"nextRefreshEligibleAt"
+																																],
+																																"additionalProperties": false
+																															},
+																															{
+																																"type": "object",
+																																"properties": {
+																																	"kind": {
+																																		"type": "string",
+																																		"const": "reauthorization-required"
+																																	},
+																																	"reason": {
+																																		"type": "string",
+																																		"enum": [
+																																			"invalid-grant",
+																																			"revoked",
+																																			"scope-insufficient",
+																																			"credential-corrupt"
+																																		]
+																																	}
+																																},
+																																"required": ["kind", "reason"],
+																																"additionalProperties": false
+																															}
+																														]
+																													}
+																												},
+																												"required": [
+																													"applicationId",
+																													"grantedScopes",
+																													"lifecycle"
+																												],
+																												"additionalProperties": false
+																											}
+																										},
+																										"authorizationOptions": {
+																											"readOnly": true,
+																											"minItems": 1,
+																											"type": "array",
+																											"items": {
+																												"type": "object",
+																												"properties": {
+																													"applicationId": {
+																														"type": "string",
+																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																													},
+																													"applicationLabel": {
+																														"type": "string",
+																														"minLength": 1,
+																														"maxLength": 320
+																													},
+																													"services": {
+																														"readOnly": true,
+																														"minItems": 1,
+																														"type": "array",
+																														"items": {
+																															"type": "object",
+																															"properties": {
+																																"maximumPermission": {
+																																	"type": "string",
+																																	"enum": ["read", "write"]
+																																},
+																																"serviceId": {
+																																	"type": "string",
+																																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																																},
+																																"serviceLabel": {
+																																	"type": "string",
+																																	"minLength": 1,
+																																	"maxLength": 320
+																																}
+																															},
+																															"required": [
+																																"maximumPermission",
+																																"serviceId",
+																																"serviceLabel"
+																															],
+																															"additionalProperties": false
+																														}
+																													}
+																												},
+																												"required": [
+																													"applicationId",
+																													"applicationLabel",
+																													"services"
+																												],
+																												"additionalProperties": false
+																											}
+																										},
+																										"kind": {
+																											"type": "string",
+																											"enum": [
+																												"unbound",
+																												"partially-enrolled",
+																												"enrolled"
+																											]
+																										}
+																									},
+																									"required": [
+																										"accountProfileId",
+																										"applications",
+																										"authorizationOptions",
+																										"kind"
+																									],
+																									"additionalProperties": false
+																								}
+																							}
+																						},
+																						"required": ["kind", "profiles"],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"authorizationUrl": {
+																								"type": "string",
+																								"format": "uri"
+																							},
+																							"expiresAt": {
+																								"type": "string",
+																								"format": "date-time",
+																								"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+																							},
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-begun"
+																							},
+																							"transactionId": {
+																								"type": "string",
+																								"pattern": "^[A-Za-z0-9_-]{32,256}$"
+																							}
+																						},
+																						"required": [
+																							"authorizationUrl",
+																							"expiresAt",
+																							"kind",
+																							"transactionId"
+																						],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-pending"
+																							},
+																							"transactionId": {
+																								"type": "string",
+																								"pattern": "^[A-Za-z0-9_-]{32,256}$"
+																							}
+																						},
+																						"required": ["kind", "transactionId"],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"accountLabel": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 320
+																							},
+																							"accountProfileId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																							},
+																							"applicationId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																							},
+																							"grantedScopes": {
+																								"readOnly": true,
+																								"type": "array",
+																								"items": {
+																									"type": "string",
+																									"pattern": "^[\\u0021-\\u007e]{1,512}$"
+																								}
+																							},
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-completed"
+																							}
+																						},
+																						"required": [
+																							"accountLabel",
+																							"accountProfileId",
+																							"applicationId",
+																							"grantedScopes",
+																							"kind"
+																						],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"failure": {
+																								"oneOf": [
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "authorization-denied"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "cancelled"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "consumed"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "expired"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "identity-mismatch"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "provider-unavailable"
+																											},
+																											"retryable": {
+																												"type": "boolean"
+																											}
+																										},
+																										"required": ["kind", "retryable"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "scope-insufficient"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "subject-mismatch"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "unavailable"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									}
+																								]
+																							},
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-failed"
+																							}
+																						},
+																						"required": ["failure", "kind"],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-cancelled"
+																							}
+																						},
+																						"required": ["kind"],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"kind": {
+																								"type": "string",
+																								"const": "authorization-revoked"
+																							}
+																						},
+																						"required": ["kind"],
+																						"additionalProperties": false
+																					}
+																				]
+																			}
+																		},
+																		"required": ["actionId", "result"],
+																		"additionalProperties": false
 																	}
 																]
 															},
@@ -5621,6 +8212,9 @@
 													}
 												]
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -5671,6 +8265,314 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_oauth_availability"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"type": "object",
+												"properties": {
+													"items": {
+														"readOnly": true,
+														"maxItems": 256,
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"availability": {
+																	"oneOf": [
+																		{
+																			"type": "object",
+																			"properties": {
+																				"accountProfiles": {
+																					"readOnly": true,
+																					"minItems": 1,
+																					"type": "array",
+																					"items": {
+																						"type": "object",
+																						"properties": {
+																							"accountLabel": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 320
+																							},
+																							"accountProfileId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																							}
+																						},
+																						"required": ["accountLabel", "accountProfileId"],
+																						"additionalProperties": false
+																					}
+																				},
+																				"kind": {
+																					"type": "string",
+																					"const": "ready"
+																				}
+																			},
+																			"required": ["accountProfiles", "kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "authorization-required"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "reauthorization-required"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "scope-insufficient"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "authorization-status-unavailable"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		}
+																	]
+																},
+																"requirement": {
+																	"type": "object",
+																	"properties": {
+																		"applicationId": {
+																			"type": "string",
+																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		},
+																		"kind": {
+																			"type": "string",
+																			"const": "oauth-account-profile"
+																		},
+																		"minimumPermission": {
+																			"type": "string",
+																			"enum": ["read", "write"]
+																		},
+																		"serviceId": {
+																			"type": "string",
+																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		}
+																	},
+																	"required": [
+																		"applicationId",
+																		"kind",
+																		"minimumPermission",
+																		"serviceId"
+																	],
+																	"additionalProperties": false
+																}
+															},
+															"required": ["availability", "requirement"],
+															"additionalProperties": false
+														}
+													}
+												},
+												"required": ["items"],
+												"additionalProperties": false
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "oauthAvailabilityBatch", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5798,6 +8700,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -5850,6 +8755,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -5975,6 +8883,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6025,6 +8936,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -6684,6 +9598,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6734,6 +9651,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -6897,6 +9817,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6947,6 +9870,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7297,6 +10223,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7347,6 +10276,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7488,6 +10420,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7538,6 +10473,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7663,6 +10601,9 @@
 											"controllerExecution": {
 												"not": {}
 											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7713,6 +10654,9 @@
 												"not": {}
 											},
 											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
 												"not": {}
 											},
 											"error": {
@@ -7824,6 +10768,7 @@
 			"tool_vm_binding_publish",
 			"tool_vm_binding_request",
 			"tool_portal_controller_execution",
+			"tool_portal_oauth_availability",
 			"tool_portal_approval_decide",
 			"tool_portal_admission_reserve",
 			"tool_portal_dispatch_arm",

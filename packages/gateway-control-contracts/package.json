@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/gateway-control-contracts",
-	"version": "0.0.145",
+	"version": "0.0.147",
 	"description": "Gateway control domain contracts for agent-vm Socket.IO sessions.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -39,6 +39,7 @@
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

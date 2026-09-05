@@ -417,6 +417,7 @@ function descriptorForRequest(props: {
 	const descriptor = props.action.descriptor;
 	return {
 		annotations: descriptor.annotations,
+		...(descriptor.description === undefined ? {} : { description: descriptor.description }),
 		...(props.includeJsonSchema && descriptor.inputSchema !== undefined
 			? { inputSchema: descriptor.inputSchema }
 			: {}),
@@ -426,6 +427,7 @@ function descriptorForRequest(props: {
 			? { outputSchema: descriptor.outputSchema }
 			: {}),
 		related: props.includeRelated ? descriptor.related : [],
+		...(descriptor.title === undefined ? {} : { title: descriptor.title }),
 		toolRef: descriptor.toolRef,
 		...(props.includeTypescriptHelper && descriptor.typescriptHelper !== undefined
 			? { typescriptHelper: descriptor.typescriptHelper }

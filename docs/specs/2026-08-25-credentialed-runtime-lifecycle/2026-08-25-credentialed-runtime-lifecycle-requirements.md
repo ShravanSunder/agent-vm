@@ -19,7 +19,7 @@ The separate [Specification](./2026-08-25-credentialed-runtime-lifecycle-specifi
 
 ## Governing sources
 
-- Owner-confirmed decisions from 2026-08-25 authorize per-agent Managed runtimes, independent per-call authorization, at most one active command with retryable busy rejection, fixed 15-minute idle retirement, agent-specific 1Password credential bindings, and Managed VM rather than controller-host execution.
+- Owner-confirmed decisions from 2026-08-25 authorize per-agent Managed runtimes, independent per-call authorization, at most one active command with retryable busy rejection, fixed 15-minute idle retirement, agent-specific 1Password credential bindings, and Managed VM rather than controller-host execution. The 2026-08-29 owner correction makes the per-agent boundary singular: one authenticated agent may have at most one current credentialed Managed VM in a zone, with no authored runtime identity or named runtime groups.
 - The existing Tool Portal agent-to-profile assignment and call-policy model remains the access-control foundation.
 - The existing controller Tool VM lifecycle is observational evidence that active-use tracking, compatibility checks, renewal, and idle retirement are viable. Its SSH, workspace, lease-request, and Tool VM authority are not inherited requirements for credentialed runtimes.
 - [2026-05-20 Credentialed Tool System](../../superpowers/plans/2026-05-20-credentialed-tool-system.md) is advisory historical evidence for warm credentialed runtimes and protected credential maintenance. Its storage, package, host-backend, and artifact proposals are not adopted here.
@@ -30,7 +30,7 @@ The separate [Specification](./2026-08-25-credentialed-runtime-lifecycle-specifi
 
 | ID | Affected class | Need and outcome | Priority | Authority |
 | --- | --- | --- | --- | --- |
-| U1 | Managed agent user | Related calls to the same credentialed CLI runtime should reuse one compatible live runtime instead of paying VM startup and credential setup for every call. | Must | Owner-authorized, 2026-08-25 |
+| U1 | Managed agent user | All compatible credentialed configured CLI calls for one authenticated agent should reuse that agent's one live credentialed Managed VM instead of paying VM startup and credential setup for every call. | Must | Owner-authorized, 2026-08-25; singular per-agent correction, 2026-08-29 |
 | U2 | Managed agent user | CLI authentication files and runtime-local state needed by consecutive calls should remain available while that agent's compatible runtime is retained. | Must | Owner-authorized, 2026-08-25 |
 | U3 | Deployment operator | The controller must own runtime creation, reuse, retirement, and destruction; Hermes, the model, and callers must receive no VM or runtime-lease authority. | Must | Owner-authorized, 2026-08-25 |
 | U4 | Security operator | Every call must independently satisfy current Tool Portal visibility, admission, approval, identity, argument, timeout, and cancellation policy. Runtime reuse must never reuse authorization. | Must | Owner-authorized, 2026-08-25; existing Tool Portal authority model |
@@ -41,8 +41,9 @@ The separate [Specification](./2026-08-25-credentialed-runtime-lifecycle-specifi
 | U9 | Security operator | A runtime that is stale, incompatible, revoked, unhealthy, ownership-ambiguous, or no longer contained must receive no new call and must be retired or fenced from access. | Must | Owner-authorized, 2026-08-25; existing controller lifecycle evidence |
 | U10 | Security operator | Durable authentication material must remain in the agent's configured 1Password binding and be sufficient to establish a fresh runtime; controller SQLite and runtime records must not become credential stores. | Must | Owner-authorized, 2026-08-25 |
 | U11 | Security operator | Credentialed broad CLI execution must remain inside a Managed VM rather than inherit the controller process's host filesystem and network authority. | Must | Owner-authorized, 2026-08-25 |
-| U12 | Maintainer | The incorrect one-shot lifecycle must be replaced directly without a compatibility target, second lease system, or preserved per-call mode unsupported by a real consumer. | Must | Owner-authorized hard-cutover preference, 2026-08-25 |
+| U12 | Maintainer | The incorrect one-shot and named-runtime lifecycle must be replaced directly without a compatibility target, second lease system, authored runtime selector, or preserved per-call mode unsupported by a real consumer. | Must | Owner-authorized hard-cutover preference, 2026-08-25; singular per-agent correction, 2026-08-29 |
 | U13 | Managed agent user | A runtime should start from an immutable image that already contains the configured CLI, use the normal fast rootfs/COW overlay while alive, and stop by discarding that overlay without per-runtime installation, checkpoint, or restoration. | Must | Owner-authorized, 2026-08-25 |
+| U14 | Security operator | A configured CLI credential projection must be one strict variant: read-only file materialization or host-side HTTP mediation. For mediation, the VM receives only opaque placeholders and raw credentials remain in controller-owned Gondolin mediation. Incompatible projections for one agent must fail configuration rather than create another runtime. | Must | Owner-authorized OAuth/API-key mediation and singular runtime correction, 2026-08-29 |
 
 ## Required outcomes
 
@@ -50,17 +51,17 @@ The separate [Specification](./2026-08-25-credentialed-runtime-lifecycle-specifi
 
 One Tool Portal RPC remains one independently authorized command and one result. Completing that RPC does not by itself destroy the compatible credentialed runtime that executed it.
 
-### O2 — Compatible runtimes are per agent
+### O2 — Exactly one current credentialed runtime slot exists per agent
 
-The controller creates or reuses a runtime for the authenticated agent and authored runtime identity. Several compatible Gog command families may share that runtime. A different agent receives a different runtime and runtime-local state, including when both agents use the same Tool Portal policy profile.
+The controller creates or reuses one credentialed runtime slot keyed only by zone and authenticated agent. Every compatible credentialed configured CLI operation for that agent shares the slot. A different agent receives a different runtime and runtime-local state, including when both agents use the same Tool Portal policy profile. Configuration and callers cannot create or select named runtime groups.
 
 ### O3 — Configuration is the access grant
 
-An agent may access a credentialed operation only when its controller-authenticated identity is declared, its assigned Tool Portal profile exposes the operation, current call policy admits it, and the agent has the required credential binding. Callers cannot select or override agent identity, profile, runtime identity, credential binding, or credential reference.
+An agent may access a credentialed operation only when its controller-authenticated identity is declared, its assigned Tool Portal profile exposes the operation, current call policy admits it, and the agent has the required credential binding. Callers cannot select or override agent identity, profile, credential binding, credential reference, or VM identity.
 
 ### O4 — Authorization remains per call
 
-Every call independently re-enters current policy and approval. A denied, pending, expired, cancelled, stale, or otherwise unadmitted call does not create a runtime, renew its idle period, register active execution, or dispatch a command.
+Every call independently re-enters current policy and approval. A denied, pending, expired, cancelled, stale-before-reservation, or otherwise unadmitted call does not create a runtime, renew its idle period, register active execution, or dispatch a command. A call invalidated during asynchronous provisioning may have created a provisional VM, but that VM is never published or executed and is immediately contained.
 
 ### O5 — One runtime admits one active command
 
@@ -78,7 +79,7 @@ The runtime becomes idle after its final active command reaches a terminal outco
 
 ### O8 — Invalidation retires access
 
-Changes to agent identity, authored runtime identity, image revision, authored credential-binding revision, runtime-shaping policy, zone/controller ownership, health, or containment make the prior runtime ineligible for new calls. A changed 1Password value takes effect on the next runtime creation; an operator explicitly retires the live runtime when immediate replacement is required. Credential revocation, operator retirement, zone stop/restart, and controller ownership loss retire or fence the affected runtime without granting adoption authority to a successor.
+Changes to agent identity, image revision, authored credential-binding revision, runtime-shaping policy, zone/controller ownership, health, or containment make the prior runtime ineligible for new calls. A changed 1Password value takes effect on the next runtime creation; an operator explicitly retires the live agent runtime when immediate replacement is required. Credential revocation, operator retirement, zone stop/restart, and controller ownership loss retire or fence the affected runtime without granting adoption authority to a successor.
 
 ### O9 — Managed VM containment is preserved
 
@@ -92,16 +93,20 @@ For credentialed Managed VM execution, `ephemeral` means controller-created, non
 
 A new runtime starts from a prepared immutable image containing the configured CLI and uses a writable rootfs/COW overlay for its live session. Retirement closes the VM and discards that overlay. No stopped agent runtime is checkpointed, restored, or used as durable credential state.
 
+### O12 — Credential projection is explicit and singleton-compatible
+
+Each agent runtime uses one compiled credential projection. File-backed operations share one identical binding/file/environment definition. HTTP-mediated operations share one identical placeholder/source/host definition. Raw mediated credentials never enter the VM. A projection disagreement fails configuration and never creates a second agent runtime.
+
 ## Boundary and non-goals
 
 - This correction extends configured CLI credential and lifecycle behavior; it does not change `controller_host`, `tool_vm_runner`, registered-action executors, or the existing Hermes approval presenter.
-- It does not expose SSH, shell, filesystem browsing, VM handles, lease handles, runtime selection, credential maintenance, or arbitrary process authority to the model or framework.
+- It does not expose SSH, shell, filesystem browsing, VM handles, lease handles, runtime selection or naming, credential maintenance, or arbitrary process authority to the model or framework.
 - It does not let callers select credential-discovery environment names or values. Those are trusted runtime-shaping configuration and can resolve only to the code-owned credential root or one configured credential file.
 - It does not create a second per-agent capability-authorization list. Existing agent-to-profile assignment remains the capability grant; agent-specific credential bindings select authentication material.
 - It does not make a Tool Portal profile imply shared authentication or a shared runtime between agents.
 - It does not store credential plaintext or encrypted credential blobs in controller SQLite, runtime records, approval records, or lifecycle ledgers.
 - It does not checkpoint or persist an agent runtime root filesystem or memory-backed credential surface. Provider image caching before agent credentials are materialized is not stopped-runtime state.
-- It does not require generic credential writeback, token rotation, interactive OAuth setup, artifact transfer, cross-command workflow composition, or persistence of disposable CLI caches.
+- It does not require generic credential-file writeback, artifact transfer, cross-command workflow composition, or persistence of disposable CLI caches. Provider-owned OAuth refresh/write-back remains a separate host-side authority and may supply HTTP mediation without entering the VM.
 - It does not queue concurrent same-runtime calls or re-resolve 1Password before every call. A retry is a new independently authorized Tool Portal call.
 - It assumes the configured 1Password material is sufficient to establish a fresh authenticated runtime. An authentication mode requiring runtime-mutated credentials to survive retirement requires a separate owner decision.
 - It does not add a host sandbox, host operating-system user, container layer, new service, new database, new approval system, or new external lease API.
@@ -109,22 +114,22 @@ A new runtime starts from a prepared immutable image containing the configured C
 
 ## Accepted complexity
 
-Accepted complexity is one agent-specific credential-binding extension to existing Tool Portal assignment, one bounded controller-authored credential-discovery environment mapping, one reusable lifecycle for the existing credentialed Managed VM target, one active-command slot per agent runtime with no queue, fixed 15-minute idle retirement, a prepared CLI image with a disposable rootfs/COW overlay that is never checkpointed, and reuse of existing controller authority and Managed VM capabilities.
+Accepted complexity is one strict file-binding or HTTP-mediation credential projection per compatible agent runtime definition, one code-owned credentialed runtime slot per zone and authenticated agent, one active-command slot per agent runtime with no queue, fixed 15-minute idle retirement, a prepared CLI image with a disposable rootfs/COW overlay that is never checkpointed, and reuse of existing controller authority, Gondolin mediation, and Managed VM capabilities.
 
-A second runtime target, shared-agent credential mode, configurable idle TTL, generic writeback system, credential database, external lease API, new presenter, host containment system, or compatibility path requires renewed owner approval.
+A second current credentialed runtime for one agent, shared-agent credential mode, configurable idle TTL, generic writeback system, credential database, external lease API, new presenter, host containment system, or compatibility path requires renewed owner approval.
 
 ## Outcome-level evidence
 
 Completion evidence must separately demonstrate:
 
 - an undeclared agent, an agent assigned a profile without the operation, an agent missing its credential binding, and a forged caller-supplied identity/binding/runtime value are rejected before runtime acquisition;
-- two different Gog operations for one agent and runtime identity reuse the same live Managed VM while receiving independent policy and approval decisions;
+- two different configured CLI operations for one agent reuse the same live Managed VM while receiving independent policy and approval decisions, without either operation declaring a runtime identity;
 - the same policy profile assigned to two agents requires separate agent bindings and produces different runtime identities, credential-materialization surfaces, and mutable runtime state;
 - a concurrent call to one busy runtime receives a retryable zero-effect result and is never dispatched later, while calls to different agent runtimes can proceed independently;
-- denied, pending, expired, cancelled, and stale calls neither create nor renew a runtime and produce zero command effects;
+- denied, pending, expired, cancelled, and stale-before-reservation calls neither create nor renew a runtime and produce zero command effects; invalidation during provisioning produces no reusable publication or guest execution and exactly contains any provisional VM;
 - runtime-local state written by one completed call is observable to the next compatible call but disappears with retirement;
 - active work prevents idle retirement, a call within 15 idle minutes reuses the runtime, and a call after retirement establishes a new runtime;
-- agent, runtime, image, authored credential binding, runtime-shaping policy, ownership, health, or containment incompatibility prevents reuse and retires or fences the prior runtime;
+- agent, image, authored credential binding, runtime-shaping policy, ownership, health, or containment incompatibility prevents reuse and retires or fences the prior runtime;
 - a fresh runtime resolves its agent-specific authentication from 1Password without reading credentials from controller SQLite or lifecycle records;
 - a real prepared generic CLI discovers the correct mounted credential through controller-authored environment projection while its mutable config, state, and cache remain on rootfs/COW;
 - Hermes and the model receive per-call results but no credential reference, credential value, VM identity, or runtime-lease authority;

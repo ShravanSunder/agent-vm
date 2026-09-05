@@ -21,11 +21,14 @@ function configuredOperation(options: {
 		executablePath: '/usr/local/bin/gog',
 		executionTarget: {
 			allowedHosts: ['www.googleapis.com'],
-			credentialBinding: 'google',
-			credentialEnvironment: {
-				[options.environmentName ?? 'GOG_DATA_DIR']: { kind: 'credential_root' },
+			credentialProjection: {
+				credentialBinding: 'google',
+				credentialEnvironment: {
+					[options.environmentName ?? 'GOG_DATA_DIR']: { kind: 'credential_root' },
+				},
+				credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
+				kind: 'file_binding',
 			},
-			credentialFiles: [{ path: 'sa-c3VuQGV4YW1wbGUuY29t.json', source: 'service-account' }],
 			environment: { kind: 'empty' },
 			guestCwd: '/work',
 			imageReference: encodeConfiguredCliPreparedImageIdentity({
@@ -34,7 +37,6 @@ function configuredOperation(options: {
 				schemaVersion: 1,
 			}),
 			kind: 'ephemeral_managed_vm',
-			runtimeId: 'google-workspace',
 		},
 		kind: 'configured_cli',
 		mandatoryArgvPrefix: [],
@@ -136,7 +138,9 @@ describe('credentialed runtime registry compiler', () => {
 			expect(serializedSafeConfig).not.toContain(forbiddenValue);
 		}
 		expect(compiled.effectiveToolPortalConfig.credentialedRuntimeRevision).toMatch(/^sha256:/u);
-		expect(resolveSunCalendar(compiled).credentialBinding.files['service-account']?.ref).toBe(
+		const projection = resolveSunCalendar(compiled).projection;
+		if (projection.kind !== 'file_binding') throw new Error('Expected file binding.');
+		expect(projection.credentialBinding.files['service-account']?.ref).toBe(
 			'op://agent-vm-testing/google/sun',
 		);
 	});
@@ -161,8 +165,171 @@ describe('credentialed runtime registry compiler', () => {
 			operationName: 'calendar_list',
 			profileId: 'google-enabled',
 		});
-		expect(gmail.groupRevision).toBe(calendar.groupRevision);
-		expect(moon.groupRevision).not.toBe(calendar.groupRevision);
+		expect(gmail.agentRuntimeRevision).toBe(calendar.agentRuntimeRevision);
+		expect(moon.agentRuntimeRevision).not.toBe(calendar.agentRuntimeRevision);
+	});
+
+	it('canonicalizes equivalent file mappings independently of authored order', () => {
+		const config = preparedConfig();
+		for (const agent of Object.values(config.agents)) {
+			const binding = agent.credentialBindings?.google;
+			if (binding === undefined) throw new Error('Missing Google binding.');
+			binding.files.client = {
+				ref: `op://agent-vm-testing/google/${agent === config.agents.sun ? 'sun' : 'moon'}-client`,
+				source: '1password',
+			};
+		}
+		const operations =
+			config.profiles['google-enabled']?.namespaces.google?.backend.kind === 'controller_execution'
+				? config.profiles['google-enabled'].namespaces.google.backend.operations
+				: undefined;
+		if (operations === undefined) throw new Error('Missing configured operations.');
+		const calendar = operations.calendar_list;
+		const gmail = operations.gmail_search;
+		if (
+			calendar?.kind !== 'configured_cli' ||
+			gmail?.kind !== 'configured_cli' ||
+			calendar.executionTarget.kind !== 'ephemeral_managed_vm' ||
+			gmail.executionTarget.kind !== 'ephemeral_managed_vm' ||
+			calendar.executionTarget.credentialProjection.kind !== 'file_binding' ||
+			gmail.executionTarget.credentialProjection.kind !== 'file_binding'
+		) {
+			throw new Error('Missing file-backed Managed VM operations.');
+		}
+		const mappings = [
+			{ path: 'client.json', source: 'client' },
+			{ path: 'service-account.json', source: 'service-account' },
+		];
+		calendar.executionTarget.credentialProjection.credentialFiles = mappings;
+		gmail.executionTarget.credentialProjection.credentialFiles = mappings.toReversed();
+
+		const compiled = compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' });
+		const calendarResolution = resolveSunCalendar(compiled);
+		const gmailResolution = compiled.registrySnapshot.resolve({
+			agentId: 'sun',
+			cohortRevision: compiled.registrySnapshot.cohortRevision,
+			namespaceId: 'google',
+			operationName: 'gmail_search',
+			profileId: 'google-enabled',
+		});
+		expect(gmailResolution.agentRuntimeRevision).toBe(calendarResolution.agentRuntimeRevision);
+	});
+
+	it('canonicalizes equivalent mediated host sets independently of authored order', () => {
+		const config = preparedConfig();
+		const operations =
+			config.profiles['google-enabled']?.namespaces.google?.backend.kind === 'controller_execution'
+				? config.profiles['google-enabled'].namespaces.google.backend.operations
+				: undefined;
+		if (operations === undefined) throw new Error('Missing configured operations.');
+		for (const [operationName, operation] of Object.entries(operations)) {
+			if (
+				operation.kind !== 'configured_cli' ||
+				operation.executionTarget.kind !== 'ephemeral_managed_vm'
+			) {
+				throw new Error('Missing configured Managed VM operation.');
+			}
+			operation.executionTarget.allowedHosts = ['oauth2.googleapis.com', 'www.googleapis.com'];
+			operation.executionTarget.credentialProjection = {
+				environment: {
+					GOOGLE_ACCESS_TOKEN: {
+						hosts:
+							operationName === 'calendar_list'
+								? ['www.googleapis.com', 'oauth2.googleapis.com']
+								: ['oauth2.googleapis.com', 'www.googleapis.com'],
+						secret: { name: 'GOOGLE_ACCESS_TOKEN', source: 'environment' },
+					},
+				},
+				kind: 'http_mediation',
+			};
+		}
+
+		const compiled = compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' });
+		const calendarResolution = resolveSunCalendar(compiled);
+		const gmailResolution = compiled.registrySnapshot.resolve({
+			agentId: 'sun',
+			cohortRevision: compiled.registrySnapshot.cohortRevision,
+			namespaceId: 'google',
+			operationName: 'gmail_search',
+			profileId: 'google-enabled',
+		});
+		expect(gmailResolution.agentRuntimeRevision).toBe(calendarResolution.agentRuntimeRevision);
+	});
+
+	it('canonicalizes equivalent allowed-host and inherited-environment sets', () => {
+		const config = preparedConfig();
+		const operations =
+			config.profiles['google-enabled']?.namespaces.google?.backend.kind === 'controller_execution'
+				? config.profiles['google-enabled'].namespaces.google.backend.operations
+				: undefined;
+		if (operations === undefined) throw new Error('Missing configured operations.');
+		const calendar = operations.calendar_list;
+		const gmail = operations.gmail_search;
+		if (
+			calendar?.kind !== 'configured_cli' ||
+			gmail?.kind !== 'configured_cli' ||
+			calendar.executionTarget.kind !== 'ephemeral_managed_vm' ||
+			gmail.executionTarget.kind !== 'ephemeral_managed_vm'
+		) {
+			throw new Error('Missing configured Managed VM operations.');
+		}
+		calendar.executionTarget.allowedHosts = ['www.googleapis.com', 'www.googleapis.com'];
+		gmail.executionTarget.allowedHosts = ['www.googleapis.com'];
+		calendar.executionTarget.environment = {
+			kind: 'inherit_allowlist',
+			names: ['PATH', 'HOME', 'PATH'],
+		};
+		gmail.executionTarget.environment = {
+			kind: 'inherit_allowlist',
+			names: ['HOME', 'PATH'],
+		};
+
+		const compiled = compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' });
+		const calendarResolution = resolveSunCalendar(compiled);
+		const gmailResolution = compiled.registrySnapshot.resolve({
+			agentId: 'sun',
+			cohortRevision: compiled.registrySnapshot.cohortRevision,
+			namespaceId: 'google',
+			operationName: 'gmail_search',
+			profileId: 'google-enabled',
+		});
+		expect(gmailResolution.agentRuntimeRevision).toBe(calendarResolution.agentRuntimeRevision);
+	});
+
+	it('retains mediated secret refs only in the controller projection', () => {
+		const config = preparedConfig();
+		const namespace = config.profiles['google-enabled']?.namespaces.google;
+		if (namespace?.backend.kind !== 'controller_execution') {
+			throw new Error('Missing controller execution namespace.');
+		}
+		for (const operation of Object.values(namespace.backend.operations)) {
+			if (
+				operation.kind !== 'configured_cli' ||
+				operation.executionTarget.kind !== 'ephemeral_managed_vm'
+			) {
+				throw new Error('Missing configured Managed VM operation.');
+			}
+			operation.executionTarget.credentialProjection = {
+				environment: {
+					GOOGLE_PLACES_API_KEY: {
+						hosts: ['www.googleapis.com'],
+						secret: {
+							ref: 'op://agent-vm-testing/google/places',
+							source: '1password',
+						},
+					},
+				},
+				kind: 'http_mediation',
+			};
+		}
+		const compiled = compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' });
+		const projection = resolveSunCalendar(compiled).projection;
+		if (projection.kind !== 'http_mediation') throw new Error('Expected HTTP mediation.');
+		expect(projection.environment.GOOGLE_PLACES_API_KEY?.secret).toEqual({
+			ref: 'op://agent-vm-testing/google/places',
+			source: '1password',
+		});
+		expect(JSON.stringify(compiled.effectiveToolPortalConfig)).not.toContain('google/places');
 	});
 
 	it('excludes per-call policy from group compatibility', () => {
@@ -183,7 +350,9 @@ describe('credentialed runtime registry compiler', () => {
 			preparedConfig: secondConfig,
 			zoneId: 'zone-a',
 		});
-		expect(resolveSunCalendar(second).groupRevision).toBe(resolveSunCalendar(first).groupRevision);
+		expect(resolveSunCalendar(second).agentRuntimeRevision).toBe(
+			resolveSunCalendar(first).agentRuntimeRevision,
+		);
 		expect(second.registrySnapshot.cohortRevision).not.toBe(first.registrySnapshot.cohortRevision);
 	});
 
@@ -197,7 +366,9 @@ describe('credentialed runtime registry compiler', () => {
 		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
 			throw new Error('Expected Managed VM operation.');
 		}
-		operation.executionTarget.credentialEnvironment = {
+		const projection = operation.executionTarget.credentialProjection;
+		if (projection.kind !== 'file_binding') throw new Error('Expected file binding.');
+		projection.credentialEnvironment = {
 			GOOGLE_APPLICATION_CREDENTIALS: {
 				kind: 'credential_file',
 				source: 'service-account',
@@ -205,7 +376,42 @@ describe('credentialed runtime registry compiler', () => {
 		};
 		expect(() =>
 			compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' }),
-		).toThrow('conflicting runtime-shaping policy');
+		).toThrow('conflicting VM-shaping policy');
+	});
+
+	it('excludes unreachable operations from singleton compatibility and registry authority', () => {
+		const config = preparedConfig();
+		const namespace = config.profiles['google-enabled']?.namespaces.google;
+		if (namespace?.backend.kind !== 'controller_execution') {
+			throw new Error('Missing controller execution namespace.');
+		}
+		const hiddenOperation = namespace.backend.operations.gmail_search;
+		if (
+			hiddenOperation?.kind !== 'configured_cli' ||
+			hiddenOperation.executionTarget.kind !== 'ephemeral_managed_vm'
+		) {
+			throw new Error('Missing credentialed operation.');
+		}
+		hiddenOperation.executionTarget.allowedHosts = ['incompatible.example.com'];
+		if (namespace.tools.allow === '*') throw new Error('Expected explicit tool selector.');
+		namespace.tools.allow = namespace.tools.allow.filter((name) => name !== 'gmail_search');
+		if (namespace.calls.withoutApproval.allow === '*') {
+			throw new Error('Expected explicit call selector.');
+		}
+		namespace.calls.withoutApproval.allow = namespace.calls.withoutApproval.allow.filter(
+			(name) => name !== 'gmail_search',
+		);
+
+		const compiled = compileCredentialedRuntimeConfig({ preparedConfig: config, zoneId: 'zone-a' });
+		expect(() =>
+			compiled.registrySnapshot.resolve({
+				agentId: 'sun',
+				cohortRevision: compiled.registrySnapshot.cohortRevision,
+				namespaceId: 'google',
+				operationName: 'gmail_search',
+				profileId: 'google-enabled',
+			}),
+		).toThrow('denied');
 	});
 
 	it('publishes, replaces, and withdraws exact per-zone cohorts', () => {

@@ -1,4 +1,5 @@
 import {
+	controllerConfiguredCliOperationSchema,
 	createGatewayRuntimeManagedToolPortalConfig,
 	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
@@ -23,12 +24,96 @@ const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
 const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_CONTROLLER_RPC';
+const quickOAuthConfiguredCliOperation = controllerConfiguredCliOperationSchema.parse({
+	authorization: {
+		kind: 'oauth_account_profile',
+		rules: [
+			{
+				match: { flags: [], path: ['gmail', 'search'] },
+				requirement: {
+					applicationId: 'gmail-app',
+					kind: 'oauth',
+					minimumPermission: 'read',
+					serviceId: 'gmail',
+				},
+			},
+		],
+	},
+	calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
+	commands: [{ flagRules: [], path: ['gmail', 'search'] }],
+	deniedPatterns: [],
+	executablePath: '/usr/local/bin/gog',
+	executionTarget: {
+		allowedHosts: ['gmail.googleapis.com'],
+		credentialProjection: {
+			environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
+			kind: 'http_mediation',
+		},
+		environment: { kind: 'empty' },
+		guestCwd: '/work',
+		imageReference: '/images/gog',
+		kind: 'ephemeral_managed_vm',
+	},
+	kind: 'configured_cli',
+	mandatoryArgvPrefix: [],
+	output: {
+		modelVisibleStderr: 'none',
+		overflow: 'truncate',
+		stderrMaxBytes: 1024,
+		stdoutMaxBytes: 1024,
+	},
+	safeHelp: 'Search Gmail through an assigned account profile.',
+	stdin: { kind: 'none' },
+	timeout: { kind: 'quick' },
+});
 const toolPortalConfig = {
 	agents: { 'agent-a': { profile: 'profile-a' } },
 	mode: 'managed',
 	profiles: {
 		'profile-a': {
 			namespaces: {
+				oauth_authorization: {
+					discovery: {
+						summary: 'Set up and inspect account authorization.',
+					},
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							begin: { kind: 'registered_action' },
+							cancel: { kind: 'registered_action' },
+							list: { kind: 'registered_action' },
+							reauthorize: { kind: 'registered_action' },
+							revoke: { kind: 'registered_action' },
+							status: { kind: 'registered_action' },
+						},
+					},
+					calls: {
+						requiresApproval: { allow: ['reauthorize', 'revoke'], deny: [] },
+						withoutApproval: {
+							allow: ['begin', 'cancel', 'list', 'status'],
+							deny: [],
+						},
+					},
+					tools: { allow: '*', deny: [] },
+				},
+				oauth_cli: {
+					discovery: { summary: 'Use account-scoped Google CLI capabilities.' },
+					backend: {
+						kind: 'controller_execution',
+						operations: {
+							gog_open: {
+								...quickOAuthConfiguredCliOperation,
+								timeout: { kind: 'open' },
+							},
+							gog_quick: quickOAuthConfiguredCliOperation,
+						},
+					},
+					calls: {
+						requiresApproval: { allow: [], deny: [] },
+						withoutApproval: { allow: ['gog_open', 'gog_quick'], deny: [] },
+					},
+					tools: { allow: ['gog_open', 'gog_quick'], deny: [] },
+				},
 				custom_controller: {
 					discovery: { summary: namespaceSummaryPayloadCanary },
 					backend: {
@@ -241,6 +326,142 @@ function createFixture(
 }
 
 describe('Gateway Control controller-execution adapter', () => {
+	it('describes OAuth configured CLI account-profile inputs without changing ordinary CLI summaries', async () => {
+		const fixture = createFixture();
+		const listed = await fixture.backend.list(
+			{
+				requests: [
+					{
+						id: 'configured-cli-summaries',
+						limit: 100,
+						namespaces: ['oauth_cli', 'controller_execution'],
+					},
+				],
+			},
+			callOptions(),
+		);
+		const listedItem = listed.items[0];
+		if (listedItem?.status !== 'ok') throw new Error('Expected configured CLI list result.');
+		const summaries = new Map(listedItem.value.tools.map((tool) => [tool.toolRef, tool]));
+
+		expect(summaries.get('oauth_cli.gog_quick')?.input).toEqual({
+			optional: ['stdin'],
+			propertyCount: 4,
+			required: ['accountProfile', 'argv', 'reason'],
+			type: 'object',
+		});
+		expect(summaries.get('oauth_cli.gog_open')?.input).toEqual({
+			optional: ['stdin', 'timeoutMs'],
+			propertyCount: 5,
+			required: ['accountProfile', 'argv', 'reason'],
+			type: 'object',
+		});
+		expect(summaries.get('controller_execution.inspect_host')?.input).toEqual({
+			optional: ['stdin'],
+			propertyCount: 3,
+			required: ['argv', 'reason'],
+			type: 'object',
+		});
+	});
+
+	it('publishes short OAuth tool names and carries the internal action id over Gateway Control', async () => {
+		const fixture = createFixture({
+			sendCommand: async () => ({
+				acceptedSession,
+				messageId: responseMessageId,
+				response: {
+					kind: 'command_result',
+					operation: 'tool_portal_controller_execution',
+					payload: {
+						controllerExecution: {
+							action: {
+								actionId: 'oauth_authorization.list',
+								result: { kind: 'authorization-list', profiles: [] },
+							},
+							kind: 'registered_action',
+						},
+						responseToMessageId: responseMessageId,
+						result: 'ok',
+					},
+				},
+			}),
+		});
+
+		const listed = await fixture.backend.list(
+			{ requests: [{ id: 'oauth-tools', limit: 100, namespaces: ['oauth_authorization'] }] },
+			callOptions(),
+		);
+		const listedItem = listed.items[0];
+		if (listedItem?.status !== 'ok') throw new Error('Expected OAuth list result.');
+		expect(listedItem.value.tools.map((item) => item.name)).toEqual([
+			'begin',
+			'cancel',
+			'list',
+			'reauthorize',
+			'revoke',
+			'status',
+		]);
+		const described = await fixture.backend.describe(
+			{
+				requests: [
+					{
+						id: 'oauth-list-description',
+						includeJsonSchema: true,
+						includeRelated: true,
+						includeTypescriptHelper: false,
+						includeZod: false,
+						refs: ['oauth_authorization.list'],
+					},
+				],
+			},
+			callOptions(),
+		);
+		const describedItem = described.items[0];
+		if (describedItem?.status !== 'ok') throw new Error('Expected OAuth describe result.');
+		expect(describedItem.value.tools[0]).toMatchObject({
+			description:
+				'List Google account profiles, configured application and service IDs, maximum permissions, and safe authorization status. Build begin suggestedSelections as applicationId → serviceId → none|read|write.',
+			title: 'List Google authorizations',
+		});
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{ arguments: {}, id: 'oauth-list', name: 'list', namespace: 'oauth_authorization' },
+				],
+			},
+			callOptions(),
+		);
+
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						action: expect.objectContaining({
+							actionId: 'oauth_authorization.list',
+							authority: expect.objectContaining({ kind: 'without_approval' }),
+							correlation: expect.objectContaining({
+								capability: { name: 'list', namespace: 'oauth_authorization' },
+							}),
+							invocation: expect.objectContaining({ callId: 'oauth-list' }),
+						}),
+					}),
+				}),
+			}),
+		);
+		expect(result).toMatchObject({
+			items: [
+				{
+					status: 'ok',
+					value: {
+						action: { actionId: 'oauth_authorization.list' },
+						kind: 'registered_action',
+					},
+				},
+			],
+			ok: true,
+		});
+	});
+
 	it('registers the caller and routes workspace_git_push through the existing narrow command', async () => {
 		const fixture = createFixture();
 

@@ -5,7 +5,7 @@
 - [Requirements](./2026-08-25-credentialed-runtime-lifecycle-requirements.md)
 - [Specification](./2026-08-25-credentialed-runtime-lifecycle-specification.md)
 
-The fixed outcome is one controller-owned credentialed Managed VM runtime per authenticated agent and authored runtime identity. Every Tool Portal call remains independently authorized. One live command occupies the runtime; a concurrent same-runtime call returns retryable `runtime_busy`. A successful runtime remains reusable until 15 idle minutes elapse. Credential files are resolved from the agent's 1Password-backed file binding into a read-only finalizable memory mount; ordinary CLI working state remains in disposable rootfs/COW. Retirement discards both.
+The fixed outcome is exactly one current controller-owned credentialed Managed VM runtime per zone and authenticated agent. No operation or caller names or selects another runtime. Every Tool Portal call remains independently authorized. One live command occupies the runtime; a concurrent same-agent runtime call returns retryable `runtime_busy`. A successful runtime remains reusable until 15 idle minutes elapse. Credential files are resolved from the agent's 1Password-backed file binding into a read-only finalizable memory mount; ordinary CLI working state remains in disposable rootfs/COW. Retirement discards both.
 
 This design changes no `controller_host`, registered-action executor, Hermes approval presenter, or `tool_vm_runner` strict-SSH behavior. It adds no external lease API, shared-agent runtime, queue, credential database, writeback path, checkpoint, or compatibility mode.
 
@@ -13,7 +13,7 @@ This design changes no `controller_host`, registered-action executor, Hermes app
 
 | Current owner | Current behavior | Required delta |
 | --- | --- | --- |
-| Managed Tool Portal config contracts | An agent assignment contains only `profile`; configured `ephemeral_managed_vm` is uncredentialed and operation-scoped. | Add controller-only agent credential file bindings and runtime-group/file-mapping target policy; safe projections omit every binding and path. |
+| Managed Tool Portal config contracts | An agent assignment contains only `profile`; configured `ephemeral_managed_vm` carries an authored `runtimeId`. | Add controller-only agent credential file bindings and file-mapping target policy, remove `runtimeId`, and reject incompatible credentialed targets reachable by one agent; safe projections omit every binding and path. |
 | Effective Tool Portal materializer and Gateway zone orchestrator | Persists and atomically replaces a complete effective Tool Portal generation, while the zone orchestrator owns generation activation and replacement. | Produce a controller-only credential/runtime registry snapshot beside the persisted Gateway-safe generation, then publish or withdraw that snapshot through one per-zone controller registry publisher. Never persist credential refs in effective artifacts. |
 | Controller execution authorization | Derives the trusted agent/profile, current operation, approval/direct authority, binding revision, and per-call fingerprint. | Return the controller-only credentialed runtime resolution context beside the existing authorized operation. Keep per-call authority unchanged. |
 | Configured Managed VM executor | Revalidates, creates one operation ledger entry, creates one VM, executes once, proves containment, and closes. | Acquire a per-agent runtime command slot, execute on a retained VM, and complete/release the active slot without closing a healthy compatible runtime. |
@@ -67,18 +67,19 @@ Revisit generalizing a shared lease core only if a third controller-local reusab
 authored tool-portal.config.jsonc
   agents.<agent>.credentialBindings.files ── 1Password refs
   configured_cli.executionTarget
-    runtimeId + credentialBinding + credentialFiles
-    credentialEnvironment
+    credentialBinding + credentialFiles + credentialEnvironment
+    no runtime name or selector
                            │
                            ▼
 Credentialed Runtime Config Compiler
-  validates agent bindings, file maps, credential environment, runtime groups
-  computes runtime-group revision
+  validates agent bindings, file maps, credential environment
+  validates one compatible VM-shaping definition per agent projection
+  computes agent-runtime revision
            ┌───────────────┴─────────────────┐
            ▼                                 ▼
 controller-only registry              Gateway-safe projection
   binding refs + file maps             profile + catalog/call policy
-  runtime-group authority              no refs/paths/runtime identity
+  agent-runtime authority              no refs/paths/runtime selector
            │                                 │
            └──── cohort publisher ───────────┘
                     activate only when both revisions match
@@ -90,23 +91,23 @@ controller current-call authorization
                            │
                            ▼
 Credentialed Runtime Lease Manager
-  key: zone + agent + runtimeId
+  key: zone + authenticated agent
   lock: one lifecycle/active-slot mutation at a time
   create | reuse | busy | retire
            │
       create only
            ▼
-Credential File Materializer
-  resolveAll(1Password refs)
-  validate bytes and relative paths
-  finalize read-only memory mount before VM start
+Credential Projection Owner
+  file_binding: resolve 1Password refs and finalize read-only memory mount
+  http_mediation: resolve host-side raw value and generate VM placeholder
            │
            ▼
 retained Managed VM
   prepared image with CLI
   rootfs/COW working state
-  /run/agent-vm/credentials read-only memory mount
-  no SSH, Tool VM lease, TCP hosts, mediation, or host mounts
+  optional /run/agent-vm/credentials read-only memory mount
+  optional opaque mediated placeholders
+  no SSH, Tool VM lease, TCP hosts, or host mounts
            │
            ▼
 one direct argv command
@@ -119,16 +120,16 @@ one direct argv command
 
 | Component | Sole ownership | Consumers | Reason to change |
 | --- | --- | --- | --- |
-| Credentialed Runtime Config Compiler | Agent binding validation, runtime-group membership, file-map and credential-environment validation, controller-only group revision, and safe projection omission | Effective-config materializer, controller registry, semantic revision owner | Authored credential/runtime contract changes. |
+| Credentialed Runtime Config Compiler | Agent binding validation, file-map and credential-environment validation, one compatible VM-shaping definition per agent projection, controller-only agent-runtime revision, and safe projection omission | Effective-config materializer, controller registry, semantic revision owner | Authored credential/runtime contract changes. |
 | Controller Credentialed Runtime Registry Publisher | Per-zone activation and withdrawal of one immutable controller-only registry snapshot bound to the same safe semantic cohort | Gateway zone orchestration, controller authorization | Effective generation startup, replacement, refresh, or zone stop behavior changes. |
-| Controller Credentialed Runtime Registry | Current atomic mapping from agent/profile/operation to runtime group, credential discovery paths, and unresolved 1Password file refs | Controller authorization and runtime manager | Current controller-only policy generation changes. |
-| Credential File Materializer | Batched secret resolution, UTF-8/size validation, logical-name to relative-path mapping, fixed permissions, and pre-start finalization | Runtime manager | Credential file contract or materialization limits change. |
+| Controller Credentialed Runtime Registry | Current atomic mapping from agent/profile/operation to the agent's singleton runtime definition, credential discovery paths, and unresolved 1Password file refs | Controller authorization and runtime manager | Current controller-only policy generation changes. |
+| Credential Projection Owner | File binding resolution/finalization or host-side mediated-source resolution/placeholder generation, with raw-value containment | Runtime manager and Managed VM factory | Credential projection variants or materialization limits change. |
 | Credentialed Runtime Lease Manager | Per-key lock, compatible runtime map, active-command slot, creation/reuse/busy/retirement, idle timestamps, and shutdown | Configured Managed VM executor, idle reaper, operator retirement | Reusable runtime lifecycle changes. |
 | Credentialed Runtime Record Store | Non-secret VM/process/parent identity and retirement evidence needed for crash cleanup | Runtime manager and controller startup recovery | Durable cleanup evidence schema changes. |
 | Credentialed Managed VM Factory | Code-owned Managed VM request and retained handle | Runtime manager | Image, resources, mount, or containment construction changes. |
 | Configured Managed VM Command Executor | Per-call final authorization, direct argv/I/O/timeout execution, result projection, and runtime completion outcome | Controller execution dispatcher | Configured command behavior changes. |
 | Credentialed Runtime Idle Reaper | Periodic expired-candidate selection using the existing cutoff-safe release contract | Runtime manager | Reaper cadence or generic idle selection changes. |
-| Operator Retirement Adapter | Authenticated zone/agent/runtime retirement request and bounded result | Controller CLI/operations | Operator recovery surface changes. |
+| Operator Retirement Adapter | Authenticated zone/agent retirement request and bounded result | Controller CLI/operations | Operator recovery surface changes. |
 | Existing Controller Approval Ledger | Exact call intent, decision, reservation, and at-most-one dispatch arm | Controller authorization | Intentionally unchanged. |
 | Existing Tool VM Lease Manager | Leased Tool VM SSH/workspace/TCP lifecycle | `tool_vm_runner` only | Intentionally unchanged. |
 
@@ -143,7 +144,7 @@ config contracts
           → controller authorization
               → command executor
                   → runtime lease manager
-                      → credential materializer
+                      → credential projection owner
                       → Managed VM factory/provider
                       → runtime record store
 
@@ -152,15 +153,15 @@ idle reaper/operator adapter → runtime lease manager
 
 Forbidden edges:
 
-- Gateway/model input to agent id, credential binding/ref, file path, runtime id, runtime handle, or lease authority;
+- Gateway/model input to agent id, credential binding/ref, file path, runtime name/id, runtime handle, or lease authority;
 - Gateway-safe projection or persisted effective config to credential refs or credential file paths;
 - controller authorization combining a persisted safe cohort with a different controller-registry cohort;
 - credentialed runtime manager to Tool VM lease manager, TCP pool, SSH client, workspace/Git roots, Tool VM active-use RPC, or Tool VM artifacts;
 - Tool VM manager to credentialed runtime registry or credential memory mount;
 - command executor directly creating/closing VMs or mutating runtime-map state;
-- credential materializer writing rootfs/COW, controller SQLite, runtime records, logs, or results;
+- credential projection owner writing raw values to rootfs/COW, controller SQLite, runtime records, logs, or results;
 - runtime record store becoming current in-process runtime authority or retaining credential bytes;
-- Managed VM credentials entering environment, mediation, image layers, checkpoint, or host-directory mounts.
+- Raw Managed VM credentials entering environment, image layers, checkpoint, or host-directory mounts; HTTP-mediated variants may enter only host-side Gondolin mediation while the VM receives placeholders.
 
 ## Configuration compilation and authority separation
 
@@ -182,6 +183,18 @@ interface CredentialFileMappingConfig {
 type CredentialEnvironmentValueConfig =
   | { readonly kind: 'credential_root' }
   | { readonly kind: 'credential_file'; readonly source: string }
+
+type CredentialProjectionConfig =
+  | {
+      readonly kind: 'file_binding'
+      readonly credentialBinding: string
+      readonly credentialFiles: readonly CredentialFileMappingConfig[]
+      readonly credentialEnvironment: Readonly<Record<string, CredentialEnvironmentValueConfig>>
+    }
+  | {
+      readonly kind: 'http_mediation'
+      readonly environment: Readonly<Record<string, MediatedCredentialSourceConfig>>
+    }
 ```
 
 The credentialed target extends the existing `ephemeral_managed_vm` variant with:
@@ -189,19 +202,16 @@ The credentialed target extends the existing `ephemeral_managed_vm` variant with
 ```ts
 interface CredentialedManagedVmTargetConfig {
   readonly kind: 'ephemeral_managed_vm'
-  readonly runtimeId: string
-  readonly credentialBinding: string
-  readonly credentialFiles: readonly CredentialFileMappingConfig[]
-  readonly credentialEnvironment: Readonly<Record<string, CredentialEnvironmentValueConfig>>
+  readonly credentialProjection: CredentialProjectionConfig
   // existing imageReference, guestCwd, environment, allowedHosts remain
 }
 ```
 
 The compiler performs four distinct operations:
 
-1. Validate every agent binding, target file map, and credential-environment entry against the Specification bounds. Reject credential-file sources without exactly one file mapping and names that overlap ordinary inherited environment names.
-2. Resolve each profile's operations into runtime groups by authored `runtimeId` and reject conflicting runtime-shaping fields.
-3. Compute one canonical runtime-group revision from image fingerprint, rootfs/resources/mount policy, allowed hosts, VM-level environment, credential root, binding name, authored binding structure, file map, and credential-environment mapping. Per-call-only policy remains outside this revision.
+1. Validate each strict projection. File bindings retain their file-map/environment rules. HTTP mediation validates environment names, source variants, and exact non-empty host policy while excluding raw values from portable config.
+2. Resolve every agent's assigned profile to one credentialed runtime group and reject conflicting runtime-shaping fields across any reachable credentialed operations. A conflict fails configuration rather than creating another runtime.
+3. Compute one canonical agent-runtime revision from image fingerprint, rootfs/resources/mount policy, allowed hosts, VM-level environment, projection kind, and the projection's non-secret binding/file or mediation/source/revision material. Per-call-only policy remains outside this revision.
 4. Produce two outputs from source data rather than redacting one object:
    - a controller-only in-memory registry containing unresolved SecretRefs and group authority;
    - the existing persisted/Gateway-safe effective Tool Portal configuration containing only agent profile assignment and safe controller-execution projection.
@@ -217,12 +227,19 @@ Credential refs never enter the atomic effective-config files. Controller restar
 ```ts
 interface CredentialedRuntimeResolution {
   readonly agentId: string
-  readonly credentialBinding: ResolvedCredentialBindingDefinition
-  readonly fileMappings: readonly CredentialFileMappingConfig[]
-  readonly groupRevision: string
-  readonly credentialEnvironment: Readonly<Record<string, ResolvedCredentialEnvironmentValue>>
+  readonly agentRuntimeRevision: string
+  readonly credentialProjection:
+    | {
+        readonly kind: 'file_binding'
+        readonly credentialBinding: ResolvedCredentialBindingDefinition
+        readonly fileMappings: readonly CredentialFileMappingConfig[]
+        readonly environment: Readonly<Record<string, ResolvedCredentialEnvironmentValue>>
+      }
+    | {
+        readonly kind: 'http_mediation'
+        readonly environment: Readonly<Record<string, ResolvedMediatedCredentialSource>>
+      }
   readonly profileId: string
-  readonly runtimeId: string
   readonly target: NormalizedCredentialedManagedVmTarget
 }
 
@@ -240,11 +257,11 @@ interface ControllerCredentialedRuntimeRegistry {
 
 The existing controller authorization result gains the trusted `agentId`, `profileId`, and `CredentialedRuntimeResolution`. None enters Gateway Control input or portable results.
 
-## Credential materialization
+## Credential projection
 
-The factory declares exactly one read-only finalizable memory mount at the code-owned guest path `/run/agent-vm/credentials`. Before VM start, the materializer:
+For `file_binding`, the factory declares exactly one read-only finalizable memory mount at the code-owned guest path `/run/agent-vm/credentials`. Before VM start, the materializer:
 
-1. Selects only sources referenced by the runtime group's file map.
+1. Selects only sources referenced by the agent runtime's file map.
 2. Calls the existing `SecretResolver.resolveAll` once for VM creation.
 3. Validates every resolved string and total byte count.
 4. Converts strings to UTF-8 bytes and maps them to canonical relative paths.
@@ -258,19 +275,23 @@ Materialization failure poisons creation: the VM is closed or exactly terminated
 
 The controller retains only the authored binding/group revision. It does not fingerprint secret bytes. A changed 1Password value behind an unchanged ref is observed at the next VM creation. The operator retirement adapter forces that creation boundary when immediate replacement is needed.
 
+For `http_mediation`, no credential mount is created. After the manager reserves the agent's singleton slot, the projection owner resolves each source to `{ placeholder, rawValue, hosts, materialRevision }`. The Managed VM request places placeholders in the configured environment and passes raw values plus exact hosts only through `mediatedSecrets` to Gondolin. Raw values are cleared from controller-owned byte arrays after VM construction as far as JavaScript permits and never enter portable configuration, lifecycle records, logs, or VM-visible data.
+
+The agent-runtime revision binds projection kind, source identity, environment name, host set, and provider material revision. File and mediated projections cannot share one agent runtime definition; configuration rejects mixed reachable operations rather than opening a second slot.
+
 ## Runtime identity and lifecycle state
 
 Runtime lookup key:
 
 ```text
-zoneId + authenticated agentId + authored runtimeId
+zoneId + authenticated agentId
 ```
 
 Compatibility authority additionally binds:
 
 ```text
 controller epoch + parent Gateway epoch + stable principal
-+ controller registry cohort + runtime-group revision
++ controller registry cohort + agent-runtime revision
 ```
 
 Controller-only live lease:
@@ -279,12 +300,11 @@ Controller-only live lease:
 interface CredentialedRuntimeLease {
   readonly agentId: string
   readonly createdAtMs: number
-  readonly groupRevision: string
+  readonly agentRuntimeRevision: string
   readonly id: string
   readonly lastUsedAtMs: number
   readonly parentGateway: GatewayEpochIdentity
   readonly processIdentity: ManagedVmProcessIdentity
-  readonly runtimeId: string
   readonly stablePrincipal: GatewayStablePrincipalDigest
   readonly vm: ManagedVm
   readonly zoneId: string
@@ -313,7 +333,7 @@ Only `current-idle` may be reused. No runtime state is exported to Gateway or mo
 
 The record store reuses `createCrashDurableRecordStore` and one strict versioned discriminated union. It does not reuse the one-shot operation-record schema and introduces no new database. Its canonical home is `controllerStateDir/zones/<zoneId>/credentialed-runtimes/<recordId>.json`, resolved by the existing controller state-record path owner. The directory is host-controller-only, never VM-mounted, rebuild-independent, and excluded from encrypted zone-state backups under the existing storage model. Zone cleanup contains every credentialed runtime record before removing the parent Gateway record; a record is deleted only after containment is proven.
 
-Every variant contains `recordVersion`, monotonic `generation`, controller/Gateway epochs, zone id, agent id, stable principal, runtime id, group revision, record id, and bounded timestamps. Credential refs, values, file contents, secret fingerprints, argv, stdin, and output are forbidden.
+Every variant contains `recordVersion`, monotonic `generation`, controller/Gateway epochs, zone id, agent id, stable principal, agent-runtime revision, record id, and bounded timestamps. Credential refs, values, file contents, secret fingerprints, argv, stdin, and output are forbidden.
 
 ```ts
 type CredentialedRuntimeRecord =
@@ -407,13 +427,16 @@ type AcquireCredentialedRuntimeCommandResult =
   | { readonly kind: 'owner-unsafe'; readonly reason: string }
 ```
 
-The executor supplies trusted current resolution plus an async final-authorization callback. Under the runtime-key lock, the manager:
+The executor supplies trusted current resolution, an async credential-resolution callback, and an async final-authorization callback. Under the runtime-key lock, the manager first:
 
-- retires incompatible or expired idle predecessors;
-- returns `busy` when a compatible runtime is active;
-- creates a runtime when absent;
-- invokes final authorization after all asynchronous creation/materialization/start work and immediately before assigning the active slot;
-- atomically assigns the active slot and returns a controller-only command handle.
+- returns `busy` when the agent slot is active or already reserved, before credential refresh/decryption/write-back or retirement;
+- reserves the slot for the admitted call;
+- retires an incompatible or expired idle predecessor only while holding that reservation;
+- invokes credential resolution and creates a runtime when absent;
+- invokes final authorization after all asynchronous resolution/creation/materialization/start work and immediately before assigning the active command;
+- atomically converts the reservation into the active slot and returns a controller-only command handle.
+
+Failure before guest dispatch releases the reservation after containment. If the call becomes stale during provisioning, a provisional VM may exist, but it is never published or executed and is exactly retired before the slot is released.
 
 The command handle exposes only `exec` and `complete`; it does not expose a public lease id, raw VM handle, credentials, or lifecycle mutation.
 
@@ -442,14 +465,13 @@ agent-vm controller credential-runtime retire
   --config <system-config>
   --zone <zoneId>
   --agent <agentId>
-  --runtime <runtimeId>
   [--force]
 ```
 
 The CLI calls the authenticated controller route:
 
 ```text
-POST /zones/:zoneId/credentialed-runtimes/:runtimeId/retire
+POST /zones/:zoneId/credentialed-runtime/retire
 body: { agentId, force, adminToken? }
 ```
 
@@ -473,26 +495,27 @@ type RetireCredentialedRuntimeResult =
 | Effective materializer → Gateway zone orchestrator → registry publisher | Added | One per-zone activation/withdrawal seam for the controller-only registry snapshot | Matching safe/registry cohort becomes current together for authorization; mismatch or withdrawal fails closed. |
 | Gateway Control handler → controller authorization | Changed | Existing authorization also resolves current controller-only credentialed runtime definition | Returns trusted agent/profile/runtime resolution or proven denial. |
 | Authorization → one-shot operation ledger | Removed | Credentialed path no longer creates an operation-to-VM ledger entry | One-shot lifecycle ceases to be authority. |
-| Authorization → runtime manager acquire | Added | Async controller-only call with final-authority callback | Returns acquired, busy, not-dispatched, or owner-unsafe. |
-| Runtime manager → credential materializer | Added on creation only | Batched external 1Password resolution and pre-start memory finalization | Produces no persistent credential bytes; failure is pre-dispatch. |
+| Authorization → runtime manager acquire | Added | Async controller-only call with credential-resolution and final-authority callbacks | Reserves before credential/provider effects; returns acquired, busy, not-dispatched, or owner-unsafe. |
+| Runtime manager → credential projection owner | Added after slot reservation | File materialization or host-side mediated-source resolution | A busy call reaches neither provider; projection failure is pre-dispatch. |
 | Runtime manager → Managed VM factory/start | Changed | VM is created only when absent and retained after healthy command completion | Publishes non-secret process/runtime identity before command use. |
 | Runtime manager → final authorization | Added/retained at new boundary | Final current call/group/epoch comparison occurs immediately before active-slot assignment | Stale call creates zero guest effects; a newly created stale VM is retired. |
 | Command handle → `ManagedVm.exec` | Changed owner | Existing direct argv/output/timeout logic executes on retained VM | Per-call result remains existing portable shape. |
 | Command completion → VM close | Removed on safe completion | Healthy compatible VM becomes idle | Runtime-local COW and credential memory remain until retirement. |
 | Idle reaper/operator/zone close → runtime manager retire | Added | Controller-owned exact cleanup | COW and credential memory disappear; no snapshot. |
-| Controller CLI/client → authenticated credential-runtime retire route → runtime manager | Added | Admin operation keyed by zone/agent/runtime plus force and the existing optional zone-admin token transport | Returns retired, absent, active, or owner-unsafe; no token/secret/VM identity exposure. |
+| Existing runtime-ID CLI/client/route | Removed | Delete `--runtime`, runtimeId request/client fields, and `/credentialed-runtimes/:runtimeId/retire` | Old route is 404 and old config/input is rejected. |
+| Controller CLI/client → authenticated credential-runtime retire route → runtime manager | Added as hard replacement | Admin operation keyed by zone/agent plus force and the existing optional zone-admin token transport | Returns retired, absent, active, or owner-unsafe; no token/secret/VM identity exposure. |
 | `tool_vm_runner` → Tool VM lease/SSH | Intentionally unchanged | Existing Gateway-owned strict-SSH path | No credentialed runtime edge. |
 
 Target normal sequence:
 
 ```text
-Hermes/Gateway     Controller Auth      Runtime Manager      1Password/VM
+Hermes/Gateway     Controller Auth      Runtime Manager      Credential/VM
       │                  │                    │                    │
       │─ configured call▶│                    │                    │
       │                  │─ current policy ─▶│                    │
-      │                  │                    │─ keyed acquire ────│
-      │                  │                    │  create if absent   │
+      │                  │                    │─ reserve/busy ──────│
       │                  │                    │─ resolve/finalize ─▶│
+      │                  │                    │  create if absent   │
       │                  │                    │◀─ VM current ───────│
       │                  │◀─ final recheck ──│                    │
       │                  │─ current result ─▶│                    │
@@ -515,7 +538,7 @@ second same-runtime call
 
 ## Concurrency and consistency
 
-- One keyed lock per `zoneId + agentId + runtimeId` serializes runtime-map and active-slot transitions, not command execution duration.
+- One keyed lock per `zoneId + agentId` serializes runtime-map and active-slot transitions, not command execution duration.
 - Creation holds the key's provisioning ownership so two simultaneous first calls cannot create two VMs. After creation and final authorization, the first call receives the slot; the second observes busy.
 - Command exec runs outside the key lock while `activeCommand` remains authoritative. Other runtime keys proceed independently.
 - Completion, idle reaping, explicit retirement, config invalidation, and zone shutdown reacquire the same key before mutation.
@@ -528,12 +551,12 @@ second same-runtime call
 
 | Failure or interleaving | Detection owner | Containment and observable result | Recovery owner |
 | --- | --- | --- | --- |
-| Agent/profile/binding/file map/credential environment invalid | Config compiler/authorization | Generation or call rejected before VM creation | Operator corrects config. |
+| Agent/profile/projection invalid or same-agent definitions conflict | Config compiler/authorization | Generation or call rejected before VM creation | Operator corrects config. |
 | Safe generation and registry cohort differ or registry is withdrawn | Controller authorization | Credentialed call proven not dispatched; no prior snapshot fallback | Zone orchestration completes activation or operator restores the zone. |
 | 1Password resolution/UTF-8/size failure | Credential materializer | VM absent or closed; proven not dispatched; no secret diagnostic | Operator corrects binding/value and retries. |
 | Memory finalization failure | Materializer/factory | Finalization poisoned; close exact VM; no start/exec | New call may create after cleanup proof. |
-| Policy/group/epoch changes during creation | Final authorization callback | No guest exec; created VM retired; proven not dispatched if containment succeeds | New independently authorized call. |
-| Concurrent same-runtime call | Runtime manager | Retryable `runtime_busy`; zero future authority | Caller submits a new call later. |
+| Policy/group/epoch changes during creation | Final authorization callback | No guest exec or reusable publication; provisional VM exactly retired before reservation release | New independently authorized call. |
+| Concurrent same-agent call | Runtime manager reservation check | Retryable `runtime_busy`; zero provider, decrypt, catalog-write, retirement, VM, or guest effects | Caller submits a new call later. |
 | Command timeout/cancel/stream/result uncertainty | Command executor | Existing bounded/ambiguous per-call result; runtime fenced and retired; no replay | New call only after containment. |
 | Non-zero observed exit | Command executor | Existing completed command result; runtime may return idle | Caller decides next call. |
 | Idle reaper races with new call | Runtime manager keyed lock + cutoff | Exactly one wins; touched/active runtime survives, expired runtime retires | Automatic. |
@@ -556,35 +579,35 @@ untrusted/model-controlled
               │ existing schema/policy/approval
               ▼
 Gateway-safe Tool Portal
-  no agent override, credential ref, file map, runtime id, VM/lease id
+  no agent override, credential ref, file map, runtime name, VM/lease id
               │ authenticated Gateway Control + caller context
               ▼
 controller trust boundary
   current call authority + controller-only runtime registry
               │
-      ┌───────┴─────────────────────┐
-      ▼                             ▼
-1Password                       Managed VM
-durable secret source           prepared image + rootfs/COW
-      │ resolved only on create      │
-      └──────► read-only finalizable-memory credential mount
-                                      │
-                                      ▼
-                                 direct argv CLI
+      ▼
+credential projection owner
+      ├─ file binding ───────────► read-only Managed VM credential mount
+      └─ HTTP mediation ─────────► opaque Managed VM placeholder
+             │ raw value remains in host-side Gondolin mediation
+             ▼
+        allowlisted external host
+
+Managed VM → direct argv CLI
 
 separate unchanged boundary:
 tool_vm_runner → current Tool VM binding → strict SSH → leased Tool VM
 ```
 
-Assets are agent-to-profile authority, credential refs/values, runtime-group revision, current runtime/process identity, per-call approval/direct authority, rootfs/COW state, and containment evidence.
+Assets are agent-to-profile authority, credential refs/values, agent-runtime revision, current VM/process identity, per-call approval/direct authority, rootfs/COW state, and containment evidence.
 
-Credential refs remain only in authored config and the controller-only in-memory registry. Credential values exist only during resolver/materializer execution and inside the Managed VM memory provider. Runtime records contain neither.
+Credential refs remain only in authored config and the controller-only in-memory registry. File values exist only during resolver/materializer execution and inside the Managed VM memory provider. Mediated raw values remain only in controller/Gondolin host authority; the VM sees placeholders. Runtime records contain neither.
 
 ## Operator retirement and observability
 
-The runtime manager exposes the controller-internal retirement operation keyed by zone, agent, and authored runtime id. `agent-vm controller credential-runtime retire` and its authenticated controller client/route adapter expose the exact contract defined above; they do not expose lease ids, VM handles, or credentials.
+The runtime manager exposes the controller-internal retirement operation keyed by zone and authenticated agent. `agent-vm controller credential-runtime retire` and its authenticated controller client/route adapter expose the exact contract defined above; they do not expose runtime names, lease ids, VM handles, or credentials.
 
-Operator-visible status may report bounded non-secret fields: zone, agent, runtime id, lifecycle state, created/last-used/idle-expiry times, image/group revision identifiers, and retirement reason. Public health/status must continue redacting raw lifecycle ids where existing policy requires it.
+Operator-visible status may report bounded non-secret fields: zone, agent, lifecycle state, created/last-used/idle-expiry times, image/agent-runtime revision identifiers, and retirement reason. Public health/status must continue redacting raw lifecycle ids where existing policy requires it.
 
 Explicit retirement is idempotent when no current runtime exists. Active retirement requires the existing force/cancellation authority; ordinary idle retirement never destroys an active command.
 
@@ -592,7 +615,7 @@ Explicit retirement is idempotent when no current runtime exists. Active retirem
 
 This is a hard cut for `ephemeral_managed_vm`:
 
-- authored target schema requires runtime id, credential binding, and credential file mappings;
+- authored target schema rejects runtime id/name and requires exactly one file-binding or HTTP-mediation credential projection;
 - effective schema and Gateway projection move in one semantic cohort;
 - the one-shot configured Managed VM runner and operation ledger are removed from the configured CLI production path;
 - there is no parser alias, optional lifetime, uncredentialed one-shot variant, host fallback, or migration of old runner records into reusable leases;
@@ -610,7 +633,7 @@ Pure tests own:
 - agent binding/file-map schemas, bounds, canonical paths, duplicates, unknown fields, and generated JSON Schema;
 - credential-environment schema, root/file resolution, source linkage, collision rejection, and safe projection omission;
 - controller-safe projection omission of bindings, refs, file maps, and runtime identities;
-- runtime-group compilation, conflict rejection, canonical revision stability, group-field mutations, and per-call-policy exclusion;
+- agent-runtime compilation, conflict rejection, canonical revision stability, VM-shaping field mutations, and per-call-policy exclusion;
 - per-agent runtime keying and cross-agent separation;
 - lifecycle reducer/state transitions, busy/no-queue behavior, cutoff-safe idle decisions, completion outcomes, and illegal transitions;
 - credential materialization inventory, UTF-8/byte bounds, fixed modes, and no secret-derived metadata;

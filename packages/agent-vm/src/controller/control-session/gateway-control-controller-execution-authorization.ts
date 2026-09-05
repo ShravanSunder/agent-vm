@@ -5,7 +5,10 @@ import {
 	jsonObjectSchema,
 	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
-import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-vm/gateway-control-contracts';
+import type {
+	GatewayControlToolPortalControllerExecutionPayload,
+	GatewayRuntimeControllerExecutionDispatchReservation,
+} from '@agent-vm/gateway-control-contracts';
 import {
 	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
 	deriveGatewayControlControllerExecutionRpcWindow,
@@ -33,10 +36,14 @@ import type {
 	GatewayControlAcceptedSessionRef,
 	GatewayControlTrustedCallerContext,
 } from './gateway-control-caller-context.js';
+import { resolveRegisteredOAuthInvocationContext } from './gateway-control-oauth-invocation-context.js';
 
 const controllerExecutionNamespace = 'controller_execution';
-const [controllerHostProbeToolName, workspaceGitPushToolName] =
-	gatewayControlRegisteredControllerExecutionActionIds;
+const oauthAuthorizationNamespace = 'oauth_authorization';
+const controllerHostProbeToolName =
+	'controller_host_probe' satisfies (typeof gatewayControlRegisteredControllerExecutionActionIds)[number];
+const workspaceGitPushToolName =
+	'workspace_git_push' satisfies (typeof gatewayControlRegisteredControllerExecutionActionIds)[number];
 const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {
@@ -80,8 +87,64 @@ function rejectAuthorization(
 
 function isSupportedControllerExecutionName(
 	value: string | undefined,
-): value is typeof workspaceGitPushToolName | typeof controllerHostProbeToolName {
-	return value === workspaceGitPushToolName || value === controllerHostProbeToolName;
+): value is (typeof gatewayControlRegisteredControllerExecutionActionIds)[number] {
+	switch (value) {
+		case controllerHostProbeToolName:
+		case 'oauth_authorization.begin':
+		case 'oauth_authorization.cancel':
+		case 'oauth_authorization.list':
+		case 'oauth_authorization.reauthorize':
+		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.status':
+		case workspaceGitPushToolName:
+			return true;
+		case undefined:
+		default:
+			return false;
+	}
+}
+
+function registeredActionMatchesCapability(props: {
+	readonly actionId: string;
+	readonly capabilityName: string;
+	readonly capabilityNamespace: string;
+}): boolean {
+	if (!isSupportedControllerExecutionName(props.actionId)) return false;
+	if (
+		props.actionId === controllerHostProbeToolName ||
+		props.actionId === workspaceGitPushToolName
+	) {
+		return (
+			props.capabilityNamespace === controllerExecutionNamespace &&
+			props.capabilityName === props.actionId
+		);
+	}
+	return (
+		props.capabilityNamespace === oauthAuthorizationNamespace &&
+		props.actionId === `${oauthAuthorizationNamespace}.${props.capabilityName}`
+	);
+}
+
+function registeredActionApprovalReservation(
+	payload: Extract<
+		GatewayControlToolPortalControllerExecutionPayload,
+		{ readonly kind: 'registered_action' }
+	>,
+): GatewayRuntimeControllerExecutionDispatchReservation | undefined {
+	switch (payload.action.actionId) {
+		case 'oauth_authorization.begin':
+		case 'oauth_authorization.cancel':
+		case 'oauth_authorization.list':
+		case 'oauth_authorization.reauthorize':
+		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.status':
+			return payload.action.authority.kind === 'controller_approval_reservation'
+				? payload.action.authority.reservation
+				: undefined;
+		case 'controller_host_probe':
+		case 'workspace_git_push':
+			return payload.action.approvalReservation;
+	}
 }
 
 export async function authorizeGatewayControlControllerExecution(
@@ -94,9 +157,11 @@ export async function authorizeGatewayControlControllerExecution(
 	if (
 		capability === undefined ||
 		(request.payload.kind === 'registered_action' &&
-			(capability.namespace !== controllerExecutionNamespace ||
-				!isSupportedControllerExecutionName(capability.name) ||
-				capability.name !== request.payload.action.actionId)) ||
+			!registeredActionMatchesCapability({
+				actionId: request.payload.action.actionId,
+				capabilityName: capability.name,
+				capabilityNamespace: capability.namespace,
+			})) ||
 		(request.payload.kind === 'configured_cli' && capability.name !== request.payload.operationName)
 	) {
 		return rejectAuthorization(
@@ -197,18 +262,21 @@ export async function authorizeGatewayControlControllerExecution(
 		namespacePolicy?.backend.kind === 'controller_execution'
 			? namespacePolicy.backend.operations[capability.name]
 			: undefined;
+	const registeredOAuthInvocation = resolveRegisteredOAuthInvocationContext(request.payload);
 	const approvalReservation =
 		request.payload.kind === 'configured_cli'
 			? request.payload.authority.kind === 'controller_approval_reservation'
 				? request.payload.authority.reservation
 				: undefined
-			: request.payload.action.approvalReservation;
+			: registeredActionApprovalReservation(request.payload);
 	const expectedBindingRevision =
 		request.payload.kind === 'configured_cli'
 			? request.payload.authority.kind === 'without_approval'
 				? request.payload.authority.bindingRevision
 				: request.payload.authority.reservation.bindingRevision
-			: approvalReservation?.bindingRevision;
+			: registeredOAuthInvocation?.authority.kind === 'without_approval'
+				? registeredOAuthInvocation.authority.bindingRevision
+				: approvalReservation?.bindingRevision;
 	const currentBindingRevision = deriveGatewayRuntimePortalBindingRevision(
 		effectiveConfig.effectiveToolPortalConfig,
 	);
@@ -384,6 +452,75 @@ export async function authorizeGatewayControlControllerExecution(
 				operation: trustedConfiguredOperation,
 			},
 		};
+	}
+	if (registeredOAuthInvocation !== undefined) {
+		if (
+			deriveGatewayControlStablePrincipal({
+				principal: registeredOAuthInvocation.invocation.trustedContext.principal,
+			}) !== request.callerContext.stablePrincipal
+		) {
+			return rejectAuthorization(
+				'controller_execution_authority_mismatch',
+				'controller execution authority does not match the requested capability',
+			);
+		}
+		const exactCall = {
+			arguments: registeredOAuthInvocation.arguments,
+			id: registeredOAuthInvocation.invocation.callId,
+			name: capability.name,
+			namespace: capability.namespace,
+		};
+		const expectedOperationId = deterministicOperationId({
+			callId: exactCall.id,
+			semanticRevision: portalAdmission.semanticSnapshot.activeRevision,
+			stablePrincipal: request.callerContext.stablePrincipal,
+			surfaceClass: registeredOAuthInvocation.invocation.surfaceClass,
+		});
+		const authorityBinding =
+			registeredOAuthInvocation.authority.kind === 'without_approval'
+				? registeredOAuthInvocation.authority
+				: registeredOAuthInvocation.authority.reservation;
+		const expectedFingerprint =
+			registeredOAuthInvocation.authority.kind === 'without_approval'
+				? directDispatchFingerprint({
+						backendKind: 'controller_execution',
+						call: exactCall,
+						principal: request.callerContext.principal,
+						semanticSnapshot: portalAdmission.semanticSnapshot,
+						surfaceClass: registeredOAuthInvocation.invocation.surfaceClass,
+					})
+				: deriveGatewayRuntimeApprovalFingerprint({
+						authorityContext: registeredOAuthInvocation.authority.reservation.authorityContext,
+						intent: {
+							backendKind: 'controller_execution',
+							call: exactCall,
+							operationId: expectedOperationId,
+							semanticRevisions: {
+								activeRevision: portalAdmission.semanticSnapshot.activeRevision,
+								bindingRevision: portalAdmission.semanticSnapshot.bindingRevision,
+								catalogRevision: portalAdmission.semanticSnapshot.catalogRevision,
+								profilePolicyRevision: portalAdmission.semanticSnapshot.profilePolicyRevision,
+								providerRevision: portalAdmission.semanticSnapshot.providerRevision,
+								schemaRevision: portalAdmission.semanticSnapshot.schemaRevision,
+							},
+							surfaceClass: registeredOAuthInvocation.invocation.surfaceClass,
+							trustedContext: registeredOAuthInvocation.invocation.trustedContext,
+						},
+					});
+		if (
+			authorityBinding.operationId !== expectedOperationId ||
+			authorityBinding.fingerprint !== expectedFingerprint ||
+			(registeredOAuthInvocation.authority.kind === 'controller_approval_reservation' &&
+				(registeredOAuthInvocation.authority.reservation.approvalId !==
+					deriveGatewayRuntimeApprovalId(expectedFingerprint) ||
+					registeredOAuthInvocation.authority.reservation.stablePrincipal !==
+						request.callerContext.stablePrincipal))
+		) {
+			return rejectAuthorization(
+				'controller_execution_authority_mismatch',
+				'controller execution authority does not match the requested capability',
+			);
+		}
 	}
 	if (
 		approvalReservation === undefined

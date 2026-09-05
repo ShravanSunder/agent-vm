@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto';
 import { encodeCanonicalJson, JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
 import {
 	createEffectiveManagedToolPortalConfig,
+	type ConfiguredCliCredentialProjection,
 	type ConfiguredCliCredentialEnvironmentValue,
 	type ConfiguredCliCredentialFileMapping,
 	type EffectiveManagedToolPortalConfig,
 	type PreparedManagedToolPortalConfig,
+	type SecretValue,
 } from '@agent-vm/config-contracts';
 import {
 	decodeConfiguredCliPreparedImageIdentity,
+	toolPortalNamespaceAllowsOperation,
 	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
@@ -24,18 +27,41 @@ export interface CredentialedRuntimeBindingDefinition {
 	readonly files: Readonly<Record<string, Extract<SecretRef, { readonly source: '1password' }>>>;
 }
 
+export type CredentialedRuntimeProjection =
+	| {
+			readonly credentialBinding: CredentialedRuntimeBindingDefinition;
+			readonly credentialEnvironment: Readonly<
+				Record<string, ConfiguredCliCredentialEnvironmentValue>
+			>;
+			readonly fileMappings: readonly ConfiguredCliCredentialFileMapping[];
+			readonly kind: 'file_binding';
+	  }
+	| {
+			readonly environment: Readonly<
+				Record<
+					string,
+					{
+						readonly hosts: readonly string[];
+						readonly secret: SecretRef;
+					}
+				>
+			>;
+			readonly kind: 'http_mediation';
+	  }
+	| {
+			readonly environmentName: 'GOG_ACCESS_TOKEN';
+			readonly kind: 'oauth_http_mediation';
+	  };
+
 export interface CredentialedRuntimeResolution {
+	readonly agentRuntimeRevision: string;
 	readonly agentId: string;
 	readonly cohortRevision: string;
-	readonly credentialBinding: CredentialedRuntimeBindingDefinition;
-	readonly credentialEnvironment: Readonly<Record<string, ConfiguredCliCredentialEnvironmentValue>>;
-	readonly fileMappings: readonly ConfiguredCliCredentialFileMapping[];
-	readonly groupRevision: string;
 	readonly namespaceId: string;
 	readonly operation: PreparedConfiguredCliOperation;
 	readonly operationName: string;
 	readonly profileId: string;
-	readonly runtimeId: string;
+	readonly projection: CredentialedRuntimeProjection;
 	readonly zoneId: string;
 }
 
@@ -87,6 +113,42 @@ function operationEntryKey(props: {
 	return [props.agentId, props.profileId, props.namespaceId, props.operationName].join('\0');
 }
 
+function canonicalCredentialProjection(
+	projection: ConfiguredCliCredentialProjection,
+): ConfiguredCliCredentialProjection {
+	if (projection.kind === 'file_binding') {
+		return {
+			credentialBinding: projection.credentialBinding,
+			credentialEnvironment: Object.fromEntries(
+				Object.entries(projection.credentialEnvironment).toSorted(([left], [right]) =>
+					left.localeCompare(right),
+				),
+			),
+			credentialFiles: [...projection.credentialFiles].toSorted(
+				(left, right) =>
+					left.source.localeCompare(right.source) || left.path.localeCompare(right.path),
+			),
+			kind: 'file_binding',
+		};
+	}
+	return {
+		environment: Object.fromEntries(
+			Object.entries(projection.environment)
+				.toSorted(([left], [right]) => left.localeCompare(right))
+				.map(([environmentName, source]) => [
+					environmentName,
+					'kind' in source
+						? { kind: source.kind }
+						: {
+								hosts: [...new Set(source.hosts)].toSorted(),
+								secret: source.secret,
+							},
+				]),
+		),
+		kind: 'http_mediation',
+	};
+}
+
 function runtimeGroupMaterial(operation: PreparedConfiguredCliOperation): unknown {
 	if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
 		throw new Error('Credentialed runtime groups require an ephemeral Managed VM target.');
@@ -94,18 +156,37 @@ function runtimeGroupMaterial(operation: PreparedConfiguredCliOperation): unknow
 	const target = operation.executionTarget;
 	const preparedImage = decodeConfiguredCliPreparedImageIdentity(target.imageReference);
 	return {
-		allowedHosts: target.allowedHosts.toSorted(),
-		credentialBinding: target.credentialBinding,
-		credentialEnvironment: target.credentialEnvironment,
-		credentialFiles: [...target.credentialFiles].toSorted((left, right) =>
-			left.source.localeCompare(right.source),
-		),
-		environment: target.environment,
+		allowedHosts: [...new Set(target.allowedHosts)].toSorted(),
+		credentialProjection: canonicalCredentialProjection(target.credentialProjection),
+		environment:
+			target.environment.kind === 'inherit_allowlist'
+				? {
+						kind: 'inherit_allowlist',
+						names: [...new Set(target.environment.names)].toSorted(),
+					}
+				: target.environment,
 		imageFingerprint: preparedImage.fingerprint,
 		imageReference: preparedImage.imageReference,
 		rootfsMode: 'cow',
-		runtimeId: target.runtimeId,
 	};
+}
+
+function secretValueToRef(secret: SecretValue): SecretRef {
+	return secret.source === '1password'
+		? { ref: secret.ref, source: '1password' }
+		: { ref: secret.name, source: 'environment' };
+}
+
+function requireStaticMediatedSource(
+	source: Extract<
+		ConfiguredCliCredentialProjection,
+		{ readonly kind: 'http_mediation' }
+	>['environment'][string],
+): Extract<typeof source, { readonly hosts: readonly string[] }> {
+	if ('kind' in source) {
+		throw new Error('OAuth access-token sources require controller materialization.');
+	}
+	return source;
 }
 
 function credentialedRegistryRevisionMaterial(
@@ -116,6 +197,7 @@ function credentialedRegistryRevisionMaterial(
 		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
 			for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
+				if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 				if (
 					operation.kind !== 'configured_cli' ||
 					operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -146,8 +228,9 @@ function hasCredentialedRuntime(config: PreparedManagedToolPortalConfig): boolea
 		Object.values(profile.namespaces).some(
 			(namespacePolicy) =>
 				namespacePolicy.backend.kind === 'controller_execution' &&
-				Object.values(namespacePolicy.backend.operations).some(
-					(operation) =>
+				Object.entries(namespacePolicy.backend.operations).some(
+					([operationName, operation]) =>
+						toolPortalNamespaceAllowsOperation(namespacePolicy, operationName) &&
 						operation.kind === 'configured_cli' &&
 						operation.executionTarget.kind === 'ephemeral_managed_vm',
 				),
@@ -171,10 +254,11 @@ export function compileCredentialedRuntimeConfig(props: {
 	const entries = new Map<string, CredentialedRuntimeResolution>();
 
 	for (const [profileId, profile] of Object.entries(props.preparedConfig.profiles)) {
-		const groupMaterials = new Map<string, string>();
+		let agentRuntimeMaterialDigest: string | undefined;
 		for (const namespacePolicy of Object.values(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') continue;
-			for (const operation of Object.values(namespacePolicy.backend.operations)) {
+			for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
+				if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 				if (
 					operation.kind !== 'configured_cli' ||
 					operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -185,13 +269,15 @@ export function compileCredentialedRuntimeConfig(props: {
 					'credentialed-runtime-group-material',
 					runtimeGroupMaterial(operation),
 				);
-				const priorDigest = groupMaterials.get(operation.executionTarget.runtimeId);
-				if (priorDigest !== undefined && priorDigest !== materialDigest) {
+				if (
+					agentRuntimeMaterialDigest !== undefined &&
+					agentRuntimeMaterialDigest !== materialDigest
+				) {
 					throw new Error(
-						`Credentialed runtime '${operation.executionTarget.runtimeId}' has conflicting runtime-shaping policy in profile '${profileId}'.`,
+						`Credentialed runtime operations have conflicting VM-shaping policy in profile '${profileId}'.`,
 					);
 				}
-				groupMaterials.set(operation.executionTarget.runtimeId, materialDigest);
+				agentRuntimeMaterialDigest = materialDigest;
 			}
 		}
 
@@ -202,6 +288,7 @@ export function compileCredentialedRuntimeConfig(props: {
 				for (const [operationName, operation] of Object.entries(
 					namespacePolicy.backend.operations,
 				)) {
+					if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 					if (
 						operation.kind !== 'configured_cli' ||
 						operation.executionTarget.kind !== 'ephemeral_managed_vm'
@@ -209,33 +296,72 @@ export function compileCredentialedRuntimeConfig(props: {
 						continue;
 					}
 					const target = operation.executionTarget;
-					const binding = agent.credentialBindings?.[target.credentialBinding];
-					if (binding === undefined) {
-						throw new Error(
-							`Credentialed runtime binding '${target.credentialBinding}' is missing for agent '${agentId}'.`,
-						);
+					if (agentRuntimeMaterialDigest === undefined) {
+						throw new Error('Credentialed agent runtime definition was not compiled.');
 					}
-					const groupMaterialDigest = groupMaterials.get(target.runtimeId);
-					if (groupMaterialDigest === undefined) {
-						throw new Error(`Credentialed runtime group '${target.runtimeId}' was not compiled.`);
-					}
+					const projection: CredentialedRuntimeProjection = (() => {
+						const configuredProjection = canonicalCredentialProjection(target.credentialProjection);
+						if (configuredProjection.kind === 'http_mediation') {
+							const accessTokenSource = configuredProjection.environment.GOG_ACCESS_TOKEN;
+							if (
+								accessTokenSource !== undefined &&
+								'kind' in accessTokenSource &&
+								accessTokenSource.kind === 'oauth_access_token'
+							) {
+								return Object.freeze({
+									environmentName: 'GOG_ACCESS_TOKEN' as const,
+									kind: 'oauth_http_mediation' as const,
+								});
+							}
+							return Object.freeze({
+								environment: Object.freeze(
+									Object.fromEntries(
+										Object.entries(configuredProjection.environment).map(
+											([environmentName, source]) => {
+												const staticSource = requireStaticMediatedSource(source);
+												return [
+													environmentName,
+													Object.freeze({
+														hosts: Object.freeze([...staticSource.hosts]),
+														secret: secretValueToRef(staticSource.secret),
+													}),
+												] as const;
+											},
+										),
+									),
+								),
+								kind: 'http_mediation' as const,
+							});
+						}
+						const binding = agent.credentialBindings?.[configuredProjection.credentialBinding];
+						if (binding === undefined) {
+							throw new Error(
+								`Credentialed runtime binding '${configuredProjection.credentialBinding}' is missing for agent '${agentId}'.`,
+							);
+						}
+						return Object.freeze({
+							credentialBinding: Object.freeze({ files: Object.freeze({ ...binding.files }) }),
+							credentialEnvironment: Object.freeze({
+								...configuredProjection.credentialEnvironment,
+							}),
+							fileMappings: Object.freeze([...configuredProjection.credentialFiles]),
+							kind: 'file_binding' as const,
+						});
+					})();
 					const resolution: CredentialedRuntimeResolution = Object.freeze({
-						agentId,
-						cohortRevision,
-						credentialBinding: Object.freeze({ files: Object.freeze({ ...binding.files }) }),
-						credentialEnvironment: Object.freeze({ ...target.credentialEnvironment }),
-						fileMappings: Object.freeze([...target.credentialFiles]),
-						groupRevision: digestJson('credentialed-runtime-group', {
+						agentRuntimeRevision: digestJson('credentialed-agent-runtime', {
 							agentId,
-							binding: binding.files,
-							groupMaterialDigest,
+							agentRuntimeMaterialDigest,
+							projection,
 							zoneId: props.zoneId,
 						}),
+						agentId,
+						cohortRevision,
 						namespaceId,
 						operation,
 						operationName,
 						profileId,
-						runtimeId: target.runtimeId,
+						projection,
 						zoneId: props.zoneId,
 					});
 					entries.set(

@@ -2,6 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
 	fakeUpstreamNamespace,
@@ -44,6 +45,7 @@ const availableUpstreamHost = 'orientation-available-mcp.vm.host';
 const unavailableUpstreamHost = 'orientation-unavailable-mcp.vm.host';
 const unavailableNamespace = 'orientation-unavailable';
 const controllerExecutionNamespace = 'controller_execution';
+const oauthAuthorizationNamespace = 'oauth_authorization';
 const availableNamespaceSummary = 'Available orientation E2E upstream';
 const unavailableNamespaceSummary = 'Unavailable orientation E2E upstream';
 const controllerExecutionSummary = 'Controller-owned orientation E2E operations';
@@ -60,6 +62,10 @@ const remoteSchemaErrorPrompt = 'call-remote-tool-returning-schema-error';
 const remoteSchemaErrorSuccessMarker = 'hermes-remote-schema-error-visible';
 const controllerExecutionPrompt = 'call-controller-host-probe-through-tool-portal';
 const controllerExecutionSuccessMarker = 'hermes-controller-execution-succeeded';
+const oauthListPrompt = 'list-google-authorizations-through-tool-portal';
+const oauthListSuccessMarker = 'hermes-oauth-list-action-reached-controller';
+const oauthRevokePrompt = 'revoke-google-authorization-requires-approval';
+const oauthRevokeSuccessMarker = 'hermes-oauth-revoke-approval-required';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker =
@@ -81,11 +87,31 @@ interface ProviderObservation {
 	readonly tools: readonly unknown[];
 }
 
+interface AuxiliaryProviderObservation {
+	readonly messages: readonly ProviderMessage[];
+	readonly responseFormat: Record<string, unknown>;
+}
+
 interface RecordingProvider {
+	readonly auxiliaryObservations: () => readonly AuxiliaryProviderObservation[];
 	readonly close: () => Promise<void>;
 	readonly observations: () => readonly ProviderObservation[];
 	readonly port: number;
 }
+
+const titleGenerationResponseFormat = {
+	json_schema: {
+		name: 'session_title',
+		schema: {
+			additionalProperties: false,
+			properties: { title: { type: 'string' } },
+			required: ['title'],
+			type: 'object',
+		},
+		strict: true,
+	},
+	type: 'json_schema',
+} as const;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,12 +125,8 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 	return Buffer.concat(chunks).toString('utf8');
 }
 
-function parseProviderObservation(requestBody: string): ProviderObservation {
-	const parsed: unknown = JSON.parse(requestBody);
-	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
-		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
-	}
-	const messages = parsed.messages.flatMap((message): readonly ProviderMessage[] => {
+function parseProviderMessages(messages: readonly unknown[]): readonly ProviderMessage[] {
+	return messages.flatMap((message): readonly ProviderMessage[] => {
 		if (
 			!isObjectRecord(message) ||
 			typeof message.role !== 'string' ||
@@ -114,7 +136,19 @@ function parseProviderObservation(requestBody: string): ProviderObservation {
 		}
 		return [{ content: message.content, role: message.role }];
 	});
+}
+
+function parseProviderObservation(requestBody: string): ProviderObservation {
+	const parsed: unknown = JSON.parse(requestBody);
+	if (!isObjectRecord(parsed) || !Array.isArray(parsed.messages) || !Array.isArray(parsed.tools)) {
+		throw new Error('Hermes recording provider expected OpenAI messages and tools arrays.');
+	}
+	const messages = parseProviderMessages(parsed.messages);
 	return { messages, tools: parsed.tools };
+}
+
+function isTitleGenerationResponseFormat(value: unknown): value is Record<string, unknown> {
+	return isObjectRecord(value) && isDeepStrictEqual(value, titleGenerationResponseFormat);
 }
 
 function writeServerSentCompletion(
@@ -146,6 +180,26 @@ function writeServerSentCompletion(
 	response.writeHead(200, { 'content-type': 'text/event-stream' });
 	for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
 	response.end('data: [DONE]\n\n');
+}
+
+function writeJsonCompletion(response: ServerResponse, content: string): void {
+	response.writeHead(200, { 'content-type': 'application/json' });
+	response.end(
+		JSON.stringify({
+			choices: [
+				{
+					finish_reason: 'stop',
+					index: 0,
+					message: { content, role: 'assistant' },
+				},
+			],
+			created: 1,
+			id: 'hermes-orientation-e2e-auxiliary-response',
+			model: modelName,
+			object: 'chat.completion',
+			usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
+		}),
+	);
 }
 
 function writeServerSentToolCall(
@@ -193,6 +247,7 @@ function messagesAfterLatestUser(observation: ProviderObservation): readonly Pro
 
 async function startRecordingProvider(): Promise<RecordingProvider> {
 	const observations: ProviderObservation[] = [];
+	const auxiliaryObservations: AuxiliaryProviderObservation[] = [];
 	// oxlint-disable-next-line typescript/no-misused-promises -- request body consumption is async
 	const server = createServer(async (request, response) => {
 		const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -200,12 +255,89 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 			response.writeHead(404).end();
 			return;
 		}
-		const observation = parseProviderObservation(await readRequestBody(request));
+		const requestBody = await readRequestBody(request);
+		const parsedRequest: unknown = JSON.parse(requestBody);
+		if (
+			isObjectRecord(parsedRequest) &&
+			Array.isArray(parsedRequest.messages) &&
+			!Object.hasOwn(parsedRequest, 'tools') &&
+			isTitleGenerationResponseFormat(parsedRequest.response_format)
+		) {
+			auxiliaryObservations.push({
+				messages: parseProviderMessages(parsedRequest.messages),
+				responseFormat: parsedRequest.response_format,
+			});
+			writeJsonCompletion(response, JSON.stringify({ title: 'Orientation E2E' }));
+			return;
+		}
+		const observation = parseProviderObservation(requestBody);
 		observations.push(observation);
 		const latestUserContent = observation.messages.findLast(({ role }) => role === 'user')?.content;
 		const latestToolResult = messagesAfterLatestUser(observation).find(
 			({ role }) => role === 'tool',
 		)?.content;
+		if (latestUserContent === oauthListPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: {},
+									id: 'oauth-list',
+									name: 'list',
+									namespace: oauthAuthorizationNamespace,
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-oauth-list-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			writeServerSentCompletion(
+				response,
+				latestToolResult.includes('configured controller execution did not complete')
+					? oauthListSuccessMarker
+					: 'hermes-oauth-list-failed',
+			);
+			return;
+		}
+		if (latestUserContent === oauthRevokePrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							calls: [
+								{
+									arguments: {
+										accountProfileId: 'personal-google',
+										applicationId: 'gmail-app',
+									},
+									id: 'oauth-revoke',
+									name: 'revoke',
+									namespace: oauthAuthorizationNamespace,
+								},
+							],
+						},
+						name: 'tool_portal_call',
+					},
+					id: 'hermes-oauth-revoke-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			writeServerSentCompletion(
+				response,
+				/"code"\s*:\s*"provider_unavailable"/u.test(latestToolResult) &&
+					latestToolResult.includes('The approval presenter was unavailable.')
+					? oauthRevokeSuccessMarker
+					: 'hermes-oauth-revoke-failed',
+			);
+			return;
+		}
 		if (latestUserContent === controllerExecutionPrompt) {
 			if (latestToolResult === undefined) {
 				writeServerSentToolCall(response, {
@@ -384,6 +516,7 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 		throw new Error('Hermes orientation recording provider did not bind a loopback port.');
 	}
 	return {
+		auxiliaryObservations: () => auxiliaryObservations,
 		close: async () =>
 			await new Promise<void>((resolve, reject) =>
 				server.close((error) => (error ? reject(error) : resolve())),
@@ -448,6 +581,27 @@ async function writeToolPortalConfiguration(options: {
 									},
 									discovery: { summary: controllerExecutionSummary },
 									tools: { allow: ['controller_host_probe'] },
+								},
+								[oauthAuthorizationNamespace]: {
+									backend: {
+										kind: 'controller_execution',
+										operations: Object.fromEntries(
+											['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'].map(
+												(operationName) => [operationName, { kind: 'registered_action' }],
+											),
+										),
+									},
+									calls: {
+										requiresApproval: { allow: ['reauthorize', 'revoke'] },
+										withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
+									},
+									discovery: {
+										summary:
+											'Set up Google account authorization. OAuth consent does not replace Tool Portal approval.',
+									},
+									tools: {
+										allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'],
+									},
 								},
 								[fakeUpstreamNamespace]: {
 									backend: { kind: 'mcp_provider' },
@@ -559,6 +713,22 @@ function requireLatestUserContent(observation: ProviderObservation): string {
 	return latestUserMessage.content;
 }
 
+function requireNamespaceOrientationBlock(content: string, namespace: string): string {
+	const namespaceMarker = `Namespace: ${JSON.stringify(namespace)}`;
+	const blockStart = content.indexOf(namespaceMarker);
+	if (blockStart < 0) {
+		throw new Error(`Hermes orientation omitted namespace ${JSON.stringify(namespace)}.`);
+	}
+	const remainingContent = content.slice(blockStart);
+	const boundaryOffsets = [
+		remainingContent.indexOf('\nNamespace: ', 1),
+		remainingContent.indexOf('\nWorkflow:', 1),
+	].filter((offset) => offset >= 0);
+	const blockEnd =
+		boundaryOffsets.length === 0 ? remainingContent.length : Math.min(...boundaryOffsets);
+	return remainingContent.slice(0, blockEnd);
+}
+
 function systemContents(observation: ProviderObservation): readonly string[] {
 	return observation.messages.filter(({ role }) => role === 'system').map(({ content }) => content);
 }
@@ -614,6 +784,10 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		if (systemZone === undefined || systemZone.gateway.type !== 'hermes') {
 			throw new Error('Expected the Hermes Tool Portal orientation E2E zone.');
 		}
+		systemZone.approvalAccess = {
+			approvers: [{ approverId: 'hermes-native', kind: 'managed_gateway' }],
+			audience: 'agent-vm-controller-approval',
+		};
 		// This proof drives Hermes through its HTTP API and must not activate a channel transport.
 		Object.assign(systemZone.gateway.profileSecretProjectionsByAgent, {
 			[agentId]: {
@@ -635,6 +809,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			surfaceEligibilityByProfile: {
 				[agentId]: {
 					[controllerExecutionNamespace]: ['protected_uds'],
+					[oauthAuthorizationNamespace]: ['protected_uds'],
 					[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
 					[unavailableNamespace]: ['mcp', 'protected_uds'],
 				},
@@ -731,20 +906,42 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		const orientedUserContent = requireLatestUserContent(orientedObservation);
 		for (const operationName of operationNames)
 			expect(orientedUserContent).toContain(operationName);
-		if (!orientedUserContent.includes(`"${fakeUpstreamNamespace}": available`)) {
+		const availableNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			fakeUpstreamNamespace,
+		);
+		if (
+			!availableNamespaceBlock.includes('Tools:') ||
+			!availableNamespaceBlock.includes('  read_thing') ||
+			!availableNamespaceBlock.includes('  write_thing')
+		) {
 			if (gatewayVm === undefined)
 				throw new Error('Hermes orientation E2E did not capture its VM.');
 			throw new Error(
-				`Available namespace was not classified as available. Inventory diagnostics:\n${await readInventoryAttemptDiagnostics(gatewayVm)}`,
+				`Available namespace did not expose its discovered tools. Namespace block:\n${availableNamespaceBlock}\nInventory diagnostics:\n${await readInventoryAttemptDiagnostics(gatewayVm)}`,
 			);
 		}
-		expect(orientedUserContent).toContain(`"${unavailableNamespace}": unavailable`);
-		expect(orientedUserContent).toContain(`"${controllerExecutionNamespace}": available`);
-		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(availableNamespaceSummary)}`);
-		expect(orientedUserContent).toContain(
-			`summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		const unavailableNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			unavailableNamespace,
 		);
-		expect(orientedUserContent).toContain(`summary: ${JSON.stringify(controllerExecutionSummary)}`);
+		expect(unavailableNamespaceBlock).not.toContain('Tools:');
+		const controllerExecutionNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			controllerExecutionNamespace,
+		);
+		expect(controllerExecutionNamespaceBlock).toContain('  controller_host_probe');
+		const oauthAuthorizationNamespaceBlock = requireNamespaceOrientationBlock(
+			orientedUserContent,
+			oauthAuthorizationNamespace,
+		);
+		expect(oauthAuthorizationNamespaceBlock).toContain('  list');
+		expect(oauthAuthorizationNamespaceBlock).toContain('  revoke');
+		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(availableNamespaceSummary)}`);
+		expect(orientedUserContent).toContain(
+			`Summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
+		);
+		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(controllerExecutionSummary)}`);
 
 		if (gatewayVm === undefined) throw new Error('Hermes orientation E2E did not capture its VM.');
 
@@ -785,6 +982,18 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		});
 		expect(controllerExecutionResponse).toContain(controllerExecutionSuccessMarker);
 
+		const oauthListResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: oauthListPrompt,
+		});
+		expect(oauthListResponse).toContain(oauthListSuccessMarker);
+
+		const oauthRevokeResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: oauthRevokePrompt,
+		});
+		expect(oauthRevokeResponse).toContain(oauthRevokeSuccessMarker);
+
 		const orientationBearingObservations = provider
 			.observations()
 			.filter((observation) => requireLatestUserContent(observation).includes(orientationMarker));
@@ -799,6 +1008,13 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			for (const content of systemContents(observation))
 				expect(content).not.toContain(orientationMarker);
 			expect(JSON.stringify(observation.tools)).not.toContain(orientationMarker);
+		}
+		const auxiliaryObservations = provider.auxiliaryObservations();
+		expect(auxiliaryObservations).toHaveLength(1);
+		for (const observation of auxiliaryObservations) {
+			expect(isTitleGenerationResponseFormat(observation.responseFormat)).toBe(true);
+			for (const message of observation.messages)
+				expect(message.content).not.toContain(orientationMarker);
 		}
 	}, 900_000);
 });

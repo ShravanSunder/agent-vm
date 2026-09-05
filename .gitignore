@@ -71,6 +71,7 @@ config/**
 # Secrets (never commit)
 *.pem
 *.key
+!packages/agent-vm/src/controller/oauth/test-fixtures/oauth-listener-test.key
 credentials.json
 
 # Gondolin image build cache

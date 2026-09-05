@@ -1,9 +1,20 @@
+import { createHash, randomBytes } from 'node:crypto';
+
 import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
 import type {
-	ConfiguredCliInput,
+	ControllerConfiguredCliInput,
 	EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import { GatewayControlConfiguredCliControllerExecutionResultSchema } from '@agent-vm/gateway-control-contracts';
+import type {
+	OAuthAccountProfileId,
+	OAuthApplicationId,
+	OAuthServiceId,
+} from '@agent-vm/oauth-broker-contracts';
+import type {
+	GoogleOAuthRuntimeCredentialResolution,
+	GoogleOAuthRuntimeCredentialSnapshotValidation,
+} from '@agent-vm/oauth-broker/google';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type {
@@ -29,10 +40,53 @@ export interface ConfiguredCliManagedVmGatewayIdentity {
 }
 
 export interface CreateConfiguredCliManagedVmExecutorProps {
+	readonly validateOAuthRuntimeCredentialSnapshot?: (request: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly applicationId: OAuthApplicationId;
+		readonly credentialId: Extract<
+			GoogleOAuthRuntimeCredentialResolution,
+			{ kind: 'ready' }
+		>['credentialId'];
+		readonly materialRevision: Extract<
+			GoogleOAuthRuntimeCredentialResolution,
+			{ kind: 'ready' }
+		>['materialRevision'];
+		readonly minimumPermission: 'read' | 'write';
+		readonly serviceId: OAuthServiceId;
+		readonly zoneId: string;
+	}) => GoogleOAuthRuntimeCredentialSnapshotValidation;
+	readonly resolveOAuthRuntimeCredential?: (request: {
+		readonly accountProfileId: OAuthAccountProfileId;
+		readonly agentId: string;
+		readonly applicationId: OAuthApplicationId;
+		readonly minimumPermission: 'read' | 'write';
+		readonly serviceId: OAuthServiceId;
+		readonly zoneId: string;
+	}) => Promise<GoogleOAuthRuntimeCredentialResolution>;
 	readonly resolveGatewayIdentity: (
 		zoneId: string,
 	) => Promise<ConfiguredCliManagedVmGatewayIdentity>;
 	readonly runtimeManager: CredentialedRuntimeManager;
+}
+
+function runtimeRevisionWithOAuthMaterial(props: {
+	readonly accountProfileId: string;
+	readonly baseRevision: string;
+	readonly credentialId: string;
+	readonly materialRevision: string;
+}): string {
+	return `sha256:${createHash('sha256')
+		.update('credentialed-oauth-runtime')
+		.update('\0')
+		.update(props.baseRevision)
+		.update('\0')
+		.update(props.accountProfileId)
+		.update('\0')
+		.update(props.credentialId)
+		.update('\0')
+		.update(props.materialRevision)
+		.digest('hex')}`;
 }
 
 function ownerIdentity(props: {
@@ -46,7 +100,7 @@ export function createConfiguredCliManagedVmExecutor(
 	props: CreateConfiguredCliManagedVmExecutorProps,
 ): (request: {
 	readonly authorization: ConfiguredCliAuthorizedOperation;
-	readonly input: ConfiguredCliInput;
+	readonly input: ControllerConfiguredCliInput;
 	readonly operation: ConfiguredCliOperation;
 	readonly operationName: string;
 	readonly reloadAuthorization: () => Promise<ConfiguredCliAuthorizedOperation>;
@@ -79,6 +133,22 @@ export function createConfiguredCliManagedVmExecutor(
 		if (!validation.ok) {
 			throw new ConfiguredControllerExecutionError('validation_failed', validation.error.message);
 		}
+		const oauthRule =
+			request.operation.authorization?.kind === 'oauth_account_profile'
+				? request.operation.authorization.rules.find(
+						(rule) =>
+							JSON.stringify(rule.match.path) === JSON.stringify(validation.matchedCommandPath),
+					)
+				: undefined;
+		if (
+			request.operation.authorization?.kind === 'oauth_account_profile' &&
+			oauthRule === undefined
+		) {
+			throw new ConfiguredControllerExecutionError(
+				'validation_failed',
+				'Configured CLI command has no current OAuth authorization classification.',
+			);
+		}
 		if (request.signal?.aborted === true) {
 			throw new ConfiguredControllerExecutionError(
 				'not_dispatched',
@@ -87,19 +157,49 @@ export function createConfiguredCliManagedVmExecutor(
 		}
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const admissionSignalIsActive = (): boolean => request.signal?.aborted !== true;
-		const acquired = await props.runtimeManager.acquireCommand({
+		const oauthRequirement =
+			oauthRule?.requirement.kind === 'oauth' ? oauthRule.requirement : undefined;
+		let materializedOAuthCredential:
+			| Pick<
+					Extract<GoogleOAuthRuntimeCredentialResolution, { kind: 'ready' }>,
+					'credentialId' | 'materialRevision'
+			  >
+			| undefined;
+		const commonAcquisition = {
 			...(request.signal === undefined ? {} : { admissionSignal: request.signal }),
 			finalAuthorization: async (): Promise<boolean> => {
 				if (!admissionSignalIsActive()) return false;
 				const current = await request.reloadAuthorization();
-				return (
+				const policyIsCurrent =
 					admissionSignalIsActive() &&
 					configuredCliAuthorizedEvaluationsEqual(
 						request.authorization.evaluation,
 						current.evaluation,
 					) &&
 					current.credentialedRuntime?.cohortRevision === resolution.cohortRevision &&
-					current.credentialedRuntime.groupRevision === resolution.groupRevision
+					current.credentialedRuntime.agentRuntimeRevision === resolution.agentRuntimeRevision;
+				return policyIsCurrent;
+			},
+			finalMaterialAuthorization: (): boolean => {
+				if (oauthRequirement === undefined) return true;
+				if (
+					!('accountProfile' in request.input) ||
+					materializedOAuthCredential === undefined ||
+					props.validateOAuthRuntimeCredentialSnapshot === undefined
+				) {
+					return false;
+				}
+				return (
+					props.validateOAuthRuntimeCredentialSnapshot({
+						accountProfileId: request.input.accountProfile,
+						agentId: resolution.agentId,
+						applicationId: oauthRequirement.applicationId,
+						credentialId: materializedOAuthCredential.credentialId,
+						materialRevision: materializedOAuthCredential.materialRevision,
+						minimumPermission: oauthRequirement.minimumPermission,
+						serviceId: oauthRequirement.serviceId,
+						zoneId: resolution.zoneId,
+					}).kind === 'current'
 				);
 			},
 			operationId: request.authorization.evaluation.operationId,
@@ -107,8 +207,70 @@ export function createConfiguredCliManagedVmExecutor(
 				gateway: gatewayIdentity,
 				stablePrincipal: request.stablePrincipal,
 			}),
-			resolution,
-		});
+		};
+		const acquired =
+			oauthRequirement !== undefined
+				? await props.runtimeManager.acquireCommand({
+						...commonAcquisition,
+						materializationFailureReason: (error): string =>
+							error instanceof ConfiguredControllerExecutionError
+								? error.message
+								: 'credentialed runtime materialization failed',
+						materializeResolution: async () => {
+							if (!('accountProfile' in request.input)) {
+								throw new ConfiguredControllerExecutionError(
+									'validation_failed',
+									'OAuth-configured CLI input requires an account profile.',
+								);
+							}
+							if (props.resolveOAuthRuntimeCredential === undefined) {
+								throw new ConfiguredControllerExecutionError(
+									'not_dispatched',
+									'OAuth credential resolution is unavailable.',
+								);
+							}
+							const credential = await props.resolveOAuthRuntimeCredential({
+								accountProfileId: request.input.accountProfile,
+								agentId: resolution.agentId,
+								applicationId: oauthRequirement.applicationId,
+								minimumPermission: oauthRequirement.minimumPermission,
+								serviceId: oauthRequirement.serviceId,
+								zoneId: resolution.zoneId,
+							});
+							if (credential.kind !== 'ready') {
+								throw new ConfiguredControllerExecutionError(
+									'not_dispatched',
+									`OAuth authorization is unavailable: ${credential.reason}.`,
+								);
+							}
+							materializedOAuthCredential = {
+								credentialId: credential.credentialId,
+								materialRevision: credential.materialRevision,
+							};
+							return {
+								dynamicHttpMediation: {
+									allowedHosts: credential.allowedHosts,
+									credentialId: credential.credentialId,
+									environmentName: 'GOG_ACCESS_TOKEN',
+									kind: 'dynamic_http_mediation',
+									materialRevision: credential.materialRevision,
+									placeholderValue: `GONDOLIN_SECRET_${randomBytes(24).toString('hex')}`,
+									secretValue: credential.accessToken,
+								},
+								resolution: {
+									...resolution,
+									agentRuntimeRevision: runtimeRevisionWithOAuthMaterial({
+										accountProfileId: request.input.accountProfile,
+										baseRevision: resolution.agentRuntimeRevision,
+										credentialId: credential.credentialId,
+										materialRevision: credential.materialRevision,
+									}),
+								},
+							};
+						},
+						runtimeIdentity: { agentId: resolution.agentId, zoneId: resolution.zoneId },
+					})
+				: await props.runtimeManager.acquireCommand({ ...commonAcquisition, resolution });
 		if (acquired.kind === 'busy') {
 			throw new ConfiguredControllerExecutionError(
 				'runtime_busy',

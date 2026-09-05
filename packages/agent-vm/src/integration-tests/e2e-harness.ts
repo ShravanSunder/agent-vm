@@ -57,6 +57,11 @@ import type {
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 
 const managedVmRuntimeComposition = createManagedVmRuntimeComposition();
+const e2eTcpPoolMaximumSize = 256;
+const e2eTcpPoolSlotWidth = e2eTcpPoolMaximumSize + 1;
+const e2eTcpPoolFirstSentinelPort = 30_000;
+const e2eTcpPoolLastSentinelPort = 45_000;
+const heldE2eTcpPoolSentinels = new Map<string, net.Server>();
 
 export async function startE2eGatewayZone(
 	options: StartGatewayZoneOptions,
@@ -290,7 +295,13 @@ function isOwnedE2eTempRoot(tempRoot: string): boolean {
 }
 
 export async function removeE2eTempRoot(tempRoot: string): Promise<void> {
-	if (!isOwnedE2eTempRoot(tempRoot)) {
+	const resolvedTempRoot = path.resolve(tempRoot);
+	const sentinel = heldE2eTcpPoolSentinels.get(resolvedTempRoot);
+	if (sentinel !== undefined) {
+		heldE2eTcpPoolSentinels.delete(resolvedTempRoot);
+		await closeE2ePort(sentinel);
+	}
+	if (!isOwnedE2eTempRoot(resolvedTempRoot)) {
 		return;
 	}
 	await fs.rm(tempRoot, { force: true, recursive: true });
@@ -360,6 +371,69 @@ export async function findAvailablePort(): Promise<number> {
 			});
 		});
 	});
+}
+
+async function bindE2ePort(port: number): Promise<net.Server> {
+	return await new Promise((resolve, reject) => {
+		const server = net.createServer();
+		server.once('error', reject);
+		server.listen(port, '127.0.0.1', () => resolve(server));
+	});
+}
+
+async function closeE2ePort(server: net.Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
+}
+
+export async function reserveE2eTcpPoolPortRange(
+	size: number,
+	ownerTempRoot: string,
+): Promise<number> {
+	if (!Number.isSafeInteger(size) || size <= 0 || size > e2eTcpPoolMaximumSize) {
+		throw new TypeError('Available port range size must be an integer between 1 and 256.');
+	}
+	const resolvedOwnerTempRoot = path.resolve(ownerTempRoot);
+	if (heldE2eTcpPoolSentinels.has(resolvedOwnerTempRoot)) {
+		throw new Error(`E2E temp root already owns a TCP pool slot: ${resolvedOwnerTempRoot}`);
+	}
+	for (
+		let sentinelPort = e2eTcpPoolFirstSentinelPort;
+		sentinelPort + size <= e2eTcpPoolLastSentinelPort;
+		sentinelPort += e2eTcpPoolSlotWidth
+	) {
+		let sentinel: net.Server | undefined;
+		const reservations: net.Server[] = [];
+		try {
+			// oxlint-disable-next-line no-await-in-loop -- binding the sentinel is the cross-process slot lock.
+			sentinel = await bindE2ePort(sentinelPort);
+			for (let offset = 0; offset < size; offset += 1) {
+				// oxlint-disable-next-line no-await-in-loop -- verify every port before retaining the slot sentinel.
+				reservations.push(await bindE2ePort(sentinelPort + 1 + offset));
+			}
+		} catch {
+			// oxlint-disable-next-line no-await-in-loop -- a rejected slot must release every acquired listener before trying the next slot.
+			await Promise.all(reservations.map(closeE2ePort));
+			if (sentinel !== undefined) {
+				// oxlint-disable-next-line no-await-in-loop -- release the rejected cross-process slot lock.
+				await closeE2ePort(sentinel);
+			}
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- release only adoptable ports while retaining the cross-process slot lock.
+		await Promise.all(reservations.map(closeE2ePort));
+		sentinel.unref();
+		heldE2eTcpPoolSentinels.set(resolvedOwnerTempRoot, sentinel);
+		return sentinelPort + 1;
+	}
+	throw new Error(`Failed to reserve an E2E TCP pool slot for ${String(size)} ports.`);
 }
 
 function readNodeNetworkErrorCode(error: unknown): string | null {
@@ -1525,6 +1599,7 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
+	readonly localOAuthBrokerContractsTarballPath: string;
 	readonly localSecretManagementTarballPath: string;
 	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
@@ -1537,6 +1612,10 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 		createLocalDockerPackageTarball({
 			packageName: 'agent-portal-sdk',
 			sourcePath: options.localAgentPortalSdkTarballPath,
+		}),
+		createLocalDockerPackageTarball({
+			packageName: 'oauth-broker-contracts',
+			sourcePath: options.localOAuthBrokerContractsTarballPath,
 		}),
 		createLocalDockerPackageTarball({
 			packageName: 'config-contracts',
@@ -1623,6 +1702,10 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		packageName: 'config-contracts',
 		repoRoot: options.repoRoot,
 	});
+	const localOAuthBrokerContractsTarballPath = await packLocalAgentVmPackageTarball({
+		packageName: 'oauth-broker-contracts',
+		repoRoot: options.repoRoot,
+	});
 	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'secret-management',
 		repoRoot: options.repoRoot,
@@ -1636,6 +1719,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
+			localOAuthBrokerContractsTarballPath,
 			localSecretManagementTarballPath,
 			...(options.profileNames === undefined ? {} : { profileNames: options.profileNames }),
 			projectRoot: options.projectRoot,
@@ -1645,6 +1729,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 		await removeE2eLocalPackageTarballs([
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
+			localOAuthBrokerContractsTarballPath,
 			localSecretManagementTarballPath,
 			localMcpPortalTarballPath,
 		]);

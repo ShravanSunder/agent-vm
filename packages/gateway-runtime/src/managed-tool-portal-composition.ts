@@ -56,6 +56,7 @@ export interface CreateGatewayRuntimeManagedToolPortalCompositionProps<TUdsProje
 > {
 	readonly artifactRuntime: GatewayRuntimeManagedToolPortalArtifactRuntimeProps;
 	readonly backendPortFactories: GatewayRuntimeManagedToolPortalBackendPortFactories;
+	readonly oauthAvailabilityPort?: CreateManagedToolPortalCapabilityCoreProps['oauthAvailabilityPort'];
 	readonly toolPortalConfig: CreateManagedToolPortalCapabilityCoreProps['config'];
 }
 
@@ -115,6 +116,9 @@ export async function createGatewayRuntimeManagedToolPortalComposition<TUdsProje
 				approvalPort: serviceProps.approvalPort,
 				backendPorts,
 				config: props.toolPortalConfig,
+				...(props.oauthAvailabilityPort === undefined
+					? {}
+					: { oauthAvailabilityPort: props.oauthAvailabilityPort }),
 				semanticSnapshot: serviceProps.semanticSnapshot,
 			}),
 		managedPluginAttachment: props.managedPluginAttachment,
