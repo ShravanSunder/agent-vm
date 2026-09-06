@@ -297,6 +297,12 @@ export async function authorizeGatewayControlControllerExecution(
 			'executionTarget' in configuredOperation
 				? configuredOperation.executionTarget.kind
 				: configuredOperation.targetKind;
+		if (targetKind === 'tool_vm') {
+			return rejectAuthorization(
+				'controller_execution_policy_denied',
+				'Tool VM configured CLI operations must dispatch inside the Gateway',
+			);
+		}
 		const expectedWindow = deriveGatewayControlControllerExecutionRpcWindow({
 			input: request.payload.input,
 			nowMs: request.createdAtMs,
@@ -324,6 +330,12 @@ export async function authorizeGatewayControlControllerExecution(
 		let trustedConfiguredOperation: ConfiguredCliAuthorizedOperation['operation'];
 		let credentialedRuntime: ConfiguredCliAuthorizedOperation['credentialedRuntime'];
 		if ('executionTarget' in configuredOperation) {
+			if (configuredOperation.executionTarget.kind === 'tool_vm') {
+				return rejectAuthorization(
+					'controller_execution_policy_denied',
+					'Tool VM configured CLI operations must dispatch inside the Gateway',
+				);
+			}
 			trustedConfiguredOperation = configuredOperation;
 		} else {
 			try {

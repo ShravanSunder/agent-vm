@@ -10,6 +10,7 @@ import {
 	encodeConfiguredCliPreparedImageIdentity,
 	managedToolPortalConfigSchema,
 	mcpPortalConfigSchema,
+	normalizePreparedControllerExecutionOperation,
 	preparedManagedToolPortalConfigSchema,
 	toolPortalNamespaceAllowsOperation,
 	type FormattedSecretValue,
@@ -211,6 +212,20 @@ async function prepareConfiguredCliManagedVmImages(props: {
 								namespace,
 								{
 									...namespacePolicy,
+									backend:
+										namespacePolicy.backend.kind !== 'controller_execution'
+											? namespacePolicy.backend
+											: {
+													...namespacePolicy.backend,
+													operations: Object.fromEntries(
+														Object.entries(namespacePolicy.backend.operations).map(
+															([operationName, operation]) => [
+																operationName,
+																normalizePreparedControllerExecutionOperation(operation),
+															],
+														),
+													),
+												},
 									discovery: discoveryByNamespace.get(namespace) ?? {},
 								},
 							]),
@@ -458,7 +473,9 @@ function assertEffectiveConfiguredCliCommandsDoNotOverlap(props: {
 		for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
 			if (operation.kind !== 'configured_cli') continue;
 			const commands = commandsByExecutable.get(operation.executablePath) ?? [];
-			for (const command of operation.commands) {
+			const configuredCommands =
+				'suggestCommands' in operation ? operation.suggestCommands : operation.commands;
+			for (const command of configuredCommands) {
 				commands.push({
 					identity: `${namespaceId}.${operationName}`,
 					tokens: [...operation.mandatoryArgvPrefix, ...command.path],
@@ -580,7 +597,9 @@ export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig
 			return Object.entries(namespacePolicy.backend.operations).some(
 				([operationName, operation]) =>
 					operation.kind === 'configured_cli' &&
-					operation.calls.requiresApproval.length > 0 &&
+					('suggestCalls' in operation
+						? operation.suggestCalls.suggestRequiresApproval.length > 0
+						: operation.calls.requiresApproval.length > 0) &&
 					selectorAllowsTool(namespacePolicy.tools, operationName) &&
 					selectorAllowsTool(namespacePolicy.calls.withoutApproval, operationName),
 			);

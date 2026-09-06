@@ -143,6 +143,7 @@ export const oauthToolPortalConfigPairSchema = z
 					if (!toolPortalNamespaceAllowsOperation(namespacePolicy, operationName)) continue;
 					if (
 						operation.kind !== 'configured_cli' ||
+						!('authorization' in operation) ||
 						operation.authorization?.kind !== 'oauth_account_profile'
 					) {
 						continue;
@@ -217,6 +218,7 @@ export const oauthToolPortalConfigPairSchema = z
 						}
 						if (
 							requirement.minimumPermission === 'write' &&
+							'calls' in operation &&
 							!operation.calls.requiresApproval.some((matcher) =>
 								matcherClassifiesExactPath(matcher, rule.match.path),
 							)

@@ -317,19 +317,18 @@ describe('Gateway runtime approval contracts', () => {
 		},
 	);
 
-	it('rejects a controller-execution reservation arm command', () => {
+	it('parses a controller-execution reservation arm command', () => {
 		// Arrange
 		const armCommand = {
 			reservation: {
 				...validDispatchReservation,
 				backendKind: 'controller_execution',
+				bindingRevision: 'binding:current',
 			},
 		};
 
 		// Act / Assert
-		expect(GatewayRuntimeApprovalArmDispatchCommandSchema.safeParse(armCommand).success).toBe(
-			false,
-		);
+		expect(GatewayRuntimeApprovalArmDispatchCommandSchema.parse(armCommand)).toEqual(armCommand);
 	});
 
 	it('parses the exact dispatch-armed result branch', () => {

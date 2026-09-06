@@ -102,7 +102,7 @@ const PRODUCTION_STRICT_SSH_PROCESS_LIMITS = Object.freeze({
 	maximumRuntimeMilliseconds: SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
 	maximumTerminalTombstones: 32,
 	maximumWaitMilliseconds: SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
-	maximumWriteBytes: PRODUCTION_STRICT_SSH_LIMITS.maxWriteBytes,
+	maximumWriteBytes: 65_536,
 	maximumWriteRecordsPerProcess: 64,
 	maximumWrittenBytesPerProcess: SANDBOX_MAXIMUM_BINARY_BYTES,
 }) satisfies StrictToolVmSshProcessRuntimeLimits;
@@ -244,19 +244,6 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		callerContextRegistrationClient,
 		controlCommandClient,
 	});
-	let controllerExecutionBackendPort: ToolPortalBackendPort<'controller_execution'>;
-	try {
-		controllerExecutionBackendPort = dependencies.createControllerExecutionBackendPort({
-			callerContextRegistrationClient,
-			controlCommandClient,
-			createCommandId: uuidv7,
-			owningGeneration: props.owningGeneration,
-			toolPortalConfig: props.toolPortalConfig,
-		});
-	} catch (error: unknown) {
-		await callerContextRegistrationClient.close().catch(() => undefined);
-		throw error;
-	}
 	const createStrictSshClient = (
 		access: Parameters<
 			CreateGatewayControlPublishedBindingRuntimeProps['createStrictSshClient']
@@ -265,7 +252,10 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		dependencies.createStrictSshClient({
 			access,
 			deadlineMilliseconds: PRODUCTION_STRICT_SSH_DEADLINES,
+			defaultExecuteOutputBytes: { stderr: 1_048_576, stdout: 1_048_576 },
 			limits: PRODUCTION_STRICT_SSH_LIMITS,
+			maximumPerCallExecuteDrainBytes: { stderr: 67_108_864, stdout: 67_108_864 },
+			maximumPerCallExecuteOutputBytes: { stderr: 16_777_216, stdout: 16_777_216 },
 			runtime: {
 				clock: { now: (): number => performance.now() },
 				createSshClient: createStrictToolVmSshTransport,
@@ -313,6 +303,35 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		throw error;
 	}
 	const acquisitionPort = operationActiveUseRuntime.acquisitionPort;
+	let controllerExecutionBackendPort: ToolPortalBackendPort<'controller_execution'>;
+	try {
+		controllerExecutionBackendPort = dependencies.createControllerExecutionBackendPort({
+			approvalPort,
+			callerContextRegistrationClient,
+			controlCommandClient,
+			createCommandId: uuidv7,
+			owningGeneration: props.owningGeneration,
+			toolPortalConfig: props.toolPortalConfig,
+			toolVmAcquisitionPort: {
+				acquire: async (request) => {
+					const group = await acquisitionPort.acquire(request);
+					if (group.kind === 'not-bound') return group;
+					return {
+						isCurrent: () =>
+							group.operationAuthority.authorize(group.operationContext).kind === 'authorized',
+						kind: group.kind,
+						retireGroup: group.retireGroup,
+						strictSshClient: group.strictSshClient,
+					};
+				},
+			},
+		});
+	} catch (error: unknown) {
+		await operationActiveUseRuntime.retire().catch(() => undefined);
+		await publishedBindingRuntime.close().catch(() => undefined);
+		await callerContextRegistrationClient.close().catch(() => undefined);
+		throw error;
+	}
 	let applicationMessageHandler: GatewayControlApplicationMessageHandler;
 	let sandboxDispatcher: GatewayRuntimeProductionSandboxDispatcher;
 	try {

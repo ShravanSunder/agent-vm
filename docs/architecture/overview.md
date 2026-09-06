@@ -122,9 +122,12 @@ minutes. File credentials are finalized into read-only memory before boot, HTTP
 credentials remain host-side behind opaque placeholders, and CLI
 config/state/cache stays on disposable COW rootfs.
 
-This is separate from leased Tool VMs: credentialed calls execute direct array
-argv through the controller, while `tool_vm_runner` and framework Sandbox APIs
-continue to use direct strict-pinned SSH to the current Tool VM.
+The credentialed runtime remains separate from leased Tool VMs. A configured
+CLI may instead select `executionTarget.kind: "tool_vm"`; the Gateway then uses
+the same current Tool VM lease and direct strict-pinned SSH path as
+`tool_vm_runner` and framework Sandbox APIs. That target authors its Portal-call
+policy with `suggest*` names because direct terminal, Python, SSH, or other Tool
+VM execution bypasses the Tool Portal route.
 
 → Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
 
