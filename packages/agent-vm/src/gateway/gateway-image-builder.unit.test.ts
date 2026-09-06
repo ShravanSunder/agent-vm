@@ -9,6 +9,7 @@ describe('buildGatewayImage', () => {
 	it('delegates image preparation exclusively through the managed VM capability', async () => {
 		const cacheDir = path.join(os.tmpdir(), 'agent-vm-gateway-image');
 		const buildConfigPath = path.join(cacheDir, 'build-config.jsonc');
+		const selectionRecordPath = path.join(cacheDir, 'selection.json');
 		const prepareImage = vi.fn(async () => ({
 			built: true,
 			fingerprint: 'managed-fingerprint',
@@ -16,14 +17,15 @@ describe('buildGatewayImage', () => {
 		}));
 
 		const result = await buildGatewayImage(
-			{ buildConfigPath, cacheDir },
+			{ artifactCacheDirectory: cacheDir, buildConfigPath, selectionRecordPath },
 			{ managedVmImages: { prepareImage } },
 		);
 
 		expect(prepareImage).toHaveBeenCalledOnce();
 		expect(prepareImage).toHaveBeenCalledWith({
-			cacheDirectory: cacheDir,
+			artifactCacheDirectory: cacheDir,
 			recipePath: buildConfigPath,
+			selectionRecordPath,
 		});
 		expect(result).toEqual({
 			built: true,

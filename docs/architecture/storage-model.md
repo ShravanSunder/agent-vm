@@ -11,20 +11,32 @@ the Gondolin VFS boundary.
 For the concrete Hermes and Worker Gateway path matrix, see
 [Storage Matrix](storage-matrix.md).
 
+New immutable VM images are published only after streamed SHA-256 verification
+against their manifest. Reuse checks supported manifest structure and regular,
+non-empty asset files without rehashing image contents. Later binary corruption
+that preserves those structural properties is not detected on the cache fast path.
+
 ## Config-Level Path Map
 
 `storageRootDir` is the sole authored standard operational storage path. The
-generated root is scoped by the deployment's `projectNamespace` for local,
-user-dir, and pod scaffolds. The controller loads that final root and derives
-the remaining paths from it and validated zone IDs; it does not append the
-namespace again.
+controller loads and canonicalizes that final root, then derives one shared
+cache beside it and one small generated-metadata root inside it. The cache's
+deployment scope is the SHA-256 digest of the canonical `storageRootDir`, not
+`projectNamespace`, so two deployments cannot collide when they reuse a
+namespace.
 
 ```text
 path                  scope                 durable?          backup?   contains
 ──────────────────    ──────────────────    ──────────────    ───────   ─────────────────────────────
 
-cacheDir              global derived        yes               no        rebuildable image/plugin/tool
-                                                                           cache
+cacheDir              host shared derived   rebuildable       no        shared images and
+                                                                           deployment-scoped caches
+
+deploymentCacheDir    per-deployment        rebuildable       no        Docker contexts and
+                      digest scope                                          zone framework caches
+
+generatedDir          per-deployment        generated         no        image selections and
+                                                                           Gateway-effective config
 
 controllerRuntimeDir  global derived        runtime-scoped    no        controller lock, health evidence,
                                                                            observability runtime config
@@ -129,7 +141,7 @@ effectiveGuestCwd                   plugin/controller response         Tool VM g
                                                                        zoneRuntimeDir/logs
                                     gateway/runtime logs               not normal zone backup
 
-/home/hermes/.cache                 Hermes Gateway VM                 RealFS -> cacheDir
+/home/hermes/.cache                 Hermes Gateway VM                 RealFS -> deploymentCacheDir
                                     rebuildable cache                  not backed up
 
 /state                              gateway / worker VM                RealFS -> stateDir or runtime state
@@ -225,10 +237,21 @@ controller durable authority
 
 rebuildable cache
   Owner: controller/runtime tooling
-  Host: <storageRootDir>/cache (`cacheDir`)
+  Host: <dirname(storageRootDir)>/cache (`cacheDir`)
+        vm-images/<fingerprint>/ for shared immutable VM image artifacts
+        deployments/<deploymentCacheKey>/ for deployment-scoped mutable cache
   VM: gateway-specific cache mounts
   Backup: no
-  Rule: can be deleted and repaired; may persist across reboot for speed
+  Rule: can be deleted and repaired; complete shared fingerprints are immutable
+
+generated deployment metadata
+  Owner: controller/build tooling
+  Host: <storageRootDir>/generated (`generatedDir`)
+        image-selections/<family>/<profile>.json
+        gateway-effective/<zone>/
+  VM: narrow generated inputs only where an owning runtime contract requires them
+  Backup: no
+  Rule: small reproducible metadata, never large Docker/image/cache artifacts
 
 controller runtime artifacts
 	Owner: controller deployment runtime
@@ -298,11 +321,20 @@ host controllerStateDir
       worker-tasks/<taskId>/gateway-runtime.json
 
 host cacheDir
-  ~/.agent-vm/<projectNamespace>/cache/
-    gateway-images/<imageProfile>/
-      prepared-image.json
-    tool-vm-images/<imageProfile>/
-      prepared-image.json
+  ~/.agent-vm/cache/
+    vm-images/<fingerprint>/
+      manifest.json
+      rootfs.ext4
+      initramfs.cpio.lz4
+      vmlinuz-virt
+    deployments/<deploymentCacheKey>/
+      docker-contexts/<family>/<profile>/
+      zones/<zone>/framework-cache/
+
+host generatedDir
+  ~/.agent-vm/<projectNamespace>/generated/
+    image-selections/<family>/<profile>.json
+    gateway-effective/<zone>/
 
 host controllerRuntimeDir
   ~/.agent-vm/<projectNamespace>/controller-runtime/

@@ -41,6 +41,12 @@ import {
 	type SecretResolver,
 } from '@agent-vm/secret-management';
 
+import { configuredImageSelectionRecordPath } from '../build/prepared-gondolin-image-cache.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	gatewayFrameworkCacheDirForSystemConfig,
+	sharedImageCacheDirForSystemConfig,
+} from '../config/system-config.js';
 import {
 	buildGatewayControlPrivateEnvironment,
 	buildGatewayControlEndpoint,
@@ -1110,11 +1116,12 @@ function applyRuntimeMcpPortalMaterialization(props: {
 }
 
 async function buildRuntimeMcpPortalMaterialization(props: {
-	readonly cacheDir: string;
 	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
+	readonly generatedDir: string;
 	readonly managedVmImages: GatewayManagerDependencies['managedVmImages'];
 	readonly mode: 'preflight' | 'write';
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
+	readonly sharedImageCacheDir: string;
 	readonly zone: GatewayZone;
 }): Promise<RuntimeMcpPortalMaterialization> {
 	const zone = props.zone;
@@ -1126,12 +1133,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 			`Managed Gateway zone '${zone.id}' requires controller-issued identity material before Tool Portal admission materialization.`,
 		);
 	}
-	const effectiveHostConfigDir = path.join(
-		props.cacheDir,
-		'gateways',
-		zone.id,
-		'tool-portal-effective',
-	);
+	const effectiveHostConfigDir = path.join(props.generatedDir, 'gateway-effective', zone.id);
 	const buildEffectiveConfig =
 		props.mode === 'preflight' ? preflightMcpPortalEffectiveConfig : writeMcpPortalEffectiveConfig;
 	const materialization = await buildEffectiveConfig({
@@ -1139,6 +1141,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,
+		sharedImageCacheDir: props.sharedImageCacheDir,
 		allowedRawEnvSecretNames: [],
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		secretResolver: props.secretResolver,
@@ -1213,12 +1216,16 @@ async function buildGatewayImageForZone(
 	});
 	return await buildGatewayImage(
 		{
+			artifactCacheDirectory: sharedImageCacheDirForSystemConfig(options.systemConfig),
 			buildConfigPath: gatewayImageProfile.buildConfig,
-			cacheDir: path.join(
-				options.systemConfig.cacheDir,
-				'gateway-images',
-				options.zone.gateway.imageProfile,
-			),
+			expectedBootRole: options.zone.gateway.type === 'hermes' ? 'hermes-gateway' : 'standard',
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+					options.systemConfig.storageRootDir,
+				),
+				family: 'gateway',
+				profileName: options.zone.gateway.imageProfile,
+			}),
 		},
 		dependencies,
 	);
@@ -1281,11 +1288,12 @@ async function preflightGatewayZoneStartPrerequisites(
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
 	const [toolPortalMaterialization] = await Promise.all([
 		buildRuntimeMcpPortalMaterialization({
-			cacheDir: options.systemConfig.cacheDir,
 			controlSessionMaterial,
+			generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
 			managedVmImages: dependencies.managedVmImages,
 			mode: 'preflight',
 			secretResolver: cachingSecretResolver.resolver,
+			sharedImageCacheDir: sharedImageCacheDirForSystemConfig(options.systemConfig),
 			zone,
 		}),
 		resolveZoneSecrets({
@@ -1463,11 +1471,12 @@ async function startGatewayZoneImplementation(
 		'Materializing Tool Portal runtime',
 		async () =>
 			await buildRuntimeMcpPortalMaterialization({
-				cacheDir: options.systemConfig.cacheDir,
 				controlSessionMaterial,
+				generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
 				managedVmImages: dependencies.managedVmImages,
 				mode: 'write',
 				secretResolver: startupSecretResolver,
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(options.systemConfig),
 				zone,
 			}),
 	);
@@ -1538,7 +1547,7 @@ async function startGatewayZoneImplementation(
 			);
 		}
 	}
-	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
+	const gatewayCacheDir = gatewayFrameworkCacheDirForSystemConfig(options.systemConfig, zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	if (isManagedGatewayZone(zone)) {
 		const logDir = path.join(zone.gateway.zoneRuntimeDir, 'logs');

@@ -692,14 +692,19 @@ VM images are built from Docker OCI base images via Gondolin's build pipeline. I
     v
   buildGatewayImage() / buildGondolinImage()
     |-- 1. Load authored build config JSONC
-    |-- 2. Fingerprint: SHA-256(buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
-    |-- 3. Cache hit?  cacheDir/{fingerprint}/ has all 4 assets -> return cached
-    |-- 4. Cache miss: gondolin.buildAssets() -> Docker pull, extract, build rootfs
+    |-- 2. Fingerprint: SHA-256(content-normalized buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
+    |-- 3. Cache hit?  cacheDir/vm-images/{fingerprint}/ passes manifest and file-structure validation -> return cached
+    |-- 4. Cache miss: staged Gondolin build -> verify checksums -> native no-replace publication
     |-- 5. Output: { imagePath, fingerprint, built: true|false }
     v
-  cacheDir/{fingerprint}/
+  cacheDir/vm-images/{fingerprint}/
     manifest.json, rootfs.ext4, initramfs.cpio.lz4, vmlinuz-virt
 ```
+
+Referenced local build inputs contribute their content and relevant file modes,
+not their placement on the host, to the effective fingerprint. Python 3 provides
+the standard-library bridge to native no-replace publication on macOS/Linux.
+Reuse avoids rehashing large image assets; new publication verifies full hashes.
 
 The identifier file is shared by all image profiles because it represents
 the system build environment, not an individual gateway or tool VM.

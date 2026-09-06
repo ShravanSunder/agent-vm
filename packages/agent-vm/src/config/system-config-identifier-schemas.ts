@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const reservedZoneIds = new Set(['cache', 'controller-state', 'controller-runtime']);
+const reservedZoneIds = new Set(['cache', 'controller-state', 'controller-runtime', 'generated']);
 
 export const agentIdSchema = z
 	.string()
@@ -28,4 +28,8 @@ export const projectNamespaceSchema = z
 	.regex(
 		/^[a-z0-9][a-z0-9-]*$/u,
 		'projectNamespace must use lowercase letters, numbers, and hyphens only',
+	)
+	.refine(
+		(projectNamespace) => projectNamespace !== 'cache',
+		'projectNamespace is reserved for host-shared storage',
 	);

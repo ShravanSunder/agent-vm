@@ -95,7 +95,8 @@ storageRootDir is the required, final deployment storage root. Generated local, 
 stateDir is <storageRootDir>/<zoneId>/state and stores durable gateway state.
 zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>. Worker zones have no active zoneFilesDir.
 gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.
-cacheDir is <storageRootDir>/cache and stores rebuildable artifacts.
+cacheDir is <dirname(storageRootDir)>/cache and is the one shared rebuildable cache. VM images live under cacheDir/vm-images/<fingerprint>; deployment-scoped Docker contexts and framework caches live under cacheDir/deployments/<deploymentCacheKey>.
+generatedDir is <storageRootDir>/generated and stores only small reproducible metadata such as image selections and Gateway-effective config.
 controllerStateDir is required as a derived controller capability at <storageRootDir>/controller-state and stores host-controller-only durable authority.
 controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.
 All controller records live below the one host-controller-owned root at controllerStateDir/zones/<zoneId>: approvals/, credentialed-runtimes/<recordId>.json, gateway-runtime.json, tool-leases/<recordId>.json, and worker-tasks/<taskId>/gateway-runtime.json.
@@ -129,7 +130,15 @@ The installed @agent-vm/hermes-gateway package owns the Hermes image recipe and 
 
 vm-images/.../overlay.jsonc owns deployment image additions. Use extraAptPackages for apt packages, copy for deployment files, runAfterBase for post-base commands, and packageOverrides.npm only for deliberate exact image-local npm package pins. Do not restate the managed default package set in deployment overlays, and do not install @agent-vm/* packages through packageOverrides.
 
-Do not edit cacheDir/generated-dockerfiles/... by hand. Generated Dockerfiles are build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
+Do not edit generated Docker build contexts under cacheDir/deployments/<deploymentCacheKey>/docker-contexts/... by hand. They are disposable build output. If a generated Dockerfile contains the wrong package version, change package.json or the overlay that produced it, then rebuild.
+
+Agent VM stores complete immutable VM images once under cacheDir/vm-images/<fingerprint>. A deployment's small image selections live under storageRootDir/generated/image-selections. Controller and Tool VM startup validate those selections and tell you to run agent-vm build when one is missing or stale.
+
+New images are checksum-verified before publication. Reuse validates manifest and file structure without hashing large images again; it does not detect every later binary corruption. Never repair or replace shared fingerprint directories by hand.
+
+Uncached image publication requires Python 3 on the controller host and native no-replace rename support on macOS or Linux. Missing support fails closed before image construction. Keep declared init scripts, copied files/directories, and custom helper binaries stable during a build; their content participates in shared-image identity.
+
+Cache cleanup also requires Python 3 with symlink-resistant directory operations. It holds the controller ownership lock and anchors deletion to opened directories without following ancestor symlinks. If a target changes or the host lacks support, cleanup fails closed; do not substitute a recursive shell deletion.
 
 For managed Worker and Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
 

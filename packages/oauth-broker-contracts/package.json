@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/oauth-broker-contracts",
-	"version": "0.0.147",
+	"version": "0.0.148",
 	"description": "Portable OAuth broker schemas and TypeScript contracts.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {

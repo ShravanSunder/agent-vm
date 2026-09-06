@@ -20,7 +20,11 @@ import {
 	resolveEffectivePackageOverrides,
 } from '../build/package-overrides.js';
 import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
-import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
+import {
+	gatewayFrameworkCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+	type SystemConfig,
+} from '../config/system-config.js';
 import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
@@ -303,7 +307,7 @@ function buildWorkerWorkRootfsChecks(
 			};
 			const vmSpec = buildWorkerVmSpec({
 				controllerPort: systemConfig.host.controllerPort,
-				gatewayCacheDir: systemConfig.cacheDir,
+				gatewayCacheDir: gatewayFrameworkCacheDirForSystemConfig(systemConfig, zone.id),
 				projectNamespace: systemConfig.host.projectNamespace,
 				resolvedSecrets: {},
 				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,

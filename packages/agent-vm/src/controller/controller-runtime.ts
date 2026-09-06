@@ -10,7 +10,10 @@ import {
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { resolveCliVersion } from '../cli/cli-version.js';
-import { resolveControllerHealthConfig } from '../config/system-config.js';
+import {
+	deploymentCacheDirForSystemConfig,
+	resolveControllerHealthConfig,
+} from '../config/system-config.js';
 import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZoneForController,
@@ -626,7 +629,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		return await createUnstartedToolVm(
 			{
 				agentId: toolVmOptions.agentId,
-				cacheDir: options.systemConfig.cacheDir,
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
@@ -831,7 +833,10 @@ async function startControllerRuntimeWithOwnershipLock(
 		readonly entryNames: string[];
 		readonly probeKind: 'controller_cache_dir_listing';
 	}> => {
-		const probeDirectory = path.join(options.systemConfig.cacheDir, 'controller-host-probe');
+		const probeDirectory = path.join(
+			deploymentCacheDirForSystemConfig(options.systemConfig),
+			'controller-host-probe',
+		);
 		await mkdir(probeDirectory, { recursive: true, mode: 0o700 });
 		await writeFile(
 			path.join(probeDirectory, controllerHostProbeMarkerFileName),

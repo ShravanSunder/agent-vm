@@ -13,7 +13,10 @@ import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import { assertOAuthListenerPortAvailable } from '../controller/oauth/oauth-listener-port-validation.js';
 import {
 	managedToolPortalRequiresApprovalAccess,
@@ -327,7 +330,11 @@ async function collectToolPortalConfigChecks(
 		await planMcpPortalEffectiveConfig({
 			approvalAccessConfigured: zone.approvalAccess !== undefined,
 			authoredConfigDir: configDir,
-			effectiveHostConfigDir: path.join(systemConfig.cacheDir, zone.id, 'tool-portal-effective'),
+			effectiveHostConfigDir: path.join(
+				deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+				'gateway-effective',
+				zone.id,
+			),
 			allowedRawEnvSecretNames: [],
 			declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 			secretResolver: validationOnlySecretResolver,

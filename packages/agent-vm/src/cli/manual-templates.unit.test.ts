@@ -77,6 +77,16 @@ describe('manual templates', () => {
 		const hermes = findManual(files, 'docs/manual/hermes.md');
 		const layout = findManual(files, 'docs/manual/layout.md');
 		const imageVersioning = findManual(files, 'docs/manual/image-versioning.md');
+		expect(imageVersioning).toContain(
+			'Cache cleanup also requires Python 3 with symlink-resistant directory operations.',
+		);
+		expect(imageVersioning).toContain(
+			'anchors deletion to opened directories without following ancestor symlinks',
+		);
+		expect(imageVersioning).toContain('New images are checksum-verified before publication.');
+		expect(imageVersioning).toContain(
+			'Reuse validates manifest and file structure without hashing large images again',
+		);
 		const ingress = findManual(files, 'docs/manual/gateway-ingress.md');
 		const secrets = findManual(files, 'docs/manual/secrets.md');
 		const channels = findManual(files, 'docs/manual/channels.md');
@@ -110,7 +120,11 @@ describe('manual templates', () => {
 		);
 		expect(imageVersioning).toContain('immutable upstream distribution pin');
 		expect(imageVersioning).toContain('packageOverrides.npm');
-		expect(imageVersioning).toContain('Do not edit cacheDir/generated-dockerfiles');
+		expect(imageVersioning).toContain(
+			'Do not edit generated Docker build contexts under cacheDir/deployments',
+		);
+		expect(imageVersioning).toContain('cacheDir/vm-images/<fingerprint>');
+		expect(imageVersioning).toContain('storageRootDir/generated/image-selections');
 		expect(imageVersioning).not.toContain('packageOverrides.pnpm');
 
 		expect(ingress).toContain('zones[].gateway.port');

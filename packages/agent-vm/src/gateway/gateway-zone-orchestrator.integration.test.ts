@@ -38,7 +38,13 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import {
+	createLoadedSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	gatewayFrameworkCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	GatewayControlBindingPublicationSource,
 	GatewayControlLeaseRpcOperations,
@@ -64,6 +70,10 @@ import {
 import { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
+import {
+	createInvalidImageSelectionFixture,
+	invalidImageSelectionKinds,
+} from '../testing/image-selection-test-fixture.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -1386,6 +1396,41 @@ function createGatewaySecretResolver(resolvedSecrets: Record<string, string>): S
 }
 
 describe('startGatewayZone', () => {
+	it.each(invalidImageSelectionKinds)(
+		'rejects %s selection before Gateway VM construction',
+		async (invalidKind) => {
+			const systemConfig = await createInvalidImageSelectionFixture({
+				systemConfig: await createSystemConfig(),
+				family: 'gateway',
+				profileName: 'hermes',
+				invalidKind,
+			});
+			const createManagedVm = vi.fn();
+			const composition = createManagedVmRuntimeComposition();
+
+			await expect(
+				startGatewayZone(
+					{
+						systemConfig,
+						zoneId: 'shravan',
+						secretResolver: {
+							resolve: async () => 'fixture-secret',
+							resolveAll: async (references: Record<string, SecretRef>) =>
+								Object.fromEntries(
+									Object.keys(references).map((secretName) => [secretName, 'fixture-secret']),
+								),
+						},
+					},
+					{
+						managedVmFactory: { createManagedVm },
+						managedVmImages: composition.managedVmImages,
+						loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
+					},
+				),
+			).rejects.toThrow(/Run agent-vm build/u);
+			expect(createManagedVm).not.toHaveBeenCalled();
+		},
+	);
 	it('reports exact current Hermes attachment loss once and ignores stale readiness', async () => {
 		// Arrange
 		const systemConfig = await createHermesSystemConfig();
@@ -1609,7 +1654,7 @@ describe('startGatewayZone', () => {
 					},
 					'/home/hermes/.cache': {
 						access: 'read-write',
-						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
+						hostPath: gatewayFrameworkCacheDirForSystemConfig(systemConfig, 'shravan'),
 						kind: 'host-directory',
 					},
 				}),
@@ -2889,10 +2934,9 @@ describe('startGatewayZone', () => {
 		const { managedVm } = createHealthyGatewayVmStub('vm-portal-admission', 28_293);
 		const toolPortal = createGatewayZoneToolPortalConfig(configDir);
 		const admissionFilePath = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 			GATEWAY_RUNTIME_PORTAL_ADMISSION_FILE_NAME,
 		);
 
@@ -3141,10 +3185,9 @@ describe('startGatewayZone', () => {
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const effectiveConfigDir = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 		);
 
 		await preflightGatewayZoneStart(

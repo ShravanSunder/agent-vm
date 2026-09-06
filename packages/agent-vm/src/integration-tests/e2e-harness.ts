@@ -23,6 +23,7 @@ import {
 	type ManagedImageOverlay,
 } from '../build/managed-image-dockerfile.js';
 import {
+	configuredImageSelectionRecordPath,
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 	type PreparedManagedVmImage,
@@ -33,7 +34,12 @@ import type { ImageArchitecture } from '../cli/init-command-schemas.js';
 import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
-import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	loadSystemConfig,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	ControllerRuntime,
 	ControllerRuntimeDependencies,
@@ -144,6 +150,7 @@ interface E2eImageTarget {
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly name: string;
 	readonly recipeFingerprint: string;
+	readonly selectionRecordPath: string;
 	readonly source?: unknown;
 }
 
@@ -606,11 +613,7 @@ async function collectE2eImageTargets(
 		const managedGatewayBoot = managedGatewayBootProjectionForE2eTarget(family, profile);
 		const target: E2eImageTarget = {
 			buildConfigPath: profile.buildConfig,
-			cacheDirectory: path.join(
-				project.systemConfig.cacheDir,
-				family === 'gateway' ? 'gateway-images' : 'tool-vm-images',
-				profileName,
-			),
+			cacheDirectory: sharedImageCacheDirForSystemConfig(project.systemConfig),
 			e2eManifestEligible:
 				profile.source === undefined ||
 				(selectedFamilies.size === 1 && selectedFamilies.has(family)),
@@ -622,6 +625,13 @@ async function collectE2eImageTargets(
 				...(profile.dockerfile === undefined ? {} : { dockerfile: profile.dockerfile }),
 				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 				...(profile.source === undefined ? {} : { source: profile.source }),
+			}),
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+					project.systemConfig.storageRootDir,
+				),
+				family,
+				profileName,
 			}),
 		};
 		if (profile.dockerfile !== undefined) {
@@ -757,12 +767,13 @@ async function materializePreparedE2eImagesFromManifest(
 			}
 			await writePreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
-				cacheDir: target.cacheDirectory,
 				fingerprint: entry.fingerprint,
 				...(entry.fingerprintInput === undefined
 					? {}
 					: { fingerprintInput: entry.fingerprintInput }),
 				imagePath: entry.imagePath,
+				selectionRecordPath: target.selectionRecordPath,
+				sharedImageCacheDir: target.cacheDirectory,
 				...(entry.managedGatewayBoot === undefined
 					? {}
 					: { managedGatewayBoot: entry.managedGatewayBoot }),
@@ -787,7 +798,9 @@ async function recordPreparedE2eImages(
 			}
 			const preparedImage: PreparedManagedVmImage | undefined = await readPreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
-				cacheDir: target.cacheDirectory,
+				expectedManagedGatewayBoot: target.managedGatewayBoot,
+				selectionRecordPath: target.selectionRecordPath,
+				sharedImageCacheDir: target.cacheDirectory,
 			});
 			return { preparedImage, target };
 		}),
@@ -837,7 +850,6 @@ export async function findReusableGatewayImageDirectory(options: {
 	readonly imageProfileName?: string;
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<string | null> {
-	const imageProfileName = options.imageProfileName ?? 'worker';
 	const explicitE2eCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (!explicitE2eCacheRoot) {
 		return null;
@@ -861,8 +873,8 @@ export async function findReusableGatewayImageDirectory(options: {
 			continue;
 		}
 		const candidateImageDirectories = [
-			path.join(e2eRunDirectory, 'gateway-images', imageProfileName, requiredFingerprint),
-			path.join(e2eRunDirectory, 'cache', 'gateway-images', imageProfileName, requiredFingerprint),
+			path.join(e2eRunDirectory, 'vm-images', requiredFingerprint),
+			path.join(e2eRunDirectory, 'cache', 'vm-images', requiredFingerprint),
 		];
 		for (const candidateImageDir of candidateImageDirectories) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
@@ -901,12 +913,7 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 			? {}
 			: { managedGatewayBoot: options.managedGatewayBoot },
 	);
-	const activeImageDir = path.join(
-		options.activeCacheDir,
-		'gateway-images',
-		imageProfileName,
-		requiredFingerprint,
-	);
+	const activeImageDir = path.join(options.activeCacheDir, 'vm-images', requiredFingerprint);
 	if (activeImageDir === reusableImageDir) {
 		return;
 	}
@@ -922,6 +929,7 @@ export async function prepareGatewayE2eProjectImages(
 	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
 	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1' && imageFamilies.length > 1) {
 		for (const imageFamily of imageFamilies) {
+			// oxlint-disable-next-line no-await-in-loop -- each family records into one shared manifest before the next family reads it.
 			await prepareGatewayE2eProjectImages({
 				imageFamilies: [imageFamily],
 				project: options.project,

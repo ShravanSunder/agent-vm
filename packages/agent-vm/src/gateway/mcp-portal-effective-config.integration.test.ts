@@ -11,6 +11,121 @@ import {
 } from './mcp-portal-effective-config.js';
 
 const createdDirectories: string[] = [];
+function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
+	return {
+		agents: {
+			shravan: {
+				credentialBindings: {
+					google: {
+						files: {
+							'service-account': {
+								ref: 'op://agent-vm-testing/google/service-account',
+								source: '1password',
+							},
+						},
+					},
+				},
+				profile: 'default',
+			},
+		},
+		mode: 'managed',
+		profiles: {
+			default: {
+				namespaces: {
+					controller: {
+						backend: {
+							kind: 'controller_execution',
+							operations: {
+								isolated: {
+									calls: {
+										deny: [],
+										requiresApproval: [],
+										withoutApproval: 'remaining_admitted',
+									},
+									commands: [{ path: ['run'] }],
+									deniedPatterns: [],
+									executablePath: '/usr/bin/printf',
+									executionTarget: {
+										allowedHosts: [],
+										credentialProjection: {
+											credentialBinding: 'google',
+											credentialEnvironment: {
+												GOG_DATA_DIR: { kind: 'credential_root' },
+											},
+											credentialFiles: [
+												{
+													path: 'sa-c2hyYXZhbkBleGFtcGxlLmNvbQ.json',
+													source: 'service-account',
+												},
+											],
+											kind: 'file_binding',
+										},
+										environment: { kind: 'empty' },
+										guestCwd: '/run',
+										imageReference: '../../vm-images/controller-runners/default/build-config.json',
+										kind: 'ephemeral_managed_vm',
+									},
+									kind: 'configured_cli',
+									mandatoryArgvPrefix: [],
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'fail',
+										stderrMaxBytes: 1024,
+										stdoutMaxBytes: 1024,
+									},
+									safeHelp: 'Run one isolated operation.',
+									stdin: { kind: 'none' },
+									timeout: { kind: 'quick' },
+								},
+							},
+						},
+						calls: {
+							requiresApproval: { allow: [] },
+							withoutApproval: { allow: ['isolated'] },
+						},
+						tools: { allow: ['isolated'] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	};
+}
+
+describe('path-based configured image preparation', () => {
+	it('forwards the shared artifact cache through authored config loading', async () => {
+		const authoredConfigDir = await createAuthoredDir({
+			mcpConfig: { providers: {}, schemaVersion: 1 },
+			toolPortalConfig: createEphemeralConfiguredCliToolPortalConfigInput(),
+		});
+		const effectiveHostConfigDir = path.join(authoredConfigDir, 'effective');
+		const sharedImageCacheDir = path.join(authoredConfigDir, 'shared-images');
+		const prepareImage = vi.fn(async () => ({
+			built: true,
+			fingerprint: 'prepared-image',
+			imageReference: '/prepared-image',
+		}));
+
+		await writeMcpPortalEffectiveConfig({
+			authoredConfigDir,
+			approvalAccessConfigured: false,
+			effectiveHostConfigDir,
+			sharedImageCacheDir,
+			managedVmImages: { prepareImage },
+			secretResolver: emptySecretResolver,
+			zoneId: 'zone-a',
+			declaredAgentIds: ['shravan'],
+		});
+
+		expect(prepareImage).toHaveBeenCalledWith({
+			artifactCacheDirectory: sharedImageCacheDir,
+			recipePath: path.resolve(
+				authoredConfigDir,
+				'../../vm-images/controller-runners/default/build-config.json',
+			),
+		});
+	});
+});
 const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
 type TestSecretResolver = SecretResolver & { readonly resolveAllMock: ReturnType<typeof vi.fn> };
 

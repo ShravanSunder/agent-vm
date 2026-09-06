@@ -4,11 +4,19 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../../build/gondolin-image-builder.js';
-import { managedVmImageAssetFileNames } from '../../build/gondolin-managed-vm-build-tooling.js';
 import type { ManagedGatewayImageBootProjection } from '../../build/gondolin-managed-vm-build-tooling.js';
-import { writePreparedManagedVmImage } from '../../build/prepared-gondolin-image-cache.js';
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	configuredImageSelectionRecordPath,
+	writePreparedManagedVmImage,
+} from '../../build/prepared-gondolin-image-cache.js';
+import {
+	createLoadedSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../../config/system-config.js';
 import {
 	createProcessShutdownSignalWaiter,
 	isGatewayImageCached,
@@ -16,6 +24,7 @@ import {
 } from './controller-command-operation.js';
 
 const temporaryDirectories: string[] = [];
+const currentRuntimeFingerprint = '3333333333333333';
 
 describe('controller process lifecycle', () => {
 	it('closes the runtime before process logging and removes signal listeners', async () => {
@@ -137,21 +146,15 @@ async function createTemporaryDirectory(): Promise<string> {
 }
 
 async function writeFakeImageAssets(imagePath: string): Promise<void> {
-	await fs.mkdir(imagePath, { recursive: true });
-	await Promise.all(
-		managedVmImageAssetFileNames.map(
-			async (fileName) => await fs.writeFile(path.join(imagePath, fileName), '', 'utf8'),
-		),
-	);
+	await writeImageArtifactFixture(imagePath);
 }
 
 async function createGatewayImageCacheFixture(
-	fingerprint: string,
 	options: {
 		readonly gatewayType?: 'hermes' | 'worker';
 		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
 	} = {},
-): Promise<LoadedSystemConfig> {
+): Promise<{ readonly fingerprint: string; readonly systemConfig: LoadedSystemConfig }> {
 	const gatewayType = options.gatewayType ?? 'worker';
 	const gatewayConfiguration =
 		gatewayType === 'hermes'
@@ -174,35 +177,47 @@ async function createGatewayImageCacheFixture(
 		type: gatewayType,
 		buildConfig: buildConfigPath,
 	};
-	const cacheDir = path.join(temporaryDirectoryPath, 'cache');
-	const gatewayProfileCacheDirectory = path.join(cacheDir, 'gateway-images', 'worker');
-	const imagePath = path.join(gatewayProfileCacheDirectory, fingerprint);
+	const sharedImageCacheDir = sharedImageCacheDirForStorageRoot(temporaryDirectoryPath);
+	const selectionRecordPath = configuredImageSelectionRecordPath({
+		deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(temporaryDirectoryPath),
+		family: 'gateway',
+		profileName: 'worker',
+	});
 	await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 	await fs.writeFile(
 		buildConfigPath,
 		JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
 		'utf8',
 	);
+	const fingerprintInput = {
+		dockerRootfsIdentity: {
+			architecture: 'arm64',
+			layers: ['sha256:rootfs-layer'],
+			os: 'linux',
+		},
+		schemaVersion: 1,
+	};
+	const fingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
+		fingerprintInput,
+		...(options.preparedManagedGatewayBoot === undefined
+			? {}
+			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
+	});
+	const imagePath = path.join(sharedImageCacheDir, fingerprint);
 	await writeFakeImageAssets(imagePath);
 	await writePreparedManagedVmImage({
 		buildConfigPath,
-		cacheDir: gatewayProfileCacheDirectory,
 		fingerprint,
-		fingerprintInput: {
-			dockerRootfsIdentity: {
-				architecture: 'arm64',
-				layers: ['sha256:rootfs-layer'],
-				os: 'linux',
-			},
-			schemaVersion: 1,
-		},
+		fingerprintInput,
 		imagePath,
+		selectionRecordPath,
+		sharedImageCacheDir,
 		...(options.preparedManagedGatewayBoot === undefined
 			? {}
 			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
 	});
 
-	return createLoadedSystemConfig(
+	const systemConfig = createLoadedSystemConfig(
 		{
 			storageRootDir: temporaryDirectoryPath,
 			host: {
@@ -271,6 +286,7 @@ async function createGatewayImageCacheFixture(
 		},
 		{ systemConfigPath },
 	);
+	return { fingerprint, systemConfig };
 }
 
 afterEach(async () => {
@@ -283,27 +299,27 @@ afterEach(async () => {
 
 describe('isGatewayImageCached', () => {
 	it('accepts the build-prepared gateway image cache record', async () => {
-		const systemConfig = await createGatewayImageCacheFixture('docker-backed-fingerprint');
+		const { fingerprint, systemConfig } = await createGatewayImageCacheFixture();
 
 		await expect(
 			isGatewayImageCached(systemConfig, 'coding-agent', {
-				computeManagedVmFingerprint: async () => 'docker-backed-fingerprint',
+				computeManagedVmFingerprint: async () => fingerprint,
 			}),
 		).resolves.toBe(true);
 	});
 
 	it('rejects a prepared gateway image from a different runtime fingerprint', async () => {
-		const systemConfig = await createGatewayImageCacheFixture('previous-runtime-fingerprint');
+		const { systemConfig } = await createGatewayImageCacheFixture();
 
 		await expect(
 			isGatewayImageCached(systemConfig, 'coding-agent', {
-				computeManagedVmFingerprint: async () => 'current-runtime-fingerprint',
+				computeManagedVmFingerprint: async () => currentRuntimeFingerprint,
 			}),
 		).resolves.toBe(false);
 	});
 
 	it('derives the managed Gateway boot projection from the current gateway type', async () => {
-		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint', {
+		const { fingerprint, systemConfig } = await createGatewayImageCacheFixture({
 			gatewayType: 'hermes',
 			preparedManagedGatewayBoot: {
 				frameworkBootEntry: 'hermes-framework-service',
@@ -316,7 +332,7 @@ describe('isGatewayImageCached', () => {
 			isGatewayImageCached(systemConfig, 'coding-agent', {
 				computeManagedVmFingerprint: async (options) => {
 					observedManagedGatewayBoot = options.managedGatewayBoot;
-					return 'current-fingerprint';
+					return fingerprint;
 				},
 			}),
 		).resolves.toBe(true);
@@ -327,7 +343,7 @@ describe('isGatewayImageCached', () => {
 	});
 
 	it('treats fingerprint computation failures as a cache miss', async () => {
-		const systemConfig = await createGatewayImageCacheFixture('current-fingerprint');
+		const { systemConfig } = await createGatewayImageCacheFixture();
 
 		await expect(
 			isGatewayImageCached(systemConfig, 'coding-agent', {
@@ -339,14 +355,14 @@ describe('isGatewayImageCached', () => {
 	});
 
 	it('rejects a stale Hermes boot projection for a Worker image', async () => {
-		const systemConfig = await createGatewayImageCacheFixture('placeholder-fingerprint', {
+		const { systemConfig } = await createGatewayImageCacheFixture({
 			gatewayType: 'worker',
 		});
 		const buildConfigPath = systemConfig.imageProfiles.gateways.worker?.buildConfig;
 		if (buildConfigPath === undefined) {
 			throw new Error('Expected gateway build config path.');
 		}
-		const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+		const sharedImageCacheDir = sharedImageCacheDirForStorageRoot(systemConfig.storageRootDir);
 		const fingerprintInput = {
 			dockerRootfsIdentity: {
 				architecture: 'arm64',
@@ -363,15 +379,20 @@ describe('isGatewayImageCached', () => {
 			fingerprintInput,
 			managedGatewayBoot: staleManagedGatewayBoot,
 		});
-		const imagePath = path.join(cacheDir, staleFingerprint);
+		const imagePath = path.join(sharedImageCacheDir, staleFingerprint);
 		await writeFakeImageAssets(imagePath);
 		await writePreparedManagedVmImage({
 			buildConfigPath,
-			cacheDir,
 			fingerprint: staleFingerprint,
 			fingerprintInput,
 			imagePath,
 			managedGatewayBoot: staleManagedGatewayBoot,
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+				family: 'gateway',
+				profileName: 'worker',
+			}),
+			sharedImageCacheDir,
 		});
 
 		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(false);

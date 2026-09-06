@@ -297,11 +297,13 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
     |       |
     |       +-- MISS: Continue to step 4
     |
-    |-- 4. Build assets       gondolin.buildAssets(config, outputDir)
+    |-- 4. Build staging      gondolin.buildAssets(config, unique staging dir)
     |                         Docker OCI pull -> extract -> build rootfs
     |-- 5. Verify             Check manifest.json, rootfs.ext4,
     |                         initramfs.cpio.lz4, vmlinuz-virt all exist
-    |-- 6. Return             { imagePath, fingerprint, built: true }
+    |-- 6. Publish atomically rename complete staging dir to fingerprint dir
+    |                         concurrent loser validates and reuses the winner
+    |-- 7. Return             { imagePath, fingerprint, built: true|false }
     v
   cacheDir/{fingerprint}/
     manifest.json
@@ -310,7 +312,7 @@ VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `
     vmlinuz-virt
 ```
 
-`computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config and fingerprint input always produce the same fingerprint regardless of property order. Docker-backed profiles pass the inspected Docker rootfs layer identity as fingerprint input, so unchanged Docker outputs can reuse Gondolin assets and changed Docker layers naturally produce a new generation.
+`computeBuildFingerprint()` uses stable JSON serialization (sorted keys, no undefined values) to ensure the same config and fingerprint input always produce the same fingerprint regardless of property order. Docker-backed profiles pass the inspected Docker rootfs layer identity as fingerprint input, so unchanged Docker outputs can reuse Gondolin assets and changed Docker layers naturally produce a new generation. The fingerprint directory is shared across deployments. A complete directory is immutable; an incomplete final directory fails closed instead of being repaired in place.
 
 `buildGatewayImage()` in `gateway-image-builder.ts` delegates through the
 injected neutral `ManagedVmImageCapability`. Before controller startup admits
@@ -319,17 +321,18 @@ the prepared record's Docker rootfs identity and managed boot projection under
 the currently installed runtime version tag. A mismatch fails closed and tells
 the operator to run `agent-vm build`; startup never performs Docker or Gondolin
 build work. After that preflight, the composition projection reuses the
-profile-local image reference when its prepared record and assets remain valid.
+shared fingerprint image reference when its deployment selection and assets remain valid.
 Tool VM startup uses the same prepared-image record contract; the required
 deployment build prepares all configured Gateway and Tool VM profiles together.
 
-`agent-vm build` dedupes repeated resolved build config path + effective
-fingerprint pairs across configured image profiles in the same invocation. The
-canonical profile runs the Gondolin asset build; duplicate profiles get
-profile-local cache entries materialized from the canonical assets, preserving
-runtime profile cache hits without repeating the Docker-to-ext4 conversion.
+`agent-vm build` dedupes repeated effective fingerprints within one invocation,
+while atomic publication provides the same guarantee across processes and
+deployments. Configured profiles publish small selection records under the
+deployment's `generated/image-selections` tree; no alias image copies or
+hardlinks are created.
 
-The `fullReset` option deletes the cached image directory before building, forcing a clean rebuild.
+`fullReset` may rebuild staging inputs, but it never replaces a complete shared
+fingerprint directory.
 
 ---
 

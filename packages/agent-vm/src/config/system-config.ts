@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { access, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -1454,6 +1455,39 @@ function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	);
 }
 
+export function sharedImageCacheDirForStorageRoot(storageRootDir: string): string {
+	return path.join(path.dirname(storageRootDir), 'cache', 'vm-images');
+}
+
+export function sharedImageCacheDirForSystemConfig(config: Pick<SystemConfig, 'cacheDir'>): string {
+	return path.join(config.cacheDir, 'vm-images');
+}
+
+export function deploymentGeneratedDirForStorageRoot(storageRootDir: string): string {
+	return path.join(storageRootDir, 'generated');
+}
+
+export function deploymentCacheKeyForStorageRoot(storageRootDir: string): string {
+	return crypto.createHash('sha256').update(path.resolve(storageRootDir)).digest('hex');
+}
+
+export function deploymentCacheDirForSystemConfig(
+	config: Pick<SystemConfig, 'cacheDir' | 'storageRootDir'>,
+): string {
+	return path.join(
+		config.cacheDir,
+		'deployments',
+		deploymentCacheKeyForStorageRoot(config.storageRootDir),
+	);
+}
+
+export function gatewayFrameworkCacheDirForSystemConfig(
+	config: Pick<SystemConfig, 'cacheDir' | 'storageRootDir'>,
+	zoneId: string,
+): string {
+	return path.join(deploymentCacheDirForSystemConfig(config), 'zones', zoneId, 'framework-cache');
+}
+
 function isManagedHostObservabilityConfig(
 	observability: HostObservabilityConfig,
 ): observability is ManagedHostObservabilityConfig {
@@ -1517,6 +1551,32 @@ function assertControllerStatePathIsolation(options: {
 }
 
 function assertResolvedRuntimePathIsolation(config: SystemConfig, systemConfigPath: string): void {
+	const cacheProtectedPaths: readonly ControllerStateProtectedPath[] = [
+		{ label: 'deployment storageRootDir', path: config.storageRootDir },
+		{ label: 'system config file', path: systemConfigPath },
+		{ label: 'controllerStateDir', path: config.controllerStateDir },
+		{ label: 'controllerRuntimeDir', path: config.controllerRuntimeDir },
+		...config.zones.flatMap((zone): readonly ControllerStateProtectedPath[] => [
+			{ label: `stateDir for zone '${zone.id}'`, path: zone.gateway.stateDir },
+			{
+				label: `backup output for zone '${zone.id}'`,
+				path: zone.gateway.backupDir ?? path.join(zone.gateway.stateDir, 'backups'),
+			},
+			...(zone.gateway.type === 'worker'
+				? []
+				: [
+						{
+							label: `zoneFilesDir for zone '${zone.id}'`,
+							path: zone.gateway.zoneFilesDir,
+						},
+					]),
+		]),
+	];
+	for (const protectedPath of cacheProtectedPaths) {
+		if (pathsOverlap(config.cacheDir, protectedPath.path)) {
+			throw new Error(`cacheDir must not overlap ${protectedPath.label}.`);
+		}
+	}
 	assertControllerStatePathIsolation({
 		controllerStateDir: config.controllerStateDir,
 		protectedPaths: collectControllerStateProtectedPaths(config, systemConfigPath),
@@ -1617,7 +1677,7 @@ function deriveResolvedStorage(
 	return {
 		...config,
 		storageRootDir,
-		cacheDir: path.join(storageRootDir, 'cache'),
+		cacheDir: path.join(path.dirname(storageRootDir), 'cache'),
 		controllerStateDir: path.join(storageRootDir, 'controller-state'),
 		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
 		zones,
@@ -1796,6 +1856,12 @@ async function canonicalizeStorageRootPath(
 ): Promise<LoadedSystemConfig> {
 	const storageRootDir = await resolveCanonicalPathIdentity(config.storageRootDir);
 	const resolvedConfig = deriveResolvedStorage(config, storageRootDir);
+	const canonicalCacheDir = await resolveCanonicalPathIdentity(resolvedConfig.cacheDir);
+	if (canonicalCacheDir !== path.resolve(resolvedConfig.cacheDir)) {
+		throw new Error(
+			`cacheDir must not traverse symlinks: '${resolvedConfig.cacheDir}' resolves to '${canonicalCacheDir}'.`,
+		);
+	}
 	const protectedPaths = await Promise.all(
 		collectControllerStateProtectedPaths(resolvedConfig, config.systemConfigPath).map(
 			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
@@ -1808,6 +1874,29 @@ async function canonicalizeStorageRootPath(
 		controllerStateDir: resolvedConfig.controllerStateDir,
 		protectedPaths,
 	});
+	const cacheProtectedPaths = await Promise.all(
+		[
+			...protectedPaths.filter(
+				({ label }) => label !== 'cacheDir' && label !== 'system config parent directory',
+			),
+			{ label: 'deployment storageRootDir', path: storageRootDir },
+			{ label: 'controllerStateDir', path: resolvedConfig.controllerStateDir },
+			...resolvedConfig.zones.map((zone) => ({
+				label: `zoneRuntimeDir for zone '${zone.id}'`,
+				path: zone.gateway.zoneRuntimeDir,
+			})),
+		].map(
+			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
+				label: protectedPath.label,
+				path: await resolveCanonicalPathIdentity(protectedPath.path),
+			}),
+		),
+	);
+	for (const protectedPath of cacheProtectedPaths) {
+		if (pathsOverlap(canonicalCacheDir, protectedPath.path)) {
+			throw new Error(`cacheDir must not overlap ${protectedPath.label}.`);
+		}
+	}
 	return { ...resolvedConfig, systemConfigPath: config.systemConfigPath };
 }
 

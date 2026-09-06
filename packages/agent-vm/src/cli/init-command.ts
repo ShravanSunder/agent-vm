@@ -22,7 +22,11 @@ import {
 } from '../build/managed-vm-build-tooling.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
-import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
+import {
+	createSystemConfigSchemaArtifact,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+} from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import { resolveCliVersion } from './cli-version.js';
 import {
@@ -1160,7 +1164,8 @@ async function scaffoldAgentVmProjectInternal(
 		const storageRootDir = resolveConfigPath(pathProfile.storageRootDir, configDir, homeDir);
 		const zoneRootDir = path.join(storageRootDir, options.zoneId);
 		const directoriesToCreate = [
-			path.join(storageRootDir, 'cache'),
+			sharedImageCacheDirForStorageRoot(storageRootDir),
+			deploymentGeneratedDirForStorageRoot(storageRootDir),
 			path.join(storageRootDir, 'controller-state'),
 			path.join(storageRootDir, 'controller-runtime'),
 			path.join(zoneRootDir, 'state'),
