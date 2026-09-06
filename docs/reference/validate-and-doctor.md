@@ -171,3 +171,9 @@ command. It acquires the same ownership lock as the controller, refuses while
 that controller is active, and deletes only the invoking deployment's Docker
 contexts and zone framework caches. Shared VM images, generated image
 selections, sibling deployment scopes, and durable/runtime roots are preserved.
+
+Cleanup requires Python 3 with symlink-resistant filesystem operations. Each
+target is opened without following symlinks in any path component; recursive
+deletion stays anchored to that opened directory in an isolated subprocess.
+Ancestor symlink substitutions cannot redirect deletion. Unsupported hosts or
+changed targets fail closed rather than falling back to path-based recursion.

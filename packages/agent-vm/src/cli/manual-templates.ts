@@ -138,6 +138,8 @@ New images are checksum-verified before publication. Reuse validates manifest an
 
 Uncached image publication requires Python 3 on the controller host and native no-replace rename support on macOS or Linux. Missing support fails closed before image construction. Keep declared init scripts, copied files/directories, and custom helper binaries stable during a build; their content participates in shared-image identity.
 
+Cache cleanup also requires Python 3 with symlink-resistant directory operations. It holds the controller ownership lock and anchors deletion to opened directories without following ancestor symlinks. If a target changes or the host lacks support, cleanup fails closed; do not substitute a recursive shell deletion.
+
 For managed Worker and Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
 
 For Hermes images, the generated deployment Dockerfile comes from the installed Hermes recipe and embeds the installed agent-vm package version plus the immutable Hermes distribution inputs. Review the generated recipe and build plan before debugging Docker output. Do not copy the recipe into a second version owner.

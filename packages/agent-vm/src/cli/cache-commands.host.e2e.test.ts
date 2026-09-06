@@ -3,7 +3,7 @@ import { symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	createLoadedSystemConfig,
@@ -21,7 +21,7 @@ async function createSystemConfig(
 	root: string,
 	deploymentName: string,
 ): Promise<LoadedSystemConfig> {
-	const storageRootDir = path.join(root, deploymentName);
+	const storageRootDir = path.join(await fs.realpath(root), deploymentName);
 	const buildConfigPath = path.join(root, 'build-config.jsonc');
 	await fs.mkdir(storageRootDir, { recursive: true });
 	await fs.writeFile(
@@ -90,6 +90,7 @@ async function pathExists(candidatePath: string): Promise<boolean> {
 }
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(
 		temporaryDirectories
 			.splice(0)
@@ -98,6 +99,67 @@ afterEach(async () => {
 });
 
 describe('runCacheCommand filesystem boundaries', () => {
+	it('refuses a cache root substituted after validation instead of re-resolving its destination', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-root-substitution-'));
+		temporaryDirectories.push(root);
+		const systemConfig = await createSystemConfig(root, 'deployment');
+		const cacheDir = systemConfig.cacheDir;
+		const target = path.join(deploymentCacheDirForSystemConfig(systemConfig), 'docker-contexts');
+		const protectedRoot = path.join(root, 'durable');
+		const protectedMarker = path.join(protectedRoot, path.relative(cacheDir, target), 'protected');
+		await Promise.all([
+			writeMarker(path.join(target, 'cache-entry')),
+			writeMarker(protectedMarker),
+		]);
+		const originalRealpath = fs.realpath;
+		let targetValidated = false;
+		let substituted = false;
+		vi.spyOn(fs, 'realpath').mockImplementation(async (candidate) => {
+			const canonicalPath = await originalRealpath(candidate);
+			if (candidate === target) targetValidated = true;
+			if (candidate === cacheDir && targetValidated && !substituted) {
+				substituted = true;
+				await fs.rename(cacheDir, `${cacheDir}-original`);
+				await symlink(protectedRoot, cacheDir);
+			}
+			return canonicalPath;
+		});
+
+		await expect(
+			runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, createIo()),
+		).rejects.toThrow(/cache cleanup/u);
+		expect(substituted).toBe(true);
+		await expect(fs.readFile(protectedMarker, 'utf8')).resolves.toBe('preserve-or-delete\n');
+	});
+	it('refuses an ancestor replaced after target validation without following it into durable data', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-substitution-'));
+		temporaryDirectories.push(root);
+		const systemConfig = await createSystemConfig(root, 'deployment');
+		const zonesDirectory = path.join(deploymentCacheDirForSystemConfig(systemConfig), 'zones');
+		const target = path.join(zonesDirectory, 'worker', 'framework-cache');
+		const protectedMarker = path.join(root, 'durable', 'worker', 'framework-cache', 'protected');
+		await Promise.all([
+			writeMarker(path.join(target, 'cache-entry')),
+			writeMarker(protectedMarker),
+		]);
+		const originalRealpath = fs.realpath;
+		let substituted = false;
+		vi.spyOn(fs, 'realpath').mockImplementation(async (candidate) => {
+			const canonicalPath = await originalRealpath(candidate);
+			if (candidate === target && !substituted) {
+				substituted = true;
+				await fs.rename(zonesDirectory, `${zonesDirectory}-original`);
+				await symlink(path.join(root, 'durable'), zonesDirectory);
+			}
+			return canonicalPath;
+		});
+
+		await expect(
+			runCacheCommand({ confirm: true, subcommand: 'clean', systemConfig }, createIo()),
+		).rejects.toThrow(/cache cleanup/u);
+		expect(substituted).toBe(true);
+		await expect(fs.readFile(protectedMarker, 'utf8')).resolves.toBe('preserve-or-delete\n');
+	});
 	it('refuses a cache ancestor symlink before deleting any target', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-alias-'));
 		temporaryDirectories.push(root);

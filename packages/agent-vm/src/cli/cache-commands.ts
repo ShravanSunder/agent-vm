@@ -15,6 +15,7 @@ import {
 	acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault,
 	type ControllerOwnershipLock,
 } from '../controller/vm-ownership/controller-ownership-lock.js';
+import { removeDeploymentCacheDirectory } from './cache-directory-removal.js';
 
 interface CacheCommandIo {
 	readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
@@ -101,10 +102,6 @@ async function resolveImageSelectionStatuses(systemConfig: LoadedSystemConfig): 
 		gateways: await resolveFamily('gateway', systemConfig.imageProfiles.gateways),
 		toolVms: await resolveFamily('toolVm', systemConfig.imageProfiles.toolVms),
 	};
-}
-
-async function removeDeploymentCacheDirectory(directoryPath: string): Promise<void> {
-	await fs.rm(directoryPath, { force: true, recursive: true });
 }
 
 async function assertCleanupTargetIdentity(cacheDir: string, target: string): Promise<void> {
@@ -224,7 +221,10 @@ export async function runCacheCommand(
 
 		const acquireControllerOwnershipLock =
 			dependencies.acquireControllerOwnershipLock ?? acquireControllerOwnershipLockDefault;
-		const removeDirectory = dependencies.removeDirectory ?? removeDeploymentCacheDirectory;
+		const removeDirectory =
+			dependencies.removeDirectory ??
+			(async (directoryPath: string): Promise<void> =>
+				await removeDeploymentCacheDirectory(options.systemConfig.cacheDir, directoryPath));
 		const ownershipLock = await acquireControllerOwnershipLock({
 			runtimeDirectory: options.systemConfig.controllerRuntimeDir,
 		});

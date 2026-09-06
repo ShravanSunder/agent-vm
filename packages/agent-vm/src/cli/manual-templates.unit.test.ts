@@ -77,6 +77,12 @@ describe('manual templates', () => {
 		const hermes = findManual(files, 'docs/manual/hermes.md');
 		const layout = findManual(files, 'docs/manual/layout.md');
 		const imageVersioning = findManual(files, 'docs/manual/image-versioning.md');
+		expect(imageVersioning).toContain(
+			'Cache cleanup also requires Python 3 with symlink-resistant directory operations.',
+		);
+		expect(imageVersioning).toContain(
+			'anchors deletion to opened directories without following ancestor symlinks',
+		);
 		expect(imageVersioning).toContain('New images are checksum-verified before publication.');
 		expect(imageVersioning).toContain(
 			'Reuse validates manifest and file structure without hashing large images again',
