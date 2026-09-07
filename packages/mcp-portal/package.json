@@ -86,7 +86,7 @@
 		"@optique/core": "^1.2.0",
 		"@optique/run": "^1.2.0",
 		"@optique/zod": "^1.2.0",
-		"hono": "4.12.24",
+		"hono": "4.12.34",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
