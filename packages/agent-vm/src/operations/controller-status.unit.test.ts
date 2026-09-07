@@ -27,10 +27,6 @@ const systemConfig = {
 				type: 'hermes',
 				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
-			worker: {
-				type: 'worker',
-				buildConfig: './vm-images/gateways/worker/build-config.json',
-			},
 		},
 		toolVms: {
 			default: {
@@ -94,21 +90,6 @@ const systemConfig = {
 			defaultToolVmProfile: 'standard',
 			agentToolVmProfiles: {},
 		},
-		{
-			id: 'worker-zone',
-			gateway: {
-				type: 'worker',
-				imageProfile: 'worker',
-				memory: '2G',
-				cpus: 2,
-				port: 18793,
-				config: './config/worker/worker.json',
-				stateDir: './state/worker',
-				zoneRuntimeDir: './runtime/worker',
-			},
-			secrets: {},
-			egressHosts: ['api.anthropic.com'].map((host) => ({ host, audience: 'gateway' as const })),
-		},
 	],
 	toolVmProfiles: {
 		standard: {
@@ -148,15 +129,6 @@ describe('buildControllerStatus', () => {
 					running: false,
 					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
-				},
-				{
-					activeLeaseCount: 0,
-					gatewayType: 'worker',
-					id: 'worker-zone',
-					ingressPort: 18793,
-					lifecycleState: 'stopped',
-					running: false,
-					toolVmLeaseState: 'not-applicable',
 				},
 			],
 		});
@@ -239,9 +211,6 @@ describe('buildControllerStatus', () => {
 						lastError: 'gateway boot failed',
 						lifecycleState: 'failed',
 					},
-					'worker-zone': {
-						lifecycleState: 'stopped',
-					},
 				},
 			}),
 		).toMatchObject({
@@ -271,15 +240,6 @@ describe('buildControllerStatus', () => {
 					running: false,
 					toolVmLeaseState: 'not-applicable',
 					defaultToolVmProfile: 'standard',
-				},
-				{
-					activeLeaseCount: 0,
-					gatewayType: 'worker',
-					id: 'worker-zone',
-					ingressPort: 18793,
-					lifecycleState: 'stopped',
-					running: false,
-					toolVmLeaseState: 'not-applicable',
 				},
 			],
 		});

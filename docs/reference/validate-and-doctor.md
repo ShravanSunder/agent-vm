@@ -28,8 +28,6 @@ It checks:
   projections, Tool Portal assignments, and Tool VM policy stay aligned.
 - Profile environment targets and loaded Tool VM mediated secret access entries
   are visible as named inventory checks.
-- Worker gateway configs load successfully.
-- Worker prompt file references exist and stay under `prompts/`.
 - Hermes configuration passes the managed Hermes configuration loader.
 - MCP Portal config shape, profile references, provider materialization, stdio
   network declarations, mediated hosts, and raw-env exceptions are coherent.
@@ -81,7 +79,6 @@ It checks:
   inventory checks.
 - Hermes Tool VM deployment requirements use the same finding IDs as
   `validate`, so a config that would fail startup is visible before boot.
-- Worker configs using the paths as the current host sees them.
 - `vm-host-system/` files when present in a checked-out container runtime
   layout, or runtime host files when running from `/etc/agent-vm/system.json`.
 
@@ -92,7 +89,7 @@ requirements. They are only relevant to flows that use them:
   config uses 1Password secrets.
 - macOS Keychain access is required only for `tokenSource.type: "keychain"`.
 - age is used by encrypted backup/local key generation flows, not by every
-  Worker runtime.
+  runtime.
 
 For 1Password-backed local configs, doctor verifies that the configured access
 method is available on the current host. It also verifies that `op whoami`
@@ -108,6 +105,9 @@ token before service-account auth exists. Use `tokenSource.type: "env"` or
 
 ## Hard Cutover From A Pre-Hermes-Only Release
 
+Follow the root [README upgrade sequence](../../README.md#upgrading-from-a-worker-release)
+for the exact old-release cleanup commands and stop condition.
+
 The cutover has no compatibility parser or state migration. Perform predecessor
 termination with the old release while its configuration and runtime records
 are still valid:
@@ -121,7 +121,7 @@ are still valid:
    owned.
 4. Only after that proof, replace the package train and generated contracts as
    one unit.
-5. Author a new valid Hermes or Worker configuration, then run `validate` and
+5. Author a new valid Hermes configuration, then run `validate` and
    `doctor` before startup.
 
 The Hermes-only release rejects legacy configuration and does not interpret,
@@ -144,7 +144,7 @@ agent-vm doctor --config /etc/agent-vm/system.jsonc
 ```
 
 Container-host scaffolds intentionally use paths such as
-`/etc/agent-vm/gateways/coding-agent/worker.jsonc`. `validate` understands how
+`/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml`. `validate` understands how
 to map those back to local scaffold files. `doctor` does not pretend the
 current Mac is the container host; it should fail when runtime paths do not
 exist on the current machine.
@@ -152,7 +152,7 @@ exist on the current machine.
 ## Local Scaffold Example
 
 ```bash
-agent-vm init coding-agent --type worker --preset macos-local
+agent-vm init coding-agent --preset macos-local
 # or: agent-vm init coding-agent --type hermes --preset macos-local
 agent-vm validate --config config/system.jsonc
 agent-vm doctor --config config/system.jsonc

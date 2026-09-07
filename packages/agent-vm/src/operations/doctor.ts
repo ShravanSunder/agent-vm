@@ -1,13 +1,6 @@
 import { access, lstat } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-	BuildGatewayVmRequirementsOptions,
-	GatewayVmRequirements,
-	GatewayZoneConfig,
-} from '@agent-vm/gateway-lifecycle';
-import { workerLifecycle } from '@agent-vm/worker-gateway';
-
 import {
 	loadManagedImageOverlay,
 	type ManagedImageRelease,
@@ -20,11 +13,7 @@ import {
 	resolveEffectivePackageOverrides,
 } from '../build/package-overrides.js';
 import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
-import {
-	gatewayFrameworkCacheDirForSystemConfig,
-	type LoadedSystemConfig,
-	type SystemConfig,
-} from '../config/system-config.js';
+import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
 import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
@@ -48,9 +37,6 @@ export interface RunControllerDoctorOptions {
 	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
-	readonly workerGatewayVmRequirementsBuilder?: (
-		options: BuildGatewayVmRequirementsOptions,
-	) => Pick<GatewayVmRequirements, 'mounts'>;
 	readonly zigVersion?: string;
 }
 
@@ -277,57 +263,6 @@ export async function collectManagedAgentRootStorageChecks(
 		}),
 	);
 	return checksByZone.flat();
-}
-
-function isWorkerRootfsWorkMountPath(guestPath: string): boolean {
-	return guestPath === '/work' || guestPath.startsWith('/work/');
-}
-
-function buildWorkerWorkRootfsChecks(
-	systemConfig: SystemConfig,
-	buildWorkerVmSpec: (
-		options: BuildGatewayVmRequirementsOptions,
-	) => Pick<GatewayVmRequirements, 'mounts'>,
-): readonly DoctorCheck[] {
-	return systemConfig.zones
-		.filter((zone) => zone.gateway.type === 'worker')
-		.map((zone) => {
-			const gatewayZone: GatewayZoneConfig = {
-				id: zone.id,
-				gateway: {
-					type: 'worker',
-					cpus: zone.gateway.cpus,
-					config: zone.gateway.config,
-					memory: zone.gateway.memory,
-					port: zone.gateway.port,
-					stateDir: zone.gateway.stateDir,
-				},
-				secrets: zone.secrets,
-				egressHosts: zone.egressHosts,
-			};
-			const vmSpec = buildWorkerVmSpec({
-				controllerPort: systemConfig.host.controllerPort,
-				gatewayCacheDir: gatewayFrameworkCacheDirForSystemConfig(systemConfig, zone.id),
-				projectNamespace: systemConfig.host.projectNamespace,
-				resolvedSecrets: {},
-				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
-				tcpPool: systemConfig.tcpPool,
-				zone: gatewayZone,
-			});
-			const vfsWorkMount = Object.keys(vmSpec.mounts).find(isWorkerRootfsWorkMountPath);
-			if (vfsWorkMount) {
-				return {
-					name: `worker-work-rootfs-${zone.id}`,
-					ok: false,
-					hint: `Worker zone '${zone.id}' mounts '${vfsWorkMount}' through VFS; /work must stay on rootfs/COW.`,
-				} satisfies DoctorCheck;
-			}
-			return {
-				name: `worker-work-rootfs-${zone.id}`,
-				ok: true,
-				hint: '/work stays on rootfs/COW',
-			} satisfies DoctorCheck;
-		});
 }
 
 function buildZoneToolVmProfileChecks(systemConfig: SystemConfig): readonly DoctorCheck[] {
@@ -639,14 +574,6 @@ export async function runControllerDoctor(
 		availableBinaries,
 		options.dockerDaemonReady,
 	);
-	const workerGatewayVmRequirementsBuilder =
-		options.workerGatewayVmRequirementsBuilder ??
-		((buildOptions: BuildGatewayVmRequirementsOptions): Pick<GatewayVmRequirements, 'mounts'> =>
-			workerLifecycle.buildVmRequirements(buildOptions));
-	const workerWorkRootfsChecks = buildWorkerWorkRootfsChecks(
-		options.systemConfig,
-		workerGatewayVmRequirementsBuilder,
-	);
 	const configuredGatewayBytes = options.systemConfig.zones.reduce((totalBytes, zone) => {
 		const memoryMatch = /^(\d+)([GgMm])$/u.exec(zone.gateway.memory);
 		if (!memoryMatch) {
@@ -740,7 +667,6 @@ export async function runControllerDoctor(
 		...gatewayStateAuthorityChecks,
 		...managedAgentRootStorageChecks,
 		...buildRuntimePathIsolationChecks(options.systemConfig),
-		...workerWorkRootfsChecks,
 		{
 			name: 'controller-port',
 			ok:

@@ -36,7 +36,7 @@ describe('smoke: generated agent-vm config validation', () => {
 				'init',
 				'generated',
 				'--type',
-				'worker',
+				'hermes',
 				'--secrets',
 				'environment',
 				'--paths',
@@ -49,43 +49,49 @@ describe('smoke: generated agent-vm config validation', () => {
 		expect(result.stderr).toContain('reserved for global storage');
 		await expect(readdir(targetDirectory)).resolves.toEqual([]);
 	});
-	it('initializes and validates a config with root-derived controller storage', async () => {
-		// Arrange
-		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-validate-cli-'));
-		createdDirectories.push(targetDirectory);
+	it.each([
+		{ name: 'default Hermes', gatewayArguments: [] },
+		{ name: 'explicit Hermes', gatewayArguments: ['--type', 'hermes'] },
+	])(
+		'initializes and validates $name with root-derived controller storage',
+		async ({ gatewayArguments }) => {
+			// Arrange
+			const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-validate-cli-'));
+			createdDirectories.push(targetDirectory);
 
-		// Act
-		await execa(
-			'node',
-			[
-				agentVmCliPath,
-				'init',
-				'worker-zone',
-				'--type',
-				'worker',
-				'--secrets',
-				'environment',
-				'--arch',
-				process.arch === 'arm64' ? 'aarch64' : 'x86_64',
-				'--paths',
-				'local',
-			],
-			{ cwd: targetDirectory, reject: true, timeout: 30_000 },
-		);
-		const generatedConfigText = await readFile(
-			path.join(targetDirectory, 'config', 'system.jsonc'),
-			'utf8',
-		);
-		const validationResult = await execa(
-			'node',
-			[agentVmCliPath, 'validate', '--config', 'config/system.jsonc'],
-			{ cwd: targetDirectory, reject: false, timeout: 30_000 },
-		);
+			// Act
+			await execa(
+				'node',
+				[
+					agentVmCliPath,
+					'init',
+					'hermes-zone',
+					...gatewayArguments,
+					'--secrets',
+					'environment',
+					'--arch',
+					process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+					'--paths',
+					'local',
+				],
+				{ cwd: targetDirectory, reject: true, timeout: 30_000 },
+			);
+			const generatedConfigText = await readFile(
+				path.join(targetDirectory, 'config', 'system.jsonc'),
+				'utf8',
+			);
+			const validationResult = await execa(
+				'node',
+				[agentVmCliPath, 'validate', '--config', 'config/system.jsonc'],
+				{ cwd: targetDirectory, reject: false, timeout: 30_000 },
+			);
 
-		// Assert
-		expect(generatedConfigText).toMatch(
-			/"storageRootDir": "\.\.\/\.agent-vm\/[a-z0-9][a-z0-9-]*-[a-f0-9]{8}"/u,
-		);
-		expect(validationResult.exitCode).toBe(0);
-	});
+			// Assert
+			expect(generatedConfigText).toMatch(
+				/"storageRootDir": "\.\.\/\.agent-vm\/[a-z0-9][a-z0-9-]*-[a-f0-9]{8}"/u,
+			);
+			expect(generatedConfigText).toContain('"type": "hermes"');
+			expect(validationResult.exitCode).toBe(0);
+		},
+	);
 });

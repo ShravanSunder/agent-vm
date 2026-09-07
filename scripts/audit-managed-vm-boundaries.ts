@@ -71,7 +71,6 @@ const MANAGED_GATEWAY_IDENTITY_SOURCE_PREFIXES = [
 	'packages/gondolin-vm-adapter/src/',
 	'packages/managed-vm/src/',
 	'packages/openclaw-gateway/src/',
-	'packages/worker-gateway/src/',
 ] as const;
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -376,18 +375,13 @@ function auditManifest(
 		forbiddenTargets.add('@agent-vm/agent-vm');
 		forbiddenTargets.add(GONDOLIN_SDK_PACKAGE);
 	}
-	if (
-		packageName === '@agent-vm/openclaw-gateway' ||
-		packageName === '@agent-vm/worker-gateway' ||
-		packageName === '@agent-vm/hermes-gateway'
-	) {
+	if (packageName === '@agent-vm/openclaw-gateway' || packageName === '@agent-vm/hermes-gateway') {
 		forbiddenTargets.add(ADAPTER_PACKAGE);
 	}
 	if (packageName === ADAPTER_PACKAGE) {
 		forbiddenTargets.add('@agent-vm/agent-vm');
 		forbiddenTargets.add('@agent-vm/gateway-lifecycle');
 		forbiddenTargets.add('@agent-vm/openclaw-gateway');
-		forbiddenTargets.add('@agent-vm/worker-gateway');
 		forbiddenTargets.add('@agent-vm/hermes-gateway');
 	}
 	for (const dependencyName of allEdges.keys()) {

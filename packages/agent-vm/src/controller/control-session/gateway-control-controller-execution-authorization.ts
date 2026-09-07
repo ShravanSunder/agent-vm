@@ -8,6 +8,7 @@ import {
 import type {
 	GatewayControlToolPortalControllerExecutionPayload,
 	GatewayRuntimeControllerExecutionDispatchReservation,
+	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
@@ -16,7 +17,6 @@ import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
-	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 import {
@@ -173,7 +173,7 @@ export async function authorizeGatewayControlControllerExecution(
 	const zone = request.systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === request.session.zoneId,
 	);
-	if (zone === undefined || zone.gateway.type === 'worker') {
+	if (zone === undefined) {
 		return rejectAuthorization(
 			'controller_execution_zone_unsupported',
 			'controller execution zone is not supported',

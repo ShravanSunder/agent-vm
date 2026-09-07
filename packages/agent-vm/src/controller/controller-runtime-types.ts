@@ -19,7 +19,6 @@ import type { checkObservabilityStackReadiness } from '../observability/observab
 import type { reconcileRecordedVmTree } from '../operations/controller-offline-cleanup.js';
 import type { ControllerRuntimeZoneStatus } from '../operations/controller-status.js';
 import type { RunTaskFn } from '../shared/run-task.js';
-import type { ActiveWorkerTask } from './active-task-registry.js';
 import type { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import type { createControllerService } from './http/controller-http-routes.js';
 import type { ToolVmProfile } from './leases/lease-manager.js';
@@ -28,7 +27,6 @@ import type { ObservedControllerLeaseCreateRequest } from './leases/observed-lea
 import type { prepareControllerOAuthRuntime } from './oauth/controller-oauth-runtime.js';
 import type { acquireControllerOwnershipLock } from './vm-ownership/controller-ownership-lock.js';
 import type { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
-import type { executeWorkerTask, prepareWorkerTask } from './worker-task-runner.js';
 import type { WorkspaceGitOperationLocks } from './workspace-git/workspace-git-operation-locks.js';
 import type { materializeWorkspaceGitRepository } from './workspace-git/workspace-git-operations.js';
 
@@ -86,15 +84,6 @@ export interface ControllerRuntimeDependencies {
 		pid: number,
 	) => Promise<{ readonly command: string; readonly lstart: string } | null>;
 	readonly runTask?: RunTaskFn;
-	readonly prepareWorkerTask?: typeof prepareWorkerTask;
-	readonly executeWorkerTask?: typeof executeWorkerTask;
-	readonly onWorkerTaskPrepared?: (task: ActiveWorkerTask) => void | Promise<void>;
-	readonly onWorkerTaskIngress?: (
-		zoneId: string,
-		taskId: string,
-		workerIngress: { readonly host: string; readonly port: number },
-	) => void | Promise<void>;
-	readonly onWorkerTaskFinished?: (zoneId: string, taskId: string) => void | Promise<void>;
 	readonly readIdentityPem?: (identityFilePath: string) => Promise<string>;
 	readonly reconcileRecordedVmTree?: typeof reconcileRecordedVmTree;
 	readonly preflightGatewayZoneStart?: typeof preflightGatewayZoneStart;

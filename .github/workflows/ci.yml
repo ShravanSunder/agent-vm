@@ -67,25 +67,17 @@ jobs:
               input-hash: ${{ steps.image-key.outputs.input-hash }}
               lookup-only: 'true'
 
-          - name: Find prepared Worker image cache
-            id: worker-image
-            uses: ./.github/actions/restore-e2e-image-cache
-            with:
-              family: worker
-              input-hash: ${{ steps.image-key.outputs.input-hash }}
-              lookup-only: 'true'
-
       - parallel:
           - name: Set up Node workspace for image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            if: steps.hermes-image.outputs.cache-hit != 'true'
             uses: ./.github/actions/setup-agent-vm
 
           - name: Set up system packages for image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            if: steps.hermes-image.outputs.cache-hit != 'true'
             uses: ./.github/actions/setup-system-packages
 
           - name: Set up uv for Hermes image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+            if: steps.hermes-image.outputs.cache-hit != 'true'
             uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
             with:
               version: '0.11.31'
@@ -93,7 +85,7 @@ jobs:
               cache-dependency-glob: uv.lock
 
       - name: Prepare current E2E images
-        if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+        if: steps.hermes-image.outputs.cache-hit != 'true'
         env:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
         run: pnpm exec tsx scripts/prepare-e2e-image-cache.ts
@@ -107,13 +99,6 @@ jobs:
                 /tmp/agent-vm-e2e-cache/hermes
                 /tmp/agent-vm-e2e-cache/local-package-tarballs
               key: ${{ steps.hermes-image.outputs.primary-key }}
-
-          - name: Save prepared Worker image cache
-            if: steps.worker-image.outputs.cache-hit != 'true'
-            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-            with:
-              path: /tmp/agent-vm-e2e-cache/worker
-              key: ${{ steps.worker-image.outputs.primary-key }}
 
   e2e-host:
     name: E2E (${{ matrix.lane }})
@@ -171,8 +156,6 @@ jobs:
             shard: 6/6
           - lane: hermes
             shard: ''
-          - lane: worker
-            shard: ''
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -205,13 +188,6 @@ jobs:
               install: true
               cache: true
 
-      - name: Restore prepared Worker image cache
-        id: worker-image
-        uses: ./.github/actions/restore-e2e-image-cache
-        with:
-          family: worker
-          input-hash: ${{ steps.image-key.outputs.input-hash }}
-
       - name: Set up system packages
         uses: ./.github/actions/setup-system-packages
 
@@ -231,11 +207,9 @@ jobs:
       - name: Require prepared image caches
         env:
           HERMES_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}
-          WORKER_CACHE_HIT: ${{ steps.worker-image.outputs.cache-hit }}
         run: |
           set -euo pipefail
           test "${HERMES_CACHE_HIT}" = true
-          test "${WORKER_CACHE_HIT}" = true
 
       - name: Run VM shard
         if: matrix.shard != ''
@@ -247,12 +221,6 @@ jobs:
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
             run: mise exec -- pnpm run test:e2e:hermes
-
-          - name: Run Worker E2E tests
-            if: matrix.lane == 'worker'
-            env:
-              AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-            run: mise exec -- pnpm run test:e2e:worker
 
   check:
     name: check

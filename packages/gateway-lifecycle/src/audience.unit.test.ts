@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { gatewayVmAllowedHosts, egressHostsForAudience, workerVmAllowedHosts } from './audience.js';
+import { gatewayVmAllowedHosts, egressHostsForAudience } from './audience.js';
 
 describe('egressHostsForAudience', () => {
 	it('returns gateway and shared hosts for gateway VMs', () => {
@@ -31,16 +31,6 @@ describe('egressHostsForAudience', () => {
 
 	it('does not add the internal controller host to gateway VM allowed hosts', () => {
 		const hosts = gatewayVmAllowedHosts([
-			{ host: 'controller.vm.host', audience: 'gateway' },
-			{ host: 'api.github.com', audience: 'both' },
-			{ host: 'mcp2.readwise.io', audience: 'tool-vm' },
-		]);
-
-		expect(hosts).toEqual(['api.github.com']);
-	});
-
-	it('does not add the internal controller host to worker VM allowed hosts', () => {
-		const hosts = workerVmAllowedHosts([
 			{ host: 'controller.vm.host', audience: 'gateway' },
 			{ host: 'api.github.com', audience: 'both' },
 			{ host: 'mcp2.readwise.io', audience: 'tool-vm' },

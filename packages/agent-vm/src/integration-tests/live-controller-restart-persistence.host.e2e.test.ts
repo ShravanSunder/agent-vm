@@ -127,10 +127,6 @@ function createSystemConfig(
 					type: 'hermes',
 					buildConfig: './vm-images/gateways/hermes/build-config.jsonc',
 				},
-				worker: {
-					type: 'worker',
-					buildConfig: './vm-images/gateways/worker/build-config.json',
-				},
 			},
 			toolVms: {
 				default: {

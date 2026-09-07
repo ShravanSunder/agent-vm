@@ -88,27 +88,25 @@ config/gateways/<zone>/hermes-managed/config.yaml is the deployment-owned manage
 config/gateways/<zone>/mcp.config.jsonc is the upstream MCP provider catalog for a managed Hermes zone.
 config/gateways/<zone>/tool-portal.config.jsonc is the managed Tool Portal agent/profile and backend policy.
 config/gateways/<zone>/oauth.config.jsonc optionally enables controller-owned Google OAuth for that managed Hermes zone. It uses direct tailnet HTTPS on port 18900, a 1Password-held KEK, encrypted controller-state SQLite, and account-profile-scoped Gog access. OAuth consent never bypasses Tool Portal visibility or approval policy.
-config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
 storageRootDir is the required, final deployment storage root. Generated local, user-dir, and pod scaffolds scope it by host.projectNamespace. The controller loads that full path and derives cacheDir, controllerStateDir, controllerRuntimeDir, and each zone's stateDir, optional zoneFilesDir, and zoneRuntimeDir without appending the namespace again.
 stateDir is <storageRootDir>/<zoneId>/state and stores durable gateway state.
-zoneFilesDir stores durable shared zone files and per-agent workspaces for managed Gateway zones. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>. Worker zones have no active zoneFilesDir.
+zoneFilesDir stores durable shared zone files and per-agent workspaces. It is derived at <storageRootDir>/<zoneId>/zone-files. Each configured agent owns zoneFilesDir/agents/<agentId>.
 gateway.backupIdentity selects the host-resolved Age identity required by backup create and restore. Backup list does not resolve it, and there is no implicit identity fallback.
 cacheDir is <dirname(storageRootDir)>/cache and is the one shared rebuildable cache. VM images live under cacheDir/vm-images/<fingerprint>; deployment-scoped Docker contexts and framework caches live under cacheDir/deployments/<deploymentCacheKey>.
 generatedDir is <storageRootDir>/generated and stores only small reproducible metadata such as image selections and Gateway-effective config.
 controllerStateDir is required as a derived controller capability at <storageRootDir>/controller-state and stores host-controller-only durable authority.
 controllerStateDir is never mounted into a Gateway or Tool VM and must remain disjoint from config, cache, runtime, Gateway state, backup, observability, and mount-source paths.
-All controller records live below the one host-controller-owned root at controllerStateDir/zones/<zoneId>: approvals/, credentialed-runtimes/<recordId>.json, gateway-runtime.json, tool-leases/<recordId>.json, and worker-tasks/<taskId>/gateway-runtime.json.
+All controller records live below the one host-controller-owned root at controllerStateDir/zones/<zoneId>: approvals/, credentialed-runtimes/<recordId>.json, gateway-runtime.json, and tool-leases/<recordId>.json.
 controllerRuntimeDir is <storageRootDir>/controller-runtime and stores the controller ownership lock, health evidence, and generated observability files.
-zoneRuntimeDir is <storageRootDir>/<zoneId>/runtime and stores zone logs, workspace Git databases, Worker task runtime, and control-session material outside normal backup.
+zoneRuntimeDir is <storageRootDir>/<zoneId>/runtime and stores zone logs, workspace Git databases, and control-session material outside normal backup.
 When zones[].agents[].workspaceGit is enabled, its isolated Git database lives at zoneRuntimeDir/gitdirs/agents/<agentId>/workspace.git while the durable workspace remains under zoneFilesDir/agents/<agentId>.
 
-Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
+Author JSONC for human-owned agent-vm config. Runtime records and API bodies stay strict JSON.
 Hermes gateway VMs mount zoneFilesDir at /zone.
 Managed Hermes Tool VMs expose only the selected agent's filtered durable workspace at /workspace. They do not mount the whole /zone tree.
 Managed Tool VMs use rootfs/COW /work for disposable execution and optionally expose only the selected workspace Git database at /gitdirs/workspace.git. No generic /agent-vm surface is mounted unless a future contract names its exact generated inventory and owner.
-Worker task VMs keep repo files on rootfs/COW at /work/repos.
 Hermes gateway VMs use /work/tmp and /work/cache for disposable runtime work.
 `,
 			),
@@ -124,7 +122,7 @@ package.json owns which installed @agent-vm/* package version this deployment us
 
 controller start refuses a stale prepared Gateway image when its fingerprint does not match the currently installed agent-vm runtime and build inputs. Startup does not rebuild images automatically; run agent-vm build from the installed package, then retry controller start.
 
-The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR base image tags and package defaults for Worker Gateway and Tool VM images. Deployment repos should not copy or edit managed-images.json.
+The installed @agent-vm/agent-vm package owns managed-images.json. That manifest selects the managed GHCR Tool VM base image tag and package defaults. Deployment repos should not copy or edit managed-images.json.
 
 The installed @agent-vm/hermes-gateway package owns the Hermes image recipe and immutable upstream distribution pin. A Hermes upstream version, source revision, or container digest change is an agent-vm release change, not a deployment overlay change.
 
@@ -140,7 +138,7 @@ Uncached image publication requires Python 3 on the controller host and native n
 
 Cache cleanup also requires Python 3 with symlink-resistant directory operations. It holds the controller ownership lock and anchors deletion to opened directories without following ancestor symlinks. If a target changes or the host lacks support, cleanup fails closed; do not substitute a recursive shell deletion.
 
-For managed Worker and Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
+For managed Tool VM images, managed package defaults come from managed-images.json and overlay packageOverrides.npm wins by package name inside the selected image profile. Generated Dockerfiles receive the resolved package specs only as disposable output.
 
 For Hermes images, the generated deployment Dockerfile comes from the installed Hermes recipe and embeds the installed agent-vm package version plus the immutable Hermes distribution inputs. Review the generated recipe and build plan before debugging Docker output. Do not copy the recipe into a second version owner.
 `,
@@ -196,10 +194,11 @@ Do not use broad QEMU process kills as normal deployment workflow. Multiple agen
 
 Local package scripts should be thin wrappers around these commands. Deployment repos should not copy process-fencing logic.
 
-OpenClaw predecessor shutdown boundary:
-1. Before installing the Hermes-only release or replacing deployment config, use the still-installed pre-cutover release and its valid config to stop the controller-managed OpenClaw Gateway.
-2. Prove its Tool VM lease records and Gateway runtime record are cleared and the configured ingress is no longer owned.
-3. Only then replace the package train and author a new Hermes or Worker config. The new release does not parse, migrate, or delete predecessor state.
+Worker predecessor shutdown boundary:
+1. Before installing the Hermes-only release or replacing deployment config, use the old binary and old config to run agent-vm controller stop --config <old-config>.
+2. If graceful stop is unavailable, use that same old release for each zone: agent-vm controller cleanup --config <old-config> --zone <worker-zone>.
+3. Prove every Worker VM and runtime record is absent, leases are released, and configured ingress is no longer owned. Any malformed, mismatched, live, or otherwise unproven evidence stops the upgrade.
+4. Only then replace the package train and author a valid Hermes config. If cleanup remains incomplete, restore the old release and config; the new release does not parse, migrate, adopt, or delete Worker state.
 
 Health model:
 - GET /health is the global agent-vm controller liveness endpoint.
@@ -274,7 +273,7 @@ For managed mode, keep durable host.observability.dataDir outside storageRootDir
 
 Published ports bind to loopback only. Do not publish collector or Victoria ports on broad host interfaces unless a separate, authenticated access layer owns that exposure.
 
-Enable zones[].observability only for managed Hermes zones that should export framework and Tool Portal diagnostics to the host collector. Worker zones reject it. The gateway sends OTLP to a synthetic collector host that agent-vm rewrites to the configured loopback collector. Tool VM SSH is the only managed gateway raw TCP exception.
+Enable zones[].observability only for managed Hermes zones that should export framework and Tool Portal diagnostics to the host collector. The gateway sends OTLP to a synthetic collector host that agent-vm rewrites to the configured loopback collector. Tool VM SSH is the only managed gateway raw TCP exception.
 
 Service identities are fixed: agent-vm-hermes and agent-vm-tool-portal. Do not author serviceName. Each producer suppresses content and baggage and uses its own fixed bounded lossy queue; collector scrubbing remains defense in depth.
 
@@ -328,7 +327,7 @@ Managed Gateway boot starts one common Tool Portal service process beside the He
 
 		Namespace discovery uses only optional discovery.summary, bounded to 500 characters. MCP-backed namespaces author it once on the matching mcp.config.jsonc provider; do not duplicate it in Tool Portal policy. controller_execution and tool_vm_runner namespaces may author the same field on their Tool Portal namespace policy. Successful list/search/describe results return effective namespaceDiscovery separately from tool metadata. Managed Hermes renders admitted namespace name, availability, and optional summary once per session. configured_cli.safeHelp remains the per-operation capability description returned by discovery and is not namespace prompt text.
 
-		approvalAccess.approvers entries are exactly kind: managed_gateway with approverId and no secret or credential. At most one managed_gateway authority may exist in a zone. Hermes presents managed approvals natively; Worker rejects managed approval authority. The controller exposes no external approval HTTP routes; Hermes API_SERVER_KEY authenticates the separate in-VM agent-message API.
+		approvalAccess.approvers entries are exactly kind: managed_gateway with approverId and no secret or credential. At most one managed_gateway authority may exist in a zone. Hermes presents managed approvals natively. The controller exposes no external approval HTTP routes; Hermes API_SERVER_KEY authenticates the separate in-VM agent-message API.
 
 		controller_execution operations are registered_action or configured_cli. Every configured_cli requires an invocation calls object: calls.deny and calls.requiresApproval match exact admitted command paths plus optional present flags, while calls.withoutApproval must be remaining_admitted. The fixed result order is deny > requires_approval > without_approval; rule order cannot weaken it. Keep commands[].flagRules only for allowed_values admission and put path-scoped flag denial in configured_cli.calls.deny. A visible configured_cli on the namespace direct baseline still requires zone approvalAccess when its calls.requiresApproval matcher list is non-empty; Hermes is the sole native presenter in this release.
 
@@ -354,17 +353,6 @@ Managed Gateway boot starts one common Tool Portal service process beside the He
 	MCP provider URLs must use http or https. Loopback and private-network upstream URLs are allowed because authored config is trusted deployment config and sidecar/local MCP providers are a supported shape. Do not import untrusted MCP provider config directly; if config trust changes, add an explicit per-provider network allowlist before accepting private-network targets.
 
 Credential redaction is not general PII filtering. Catalogs redact exact configured secrets only; outputs and errors also redact credential-shaped text. Treat upstream tool response content as agent-visible unless a deployment adds future response middleware policy.
-`,
-			),
-		},
-		{
-			relativePath: 'docs/manual/agent-worker.md',
-			content: generatedPage(
-				'Agent Worker Gateway',
-				`
-Worker gateways run task VMs with explicit phases: plan, work, review, and wrapup.
-Repo resources live under .agent-vm inside target repos and are refreshed with agent-vm resources update.
-Worker repo edits happen under /work/repos/<repoId> inside the VM. The controller keeps host gitdirs separate for authenticated git operations.
 `,
 			),
 		},
@@ -430,7 +418,6 @@ Hermes Discord recipe:
 - Add websocketUpgrades for Discord Gateway WebSockets: allow wss://gateway.discord.gg/ and wss://gateway-*.discord.gg/ for audience gateway.
 - Do not add raw TCP entries for Discord Gateway WebSockets. Use native Gondolin WebSocket upgrades.
 - Configure Hermes native Discord policy in the owning profile config.yaml. Do not put the token or other credential fields in native YAML.
-- Do not add runtimeAuthHints to Hermes zones; they are Worker gateway runtime instructions only.
 - Tool VM secrets must use injection http-mediation and declare agentAccess as "all" or a non-empty list of declared zone agent ids. source environment is allowed only as the controller-side source for mediated Tool VM secrets; never use injection env for Tool VM audience.
 
 Managed Hermes profile secrets:
@@ -457,10 +444,8 @@ Managed Hermes profile secrets:
 Managed Hermes Tool VMs run commands in rootfs/COW /work by default. /work is disposable execution space and is deleted with the Tool VM.
 /workspace is the current agent's filtered durable RealFS workspace selected by the controller from stable agent identity. It is the only durable agent workspace exposed to that Tool VM.
 /gitdirs/workspace.git is present only when the current agent enables zones[].agents[].workspaceGit. No parent Git directory or sibling agent Git database is exposed.
-Managed Tool VMs do not currently expose a generic /agent-vm path. Worker task VMs retain their separately owned generated /agent-vm inputs.
+Managed Tool VMs do not currently expose a generic /agent-vm path.
 /state is controller/gateway plumbing, not the primary place for agent docs.
-worker repo edits live under /work/repos inside Worker gateway task VMs.
-Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.
 Hermes gateway VMs use /work/tmp and /work/cache for disposable runtime work; persistent zone files live at /zone and are backed by the derived zoneFilesDir. Hermes root native state lives directly under stateDir and named profile state lives under stateDir/profiles/<profileName>.
 
 The Hermes adapter translates authenticated profile identity to the controller-authored agent projection. It never sends a Gateway path or host path as Tool VM storage authority.

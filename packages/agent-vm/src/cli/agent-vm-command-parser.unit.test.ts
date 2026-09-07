@@ -89,22 +89,6 @@ const commandContractFixtures = [
 	},
 	{
 		argv: [
-			'config',
-			'reset-instructions',
-			'-c',
-			'config/worker.json',
-			'--zone',
-			'worker',
-			'--phase',
-			'work',
-		],
-		expected: {
-			command: 'config.reset-instructions',
-			options: { config: 'config/worker.json', zone: 'worker', phase: 'work' },
-		},
-	},
-	{
-		argv: [
 			'manual',
 			'update',
 			'--agents',
@@ -134,18 +118,6 @@ const commandContractFixtures = [
 	{
 		argv: ['paths', 'show', '--sizes', '-c', 'config/paths.json'],
 		expected: { command: 'paths.show', options: { config: 'config/paths.json', sizes: true } },
-	},
-	{
-		argv: ['resources', 'init'],
-		expected: { command: 'resources.init', options: { json: false } },
-	},
-	{
-		argv: ['resources', 'validate', '--json'],
-		expected: { command: 'resources.validate', options: { json: true } },
-	},
-	{
-		argv: ['resources', 'update'],
-		expected: { command: 'resources.update', options: { json: false } },
 	},
 	{
 		argv: ['backup', 'create', '-c', 'config/backup.json', '-z', 'prod'],
@@ -266,6 +238,26 @@ const commandContractFixtures = [
 }>;
 
 describe('agent-vm Optique command parser', () => {
+	it('defaults omitted init type to Hermes and rejects removed Worker command surfaces', () => {
+		expect(parseAgentVmCommand(['init', 'project-zone'])).toMatchObject({
+			command: 'init',
+			options: { type: 'hermes' },
+		});
+
+		for (const removedArguments of [
+			['init', 'project-zone', '--type', 'worker'],
+			['config', 'reset-instructions'],
+			['resources', 'init'],
+			['resources', 'validate'],
+			['resources', 'update'],
+		] as const) {
+			expect(
+				parseSync(agentVmRootParser, removedArguments).success,
+				removedArguments.join(' '),
+			).toBe(false);
+		}
+	});
+
 	it('keeps parser construction free of runtime operation effects', async () => {
 		const parserSource = await readFile(
 			new URL('./agent-vm-command-parser.ts', import.meta.url),
@@ -299,8 +291,7 @@ describe('agent-vm Optique command parser', () => {
 	it('rejects invalid values before dispatch', () => {
 		const invalidArguments = [
 			['auth', 'openclaw', 'login', 'openai', '--agent', 'Hello World', '--zone', 'zone'],
-			['config', 'reset-instructions', '--phase', 'cache'],
-			['init', 'zone', '--type', 'worker', '--namespace', 'Project_Name'],
+			['init', 'zone', '--type', 'hermes', '--namespace', 'Project_Name'],
 			['controller', 'ssh', '--all-secrets', '--zone', 'zone'],
 			['controller', 'ssh', '--print', '--zone', 'zone'],
 			['controller', 'ssh', '--zone', 'zone', '--', 'openclaw', 'auth', 'login'],

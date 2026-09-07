@@ -118,7 +118,7 @@ The `rootfsMode` controls what happens when a process inside the VM writes to th
   readonly    Immutable                       Rejected (write fails)          Not currently used in production
 ```
 
-Gateway, Worker, and Tool VMs currently use `cow`. Tool VM isolation comes from
+Gateway and Tool VMs currently use `cow`. Tool VM isolation comes from
 a new VM lifecycle and controlled mounts per lease, not from selecting
 `rootfsMode: memory`. In Gondolin docs, rootfs `memory` means a throwaway rootfs
 mode, not always RAM-backed storage; guest tmpfs and VFS `MemoryProvider` are
@@ -194,8 +194,8 @@ Only hosts in the `allowedHosts` list can be reached. Requests to unlisted hosts
 
 TCP host mapping lets processes inside the VM reach selected host-side TCP
 services via synthetic DNS hostnames. In the managed control plane, this is
-reserved for Hermes Gateway access to Tool VM SSH ports. Gateway and Worker
-control traffic uses controller-initiated Gondolin ingress WebSocket upgrades
+reserved for Hermes Gateway access to Tool VM SSH ports. Gateway control traffic
+uses controller-initiated Gondolin ingress WebSocket upgrades
 instead of raw mapped TCP.
 
 ```
@@ -221,8 +221,6 @@ of raw TCP mappings.
 `allowedInternalHosts` is a Gondolin HTTP-hook escape hatch. It can relax the
 host-side HTTP internal-IP block for matching request hostnames, but it does
 not apply to raw mapped TCP.
-
-Worker VMs do not map the agent-vm controller endpoint for control traffic.
 Hermes Gateway VMs map Tool VM SSH slots from the TCP pool.
 
 The managed raw TCP exception is Tool VM SSH:

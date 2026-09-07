@@ -39,9 +39,7 @@ RUN pnpm install --frozen-lockfile \\
     && pnpm build
 
 RUN pnpm --filter @agent-vm/agent-vm --prod --legacy \\
-      deploy /deploy-agent-vm \\
-    && pnpm --filter @agent-vm/agent-vm-worker --prod --legacy \\
-      deploy /deploy-agent-vm-worker
+	  deploy /deploy-agent-vm
 
 FROM docker.io/nestybox/ubuntu-noble-systemd-docker:latest
 
@@ -64,18 +62,15 @@ COPY --from=builder /deploy-agent-vm /opt/agent-vm
 RUN printf '#!/bin/sh\\nexec node /opt/agent-vm/dist/cli/agent-vm-entrypoint.js "$@"\\n' > /usr/local/bin/agent-vm && \\
     chmod +x /usr/local/bin/agent-vm
 
-RUN mkdir -p /etc/agent-vm/vm-images/gateways/worker/agent-vm-worker
-COPY --from=builder /deploy-agent-vm-worker /etc/agent-vm/vm-images/gateways/worker/agent-vm-worker
-
 RUN npm install -g pnpm@10
 
 RUN pnpm dlx ${options.managedVmBackendPackageSpec} image pull alpine-base:latest --arch ${options.imageArchitecture} \\
     || echo "[WARN] Gondolin guest asset warmup failed; cold starts will be slow"
 
 COPY config/ /etc/agent-vm/
-COPY vm-images/gateways/worker/Dockerfile \\
-     vm-images/gateways/worker/build-config.json \\
-     /etc/agent-vm/vm-images/gateways/worker/
+COPY vm-images/gateways/hermes/Dockerfile \\
+	 vm-images/gateways/hermes/build-config.json \\
+	 /etc/agent-vm/vm-images/gateways/hermes/
 
 COPY vm-host-system/start.sh /usr/local/bin/start.sh
 COPY vm-host-system/agent-vm-controller.service /etc/systemd/system/agent-vm-controller.service
@@ -134,7 +129,7 @@ CACHE_STATUS="$(
       const input = process.argv[1] ?? "";
     try {
       const data = JSON.parse(input);
-      const gatewayHit = data.gateways.worker.some((entry) => entry.current) ? "yes" : "no";
+	  const gatewayHit = data.gateways.hermes.some((entry) => entry.current) ? "yes" : "no";
       console.log(gatewayHit);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -152,8 +147,8 @@ else
   echo "[start] cache miss; building OCI gateway image..."
   docker build \\
     -t agent-vm-gateway:local \\
-    -f /etc/agent-vm/vm-images/gateways/worker/Dockerfile \\
-    /etc/agent-vm/vm-images/gateways/worker/
+	-f /etc/agent-vm/vm-images/gateways/hermes/Dockerfile \\
+	/etc/agent-vm/vm-images/gateways/hermes/
 
   echo "[start] Building Gondolin VM assets into /var/agent-vm/cache (EFS)..."
   agent-vm build --config /etc/agent-vm/system.json
@@ -191,9 +186,9 @@ It is separate from \`vm-images/\`: those are inner Gondolin VM recipes. This fo
 Regenerate these files with:
 
 \`\`\`bash
-agent-vm init ${options.zoneId} --type worker --preset container-x86 --overwrite
+agent-vm init ${options.zoneId} --type hermes --preset container-x86 --overwrite
 # or, on an arm64 container host:
-agent-vm init ${options.zoneId} --type worker --preset container-arm64 --overwrite
+agent-vm init ${options.zoneId} --type hermes --preset container-arm64 --overwrite
 \`\`\`
 `;
 }

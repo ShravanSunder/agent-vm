@@ -28,7 +28,7 @@ export const CONTROL_QUEUE_LIMITS = {
 
 export const ControlDomainSchema = z.string().regex(/^[a-z][a-z0-9_]*$/u);
 
-export const KnownControlDomainSchema = z.enum(['gateway_control', 'worker_control']);
+export const KnownControlDomainSchema = z.enum(['gateway_control']);
 
 export const ControlMessageKindSchema = z.enum(['command', 'command_result', 'event', 'heartbeat']);
 

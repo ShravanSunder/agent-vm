@@ -49,6 +49,7 @@ export const initPresetSchema = z
 	.enum(['macos-local', 'container-x86', 'container-arm64'])
 	.transform((presetName) => initPresets[presetName])
 	.optional();
+export const initGatewayTypeSchema = scaffoldGatewayTypeSchema.default('hermes');
 export const initZoneIdSchema = zoneIdSchema.default('default');
 export const initSecretsProviderSchema = secretsProviderSchema.optional();
 export const initImageArchitectureSchema = imageArchitectureSchema.optional();
@@ -108,10 +109,10 @@ export const initCommandParser = command(
 			type: projectZodScalarPresence({
 				parser: option(
 					'--type',
-					zod(scaffoldGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'hermes' as const }),
-					{ description: cliDescription('Gateway type: hermes or worker') },
+					zod(initGatewayTypeSchema, { metavar: 'TYPE', placeholder: 'hermes' as const }),
+					{ description: cliDescription('Gateway type: hermes') },
 				),
-				schema: scaffoldGatewayTypeSchema,
+				schema: initGatewayTypeSchema,
 			}),
 			preset: projectZodScalarPresence({
 				parser: option(

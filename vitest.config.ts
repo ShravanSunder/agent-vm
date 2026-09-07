@@ -97,7 +97,6 @@ export default defineConfig({
 				'packages/controller-execution-contracts/src/index.ts',
 			),
 			'@agent-vm/gondolin-vm-adapter': repoPath('packages/gondolin-vm-adapter/src/index.ts'),
-			'@agent-vm/agent-vm-worker': repoPath('packages/agent-vm-worker/src/index.ts'),
 			'@agent-vm/gateway-control-contracts': repoPath(
 				'packages/gateway-control-contracts/src/index.ts',
 			),
@@ -134,10 +133,6 @@ export default defineConfig({
 				'packages/mcp-portal/src/portal-auth/hmac-token.ts',
 			),
 			'@agent-vm/mcp-portal': repoPath('packages/mcp-portal/src/index.ts'),
-			'@agent-vm/worker-control-contracts': repoPath(
-				'packages/worker-control-contracts/src/index.ts',
-			),
-			'@agent-vm/worker-gateway': repoPath('packages/worker-gateway/src/index.ts'),
 			'@agent-vm/tool-portal/cli-allowances': repoPath(
 				'packages/tool-portal/src/cli-allowances/index.ts',
 			),
@@ -278,16 +273,6 @@ export default defineConfig({
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 1,
-				},
-			},
-			{
-				extends: true,
-				test: {
-					name: 'e2e-worker',
-					include: ['packages/**/*.worker.e2e.test.ts'],
-					testTimeout: 900_000,
-					hookTimeout: 300_000,
-					maxWorkers: 2,
 				},
 			},
 			{

@@ -19,7 +19,7 @@ describe('hasAllowedTestSuffix', () => {
 		expect(hasAllowedTestSuffix('packages/example/example.host.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.vm.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.hermes.e2e.test.ts')).toBe(true);
-		expect(hasAllowedTestSuffix('packages/example/example.worker.e2e.test.ts')).toBe(true);
+		expect(hasAllowedTestSuffix('packages/example/example.worker.e2e.test.ts')).toBe(false);
 		expect(hasAllowedTestSuffix('packages/example/example.secrets.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.llm.e2e.test.ts')).toBe(true);
 	});
@@ -236,9 +236,7 @@ describe('resolveTestFileProjectNames', () => {
 		expect(resolveTestFileProjectNames('packages/example/example.hermes.e2e.test.ts')).toEqual([
 			'e2e-hermes',
 		]);
-		expect(resolveTestFileProjectNames('packages/example/example.worker.e2e.test.ts')).toEqual([
-			'e2e-worker',
-		]);
+		expect(resolveTestFileProjectNames('packages/example/example.worker.e2e.test.ts')).toEqual([]);
 		expect(resolveTestFileProjectNames('packages/example/example.secrets.e2e.test.ts')).toEqual([
 			'e2e-secrets',
 		]);

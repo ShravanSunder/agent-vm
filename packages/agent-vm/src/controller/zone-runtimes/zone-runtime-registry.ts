@@ -9,15 +9,11 @@ import {
 	deriveGatewayDiagnosisSnapshot,
 	type GatewayDiagnosisSnapshot,
 } from './gateway-zone-state-machine.js';
-import {
-	ControllerZoneNotFoundError,
-	ControllerZoneOperationUnsupportedError,
-} from './zone-runtime-errors.js';
+import { ControllerZoneNotFoundError } from './zone-runtime-errors.js';
 import type {
 	ControllerZoneRuntime,
 	ControllerZoneRuntimeSnapshot,
 	ManagedGatewayZoneRuntime,
-	WorkerZoneRuntime,
 } from './zone-runtime-types.js';
 
 export interface ZoneRuntimeRegistry {
@@ -33,7 +29,6 @@ export interface ZoneRuntimeRegistry {
 	getManagedGatewayRuntime(zoneId: string): ManagedGatewayZoneRuntime;
 	getDiagnosisByZone(): Readonly<Record<string, GatewayDiagnosisSnapshot>>;
 	getSnapshotByZone(): Readonly<Record<string, ControllerZoneRuntimeSnapshot>>;
-	getWorkerRuntime(zoneId: string): WorkerZoneRuntime;
 	startSelectedZones(): Promise<void>;
 	stopAllZones(): Promise<void>;
 }
@@ -103,15 +98,7 @@ export function createZoneRuntimeRegistry(options: {
 			return await getRuntime(zoneId).destroy(purge);
 		},
 		getManagedGatewayRuntime(zoneId) {
-			const runtime = getRuntime(zoneId);
-			if (runtime.gatewayType === 'worker') {
-				throw new ControllerZoneOperationUnsupportedError(
-					zoneId,
-					'managed Gateway operations',
-					runtime.gatewayType,
-				);
-			}
-			return runtime;
+			return getRuntime(zoneId);
 		},
 		getDiagnosisByZone() {
 			const startupFailureDiagnoses = Object.fromEntries(
@@ -130,12 +117,10 @@ export function createZoneRuntimeRegistry(options: {
 				]),
 			);
 			const runtimeDiagnoses = Object.fromEntries(
-				[...runtimesByZoneId.entries()]
-					.filter(
-						(entry): entry is [string, ManagedGatewayZoneRuntime] =>
-							entry[1].gatewayType !== 'worker',
-					)
-					.map(([zoneId, runtime]) => [zoneId, runtime.getDiagnosis()]),
+				[...runtimesByZoneId.entries()].map(([zoneId, runtime]) => [
+					zoneId,
+					runtime.getDiagnosis(),
+				]),
 			);
 			return {
 				...startupFailureDiagnoses,
@@ -161,34 +146,19 @@ export function createZoneRuntimeRegistry(options: {
 				),
 			};
 		},
-		getWorkerRuntime(zoneId) {
-			const runtime = getRuntime(zoneId);
-			if (runtime.gatewayType !== 'worker') {
-				throw new ControllerZoneOperationUnsupportedError(
-					zoneId,
-					'worker operations',
-					runtime.gatewayType,
-				);
-			}
-			return runtime;
-		},
 		async startSelectedZones() {
 			await Promise.all(
-				[...runtimesByZoneId.values()]
-					.filter(
-						(runtime): runtime is ManagedGatewayZoneRuntime => runtime.gatewayType !== 'worker',
-					)
-					.map(async (runtime) => {
-						try {
-							await runtime.start();
-						} catch {
-							writeLog('warning', {
-								operation: 'start-gateway-zone',
-								zoneId: runtime.zoneId,
-							});
-							// Partial start: failed runtimes retain their own failed snapshot.
-						}
-					}),
+				[...runtimesByZoneId.values()].map(async (runtime) => {
+					try {
+						await runtime.start();
+					} catch {
+						writeLog('warning', {
+							operation: 'start-gateway-zone',
+							zoneId: runtime.zoneId,
+						});
+						// Partial start: failed runtimes retain their own failed snapshot.
+					}
+				}),
 			);
 		},
 		async stopAllZones() {

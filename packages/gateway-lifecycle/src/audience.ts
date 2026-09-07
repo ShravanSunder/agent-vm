@@ -33,11 +33,3 @@ export function gatewayVmAllowedHosts(egressHosts: readonly EgressHostConfig[]):
 		),
 	);
 }
-
-export function workerVmAllowedHosts(egressHosts: readonly EgressHostConfig[]): readonly string[] {
-	return Array.from(
-		new Set(
-			egressHostsForAudience(egressHosts, 'gateway').filter((host) => host !== controllerVmHost),
-		),
-	);
-}

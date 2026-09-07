@@ -13,7 +13,6 @@ const requiredAffectedPackageNames = [
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/hermes-gateway',
-	'@agent-vm/worker-gateway',
 	'@agent-vm/agent-vm',
 ] as const;
 

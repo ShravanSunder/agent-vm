@@ -39,7 +39,6 @@
 	},
 	"dependencies": {
 		"@agent-vm/agent-portal-sdk": "workspace:*",
-		"@agent-vm/agent-vm-worker": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
 		"@agent-vm/controller-execution-contracts": "workspace:*",
@@ -55,8 +54,6 @@
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"@agent-vm/tool-portal": "workspace:*",
-		"@agent-vm/worker-control-contracts": "workspace:*",
-		"@agent-vm/worker-gateway": "workspace:*",
 		"@hono/node-server": "2.0.10",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",

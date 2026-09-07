@@ -162,18 +162,6 @@ describe('managed VM exact-HEAD package inspector', () => {
 		);
 	});
 
-	it('rejects a workspace missing a required closure member', () => {
-		// Arrange
-		const incompleteWorkspace = completeWorkspace().filter(
-			(candidate) => candidate.manifest.name !== '@agent-vm/worker-gateway',
-		);
-
-		// Act / Assert
-		expect(() => deriveAffectedPublishableClosure(incompleteWorkspace)).toThrow(
-			'Affected publishable package closure is missing @agent-vm/worker-gateway.',
-		);
-	});
-
 	it('rejects unsafe tar members before inspecting their contents', () => {
 		// Arrange
 		const tarMembers = ['package/package.json', 'package/../escaped-file'];

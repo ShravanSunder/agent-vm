@@ -126,7 +126,7 @@ interface ImageTarget {
 	readonly source: ManagedImageSource | undefined;
 }
 
-type ManagedGatewayBootGatewayType = 'hermes' | 'worker';
+type ManagedGatewayBootGatewayType = 'hermes';
 
 interface BuiltImageCacheEntry {
 	readonly imageTarget: ImageTarget;
@@ -181,17 +181,12 @@ function imageTargetFingerprintInputKey(options: {
 }
 
 export function managedGatewayBootProjectionForGatewayType(
-	gatewayType: ManagedGatewayBootGatewayType,
-): ManagedGatewayImageBootProjection | undefined {
-	switch (gatewayType) {
-		case 'hermes':
-			return {
-				frameworkBootEntry: 'hermes-framework-service',
-				kind: 'managed-gateway-exact-two-role',
-			};
-		case 'worker':
-			return undefined;
-	}
+	_gatewayType: ManagedGatewayBootGatewayType,
+): ManagedGatewayImageBootProjection {
+	return {
+		frameworkBootEntry: 'hermes-framework-service',
+		kind: 'managed-gateway-exact-two-role',
+	};
 }
 
 function managedGatewayBootProjectionForImageTarget(
