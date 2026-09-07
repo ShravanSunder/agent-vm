@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { applyEdits, modify } from 'jsonc-parser';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const repoRoot = process.cwd();
@@ -49,6 +50,53 @@ describe('smoke: generated agent-vm config validation', () => {
 		expect(result.stderr).toContain('reserved for global storage');
 		await expect(readdir(targetDirectory)).resolves.toEqual([]);
 	});
+
+	it('rejects a saved legacy Worker config through the built validate command', async () => {
+		// Arrange
+		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-legacy-worker-'));
+		createdDirectories.push(targetDirectory);
+		await execa(
+			'node',
+			[
+				agentVmCliPath,
+				'init',
+				'legacy-worker-zone',
+				'--type',
+				'hermes',
+				'--secrets',
+				'environment',
+				'--arch',
+				process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+				'--paths',
+				'local',
+			],
+			{ cwd: targetDirectory, reject: true, timeout: 30_000 },
+		);
+		const systemConfigPath = path.join(targetDirectory, 'config', 'system.jsonc');
+		const generatedConfigText = await readFile(systemConfigPath, 'utf8');
+		const legacyWorkerConfigText = applyEdits(
+			generatedConfigText,
+			modify(generatedConfigText, ['zones', 0, 'gateway', 'type'], 'worker', {
+				formattingOptions: { insertSpaces: false, tabSize: 1 },
+			}),
+		);
+		await writeFile(systemConfigPath, legacyWorkerConfigText, 'utf8');
+
+		// Act
+		const validationResult = await execa(
+			'node',
+			[agentVmCliPath, 'validate', '--config', 'config/system.jsonc'],
+			{ cwd: targetDirectory, reject: false, timeout: 30_000 },
+		);
+
+		// Assert
+		expect(legacyWorkerConfigText).toContain('"type": "worker"');
+		expect(validationResult.exitCode).toBe(1);
+		expect(validationResult.stderr).toContain('Invalid config/system.jsonc configuration:');
+		expect(validationResult.stderr).toContain('zones[0].gateway.type');
+		expect(validationResult.stderr).toContain('expected "hermes"');
+	});
+
 	it.each([
 		{ name: 'default Hermes', gatewayArguments: [] },
 		{ name: 'explicit Hermes', gatewayArguments: ['--type', 'hermes'] },

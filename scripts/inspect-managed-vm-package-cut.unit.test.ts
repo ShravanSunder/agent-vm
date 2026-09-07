@@ -24,7 +24,6 @@ const requiredPackageNames = [
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/hermes-gateway',
-	'@agent-vm/worker-gateway',
 	'@agent-vm/agent-vm',
 ] as const;
 
@@ -53,13 +52,9 @@ function completeWorkspace(): readonly WorkspacePackage[] {
 		workspacePackage('@agent-vm/hermes-gateway', {
 			'@agent-vm/gateway-lifecycle': 'workspace:*',
 		}),
-		workspacePackage('@agent-vm/worker-gateway', {
-			'@agent-vm/gateway-lifecycle': 'workspace:*',
-		}),
 		workspacePackage('@agent-vm/agent-vm', {
 			'@agent-vm/gondolin-vm-adapter': 'workspace:*',
 			'@agent-vm/hermes-gateway': 'workspace:*',
-			'@agent-vm/worker-gateway': 'workspace:*',
 		}),
 	];
 }
@@ -195,6 +190,81 @@ describe('managed VM exact-HEAD package inspector', () => {
 		expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
 			'contains removed name @agent-vm/openclaw-gateway',
 		);
+	});
+
+	it.each([
+		['@agent-vm/agent-vm-worker', 'packed manifest identity'],
+		['@agent-vm/worker-gateway', 'packed manifest identity'],
+		['@agent-vm/worker-control-contracts', 'packed manifest identity'],
+	] as const)('rejects removed Worker package %s as a %s', (removedPackageName) => {
+		const packageManifest = manifest(removedPackageName);
+
+		expect(() =>
+			inspectPackedPackage(
+				packedPackage(packageManifest),
+				new Map([[packageManifest.name, packageManifest.version]]),
+			),
+		).toThrow(`contains removed name ${removedPackageName}`);
+	});
+
+	it.each([
+		['@agent-vm/agent-vm-worker', 'removed Worker dependency'],
+		['@agent-vm/worker-gateway', 'removed Worker dependency'],
+		['@agent-vm/worker-control-contracts', 'removed Worker dependency'],
+		['@openai/codex-sdk', 'removed Codex SDK dependency'],
+	] as const)('rejects %s as a %s in the packed manifest', (removedDependencyName) => {
+		const packageManifest = manifest('@agent-vm/managed-vm', {
+			[removedDependencyName]: '1.2.3',
+		});
+
+		expect(() =>
+			inspectPackedPackage(
+				packedPackage(packageManifest),
+				new Map([[packageManifest.name, packageManifest.version]]),
+			),
+		).toThrow(`contains removed name ${removedDependencyName}`);
+	});
+
+	it.each([
+		['@openai/codex', 'removed Codex CLI'],
+		['@openai/codex-darwin-arm64', 'removed Codex platform package'],
+		['@openai/codex-darwin-x64', 'removed Codex platform package'],
+		['@openai/codex-linux-arm64', 'removed Codex platform package'],
+		['@openai/codex-linux-x64', 'removed Codex platform package'],
+		['@openai/codex-win32-arm64', 'removed Codex platform package'],
+		['@openai/codex-win32-x64', 'removed Codex platform package'],
+	] as const)('rejects %s text as a %s in packed output', (removedPackageName) => {
+		const packageManifest = manifest('@agent-vm/managed-vm');
+		const input = packedPackage(packageManifest, {
+			declaration: `export const removedPackageName = '${removedPackageName}';`,
+		});
+
+		expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
+			`contains removed name ${removedPackageName}`,
+		);
+	});
+
+	it('rejects an exact removed scoped package name in a packed member path', () => {
+		const packageManifest = manifest('@agent-vm/managed-vm');
+		const input = packedPackage(packageManifest, {
+			memberName: 'package/node_modules/@agent-vm/worker-control-contracts/index.js',
+		});
+
+		expect(() => inspectPackedPackage(input, new Map([[packageManifest.name, '1.2.3']]))).toThrow(
+			'contains removed name @agent-vm/worker-control-contracts',
+		);
+	});
+
+	it('accepts generic worker vocabulary in packed runtime code', () => {
+		const packageManifest = manifest('@agent-vm/managed-vm');
+		const input = packedPackage(packageManifest, {
+			declaration: 'export interface WorkerThreadPool {}',
+			memberName: 'package/dist/worker-thread.js',
+		});
+
+		expect(
+			inspectPackedPackage(input, new Map([[packageManifest.name, packageManifest.version]])),
+		).toMatchObject({ name: '@agent-vm/managed-vm' });
 	});
 
 	it('rejects exact sibling dependency drift in the packed manifest', () => {

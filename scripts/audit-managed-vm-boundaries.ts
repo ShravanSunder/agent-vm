@@ -19,6 +19,19 @@ const ADAPTER_PACKAGE = '@agent-vm/gondolin-vm-adapter';
 const GONDOLIN_SDK_PACKAGE = '@earendil-works/gondolin';
 const GONDOLIN_SDK_VERSION = '0.12.0';
 const OLD_PACKAGE_NAMES = ['@agent-vm/gondolin-adapter', '@agent-vm/gateway-interface'] as const;
+const REMOVED_WORKER_AND_CODEX_PACKAGE_NAMES = [
+	'@agent-vm/agent-vm-worker',
+	'@agent-vm/worker-control-contracts',
+	'@agent-vm/worker-gateway',
+	'@openai/codex-sdk',
+	'@openai/codex-darwin-arm64',
+	'@openai/codex-darwin-x64',
+	'@openai/codex-linux-arm64',
+	'@openai/codex-linux-x64',
+	'@openai/codex-win32-arm64',
+	'@openai/codex-win32-x64',
+	'@openai/codex',
+] as const;
 const ALLOWED_ADAPTER_IMPORTERS = new Set([
 	'packages/agent-vm/src/build/gondolin-managed-vm-build-tooling.ts',
 	'packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts',
@@ -498,6 +511,15 @@ export function auditManagedVmBoundaries(
 						findings,
 						source,
 						`active old package name '${oldPackageName}' is forbidden`,
+					);
+				}
+			}
+			for (const removedPackageName of REMOVED_WORKER_AND_CODEX_PACKAGE_NAMES) {
+				if (source.content.includes(removedPackageName)) {
+					insertFinding(
+						findings,
+						source,
+						`active removed package name '${removedPackageName}' is forbidden`,
 					);
 				}
 			}

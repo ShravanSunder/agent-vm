@@ -72,7 +72,7 @@ const classifiedRemovalTestFiles = new Map<string, number>([
 		'packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-module-boundary.unit.test.ts',
 		2,
 	],
-	['scripts/audit-managed-vm-boundaries.unit.test.ts', 13],
+	['scripts/audit-managed-vm-boundaries.unit.test.ts', 8],
 	['scripts/audit-openclaw-removal.unit.test.ts', 36],
 	['scripts/audit-test-taxonomy.unit.test.ts', 1],
 	['scripts/ci-workflow.unit.test.ts', 1],

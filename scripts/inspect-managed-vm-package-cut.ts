@@ -23,11 +23,22 @@ const closureSeedPackageNames = [
 ] as const;
 
 const removedNames = [
+	'@agent-vm/agent-vm-worker',
 	'@agent-vm/gateway-interface',
 	'@agent-vm/gondolin-adapter',
 	'@agent-vm/openclaw-agent-vm-plugin',
 	'@agent-vm/openclaw-gateway',
 	'@agent-vm/openclaw-mcp-portal-plugin',
+	'@agent-vm/worker-control-contracts',
+	'@agent-vm/worker-gateway',
+	'@openai/codex-sdk',
+	'@openai/codex-darwin-arm64',
+	'@openai/codex-darwin-x64',
+	'@openai/codex-linux-arm64',
+	'@openai/codex-linux-x64',
+	'@openai/codex-win32-arm64',
+	'@openai/codex-win32-x64',
+	'@openai/codex',
 ] as const;
 const forbiddenDeclarationFragments = [
 	'@earendil-works/gondolin',
