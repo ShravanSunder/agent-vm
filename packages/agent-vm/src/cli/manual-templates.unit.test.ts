@@ -238,12 +238,18 @@ describe('manual templates', () => {
 		expect(portal).toContain('calls.requiresApproval requires zone approvalAccess');
 		expect(portal).toContain('Static validation and Gateway preflight fail closed');
 		expect(portal).toContain('Hermes presents managed approvals natively');
-		expect(portal).toContain('controller_host or a reusable credentialed ephemeral_managed_vm');
+		expect(portal).toContain(
+			'controller_host, a reusable credentialed ephemeral_managed_vm, or the current leased tool_vm',
+		);
+		expect(portal).toContain('suggestCalls, suggestCommands, suggestDeniedPatterns');
+		expect(portal).toContain('govern only tool_portal_call');
 		expect(portal).toContain('it does not mean one VM per RPC');
 		expect(portal).toContain('one current credentialed VM per zone and authenticated agent');
 		expect(portal).toContain('targets do not declare runtime ids');
 		expect(portal).toContain('file_binding or http_mediation credentialProjection');
-		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
+		expect(portal).toContain('current Tool VM strict-SSH lease');
+		expect(portal).toContain('without a controller execution RPC');
+		expect(portal).toContain('arm their controller-issued reservation');
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(
 			'Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider',

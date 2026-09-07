@@ -634,8 +634,8 @@ authenticated in-VM agent-message API uses `API_SERVER_KEY` and is not an
 approval authority.
 
 `controller_execution` contains named `registered_action | configured_cli`
-operations. Configured CLI binds exactly one `controller_host` or
-`ephemeral_managed_vm` target. Its timeout is `quick` (fixed 5 seconds) or
+operations. Configured CLI binds exactly one `controller_host`,
+`ephemeral_managed_vm`, or `tool_vm` target. Its timeout is `quick` (fixed 5 seconds) or
 `open` (120-second default, caller override up to 8 hours). The Gateway never
 selects the target, executable, image, environment, or raw controller deadline.
 
@@ -651,6 +651,17 @@ authored order:
 ```text
 deny > requires_approval > without_approval
 ```
+
+The `tool_vm` discriminant uses the same configured-CLI policy schemas under
+the honest route-local names `suggestCalls`, `suggestCommands`,
+`suggestDeniedPatterns`, `suggestStdin`, and `suggestTimeout`; the nested call
+properties are `suggestDeny`, `suggestRequiresApproval`, and
+`suggestWithoutApproval`. Agent VM transforms these suggestions into the
+ordinary internal configured-CLI evaluator. A match therefore denies or asks
+for approval only when the agent enters through `tool_portal_call`. It does not
+restrict terminal, Python, SSH, or other arbitrary execution inside the leased
+Tool VM. Successful Portal calls run `executablePath` plus
+`mandatoryArgvPrefix` and caller `argv` in the current leased Tool VM.
 
 An empty matcher `flags` array classifies the entire exact command path.
 Predicate names and values are alternatives, predicates within one matcher are
@@ -683,8 +694,11 @@ current policy and approval decision. Retirement discards credential memory and
 COW without checkpointing. Gateway startup prepares `imageReference` and binds
 its fingerprint into controller-only compatibility. Persisted Gateway-safe
 config contains only an opaque cohort revision, never credential refs, file
-paths, runtime ids, or prepared image details. `tool_vm_runner` remains direct
-Gateway-to-leased-Tool-VM strict SSH with no per-command controller RPC.
+paths, runtime ids, or prepared image details. A `configured_cli` with the
+`tool_vm` target is dispatched locally by the Gateway through the leased Tool
+VM strict-SSH acquisition path, with no controller execution RPC. An
+approval-required call still arms its controller-issued reservation through
+the approval control plane immediately before SSH dispatch.
 
 For Gog service accounts, map the 1Password value to Gog's expected
 `sa-<encoded-account>.json` path and set:

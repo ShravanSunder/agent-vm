@@ -190,6 +190,70 @@ export const configuredCliPolicySchema = z
 		}
 	});
 
+export const suggestedConfiguredCliInvocationCallPolicySchema = z
+	.object({
+		suggestDeny: z.array(configuredCliInvocationMatcherSchema).default([]),
+		suggestRequiresApproval: z.array(configuredCliInvocationMatcherSchema).default([]),
+		suggestWithoutApproval: z.literal('remaining_admitted'),
+	})
+	.strict();
+
+export const suggestedConfiguredCliPolicySchema = z
+	.object({
+		suggestCalls: suggestedConfiguredCliInvocationCallPolicySchema,
+		suggestCommands: z.array(configuredCliAllowedCommandSchema).min(1),
+		suggestDeniedPatterns: z.array(configuredCliPatternRuleSchema).default([]),
+		suggestStdin: configuredCliStdinPolicySchema.default({ kind: 'none' }),
+		suggestTimeout: configuredCliTimeoutPolicySchema,
+	})
+	.strict()
+	.superRefine((suggestions, context) => {
+		const parsed = configuredCliPolicySchema.safeParse({
+			calls: {
+				deny: suggestions.suggestCalls.suggestDeny,
+				requiresApproval: suggestions.suggestCalls.suggestRequiresApproval,
+				withoutApproval: suggestions.suggestCalls.suggestWithoutApproval,
+			},
+			commands: suggestions.suggestCommands,
+			deniedPatterns: suggestions.suggestDeniedPatterns,
+			stdin: suggestions.suggestStdin,
+			timeout: suggestions.suggestTimeout,
+		});
+		if (parsed.success) return;
+		for (const issue of parsed.error.issues) {
+			context.addIssue({
+				...issue,
+				path: issue.path.map((segment) => {
+					if (segment === 'calls') return 'suggestCalls';
+					if (segment === 'deny') return 'suggestDeny';
+					if (segment === 'requiresApproval') return 'suggestRequiresApproval';
+					if (segment === 'withoutApproval') return 'suggestWithoutApproval';
+					if (segment === 'commands') return 'suggestCommands';
+					if (segment === 'deniedPatterns') return 'suggestDeniedPatterns';
+					if (segment === 'stdin') return 'suggestStdin';
+					if (segment === 'timeout') return 'suggestTimeout';
+					return segment;
+				}),
+			});
+		}
+	});
+
+export function configuredCliPolicyFromSuggestions(
+	suggestions: z.infer<typeof suggestedConfiguredCliPolicySchema>,
+): z.infer<typeof configuredCliPolicySchema> {
+	return configuredCliPolicySchema.parse({
+		calls: {
+			deny: suggestions.suggestCalls.suggestDeny,
+			requiresApproval: suggestions.suggestCalls.suggestRequiresApproval,
+			withoutApproval: suggestions.suggestCalls.suggestWithoutApproval,
+		},
+		commands: suggestions.suggestCommands,
+		deniedPatterns: suggestions.suggestDeniedPatterns,
+		stdin: suggestions.suggestStdin,
+		timeout: suggestions.suggestTimeout,
+	});
+}
+
 export const configuredCliEnvironmentPolicySchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('empty') }).strict(),
 	z
@@ -499,46 +563,67 @@ export const configuredCliImageRecipePathSchema = z
 			'Configured CLI authored image references cannot use the reserved prepared-image prefix.',
 	});
 
+export const configuredCliControllerHostExecutionTargetSchema = z
+	.object({
+		cwd: absoluteControlFreePathSchema,
+		environment: configuredCliEnvironmentPolicySchema,
+		kind: z.literal('controller_host'),
+	})
+	.strict();
+export const configuredCliEphemeralManagedVmExecutionTargetSchema = z
+	.object({
+		allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+		credentialProjection: configuredCliCredentialProjectionSchema,
+		environment: configuredCliEnvironmentPolicySchema,
+		guestCwd: absoluteControlFreePathSchema,
+		imageReference: configuredCliImageRecipePathSchema,
+		kind: z.literal('ephemeral_managed_vm'),
+	})
+	.strict()
+	.superRefine(validateCredentialedManagedVmTarget);
+export const configuredCliToolVmExecutionTargetSchema = z
+	.object({
+		kind: z.literal('tool_vm'),
+		workingDirectory: z
+			.string()
+			.min(1)
+			.refine(
+				(value) =>
+					!value.includes('\0') && !value.startsWith('/') && !value.split('/').includes('..'),
+				{ message: 'Tool VM configured CLI working directories must remain work-relative.' },
+			),
+	})
+	.strict();
+
 export const configuredCliExecutionTargetSchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			cwd: absoluteControlFreePathSchema,
-			environment: configuredCliEnvironmentPolicySchema,
-			kind: z.literal('controller_host'),
-		})
-		.strict(),
-	z
-		.object({
-			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
-			credentialProjection: configuredCliCredentialProjectionSchema,
-			environment: configuredCliEnvironmentPolicySchema,
-			guestCwd: absoluteControlFreePathSchema,
-			imageReference: configuredCliImageRecipePathSchema,
-			kind: z.literal('ephemeral_managed_vm'),
-		})
-		.strict()
-		.superRefine(validateCredentialedManagedVmTarget),
+	configuredCliControllerHostExecutionTargetSchema,
+	configuredCliEphemeralManagedVmExecutionTargetSchema,
+	configuredCliToolVmExecutionTargetSchema,
 ]);
 
+export const configuredCliEffectiveControllerHostExecutionTargetSchema = z
+	.object({
+		cwd: absoluteControlFreePathSchema,
+		environment: configuredCliEnvironmentPolicySchema,
+		kind: z.literal('controller_host'),
+	})
+	.strict();
+export const configuredCliEffectiveEphemeralManagedVmExecutionTargetSchema = z
+	.object({
+		allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
+		credentialProjection: configuredCliCredentialProjectionSchema,
+		environment: configuredCliEnvironmentPolicySchema,
+		guestCwd: absoluteControlFreePathSchema,
+		imageReference: configuredCliPreparedImageIdentitySchema,
+		kind: z.literal('ephemeral_managed_vm'),
+	})
+	.strict()
+	.superRefine(validateCredentialedManagedVmTarget);
+
 export const configuredCliEffectiveExecutionTargetSchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			cwd: absoluteControlFreePathSchema,
-			environment: configuredCliEnvironmentPolicySchema,
-			kind: z.literal('controller_host'),
-		})
-		.strict(),
-	z
-		.object({
-			allowedHosts: configuredCliExactNetworkHostsSchema.default([]),
-			credentialProjection: configuredCliCredentialProjectionSchema,
-			environment: configuredCliEnvironmentPolicySchema,
-			guestCwd: absoluteControlFreePathSchema,
-			imageReference: configuredCliPreparedImageIdentitySchema,
-			kind: z.literal('ephemeral_managed_vm'),
-		})
-		.strict()
-		.superRefine(validateCredentialedManagedVmTarget),
+	configuredCliEffectiveControllerHostExecutionTargetSchema,
+	configuredCliEffectiveEphemeralManagedVmExecutionTargetSchema,
+	configuredCliToolVmExecutionTargetSchema,
 ]);
 
 export const configuredCliOutputPolicySchema = z
@@ -587,7 +672,8 @@ interface ConfiguredCliOperationAuthorizationValidation {
 		| {
 				readonly credentialProjection: z.infer<typeof configuredCliCredentialProjectionSchema>;
 				readonly kind: 'ephemeral_managed_vm';
-		  };
+		  }
+		| { readonly kind: 'tool_vm' };
 }
 
 function validateConfiguredCliOperationAuthorization(
@@ -674,41 +760,83 @@ export const controllerRegisteredOperationSchema = z
 	.object({ kind: z.literal('registered_action') })
 	.strict();
 
-export const controllerConfiguredCliOperationSchema = configuredCliPolicySchema
+const configuredCliOperationCommonShape = {
+	executablePath: absoluteControlFreePathSchema,
+	kind: z.literal('configured_cli'),
+	mandatoryArgvPrefix: z.array(configuredCliArgvTokenSchema).max(64),
+	output: configuredCliOutputPolicySchema,
+	safeHelp: z.string().min(1).max(4_000),
+} as const;
+
+const configuredCliAuthorizedOperationCommonShape = {
+	...configuredCliOperationCommonShape,
+	authorization: configuredCliAuthorizationSchema.optional(),
+} as const;
+
+export const controllerEnforcedConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
-		authorization: configuredCliAuthorizationSchema.optional(),
-		executablePath: absoluteControlFreePathSchema,
-		executionTarget: configuredCliExecutionTargetSchema,
-		kind: z.literal('configured_cli'),
-		mandatoryArgvPrefix: z.array(configuredCliArgvTokenSchema).max(64),
-		output: configuredCliOutputPolicySchema,
-		safeHelp: z.string().min(1).max(4_000),
+		...configuredCliAuthorizedOperationCommonShape,
+		executionTarget: z.discriminatedUnion('kind', [
+			configuredCliControllerHostExecutionTargetSchema,
+			configuredCliEphemeralManagedVmExecutionTargetSchema,
+		]),
 	})
 	.strict()
 	.superRefine(validateConfiguredCliOperationAuthorization);
 
-export const controllerExecutionOperationSchema = z.discriminatedUnion('kind', [
+export const controllerToolVmConfiguredCliOperationSchema = suggestedConfiguredCliPolicySchema
+	.safeExtend({
+		...configuredCliOperationCommonShape,
+		executionTarget: configuredCliToolVmExecutionTargetSchema,
+	})
+	.strict();
+
+export const controllerConfiguredCliOperationSchema = z.union([
+	controllerEnforcedConfiguredCliOperationSchema,
+	controllerToolVmConfiguredCliOperationSchema,
+]);
+
+export const controllerExecutionOperationSchema = z.union([
 	controllerRegisteredOperationSchema,
 	controllerConfiguredCliOperationSchema,
 ]);
 
 export const effectiveControllerConfiguredCliOperationSchema = configuredCliPolicySchema
 	.safeExtend({
-		authorization: configuredCliAuthorizationSchema.optional(),
+		...configuredCliAuthorizedOperationCommonShape,
 		executablePath: absoluteControlFreePathSchema,
 		executionTarget: configuredCliEffectiveExecutionTargetSchema,
-		kind: z.literal('configured_cli'),
-		mandatoryArgvPrefix: z.array(configuredCliArgvTokenSchema).max(64),
-		output: configuredCliOutputPolicySchema,
-		safeHelp: z.string().min(1).max(4_000),
 	})
 	.strict()
 	.superRefine(validateConfiguredCliOperationAuthorization);
 
-export const effectiveControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
+export const effectiveControllerExecutionOperationSchema = z.union([
 	controllerRegisteredOperationSchema,
 	effectiveControllerConfiguredCliOperationSchema,
 ]);
+
+export function normalizePreparedControllerExecutionOperation(
+	operation: z.infer<typeof controllerExecutionOperationSchema>,
+): z.infer<typeof effectiveControllerExecutionOperationSchema> {
+	if (operation.kind === 'registered_action') return operation;
+	if (!('suggestCalls' in operation)) {
+		return effectiveControllerConfiguredCliOperationSchema.parse(operation);
+	}
+	const policy = configuredCliPolicyFromSuggestions(operation);
+	return effectiveControllerConfiguredCliOperationSchema.parse({
+		calls: policy.calls,
+		commands: policy.commands,
+		deniedPatterns: policy.deniedPatterns,
+		executablePath: operation.executablePath,
+		executionTarget: operation.executionTarget,
+		kind: operation.kind,
+		mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+		output: operation.output,
+		safeHelp: operation.safeHelp,
+		stdin: policy.stdin,
+		timeout: policy.timeout,
+	});
+}
 
 const configuredCliCommonInputShape = {
 	argv: z.array(configuredCliArgvTokenSchema).min(1).max(100),
@@ -786,6 +914,9 @@ export type ConfiguredCliPolicy = z.infer<typeof configuredCliPolicySchema>;
 export type ConfiguredCliStdinPolicy = z.infer<typeof configuredCliStdinPolicySchema>;
 export type ConfiguredCliTimeoutPolicy = z.infer<typeof configuredCliTimeoutPolicySchema>;
 export type ControllerExecutionOperation = z.infer<typeof controllerExecutionOperationSchema>;
+export type ControllerEnforcedConfiguredCliOperation = z.infer<
+	typeof controllerEnforcedConfiguredCliOperationSchema
+>;
 export type EffectiveControllerExecutionOperation = z.infer<
 	typeof effectiveControllerExecutionOperationSchema
 >;

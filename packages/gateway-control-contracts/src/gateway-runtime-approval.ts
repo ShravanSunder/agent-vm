@@ -138,6 +138,7 @@ export const GatewayRuntimeApprovalDispatchReservationSchema = z.discriminatedUn
 
 export const GatewayRuntimeGatewayDispatchReservationSchema = z.discriminatedUnion('backendKind', [
 	GatewayRuntimeMcpProviderDispatchReservationSchema,
+	GatewayRuntimeControllerExecutionDispatchReservationSchema,
 	GatewayRuntimeToolVmRunnerDispatchReservationSchema,
 ]);
 
@@ -157,8 +158,18 @@ export const GatewayRuntimeToolVmRunnerDispatchGrantSchema = z
 	})
 	.strict();
 
+export const GatewayRuntimeControllerExecutionDispatchGrantSchema = z
+	.object({
+		...approvalDispatchAuthorityShape,
+		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
+		bindingRevision: z.string().min(1),
+		grantId: z.string().uuid(),
+	})
+	.strict();
+
 export const GatewayRuntimeApprovalDispatchGrantSchema = z.discriminatedUnion('backendKind', [
 	GatewayRuntimeMcpProviderDispatchGrantSchema,
+	GatewayRuntimeControllerExecutionDispatchGrantSchema,
 	GatewayRuntimeToolVmRunnerDispatchGrantSchema,
 ]);
 
@@ -206,6 +217,14 @@ export const GatewayRuntimeToolVmRunnerApprovalGrantDispatchAuthoritySchema = z
 	})
 	.strict();
 
+export const GatewayRuntimeControllerExecutionApprovalGrantDispatchAuthoritySchema = z
+	.object({
+		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
+		grant: GatewayRuntimeControllerExecutionDispatchGrantSchema,
+		kind: z.literal('approval-grant'),
+	})
+	.strict();
+
 export const GatewayRuntimeControllerExecutionApprovalReservationDispatchAuthoritySchema = z
 	.object({
 		backendKind: z.literal(toolPortalBackendKindSchema.enum.controller_execution),
@@ -220,6 +239,7 @@ export const GatewayRuntimeToolPortalDispatchAuthoritySchema = z.union([
 	GatewayRuntimeControllerExecutionDirectDispatchAuthoritySchema,
 	GatewayRuntimeMcpProviderApprovalGrantDispatchAuthoritySchema,
 	GatewayRuntimeToolVmRunnerApprovalGrantDispatchAuthoritySchema,
+	GatewayRuntimeControllerExecutionApprovalGrantDispatchAuthoritySchema,
 	GatewayRuntimeControllerExecutionApprovalReservationDispatchAuthoritySchema,
 ]);
 

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createStockGatewayRuntimeSandboxVmHarness,
+	stockConfiguredCliCapabilityName,
 	type StockGatewayRuntimeSandboxVmHarness,
 } from './gateway-runtime-sandbox-vm-test-fixture.js';
 import { shouldRunLiveVmE2e } from './live-vm-e2e-gates.js';
@@ -40,12 +41,32 @@ async function callConfiguredProofCapability(
 	return result;
 }
 
+async function callConfiguredCliProofCapability(
+	harness: StockGatewayRuntimeSandboxVmHarness,
+): Promise<PortalCallResult> {
+	return await harness.gatewayRuntimeClient().portal.call(
+		PortalCallRequestSchema.parse({
+			calls: [
+				{
+					arguments: { argv: ['portal-argument'], reason: 'Prove Tool VM CLI routing.' },
+					id: 'configured-cli-call',
+					name: stockConfiguredCliCapabilityName,
+					namespace: 'configured_cli',
+				},
+			],
+			requestId: 'configured-cli-private-uds-proof',
+		}),
+		{ trustedContext: harness.trustedInvocationContext() },
+	);
+}
+
 describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 	it('reaches a stock Tool VM from managed private UDS through strict-pinned SSH', async () => {
 		const harness = await createStockGatewayRuntimeSandboxVmHarness();
 
 		try {
 			const result = await callConfiguredProofCapability(harness);
+			const configuredCliResult = await callConfiguredCliProofCapability(harness);
 			const client = harness.gatewayRuntimeClient();
 			const trustedOptions = { trustedContext: harness.trustedInvocationContext() };
 			const environment = await client.sandbox.environment.open({}, trustedOptions);
@@ -132,6 +153,14 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 				'stock-vm-output',
 			);
 			expect(await harness.readToolVmFile('/work/proof.txt')).toBe('stock-vm');
+			expect(configuredCliResult.items[0]).toMatchObject({
+				outcome: { kind: 'completed' },
+				status: 'ok',
+				value: { exitCode: 0, stdout: 'cli:portal-argument' },
+			});
+			expect(await harness.readToolVmFile('/work/configured-cli-proof.txt')).toBe(
+				'portal-argument',
+			);
 			expect(directShellOutcome).toMatchObject({
 				kind: 'terminal',
 				outcome: { completion: 'succeeded', kind: 'completed' },

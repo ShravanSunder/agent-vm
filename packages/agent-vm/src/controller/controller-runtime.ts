@@ -927,6 +927,9 @@ async function startControllerRuntimeWithOwnershipLock(
 				return requireCurrentConfiguredCliAuthorization(currentAuthorization);
 			};
 			const operation = authorization.operation;
+			if (operation.executionTarget.kind === 'tool_vm') {
+				throw new Error('Tool VM configured CLI execution must not reach the controller.');
+			}
 			return operation.executionTarget.kind === 'controller_host'
 				? await executeConfiguredCliOnControllerHost({
 						authorization,

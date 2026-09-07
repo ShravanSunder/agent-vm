@@ -5,6 +5,7 @@ import {
 	type EffectiveNamespaceDiscovery,
 } from '@agent-vm/agent-portal-sdk';
 import type {
+	ConfiguredCliInvocationMatcher,
 	EffectiveManagedToolPortalConfig,
 	FormattedSecretValue,
 	GatewayRuntimeManagedToolPortalConfig,
@@ -447,6 +448,18 @@ function normalizedControllerExecutionOperation(
 	operation: BindingControllerExecutionOperation,
 ): object {
 	if (operation.kind === 'registered_action') return operation;
+	if ('suggestCalls' in operation) {
+		return {
+			...operation,
+			suggestCalls: {
+				suggestDeny: normalizedInvocationMatchers(operation.suggestCalls.suggestDeny),
+				suggestRequiresApproval: normalizedInvocationMatchers(
+					operation.suggestCalls.suggestRequiresApproval,
+				),
+				suggestWithoutApproval: operation.suggestCalls.suggestWithoutApproval,
+			},
+		};
+	}
 	return {
 		...operation,
 		calls: {
@@ -458,10 +471,7 @@ function normalizedControllerExecutionOperation(
 }
 
 function normalizedInvocationMatchers(
-	matchers: Extract<
-		BindingControllerExecutionOperation,
-		{ kind: 'configured_cli' }
-	>['calls']['deny'],
+	matchers: readonly ConfiguredCliInvocationMatcher[],
 ): readonly object[] {
 	return matchers
 		.map((matcher) => ({

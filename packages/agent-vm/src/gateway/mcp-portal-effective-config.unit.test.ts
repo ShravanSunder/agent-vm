@@ -5,7 +5,7 @@ import {
 	decodeConfiguredCliPreparedImageIdentity,
 	mcpConfigSchema,
 	toolPortalConfigSchema,
-	type ControllerExecutionOperation,
+	type ControllerEnforcedConfiguredCliOperation,
 	type McpConfig,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
@@ -215,7 +215,7 @@ function createConfiguredCliOperationForOverlapTest(props: {
 	readonly commandPath: readonly string[];
 	readonly mandatoryArgvPrefix: readonly string[];
 	readonly safeHelp: string;
-}): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> {
+}): ControllerEnforcedConfiguredCliOperation {
 	return {
 		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 		commands: [{ flagRules: [], path: [...props.commandPath] }],
