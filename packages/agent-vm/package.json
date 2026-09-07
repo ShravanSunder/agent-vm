@@ -57,7 +57,7 @@
 		"@agent-vm/tool-portal": "workspace:*",
 		"@agent-vm/worker-control-contracts": "workspace:*",
 		"@agent-vm/worker-gateway": "workspace:*",
-		"@hono/node-server": "2.0.10",
+		"@hono/node-server": "2.0.11",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",
 		"@opentelemetry/api": "1.9.1",
