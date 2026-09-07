@@ -8,6 +8,20 @@ async function readRepositoryFile(relativePath: string): Promise<string> {
 }
 
 describe('CI workflow topology', () => {
+	it('serializes actions that share the runner event payload while keeping test commands parallel', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const parallelGroups = [...workflow.matchAll(/^      - parallel:\n(?:(?: {8,}[^\n]*|)\n)*/gmu)];
+
+		expect(parallelGroups).toHaveLength(2);
+		for (const [parallelGroup] of parallelGroups) {
+			expect(parallelGroup).not.toMatch(/^\s+uses:/mu);
+			expect(parallelGroup).toMatch(/^\s+run:/mu);
+		}
+		expect(parallelGroups[0]?.[0]).toContain('run: pnpm test:unit');
+		expect(parallelGroups[0]?.[0]).toContain('run: pnpm test:integration');
+		expect(parallelGroups[1]?.[0]).toContain('run: mise exec -- pnpm run test:e2e:hermes');
+	});
+
 	it('keeps every required proof lane behind one aggregate check', async () => {
 		const [workflow, hermesPythonTestScript] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),
@@ -80,47 +94,44 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a');
 		expect(workflow).toContain("version: '0.11.31'");
 		expect(workflow).toContain("lookup-only: 'true'");
-		expect(workflow).toContain(
-			'      - parallel:\n          - name: Restore prepared Hermes image cache',
-		);
+		expect(workflow).toContain('      - name: Restore prepared Hermes image cache');
 		expect(workflow).toContain('      - name: Restore prepared Worker image cache');
 		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
-		expect(workflow).toContain('          - name: Set up Agent VM workspace');
-		expect(workflow).toContain('          - name: Set up uv for VM proof');
+		expect(workflow).toContain('      - name: Set up Agent VM workspace');
+		expect(workflow).toContain('      - name: Set up uv for VM proof');
 		expect(workflow).toContain(
-			'          - name: Set up uv for VM proof\n' +
-				'            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0\n' +
-				'            with:\n' +
-				"              version: '0.11.31'\n" +
-				'              enable-cache: false',
+			'      - name: Set up uv for VM proof\n' +
+				'        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0\n' +
+				'        with:\n' +
+				"          version: '0.11.31'\n" +
+				'          enable-cache: false',
 		);
-		expect(workflow).toContain('          - name: Set up pinned VM toolchain');
+		expect(workflow).toContain('      - name: Set up pinned VM toolchain');
 		expect(workflow).toContain('uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c');
 		expect(workflow).toContain(
-			'          - name: Set up Python workspace\n' +
-				"            if: matrix.lane == 'host'\n" +
-				'            uses: ./.github/actions/setup-python-workspace',
+			'      - name: Set up Python workspace\n' +
+				"        if: matrix.lane == 'host'\n" +
+				'        uses: ./.github/actions/setup-python-workspace',
 		);
-		expect(workflow).not.toContain('\n      - name: Set up Agent VM workspace\n');
-		const parallelPreparationStart = workflow.indexOf(
-			'      - parallel:\n          - name: Restore prepared Hermes image cache',
+		const vmPreparationStart = workflow.indexOf(
+			'      - name: Restore prepared Hermes image cache',
 		);
 		const workspaceSetupPosition = workflow.indexOf(
-			'          - name: Set up Agent VM workspace',
-			parallelPreparationStart,
+			'      - name: Set up Agent VM workspace',
+			vmPreparationStart,
 		);
 		const workerCacheRestorePosition = workflow.indexOf(
 			'      - name: Restore prepared Worker image cache',
-			parallelPreparationStart,
+			vmPreparationStart,
 		);
 		const cacheHitBarrierPosition = workflow.indexOf(
 			'      - name: Require prepared image caches',
-			parallelPreparationStart,
+			vmPreparationStart,
 		);
-		const vmPreparationBlock = workflow.slice(parallelPreparationStart, cacheHitBarrierPosition);
-		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
-		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
-		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
+		const vmPreparationBlock = workflow.slice(vmPreparationStart, cacheHitBarrierPosition);
+		expect(vmPreparationStart).toBeGreaterThanOrEqual(0);
+		expect(cacheHitBarrierPosition).toBeGreaterThan(vmPreparationStart);
+		expect(workspaceSetupPosition).toBeGreaterThan(vmPreparationStart);
 		expect(workerCacheRestorePosition).toBeGreaterThan(workspaceSetupPosition);
 		expect(workerCacheRestorePosition).toBeLessThan(cacheHitBarrierPosition);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);

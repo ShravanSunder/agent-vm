@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+# Keep uses-based setup/cache steps sequential: the runner rewrites a shared
+# event.json at action startup, which parallel actions can read mid-write.
+# Independent run-only test steps can still execute in parallel.
 jobs:
   validation:
     name: Validation
@@ -18,14 +21,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - parallel:
-          - name: Set up Node workspace
-            uses: ./.github/actions/setup-agent-vm
-            with:
-              build: 'false'
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-agent-vm
+        with:
+          build: 'false'
 
-          - name: Set up Python workspace
-            uses: ./.github/actions/setup-python-workspace
+      - name: Set up Python workspace
+        uses: ./.github/actions/setup-python-workspace
 
       - name: Quality checks
         run: pnpm check
@@ -58,39 +60,37 @@ jobs:
         id: image-key
         uses: ./.github/actions/resolve-e2e-image-cache-key
 
-      - parallel:
-          - name: Find prepared Hermes image cache
-            id: hermes-image
-            uses: ./.github/actions/restore-e2e-image-cache
-            with:
-              family: hermes
-              input-hash: ${{ steps.image-key.outputs.input-hash }}
-              lookup-only: 'true'
+      - name: Find prepared Hermes image cache
+        id: hermes-image
+        uses: ./.github/actions/restore-e2e-image-cache
+        with:
+          family: hermes
+          input-hash: ${{ steps.image-key.outputs.input-hash }}
+          lookup-only: 'true'
 
-          - name: Find prepared Worker image cache
-            id: worker-image
-            uses: ./.github/actions/restore-e2e-image-cache
-            with:
-              family: worker
-              input-hash: ${{ steps.image-key.outputs.input-hash }}
-              lookup-only: 'true'
+      - name: Find prepared Worker image cache
+        id: worker-image
+        uses: ./.github/actions/restore-e2e-image-cache
+        with:
+          family: worker
+          input-hash: ${{ steps.image-key.outputs.input-hash }}
+          lookup-only: 'true'
 
-      - parallel:
-          - name: Set up Node workspace for image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
-            uses: ./.github/actions/setup-agent-vm
+      - name: Set up Node workspace for image preparation
+        if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-agent-vm
 
-          - name: Set up system packages for image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
-            uses: ./.github/actions/setup-system-packages
+      - name: Set up system packages for image preparation
+        if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-system-packages
 
-          - name: Set up uv for Hermes image preparation
-            if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
-            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
-            with:
-              version: '0.11.31'
-              enable-cache: true
-              cache-dependency-glob: uv.lock
+      - name: Set up uv for Hermes image preparation
+        if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
+        with:
+          version: '0.11.31'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Prepare current E2E images
         if: steps.hermes-image.outputs.cache-hit != 'true' || steps.worker-image.outputs.cache-hit != 'true'
@@ -98,22 +98,21 @@ jobs:
           AGENT_VM_E2E_CACHE_DIR: /tmp/agent-vm-e2e-cache
         run: pnpm exec tsx scripts/prepare-e2e-image-cache.ts
 
-      - parallel:
-          - name: Save prepared Hermes image cache
-            if: steps.hermes-image.outputs.cache-hit != 'true'
-            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-            with:
-              path: |
-                /tmp/agent-vm-e2e-cache/hermes
-                /tmp/agent-vm-e2e-cache/local-package-tarballs
-              key: ${{ steps.hermes-image.outputs.primary-key }}
+      - name: Save prepared Hermes image cache
+        if: steps.hermes-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            /tmp/agent-vm-e2e-cache/hermes
+            /tmp/agent-vm-e2e-cache/local-package-tarballs
+          key: ${{ steps.hermes-image.outputs.primary-key }}
 
-          - name: Save prepared Worker image cache
-            if: steps.worker-image.outputs.cache-hit != 'true'
-            uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-            with:
-              path: /tmp/agent-vm-e2e-cache/worker
-              key: ${{ steps.worker-image.outputs.primary-key }}
+      - name: Save prepared Worker image cache
+        if: steps.worker-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/agent-vm-e2e-cache/worker
+          key: ${{ steps.worker-image.outputs.primary-key }}
 
   e2e-host:
     name: E2E (${{ matrix.lane }})
@@ -130,16 +129,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - parallel:
-          - name: Set up Node workspace
-            uses: ./.github/actions/setup-agent-vm
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-agent-vm
 
-          - name: Set up system packages
-            uses: ./.github/actions/setup-system-packages
+      - name: Set up system packages
+        uses: ./.github/actions/setup-system-packages
 
-          - name: Set up Python workspace
-            if: matrix.lane == 'host'
-            uses: ./.github/actions/setup-python-workspace
+      - name: Set up Python workspace
+        if: matrix.lane == 'host'
+        uses: ./.github/actions/setup-python-workspace
 
       - name: Run E2E lane
         env:
@@ -182,28 +180,27 @@ jobs:
         id: image-key
         uses: ./.github/actions/resolve-e2e-image-cache-key
 
-      - parallel:
-          - name: Restore prepared Hermes image cache
-            id: hermes-image
-            uses: ./.github/actions/restore-e2e-image-cache
-            with:
-              family: hermes
-              input-hash: ${{ steps.image-key.outputs.input-hash }}
+      - name: Restore prepared Hermes image cache
+        id: hermes-image
+        uses: ./.github/actions/restore-e2e-image-cache
+        with:
+          family: hermes
+          input-hash: ${{ steps.image-key.outputs.input-hash }}
 
-          - name: Set up Agent VM workspace
-            uses: ./.github/actions/setup-agent-vm
+      - name: Set up Agent VM workspace
+        uses: ./.github/actions/setup-agent-vm
 
-          - name: Set up uv for VM proof
-            uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
-            with:
-              version: '0.11.31'
-              enable-cache: false
+      - name: Set up uv for VM proof
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v9.0.0
+        with:
+          version: '0.11.31'
+          enable-cache: false
 
-          - name: Set up pinned VM toolchain
-            uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
-            with:
-              install: true
-              cache: true
+      - name: Set up pinned VM toolchain
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          install: true
+          cache: true
 
       - name: Restore prepared Worker image cache
         id: worker-image
