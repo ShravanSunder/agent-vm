@@ -10,7 +10,6 @@ import {
 	resolveManagedImageRelease,
 } from './managed-image-dockerfile.js';
 
-const managedOpenAiCodexCliVersion = '0.139.0';
 const managedDockerfileForbiddenSecretPattern =
 	/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u;
 
@@ -36,13 +35,6 @@ function expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfi
 function createTestManagedImageRelease(): ManagedImageRelease {
 	return {
 		baseImages: {
-			'worker-gateway': {
-				packageOverrides: {
-					npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
-				},
-				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-				tag: '2026.05.27.1',
-			},
 			'tool-vm': {
 				packageOverrides: {
 					npm: [],
@@ -58,13 +50,6 @@ describe('managed image release', () => {
 	it('keeps managed image tags separate from npm package versions', async () => {
 		const release = await resolveManagedImageRelease();
 
-		expect(release.baseImages['worker-gateway']).toMatchObject({
-			repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-			packageOverrides: {
-				npm: [`@openai/codex@${managedOpenAiCodexCliVersion}`],
-			},
-			tag: '2026.05.27.1',
-		});
 		expect(release.baseImages['tool-vm']).toMatchObject({
 			repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 			tag: '2026.05.27.1',
@@ -95,9 +80,9 @@ describe('managed image release', () => {
 
 		await expect(
 			generateManagedDockerfile({
-				base: 'worker-gateway',
-				imageTargetFamily: 'gateway',
-				imageTargetName: 'worker',
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
 				managedImageRelease: createTestManagedImageRelease(),
 				outputDirectory,
 				overlayPath,
@@ -143,46 +128,6 @@ describe('managed image release', () => {
 				spec: 'JSONStream@1.3.5',
 				version: '1.3.5',
 			},
-		]);
-	});
-
-	it('renders direct npm package overrides for worker gateway images', async () => {
-		const temporaryDirectory = await fs.mkdtemp(
-			path.join(os.tmpdir(), 'agent-vm-managed-direct-npm-worker-'),
-		);
-		const overlayPath = path.join(temporaryDirectory, 'overlay.jsonc');
-		const outputDirectory = path.join(temporaryDirectory, 'generated');
-		await fs.writeFile(
-			overlayPath,
-			[
-				'{',
-				'  "schemaVersion": 1,',
-				'  "packageOverrides": {',
-				'    "npm": ["zx@8.1.0"]',
-				'  }',
-				'}',
-				'',
-			].join('\n'),
-			'utf8',
-		);
-
-		const result = await generateManagedDockerfile({
-			base: 'worker-gateway',
-			imageTargetFamily: 'gateway',
-			imageTargetName: 'worker',
-			managedImageRelease: createTestManagedImageRelease(),
-			outputDirectory,
-			overlayPath,
-		});
-
-		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
-		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
-		expect(generatedDockerfile).toContain(
-			'RUN pnpm add -g --ignore-scripts "@openai/codex@0.139.0" "zx@8.1.0"',
-		);
-		expect(result.plan.directNpmPackages.map((packageEntry) => packageEntry.name)).toEqual([
-			'@openai/codex',
-			'zx',
 		]);
 	});
 
@@ -366,14 +311,14 @@ describe('managed image release', () => {
 		const outputDirectory = path.join(temporaryDirectory, 'generated');
 		await fs.writeFile(
 			overlayPath,
-				[
-					'{',
-					'  "schemaVersion": 1,',
-					'  "extraAptPackages": [],',
-					'  "packageOverrides": {',
-					'    "openclaw": ["@agent-vm/mcp-portal@0.0.1"]',
-					'  },',
-					'  "runAfterBase": []',
+			[
+				'{',
+				'  "schemaVersion": 1,',
+				'  "extraAptPackages": [],',
+				'  "packageOverrides": {',
+				'    "frameworkPackages": ["example-package@1.0.0"]',
+				'  },',
+				'  "runAfterBase": []',
 				'}',
 				'',
 			].join('\n'),
@@ -382,13 +327,13 @@ describe('managed image release', () => {
 
 		await expect(
 			generateManagedDockerfile({
-				base: 'worker-gateway',
-				imageTargetFamily: 'gateway',
-				imageTargetName: 'worker',
+				base: 'tool-vm',
+				imageTargetFamily: 'toolVm',
+				imageTargetName: 'default',
 				managedImageRelease: createTestManagedImageRelease(),
 				outputDirectory,
 				overlayPath,
 			}),
-		).rejects.toThrow(/Unrecognized key: "openclaw"/u);
+		).rejects.toThrow(/Unrecognized key: "frameworkPackages"/u);
 	});
 });

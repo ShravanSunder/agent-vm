@@ -1,7 +1,6 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 
-import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import {
 	loadMcpConfig,
 	loadOAuthConfig,
@@ -71,27 +70,6 @@ async function collectReadableFileCheck(
 			name,
 			ok: false,
 			hint: `Missing ${filePath}: ${getErrorMessage(error)}`,
-		};
-	}
-}
-
-async function collectWorkerConfigCheck(
-	systemConfig: LoadedSystemConfig,
-	zone: LoadedSystemConfig['zones'][number],
-): Promise<ConfigValidationCheck> {
-	const workerConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
-	try {
-		await loadWorkerConfigDraft(workerConfigPath);
-		return {
-			name: `worker-config-${zone.id}`,
-			ok: true,
-			hint: workerConfigPath,
-		};
-	} catch (error) {
-		return {
-			name: `worker-config-${zone.id}`,
-			ok: false,
-			hint: getErrorMessage(error),
 		};
 	}
 }
@@ -197,9 +175,6 @@ function buildZoneToolVmProfileChecks(
 	systemConfig: LoadedSystemConfig,
 ): readonly ConfigValidationCheck[] {
 	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type === 'worker') {
-			return [];
-		}
 		const agentToolVmProfileChecks = Object.entries(zone.agentToolVmProfiles ?? {}).map(
 			([agentId, toolVmProfileId]) =>
 				({
@@ -229,7 +204,7 @@ async function collectToolPortalConfigChecks(
 	systemConfig: LoadedSystemConfig,
 	zone: LoadedSystemConfig['zones'][number],
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type === 'worker' || zone.toolPortal === undefined) {
+	if (zone.toolPortal === undefined) {
 		return [];
 	}
 	const configDir = resolveProjectCheckoutPath(systemConfig, zone.toolPortal.configDir);
@@ -384,14 +359,7 @@ export async function runConfigValidation(
 ): Promise<ConfigValidationResult> {
 	const systemConfig = options.systemConfig;
 	const zoneConfigChecks = await Promise.all(
-		systemConfig.zones.map(async (zone) => {
-			switch (zone.gateway.type) {
-				case 'hermes':
-					return await collectHermesConfigCheck(systemConfig, zone);
-				case 'worker':
-					return await collectWorkerConfigCheck(systemConfig, zone);
-			}
-		}),
+		systemConfig.zones.map(async (zone) => await collectHermesConfigCheck(systemConfig, zone)),
 	);
 	const toolPortalConfigChecks = (
 		await Promise.all(

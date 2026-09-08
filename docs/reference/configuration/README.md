@@ -1,83 +1,34 @@
 # Configuration
 
-agent-vm uses a small set of config files. Human-authored agent-vm configs may
-be JSONC (`.jsonc`) so operators can leave short comments beside load-bearing
-settings. Runtime, effective, API, backup, and event-log files stay strict JSON
-or JSONL.
+Agent VM uses a Hermes-only system configuration plus service-specific files.
+Human-authored agent-vm files may be JSONC so operators can keep short comments
+beside load-bearing settings. Runtime records and API payloads remain strict
+JSON or JSONL.
 
-## Whole Map
+```text
+config/system.jsonc
+  Host/controller, Hermes zones, image profiles, secrets, leases, and storage.
 
-```
-system.jsonc / system.json
-  Host/controller config.
-  Defines zones, secrets, image profiles, cache, ports, and resource policy.
+config/gateways/<zone>/hermes-managed/config.yaml
+  Deployment-owned Hermes framework policy.
 
-config/gateways/<zone>/oauth.config.jsonc
-  Optional managed-Hermes Google OAuth config.
-  Defines Clerk human identity, owners/editors, application bindings and ceilings.
+config/gateways/<zone>/mcp.config.jsonc
+  Upstream MCP providers, transports, egress, and provider secrets.
 
 config/gateways/<zone>/tool-portal.config.jsonc
-  Managed Tool Portal policy.
-  Defines per-agent Google policy defaults and the finite executable Gog surface.
+  Managed Tool Portal agent/profile assignments and capability policy.
+  Per-agent Google policy defaults and the finite executable Gog surface.
 
-worker.jsonc / worker.json
-  Zone-level Worker behavior.
-  Defines prompts, phases, verification, MCP servers, and skills.
-
-.agent-vm/config.jsonc / .agent-vm/config.json
-  Repo-level Worker overrides.
-  Checked into the project repo that the agent edits.
-
-.agent-vm/repo-resources.ts
-  Repo-level resource contract.
-  Declares TCP resources the repo requires and can provide.
+config/gateways/<zone>/oauth.config.jsonc
+  Optional controller-owned OAuth broker configuration.
+  Clerk human identity, owners/editors, application bindings and ceilings.
 ```
-
-## Assembly Flow
-
-```
-config/system.jsonc
-  |
-  | zones[].gateway.config
-  v
-config/gateways/<zone>/worker.jsonc
-  |
-  | deep merge with repo override
-  v
-<repo>/.agent-vm/config.jsonc
-  |
-  | Zod defaults fill missing fields
-  v
-/state/effective-worker.json
-
-<repo>/.agent-vm/repo-resources.ts
-  |
-  | resolve once per logical resource name
-  v
-Gondolin tcpHosts + env + /agent-vm/resources/<repoId>
-```
-
-The controller writes `effective-worker.json` before booting the Worker VM.
-Prompt file references are resolved before the worker starts.
-
-## Ownership
-
-| File | Owner | Changes when |
-| --- | --- | --- |
-| `system.jsonc` / `system.json` | platform/operator | host paths, zones, secrets, image profiles, resources change |
-| `worker.jsonc` / `worker.json` | operator/team | default agent behavior changes |
-| `.agent-vm/config.jsonc` / `.agent-vm/config.json` | project repo | a repo needs different validation, MCP, or prompt overrides |
-| `.agent-vm/repo-resources.ts` | project repo | a repo needs TCP resources, mocks, fixtures, or repo-local providers |
-
-## Drill Down
 
 | Need | Read |
 | --- | --- |
-| Host/controller fields | [system-json.md](system-json.md) |
 | Google account authorization and managed Gog policy | [system-json.md#managed-gateway-tool-portal-defaults](system-json.md#managed-gateway-tool-portal-defaults) |
 | Start from a validated synthetic OAuth v2 and Tool Portal pair | [examples/oauth-v2.config.jsonc](examples/oauth-v2.config.jsonc) and [examples/tool-portal-google-policy.config.jsonc](examples/tool-portal-google-policy.config.jsonc) |
-| Worker phase behavior | [worker-json.md](worker-json.md) |
-| Repo-level overrides | [project-config-json.md](project-config-json.md) |
-| Repo/external resources | [resource-contracts.md](resource-contracts.md) |
-| Prompt file references | [prompt-files.md](prompt-files.md) |
-| Static vs runtime checks | [../validate-and-doctor.md](../validate-and-doctor.md) |
+| Host, controller, zone, storage, image, lease, and secret fields | [system-json.md](system-json.md) |
+| Static versus runtime checks | [../validate-and-doctor.md](../validate-and-doctor.md) |
+| MCP Portal architecture | [../../subsystems/mcp-portal.md](../../subsystems/mcp-portal.md) |
+| Secret boundaries | [../../subsystems/secrets-and-credentials.md](../../subsystems/secrets-and-credentials.md) |

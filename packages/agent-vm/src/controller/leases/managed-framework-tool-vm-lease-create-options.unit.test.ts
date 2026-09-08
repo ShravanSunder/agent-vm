@@ -160,10 +160,7 @@ function configureFixtureAsHermes(systemConfig: LoadedSystemConfig): void {
 			},
 			stateDir: gateway.stateDir,
 			type: 'hermes',
-			zoneFilesDir:
-				gateway.type === 'worker'
-					? path.join(testRoot, 'zone-a', 'zone-files')
-					: gateway.zoneFilesDir,
+			zoneFilesDir: gateway.zoneFilesDir,
 			zoneRuntimeDir: gateway.zoneRuntimeDir,
 		},
 		secrets: {
@@ -450,34 +447,6 @@ describe('createManagedFrameworkToolVmLeaseCreateOptionsResolver', () => {
 				}),
 			),
 		).rejects.toThrow(/does not declare managed agent 'victim'/u);
-	});
-
-	it('rejects Worker zones without managed framework lease semantics', async () => {
-		const systemConfig = await createSystemConfigFixture();
-		const zone = systemConfig.zones[0];
-		if (zone === undefined) {
-			throw new Error('Expected managed framework fixture zone');
-		}
-		systemConfig.zones[0] = {
-			...zone,
-			gateway: {
-				config: './config/worker.json',
-				cpus: 2,
-				imageProfile: 'worker',
-				memory: '2G',
-				port: 18_792,
-				stateDir: path.join(testRoot, 'zone-a', 'state'),
-				type: 'worker',
-				zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
-			},
-		};
-		const resolveLeaseCreateOptions = createManagedFrameworkToolVmLeaseCreateOptionsResolver({
-			systemConfig,
-		});
-
-		await expect(resolveLeaseCreateOptions(leaseResolutionInput())).rejects.toThrow(
-			/does not support managed framework Tool VM leases/u,
-		);
 	});
 
 	it('uses runtime status only for health and preserves controller-resolved Gateway authority', async () => {

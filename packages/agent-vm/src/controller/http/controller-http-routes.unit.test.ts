@@ -1,39 +1,14 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-
-import { workerConfigSchema } from '@agent-vm/agent-vm-worker';
 import { TOOL_VM_WORK_GUEST_ROOT } from '@agent-vm/gateway-lifecycle';
 import { describe, expect, it, vi } from 'vitest';
-
-const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
-	writeControllerDiagnosticMock: vi.fn(),
-}));
-
-vi.mock('../controller-diagnostic-logging.js', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../controller-diagnostic-logging.js')>();
-	return { ...actual, writeControllerDiagnostic: writeControllerDiagnosticMock };
-});
 
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
 } from '../../testing/managed-vm-test-helpers.js';
-import { PullDefaultValidationError } from '../git-pull-default-operations.js';
 import { HealthEventStore } from '../health/health-event-store.js';
 import type { Lease, LeaseSnapshot } from '../leases/lease-manager.js';
-import type { PreparedWorkerTask, WorkerTaskResult } from '../worker-task-runner.js';
-import {
-	ControllerZoneNotFoundError,
-	ControllerZoneOperationUnsupportedError,
-	ControllerZoneTaskNotReadyError,
-	ControllerZoneWorkerCloseError,
-} from '../zone-runtimes/zone-runtime-errors.js';
-import {
-	ControllerRuntimeAtCapacityError,
-	ControllerTaskNotReadyError,
-	serializeLeaseForResponse,
-} from './controller-http-route-support.js';
+import { ControllerZoneNotFoundError } from '../zone-runtimes/zone-runtime-errors.js';
+import { serializeLeaseForResponse } from './controller-http-route-support.js';
 import { createControllerApp } from './controller-http-routes.js';
 
 type ControllerAppOptions = Parameters<typeof createControllerApp>[0];
@@ -101,97 +76,6 @@ function createLeaseStub(
 		zoneId,
 	} satisfies Lease;
 	return lease;
-}
-
-function createPreparedWorkerTaskStub(
-	taskId: string,
-	recordEvent: (event: unknown) => Promise<void> = async () => {},
-	stateDir = `/state/tasks/${taskId}/state`,
-): PreparedWorkerTask {
-	const taskRoot = path.dirname(stateDir);
-	const zoneStateDir = path.dirname(path.dirname(taskRoot));
-	const taskZoneConfig = {
-		id: 'shravan',
-		gateway: {
-			type: 'worker' as const,
-			imageProfile: 'worker',
-			memory: '2G',
-			cpus: 2,
-			port: 18791,
-			config: '/tmp/gateway.json',
-			stateDir: zoneStateDir,
-			zoneRuntimeDir: '/storage/shravan/runtime',
-		},
-		secrets: {},
-		egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-	};
-	return {
-		taskId,
-		taskRoot,
-		zoneId: 'shravan',
-		input: {
-			requestTaskId: 'request-task-1',
-			prompt: 'hi',
-			repos: [],
-			context: {},
-			resources: { externalResources: {} },
-		},
-		preStartResult: {
-			taskId,
-			input: {
-				requestTaskId: 'request-task-1',
-				prompt: 'hi',
-				repos: [],
-				context: {},
-				resources: { externalResources: {} },
-			},
-			taskRoot,
-			taskRuntimeRoot: path.join('/storage/shravan/runtime/worker-tasks', taskId),
-			workDir: path.join(taskRoot, 'work'),
-			stateDir,
-			environment: {},
-			startedResourceProviders: [],
-			tcpHosts: {},
-			vfsMounts: {},
-			repos: [],
-			effectiveConfig: workerConfigSchema.parse({
-				runtimeInstructions: 'Generated runtime instructions.',
-				commonAgentInstructions: null,
-				defaults: { provider: 'codex', model: 'latest-medium' },
-				phases: {
-					plan: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-						skills: [],
-					},
-					work: {
-						cycle: { kind: 'review', cycleCount: 1 },
-						agentInstructions: null,
-						reviewerInstructions: null,
-						skills: [],
-					},
-					wrapup: { instructions: null, skills: [] },
-				},
-				mcpServers: [],
-				verification: [],
-				branchPrefix: 'agent/',
-				stateDir: '/state',
-			}),
-		},
-		taskZoneConfig,
-		zone: taskZoneConfig,
-		eventLogPath: path.join(stateDir, 'tasks', `${taskId}.jsonl`),
-		recordEvent,
-	};
-}
-
-function createWorkerTaskResultStub(taskId: string): WorkerTaskResult {
-	return {
-		finalState: null,
-		taskId,
-		taskRoot: `/state/tasks/${taskId}`,
-	};
 }
 
 describe('createControllerApp', () => {
@@ -397,12 +281,9 @@ describe('createControllerApp', () => {
 		['POST', '/zones/shravan/credentials/refresh'],
 		['POST', '/zones/shravan/destroy'],
 		['POST', '/zones/shravan/upgrade'],
-		['POST', '/zones/shravan/worker-tasks'],
-		['POST', '/zones/shravan/tasks/task-1/close'],
-		['POST', '/zones/shravan/tasks/task-1/push-branches'],
-		['POST', '/zones/shravan/tasks/task-1/pull-default'],
 		['POST', '/zones/shravan/enable-ssh'],
 		['POST', '/zones/shravan/execute-command'],
+		['POST', '/zones/shravan/credentialed-runtime/retire'],
 	] as const)(
 		'returns not-ready for %s %s while runtime is recovering',
 		async (method, routePath) => {
@@ -429,17 +310,13 @@ describe('createControllerApp', () => {
 					endActiveUse: vi.fn(),
 				},
 				operations: {
-					closeTaskForZone: vi.fn(async () => ({ status: 'closed' as const })),
 					destroyZone: vi.fn(async () => ({})),
 					enableSshForZone: vi.fn(async () => ({})),
 					execInZone: vi.fn(async () => ({})),
 					getStatus: vi.fn(async () => ({})),
 					getZoneLogs: vi.fn(async () => ({})),
-					pushTaskBranches: vi.fn(async () => ({})),
-					pullDefaultForTask: vi.fn(async () => ({})),
 					refreshZoneCredentials: vi.fn(async () => ({})),
-					prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1')),
-					executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
+					retireCredentialedRuntime: vi.fn(async () => ({})),
 					upgradeZone: vi.fn(async () => ({})),
 				},
 			});
@@ -728,108 +605,6 @@ describe('createControllerApp', () => {
 		expect(pushResponse.status).toBe(404);
 	});
 
-	it('returns 409 when destroy is requested while a worker task is preparing', async () => {
-		const destroyZone = vi.fn(async () => {
-			throw new ControllerZoneTaskNotReadyError(
-				'worker-zone',
-				'task-booting',
-				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
-			);
-		});
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone,
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/worker-zone/destroy', {
-			body: JSON.stringify({ purge: true }),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(409);
-		await expect(response.json()).resolves.toEqual({
-			error:
-				"Task 'task-booting' in zone 'worker-zone' is still preparing and cannot be destroyed safely yet.",
-			kind: 'task-not-ready',
-			taskId: 'task-booting',
-			zoneId: 'worker-zone',
-		});
-	});
-
-	it('returns worker close failure context from destroy routes', async () => {
-		const destroyZone = vi.fn(async () => {
-			throw new ControllerZoneWorkerCloseError({
-				body: 'close failed',
-				httpStatus: 503,
-				taskId: 'task-1',
-				zoneId: 'worker-zone',
-			});
-		});
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone,
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/worker-zone/destroy', {
-			body: JSON.stringify({ purge: true }),
-			headers: { 'content-type': 'application/json' },
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(502);
-		await expect(response.json()).resolves.toEqual({
-			error: "worker close returned HTTP 503 for task 'task-1'",
-			body: 'close failed',
-			httpStatus: 503,
-			kind: 'worker-close-failed',
-			taskId: 'task-1',
-			zoneId: 'worker-zone',
-		});
-	});
-
 	it('does not expose active leases via GET /leases', async () => {
 		const listLeases = vi.fn(() => [createLeaseStub('lease-1', 0), createLeaseStub('lease-2', 1)]);
 		const app = createControllerAppForTest({
@@ -892,50 +667,6 @@ describe('createControllerApp', () => {
 		expect(stopController).toHaveBeenCalled();
 	});
 
-	it('returns 405 for operations unsupported by the target zone type', async () => {
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => {
-					throw new ControllerZoneOperationUnsupportedError(
-						'worker-zone',
-						'Hermes operations',
-						'worker',
-					);
-				}),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/worker-zone/logs');
-
-		expect(response.status).toBe(405);
-		await expect(response.json()).resolves.toEqual({
-			error: "Zone 'worker-zone' with gateway type 'worker' does not support Hermes operations.",
-			gatewayType: 'worker',
-			operationName: 'Hermes operations',
-			zoneId: 'worker-zone',
-		});
-	});
-
 	it('returns 404 when zone status is requested for an unknown zone', async () => {
 		const app = createControllerAppForTest({
 			toolVmProfiles: {
@@ -972,177 +703,6 @@ describe('createControllerApp', () => {
 		await expect(response.json()).resolves.toEqual({
 			error: "Unknown zone 'missing-zone'.",
 		});
-	});
-
-	it('pushes branches for an active worker task via POST /zones/:zoneId/tasks/:taskId/push-branches', async () => {
-		const pushTaskBranches = vi.fn(async () => ({
-			results: [
-				{
-					repoUrl: 'https://github.com/acme/widgets.git',
-					branchName: 'agent/task-1',
-					success: true,
-					prUrl: 'https://github.com/acme/widgets/pull/42',
-				},
-			],
-		}));
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				pushTaskBranches,
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/task-1/push-branches', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				branches: [
-					{
-						repoUrl: 'https://github.com/acme/widgets.git',
-						branchName: 'agent/task-1',
-					},
-				],
-			}),
-		});
-
-		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toMatchObject({
-			results: [
-				{
-					repoUrl: 'https://github.com/acme/widgets.git',
-					success: true,
-				},
-			],
-		});
-		expect(pushTaskBranches).toHaveBeenCalledWith('shravan', 'task-1', {
-			branches: [
-				{
-					repoUrl: 'https://github.com/acme/widgets.git',
-					branchName: 'agent/task-1',
-				},
-			],
-		});
-	});
-
-	it('returns 400 when pull-default rejects the request as invalid', async () => {
-		const pullDefaultForTask = vi.fn(async () => {
-			throw new PullDefaultValidationError('Repo is not registered for active task.');
-		});
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				pullDefaultForTask,
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/task-1/pull-default', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				repoUrl: 'https://github.com/acme/widgets.git',
-			}),
-		});
-
-		expect(response.status).toBe(400);
-		await expect(response.json()).resolves.toEqual({
-			error: 'Repo is not registered for active task.',
-		});
-	});
-
-	it('scrubs token-bearing pull-default errors from route logs and responses', async () => {
-		writeControllerDiagnosticMock.mockClear();
-		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-		const pullDefaultForTask = vi.fn(async () => {
-			throw new Error('boom https://x-access-token:secret-token@github.com/acme/widgets.git');
-		});
-		const app = createControllerAppForTest({
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				pullDefaultForTask,
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/task-1/pull-default', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				repoUrl: 'https://github.com/acme/widgets.git',
-			}),
-		});
-
-		expect(response.status).toBe(500);
-		await expect(response.json()).resolves.toEqual({
-			error: 'boom https://x-access-token:***@github.com/acme/widgets.git',
-		});
-		expect(stderrSpy.mock.calls.join('\n')).not.toContain('secret-token');
-		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith(
-			'git',
-			expect.objectContaining({
-				event: 'controller-operation-failed',
-				telemetry: expect.objectContaining({ operation: 'pull-default-for-task' }),
-			}),
-		);
-		stderrSpy.mockRestore();
 	});
 
 	it('returns schema details for invalid destroy requests', async () => {
@@ -1205,10 +765,12 @@ describe('createControllerApp', () => {
 			},
 			operations: {
 				destroyZone: vi.fn(async () => ({})),
+				enableSshForZone: vi.fn(async () => ({})),
 				execInZone: vi.fn(async () => ({})),
 				getStatus: vi.fn(async () => ({})),
 				getZoneLogs: vi.fn(async () => ({})),
 				refreshZoneCredentials: vi.fn(async () => ({})),
+				retireCredentialedRuntime: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 		});
@@ -1329,22 +891,19 @@ describe('createControllerApp', () => {
 			},
 			operations: {
 				destroyZone: vi.fn(async () => ({})),
+				enableSshForZone: vi.fn(async () => ({})),
 				execInZone: vi.fn(async () => ({})),
 				getStatus: vi.fn(async () => ({})),
 				getZoneLogs: vi.fn(async () => ({})),
-				pullDefaultForTask: vi.fn(async () => ({})),
-				pushTaskBranches: vi.fn(async () => ({ results: [] })),
 				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-json')),
-				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
+				retireCredentialedRuntime: vi.fn(async () => ({})),
 				upgradeZone: vi.fn(async () => ({})),
 			},
 		});
 		const operationPaths = [
-			'/zones/shravan/worker-tasks',
-			'/zones/shravan/tasks/task-1/push-branches',
-			'/zones/shravan/tasks/task-1/pull-default',
+			'/zones/shravan/enable-ssh',
 			'/zones/shravan/execute-command',
+			'/zones/shravan/credentialed-runtime/retire',
 			'/zones/shravan/destroy',
 		];
 
@@ -1365,603 +924,53 @@ describe('createControllerApp', () => {
 		);
 	});
 
-	it('returns 202 from POST worker-tasks without awaiting background execution', async () => {
-		let executeStarted = false;
-		let resolveExecute: (() => void) | undefined;
-		const prepareWorkerTask = vi.fn(async () => createPreparedWorkerTaskStub('worker-task-1'));
-		const executeWorkerTask = vi.fn(
-			() =>
-				new Promise<WorkerTaskResult>((resolve) => {
-					executeStarted = true;
-					resolveExecute = () => resolve(createWorkerTaskResultStub('worker-task-1'));
-				}),
-		);
+	it('leaves removed Worker task paths unmatched without invoking obsolete callbacks', async () => {
+		const obsoleteCallbacks = {
+			closeTaskForZone: vi.fn(),
+			getTaskState: vi.fn(),
+			prepareWorkerTask: vi.fn(),
+			pullDefaultForTask: vi.fn(),
+			pushTaskBranches: vi.fn(),
+		};
 		const app = createControllerAppForTest({
 			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
+				createLease: vi.fn(),
 				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
+				peekLease: vi.fn(),
+				releaseLease: vi.fn(),
+				renewLease: vi.fn(),
 			},
 			operations: {
 				destroyZone: vi.fn(async () => ({})),
 				getStatus: vi.fn(async () => ({})),
 				getZoneLogs: vi.fn(async () => ({})),
 				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask,
-				executeWorkerTask,
 				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
+				...obsoleteCallbacks,
 			},
 		});
 
-		const start = Date.now();
-		const response = await app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				requestTaskId: 'request-task-1',
-				prompt: 'fix the login bug',
-				repos: [
-					{
-						repoUrl: 'https://github.com/org/repo.git',
-						baseBranch: 'main',
-					},
-				],
-				context: { ticket: 'INC-1' },
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-		const elapsed = Date.now() - start;
+		const [
+			createTaskResponse,
+			getTaskResponse,
+			closeTaskResponse,
+			pushBranchesResponse,
+			pullDefaultResponse,
+		] = await Promise.all([
+			app.request('/zones/shravan/worker-tasks', { method: 'POST' }),
+			app.request('/zones/shravan/tasks/task-1'),
+			app.request('/zones/shravan/tasks/task-1/close', { method: 'POST' }),
+			app.request('/zones/shravan/tasks/task-1/push-branches', { method: 'POST' }),
+			app.request('/zones/shravan/tasks/task-1/pull-default', { method: 'POST' }),
+		]);
 
-		expect(response.status).toBe(202);
-		await expect(response.json()).resolves.toEqual({
-			taskId: 'worker-task-1',
-			status: 'accepted',
-		});
-		expect(prepareWorkerTask).toHaveBeenCalledWith('shravan', {
-			requestTaskId: 'request-task-1',
-			context: { ticket: 'INC-1' },
-			prompt: 'fix the login bug',
-			repos: [{ baseBranch: 'main', repoUrl: 'https://github.com/org/repo.git' }],
-			resources: { externalResources: {} },
-		});
-		expect(executeWorkerTask).toHaveBeenCalledTimes(1);
-		expect(executeStarted).toBe(true);
-		expect(elapsed).toBeLessThan(500);
-		resolveExecute?.();
-	});
-
-	it('emits task-failed when background worker execution rejects', async () => {
-		const emittedEvents: unknown[] = [];
-		const prepareWorkerTask = vi.fn(async () =>
-			createPreparedWorkerTaskStub('worker-task-2', async (event) => {
-				emittedEvents.push(event);
-			}),
-		);
-		const executeWorkerTask = vi.fn(async () => {
-			throw new Error('vm-boot-failed');
-		});
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask,
-				executeWorkerTask,
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				requestTaskId: 'request-task-2',
-				prompt: 'fix the cross-repo bug',
-				repos: [
-					{
-						repoUrl: 'https://github.com/org/frontend.git',
-						baseBranch: 'main',
-					},
-					{
-						repoUrl: 'https://github.com/org/backend.git',
-						baseBranch: 'develop',
-					},
-				],
-				context: { ticket: 'INC-2' },
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(202);
-		await vi.waitFor(() => {
-			expect(emittedEvents).toContainEqual(
-				expect.objectContaining({
-					event: 'task-failed',
-					reason: expect.stringContaining('vm-boot-failed'),
-				}),
-			);
-		});
-		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith(
-			'runtime',
-			expect.objectContaining({
-				event: 'controller-operation-failed',
-				telemetry: expect.objectContaining({ operation: 'execute-worker-task' }),
-			}),
-		);
-	});
-
-	it('writes a task-failed sentinel when background failure event recording fails', async () => {
-		const stateRoot = await mkdtemp(path.join(os.tmpdir(), 'controller-failure-sentinel-'));
-		const taskId = 'worker-task-sentinel';
-		const taskStateDir = path.join(stateRoot, 'tasks', taskId, 'state');
-		const prepareWorkerTask = vi.fn(async () =>
-			createPreparedWorkerTaskStub(
-				taskId,
-				async () => {
-					throw new Error('event log unavailable');
-				},
-				taskStateDir,
-			),
-		);
-		const executeWorkerTask = vi.fn(async () => {
-			throw new Error('vm-boot-failed');
-		});
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask,
-				executeWorkerTask,
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		try {
-			const response = await app.request('/zones/shravan/worker-tasks', {
-				body: JSON.stringify({
-					requestTaskId: 'request-task-sentinel',
-					prompt: 'fix the sentinel failure',
-					repos: [],
-					context: {},
-				}),
-				headers: { 'content-type': 'application/json' },
-				method: 'POST',
-			});
-
-			expect(response.status).toBe(202);
-			await vi.waitFor(async () => {
-				const sentinel = JSON.parse(
-					await readFile(path.join(taskStateDir, 'tasks', `${taskId}.failed`), 'utf8'),
-				) as { readonly status?: string; readonly failureReason?: string };
-				expect(sentinel).toMatchObject({
-					status: 'failed',
-					failureReason: expect.stringContaining('vm-boot-failed'),
-				});
-			});
-		} finally {
-			await rm(stateRoot, { recursive: true, force: true });
+		expect(createTaskResponse.status).toBe(404);
+		expect(getTaskResponse.status).toBe(404);
+		expect(closeTaskResponse.status).toBe(404);
+		expect(pushBranchesResponse.status).toBe(404);
+		expect(pullDefaultResponse.status).toBe(404);
+		for (const obsoleteCallback of Object.values(obsoleteCallbacks)) {
+			expect(obsoleteCallback).not.toHaveBeenCalled();
 		}
-	});
-
-	it('rejects worker task requests missing requestTaskId', async () => {
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask: vi.fn(async () => createPreparedWorkerTaskStub('worker-task-3')),
-				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				prompt: 'missing callback identity',
-				repos: [],
-				context: {},
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(400);
-		await expect(response.json()).resolves.toMatchObject({
-			error: 'invalid-worker-task-request',
-			issues: expect.any(Array),
-		});
-	});
-
-	it('returns 409 when the worker runtime is at capacity', async () => {
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask: vi.fn(async () => {
-					throw new ControllerRuntimeAtCapacityError('worker runtime is at capacity');
-				}),
-				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				requestTaskId: 'request-task-capacity',
-				prompt: 'capacity test',
-				repos: [],
-				context: {},
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(409);
-		await expect(response.json()).resolves.toMatchObject({
-			status: 'at-capacity',
-			error: 'worker runtime is at capacity',
-		});
-	});
-
-	it('returns resource preparation error details when worker task preparation fails', async () => {
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				prepareWorkerTask: vi.fn(async () => {
-					throw new AggregateError(
-						[
-							new AggregateError(
-								[
-									new Error('run-setup.sh failed: missing DATABASE_URL'),
-									new Error('docker compose up failed: port already allocated'),
-								],
-								"Failed to start repo resource provider 'repo-1'.",
-							),
-							new Error('compose cleanup failed', {
-								cause: new Error('docker compose down exited 1'),
-							}),
-						],
-						'Failed to start repo resource providers and clean up started providers.',
-					);
-				}),
-				executeWorkerTask: vi.fn(async () => createWorkerTaskResultStub('worker-task-1')),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/worker-tasks', {
-			body: JSON.stringify({
-				requestTaskId: 'request-task-resource-error',
-				prompt: 'resource error test',
-				repos: [],
-				context: {},
-			}),
-			headers: {
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(500);
-		await expect(response.json()).resolves.toEqual({
-			error: 'Failed to start repo resource providers and clean up started providers.',
-			details: [
-				'Failed to start repo resource providers and clean up started providers.',
-				"Failed to start repo resource provider 'repo-1'.",
-				'run-setup.sh failed: missing DATABASE_URL',
-				'docker compose up failed: port already allocated',
-				'compose cleanup failed',
-				'docker compose down exited 1',
-			],
-		});
-	});
-
-	it('returns error details when task state lookup fails with an aggregate error', async () => {
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				getTaskState: vi.fn(async () => {
-					throw new AggregateError(
-						[new Error('state log unreadable'), new Error('task index corrupt')],
-						'task state failed',
-					);
-				}),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					memory: '1G',
-					imageProfile: 'default',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/task-1');
-
-		expect(response.status).toBe(500);
-		await expect(response.json()).resolves.toEqual({
-			error: 'task state failed',
-			details: ['task state failed', 'state log unreadable', 'task index corrupt'],
-		});
-	});
-
-	it('returns task state snapshots via GET /zones/:zoneId/tasks/:taskId', async () => {
-		const getTaskState = vi.fn(async () => ({
-			taskId: 'worker-task-1',
-			status: 'work-agent',
-			currentCycle: 1,
-			currentMaxCycles: 2,
-		}));
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getTaskState,
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/worker-task-1');
-
-		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toEqual({
-			taskId: 'worker-task-1',
-			status: 'work-agent',
-			currentCycle: 1,
-			currentMaxCycles: 2,
-		});
-		expect(getTaskState).toHaveBeenCalledWith('shravan', 'worker-task-1');
-	});
-
-	it('returns 404 when task state is unknown', async () => {
-		const getTaskState = vi.fn(async () => null);
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getTaskState,
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/missing');
-
-		expect(response.status).toBe(404);
-		expect(getTaskState).toHaveBeenCalledWith('shravan', 'missing');
-	});
-
-	it('proxies close through the configured close operation', async () => {
-		const closeTaskForZone = vi.fn(async () => ({ status: 'closed' as const }));
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				closeTaskForZone,
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/worker-task-1/close', {
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toEqual({ status: 'closed' });
-		expect(closeTaskForZone).toHaveBeenCalledWith('shravan', 'worker-task-1');
-	});
-
-	it('returns 409 when close is requested before worker ingress is ready', async () => {
-		const closeTaskForZone = vi.fn(async () => {
-			throw new ControllerTaskNotReadyError('worker ingress is not ready');
-		});
-		const app = createControllerAppForTest({
-			leaseManager: {
-				createLease: vi.fn(async () => {
-					throw new Error('not used');
-				}),
-				renewLease: vi.fn(),
-				peekLease: vi.fn(),
-				listLeases: vi.fn(() => []),
-				releaseLease: vi.fn(async () => {}),
-			},
-			operations: {
-				closeTaskForZone,
-				destroyZone: vi.fn(async () => ({})),
-				getStatus: vi.fn(async () => ({})),
-				getZoneLogs: vi.fn(async () => ({})),
-				refreshZoneCredentials: vi.fn(async () => ({})),
-				upgradeZone: vi.fn(async () => ({})),
-			},
-			toolVmProfiles: {
-				standard: {
-					cpus: 1,
-					imageProfile: 'default',
-					memory: '1G',
-				},
-			},
-		});
-
-		const response = await app.request('/zones/shravan/tasks/worker-task-1/close', {
-			method: 'POST',
-		});
-
-		expect(response.status).toBe(409);
-		await expect(response.json()).resolves.toEqual({
-			status: 'not-ready',
-			error: 'worker ingress is not ready',
-		});
 	});
 });

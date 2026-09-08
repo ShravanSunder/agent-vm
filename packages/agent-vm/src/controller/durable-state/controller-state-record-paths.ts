@@ -26,42 +26,14 @@ export interface ControllerToolLeaseRecordsTarget {
 	readonly zoneId: string;
 }
 
-export interface ControllerWorkerTaskRecordsTarget {
-	readonly directoryPath: string;
-	readonly kind: 'controller-worker-task-records';
-	readonly zoneId: string;
-}
-
-export interface ControllerWorkerTaskRuntimeRecordTarget {
-	readonly filePath: string;
-	readonly kind: 'controller-worker-task-runtime-record';
-	readonly taskId: string;
-	readonly zoneId: string;
-}
-
 export interface ControllerGatewayRecordTargets {
 	readonly approvalRecords: ControllerApprovalRecordsTarget;
 	readonly credentialedRuntimeRecords: ControllerCredentialedRuntimeRecordsTarget;
 	readonly managedGatewayRuntimeRecord: ControllerManagedGatewayRuntimeRecordTarget;
 	readonly toolLeaseRecords: ControllerToolLeaseRecordsTarget;
-	readonly workerTaskRecords: ControllerWorkerTaskRecordsTarget;
 }
 
 const gatewayRuntimeRecordFileName = 'gateway-runtime.json';
-const workerTaskRecordsDirectoryName = 'worker-tasks';
-
-function assertSafeWorkerTaskId(taskId: string): void {
-	if (
-		taskId.length === 0 ||
-		taskId === '.' ||
-		taskId === '..' ||
-		taskId.includes('/') ||
-		taskId.includes('\\') ||
-		taskId.includes('\0')
-	) {
-		throw new Error('Worker task id must be one safe path segment.');
-	}
-}
 
 export function resolveControllerGatewayRecordTargets(options: {
 	readonly gatewayStateRoot: ControllerGatewayStateRoot;
@@ -86,38 +58,10 @@ export function resolveControllerGatewayRecordTargets(options: {
 		kind: 'controller-tool-lease-records',
 		zoneId: options.gatewayStateRoot.zoneId,
 	}) satisfies ControllerToolLeaseRecordsTarget;
-	const workerTaskRecords = Object.freeze({
-		directoryPath: path.join(
-			options.gatewayStateRoot.directoryPath,
-			workerTaskRecordsDirectoryName,
-		),
-		kind: 'controller-worker-task-records',
-		zoneId: options.gatewayStateRoot.zoneId,
-	}) satisfies ControllerWorkerTaskRecordsTarget;
-
 	return Object.freeze({
 		approvalRecords,
 		credentialedRuntimeRecords,
 		managedGatewayRuntimeRecord,
 		toolLeaseRecords,
-		workerTaskRecords,
-	});
-}
-
-export function resolveControllerWorkerTaskRuntimeRecordTarget(options: {
-	readonly gatewayStateRoot: ControllerGatewayStateRoot;
-	readonly taskId: string;
-}): ControllerWorkerTaskRuntimeRecordTarget {
-	assertSafeWorkerTaskId(options.taskId);
-	return Object.freeze({
-		filePath: path.join(
-			options.gatewayStateRoot.directoryPath,
-			workerTaskRecordsDirectoryName,
-			options.taskId,
-			gatewayRuntimeRecordFileName,
-		),
-		kind: 'controller-worker-task-runtime-record',
-		taskId: options.taskId,
-		zoneId: options.gatewayStateRoot.zoneId,
 	});
 }

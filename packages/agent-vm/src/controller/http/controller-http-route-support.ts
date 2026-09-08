@@ -2,15 +2,7 @@ import fs from 'node:fs/promises';
 
 import type { Lease, LeaseManager } from '../leases/lease-manager.js';
 import { buildToolVmKnownHostsLine } from '../leases/tool-vm-ssh-server-identity.js';
-import type {
-	PreparedWorkerTask,
-	WorkerTaskInput,
-	WorkerTaskResult,
-} from '../worker-task-runner.js';
 import type { ControllerLeasePeekResponse } from './controller-lease-response-types.js';
-
-export class ControllerTaskNotReadyError extends Error {}
-export class ControllerRuntimeAtCapacityError extends Error {}
 
 export type ControllerRuntimeReadinessState = 'ready' | 'recovering' | 'stopping';
 
@@ -56,7 +48,6 @@ export interface ControllerRouteOperations {
 		options: ExecInZoneOptions,
 	) => Promise<unknown>;
 	readonly getStatus: () => Promise<unknown>;
-	readonly getTaskState?: (zoneId: string, taskId: string) => Promise<unknown>;
 	readonly getZoneHealth?: (
 		zoneId: string,
 	) => Promise<{ readonly ok: boolean } & Record<string, unknown>>;
@@ -72,35 +63,6 @@ export interface ControllerRouteOperations {
 			readonly adminToken?: string;
 			readonly agentId: string;
 			readonly force: boolean;
-		},
-	) => Promise<unknown>;
-	readonly prepareWorkerTask?: (
-		zoneId: string,
-		input: WorkerTaskInput,
-	) => Promise<PreparedWorkerTask>;
-	readonly executeWorkerTask?: (prepared: PreparedWorkerTask) => Promise<WorkerTaskResult>;
-	readonly closeTaskForZone?: (
-		zoneId: string,
-		taskId: string,
-	) => Promise<{ readonly status: 'closed' }>;
-	readonly pushTaskBranches?: (
-		zoneId: string,
-		taskId: string,
-		input: {
-			readonly branches: readonly {
-				readonly repoUrl: string;
-				readonly branchName: string;
-			}[];
-		},
-	) => Promise<unknown>;
-	readonly pullDefaultForTask?: (
-		zoneId: string,
-		taskId: string,
-		input: {
-			readonly currentBranch?: string | null | undefined;
-			readonly currentHead?: string | undefined;
-			readonly repoUrl: string;
-			readonly worktreeDirty?: boolean | undefined;
 		},
 	) => Promise<unknown>;
 	readonly stopController?: () => Promise<unknown>;

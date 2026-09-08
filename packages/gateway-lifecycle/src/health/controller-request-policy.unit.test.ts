@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	controllerRequestPolicies,
 	drainControllerResponseBody,
-	externalControllerRoutes,
 	fetchControllerWithPolicy,
 	gatewayInternalControllerRequestOperations,
 	genericControllerRequestEventOperations,
@@ -62,14 +61,6 @@ describe('controller request policies', () => {
 		expect(controllerRequestPolicies).not.toHaveProperty('lease-list');
 		expect(controllerRequestPolicies).not.toHaveProperty('worker-push-branches');
 		expect(controllerRequestPolicies).not.toHaveProperty('worker-pull-default');
-	});
-
-	it('keeps external controller routes out of the in-VM policy table', () => {
-		expect(externalControllerRoutes).toContain('GET /controller-status');
-		expect(externalControllerRoutes).toContain('POST /zones/:zoneId/worker-tasks');
-		expect(externalControllerRoutes).not.toContain('GET /zones/:zoneId/zone-git/status');
-		expect(controllerRequestPolicies).not.toHaveProperty('worker-task-create');
-		expect(controllerRequestPolicies).not.toHaveProperty('worker-task-close');
 	});
 
 	it('does not emit rich lease operations as generic controller-request events', () => {

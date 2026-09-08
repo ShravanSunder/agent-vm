@@ -820,40 +820,6 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({ authorized: true });
 	});
 
-	it('rejects controller execution from Worker zones', async () => {
-		const systemConfig = await createSystemConfigFixture();
-		const zone = systemConfig.zones[0];
-		if (zone === undefined) {
-			throw new Error('Expected managed framework fixture zone');
-		}
-		systemConfig.zones[0] = {
-			...zone,
-			gateway: {
-				config: path.join(testRoot, 'config', 'zone-a', 'worker.json'),
-				cpus: 2,
-				imageProfile: 'worker',
-				memory: '2G',
-				port: 18_792,
-				stateDir: path.join(testRoot, 'zone-a', 'state'),
-				type: 'worker',
-				zoneRuntimeDir: path.join(testRoot, 'zone-a', 'runtime'),
-			},
-		};
-
-		await expect(
-			authorizeGatewayControlControllerExecution({
-				callerContext: trustedCallerContext,
-				payload: createWorkspaceGitPushPayload(),
-				session: acceptedSession,
-				systemConfig,
-			}),
-		).resolves.toEqual({
-			authorized: false,
-			errorClass: 'controller_execution_zone_unsupported',
-			safeMessage: 'controller execution zone is not supported',
-		});
-	});
-
 	it('authorizes controller_host_probe from explicit policy when the e2e probe gate is enabled', async () => {
 		process.env.AGENT_VM_E2E_CONTROLLER_HOST_PROBE = '1';
 		const systemConfig = await createSystemConfigFixture({

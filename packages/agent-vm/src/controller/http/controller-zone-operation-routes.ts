@@ -1,32 +1,15 @@
 import { type Context, type Hono } from 'hono';
 import type { z } from 'zod';
 
-import {
-	writeControllerDiagnostic,
-	type ControllerDiagnosticDomain,
-	type ControllerDiagnosticTelemetry,
-} from '../controller-diagnostic-logging.js';
-import { scrubGithubTokenFromOutput } from '../git-auth-support.js';
-import { PullDefaultValidationError } from '../git-pull-default-operations.js';
-import { PushBranchesValidationError } from '../git-push-operations.js';
 import type { HealthEventStore } from '../health/health-event-store.js';
-import { buildTaskConfigFromPreparedInput } from '../task-config-builder.js';
-import { writeTaskFailureSentinel } from '../task-state-reader.js';
 import {
 	ControllerZoneAdminAuthError,
 	ControllerZoneConfigurationError,
 	ControllerZoneNotFoundError,
-	ControllerZoneOperationUnsupportedError,
-	ControllerZoneTaskNotFoundError,
-	ControllerZoneTaskNotReadyError,
-	ControllerZoneWorkerCloseAggregateError,
-	ControllerZoneWorkerCloseError,
 	ControllerZoneRuntimeStartError,
 	ControllerZoneRuntimeUnavailableError,
 } from '../zone-runtimes/zone-runtime-errors.js';
 import {
-	ControllerRuntimeAtCapacityError,
-	ControllerTaskNotReadyError,
 	type ControllerRuntimeReadiness,
 	type ControllerRouteOperations,
 	type ExecInZoneOptions,
@@ -35,10 +18,7 @@ import {
 	controllerDestroyZoneRequestSchema,
 	controllerEnableSshRequestSchema,
 	controllerExecuteCommandRequestSchema,
-	controllerPullDefaultRequestSchema,
-	controllerPushBranchesRequestSchema,
 	controllerRetireCredentialedRuntimeRequestSchema,
-	controllerWorkerTaskRequestSchema,
 } from './controller-request-schemas.js';
 
 class JsonBodyParseError extends Error {
@@ -96,26 +76,6 @@ async function parseJsonBodyWithSchema<TSchema extends z.ZodType>(
 		};
 	}
 	return { ok: true, data: parsedPayload.data };
-}
-
-type ControllerRouteDiagnosticOperation =
-	| 'execute-worker-task'
-	| 'pull-default-for-task'
-	| 'push-task-branches'
-	| 'record-task-failed-event'
-	| 'write-task-failure-sentinel';
-
-function writeControllerRouteLog(
-	domain: ControllerDiagnosticDomain,
-	operation: ControllerRouteDiagnosticOperation,
-	telemetry: ControllerDiagnosticTelemetry = { operation },
-): void {
-	writeControllerDiagnostic(domain, {
-		event: 'controller-operation-failed',
-		level: 'warning',
-		failureClass: 'failure',
-		telemetry,
-	});
 }
 
 function errorMessage(error: unknown, fallbackError: string): string {
@@ -184,44 +144,17 @@ function buildErrorResponseBody(
 	};
 }
 
-function scrubErrorResponseBody(responseBody: {
-	readonly details?: readonly string[];
-	readonly error: string;
-}): { readonly details?: readonly string[]; readonly error: string } {
-	return {
-		error: scrubGithubTokenFromOutput(responseBody.error),
-		...(responseBody.details
-			? { details: responseBody.details.map((detail) => scrubGithubTokenFromOutput(detail)) }
-			: {}),
-	};
-}
-
 function zoneRuntimeErrorStatus(
 	error: unknown,
 ): 401 | 403 | 404 | 405 | 409 | 412 | 500 | 502 | 503 {
 	if (error instanceof ControllerZoneAdminAuthError) {
 		return error.httpStatus;
 	}
-	if (
-		error instanceof ControllerZoneNotFoundError ||
-		error instanceof ControllerZoneTaskNotFoundError
-	) {
+	if (error instanceof ControllerZoneNotFoundError) {
 		return 404;
-	}
-	if (error instanceof ControllerZoneOperationUnsupportedError) {
-		return 405;
 	}
 	if (error instanceof ControllerZoneRuntimeUnavailableError) {
 		return 409;
-	}
-	if (error instanceof ControllerZoneTaskNotReadyError) {
-		return 409;
-	}
-	if (
-		error instanceof ControllerZoneWorkerCloseError ||
-		error instanceof ControllerZoneWorkerCloseAggregateError
-	) {
-		return 502;
 	}
 	if (error instanceof ControllerZoneRuntimeStartError) {
 		return 503;
@@ -244,73 +177,11 @@ function zoneRuntimeErrorBody(error: unknown):
 			readonly operationName: string;
 			readonly zoneId: string;
 	  }
-	| {
-			readonly error: string;
-			readonly kind: 'task-not-ready';
-			readonly taskId: string | null;
-			readonly zoneId: string;
-	  }
-	| {
-			readonly body: string;
-			readonly error: string;
-			readonly httpStatus: number;
-			readonly kind: 'worker-close-failed';
-			readonly taskId: string;
-			readonly zoneId: string;
-	  }
-	| {
-			readonly error: string;
-			readonly failures: readonly {
-				readonly body: string;
-				readonly httpStatus: number;
-				readonly taskId: string;
-			}[];
-			readonly kind: 'worker-close-aggregate-failed';
-			readonly zoneId: string;
-	  }
 	| { readonly error: string } {
 	if (error instanceof ControllerZoneAdminAuthError) {
 		return {
 			code: error.code,
 			error: error.message,
-			zoneId: error.zoneId,
-		};
-	}
-	if (error instanceof ControllerZoneOperationUnsupportedError) {
-		return {
-			error: error.message,
-			gatewayType: error.gatewayType,
-			operationName: error.operationName,
-			zoneId: error.zoneId,
-		};
-	}
-	if (error instanceof ControllerZoneTaskNotReadyError) {
-		return {
-			error: error.message,
-			kind: 'task-not-ready',
-			taskId: error.taskId,
-			zoneId: error.zoneId,
-		};
-	}
-	if (error instanceof ControllerZoneWorkerCloseError) {
-		return {
-			error: error.message,
-			body: error.body,
-			httpStatus: error.httpStatus,
-			kind: 'worker-close-failed',
-			taskId: error.taskId,
-			zoneId: error.zoneId,
-		};
-	}
-	if (error instanceof ControllerZoneWorkerCloseAggregateError) {
-		return {
-			error: error.message,
-			failures: error.failures.map((failure) => ({
-				body: failure.body,
-				httpStatus: failure.httpStatus,
-				taskId: failure.taskId,
-			})),
-			kind: 'worker-close-aggregate-failed',
 			zoneId: error.zoneId,
 		};
 	}
@@ -435,210 +306,6 @@ export function registerControllerZoneOperationRoutes(
 			return context.json(zoneRuntimeErrorBody(error), zoneRuntimeErrorStatus(error));
 		}
 	});
-
-	if (operations.prepareWorkerTask && operations.executeWorkerTask) {
-		const prepareWorkerTask = operations.prepareWorkerTask;
-		const executeWorkerTask = operations.executeWorkerTask;
-		app.post('/zones/:zoneId/worker-tasks', async (context) => {
-			const notReadyResponse = rejectIfRuntimeNotReady(context);
-			if (notReadyResponse) {
-				return notReadyResponse;
-			}
-			const parsedPayload = await parseJsonBodyWithSchema(
-				context,
-				controllerWorkerTaskRequestSchema,
-				'invalid-worker-task-request',
-			);
-			if (!parsedPayload.ok) {
-				return parsedPayload.response;
-			}
-			try {
-				const taskInput = parsedPayload.data;
-				const prepared = await prepareWorkerTask(context.req.param('zoneId'), taskInput);
-
-				void executeWorkerTask(prepared).catch(async (error: unknown) => {
-					const message = error instanceof Error ? error.message : String(error);
-					writeControllerRouteLog('runtime', 'execute-worker-task', {
-						operation: 'execute-worker-task',
-						zoneId: context.req.param('zoneId'),
-					});
-					try {
-						await prepared.recordEvent({ event: 'task-failed', reason: message });
-					} catch {
-						writeControllerRouteLog('runtime', 'record-task-failed-event', {
-							operation: 'record-task-failed-event',
-							zoneId: context.req.param('zoneId'),
-						});
-						try {
-							await writeTaskFailureSentinel({
-								config: buildTaskConfigFromPreparedInput({
-									taskId: prepared.taskId,
-									input: prepared.input,
-									repos: prepared.preStartResult.repos,
-									effectiveConfig: prepared.preStartResult.effectiveConfig,
-								}),
-								reason: message,
-								stateDir: prepared.preStartResult.stateDir,
-								taskId: prepared.taskId,
-							});
-						} catch {
-							writeControllerRouteLog('runtime', 'write-task-failure-sentinel', {
-								operation: 'write-task-failure-sentinel',
-								zoneId: context.req.param('zoneId'),
-							});
-						}
-					}
-				});
-
-				return context.json({ taskId: prepared.taskId, status: 'accepted' }, 202);
-			} catch (error) {
-				const runtimeStatus = zoneRuntimeErrorStatus(error);
-				if (runtimeStatus !== 500) {
-					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-				}
-				if (error instanceof ControllerRuntimeAtCapacityError) {
-					return context.json(
-						{
-							status: 'at-capacity',
-							error: error.message,
-						},
-						409,
-					);
-				}
-				return context.json(buildErrorResponseBody(error, 'worker-task-failed'), 500);
-			}
-		});
-	}
-
-	if (operations.getTaskState) {
-		const getTaskState = operations.getTaskState;
-		app.get('/zones/:zoneId/tasks/:taskId', async (context) => {
-			try {
-				const state = await getTaskState(context.req.param('zoneId'), context.req.param('taskId'));
-				if (!state) {
-					return context.json({ error: 'task-not-found' }, 404);
-				}
-				return context.json(state);
-			} catch (error) {
-				const runtimeStatus = zoneRuntimeErrorStatus(error);
-				if (runtimeStatus !== 500) {
-					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-				}
-				return context.json(buildErrorResponseBody(error, 'get-task-state-failed'), 500);
-			}
-		});
-	}
-
-	if (operations.closeTaskForZone) {
-		const closeTaskForZone = operations.closeTaskForZone;
-		app.post('/zones/:zoneId/tasks/:taskId/close', async (context) => {
-			const notReadyResponse = rejectIfRuntimeNotReady(context);
-			if (notReadyResponse) {
-				return notReadyResponse;
-			}
-			try {
-				return context.json(
-					await closeTaskForZone(context.req.param('zoneId'), context.req.param('taskId')),
-				);
-			} catch (error) {
-				const runtimeStatus = zoneRuntimeErrorStatus(error);
-				if (runtimeStatus !== 500) {
-					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-				}
-				if (error instanceof ControllerTaskNotReadyError) {
-					return context.json(
-						{
-							status: 'not-ready',
-							...buildErrorResponseBody(error, 'close-task-failed'),
-						},
-						409,
-					);
-				}
-				return context.json(buildErrorResponseBody(error, 'close-task-failed'), 500);
-			}
-		});
-	}
-
-	if (operations.pushTaskBranches) {
-		const pushTaskBranches = operations.pushTaskBranches;
-		app.post('/zones/:zoneId/tasks/:taskId/push-branches', async (context) => {
-			const notReadyResponse = rejectIfRuntimeNotReady(context);
-			if (notReadyResponse) {
-				return notReadyResponse;
-			}
-			const parsedPayload = await parseJsonBodyWithSchema(
-				context,
-				controllerPushBranchesRequestSchema,
-				'invalid-push-branches-request',
-			);
-			if (!parsedPayload.ok) {
-				return parsedPayload.response;
-			}
-			try {
-				return context.json(
-					await pushTaskBranches(
-						context.req.param('zoneId'),
-						context.req.param('taskId'),
-						parsedPayload.data,
-					),
-				);
-			} catch (error) {
-				const runtimeStatus = zoneRuntimeErrorStatus(error);
-				if (runtimeStatus !== 500) {
-					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-				}
-				const responseBody = buildErrorResponseBody(error, 'push-branches-failed');
-				writeControllerRouteLog('git', 'push-task-branches', {
-					operation: 'push-task-branches',
-					statusCode: error instanceof PushBranchesValidationError ? 400 : 500,
-					zoneId: context.req.param('zoneId'),
-				});
-				return context.json(responseBody, error instanceof PushBranchesValidationError ? 400 : 500);
-			}
-		});
-	}
-
-	if (operations.pullDefaultForTask) {
-		const pullDefaultForTask = operations.pullDefaultForTask;
-		app.post('/zones/:zoneId/tasks/:taskId/pull-default', async (context) => {
-			const notReadyResponse = rejectIfRuntimeNotReady(context);
-			if (notReadyResponse) {
-				return notReadyResponse;
-			}
-			const parsedPayload = await parseJsonBodyWithSchema(
-				context,
-				controllerPullDefaultRequestSchema,
-				'invalid-pull-default-request',
-			);
-			if (!parsedPayload.ok) {
-				return parsedPayload.response;
-			}
-			try {
-				return context.json(
-					await pullDefaultForTask(
-						context.req.param('zoneId'),
-						context.req.param('taskId'),
-						parsedPayload.data,
-					),
-				);
-			} catch (error) {
-				const runtimeStatus = zoneRuntimeErrorStatus(error);
-				if (runtimeStatus !== 500) {
-					return context.json(zoneRuntimeErrorBody(error), runtimeStatus);
-				}
-				const isValidationError = error instanceof PullDefaultValidationError;
-				writeControllerRouteLog('git', 'pull-default-for-task', {
-					operation: 'pull-default-for-task',
-					statusCode: isValidationError ? 400 : 500,
-					zoneId: context.req.param('zoneId'),
-				});
-				return context.json(
-					scrubErrorResponseBody(buildErrorResponseBody(error, 'pull-default-failed')),
-					isValidationError ? 400 : 500,
-				);
-			}
-		});
-	}
 
 	if (operations.enableSshForZone) {
 		const enableSshForZone = operations.enableSshForZone;

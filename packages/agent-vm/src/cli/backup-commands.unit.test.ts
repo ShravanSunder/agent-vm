@@ -22,10 +22,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						type: 'hermes',
 						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.json',
-					},
 				},
 				toolVms: {
 					default: {

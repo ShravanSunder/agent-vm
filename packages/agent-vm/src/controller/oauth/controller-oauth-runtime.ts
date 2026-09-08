@@ -204,7 +204,7 @@ export interface ControllerOAuthSystemConfig {
 	};
 	readonly tcpPool: { readonly basePort: number; readonly size: number };
 	readonly zones: readonly {
-		readonly gateway: { readonly port: number; readonly type: 'hermes' | 'worker' };
+		readonly gateway: { readonly port: number; readonly type: 'hermes' };
 		readonly id: string;
 		readonly toolPortal?: { readonly configDir: string } | undefined;
 	}[];

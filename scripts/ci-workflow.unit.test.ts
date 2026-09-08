@@ -28,7 +28,6 @@ describe('CI workflow topology', () => {
 			'pnpm run test:e2e:${{ matrix.lane }}',
 			'pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
 			'pnpm run test:e2e:hermes',
-			'pnpm run test:e2e:worker',
 			"AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'",
 		]) {
 			expect(workflow).toContain(command);
@@ -36,7 +35,6 @@ describe('CI workflow topology', () => {
 		for (const command of [
 			'mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}',
 			'mise exec -- pnpm run test:e2e:hermes',
-			'mise exec -- pnpm run test:e2e:worker',
 		]) {
 			expect(workflow).toContain(command);
 		}
@@ -52,7 +50,6 @@ describe('CI workflow topology', () => {
 			/metadata\.version\("agent-vm-(?:agent-portal-sdk|hermes-adapter)"\) == "\d+\.\d+\.\d+"/u,
 		);
 		expect(workflow.match(/lane: hermes/gu)).toHaveLength(1);
-		expect(workflow.match(/lane: worker/gu)).toHaveLength(1);
 		expect(workflow).not.toContain('test:e2e:vm-managed-gateway');
 		expect(workflow).not.toContain('managed-gateway-startup');
 		expect(workflow).not.toContain('managed-gateway-degraded-input');
@@ -83,8 +80,6 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain(
 			'      - parallel:\n          - name: Restore prepared Hermes image cache',
 		);
-		expect(workflow).toContain('      - name: Restore prepared Worker image cache');
-		expect(workflow).not.toContain('\n          - name: Restore prepared Worker image cache\n');
 		expect(workflow).toContain('          - name: Set up Agent VM workspace');
 		expect(workflow).toContain('          - name: Set up uv for VM proof');
 		expect(workflow).toContain(
@@ -109,10 +104,6 @@ describe('CI workflow topology', () => {
 			'          - name: Set up Agent VM workspace',
 			parallelPreparationStart,
 		);
-		const workerCacheRestorePosition = workflow.indexOf(
-			'      - name: Restore prepared Worker image cache',
-			parallelPreparationStart,
-		);
 		const cacheHitBarrierPosition = workflow.indexOf(
 			'      - name: Require prepared image caches',
 			parallelPreparationStart,
@@ -121,8 +112,6 @@ describe('CI workflow topology', () => {
 		expect(parallelPreparationStart).toBeGreaterThanOrEqual(0);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(parallelPreparationStart);
 		expect(workspaceSetupPosition).toBeGreaterThan(parallelPreparationStart);
-		expect(workerCacheRestorePosition).toBeGreaterThan(workspaceSetupPosition);
-		expect(workerCacheRestorePosition).toBeLessThan(cacheHitBarrierPosition);
 		expect(cacheHitBarrierPosition).toBeGreaterThan(workspaceSetupPosition);
 		expect(vmPreparationBlock).toContain(
 			'\n      - name: Set up system packages\n        uses: ./.github/actions/setup-system-packages',
@@ -136,7 +125,7 @@ describe('CI workflow topology', () => {
 		expect(vmPreparationBlock).toContain('test -w /dev/kvm');
 	});
 
-	it('keys and prepares the retained Hermes and Worker image families', async () => {
+	it('keys and prepares the retained Hermes image family', async () => {
 		const [workflow, cacheAction, cacheKeyAction, setupAction, preparationScript] =
 			await Promise.all([
 				readRepositoryFile('.github/workflows/ci.yml'),
@@ -184,18 +173,12 @@ describe('CI workflow topology', () => {
 		expect(workflow).toContain('permissions:\n  contents: read');
 		expect(workflow).toContain('persist-credentials: false');
 		expect(preparationScript).toContain('materializeLocalHermesGatewayImagePackages');
-		expect(preparationScript.match(/imageFamilies: \['gateway'\]/gu)).toHaveLength(2);
+		expect(preparationScript.match(/imageFamilies: \['gateway'\]/gu)).toHaveLength(1);
 		expect(preparationScript.match(/imageFamilies: \['toolVm'\]/gu)).toHaveLength(1);
-		expect(preparationScript).toMatch(
-			/prepareGatewayE2eProjectImages\(\{\s+imageFamilies: \['gateway'\],\s+project: workerProject,/u,
-		);
-
 		expect(cacheAction).toContain('Restore prepared Hermes image cache');
-		expect(cacheAction).toContain('Restore prepared Worker image cache');
 		expect(cacheAction).toContain('lookup-only: ${{ inputs.lookup-only }}');
 		expect(cacheAction).not.toContain('    - parallel:');
 		expect(workflow).toContain('Save prepared Hermes image cache');
-		expect(workflow).toContain('Save prepared Worker image cache');
 		expect(cacheAction).toMatch(
 			/\/tmp\/agent-vm-e2e-cache\/hermes\n\s+\/tmp\/agent-vm-e2e-cache\/local-package-tarballs/u,
 		);
@@ -209,7 +192,6 @@ describe('CI workflow topology', () => {
 		expect(setupAction).not.toContain('Install Zig');
 		expect(setupAction).not.toContain('ziglang.org');
 		expect(preparationScript).toContain('scaffoldHermesE2eProject');
-		expect(preparationScript).toContain('scaffoldWorkerE2eProject');
 		expect(preparationScript).toContain('removeE2eTempRoot');
 		expect(preparationScript).toContain('agent-vm-hermes-e2e-cache-');
 		expect(`${workflow}\n${cacheAction}\n${preparationScript}`.toLowerCase()).not.toContain(

@@ -76,24 +76,6 @@ describe('auditControllerStateRecordBoundaries', () => {
 		},
 	);
 
-	it('rejects a record call site passing Gateway-owned stateDir', () => {
-		const findings = auditControllerStateRecordBoundaries([
-			productionSource({
-				content:
-					'await writeWorkerRuntimeRecord(prepared.taskZoneConfig.gateway.stateDir, runtimeRecord);',
-				filePath: 'packages/agent-vm/src/controller/worker-task-runner.ts',
-			}),
-		]);
-
-		expect(findings).toEqual([
-			{
-				filePath: 'packages/agent-vm/src/controller/worker-task-runner.ts',
-				line: 1,
-				reason: 'record call site must not pass Gateway-owned .gateway.stateDir',
-			},
-		]);
-	});
-
 	it.each([
 		[
 			"path.join(stateDirectory, 'gateway-runtime.json')",
@@ -106,10 +88,6 @@ describe('auditControllerStateRecordBoundaries', () => {
 		[
 			"path.join(gatewayStateDirectoryPath, 'tool-leases')",
 			'legacy Tool-lease record layout is forbidden outside the legacy evidence scanner',
-		],
-		[
-			"path.join(zone.gateway.stateDir, 'tasks', taskId, 'state', 'gateway-runtime.json')",
-			'legacy Worker task runtime record layout is forbidden outside the legacy evidence scanner',
 		],
 	] as const)('rejects legacy controller record layout knowledge in %s', (expression, reason) => {
 		const findings = auditControllerStateRecordBoundaries([
@@ -129,7 +107,6 @@ describe('auditControllerStateRecordBoundaries', () => {
 					"const legacyRecordPath = path.join(options.gatewayStateDirectoryPath, 'gateway-runtime.json');",
 					"const approvals = path.join(options.gatewayStateDirectoryPath, 'approvals');",
 					"const leases = path.join(options.gatewayStateDirectoryPath, 'tool-leases');",
-					"const worker = path.join(options.gatewayStateDirectoryPath, 'tasks', taskId, 'state', 'gateway-runtime.json');",
 				].join('\n'),
 				filePath:
 					'packages/agent-vm/src/controller/durable-state/legacy-controller-record-evidence.ts',

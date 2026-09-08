@@ -10,8 +10,6 @@ export interface GatewayLifecycleNegativeFixtureVerification {
 export interface GatewayLifecycleContractVerification {
 	readonly managedPositiveDiagnostics: readonly string[];
 	readonly negativeFixtures: readonly GatewayLifecycleNegativeFixtureVerification[];
-	readonly positiveDiagnostics: readonly string[];
-	readonly positiveFixtureUsesForbiddenGatewaySpecificSurface: boolean;
 }
 
 interface CompileFixtureResult {
@@ -22,9 +20,6 @@ interface CompileFixtureResult {
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const fixtureRoot = path.join(packageRoot, 'contract-fixtures');
 const managedPositiveFixtureName = 'python-managed-gateway-lifecycle';
-const positiveFixtureName = 'python-guest-gateway-lifecycle';
-const forbiddenPositiveFixtureSurfacePattern =
-	/composeNodeOptions|FORCE_IPV4_EGRESS_NODE_OPTIONS|OpenClaw|authProfilesByAgent|rawEnvSecrets|controlAuth/u;
 
 function formatDiagnostic(diagnostic: ts.Diagnostic): string {
 	return ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
@@ -70,9 +65,6 @@ const negativeFixtureExpectations = [
 
 export function verifyGatewayLifecycleContracts(): GatewayLifecycleContractVerification {
 	const managedPositiveResult = compileFixture(managedPositiveFixtureName);
-	const positiveResult = compileFixture(positiveFixtureName);
-	const positiveFixtureSource =
-		ts.sys.readFile(path.join(fixtureRoot, positiveFixtureName, 'index.ts')) ?? '';
 	const negativeFixtures = negativeFixtureExpectations.map(
 		({ expectedPackageName, fixtureName }): GatewayLifecycleNegativeFixtureVerification => {
 			const result = compileFixture(fixtureName);
@@ -92,8 +84,5 @@ export function verifyGatewayLifecycleContracts(): GatewayLifecycleContractVerif
 	return {
 		managedPositiveDiagnostics: managedPositiveResult.formattedDiagnostics,
 		negativeFixtures,
-		positiveDiagnostics: positiveResult.formattedDiagnostics,
-		positiveFixtureUsesForbiddenGatewaySpecificSurface:
-			forbiddenPositiveFixtureSurfacePattern.test(positiveFixtureSource),
 	};
 }

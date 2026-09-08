@@ -151,24 +151,26 @@ async function writeFakeImageAssets(imagePath: string): Promise<void> {
 
 async function createGatewayImageCacheFixture(
 	options: {
-		readonly gatewayType?: 'hermes' | 'worker';
 		readonly preparedManagedGatewayBoot?: ManagedGatewayImageBootProjection;
 	} = {},
 ): Promise<{ readonly fingerprint: string; readonly systemConfig: LoadedSystemConfig }> {
-	const gatewayType = options.gatewayType ?? 'worker';
-	const gatewayConfiguration =
-		gatewayType === 'hermes'
-			? {
-					type: 'hermes' as const,
-					profileSecretProjectionsByAgent: {
-						'coding-agent': {
-							API_SERVER_KEY: 'API_SERVER_KEY_CODING_AGENT',
-							DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_CODING_AGENT',
-						},
-					},
-					profilesByAgent: { 'coding-agent': 'coding-agent' },
-				}
-			: { type: 'worker' as const };
+	const gatewayType = 'hermes' as const;
+	const preparedManagedGatewayBoot =
+		options.preparedManagedGatewayBoot ??
+		({
+			frameworkBootEntry: 'hermes-framework-service',
+			kind: 'managed-gateway-exact-two-role',
+		} satisfies ManagedGatewayImageBootProjection);
+	const gatewayConfiguration = {
+		type: gatewayType,
+		profileSecretProjectionsByAgent: {
+			'coding-agent': {
+				API_SERVER_KEY: 'API_SERVER_KEY_CODING_AGENT',
+				DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_CODING_AGENT',
+			},
+		},
+		profilesByAgent: { 'coding-agent': 'coding-agent' },
+	};
 	const temporaryDirectoryPath = await createTemporaryDirectory();
 	const gatewayConfigDirectory = await createTemporaryDirectory();
 	const systemConfigPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
@@ -181,7 +183,7 @@ async function createGatewayImageCacheFixture(
 	const selectionRecordPath = configuredImageSelectionRecordPath({
 		deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(temporaryDirectoryPath),
 		family: 'gateway',
-		profileName: 'worker',
+		profileName: 'hermes',
 	});
 	await fs.mkdir(path.dirname(systemConfigPath), { recursive: true });
 	await fs.writeFile(
@@ -199,9 +201,7 @@ async function createGatewayImageCacheFixture(
 	};
 	const fingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
 		fingerprintInput,
-		...(options.preparedManagedGatewayBoot === undefined
-			? {}
-			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
+		managedGatewayBoot: preparedManagedGatewayBoot,
 	});
 	const imagePath = path.join(sharedImageCacheDir, fingerprint);
 	await writeFakeImageAssets(imagePath);
@@ -212,9 +212,7 @@ async function createGatewayImageCacheFixture(
 		imagePath,
 		selectionRecordPath,
 		sharedImageCacheDir,
-		...(options.preparedManagedGatewayBoot === undefined
-			? {}
-			: { managedGatewayBoot: options.preparedManagedGatewayBoot }),
+		managedGatewayBoot: preparedManagedGatewayBoot,
 	});
 
 	const systemConfig = createLoadedSystemConfig(
@@ -226,7 +224,7 @@ async function createGatewayImageCacheFixture(
 			},
 			imageProfiles: {
 				gateways: {
-					worker: gatewayImageConfiguration,
+					hermes: gatewayImageConfiguration,
 				},
 				toolVms: {
 					default: {
@@ -254,7 +252,7 @@ async function createGatewayImageCacheFixture(
 					})),
 					gateway: {
 						...gatewayConfiguration,
-						imageProfile: 'worker',
+						imageProfile: 'hermes',
 						cpus: 2,
 						config: path.join(gatewayConfigDirectory, 'gateway.json'),
 						memory: '2G',
@@ -320,7 +318,6 @@ describe('isGatewayImageCached', () => {
 
 	it('derives the managed Gateway boot projection from the current gateway type', async () => {
 		const { fingerprint, systemConfig } = await createGatewayImageCacheFixture({
-			gatewayType: 'hermes',
 			preparedManagedGatewayBoot: {
 				frameworkBootEntry: 'hermes-framework-service',
 				kind: 'managed-gateway-exact-two-role',
@@ -352,49 +349,5 @@ describe('isGatewayImageCached', () => {
 				},
 			}),
 		).resolves.toBe(false);
-	});
-
-	it('rejects a stale Hermes boot projection for a Worker image', async () => {
-		const { systemConfig } = await createGatewayImageCacheFixture({
-			gatewayType: 'worker',
-		});
-		const buildConfigPath = systemConfig.imageProfiles.gateways.worker?.buildConfig;
-		if (buildConfigPath === undefined) {
-			throw new Error('Expected gateway build config path.');
-		}
-		const sharedImageCacheDir = sharedImageCacheDirForStorageRoot(systemConfig.storageRootDir);
-		const fingerprintInput = {
-			dockerRootfsIdentity: {
-				architecture: 'arm64',
-				layers: ['sha256:rootfs-layer'],
-				os: 'linux',
-			},
-			schemaVersion: 1,
-		};
-		const staleManagedGatewayBoot: ManagedGatewayImageBootProjection = {
-			frameworkBootEntry: 'hermes-framework-service',
-			kind: 'managed-gateway-exact-two-role',
-		};
-		const staleFingerprint = await computeFingerprintFromConfigPath(buildConfigPath, {
-			fingerprintInput,
-			managedGatewayBoot: staleManagedGatewayBoot,
-		});
-		const imagePath = path.join(sharedImageCacheDir, staleFingerprint);
-		await writeFakeImageAssets(imagePath);
-		await writePreparedManagedVmImage({
-			buildConfigPath,
-			fingerprint: staleFingerprint,
-			fingerprintInput,
-			imagePath,
-			managedGatewayBoot: staleManagedGatewayBoot,
-			selectionRecordPath: configuredImageSelectionRecordPath({
-				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
-				family: 'gateway',
-				profileName: 'worker',
-			}),
-			sharedImageCacheDir,
-		});
-
-		await expect(isGatewayImageCached(systemConfig, 'coding-agent')).resolves.toBe(false);
 	});
 });

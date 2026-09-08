@@ -298,10 +298,6 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 						type: 'hermes',
 						buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
 					},
-					worker: {
-						type: 'worker',
-						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
-					},
 				},
 				toolVms: {
 					default: {
@@ -370,7 +366,7 @@ async function createWorkMountDirectory(
 	name: string,
 ): Promise<string> {
 	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-	if (zone === undefined || zone.gateway.type === 'worker') {
+	if (zone === undefined) {
 		throw new Error('Expected shravan managed framework zone');
 	}
 	const hostWorkMountDir = path.join(

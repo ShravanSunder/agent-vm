@@ -16,7 +16,6 @@ import type { LoadedSystemConfig, SystemConfig } from '../../config/system-confi
 import type { GatewayExpectedAdmissionCohort } from '../../gateway/gateway-aggregate-admission-state.js';
 import { GatewayOwnershipUnsafeError } from '../../gateway/gateway-ownership-evidence.js';
 import type {
-	DirectProcessGatewayZoneStartResult,
 	GatewayZone,
 	GatewayZoneDestroyResult,
 	GatewayZoneVmOperations,
@@ -37,10 +36,7 @@ import { resolveControllerGatewayRecordTargets } from '../durable-state/controll
 import type { GatewayVmLifecycleAuthority } from '../vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
 import type { GatewayLifecycleOperationRecord } from './gateway-lifecycle-operation-record.js';
-import {
-	createManagedGatewayZoneRuntime as createManagedGatewayZoneRuntimeImpl,
-	requireManagedGatewayStartResult,
-} from './managed-gateway-zone-runtime.js';
+import { createManagedGatewayZoneRuntime as createManagedGatewayZoneRuntimeImpl } from './managed-gateway-zone-runtime.js';
 import type { GatewayZoneRuntimeHandle } from './zone-runtime-types.js';
 
 const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
@@ -528,112 +524,6 @@ describe('Managed Gateway zone runtime test fixture paths', () => {
 			expect(runtime.gatewayType).toBe(gatewayType);
 		},
 	);
-
-	it('contains and rejects a direct-process result at the Hermes lifecycle boundary', async () => {
-		const destroyGateway = vi.fn(async () => ({ kind: 'destroyed-clean' }) as const);
-		const unexpectedDirectProcessResult = {
-			destroyGateway,
-			executionModel: 'direct-process',
-			gatewayIdentity: createTestGatewayIdentity('unexpected-direct-process-vm'),
-			image: preflightedGatewayImage,
-			ingress: { host: '127.0.0.1', port: 18_791 },
-			processSpec: {
-				bootstrapCommand: 'bootstrap-worker',
-				guestListenPort: 18_789,
-				healthCheck: { type: 'http', port: 18_789, path: '/health' },
-				logPath: '/tmp/agent-vm-worker.log',
-				startCommand: 'start-worker',
-			},
-			processTarget: {
-				hostPid: 48_000,
-				processIdentity: {
-					command: 'qemu-system-x86_64 -m 1G',
-					lstart: 'Fri May 22 10:00:00 2026',
-				},
-				vmId: 'unexpected-direct-process-vm',
-			},
-			vm: {
-				enableSsh: vi.fn(async () => ({
-					close: vi.fn(async () => undefined),
-					command: 'ssh sandbox@127.0.0.1',
-					host: '127.0.0.1',
-					identityFile: '/tmp/test-identity',
-					port: 19_000,
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(() => createManagedExecProcessStub()),
-				getHostProcessId: () => 48_000,
-				id: 'unexpected-direct-process-vm',
-			},
-			zone: getManagedGatewayZone(),
-		} satisfies DirectProcessGatewayZoneStartResult;
-
-		await expect(requireManagedGatewayStartResult(unexpectedDirectProcessResult)).rejects.toThrow(
-			"Managed Gateway zone runtime rejected direct-process Gateway result for VM 'unexpected-direct-process-vm'",
-		);
-
-		expect(destroyGateway).toHaveBeenCalledOnce();
-	});
-
-	it('reports bounded cleanup debt after containing a rejected direct-process result', async () => {
-		const destroyGateway = vi.fn(
-			async () =>
-				({
-					cleanupFailures: [
-						{ error: new Error('secret-bearing cleanup detail'), stage: 'runtime-record-deletion' },
-					] as const,
-					kind: 'destroyed-cleanup-incomplete',
-				}) as const,
-		);
-		const directProcessResult = {
-			destroyGateway,
-			executionModel: 'direct-process',
-			gatewayIdentity: createTestGatewayIdentity('cleanup-debt-direct-process-vm'),
-			image: preflightedGatewayImage,
-			ingress: { host: '127.0.0.1', port: 18_791 },
-			processSpec: {
-				bootstrapCommand: 'bootstrap-worker',
-				guestListenPort: 18_789,
-				healthCheck: { type: 'http', port: 18_789, path: '/health' },
-				logPath: '/tmp/agent-vm-worker.log',
-				startCommand: 'start-worker',
-			},
-			processTarget: {
-				hostPid: 48_000,
-				processIdentity: {
-					command: 'qemu-system-x86_64 -m 1G',
-					lstart: 'Fri May 22 10:00:00 2026',
-				},
-				vmId: 'cleanup-debt-direct-process-vm',
-			},
-			vm: {
-				enableSsh: vi.fn(async () => ({
-					close: vi.fn(async () => undefined),
-					command: 'ssh sandbox@127.0.0.1',
-					host: '127.0.0.1',
-					identityFile: '/tmp/test-identity',
-					port: 19_000,
-					serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-					user: 'sandbox',
-				})),
-				exec: vi.fn(() => createManagedExecProcessStub()),
-				getHostProcessId: () => 48_000,
-				id: 'cleanup-debt-direct-process-vm',
-			},
-			zone: getManagedGatewayZone(),
-		} satisfies DirectProcessGatewayZoneStartResult;
-
-		const rejection = await requireManagedGatewayStartResult(directProcessResult).catch(
-			(error: unknown) => error,
-		);
-		if (!(rejection instanceof Error)) {
-			throw new Error('Expected direct-process rejection to be an Error.');
-		}
-		expect(rejection.message).toMatch(/runtime-record-deletion/u);
-		expect(rejection.message).not.toMatch(/secret-bearing cleanup detail/u);
-		expect(destroyGateway).toHaveBeenCalledOnce();
-	});
 
 	it('models only the managed sibling-service runtime handle', () => {
 		expectTypeOf<GatewayZoneRuntimeHandle['executionModel']>().toEqualTypeOf<'managed-gateway'>();

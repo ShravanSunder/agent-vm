@@ -9,7 +9,7 @@ multiple independently authorized RPC calls while compatible and healthy.
 
 This lifecycle belongs only to a `configured_cli` operation whose
 `executionTarget.kind` is `ephemeral_managed_vm`. It does not change
-`controller_host`, registered actions, Worker VMs, Gateway VMs, or the leased
+`controller_host`, registered actions, Gateway VMs, or the leased
 Tool VM `tool_vm_runner` path.
 
 ## Lifecycle Boundaries

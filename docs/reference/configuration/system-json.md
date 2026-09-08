@@ -5,9 +5,11 @@ Relative paths are resolved relative to the directory containing the system
 config. `system.json` is still accepted for existing deployments, but new
 scaffolds generate `system.jsonc`.
 
+Hermes is the sole accepted Gateway type. Removed Worker types and fields fail
+strict schema validation before build or controller startup.
+
 Comments are allowed in authored config. Runtime files that the controller
-writes, including effective worker config, runtime records, API bodies, and
-task event logs, remain strict JSON/JSONL.
+writes, including runtime records and API bodies, remain strict JSON/JSONL.
 
 New scaffolds write deployment-local JSON Schema files under `config/schemas/`:
 
@@ -51,9 +53,7 @@ zones[]
   gateway
     ingress
   observability
-  resources
   secrets
-  runtimeAuthHints
   egressHosts
   websocketUpgrades
   toolPortal
@@ -359,7 +359,6 @@ SHA-256 digest of the canonical `storageRootDir`; VM image fingerprints are
         └── runtime/                    zoneRuntimeDir
             ├── logs/
             ├── gitdirs/agents/<agentId>/
-            ├── worker-tasks/<taskId>/
             └── control-sessions/
 ```
 
@@ -382,9 +381,6 @@ Do not place durable secrets or user state under `cacheDir`. Do not place
 rebuildable dependency trees under `stateDir` just to make them survive gateway
 VM reboot; mount a cache path or bake stable dependency trees into the image
 instead.
-
-Do not put active worker gitdirs here; unpushed commits are not rebuildable
-cache.
 
 `agent-vm build` publishes a complete fingerprint atomically and never replaces
 or automatically prunes a complete shared fingerprint. When multiple profiles
@@ -426,20 +422,18 @@ controller ownership lock, health evidence, and generated observability files.
 `zoneRuntimeDir` is `<storageRootDir>/<zoneId>/runtime` and stores active
 non-backup runtime artifacts owned by one zone.
 
-Current uses include Hermes Gateway logs and Worker Git metadata:
+Current uses include Hermes Gateway logs and managed workspace Git metadata:
 
 ```text
 <zoneRuntimeDir>/logs/
 <zoneRuntimeDir>/gitdirs/agents/<agentId>/workspace.git
-<zoneRuntimeDir>/worker-tasks/<taskId>/gitdirs/<repoId>.git
 ```
 
-Normal `backup create` copies neither runtime root. Worker runtime artifacts are
-task-lifetime data: the agent must
-commit and call `git-push` before task teardown if work must survive. Hermes
-gateway logs are runtime evidence for post-mortems and performance debugging;
-they persist across gateway VM restarts but are intentionally excluded from
-normal zone backups.
+Normal `backup create` copies neither runtime root. Hermes gateway logs are
+runtime evidence for post-mortems and performance debugging; they persist
+across gateway VM restarts but are intentionally excluded from normal zone
+backups. Managed workspace Git databases follow their separate runtime
+recovery/export policy and are not normal zone backup payload.
 
 ## Derived zoneFilesDir
 
@@ -449,12 +443,8 @@ The controller selects each agent workspace from
 `zoneFilesDir/agents/<agentId>` for its Tool VM. The complete directory is
 included in Hermes zone backups.
 
-Worker gateways do not use `zoneFilesDir`. Their repo files live in VM-local
-`/work/repos/<repoId>`, and their Git metadata lives under `zoneRuntimeDir`.
-
-Do not call this `workspaceDir`. Worker execution files live under VM-local
-`/work/repos/<repoId>` and are not backed by this host path. For managed agents,
-the controller derives one durable workspace from
+Do not call this `workspaceDir`. For managed agents, the controller derives one
+durable workspace from
 `zoneFilesDir/agents/<agentId>` and projects only its filtered view into the
 selected Tool VM.
 
@@ -642,9 +632,8 @@ auth, or any other authority.
 
 Every `approvalAccess.approvers[]` entry is exactly
 `{ kind: "managed_gateway", approverId }`. Secrets, credentials, bearer
-authorities, and other variants are rejected. Only Hermes declares the native
-presenter capability in this release; Worker zones reject managed approval
-authority rather than falling back to another approval surface. The
+authorities, and other variants are rejected. Hermes declares the native
+presenter capability. The
 controller exposes no external approval HTTP routes. Hermes's separately
 authenticated in-VM agent-message API uses `API_SERVER_KEY` and is not an
 approval authority.
@@ -971,8 +960,6 @@ policy plus matching `egressHosts`.
 
 Hermes Tool VMs mount the selected filtered durable agent workspace at
 `/workspace`; `/work` is rootfs/COW hot execution space and the default cwd.
-Worker task VMs keep repo edits under `/work/repos/<repoId>`; Worker `/work`
-remains per-task rootfs/COW.
 
 ## imageProfiles
 
@@ -982,14 +969,10 @@ Gateway image profiles are used by zones:
 {
   "imageProfiles": {
     "gateways": {
-      "worker": {
-        "type": "worker",
-        "buildConfig": "../vm-images/gateways/worker/build-config.jsonc",
-        "source": {
-          "kind": "managedBase",
-          "base": "worker-gateway",
-          "overlay": "../vm-images/gateways/worker/overlay.jsonc"
-        }
+      "hermes": {
+        "type": "hermes",
+        "buildConfig": "../vm-images/gateways/hermes/build-config.jsonc",
+        "dockerfile": "../vm-images/gateways/hermes/Dockerfile"
       }
     }
   }
@@ -1007,12 +990,11 @@ copy steps, post-base commands, and explicit per-image package overrides.
 under
 `cacheDir/deployments/<deploymentCacheKey>/docker-contexts/<family>/<profile>/`;
 do not edit those generated build inputs by hand.
-Managed Worker and Tool VM deployments should omit `packageOverrides` when the
-managed default package set is acceptable. Use `packageOverrides.npm` for
-direct npm packages such as `@openai/codex`, and
-`packageOverrides.pnpm` for exact transitive override
-floors such as `undici`. Overlay package pins override managed default package
-entries by package name during Dockerfile generation.
+Managed Tool VM deployments should omit `packageOverrides` when the managed
+default package set is acceptable. Use `packageOverrides.npm` for direct npm
+packages and `packageOverrides.pnpm` for exact transitive override floors.
+Overlay package pins override managed default package entries by package name
+during Dockerfile generation.
 
 Managed package defaults are recorded under each base image in the installed
 package's `managed-images.json`, then exposed in the generated Dockerfile plan
@@ -1024,69 +1006,12 @@ runtime no longer resolves the affected dependency.
 Legacy `dockerfile` profiles are reported by `agent-vm doctor`; migrate them
 with `agent-vm migrate images`.
 
-Hermes Tool VMs use `imageProfiles.toolVms`. Worker-only configs normally
-omit tool VM image profiles.
+Hermes Tool VMs use `imageProfiles.toolVms`.
 
 ## zones
 
-Each zone selects one gateway image profile and one gateway behavior config:
-
-```json
-{
-  "id": "coding-agent",
-  "gateway": {
-    "type": "worker",
-    "memory": "2G",
-    "cpus": 2,
-    "port": 18791,
-    "config": "./gateways/coding-agent/worker.jsonc",
-    "imageProfile": "worker",
-    "repoPushPolicies": [
-      {
-        "repoUrl": "https://github.com/example/example-repo.git",
-        "defaultBranch": "main",
-        "protectedBranches": ["release"],
-        "protectedBranchPatterns": ["hotfix/*"]
-      }
-    ]
-  },
-  "resources": {
-    "allowRepoResources": false
-  },
-  "secrets": {
-    "GITHUB_TOKEN": {
-      "source": "environment",
-      "envVar": "GITHUB_TOKEN",
-      "injection": "http-mediation",
-      "audience": "gateway",
-      "hosts": ["api.github.com", "github.com"]
-    }
-  },
-  "runtimeAuthHints": [
-    {
-      "kind": "service-token",
-      "secret": "GITHUB_TOKEN",
-      "service": "github",
-      "hosts": ["api.github.com", "github.com"],
-      "tools": ["gh"]
-    }
-  ],
-  "egressHosts": [
-    { "host": "api.openai.com", "audience": "gateway" },
-    { "host": "api.github.com", "audience": "gateway" },
-    { "host": "github.com", "audience": "gateway" },
-    { "host": "mcp.deepwiki.com", "audience": "gateway" }
-  ]
-}
-```
-
-For worker gateways, `gateway.repoPushPolicies` is the controller-trusted
-source for host-token branch push safety. Worker task requests name repos and
-base branches to prepare; they do not define protected branch policy. If a
-worker task repo has no matching `repoPushPolicies[].repoUrl`, controller-owned
-push for that repo fails closed before Git I/O.
-
-Worker zones do not declare Tool VM profile fields. Hermes zones must declare
+Each zone selects one Hermes gateway image profile and one Hermes behavior
+config. Hermes zones must declare
 `defaultToolVmProfile` and `agentToolVmProfiles`, even when the agent mapping is
 empty. This makes the Tool VM image policy visible in generated configs instead
 of hiding it behind defaults.
@@ -1148,8 +1073,8 @@ backup.
 
 `zones[].observability` opts a managed Hermes zone into common
 framework and Tool Portal OpenTelemetry export through the host collector.
-Worker zones reject enabled zone observability. Hermes producers use mediated
-OTLP HTTP through the controller-configured collector boundary.
+Hermes producers use mediated OTLP HTTP through the controller-configured
+collector boundary.
 
 Accepted shape:
 
@@ -1353,38 +1278,6 @@ to Tool VMs created from that profile. Use the image build config
 `runtimeRootfsSize` for writable runtime capacity such as agent caches,
 temporary installs, browser artifacts, and command output generated after boot.
 
-## zones[].resources
-
-`resources` controls whether repo-local providers may satisfy logical
-resources. If omitted, `allowRepoResources` behaves as `true`.
-
-```json
-{
-  "resources": {
-    "allowRepoResources": [
-      "https://github.com/example/example-repo"
-    ]
-  }
-}
-```
-
-| Value | Meaning |
-| --- | --- |
-| `false` | Repo-local providers are disabled; required resources must be supplied externally. |
-| `true` | Any requested repo may provide resources. This is the default. |
-| `string[]` | Only matching repo URLs may provide resources. |
-
-Repo resources are TCP-only and compile to Gondolin `tcpHosts`, env, and
-read-only VFS mounts. They do not modify `egressHosts`; HTTP egress remains a
-zone-level policy.
-
-`allowRepoResources: false` disables the entire repo-local resource contract
-pipeline. The controller does not load `.agent-vm/repo-resources.ts`, does not
-run `.agent-vm/run-setup.sh`, and does not call
-`finalizeRepoResourceSetup(input)`. Required resources must be supplied as
-task external resources. `true` and `string[]` allow matching repos with a
-contract file to run setup/finalization after resource resolution.
-
 ## secrets
 
 Zone secrets support three sources:
@@ -1451,56 +1344,9 @@ deployment config.
 Secret names must be valid environment variable identifiers. This keeps
 gateway env-file rendering and runtime placeholder names safe and predictable.
 
-## runtimeAuthHints
-
-Worker zones may declare `runtimeAuthHints` to describe mediated service tokens
-to the worker agent. These hints generate worker runtime instructions only; they
-do not mount config files and do not expose real secret values. They name the
-service, mediated host list, tool names, and placeholder env var so the worker
-agent can use normal tooling without guessing which token exists. Hermes zones
-must not declare `runtimeAuthHints`; Tool VM auth is controlled by Tool
-VM-audience mediated secrets and `egressHosts`.
-
-Known services get setup recipes in the generated runtime instructions. Current
-recipes cover `github`, `npm`, Linear, Readwise, and Python package indexes
-(`pypi`, `pypi-private`, `python`, or `python-package-index`). Unknown services
-are still listed, but the generated guidance tells the agent to report an auth
-setup gap if the correct toolchain setup is not known.
-
-```json
-{
-  "runtimeAuthHints": [
-    {
-      "kind": "service-token",
-      "secret": "GITHUB_TOKEN",
-      "service": "github",
-      "hosts": ["api.github.com"],
-      "tools": ["gh"]
-    },
-    {
-      "kind": "service-token",
-      "secret": "NPM_AUTH_TOKEN",
-      "service": "npm",
-      "hosts": ["registry.npmjs.org"],
-      "tools": ["npm", "pnpm", "yarn"]
-    }
-  ]
-}
-```
-
-Each hint must reference a worker-zone secret with `injection:
-"http-mediation"` and an audience that reaches the worker gateway runtime
-(`"gateway"` or `"both"`). Every hint host must also appear in that secret's
-`hosts`.
-
-Generated auth guidance appears in `/agent-vm/agents.md`,
-`/agent-vm/runtime-instructions.md`, and the prompt's `runtimeInstructions`
-layer.
-
 ## tcpPool
 
-The TCP pool reserves host ports for VM networking. Agent Worker Gateway uses the
-controller mapping. Hermes Gateway uses it for Tool VM SSH slots.
+The TCP pool reserves host ports for Hermes Tool VM SSH slots.
 
 ```json
 {
@@ -1551,20 +1397,13 @@ The schema rejects:
   `zones[].agents`.
 - Tool VM-reaching mediated secrets whose `agentAccess` array references an
   unknown `zones[].agents[].id`.
-- Worker zones declaring `agentAccess`, because Worker zones do not boot Tool
-  VMs.
 - Mediated secret hosts not declared in `egressHosts` for the same audience.
 - WebSocket upgrade hosts not declared in `egressHosts` for the same audience.
 - Zones referencing missing gateway image profiles.
 - Zone gateway type mismatches against the selected image profile.
-- Hermes zones declaring `runtimeAuthHints`.
 - Hermes zone observability without `host.observability.enabled=true`.
-- Worker zone observability.
-- Worker `runtimeAuthHints` referencing missing secrets, non-mediated secrets,
-  Tool VM-only secrets, or hosts not listed on the referenced secret.
 - Hermes zones without `defaultToolVmProfile`.
 - Hermes zones without explicit `agentToolVmProfiles`.
-- Worker zones declaring Tool VM profile fields.
 - `agentToolVmProfiles` values referencing missing `toolVmProfiles`.
 - Tool VM profiles referencing missing Tool VM image profiles.
 - Managed MCP Portal configs that fail materialization semantics, including

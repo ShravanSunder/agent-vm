@@ -2,7 +2,10 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Controller
 
-Deep dive into the controller runtime: startup lifecycle, HTTP API surface, lease management, gateway orchestration, worker task execution, and graceful shutdown. The controller is the host-side process that owns all VM lifecycles and never executes untrusted code.
+Deep dive into the controller runtime: startup lifecycle, HTTP API surface,
+lease management, Gateway orchestration, and graceful shutdown. The controller
+is the host-side process that owns all VM lifecycles and never executes
+untrusted code.
 
 ---
 
@@ -34,8 +37,7 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      Refuse malformed/mismatched/unproven evidence; adopt nothing
     |
     |-- 5. Create zone runtime registry
-    |      Builds one runtime per selected zone
-    |      Hermes and Worker zones dispatch by Gateway type
+    |      Builds one managed Hermes runtime per selected zone
     |
     |-- 6. Create lease manager
     |      createLeaseManager({ tcpPool, createManagedVm, now })
@@ -51,12 +53,11 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
     |      startGatewayZone({ secretResolver, systemConfig, zoneId })
     |      Image build, Gateway epoch admission, VM boot, runtime record, health check
     |
-    |-- 9. Wire operations + task runner
-    |      Hermes zones:  managed zone operations + stopController
-    |      Worker zones:   worker task runtime + push/pull/close + stopController
+    |-- 9. Wire operations
+    |      Hermes zones: managed zone operations + stopController
     |
     |-- 10. Build Hono app
-    |      createControllerService({ leaseManager, operations, workerTaskRunner })
+    |      createControllerService({ leaseManager, operations })
     |      Mounts lease routes, zone operation routes, /health
     |
     |-- 11. Bind HTTP server
@@ -101,8 +102,8 @@ Offline cleanup is the broken-controller path. `agent-vm controller cleanup --co
 
 `controllerStateDir` is one system/controller-owned durable root. Controller
 records for a zone live beneath `<controllerStateDir>/zones/<zoneId>/`:
-`approvals/`, `gateway-runtime.json`, `tool-leases/<recordId>.json`, and
-`worker-tasks/<taskId>/gateway-runtime.json`. This root is never mounted into a
+`approvals/`, `credentialed-runtimes/<recordId>.json`,
+`gateway-runtime.json`, and `tool-leases/<recordId>.json`. This root is never mounted into a
 Gateway or Tool VM. Existing Gateway-visible paths under `stateDir` remain
 unchanged and contain no controller lifecycle authority.
 
@@ -126,7 +127,7 @@ All routes are served by Hono on the configured `host.controllerPort` (default 1
 
 ### Zone Operation Routes (controller-zone-operation-routes.ts)
 
-Registered conditionally -- only when `operations` or `workerTaskRunner` is provided.
+Registered when controller runtime operations are provided.
 
 | Method | Path | Description | Availability |
 |--------|------|-------------|-------------|
@@ -140,10 +141,7 @@ Registered conditionally -- only when `operations` or `workerTaskRunner` is prov
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH into gateway VM | Managed gateways |
 | `POST` | `/zones/:zoneId/execute-command` | Run a shell command inside Gateway VM; requires zone admin token when adminAccess is configured | Hermes |
 | `POST` | `/zones/:zoneId/credentialed-runtime/retire` | Retire the authenticated agent's singleton reusable credentialed Managed runtime; body is `{ agentId, force, adminToken? }` | Managed gateways |
-| `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
-| `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
-| `POST` | `/zones/:zoneId/tasks/:taskId/close` | Request task cancellation | Worker |
-| `POST` | `/stop-controller` | Graceful shutdown | Both |
+| `POST` | `/stop-controller` | Graceful shutdown | Controller |
 
 Request bodies are validated with Zod schemas (`controller-request-schemas.ts`). Invalid payloads return 400 with structured `error` and `issues` fields.
 
@@ -184,7 +182,7 @@ bundle variables needed by Python and Node CLI operations such as
 The agent-vm controller is global, but operational health is zone-scoped.
 Operators debug the boundary that is sick for a specific zone: gateway VM,
 gateway-service process, gateway-to-controller control link, lease routes,
-Tool VM SSH, or worker controller-tool requests.
+or Tool VM SSH.
 
 `GET /health` is only the global agent-vm controller liveness endpoint. It does
 not emit a zone-scoped `controller-runtime` event because it has no zone
@@ -291,8 +289,8 @@ the zone runtime.
 ## Gateway Zone Orchestrator
 
 `startGatewayZone()` in `gateway-zone-orchestrator.ts` is the boot sequence for
-any Gateway VM. The controller calls it once at startup for Hermes zones, and
-once per task for Worker zones. The sequence is documented in the [Gateway zone
+a Hermes Gateway VM. The controller calls it once at startup for each selected
+Hermes zone. The sequence is documented in the [Gateway zone
 orchestrator architecture](../architecture/overview.md#gateway-zone-orchestrator).
 
 - Before a fresh Hermes tree is published, controller recovery adopts nothing:
@@ -453,10 +451,9 @@ The reaper runs one immediate pass at the end of controller startup, before the 
 
 ## Operations
 
-`createControllerRuntimeOperations()` builds operations over a zone runtime
-registry. Each route resolves the requested `zoneId`, checks that the operation
-matches the zone gateway type, and returns typed HTTP errors for missing,
-failed, or wrong-type zones.
+`createControllerRuntimeOperations()` builds operations over a managed zone
+runtime registry. Each route resolves the requested `zoneId` and returns typed
+HTTP errors for missing or failed zones.
 
 | Operation | What It Does |
 |-----------|-------------|
@@ -468,78 +465,6 @@ failed, or wrong-type zones.
 | `enableSshForZone` | Calls `vm.enableSsh()` on the gateway VM |
 | `execInZone` | Runs an arbitrary command inside the gateway VM via `vm.exec()` after zone admin authorization when configured |
 | `stopController` | Clears reaper timer, releases all leases, stops gateway, closes HTTP server |
-
-The `stopController` operation is available to both Gateway modes. Managed zone
-operations apply to Hermes; Worker task operations remain separate.
-
----
-
-## Worker Task Runner
-
-Worker-mode zones do not start a gateway at boot. Instead, each task gets an ephemeral per-task VM. The `worker-task-runner.ts` module manages the full lifecycle.
-
-### Task Phases
-
-```
-  runWorkerTask(options)
-    |
-    |== PRE-START (preStartGateway) ==========================
-    |   1. Generate taskId (crypto.randomUUID)
-    |   2. Create task state and non-backup task runtime roots
-    |   3. Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-    |   4. Create RealFS gitdirs under zoneRuntimeDir in parallel
-    |      - Derive repo IDs from repo URLs, deduplicate
-    |   5. Read .agent-vm/config.jsonc or .agent-vm/config.json from primary repo
-    |   6. Deep-merge zone gateway config + project config
-    |   7. Validate merged config against workerConfigSchema
-    |   8. Write effective-worker.json to task state
-    |   9. Resolve typed repo resources from each repo's
-    |      .agent-vm/repo-resources.ts contract
-    |  10. Start only selected repo-local Compose providers
-    |  11. Register task in ActiveTaskRegistry
-    |
-    |== BOOT (startGatewayZone with zoneOverride) ============
-    |   Mount task state at /state and task gitdirs at /gitdirs;
-    |   keep /work/repos as VM-local rootfs/COW work-area storage
-    |   Full orchestration: orphan cleanup, image, VM, bootstrap,
-    |   start, health check, ingress
-    |
-    |== SUBMIT ================================================
-    |   POST http://{vm}:{port}/tasks
-    |   Body: { requestTaskId, prompt, repos, context }
-    |
-    |== POLL ==================================================
-    |   GET http://{vm}:{port}/tasks/{taskId}
-    |   Every 1 second until status is completed | failed | closed
-    |   3 consecutive poll failures -> abort
-    |   30-minute timeout (configurable via timeoutMs)
-    |
-    |== TEARDOWN (always runs in finally block) ===============
-    |   1. Stop the prepared Worker runtime through controller-managed exact VM termination
-    |   2. Stop selected repo resource Compose providers
-    |   3. Check gitdirs for dirty/unpushed work
-    |   4. Push, export recovery artifact, or discard before cleanup
-    |   5. Deregister task from ActiveTaskRegistry
-    |
-    v
-  Returns { taskId, finalState, taskRoot }
-```
-
-### Push Branches
-
-`git-push-operations.ts` handles post-task branch pushing from the host (Zone 1), so the GitHub token never enters any VM. The `pushBranchesForTask()` function:
-
-1. Validates every branch name starts with the task's `branchPrefix`.
-2. Validates every repo URL is registered for the active task and appears at most once in the request.
-3. Pushes branches for distinct repos concurrently. A single repo can have only one branch push per request because operations share one `.git` directory.
-4. Pushes each branch using a token-authenticated HTTPS URL, refreshes the remote branch ref, and returns branch state.
-5. Token values are scrubbed from error messages before surfacing.
-
-PR creation is not part of `pushBranchesForTask()`. After the controller reports a successful push, the worker uses `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy.
-
-### Active Task Registry
-
-`ActiveTaskRegistry` is an in-memory map keyed by `zoneId`. Each zone can have at most one active task at a time. Methods: `register(task)` (throws if zone already has a different task), `get(zoneId, taskId)`, `clear(zoneId, taskId)`.
 
 ---
 
@@ -564,7 +489,13 @@ enters controller domains. Runtime wiring injects only its neutral
 is needed; the lease manager receives the still narrower Tool VM creation
 closure shown above.
 
-**Runtime-level wiring** happens in `startControllerRuntime()`, which closes over all subsystems. Its `ControllerRuntimeDependencies` interface carries 11 optional overrides (`createSecretResolver`, `startGatewayZone`, `startHttpServer`, `createManagedToolVm`, `runWorkerTask`, `now`, `setIntervalImpl`, `clearIntervalImpl`, `deleteGatewayRuntimeRecord`, `onWorkerTaskPrepared`, `onWorkerTaskFinished`). Production defaults are imported at module scope and used when the corresponding dependency is absent. Every subsystem (`gateway-recovery.ts`, `gateway-zone-orchestrator.ts`, `idle-reaper.ts`, `worker-task-runner.ts`) follows this same pattern -- tests override individual collaborators without mocking internals.
+**Runtime-level wiring** happens in `startControllerRuntime()`, which closes
+over all subsystems. `ControllerRuntimeDependencies` exposes narrow overrides
+for secret resolution, Gateway startup, HTTP binding, Tool VM creation, clocks,
+timers, and runtime-record operations. Production defaults are imported at
+module scope and used when the corresponding dependency is absent. The
+surviving subsystems follow this same pattern so tests can replace individual
+collaborators without mocking internals.
 
 ---
 
@@ -579,16 +510,13 @@ All paths relative to `packages/agent-vm/src/controller/`.
 | `controller-runtime-operations.ts` | Hermes managed-zone operations (destroy, upgrade, logs, credentials, exec, SSH) |
 | `controller-runtime-support.ts` | Secret resolver factory, GitHub token resolution, zone lookup |
 | `http/controller-http-routes.ts` | Hono app: lease routes + health, `createControllerService` |
-| `http/controller-zone-operation-routes.ts` | Hono route registration for zone operations + worker tasks |
+| `http/controller-zone-operation-routes.ts` | Hono route registration for managed zone operations |
 | `http/controller-http-route-support.ts` | `ControllerRouteOperations` type, lease serialization |
 | `http/controller-request-schemas.ts` | Zod schemas for all request payloads |
 | `http/controller-http-server.ts` | HTTP server binding (Hono serve) |
 | `leases/lease-manager.ts` | Lease CRUD, VM creation, cleanup |
 | `leases/tcp-pool.ts` | Fixed-size TCP port slot allocator |
 | `leases/idle-reaper.ts` | TTL-based lease expiration |
-| `worker-task-runner.ts` | Per-task VM lifecycle: pre-start, boot, submit, poll, teardown |
-| `active-task-registry.ts` | In-memory map of active worker tasks by zone |
-| `git-push-operations.ts` | Host-side git push with token scrubbing |
 | `composite-secret-resolver.ts` | Dispatches by `SecretRef.source` to 1Password or env resolver |
 
 Gateway-side files referenced by the controller (relative to `src/gateway/`): `gateway-zone-orchestrator.ts` (boot sequence), `gateway-recovery.ts` (orphan cleanup), `gateway-runtime-record.ts` (crash recovery persistence), `credential-manager.ts` (zone secret resolution).

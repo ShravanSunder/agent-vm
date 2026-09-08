@@ -2,7 +2,6 @@ import {
 	currentE2eArchitecture,
 	prepareGatewayE2eProjectImages,
 	removeE2eTempRoot,
-	scaffoldWorkerE2eProject,
 } from '../packages/agent-vm/src/integration-tests/e2e-harness.js';
 import {
 	scaffoldHermesE2eProject,
@@ -15,7 +14,6 @@ async function main(): Promise<void> {
 	process.env.AGENT_VM_GONDOLIN_E2E = '1';
 
 	let hermesTempRoot: string | undefined;
-	let workerTempRoot: string | undefined;
 	try {
 		const architecture = currentE2eArchitecture();
 		const hermesProject = await scaffoldHermesE2eProject({
@@ -25,12 +23,6 @@ async function main(): Promise<void> {
 			zoneId: 'ci-hermes-image-cache',
 		});
 		hermesTempRoot = hermesProject.tempRoot;
-		const workerProject = await scaffoldWorkerE2eProject({
-			architecture,
-			prefix: 'worker-loop-e2e-',
-			zoneId: 'ci-worker-image-cache',
-		});
-		workerTempRoot = workerProject.tempRoot;
 		await materializeLocalHermesGatewayImagePackages({
 			architecture,
 			profileName: hermesProject.zone.gateway.imageProfile,
@@ -46,16 +38,9 @@ async function main(): Promise<void> {
 			imageFamilies: ['toolVm'],
 			project: hermesProject,
 		});
-		await prepareGatewayE2eProjectImages({
-			imageFamilies: ['gateway'],
-			project: workerProject,
-		});
 		process.stdout.write(`Prepared E2E image cache at ${process.env.AGENT_VM_E2E_CACHE_DIR}\n`);
 	} finally {
-		await Promise.all([
-			...(hermesTempRoot === undefined ? [] : [removeE2eTempRoot(hermesTempRoot)]),
-			...(workerTempRoot === undefined ? [] : [removeE2eTempRoot(workerTempRoot)]),
-		]);
+		await Promise.all(hermesTempRoot === undefined ? [] : [removeE2eTempRoot(hermesTempRoot)]);
 	}
 }
 

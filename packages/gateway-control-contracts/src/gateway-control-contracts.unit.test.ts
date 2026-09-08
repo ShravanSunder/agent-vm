@@ -6,7 +6,6 @@ import {
 	assertDerivedControlDeliveryPolicy,
 	type ControlMessageReceipt,
 } from '@agent-vm/control-protocol-contracts';
-import { WorkerControlRpcOperationSchema } from '@agent-vm/worker-control-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type * as GatewayControlContracts from './index.js';
@@ -108,7 +107,7 @@ describe('gateway control contract', () => {
 		expect(GatewayControlDomainSchema.safeParse('worker_control').success).toBe(false);
 	});
 
-	it('keeps the gateway operation union exact and separated from worker ops', () => {
+	it('keeps the gateway operation union exact and rejects foreign operations', () => {
 		expect([...GatewayControlRpcOperationSchema.options].toSorted()).toEqual([
 			'caller_context_register',
 			'control_ping',
@@ -139,7 +138,7 @@ describe('gateway control contract', () => {
 		expect(GatewayControlRpcOperationSchema.safeParse('git_push').success).toBe(false);
 		expect(GatewayControlRpcOperationSchema.safeParse('git_pull_default').success).toBe(false);
 		expect(GatewayControlRpcOperationSchema.safeParse('worker_runtime_status').success).toBe(false);
-		expect(WorkerControlRpcOperationSchema.safeParse('lease_create').success).toBe(false);
+		expect(GatewayControlRpcOperationSchema.safeParse('foreign_operation').success).toBe(false);
 	});
 
 	it('keeps controller-published Tool VM bindings active-use-free and exactly fenced', () => {

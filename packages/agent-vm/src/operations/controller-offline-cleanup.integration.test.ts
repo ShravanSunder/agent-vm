@@ -10,66 +10,50 @@ import { runControllerOfflineCleanup as runControllerOfflineCleanupProduction } 
 function createSystemConfig(
 	options: {
 		readonly controllerPort?: number;
-		readonly gatewayType?: 'hermes' | 'worker';
 	} = {},
 ): LoadedSystemConfig {
-	const zone =
-		options.gatewayType === 'worker'
-			? {
-					egressHosts: [{ audience: 'gateway' as const, host: 'api.openai.com' }],
-					gateway: {
-						config: '/deployments/shravan-claw-beta/config/gateways/beta/worker.json',
-						cpus: 2,
-						imageProfile: 'worker',
-						memory: '4G',
-						port: 18891,
-						type: 'worker' as const,
-					},
-					id: 'beta',
-					secrets: {},
-				}
-			: {
-					agentToolVmProfiles: {},
-					agents: [{ id: 'main' }],
-					defaultToolVmProfile: 'default',
-					egressHosts: [{ audience: 'gateway' as const, host: 'api.openai.com' }],
-					gateway: {
-						config: '/deployments/shravan-claw-beta/config/gateways/beta/hermes.yaml',
-						cpus: 2,
-						imageProfile: 'hermes',
-						memory: '4G',
-						port: 18891,
-						profileSecretProjectionsByAgent: {
-							main: {
-								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
-								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
-							},
-						},
-						profilesByAgent: { main: 'main' },
-						type: 'hermes' as const,
-					},
-					id: 'beta',
-					secrets: {
-						API_SERVER_KEY: {
-							audience: 'gateway' as const,
-							injection: 'env' as const,
-							source: 'config' as const,
-							value: 'test-root-api-server-key',
-						},
-						API_SERVER_KEY_MAIN: {
-							audience: 'gateway' as const,
-							envVar: 'API_SERVER_KEY_MAIN',
-							injection: 'env' as const,
-							source: 'environment' as const,
-						},
-						DISCORD_BOT_TOKEN: {
-							audience: 'gateway' as const,
-							envVar: 'DISCORD_BOT_TOKEN',
-							injection: 'env' as const,
-							source: 'environment' as const,
-						},
-					},
-				};
+	const zone = {
+		agentToolVmProfiles: {},
+		agents: [{ id: 'main' }],
+		defaultToolVmProfile: 'default',
+		egressHosts: [{ audience: 'gateway' as const, host: 'api.openai.com' }],
+		gateway: {
+			config: '/deployments/shravan-claw-beta/config/gateways/beta/hermes.yaml',
+			cpus: 2,
+			imageProfile: 'hermes',
+			memory: '4G',
+			port: 18891,
+			profileSecretProjectionsByAgent: {
+				main: {
+					API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+					DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN',
+				},
+			},
+			profilesByAgent: { main: 'main' },
+			type: 'hermes' as const,
+		},
+		id: 'beta',
+		secrets: {
+			API_SERVER_KEY: {
+				audience: 'gateway' as const,
+				injection: 'env' as const,
+				source: 'config' as const,
+				value: 'test-root-api-server-key',
+			},
+			API_SERVER_KEY_MAIN: {
+				audience: 'gateway' as const,
+				envVar: 'API_SERVER_KEY_MAIN',
+				injection: 'env' as const,
+				source: 'environment' as const,
+			},
+			DISCORD_BOT_TOKEN: {
+				audience: 'gateway' as const,
+				envVar: 'DISCORD_BOT_TOKEN',
+				injection: 'env' as const,
+				source: 'environment' as const,
+			},
+		},
+	};
 	return createLoadedSystemConfig(
 		{
 			schemaVersion: 2,
@@ -83,11 +67,6 @@ function createSystemConfig(
 					hermes: {
 						type: 'hermes',
 						buildConfig: './vm-images/gateways/hermes/build-config.jsonc',
-					},
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.jsonc',
-						source: { kind: 'managedBase', base: 'worker-gateway' },
 					},
 				},
 				toolVms: {
@@ -474,68 +453,6 @@ describe('runControllerOfflineCleanup', () => {
 			},
 			expect.objectContaining({ exactProcessTermination: expect.anything() }),
 		);
-	});
-
-	it('reconciles Worker records from controller state without managed Gateway or Tool cleanup', async () => {
-		const systemConfig = createSystemConfig({ gatewayType: 'worker' });
-		const cleanupRecordedWorkerRuntimes = vi.fn(async () => ({
-			cleanedCount: 2,
-			killedPids: [41, 42],
-		}));
-		const cleanupRecordedToolVmRuntimes = vi.fn(async () => ({
-			cleanedCount: 0,
-			killedPids: [],
-			quarantinedCount: 0,
-			warnings: [],
-		}));
-		const cleanupRecordedGatewayRuntime = vi.fn(async () => ({
-			cleanedUp: true,
-			killedPid: 40,
-		}));
-		const scanGatewayStateAuthorityEvidence = vi.fn(async () => []);
-
-		await expect(
-			runControllerOfflineCleanup(
-				{
-					force: true,
-					systemConfig,
-					zoneId: 'beta',
-				},
-				{
-					cleanupRecordedGatewayRuntime,
-					cleanupRecordedToolVmRuntimes,
-					cleanupRecordedWorkerRuntimes,
-					scanGatewayStateAuthorityEvidence,
-				},
-			),
-		).resolves.toEqual({
-			results: [
-				{
-					ownershipDisposition: 'complete',
-					stateDir: '/storage/beta/state',
-					zoneId: 'beta',
-				},
-			],
-		});
-
-		expect(scanGatewayStateAuthorityEvidence).toHaveBeenCalledWith({
-			gatewayStateDirectoryPath: '/storage/beta/state',
-		});
-		expect(cleanupRecordedWorkerRuntimes).toHaveBeenCalledWith(
-			{
-				expectedConfigPath: systemConfig.systemConfigPath,
-				expectedControllerPort: systemConfig.host.controllerPort,
-				gatewayStateRoot: {
-					directoryPath: '/storage/controller-state/zones/beta',
-					zoneId: 'beta',
-				},
-				mode: 'offline-cleanup',
-				projectNamespace: systemConfig.host.projectNamespace,
-			},
-			expect.objectContaining({ exactProcessTermination: expect.anything() }),
-		);
-		expect(cleanupRecordedToolVmRuntimes).not.toHaveBeenCalled();
-		expect(cleanupRecordedGatewayRuntime).not.toHaveBeenCalled();
 	});
 
 	it('fails closed on legacy Gateway-state evidence before mutating controller records', async () => {

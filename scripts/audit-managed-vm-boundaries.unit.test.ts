@@ -33,16 +33,9 @@ const validSources: readonly ManagedVmBoundaryAuditSource[] = [
 	{
 		content: JSON.stringify({
 			dependencies: { '@agent-vm/gateway-lifecycle': 'workspace:*' },
-			name: '@agent-vm/openclaw-gateway',
+			name: '@agent-vm/hermes-gateway',
 		}),
-		filePath: 'packages/openclaw-gateway/package.json',
-	},
-	{
-		content: JSON.stringify({
-			dependencies: { '@agent-vm/gateway-lifecycle': 'workspace:*' },
-			name: '@agent-vm/worker-gateway',
-		}),
-		filePath: 'packages/worker-gateway/package.json',
+		filePath: 'packages/hermes-gateway/package.json',
 	},
 	{
 		content: JSON.stringify({
@@ -193,7 +186,7 @@ describe('auditManagedVmBoundaries', () => {
 
 	it('rejects forbidden gateway and adapter manifest edges', () => {
 		const sources = validSources.map((source) =>
-			source.filePath === 'packages/openclaw-gateway/package.json'
+			source.filePath === 'packages/hermes-gateway/package.json'
 				? {
 						...source,
 						content: JSON.stringify({
@@ -201,15 +194,77 @@ describe('auditManagedVmBoundaries', () => {
 								'@agent-vm/gateway-lifecycle': 'workspace:*',
 								'@agent-vm/gondolin-vm-adapter': 'workspace:*',
 							},
-							name: '@agent-vm/openclaw-gateway',
+							name: '@agent-vm/hermes-gateway',
 						}),
 					}
 				: source,
 		);
 
 		expect(auditManagedVmBoundaries(sources).map((finding) => finding.reason)).toContain(
-			"forbidden package edge '@agent-vm/openclaw-gateway' -> '@agent-vm/gondolin-vm-adapter'",
+			"forbidden package edge '@agent-vm/hermes-gateway' -> '@agent-vm/gondolin-vm-adapter'",
 		);
+	});
+
+	it.each([
+		['@agent-vm/agent-vm-worker', 'packages/agent-vm-worker/package.json'],
+		['@agent-vm/worker-gateway', 'packages/worker-gateway/package.json'],
+		['@agent-vm/worker-control-contracts', 'packages/worker-control-contracts/package.json'],
+	] as const)('rejects removed Worker package manifest %s', (removedPackageName, filePath) => {
+		const findings = auditManagedVmBoundaries([
+			...validSources,
+			{ content: JSON.stringify({ name: removedPackageName }), filePath },
+		]);
+
+		expect(findings.map((finding) => finding.reason)).toContain(
+			`active removed package name '${removedPackageName}' is forbidden`,
+		);
+	});
+
+	it.each([
+		['@agent-vm/agent-vm-worker', 'removed Worker dependency'],
+		['@agent-vm/worker-gateway', 'removed Worker dependency'],
+		['@agent-vm/worker-control-contracts', 'removed Worker dependency'],
+		['@openai/codex-sdk', 'removed Codex SDK dependency'],
+		['@openai/codex', 'removed Codex CLI dependency'],
+		['@openai/codex-darwin-arm64', 'removed Codex platform dependency'],
+		['@openai/codex-darwin-x64', 'removed Codex platform dependency'],
+		['@openai/codex-linux-arm64', 'removed Codex platform dependency'],
+		['@openai/codex-linux-x64', 'removed Codex platform dependency'],
+		['@openai/codex-win32-arm64', 'removed Codex platform dependency'],
+		['@openai/codex-win32-x64', 'removed Codex platform dependency'],
+	] as const)('rejects %s as a %s', (removedPackageName) => {
+		const findings = auditManagedVmBoundaries(
+			validSources.map((source) =>
+				source.filePath === 'packages/agent-vm/package.json'
+					? {
+							...source,
+							content: JSON.stringify({
+								dependencies: {
+									'@agent-vm/gondolin-vm-adapter': 'workspace:*',
+									[removedPackageName]: '1.2.3',
+								},
+								name: '@agent-vm/agent-vm',
+							}),
+						}
+					: source,
+			),
+		);
+
+		expect(findings.map((finding) => finding.reason)).toContain(
+			`active removed package name '${removedPackageName}' is forbidden`,
+		);
+	});
+
+	it('accepts generic worker-thread production code', () => {
+		expect(
+			auditManagedVmBoundaries([
+				...validSources,
+				{
+					content: "import { Worker } from 'node:worker_threads';",
+					filePath: 'packages/agent-vm/src/controller/background-thread.ts',
+				},
+			]),
+		).toEqual([]);
 	});
 
 	it('rejects old package names and non-adapter Gondolin SDK imports', () => {

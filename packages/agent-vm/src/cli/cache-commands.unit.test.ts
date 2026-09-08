@@ -32,21 +32,44 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 			storageRootDir,
 			host: { controllerPort: 18800, projectNamespace: 'cache-command-test' },
 			imageProfiles: {
-				gateways: { worker: { type: 'worker', buildConfig: buildConfigPath } },
+				gateways: { hermes: { type: 'hermes', buildConfig: buildConfigPath } },
 				toolVms: { default: { type: 'toolVm', buildConfig: buildConfigPath } },
 			},
 			zones: [
 				{
-					id: 'worker',
+					id: 'hermes',
 					gateway: {
-						type: 'worker',
-						imageProfile: 'worker',
-						config: path.join(root, 'worker.jsonc'),
+						type: 'hermes',
+						imageProfile: 'hermes',
+						config: '/fixture-config/hermes.yaml',
 						cpus: 1,
 						memory: '1G',
 						port: 18791,
+						profileSecretProjectionsByAgent: {
+							main: {
+								API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+								DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+							},
+						},
+						profilesByAgent: { main: 'main' },
 					},
-					secrets: {},
+					agents: [{ id: 'main' }],
+					agentToolVmProfiles: {},
+					defaultToolVmProfile: 'standard',
+					secrets: {
+						API_SERVER_KEY_MAIN: {
+							audience: 'gateway',
+							envVar: 'API_SERVER_KEY_MAIN',
+							injection: 'env',
+							source: 'environment',
+						},
+						DISCORD_BOT_TOKEN_MAIN: {
+							audience: 'gateway',
+							envVar: 'DISCORD_BOT_TOKEN_MAIN',
+							injection: 'env',
+							source: 'environment',
+						},
+					},
 					egressHosts: [{ audience: 'gateway', host: 'example.com' }],
 				},
 			],

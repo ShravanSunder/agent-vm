@@ -43,9 +43,7 @@ async function readPathStatus(filePath: string): Promise<FileSystemEntryStatus |
 
 function requireHermesProfileNames(zone: GatewayZoneConfig): readonly string[] {
 	if (zone.gateway.type !== 'hermes') {
-		throw new Error(
-			`Hermes profile materialization cannot prepare gateway type '${zone.gateway.type}'.`,
-		);
+		throw new Error('Hermes profile materialization cannot prepare a non-Hermes gateway.');
 	}
 
 	const profilesByAgent: unknown = zone.gateway.profilesByAgent;

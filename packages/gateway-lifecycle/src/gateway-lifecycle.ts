@@ -2,7 +2,6 @@ import type { MediatedSecretSpec, SecretResolver } from '@agent-vm/secret-manage
 
 import type { EgressHostConfig, VmAudience } from './audience.js';
 import type { GatewayControlPrivateEnvironmentName } from './gateway-control-private-environment.js';
-import type { GatewayProcessSpec } from './gateway-process-spec.js';
 import type { GatewayType } from './gateway-runtime-contract.js';
 import type { GatewayVmRequirements } from './gateway-vm-spec.js';
 import type { ManagedFrameworkServiceBootMetadata } from './managed-gateway-boot-contract.js';
@@ -77,11 +76,7 @@ interface HermesGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
 	readonly profilesByAgent: Readonly<Record<string, string>>;
 }
 
-interface WorkerGatewayZoneGatewayConfig extends GatewayZoneBaseGatewayConfig {
-	readonly type: 'worker';
-}
-
-type GatewayZoneGatewayConfig = HermesGatewayZoneGatewayConfig | WorkerGatewayZoneGatewayConfig;
+type GatewayZoneGatewayConfig = HermesGatewayZoneGatewayConfig;
 
 interface OnePasswordSecretSourceConfig {
 	readonly source: '1password';
@@ -307,17 +302,4 @@ export interface ManagedGatewayLifecycle extends GatewayLifecycleBase {
 	): Promise<ManagedFrameworkServiceBootInputs>;
 }
 
-export interface DirectProcessGatewayLifecycle extends GatewayLifecycleBase {
-	readonly executionModel: 'direct-process';
-
-	/**
-	 * Build the direct-process spec retained only by standalone Worker.
-	 * Pure data assembly — no side effects.
-	 */
-	buildProcessSpec(
-		zone: GatewayZoneConfig,
-		resolvedSecrets: Record<string, string>,
-	): GatewayProcessSpec;
-}
-
-export type GatewayLifecycle = ManagedGatewayLifecycle | DirectProcessGatewayLifecycle;
+export type GatewayLifecycle = ManagedGatewayLifecycle;

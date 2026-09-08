@@ -69,11 +69,6 @@ export async function runSshCommand(options: RunSshCommandOptions): Promise<void
 	});
 	const zone = requireZone(options.systemConfig, options.zoneId);
 	const lifecycle = loadGatewayLifecycle(zone.gateway.type);
-	if (lifecycle.executionModel !== 'managed-gateway') {
-		throw new Error(
-			`controller ssh is not implemented for gateway type '${zone.gateway.type}'; use the Worker task APIs.`,
-		);
-	}
 	const interactiveSshSession = lifecycle.interactiveSsh.buildSession();
 	const adminToken = await resolveZoneAdminToken({
 		dependencies: options.dependencies,
