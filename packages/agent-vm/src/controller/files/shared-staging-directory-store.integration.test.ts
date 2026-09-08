@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -36,6 +36,35 @@ async function fixture(): Promise<{
 }
 
 describe('shared staging owned directories and real cleanup', () => {
+	it.each(['.', 'producer', 'receiver', 'private'])(
+		'refuses an existing %s symlink during initialization without following or deleting it',
+		async (selectedDirectory) => {
+			// Arrange
+			const root = await mkdtemp(path.join(os.tmpdir(), 'shared-staging-init-symlink-'));
+			ownedRoots.push(root);
+			const stagingRoot = path.join(root, 'staging');
+			const target = path.join(root, 'unrelated');
+			await mkdir(target);
+			await writeFile(path.join(target, 'sentinel'), 'keep');
+			if (selectedDirectory !== '.') await mkdir(stagingRoot);
+			await symlink(target, path.join(stagingRoot, selectedDirectory));
+			// Act / Assert
+			await expect(
+				createSharedStagingDirectoryStore({
+					root: stagingRoot,
+					now: () => 0,
+					retention: createOperationFileRetentionBudget().forOwner({
+						agentId: 'sun',
+						zoneId: 'zone',
+						ownerId: 'run',
+					}),
+				}),
+			).rejects.toMatchObject({ reason: 'invalid-path' });
+			expect(await readdir(target)).toEqual(['sentinel']);
+			expect(await readFile(path.join(target, 'sentinel'), 'utf8')).toBe('keep');
+		},
+	);
+
 	it('retires exact producer and receiver roots without touching another generation', async () => {
 		// Arrange
 		const { store } = await fixture();

@@ -75,13 +75,19 @@ export function createControllerSharedStaging(props: {
 				})();
 				stores.set(key, store);
 			}
-			return await store;
+			try {
+				return await store;
+			} catch (error) {
+				// A transient disk failure must not become this agent's permanent runtime state.
+				if (stores.get(key) === store) stores.delete(key);
+				throw error;
+			}
 		},
 		reapExpired: async () => {
-			const results = await Promise.all(
+			const results = await Promise.allSettled(
 				[...stores.values()].map(async (store) => await (await store).reapExpired()),
 			);
-			if (results.some((result) => result.pending > 0))
+			if (results.some((result) => result.status === 'rejected' || result.value.pending > 0))
 				throw new Error('Shared staging cleanup remains pending.');
 		},
 	};

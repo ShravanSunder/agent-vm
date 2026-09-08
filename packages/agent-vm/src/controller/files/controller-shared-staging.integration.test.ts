@@ -1,4 +1,16 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	realpath,
+	rm,
+	symlink,
+	unlink,
+	writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,6 +30,64 @@ afterEach(async () => {
 });
 
 describe('controller run staging recovery', () => {
+	it('retries failed initialization without poisoning the registry or reaper', async () => {
+		// Arrange
+		const root = await mkdtemp(path.join(os.tmpdir(), 'controller-staging-retry-'));
+		roots.push(root);
+		const blockedPath = path.join(root, 'shared-staging');
+		await writeFile(blockedPath, 'temporary obstruction');
+		const staging = createControllerSharedStaging({
+			controllerRuntimeDir: root,
+			controllerEpoch: 'run',
+			retentionBudget: createOperationFileRetentionBudget(),
+			now: () => 0,
+		});
+		// Act
+		await expect(staging.getStore('zone', 'sun')).rejects.toMatchObject({ code: 'ENOTDIR' });
+		await unlink(blockedPath);
+		// Assert
+		await expect(staging.reapExpired()).resolves.toBeUndefined();
+		const [first, second] = await Promise.all([
+			staging.getStore('zone', 'sun'),
+			staging.getStore('zone', 'sun'),
+		]);
+		expect(second).toBe(first);
+		await expect(first.prepareProducerRoot('producer')).resolves.toEqual(expect.any(String));
+	});
+
+	it('resumes only directory initialization after a partially created agent tree fails', async () => {
+		// Arrange: simulate the partial tree left by an interrupted initialization.
+		const root = await mkdtemp(path.join(os.tmpdir(), 'controller-staging-partial-'));
+		roots.push(root);
+		const agentRoot = path.join(
+			root,
+			'shared-staging',
+			...['zone', 'run', 'sun'].map((identity) =>
+				createHash('sha256').update(identity).digest('hex'),
+			),
+		);
+		await mkdir(path.join(agentRoot, 'producer'), { recursive: true, mode: 0o700 });
+		await chmod(agentRoot, 0o500);
+		const staging = createControllerSharedStaging({
+			controllerRuntimeDir: root,
+			controllerEpoch: 'run',
+			retentionBudget: createOperationFileRetentionBudget(),
+			now: () => 0,
+		});
+		try {
+			// Act / Assert
+			await expect(staging.getStore('zone', 'sun')).rejects.toMatchObject({ code: 'EACCES' });
+			await chmod(agentRoot, 0o700);
+			const store = await staging.getStore('zone', 'sun');
+			await expect(store.prepareReceiverRoot('receiver')).resolves.toBe(
+				path.join(await realpath(agentRoot), 'receiver', 'receiver'),
+			);
+			expect((await readdir(agentRoot)).sort()).toEqual(['private', 'producer', 'receiver']);
+		} finally {
+			await chmod(agentRoot, 0o700);
+		}
+	});
+
 	it('cleans a contained zone across runs while preserving other zones and ordinary runtime files', async () => {
 		// Arrange
 		const root = await mkdtemp(path.join(os.tmpdir(), 'controller-staging-recovery-'));

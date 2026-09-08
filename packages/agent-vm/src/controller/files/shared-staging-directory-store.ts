@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ToolVmWorkFileBinding } from './current-tool-vm-work-files.js';
@@ -87,6 +87,18 @@ function requireDirectoryId(value: string): string {
 	return value;
 }
 
+/** Only structural directories may survive an initialization retry; operations stay exclusive. */
+async function ensureStagingDirectory(directory: string): Promise<void> {
+	try {
+		await mkdir(directory, { mode: 0o700 });
+	} catch (error) {
+		if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+		const status = await lstat(directory);
+		if (!status.isDirectory() || status.isSymbolicLink())
+			throw new OperationFolderAccessError('invalid-path');
+	}
+}
+
 /** One agent/run's owned host subtree. Startup recovery removes old roots after VM containment. */
 export async function createSharedStagingDirectoryStore(props: {
 	readonly root: string;
@@ -95,16 +107,20 @@ export async function createSharedStagingDirectoryStore(props: {
 }): Promise<SharedStagingDirectoryStore> {
 	if (!path.isAbsolute(props.root) || path.parse(props.root).root === props.root)
 		throw new OperationFolderAccessError('invalid-path');
-	await mkdir(props.root, { mode: 0o700 });
+	await ensureStagingDirectory(props.root);
 	const root = await realpath(props.root);
 	const producerRoot = path.join(root, 'producer');
 	const receiverRoot = path.join(root, 'receiver');
 	const privateRoot = path.join(root, 'private');
-	await Promise.all(
+	// Settle every mkdir before permitting a retry of a partially initialized tree.
+	const initialized = await Promise.allSettled(
 		[producerRoot, receiverRoot, privateRoot].map(
-			async (directory) => await mkdir(directory, { mode: 0o700 }),
+			async (directory) => await ensureStagingDirectory(directory),
 		),
 	);
+	for (const result of initialized) {
+		if (result.status === 'rejected') throw result.reason;
+	}
 	const operations = new Map<string, PreparedOperation>();
 	const producers = new Map<string, PreparedOwnedRoot>();
 	const receivers = new Map<string, PreparedOwnedRoot>();

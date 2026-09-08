@@ -62,20 +62,26 @@ describeLiveFolderGuards('operation folder guards on real Linux VM rootfs', () =
 		'device',
 	])('rejects %s without emitting source bytes, then remains usable', async (selectedPath) => {
 		// Arrange: this invokes the real fixed reader through the neutral VM adapter.
-		const files = createOperationFolderGuestAccess({
-			vm: fixture.vm,
-			root: `${proofRoot}/work`,
-			program: await loadOperationFolderGuestProgram(),
-			pythonExecutable: fileRelayPythonExecutable,
-			signal: AbortSignal.timeout(5_000),
-		});
+		const program = await loadOperationFolderGuestProgram();
+		// Each invocation gets its own deadline; the recovery read must not inherit time
+		// already spent starting the separate rejection probe on an emulated CI guest.
+		const readOperationFile = (relativePath: string): AsyncIterable<Uint8Array> =>
+			createOperationFolderGuestAccess({
+				vm: fixture.vm,
+				root: `${proofRoot}/work`,
+				program,
+				pythonExecutable: fileRelayPythonExecutable,
+				signal: AbortSignal.timeout(5_000),
+			}).read(relativePath);
 		// Act / Assert: a block or timeout is not accepted as successful rejection.
-		await expect(files.read(selectedPath)[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+		await expect(
+			readOperationFile(selectedPath)[Symbol.asyncIterator]().next(),
+		).rejects.toMatchObject({
 			name: 'Error',
 			reason: expect.stringMatching(/^(invalid-path|integrity-mismatch)$/u),
 		});
 		const received: number[] = [];
-		for await (const chunk of files.read('regular')) received.push(...chunk);
+		for await (const chunk of readOperationFile('regular')) received.push(...chunk);
 		expect(received).toEqual([0, 255, 128, 1]);
 		const sentinel = await fixture.vm.exec(
 			[
