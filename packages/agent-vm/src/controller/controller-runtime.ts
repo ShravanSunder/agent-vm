@@ -1382,12 +1382,9 @@ async function startControllerRuntimeWithOwnershipLock(
 							? preflightDependencies
 							: {
 									...preflightDependencies,
-									checkObservabilityStackReadiness:
-										dependencies.checkObservabilityStackReadiness,
+									checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
 								};
-					return await (
-						dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault
-					)(
+					return await (dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault)(
 						{
 							...preflightOptions,
 							controlSession: { controllerEpoch },
@@ -1404,9 +1401,7 @@ async function startControllerRuntimeWithOwnershipLock(
 				restartGatewayZone: async (zoneId, startOptions) => {
 					const approvalLedger = approvalLedgersByZoneId.get(zoneId);
 					if (approvalLedger === undefined) {
-						throw new Error(
-							`Managed Gateway zone '${zoneId}' does not have an approval ledger.`,
-						);
+						throw new Error(`Managed Gateway zone '${zoneId}' does not have an approval ledger.`);
 					}
 					const startGatewayZoneOptions = {
 						controlSession: { controllerEpoch },
@@ -1448,9 +1443,7 @@ async function startControllerRuntimeWithOwnershipLock(
 						...(startOptions?.observabilityStartupCheck
 							? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
 							: {}),
-						...(startOptions?.prebuiltImage
-							? { prebuiltImage: startOptions.prebuiltImage }
-							: {}),
+						...(startOptions?.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
 						runTask: runTaskStep,
 						gatewayControlControllerExecutions,
 						gatewayControlApprovalLedger: approvalLedger,
@@ -1481,8 +1474,7 @@ async function startControllerRuntimeWithOwnershipLock(
 								{
 									gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
 									managedVmFactory: dependencies.managedVmFactory,
-									managedVmExactProcessTermination:
-										dependencies.managedVmExactProcessTermination,
+									managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
 									managedVmImages: dependencies.managedVmImages,
 									managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
 								},
@@ -1517,8 +1509,7 @@ async function startControllerRuntimeWithOwnershipLock(
 						}),
 					};
 				},
-				runtimeRecordTarget: controllerGatewayRecordTargetsFor(zone.id)
-					.managedGatewayRuntimeRecord,
+				runtimeRecordTarget: controllerGatewayRecordTargetsFor(zone.id).managedGatewayRuntimeRecord,
 				secretResolver,
 				systemConfig: options.systemConfig,
 				zone,
