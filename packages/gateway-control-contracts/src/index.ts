@@ -700,9 +700,15 @@ export const GatewayControlToolPortalControllerExecutionResultSchema = z.discrim
 
 export const GatewayControlActiveOperationIdSchema = z.string().uuid();
 
+export const GatewayControlOperationCancelAdapterEvidenceSchema =
+	GatewayControlCallerContextRegisterPayloadSchema.shape.adapterEvidence
+		.extend({ purpose: z.literal('tool_portal_controller_execution') })
+		.strict();
+
 export const GatewayInitiatedOperationCancelPayloadSchema = z
 	.object({
 		activeOperationId: GatewayControlActiveOperationIdSchema,
+		adapterEvidence: GatewayControlOperationCancelAdapterEvidenceSchema,
 		initiatedBy: z.literal('gateway'),
 		reason: z.enum(['caller_cancelled', 'gateway_shutdown', 'operation_failed']),
 	})
@@ -1549,6 +1555,9 @@ export type GatewayControlCallerContextAgentAuthority = z.infer<
 >;
 export type GatewayControlCallerContextRegisterPayload = z.infer<
 	typeof GatewayControlCallerContextRegisterPayloadSchema
+>;
+export type GatewayControlOperationCancelAdapterEvidence = z.infer<
+	typeof GatewayControlOperationCancelAdapterEvidenceSchema
 >;
 export type GatewayControlLeaseCreateIntentPayload = z.infer<
 	typeof GatewayControlLeaseCreateIntentPayloadSchema

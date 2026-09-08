@@ -52,6 +52,8 @@ class FakeProcessChannel implements StrictToolVmSshProcessChannel {
 	throwOnWrite = false;
 	onCancellation: (() => void) | undefined;
 	readonly terminalSizes: { readonly columns: number; readonly rows: number }[] = [];
+	readonly pausedOutputChannels: Array<'stderr' | 'stdout'> = [];
+	readonly resumedOutputChannels: Array<'stderr' | 'stdout'> = [];
 
 	requestCancellation(): void {
 		this.cancelRequestCount += 1;
@@ -66,6 +68,14 @@ class FakeProcessChannel implements StrictToolVmSshProcessChannel {
 
 	resizeTerminal(size: { readonly columns: number; readonly rows: number }): void {
 		this.terminalSizes.push(size);
+	}
+
+	pauseOutput(channel: 'stderr' | 'stdout'): void {
+		this.pausedOutputChannels.push(channel);
+	}
+
+	resumeOutput(channel: 'stderr' | 'stdout'): void {
+		this.resumedOutputChannels.push(channel);
 	}
 
 	async write(bytes: Uint8Array): Promise<void> {
@@ -452,30 +462,30 @@ describe('strict Tool VM SSH process runtime', () => {
 		fixture.getOpenRecord().request.onStdout(Buffer.from('abcd'));
 		fixture.getOpenRecord().request.onStderr(Buffer.from('err'));
 
-		const first = fixture.runtime.read({ maxBytes: 2, stream: stdout });
+		const first = await fixture.runtime.read({ maxBytes: 2, stream: stdout });
 		expect(() => SandboxStreamReadResultSchema.parse(first)).not.toThrow();
 		expect(first).toMatchObject({
 			chunk: { byteLength: 2, contentBase64: 'YWI=' },
 			eof: false,
 			kind: 'read',
 		});
-		expect(() =>
+		await expect(
 			fixture.runtime.read({ cursor: first.nextCursor, maxBytes: 2, stream: stderr }),
-		).toThrow(/channel-mismatched/i);
-		const second = fixture.runtime.read({
+		).rejects.toThrow(/channel-mismatched/i);
+		const second = await fixture.runtime.read({
 			cursor: first.nextCursor,
 			maxBytes: 2,
 			stream: stdout,
 		});
-		const third = fixture.runtime.read({ maxBytes: 1, stream: stdout });
-		expect(() =>
+		const third = await fixture.runtime.read({ maxBytes: 1, stream: stdout });
+		await expect(
 			fixture.runtime.read({ cursor: first.nextCursor, maxBytes: 2, stream: stdout }),
-		).toThrow(/cursor/i);
+		).rejects.toThrow(/cursor/i);
 		expect(second.chunk.contentBase64).toBe('Y2Q=');
 		expect(third.kind).toBe('read');
 
 		fixture.getOpenRecord().request.onTerminal({ exitCode: 0, kind: 'exited' });
-		const end = fixture.runtime.read({
+		const end = await fixture.runtime.read({
 			cursor: second.nextCursor,
 			maxBytes: 2,
 			stream: stdout,
@@ -638,6 +648,222 @@ describe('strict Tool VM SSH process runtime', () => {
 		fixture.getOpenRecord().channel.throwOnWrite = false;
 		await expect(fixture.runtime.write(request)).rejects.toThrow(/retry is forbidden/i);
 		expect(fixture.getOpenRecord().channel.writes).toHaveLength(1);
+	});
+
+	it('advances the portal relay write window past 64 records without replaying evicted sequences', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdin = streamFor(started.streams, 'stdin');
+
+		for (let sequence = 0; sequence < 70; sequence += 1) {
+			const bytes = Buffer.from([sequence]);
+			// oxlint-disable-next-line no-await-in-loop -- Relay acknowledgment and sequence admission are intentionally serialized.
+			await fixture.runtime.write({
+				acknowledgedThrough: sequence - 1,
+				content: binaryChunk(bytes),
+				contentDigest: digest(bytes),
+				sequence,
+				stream: stdin,
+			});
+		}
+
+		expect(fixture.getOpenRecord().channel.writes).toHaveLength(70);
+		const evictedBytes = Buffer.from([0]);
+		await expect(
+			fixture.runtime.write({
+				acknowledgedThrough: 69,
+				content: binaryChunk(evictedBytes),
+				contentDigest: digest(evictedBytes),
+				sequence: 0,
+				stream: stdin,
+			}),
+		).rejects.toThrow(/evicted/i);
+		expect(fixture.getOpenRecord().channel.writes).toHaveLength(70);
+	});
+
+	it('does not advance relay acknowledgments from submitted or future sequences', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdin = streamFor(started.streams, 'stdin');
+		const byte = Buffer.from('x');
+		const request = {
+			acknowledgedThrough: -1,
+			content: binaryChunk(byte),
+			contentDigest: digest(byte),
+			sequence: 0,
+			stream: stdin,
+		};
+
+		await fixture.runtime.write(request);
+		await expect(fixture.runtime.write({ ...request, acknowledgedThrough: 1 })).rejects.toThrow(
+			/future acknowledgment/i,
+		);
+		await expect(
+			fixture.runtime.write({ ...request, acknowledgedThrough: -1, sequence: 2 }),
+		).rejects.toThrow(/next expected sequence/i);
+		expect(fixture.getOpenRecord().channel.writes).toHaveLength(1);
+	});
+
+	it('enforces the fixed 64 MiB relay stdin transfer total independently of standard limits', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdin = streamFor(started.streams, 'stdin');
+		const chunk = Buffer.alloc(64 * 1_024, 1);
+		const chunkRequest = {
+			content: binaryChunk(chunk),
+			contentDigest: digest(chunk),
+			stream: stdin,
+		};
+
+		for (let sequence = 0; sequence < 1_024; sequence += 1) {
+			// oxlint-disable-next-line no-await-in-loop -- The cumulative limit proof requires the single-writer acknowledgment order.
+			await fixture.runtime.write({
+				...chunkRequest,
+				acknowledgedThrough: sequence - 1,
+				sequence,
+			});
+		}
+		const overflow = Buffer.from('x');
+		await expect(
+			fixture.runtime.write({
+				acknowledgedThrough: 1_023,
+				content: binaryChunk(overflow),
+				contentDigest: digest(overflow),
+				sequence: 1_024,
+				stream: stdin,
+			}),
+		).rejects.toThrow(/written byte limit/i);
+		expect(fixture.getOpenRecord().channel.writes).toHaveLength(1_024);
+	});
+
+	it('uses consuming relay cursors and waits without interpreting timeout as EOF', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdout = streamFor(started.streams, 'stdout');
+		const pendingRead = fixture.runtime.read({ maxBytes: 2, stream: stdout, waitMs: 50 });
+		fixture.expireFirst(50);
+		await expect(pendingRead).resolves.toMatchObject({
+			chunk: { byteLength: 0 },
+			eof: false,
+		});
+
+		fixture.getOpenRecord().request.onStdout(Buffer.from('abcd'));
+		const first = await fixture.runtime.read({ maxBytes: 2, stream: stdout, waitMs: 0 });
+		const repeated = await fixture.runtime.read({ maxBytes: 2, stream: stdout, waitMs: 0 });
+		expect(first.chunk.contentBase64).toBe('YWI=');
+		expect(repeated).toEqual(first);
+		const second = await fixture.runtime.read({
+			cursor: first.nextCursor,
+			maxBytes: 2,
+			stream: stdout,
+			waitMs: 0,
+		});
+		expect(second.chunk.contentBase64).toBe('Y2Q=');
+		await expect(
+			fixture.runtime.read({ cursor: 'forged', maxBytes: 2, stream: stdout, waitMs: 0 }),
+		).rejects.toThrow(/forged|cursor/i);
+	});
+
+	it('rejects a waiting relay read when process cancellation starts', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdout = streamFor(started.streams, 'stdout');
+		const pendingRead = fixture.runtime.read({ maxBytes: 2, stream: stdout, waitMs: 50 });
+
+		fixture.runtime.cancel({ process: started.process });
+
+		await expect(pendingRead).rejects.toThrow(/cancelled/i);
+	});
+
+	it('pauses and resumes only the saturated relay output channel and fails closed at 4 MiB', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdout = streamFor(started.streams, 'stdout');
+		const outputChunk = Buffer.alloc(64 * 1_024, 1);
+		for (let index = 0; index < 48; index += 1) {
+			fixture.getOpenRecord().request.onStdout(outputChunk);
+		}
+		expect(fixture.getOpenRecord().channel.pausedOutputChannels).toEqual(['stdout']);
+		expect(fixture.getOpenRecord().channel.pausedOutputChannels).not.toContain('stderr');
+
+		let cursor: string | undefined;
+		for (let index = 0; index < 34; index += 1) {
+			// oxlint-disable-next-line no-await-in-loop -- Each consuming read acknowledges the cursor returned by its predecessor.
+			const read = await fixture.runtime.read({ cursor, maxBytes: 64 * 1_024, stream: stdout });
+			cursor = read.nextCursor;
+		}
+		expect(fixture.getOpenRecord().channel.resumedOutputChannels).toEqual(['stdout']);
+
+		for (let index = 0; index < 50; index += 1) {
+			fixture.getOpenRecord().request.onStdout(outputChunk);
+		}
+		expect(fixture.runtime.status({ process: started.process })).toMatchObject({
+			kind: 'terminal',
+			outcome: { kind: 'ambiguous' },
+		});
+	});
+
+	it('enforces one shared 4 MiB hard cap across relay stdout and stderr', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const twoMiB = Buffer.alloc(2 * 1_024 * 1_024, 1);
+
+		fixture.getOpenRecord().request.onStdout(twoMiB);
+		fixture.getOpenRecord().request.onStderr(twoMiB);
+		expect(fixture.runtime.status({ process: started.process })).toMatchObject({ kind: 'running' });
+		fixture.getOpenRecord().request.onStderr(Buffer.from('overflow'));
+
+		expect(fixture.getOpenRecord().channel.cancelRequestCount).toBe(1);
+		expect(fixture.runtime.status({ process: started.process })).toMatchObject({
+			kind: 'terminal',
+			outcome: { kind: 'ambiguous' },
+		});
+	});
+
+	it('closes relay output after the fixed 64 MiB cumulative transfer total', async () => {
+		const fixture = createRuntimeFixture();
+		const started = await fixture.runtime.start({
+			...defaultStartRequest,
+			ioProfile: 'portal-relay',
+		});
+		const stdout = streamFor(started.streams, 'stdout');
+		const outputChunk = Buffer.alloc(64 * 1_024, 1);
+		let cursor: string | undefined;
+
+		for (let index = 0; index < 1_024; index += 1) {
+			fixture.getOpenRecord().request.onStdout(outputChunk);
+			// oxlint-disable-next-line no-await-in-loop -- Each consuming read releases the preceding bounded output chunk.
+			const read = await fixture.runtime.read({ cursor, maxBytes: 64 * 1_024, stream: stdout });
+			cursor = read.nextCursor;
+		}
+		fixture.getOpenRecord().request.onStdout(Buffer.from('overflow'));
+
+		expect(fixture.getOpenRecord().channel.cancelRequestCount).toBe(1);
+		expect(fixture.runtime.status({ process: started.process })).toMatchObject({
+			kind: 'terminal',
+			outcome: { kind: 'ambiguous' },
+		});
 	});
 
 	it('retains bounded terminal tombstones and evicts the oldest to free process capacity', async () => {

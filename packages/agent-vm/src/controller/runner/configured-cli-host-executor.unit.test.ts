@@ -207,7 +207,48 @@ describe('configured CLI controller-host executor', () => {
 			new ConfiguredControllerExecutionError('cancelled', 'Controller is shutting down.'),
 		);
 
-		await expect(execution).rejects.toMatchObject({ code: 'cancelled' });
 		expect(fixture.child.kill).toHaveBeenCalledWith('SIGKILL');
+		let executionSettled = false;
+		void execution.then(
+			() => {
+				executionSettled = true;
+			},
+			() => {
+				executionSettled = true;
+			},
+		);
+		await Promise.resolve();
+		expect(executionSettled).toBe(false);
+		fixture.child.emit('close', null, 'SIGKILL');
+		await expect(execution).rejects.toMatchObject({ code: 'cancelled' });
+	});
+
+	it('does not classify a post-spawn child error as not dispatched', async () => {
+		process.env.AGENT_VM_HOST_EXECUTOR_TEST_VALUE = 'visible';
+		const fixture = createFakeChildProcess();
+		spawnMock.mockReturnValue(fixture.child);
+		const execution = executeConfiguredCliOnControllerHost({
+			...authorizationProps,
+			input: { argv: ['inspect'], reason: 'post-spawn error proof' },
+			operation,
+		});
+		queueMicrotask(() => {
+			fixture.child.emit('spawn');
+			fixture.child.emit('error', new Error('child transport failed'));
+		});
+		await Promise.resolve();
+		let executionSettled = false;
+		void execution.then(
+			() => {
+				executionSettled = true;
+			},
+			() => {
+				executionSettled = true;
+			},
+		);
+		await Promise.resolve();
+		expect(executionSettled).toBe(false);
+		fixture.child.emit('close', null);
+		await expect(execution).rejects.toMatchObject({ code: 'execution_failed' });
 	});
 });

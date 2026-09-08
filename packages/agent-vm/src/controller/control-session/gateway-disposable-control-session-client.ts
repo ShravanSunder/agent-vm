@@ -399,6 +399,39 @@ function buildGatewayAdmissionFailureResponse(options: {
 	});
 }
 
+function buildGatewayOperationCancellationResponse(options: {
+	readonly activeOperationId: string;
+	readonly responseToMessageId: string;
+	readonly result:
+		| { readonly status: 'cancelled' | 'already_cancelled' }
+		| { readonly status: 'not_found' | 'not_owned' };
+}): GatewayControlRpcMessage {
+	return GatewayControlRpcMessageSchema.parse({
+		kind: 'command_result',
+		operation: 'operation_cancel',
+		payload:
+			options.result.status === 'cancelled' || options.result.status === 'already_cancelled'
+				? {
+						activeOperationId: options.activeOperationId,
+						responseToMessageId: options.responseToMessageId,
+						result: 'ok',
+					}
+				: {
+						activeOperationId: options.activeOperationId,
+						error: {
+							errorClass:
+								options.result.status === 'not_owned'
+									? 'active_operation_not_owned'
+									: 'active_operation_not_found',
+							retryable: false,
+							safeMessage: 'active operation is not owned by this accepted session',
+						},
+						responseToMessageId: options.responseToMessageId,
+						result: 'rejected',
+					},
+	});
+}
+
 function buildGatewayCallerContextRejectionResponse(options: {
 	readonly leaseRejectionReason: GatewayControlLeaseRejectionReason;
 	readonly message: Extract<GatewayControlRpcMessage, { readonly kind: 'command' }>;
@@ -575,6 +608,7 @@ export function createGatewayDisposableControlSessionClient(
 			} as const;
 			return {
 				admission: closedAdmission,
+				cleanup: Promise.resolve(),
 				completion: Promise.resolve(closedAdmission),
 			};
 		}
@@ -1096,8 +1130,35 @@ export function createGatewayDisposableControlSessionClient(
 							...(classification.coalesceKey === undefined
 								? {}
 								: { coalesceKey: classification.coalesceKey }),
-							execute: async () => {
+							execute: async ({ cancellationSignal }) => {
 								if (currentAttempt !== attempt || !attempt.accepted) {
+									return;
+								}
+								if (
+									message.kind === 'command' &&
+									message.operation === 'operation_cancel' &&
+									message.payload.initiatedBy === 'gateway' &&
+									options.processAdmissionCoordinator !== undefined &&
+									processAdmissionRegistration !== undefined &&
+									stablePrincipal !== undefined
+								) {
+									const cancellationResult = options.processAdmissionCoordinator.cancelOperation({
+										activeOperationId: message.payload.activeOperationId,
+										attachmentGeneration: attempt.attachmentGeneration,
+										connectionId: envelope.connectionId,
+										registration: processAdmissionRegistration,
+										sessionId: envelope.sessionId,
+										stablePrincipal,
+									});
+									await sendGatewayCommandResponse({
+										attempt,
+										requestEnvelope: envelope,
+										responsePayload: buildGatewayOperationCancellationResponse({
+											activeOperationId: message.payload.activeOperationId,
+											responseToMessageId: envelope.messageId,
+											result: cancellationResult,
+										}),
+									});
 									return;
 								}
 								if (
@@ -1120,6 +1181,7 @@ export function createGatewayDisposableControlSessionClient(
 								});
 								const responsePayload = await options.dispatcher.dispatch({
 									attachmentGeneration: attempt.attachmentGeneration,
+									...(cancellationSignal === undefined ? {} : { cancellationSignal }),
 									envelope,
 									payload: message,
 								});
@@ -1139,6 +1201,22 @@ export function createGatewayDisposableControlSessionClient(
 							id: envelope.messageId,
 							messageClass: classification.messageClass,
 							payload: message,
+							...(message.kind === 'command' &&
+							message.operation === 'tool_portal_controller_execution' &&
+							message.payload.kind === 'configured_cli' &&
+							envelope.commandId !== undefined &&
+							stablePrincipal !== undefined
+								? {
+										cancellableOperation: {
+											activeOperationId: envelope.commandId,
+											attachmentGeneration: attempt.attachmentGeneration,
+											connectionId: envelope.connectionId,
+											sessionId: envelope.sessionId,
+											stablePrincipal,
+										},
+										retainProcessAdmissionUntilCleanup: true,
+									}
+								: {}),
 							...(classification.stablePrincipal === undefined
 								? {}
 								: { stablePrincipal: classification.stablePrincipal }),

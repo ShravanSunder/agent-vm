@@ -130,6 +130,7 @@ const toolPortalScopedStdioTransportParser = map(
 const toolPortalTransportParser = or(
 	toolPortalHttpTransportParser,
 	toolPortalScopedStdioTransportParser,
+	object({ kind: constant('managed') }),
 );
 
 function createInputJsonOption(): Parser<'sync', z.infer<typeof toolPortalInputJsonSchema>> {

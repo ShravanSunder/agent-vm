@@ -2770,6 +2770,11 @@ describe('gateway control domain handler', () => {
 				operation: 'operation_cancel',
 				payload: {
 					activeOperationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+					adapterEvidence: signCallerContextEvidence({
+						principal: invocationPrincipal,
+						purpose: 'tool_portal_controller_execution',
+						zoneId: 'zone-a',
+					}),
 					initiatedBy: 'gateway',
 					reason: 'caller_cancelled',
 				},

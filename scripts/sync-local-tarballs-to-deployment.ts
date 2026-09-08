@@ -103,6 +103,7 @@ interface ManagedImageOverlay {
 interface RenderToolVmOverlayOptions {
 	readonly existingOverlay: ManagedImageOverlay;
 	readonly plan: BetaTarballSyncPlan;
+	readonly portalSdkWheelFileName?: string;
 }
 
 interface SyncBetaTarballsOptions {
@@ -249,7 +250,9 @@ export function listStaleLocalOverlayFileNames(options: {
 		...(options.additionalCurrentFileNames ?? []),
 	]);
 	return options.existingFileNames.filter(
-		(fileName) => fileName.startsWith('agent-vm-') && !currentOverlayFileNames.has(fileName),
+		(fileName) =>
+			(fileName.startsWith('agent-vm-') || isAgentPortalSdkWheelFileName(fileName)) &&
+			!currentOverlayFileNames.has(fileName),
 	);
 }
 
@@ -271,8 +274,14 @@ function isJsonRecord(value: unknown): value is JsonRecord {
 function isAgentVmLocalCopyEntry(copyEntry: OverlayCopyEntry): boolean {
 	return (
 		copyEntry.from.startsWith('local-agent-vm/agent-vm-') ||
-		copyEntry.to.startsWith('/tmp/agent-vm-')
+		copyEntry.to.startsWith('/tmp/agent-vm-') ||
+		isAgentPortalSdkWheelFileName(path.basename(copyEntry.from)) ||
+		isAgentPortalSdkWheelFileName(path.basename(copyEntry.to))
 	);
+}
+
+function isAgentPortalSdkWheelFileName(fileName: string): boolean {
+	return /^agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(fileName);
 }
 
 function isAgentVmLocalInstallCommand(command: string): boolean {
@@ -368,10 +377,17 @@ function renderLocalPackageCleanupCommand(
 }
 
 export function renderToolVmOverlay(options: RenderToolVmOverlayOptions): ManagedImageOverlay {
-	const copyEntries = renderLocalPackageCopyEntries(
-		options.existingOverlay.copy,
-		options.plan.toolVmPackages,
-	);
+	const copyEntries = [
+		...renderLocalPackageCopyEntries(options.existingOverlay.copy, options.plan.toolVmPackages),
+		...(options.portalSdkWheelFileName === undefined
+			? []
+			: [
+					{
+						from: `local-agent-vm/${options.portalSdkWheelFileName}`,
+						to: `/tmp/${options.portalSdkWheelFileName}`,
+					},
+				]),
+	];
 	const runAfterBase = [
 		...(options.existingOverlay.runAfterBase ?? []).filter(
 			(command) => !isAgentVmLocalInstallCommand(command),
@@ -720,13 +736,29 @@ export async function refreshBetaDeploymentTarballArtifacts(
 	await pruneStaleLocalOverlayFiles({
 		overlayDirectory: toolVmOverlayDirectory,
 		packageEntries: options.plan.toolVmPackages,
+		...(options.hermesImage === undefined
+			? {}
+			: { additionalCurrentFileNames: [options.hermesImage.pythonWheels.agentPortalSdk.fileName] }),
 	});
+	if (options.hermesImage !== undefined) {
+		await cp(
+			options.hermesImage.pythonWheels.agentPortalSdk.sourcePath,
+			path.join(
+				toolVmOverlayDirectory,
+				'local-agent-vm',
+				options.hermesImage.pythonWheels.agentPortalSdk.fileName,
+			),
+		);
+	}
 	const toolVmOverlay = (await readJsonFile(toolVmOverlayPath)) as ManagedImageOverlay;
 	await writeJsonFile(
 		toolVmOverlayPath,
 		renderToolVmOverlay({
 			existingOverlay: toolVmOverlay,
 			plan: options.plan,
+			...(options.hermesImage === undefined
+				? {}
+				: { portalSdkWheelFileName: options.hermesImage.pythonWheels.agentPortalSdk.fileName }),
 		}),
 	);
 	if (options.hermesImage !== undefined) {

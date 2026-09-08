@@ -11,6 +11,7 @@ directory is the deeper map for the Hermes-only controller and runtime.
 | Configure a Hermes managed Gateway | [reference/configuration/system-json.md](reference/configuration/system-json.md) |
 | Understand state, cache, and backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand reusable credentialed CLI runtimes | [architecture/credentialed-runtimes.md](architecture/credentialed-runtimes.md) |
+| Compose Tool Portal calls from Tool VM code | [architecture/tool-vm-portal-composition.md](architecture/tool-vm-portal-composition.md) |
 | Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
 | Review the accepted Gateway Runtime and Tool Portal contract | [specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md](specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md) |
 | Review concrete Hermes and Tool VM storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
@@ -25,6 +26,7 @@ docs/
   architecture/
     overview.md
     credentialed-runtimes.md
+    tool-vm-portal-composition.md
     storage-model.md
     storage-matrix.md
   subsystems/

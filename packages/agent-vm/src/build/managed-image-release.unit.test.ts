@@ -9,6 +9,12 @@ import {
 	type ManagedImageRelease,
 	resolveManagedImageRelease,
 } from './managed-image-dockerfile.js';
+import {
+	managedToolPortalGuide,
+	managedToolPortalGuideFileName,
+	managedToolVmLoginProfile,
+	managedToolVmLoginProfileFileName,
+} from './managed-image-tool-portal-guide.js';
 
 const managedDockerfileForbiddenSecretPattern =
 	/TOKEN|Authorization|\.npmrc|\.netrc|_authToken|Bearer/u;
@@ -18,6 +24,21 @@ function expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile: strin
 }
 
 function expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile: string): void {
+	expect(generatedDockerfile).toContain('uv venv /opt/agent-vm-tools');
+	expect(generatedDockerfile).toContain('agent-vm-agent-portal-sdk==');
+	expect(generatedDockerfile).toContain('/node_modules');
+	expect(generatedDockerfile).toContain(
+		'/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js /pnpm/tool-portal',
+	);
+	expect(generatedDockerfile).not.toContain(
+		'node_modules/.bin/tool-portal /pnpm/tool-portal',
+	);
+	expect(generatedDockerfile).toContain(
+		`COPY ${managedToolPortalGuideFileName} /agent-vm/tool-portal.md`,
+	);
+	expect(generatedDockerfile).toContain(
+		`COPY ${managedToolVmLoginProfileFileName} /etc/profile.d/agent-vm-tools.sh`,
+	);
 	const githubCliKeyringPath = '/usr/share/keyrings/githubcli-archive-keyring.gpg';
 	const githubCliSource = 'https://cli.github.com/packages stable main';
 	const sourceIndex = generatedDockerfile.indexOf(githubCliSource);
@@ -232,6 +253,14 @@ describe('managed image release', () => {
 		});
 
 		const generatedDockerfile = await fs.readFile(result.dockerfilePath, 'utf8');
+		const generatedToolPortalGuide = await fs.readFile(
+			path.join(outputDirectory, managedToolPortalGuideFileName),
+			'utf8',
+		);
+		const generatedToolVmLoginProfile = await fs.readFile(
+			path.join(outputDirectory, managedToolVmLoginProfileFileName),
+			'utf8',
+		);
 		expect(generatedDockerfile).toContain(
 			'RUN rm -rf /scratch && install -d -m 0755 /work /workspace',
 		);
@@ -243,6 +272,17 @@ describe('managed image release', () => {
 		);
 		expect(generatedDockerfile).toContain('RUN pnpm add -g "@agent-vm/mcp-portal@');
 		expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile);
+		expect(generatedToolPortalGuide).toBe(managedToolPortalGuide);
+		expect(generatedToolPortalGuide).toContain('async with connect_tool_portal() as portal:');
+		expect(generatedToolPortalGuide).toContain('const portal = await connectToolPortal();');
+		expect(generatedToolPortalGuide).toContain(
+			'CLI (managed transport is automatic; omit transport flags)',
+		);
+		expect(generatedToolPortalGuide).not.toContain('--transport');
+		expect(generatedToolVmLoginProfile).toBe(managedToolVmLoginProfile);
+		expect(generatedToolVmLoginProfile).toBe(
+			'export PATH=/opt/agent-vm-tools/bin:/pnpm:$PATH\n',
+		);
 		expect(result.plan.mcpPortalPackage).toMatchObject({
 			name: '@agent-vm/mcp-portal',
 			source: 'installed-package',

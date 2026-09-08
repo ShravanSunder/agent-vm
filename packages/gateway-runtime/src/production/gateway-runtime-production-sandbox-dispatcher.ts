@@ -1108,6 +1108,7 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 						...(parsed.environmentVariables === undefined
 							? {}
 							: { environmentVariables: parsed.environmentVariables }),
+						...(parsed.ioProfile === undefined ? {} : { ioProfile: parsed.ioProfile }),
 						maxRuntimeMs: parsed.maxRuntimeMs,
 						retainOutputBytes: parsed.retainOutputBytes,
 					});
@@ -1129,7 +1130,9 @@ export function createGatewayRuntimeProductionSandboxDispatcher(
 						SandboxProcessCancelRequestSchema.parse(request.publicRequest),
 					);
 				case 'sandbox.stream.read':
-					return processRegistry.read(SandboxStreamReadRequestSchema.parse(request.publicRequest));
+					return await processRegistry.read(
+						SandboxStreamReadRequestSchema.parse(request.publicRequest),
+					);
 				case 'sandbox.stream.write':
 					return await processRegistry.write(
 						SandboxStreamWriteRequestSchema.parse(request.publicRequest),

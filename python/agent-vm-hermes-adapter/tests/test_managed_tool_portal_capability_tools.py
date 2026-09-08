@@ -41,6 +41,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import (
     HermesToolCheck,
     HermesToolHandler,
     RegisteredHook,
+    RegisteredMiddleware,
     _ApiRequestErrorHook,
     _OnSessionEndHook,
     _PostApiRequestHook,
@@ -421,6 +422,14 @@ class FakeHermesPluginContext:
     def __init__(self) -> None:
         self.hooks = FakeHookRegistry()
         self.tools: list[RegisteredTool] = []
+        self.middlewares: dict[str, RegisteredMiddleware] = {}
+
+    def register_middleware(
+        self,
+        middleware_name: str,
+        callback: RegisteredMiddleware,
+    ) -> None:
+        self.middlewares[middleware_name] = callback
 
     def register_tool(
         self,
@@ -679,6 +688,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
             tuple(registered_tool.name for registered_tool in context.tools),
             MANAGED_TOOL_PORTAL_TOOL_NAMES,
         )
+        self.assertEqual(set(context.middlewares), {"tool_execution"})
         self.assertEqual(context.toolset_names(), {"tool-portal"})
         for tool_name, schema_id in REQUEST_SCHEMA_ID_BY_TOOL_NAME.items():
             with self.subTest(tool_name=tool_name):

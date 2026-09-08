@@ -30,6 +30,7 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesManagedAdapterConfig,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import RegisteredMiddleware
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     EvictionReason,
     InjectionCacheKey,
@@ -226,7 +227,16 @@ class FakeTerminalToolModule:
 class FakeHermesPluginContext:
     def __init__(self) -> None:
         self.registered_hook_names: list[str] = []
+        self.registered_middleware_names: list[str] = []
         self.registered_tool_names: list[str] = []
+
+    def register_middleware(
+        self,
+        middleware_name: str,
+        callback: RegisteredMiddleware,
+    ) -> None:
+        del callback
+        self.registered_middleware_names.append(middleware_name)
 
     def register_hook(
         self,

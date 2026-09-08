@@ -600,6 +600,25 @@ describe('Gateway runtime Tool Portal projections', () => {
 		expect(fixture.composition.capabilityCore.semanticSnapshot).toEqual(semanticSnapshot);
 	});
 
+	it('propagates private UDS cancellation through the capability core to the backend', async () => {
+		const fixture = composeRecordingProjections();
+		const abortController = new AbortController();
+
+		await fixture.composition.privateUdsProjection.portalOperations.list({
+			publicRequest: PortalListRequestSchema.parse({
+				requests: [{ id: 'list-with-signal', namespaces: ['github'] }],
+			}),
+			signal: abortController.signal,
+			trustedContext: agentATrustedContext,
+		});
+
+		expect(fixture.backendPorts.mcpProvider.invocations[0]?.options).toEqual({
+			signal: abortController.signal,
+			surfaceClass: 'protected_uds',
+			trustedContext: agentATrustedContext,
+		});
+	});
+
 	it('derives protected-UDS artifact authority from trusted context without session fields', async () => {
 		// Arrange
 		const fixture = composeRecordingProjections();

@@ -15,12 +15,21 @@ _ORIENTATION_INTRODUCTION = (
     "Tool Portal exposes profile-authorized capabilities through four operations:"
 )
 _OPERATION_LINES = (
-    "- tool_portal_list: List authorized capabilities and compact summaries.",
-    "- tool_portal_search: Search authorized capabilities by intent.",
-    "- tool_portal_describe: Retrieve exact schemas for selected capabilities.",
-    "- tool_portal_call: Validate and call an authorized capability.",
+    "- tool_portal_list: Discover authorized capabilities.",
+    "- tool_portal_search: Find capabilities by intent.",
+    "- tool_portal_describe: Get exact schemas.",
+    "- tool_portal_call: Validate and call.",
 )
-_WORKFLOW_LINE = "Workflow: list or search, describe the exact capability schema, then call it."
+_COMPOSITION_LINES = (
+    "Tool VM clients: Python connect_tool_portal(), TypeScript connectToolPortal(), "
+    "and the tool-portal CLI.",
+    "They connect automatically in the active foreground invocation; the endpoint expires "
+    "when it ends.",
+    "Inspect and compose results; wait for human approval.",
+    "Transport uncertain? do not replay uncertain effects.",
+    "Guide: /agent-vm/tool-portal.md",
+)
+_WORKFLOW_LINE = "Workflow: discover, describe, call, inspect."
 
 
 def _orientation_child_text(value: str) -> str:
@@ -38,7 +47,7 @@ def _candidate_orientation(
     total_count = len(inventory.namespaces)
     omitted_count = total_count - displayed_count
     sorted_namespaces = tuple(sorted(inventory.namespaces, key=lambda item: item.namespace))
-    lines = [_ORIENTATION_INTRODUCTION, *_OPERATION_LINES]
+    lines = [_ORIENTATION_INTRODUCTION, *_OPERATION_LINES, *_COMPOSITION_LINES]
     lines.append(
         f"Namespace availability for this profile (showing {displayed_count} of {total_count}):"
     )

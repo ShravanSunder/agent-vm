@@ -32,7 +32,7 @@ import {
 	GatewayControlControllerHostProbeArgumentsSchema,
 	GatewayControlToolPortalControllerExecutionPayloadSchema,
 	GatewayControlWorkspaceGitPushArgumentsSchema,
-	gatewayControlRegisteredControllerExecutionActionIds,
+	type gatewayControlRegisteredControllerExecutionActionIds,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
@@ -45,6 +45,7 @@ import { z } from 'zod/v4';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
 import type { GatewayRuntimeControlCommandClient } from '../control-endpoint/gateway-control-command-client.js';
+import { GatewayControlCommandCancelledBeforeDispatchError } from '../control-endpoint/gateway-control-endpoint-contracts.js';
 import {
 	executeConfiguredCliInToolVm,
 	type ConfiguredCliToolVmAcquisitionPort,
@@ -631,6 +632,34 @@ function resultFromControllerResponse(props: {
 	});
 }
 
+type GatewayControlConfiguredCommandOutcome =
+	| {
+			readonly kind: 'response';
+			readonly response: Awaited<ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>>;
+	  }
+	| { readonly error: unknown; readonly kind: 'failed' };
+
+function resultFromConfiguredCommandOutcome(props: {
+	readonly binding: ControllerExecutionAuthorityBinding;
+	readonly outcome: GatewayControlConfiguredCommandOutcome;
+}): ControllerExecutionResult {
+	if (props.outcome.kind === 'response') {
+		return resultFromControllerResponse({
+			binding: props.binding,
+			response: props.outcome.response.response,
+		});
+	}
+	if (props.outcome.error instanceof GatewayControlCommandCancelledBeforeDispatchError) {
+		return notDispatchedResult({
+			binding: props.binding,
+			code: 'cancelled',
+			message: 'Controller execution was cancelled before dispatch.',
+			reason: 'stale-authority',
+		});
+	}
+	return ambiguousResult({ binding: props.binding });
+}
+
 function idempotencyKey(binding: ControllerExecutionAuthorityBinding): string {
 	return `controller-execution:${binding.operationId}:${binding.fingerprint}`;
 }
@@ -711,33 +740,132 @@ function createGatewayControlControllerExecutionRpcPort(
 							targetKind: configuredOperation.targetKind,
 							timeoutKind: configuredOperation.timeout.kind,
 						});
-			let response: Awaited<ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>>;
-			try {
-				response = await props.controlCommandClient.sendCommand({
-					admissionPrincipal: callerContext.admissionPrincipal,
-					commandId,
-					...(configuredRpcWindow === undefined
-						? {}
-						: {
-								commandResultTimeoutMs: configuredRpcWindow.expiresAtMs - commandCreatedAtMs,
-								createdAtMs: commandCreatedAtMs,
-							}),
-					expiresAtMs:
-						configuredRpcWindow?.expiresAtMs ??
-						now() +
+			if (configuredOperation === undefined) {
+				try {
+					const response = await props.controlCommandClient.sendCommand({
+						admissionPrincipal: callerContext.admissionPrincipal,
+						commandId,
+						expiresAtMs:
+							now() +
 							gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
-					idempotencyKey: idempotencyKey(binding),
+						idempotencyKey: idempotencyKey(binding),
+						message: {
+							kind: 'command',
+							operation: 'tool_portal_controller_execution',
+							payload,
+						},
+					});
+					if (isAborted(signal)) return ambiguousResult({ binding, code: 'cancelled' });
+					return resultFromControllerResponse({ binding, response: response.response });
+				} catch {
+					return ambiguousResult({ binding });
+				}
+			}
+			if (callerContext.operationCancelEvidence === undefined) {
+				return notDispatchedResult({
+					binding,
+					code: 'not_authorized',
+					message: 'Controller execution cancellation evidence was unavailable.',
+					reason: 'stale-authority',
+				});
+			}
+			const cancellationSignal = signal ?? new AbortController().signal;
+			let resolveAdmissionReceipt!: (receipt: {
+				readonly acceptedSession: Awaited<
+					ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>
+				>['acceptedSession'];
+				readonly messageId: string;
+			}) => void;
+			const admissionReceipt = new Promise<{
+				readonly acceptedSession: Awaited<
+					ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>
+				>['acceptedSession'];
+				readonly messageId: string;
+			}>((resolve) => {
+				resolveAdmissionReceipt = resolve;
+			});
+			const responsePromise = props.controlCommandClient.sendCommand({
+				admissionPrincipal: callerContext.admissionPrincipal,
+				commandId,
+				...(configuredRpcWindow === undefined
+					? {}
+					: {
+							commandResultTimeoutMs: configuredRpcWindow.expiresAtMs - commandCreatedAtMs,
+							createdAtMs: commandCreatedAtMs,
+						}),
+				expiresAtMs:
+					configuredRpcWindow?.expiresAtMs ??
+					now() +
+						gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_controller_execution,
+				idempotencyKey: idempotencyKey(binding),
+				message: {
+					kind: 'command',
+					operation: 'tool_portal_controller_execution',
+					payload,
+				},
+				onAdmissionReceipt: resolveAdmissionReceipt,
+				signal: cancellationSignal,
+			});
+			const abortListener = (): void => resolveCancellation?.({ kind: 'cancelled' });
+			let resolveCancellation: ((result: { readonly kind: 'cancelled' }) => void) | undefined;
+			const cancellation = new Promise<{ readonly kind: 'cancelled' }>((resolve) => {
+				resolveCancellation = resolve;
+				if (cancellationSignal.aborted) {
+					resolve({ kind: 'cancelled' });
+					return;
+				}
+				cancellationSignal.addEventListener('abort', abortListener, { once: true });
+			});
+			const commandOutcome: Promise<GatewayControlConfiguredCommandOutcome> = responsePromise.then(
+				(response) => ({ kind: 'response' as const, response }),
+				(error: unknown) => ({ error, kind: 'failed' as const }),
+			);
+			let observedCommandOutcome: GatewayControlConfiguredCommandOutcome | undefined;
+			void commandOutcome.then((outcome) => {
+				observedCommandOutcome = outcome;
+			});
+			const firstOutcome = await Promise.race([commandOutcome, cancellation]);
+			if (firstOutcome.kind !== 'cancelled') {
+				cancellationSignal.removeEventListener('abort', abortListener);
+				return resultFromConfiguredCommandOutcome({ binding, outcome: firstOutcome });
+			}
+			const receiptOutcome = await Promise.race([
+				admissionReceipt.then((receipt) => ({ kind: 'receipt' as const, receipt })),
+				commandOutcome,
+			]);
+			if (receiptOutcome.kind !== 'receipt') {
+				return resultFromConfiguredCommandOutcome({ binding, outcome: receiptOutcome });
+			}
+			const cancellationOutcome = props.controlCommandClient
+				.sendCommand({
+					admissionPrincipal: callerContext.admissionPrincipal,
 					message: {
 						kind: 'command',
-						operation: 'tool_portal_controller_execution',
-						payload,
+						operation: 'operation_cancel',
+						payload: {
+							activeOperationId: commandId,
+							adapterEvidence: callerContext.operationCancelEvidence,
+							initiatedBy: 'gateway',
+							reason: 'caller_cancelled',
+						},
 					},
-				});
-			} catch {
-				return ambiguousResult({ binding });
+					requiredAcceptedSession: receiptOutcome.receipt.acceptedSession,
+				})
+				.then(
+					() => ({ kind: 'cancel-acknowledged' as const }),
+					() => ({ kind: 'cancel-failed' as const }),
+				);
+			const terminalOutcome = await Promise.race([commandOutcome, cancellationOutcome]);
+			if (terminalOutcome.kind === 'response' || terminalOutcome.kind === 'failed') {
+				return resultFromConfiguredCommandOutcome({ binding, outcome: terminalOutcome });
 			}
-			if (isAborted(signal)) return ambiguousResult({ binding, code: 'cancelled' });
-			return resultFromControllerResponse({ binding, response: response.response });
+			if (observedCommandOutcome !== undefined) {
+				return resultFromConfiguredCommandOutcome({
+					binding,
+					outcome: observedCommandOutcome,
+				});
+			}
+			return ambiguousResult({ binding, code: 'cancelled' });
 		},
 	};
 }

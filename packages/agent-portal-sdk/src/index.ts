@@ -7,3 +7,4 @@ export * from './contracts/index.js';
 export * from './portal-call-surface/index.js';
 export * from './portal-event-surface/index.js';
 export * from './portable-contracts/index.js';
+export { connectToolPortal } from './tool-vm-relay/connect-tool-portal.js';
