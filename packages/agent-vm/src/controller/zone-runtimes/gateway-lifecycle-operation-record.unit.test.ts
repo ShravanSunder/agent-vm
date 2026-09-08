@@ -68,7 +68,7 @@ describe('gateway lifecycle operation records', () => {
 		).resolves.toEqual(secondRecord);
 	});
 
-	it.each(['hermes', 'worker'] as const)(
+	it.each(['hermes'] as const)(
 		'round-trips $gatewayType lifecycle records',
 		async (gatewayType) => {
 			await using tempDir = await createTemporaryDirectory();

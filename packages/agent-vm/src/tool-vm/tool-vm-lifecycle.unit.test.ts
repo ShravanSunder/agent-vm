@@ -20,7 +20,17 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { configuredImageSelectionRecordPath } from '../build/prepared-gondolin-image-cache.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+} from '../config/system-config.js';
+import {
+	createInvalidImageSelectionFixture,
+	invalidImageSelectionKinds,
+} from '../testing/image-selection-test-fixture.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -183,6 +193,57 @@ async function createToolVm(
 }
 
 const createdDirectories: string[] = [];
+
+describe('Tool VM invalid image selection admission', () => {
+	it.each(invalidImageSelectionKinds)(
+		'rejects %s selection before creating a VM',
+		async (invalidKind) => {
+			const systemConfig = await createInvalidImageSelectionFixture({
+				systemConfig: await createToolVmSystemConfig(),
+				family: 'toolVm',
+				profileName: 'default',
+				invalidKind,
+			});
+			const profile = systemConfig.toolVmProfiles.standard;
+			const imageProfile = systemConfig.imageProfiles.toolVms.default;
+			if (profile === undefined || imageProfile === undefined)
+				throw new Error('Expected Tool VM fixture profiles.');
+			const hostWorkspaceRoot = await createWorkMountDirectory(systemConfig, 'selection-proof');
+			const createManagedVm = vi.fn();
+			const composition = createManagedVmRuntimeComposition();
+
+			await expect(
+				createToolVm(
+					{
+						agentId: 'sun',
+						profile,
+						systemConfig,
+						zoneId: 'shravan',
+						secretResolver: createSecretResolver({}),
+						hostWorkspaceRoot,
+						tcpSlot: 19000,
+					},
+					{
+						createManagedVm,
+						prepareImage: async () =>
+							await composition.managedVmImages.prepareImage({
+								artifactCacheDirectory: sharedImageCacheDirForSystemConfig(systemConfig),
+								recipePath: imageProfile.buildConfig,
+								selectionRecordPath: configuredImageSelectionRecordPath({
+									deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+										systemConfig.storageRootDir,
+									),
+									family: 'toolVm',
+									profileName: 'default',
+								}),
+							}),
+					},
+				),
+			).rejects.toThrow(/Run agent-vm build/u);
+			expect(createManagedVm).not.toHaveBeenCalled();
+		},
+	);
+});
 const testToolVmProcessIdentity = {
 	command: 'qemu-system-aarch64 -name tool-vm-test',
 	lstart: 'Sat Jul 11 18:00:00 2026',
@@ -236,10 +297,6 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 					hermes: {
 						type: 'hermes',
 						buildConfig: '/project/vm-images/gateways/hermes/build-config.json',
-					},
-					worker: {
-						type: 'worker',
-						buildConfig: '/project/vm-images/gateways/worker/build-config.json',
 					},
 				},
 				toolVms: {
@@ -309,7 +366,7 @@ async function createWorkMountDirectory(
 	name: string,
 ): Promise<string> {
 	const zone = systemConfig.zones.find((configuredZone) => configuredZone.id === 'shravan');
-	if (zone === undefined || zone.gateway.type === 'worker') {
+	if (zone === undefined) {
 		throw new Error('Expected shravan managed framework zone');
 	}
 	const hostWorkMountDir = path.join(
@@ -476,7 +533,6 @@ describe('createToolVm', () => {
 			createToolVmWithManagedProvider(
 				{
 					agentId: 'sun',
-					cacheDir: systemConfig.cacheDir,
 					profile,
 					rootBinding: {
 						hostGitDirectoryRoot,
@@ -548,7 +604,6 @@ describe('createToolVm', () => {
 		const creation = createToolVmWithManagedProvider(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				profile,
 				rootBinding: {
 					hostGitDirectoryRoot,
@@ -613,7 +668,6 @@ describe('createToolVm', () => {
 
 		await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -708,7 +762,6 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkspaceRoot,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
@@ -775,7 +828,6 @@ describe('createToolVm', () => {
 		await createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkspaceRoot,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
@@ -835,7 +887,6 @@ describe('createToolVm', () => {
 		const createdVm = await createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({ TOOL_TOKEN: 'real-secret' }),
@@ -895,7 +946,6 @@ describe('createToolVm', () => {
 		const creation = createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
@@ -946,7 +996,6 @@ describe('createToolVm', () => {
 		const creation = createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
@@ -996,7 +1045,6 @@ describe('createToolVm', () => {
 		const creation = createToolVm(
 			{
 				agentId: 'sun',
-				cacheDir: systemConfig.cacheDir,
 				hostWorkspaceRoot: requestedWorkMountDir,
 				profile: standardProfile,
 				secretResolver: createSecretResolver({}),
@@ -1123,7 +1171,6 @@ describe('createToolVm', () => {
 
 		await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -1249,7 +1296,6 @@ describe('createToolVm', () => {
 
 		await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -1325,7 +1371,6 @@ describe('createToolVm', () => {
 			await expect(
 				createToolVm(
 					{
-						cacheDir: systemConfig.cacheDir,
 						agentId: 'sun',
 						profile: standardProfile,
 						systemConfig,
@@ -1407,7 +1452,6 @@ describe('createToolVm', () => {
 		try {
 			await createToolVm(
 				{
-					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
 					profile: standardProfile,
 					systemConfig,
@@ -1479,7 +1523,6 @@ describe('createToolVm', () => {
 
 		await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -1537,7 +1580,6 @@ describe('createToolVm', () => {
 
 		const result = await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -1576,17 +1618,16 @@ describe('createToolVm', () => {
 			throw new Error('Expected standard tool VM profile');
 		}
 		const requestedWorkMountDir = await createWorkMountDirectory(systemConfig, 'hermes-work-mount');
-		const imagePath = path.join(systemConfig.cacheDir, 'tool-vm-images', 'prepared-fingerprint');
+		const imagePath = path.join(systemConfig.cacheDir, 'vm-images', '1111111111111111');
 		const prepareImage = vi.fn(async () => ({
 			built: false,
-			fingerprint: 'prepared-fingerprint',
+			fingerprint: '1111111111111111',
 			imageReference: imagePath,
 		}));
 		let capturedCreateVmOptions: CreateVmOptions | undefined;
 
 		await createToolVm(
 			{
-				cacheDir: systemConfig.cacheDir,
 				agentId: 'sun',
 				profile: standardProfile,
 				systemConfig,
@@ -1626,7 +1667,6 @@ describe('createToolVm', () => {
 		await expect(
 			createToolVm(
 				{
-					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
@@ -1668,7 +1708,6 @@ describe('createToolVm', () => {
 		await expect(
 			createToolVm(
 				{
-					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),
@@ -1702,7 +1741,6 @@ describe('createToolVm', () => {
 		await expect(
 			createToolVm(
 				{
-					cacheDir: systemConfig.cacheDir,
 					agentId: 'sun',
 					profile: standardProfile,
 					secretResolver: createSecretResolver({}),

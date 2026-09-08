@@ -443,19 +443,48 @@ export const preparedManagedToolPortalConfigSchema = z
 
 export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedToolPortalConfigSchema>;
 
-export const gatewayRuntimeConfiguredCliOperationSchema = z
-	.object({
-		authorization: configuredCliAuthorizationSchema.optional(),
-		calls: configuredCliInvocationCallPolicySchema,
-		commands: z.array(configuredCliAllowedCommandSchema).min(1),
-		deniedPatterns: z.array(configuredCliPatternRuleSchema),
-		kind: z.literal('configured_cli'),
-		safeHelp: z.string().min(1).max(4_000),
-		stdin: configuredCliStdinPolicySchema,
-		targetKind: z.enum(['controller_host', 'ephemeral_managed_vm']),
-		timeout: configuredCliTimeoutPolicySchema,
-	})
-	.strict();
+const gatewayRuntimeConfiguredCliCommonShape = {
+	authorization: configuredCliAuthorizationSchema.optional(),
+	calls: configuredCliInvocationCallPolicySchema,
+	commands: z.array(configuredCliAllowedCommandSchema).min(1),
+	deniedPatterns: z.array(configuredCliPatternRuleSchema),
+	kind: z.literal('configured_cli'),
+	safeHelp: z.string().min(1).max(4_000),
+	stdin: configuredCliStdinPolicySchema,
+	timeout: configuredCliTimeoutPolicySchema,
+} as const;
+
+export const gatewayRuntimeConfiguredCliOperationSchema = z.discriminatedUnion('targetKind', [
+	z
+		.object({
+			...gatewayRuntimeConfiguredCliCommonShape,
+			targetKind: z.literal('controller_host'),
+		})
+		.strict(),
+	z
+		.object({
+			...gatewayRuntimeConfiguredCliCommonShape,
+			targetKind: z.literal('ephemeral_managed_vm'),
+		})
+		.strict(),
+	z
+		.object({
+			...gatewayRuntimeConfiguredCliCommonShape,
+			executablePath: z.string().min(1),
+			mandatoryArgvPrefix: z.array(z.string().max(4_096)).max(64),
+			output: z
+				.object({
+					modelVisibleStderr: z.enum(['none', 'fixed_safe_summary']),
+					overflow: z.enum(['fail', 'truncate']),
+					stderrMaxBytes: z.number().int().positive().max(16_777_216),
+					stdoutMaxBytes: z.number().int().positive().max(16_777_216),
+				})
+				.strict(),
+			targetKind: z.literal('tool_vm'),
+			workingDirectory: z.string().min(1),
+		})
+		.strict(),
+]);
 
 export const gatewayRuntimeControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -478,10 +507,17 @@ const effectiveCredentialedConfiguredCliOperationSchema =
 		{ message: 'Credentialed effective operations must project the Managed VM target kind.' },
 	);
 
+const effectiveToolVmConfiguredCliOperationSchema =
+	gatewayRuntimeConfiguredCliOperationSchema.refine(
+		(operation) => operation.targetKind === 'tool_vm',
+		{ message: 'Tool VM effective operations must project the Tool VM target kind.' },
+	);
+
 const effectiveControllerExecutionOperationSchema = z.union([
 	controllerRegisteredOperationSchema,
 	effectiveControllerHostConfiguredCliOperationSchema,
 	effectiveCredentialedConfiguredCliOperationSchema,
+	effectiveToolVmConfiguredCliOperationSchema,
 ]);
 
 const effectiveControllerExecutionBackendBindingSchema = z
@@ -566,7 +602,7 @@ function projectedConfiguredCliOperation(
 	>['operations'][string],
 ): GatewayRuntimeControllerExecutionOperation {
 	if (operation.kind === 'registered_action') return operation;
-	return {
+	return gatewayRuntimeConfiguredCliOperationSchema.parse({
 		...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
 		calls: operation.calls,
 		commands: operation.commands,
@@ -576,7 +612,15 @@ function projectedConfiguredCliOperation(
 		stdin: operation.stdin,
 		targetKind: operation.executionTarget.kind,
 		timeout: operation.timeout,
-	};
+		...(operation.executionTarget.kind === 'tool_vm'
+			? {
+					executablePath: operation.executablePath,
+					mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+					output: operation.output,
+					workingDirectory: operation.executionTarget.workingDirectory,
+				}
+			: {}),
+	});
 }
 
 export function createEffectiveManagedToolPortalConfig(

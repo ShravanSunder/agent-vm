@@ -48,11 +48,9 @@ const operationalFiles = [
 // or removal enforcement. Every other active test must use Hermes or
 // framework-neutral vocabulary.
 const classifiedRemovalTestFiles = new Map<string, number>([
-	['packages/agent-vm/src/build/managed-image-release.unit.test.ts', 2],
 	['packages/agent-vm/src/cli/agent-vm-command-parser.unit.test.ts', 4],
-	['packages/agent-vm/src/cli/init-command.integration.test.ts', 3],
-	['packages/agent-vm/src/cli/manual-templates.unit.test.ts', 10],
-	['packages/agent-vm/src/cli/publish-workflow.unit.test.ts', 1],
+	['packages/agent-vm/src/cli/init-command.integration.test.ts', 2],
+	['packages/agent-vm/src/cli/manual-templates.unit.test.ts', 7],
 	['packages/agent-vm/src/cli/ssh-commands.unit.test.ts', 3],
 	['packages/agent-vm/src/controller/controller-runtime.unit.test.ts', 2],
 	[
@@ -74,7 +72,7 @@ const classifiedRemovalTestFiles = new Map<string, number>([
 		'packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-module-boundary.unit.test.ts',
 		2,
 	],
-	['scripts/audit-managed-vm-boundaries.unit.test.ts', 13],
+	['scripts/audit-managed-vm-boundaries.unit.test.ts', 8],
 	['scripts/audit-openclaw-removal.unit.test.ts', 36],
 	['scripts/audit-test-taxonomy.unit.test.ts', 1],
 	['scripts/ci-workflow.unit.test.ts', 1],

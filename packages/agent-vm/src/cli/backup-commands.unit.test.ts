@@ -22,10 +22,6 @@ function createBackupSystemConfig(): LoadedSystemConfig {
 						type: 'hermes',
 						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.json',
-					},
 				},
 				toolVms: {
 					default: {
@@ -258,7 +254,7 @@ describe('runBackupCommand', () => {
 		await expect(identityPromise).resolves.toBe('test-environment-backup-identity');
 		expect(createBackup).toHaveBeenCalledWith({
 			backupDir: 'storage/shravan/state/backups',
-			cacheDir: 'storage/cache',
+			cacheDir: 'cache',
 			stateDir: 'storage/shravan/state',
 			zoneFilesDir: 'storage/shravan/zone-files',
 			zoneId: 'shravan',

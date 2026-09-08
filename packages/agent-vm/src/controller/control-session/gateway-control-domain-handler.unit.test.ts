@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 
-import { controllerConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
+import { controllerEnforcedConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
@@ -474,7 +474,7 @@ function createAuthorizedControllerExecutions(
 	pushWorkspaceGit: GatewayControlControllerExecutionOperations['pushWorkspaceGit'],
 	overrides: Partial<GatewayControlControllerExecutionOperations> = {},
 ): GatewayControlControllerExecutionOperations {
-	const operation = controllerConfiguredCliOperationSchema.parse({
+	const operation = controllerEnforcedConfiguredCliOperationSchema.parse({
 		calls: { withoutApproval: 'remaining_admitted' },
 		commands: [{ path: ['inspect'] }],
 		deniedPatterns: [],

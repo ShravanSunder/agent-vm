@@ -6,11 +6,9 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
-import {
-	managedVmImageAssetFileNames,
-	type ManagedGatewayImageBootProjection,
-} from '../build/gondolin-managed-vm-build-tooling.js';
+import { type ManagedGatewayImageBootProjection } from '../build/gondolin-managed-vm-build-tooling.js';
 
 const repoRoot = process.cwd();
 const agentVmCliPath = path.join(
@@ -118,12 +116,7 @@ async function seedBuiltImageCache(options: {
 			: { managedGatewayBoot: options.managedGatewayBoot },
 	);
 	const imageDirectory = path.join(options.cacheDirectory, fingerprint);
-	await fs.mkdir(imageDirectory, { recursive: true });
-	await Promise.all(
-		managedVmImageAssetFileNames.map(async (fileName) => {
-			await fs.writeFile(path.join(imageDirectory, fileName), `${fileName}\n`, 'utf8');
-		}),
-	);
+	await writeImageArtifactFixture(imageDirectory);
 }
 
 async function createFakeDocker(temporaryDirectory: string): Promise<{
@@ -158,10 +151,11 @@ async function createSmokeDeployment(
 		path.join(os.tmpdir(), 'agent-vm-observability-cli-'),
 	);
 	temporaryDirectories.push(temporaryDirectory);
+	const storageRootDir = path.join(temporaryDirectory, 'deployment');
 	const configDirectory = path.join(temporaryDirectory, 'config');
 	const vmImagesDirectory = path.join(temporaryDirectory, 'vm-images');
 	const cacheDir = path.join(temporaryDirectory, 'cache');
-	const runtimeDir = path.join(temporaryDirectory, 'controller-runtime');
+	const runtimeDir = path.join(storageRootDir, 'controller-runtime');
 	const dataDir = path.join(temporaryDirectory, 'observability-data');
 	const gatewayConfigPath = path.join(configDirectory, 'gateways', 'sunfam', 'config.yaml');
 	const gatewayBuildConfigPath = path.join(
@@ -194,7 +188,7 @@ async function createSmokeDeployment(
 	await writeJson(toolBuildConfigPath, buildConfig);
 	await writeJson(configPath, {
 		schemaVersion: 2,
-		storageRootDir: temporaryDirectory,
+		storageRootDir,
 		host: {
 			controllerPort: 18_800,
 			projectNamespace: 'observability-cli-smoke',
@@ -312,7 +306,7 @@ async function createSmokeDeployment(
 	await Promise.all([
 		seedBuiltImageCache({
 			buildConfigPath: gatewayBuildConfigPath,
-			cacheDirectory: path.join(cacheDir, 'gateway-images', 'hermes'),
+			cacheDirectory: path.join(cacheDir, 'vm-images'),
 			managedGatewayBoot: {
 				frameworkBootEntry: 'hermes-framework-service',
 				kind: 'managed-gateway-exact-two-role',
@@ -320,7 +314,7 @@ async function createSmokeDeployment(
 		}),
 		seedBuiltImageCache({
 			buildConfigPath: toolBuildConfigPath,
-			cacheDirectory: path.join(cacheDir, 'tool-vm-images', 'default'),
+			cacheDirectory: path.join(cacheDir, 'vm-images'),
 		}),
 	]);
 	return {

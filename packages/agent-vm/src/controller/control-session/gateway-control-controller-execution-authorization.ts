@@ -8,6 +8,7 @@ import {
 import type {
 	GatewayControlToolPortalControllerExecutionPayload,
 	GatewayRuntimeControllerExecutionDispatchReservation,
+	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import {
 	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
@@ -16,7 +17,6 @@ import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
-	gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 import {
@@ -24,7 +24,10 @@ import {
 	directDispatchFingerprint,
 } from '@agent-vm/tool-portal/dispatch-authority';
 
-import type { SystemConfig } from '../../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type SystemConfig,
+} from '../../config/system-config.js';
 import { loadGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
 import type { ControllerCredentialedRuntimeRegistryPublisher } from '../credentialed-runtime/credentialed-runtime-registry.js';
@@ -170,7 +173,7 @@ export async function authorizeGatewayControlControllerExecution(
 	const zone = request.systemConfig.zones.find(
 		(configuredZone) => configuredZone.id === request.session.zoneId,
 	);
-	if (zone === undefined || zone.gateway.type === 'worker') {
+	if (zone === undefined) {
 		return rejectAuthorization(
 			'controller_execution_zone_unsupported',
 			'controller execution zone is not supported',
@@ -207,10 +210,9 @@ export async function authorizeGatewayControlControllerExecution(
 		);
 	}
 	const effectiveConfigDirectory = path.join(
-		request.systemConfig.cacheDir,
-		'gateways',
+		deploymentGeneratedDirForStorageRoot(request.systemConfig.storageRootDir),
+		'gateway-effective',
 		zone.id,
-		'tool-portal-effective',
 	);
 	let effectiveConfig: Awaited<ReturnType<typeof loadMcpPortalEffectiveToolPortalConfigSnapshot>>;
 	let portalAdmission: Awaited<ReturnType<typeof loadGatewayRuntimePortalAdmissionFile>>;
@@ -295,6 +297,12 @@ export async function authorizeGatewayControlControllerExecution(
 			'executionTarget' in configuredOperation
 				? configuredOperation.executionTarget.kind
 				: configuredOperation.targetKind;
+		if (targetKind === 'tool_vm') {
+			return rejectAuthorization(
+				'controller_execution_policy_denied',
+				'Tool VM configured CLI operations must dispatch inside the Gateway',
+			);
+		}
 		const expectedWindow = deriveGatewayControlControllerExecutionRpcWindow({
 			input: request.payload.input,
 			nowMs: request.createdAtMs,
@@ -322,6 +330,12 @@ export async function authorizeGatewayControlControllerExecution(
 		let trustedConfiguredOperation: ConfiguredCliAuthorizedOperation['operation'];
 		let credentialedRuntime: ConfiguredCliAuthorizedOperation['credentialedRuntime'];
 		if ('executionTarget' in configuredOperation) {
+			if (configuredOperation.executionTarget.kind === 'tool_vm') {
+				return rejectAuthorization(
+					'controller_execution_policy_denied',
+					'Tool VM configured CLI operations must dispatch inside the Gateway',
+				);
+			}
 			trustedConfiguredOperation = configuredOperation;
 		} else {
 			try {

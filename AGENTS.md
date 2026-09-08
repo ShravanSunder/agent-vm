@@ -1,6 +1,6 @@
 # agent-vm
 
-Sandboxed QEMU micro-VM controller and worker packages for autonomous coding agents.
+Sandboxed QEMU micro-VM controller and managed Gateway packages for autonomous coding agents.
 
 ## Rules
 
@@ -18,14 +18,11 @@ Use progressive disclosure when learning this repo:
    before changing cache, state, workspace, work mount, or backup behavior. Its
    [Lease Path Vocabulary](docs/architecture/storage-model.md#lease-path-vocabulary)
    section is the canonical name/location/storage table.
-5. Use mode-specific gateway docs only when needed:
-   - `docs/architecture/agent-worker-gateway.md` — Agent Worker Gateway, in-VM pipeline, event log, executors.
-   - `docs/reference/configuration/system-json.md` — Hermes managed Gateway configuration, profiles, Tool VM policy, and ingress.
+5. Use `docs/reference/configuration/system-json.md` for Hermes managed Gateway configuration, profiles, Tool VM policy, and ingress.
 6. Use subsystem docs for implementation details:
    - `docs/subsystems/controller.md` — HTTP routes, controller runtime, lease manager.
-   - `docs/subsystems/gateway-lifecycle.md` — `GatewayLifecycle`, Hermes managed Gateway vs Agent Worker Gateway implementations.
+   - `docs/subsystems/gateway-lifecycle.md` — the managed Hermes `GatewayLifecycle` implementation.
    - `docs/subsystems/gondolin-vm-layer.md` — Gondolin adapter, VFS, `tcpHosts`, image build.
-   - `docs/subsystems/worker-task-pipeline.md` — host-side Agent Worker task lifecycle, repo resources, teardown.
 
 For gateway serving, streaming, WebSocket, or exposed webserver port work, read
 `docs/subsystems/gondolin-vm-layer.md` and the `gateway.ingress` section of
@@ -44,16 +41,11 @@ gateway-to-Tool-VM SSH are different failure surfaces.
 For configuration questions, start at `docs/reference/configuration/README.md`,
 then drill down:
 
-- `docs/reference/configuration/system-json.md` — host/controller config, zones, gateway config, secrets, resource policy.
-- `docs/reference/configuration/worker-json.md` — Agent Worker Gateway phases, prompts, verification, MCP servers.
-- `docs/reference/configuration/project-config-json.md` — repo-local `.agent-vm/config.json` overrides.
-- `docs/reference/configuration/resource-contracts.md` — `.agent-vm/` repo resources and task external resources.
-- `docs/reference/configuration/prompt-files.md` — prompt file references and resolution.
+- `docs/reference/configuration/system-json.md` — host/controller config, zones, gateway config, secrets, Tool VM policy.
 
 For package ownership, use the package map below first, then inspect the package
-README/source. Keep boundaries explicit: gateway packages produce VM/process
-specs; `agent-vm` owns controller/CLI orchestration; `agent-vm-worker` owns the
-in-VM task loop.
+README/source. Keep boundaries explicit: `hermes-gateway` produces the managed
+Gateway VM specification and `agent-vm` owns controller/CLI orchestration.
 
 ## Docs And Manuals
 
@@ -92,7 +84,7 @@ fast formatting and linting.
 - Unit tests: `pnpm test:unit`.
 - Integration tests: `pnpm test:integration`.
   Unit and integration Vitest projects use the `threads` pool for fast local and
-  CI feedback. Do not move live VM, Hermes, Worker, 1Password, LLM, or host
+  CI feedback. Do not move live VM, Hermes, 1Password, LLM, or host
   e2e lanes onto that pool without proving teardown and process isolation still
   hold.
 - E2E inventory: `pnpm test:e2e:inventory`.
@@ -107,13 +99,12 @@ fast formatting and linting.
   - Generic VM/Gondolin: `mise exec -- pnpm test:e2e:vm`.
   - VM/Gondolin HTTP mediation: `mise exec -- pnpm test:e2e:vm-mediation`.
   - Hermes gateway: `mise exec -- pnpm test:e2e:hermes`.
-  - Worker gateway/runtime: `mise exec -- pnpm test:e2e:worker`.
   - 1Password test account: `pnpm test:e2e:secrets`.
   - LLM/model roundtrip: `pnpm test:e2e:llm`.
   Proof lanes run directly through their named Vitest projects and use
   Vitest's exit status for pass/fail. `test:e2e:inventory` is the discovery
   lane and may report skipped tests by design.
-- E2E VM/Hermes/Worker lanes require Docker, QEMU, and the pinned Zig from
+- E2E VM/Hermes lanes require Docker, QEMU, and the pinned Zig from
   `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
   shared rebuildable image/local-package cache by default and honors
   `AGENT_VM_E2E_CACHE_DIR` when you want to pin that cache location.
@@ -138,7 +129,6 @@ The suffix is the contract. Do not use plain `*.test.ts` for new tests.
 - Host e2e tests must use `*.host.e2e.test.ts`.
 - VM e2e tests must use `*.vm.e2e.test.ts`.
 - Hermes e2e tests must use `*.hermes.e2e.test.ts`.
-- Worker e2e tests must use `*.worker.e2e.test.ts`.
 - 1Password e2e tests must use `*.secrets.e2e.test.ts`.
 - LLM-gated e2e tests must use `*.llm.e2e.test.ts`.
 
@@ -191,7 +181,7 @@ proof.
 Host e2e tests are the home for expensive host-boundary proofs that do not boot
 a VM but do execute production-shaped host behavior: real `git`, `tar`, `age`,
 package-manager-style CLI entrypoints, shell bootstrap rendering, real
-controller/worker HTTP wiring, host process lifecycle, and other external
+controller HTTP wiring, host process lifecycle, and other external
 process behavior. These tests must keep temp roots isolated and must be
 included in the default `pnpm test:e2e` proof lane so coverage is not lost when
 `pnpm test:integration` stays fast.
@@ -212,7 +202,7 @@ layers as e2e.
   fake.
 - Host e2e: production-shaped host proofs that do not boot a VM, such as real
   Git, archive/encryption tools, package-manager-style CLI entrypoints, shell
-  bootstrap rendering, real controller/worker HTTP wiring, and host process
+  bootstrap rendering, real controller HTTP wiring, and host process
   lifecycle. They are higher than integration because they execute external host
   programs or production-shaped host services and are allowed to be slower.
 - Real VM integration: boots the real Gondolin/QEMU path or a real managed image
@@ -417,11 +407,9 @@ Follow `.cursor/rules/ts-rules.md`; key points:
 ```text
 secret-management        → SecretRef/SecretResolver contracts, env + 1Password resolution
 managed-vm               → Backend-neutral VM capabilities and structural contracts
-gateway-lifecycle        → GatewayLifecycle, VM requirements, and process specs (→ managed-vm)
+gateway-lifecycle        → managed GatewayLifecycle and VM requirements (→ managed-vm)
 gondolin-vm-adapter      → Gondolin provider and image tooling (→ managed-vm, Gondolin SDK)
 hermes-gateway           → Hermes lifecycle and managed image recipe (→ gateway-lifecycle, managed-vm)
-worker-gateway           → Worker lifecycle (→ gateway-lifecycle, managed-vm)
-agent-vm-worker          → Worker process, runs inside VM (standalone)
 agent-vm                 → Controller CLI + HTTP server; composes the selected provider
 ```
 
@@ -462,31 +450,12 @@ controller-validated host path; Tool VMs always see the selected mount at
 
 - `GET /health` — readiness
 - `GET /zones/:zoneId/health` — live managed Gateway health probe
-- `POST /zones/:zoneId/worker-tasks` — start worker task, returns `202 { taskId, status: "accepted" }`
-- `GET /zones/:zoneId/tasks/:taskId` — replayed worker task state snapshot
 - `POST /zones/:zoneId/credentialed-runtime/retire` — retire the authenticated agent's singleton credentialed Managed runtime using existing zone admin authorization
-- `POST /zones/:zoneId/tasks/:taskId/push-branches` — controller-side git push
-- `POST /zones/:zoneId/tasks/:taskId/pull-default` — controller-side default/current branch refresh
-- `POST /zones/:zoneId/tasks/:taskId/close` — request task cancellation
-
-`pull-default` returns a discriminated result. `kind: "advanced"` means the
-default branch ref was updated; `kind: "refused-not-fast-forward"` means the
-controller refused to rewrite an unsafe default branch; `kind: "failed"` means
-transport, auth, or git plumbing failed. For current branch refresh, read
-`currentBranchSync.status`: `fast-forwarded` means the agent branch and worktree
-moved, `up-to-date` means no branch change, `ahead` usually means push,
-`diverged` needs a merge/rebase plan, `dirty-worktree` needs commit/stash first,
-`no-upstream` needs an upstream push, `detached` needs a branch, and
-`default-branch` means the current branch was the protected/default branch.
 
 ## Key Files
 
 - `packages/agent-vm/src/controller/controller-runtime.ts` — startup, gateway type dispatch
-- `packages/agent-vm/src/controller/worker-task-runner.ts` — per-task VM lifecycle
-- `packages/agent-vm/src/controller/git-push-operations.ts` — host-side push
-- `packages/agent-vm-worker/src/coordinator/coordinator.ts` — worker loop
-- `packages/agent-vm-worker/src/config/worker-config.ts` — worker config schema
-- `packages/worker-gateway/src/worker-lifecycle.ts` — VM spec + process spec
+- `packages/agent-vm/src/controller/workspace-git/workspace-git-operations.ts` — controller-owned managed workspace Git
 
 ## Secrets
 
@@ -512,17 +481,13 @@ Allowed runtime auth path:
 
 1. `system.json` declares the secret with `injection: "http-mediation"` and the
    allowed `hosts`.
-2. `system.json` declares `runtimeAuthHints` for service tokens the agent should
-   know about.
-3. The controller generates `runtimeInstructions` and the agent-facing
-   `/agent-vm/agents.md` runtime index at task boot. Worker repo docs live at
-   `/work/repos/AGENTS.md` with a `CLAUDE.md` symlink for Claude-compatible
-   discovery. Hermes Tool VMs mount the validated lease work mount at `/work`.
-4. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
+2. The controller generates protected managed Gateway inputs before boot.
+   Hermes Tool VMs mount the controller-selected agent workspace at `/workspace`
+   and use disposable `/work` as the default command directory.
+3. Gondolin runtime puts a placeholder in the VM env at boot; the proxy swaps it
    for the real token only on outbound calls to allowed hosts.
 
-Common prompt defaults live in `common-agent-instructions.md`. Runtime
-paths/auth/resources are generated by the controller into `runtimeInstructions`
-and `/agent-vm/agents.md`. `/state` is mounted in the VM for worker/controller
-plumbing, not as the primary agent documentation surface. Gateway images must
-stay redistributable without secret pinning.
+Runtime paths and authorization inputs are generated by the controller as
+protected managed Gateway material. Hermes durable framework state lives under
+`/home/hermes/.hermes`. Gateway images must stay
+redistributable without secret pinning.

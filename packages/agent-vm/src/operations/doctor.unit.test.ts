@@ -107,10 +107,6 @@ const systemConfig = {
 				type: 'hermes',
 				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
-			worker: {
-				type: 'worker',
-				buildConfig: './vm-images/gateways/worker/build-config.json',
-			},
 		},
 		toolVms: {
 			default: {
@@ -189,16 +185,9 @@ const allBinaries = new Set([
 function createManagedImageReleaseFixture(): ManagedImageRelease {
 	return {
 		baseImages: {
-			'worker-gateway': {
-				packageOverrides: {
-					npm: ['@openai/codex@0.139.0'],
-				},
-				repository: 'ghcr.io/shravansunder/agent-vm-managed-worker-gateway-base',
-				tag: '2026.05.27.1',
-			},
 			'tool-vm': {
 				packageOverrides: {
-					npm: [],
+					npm: ['tsx@4.20.3'],
 				},
 				repository: 'ghcr.io/shravansunder/agent-vm-managed-tool-vm-base',
 				tag: '2026.05.27.1',
@@ -235,10 +224,6 @@ function createSystemConfigInputFromResolvedFixture(config: SystemConfig): Syste
 function stripResolvedGatewayStorage(
 	gateway: SystemConfig['zones'][number]['gateway'],
 ): SystemConfigInput['zones'][number]['gateway'] {
-	if (gateway.type === 'worker') {
-		const { stateDir: _stateDir, zoneRuntimeDir: _zoneRuntimeDir, ...gatewayInput } = gateway;
-		return gatewayInput;
-	}
 	const {
 		stateDir: _stateDir,
 		zoneFilesDir: _zoneFilesDir,
@@ -246,35 +231,6 @@ function stripResolvedGatewayStorage(
 		...gatewayInput
 	} = gateway;
 	return gatewayInput;
-}
-
-function createWorkerOnlySystemConfig(): SystemConfig {
-	return {
-		...systemConfig,
-		imageProfiles: {
-			...systemConfig.imageProfiles,
-			gateways: {
-				worker: systemConfig.imageProfiles.gateways.worker,
-			},
-		},
-		zones: [
-			{
-				id: 'worker',
-				gateway: {
-					type: 'worker',
-					imageProfile: 'worker',
-					memory: '2G',
-					cpus: 2,
-					port: 18791,
-					config: './config/worker/worker.json',
-					stateDir: './state/worker',
-					zoneRuntimeDir: './runtime/worker',
-				},
-				secrets: {},
-				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			},
-		],
-	};
 }
 
 function createExternalObservabilitySystemConfig(): SystemConfig {
@@ -603,7 +559,6 @@ describe('runControllerDoctor', () => {
 						...systemConfig.imageProfiles.gateways.hermes,
 						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
-					worker: systemConfig.imageProfiles.gateways.worker,
 				},
 			},
 		} satisfies SystemConfig;
@@ -657,15 +612,14 @@ describe('runControllerDoctor', () => {
 			...systemConfig,
 			imageProfiles: {
 				...systemConfig.imageProfiles,
-				gateways: {
-					hermes: {
-						...systemConfig.imageProfiles.gateways.hermes,
+				toolVms: {
+					default: {
+						...systemConfig.imageProfiles.toolVms.default,
 						source: {
 							kind: 'managedBase',
-							base: 'worker-gateway',
+							base: 'tool-vm',
 						},
 					},
-					worker: systemConfig.imageProfiles.gateways.worker,
 				},
 			},
 		} satisfies SystemConfig;
@@ -687,10 +641,9 @@ describe('runControllerDoctor', () => {
 			ok: false,
 		});
 		expect(
-			result.checks.find((check) => check.name === 'gateway-image-profile-hermes'),
+			result.checks.find((check) => check.name === 'tool-vm-image-profile-default'),
 		).toMatchObject({
 			ok: true,
-			hint: 'type=hermes source=managedBase base=worker-gateway',
 		});
 	});
 
@@ -716,16 +669,15 @@ describe('runControllerDoctor', () => {
 			...systemConfig,
 			imageProfiles: {
 				...systemConfig.imageProfiles,
-				gateways: {
-					hermes: {
-						...systemConfig.imageProfiles.gateways.hermes,
+				toolVms: {
+					default: {
+						...systemConfig.imageProfiles.toolVms.default,
 						source: {
 							kind: 'managedBase',
-							base: 'worker-gateway',
+							base: 'tool-vm',
 							overlay: overlayPath,
 						},
 					},
-					worker: systemConfig.imageProfiles.gateways.worker,
 				},
 			},
 		} satisfies SystemConfig;
@@ -737,15 +689,13 @@ describe('runControllerDoctor', () => {
 
 		expect(checks).toHaveLength(1);
 		expect(checks[0]).toMatchObject({
-			name: 'gateway-package-overrides-hermes',
+			name: 'tool-vm-package-overrides-default',
 			ok: true,
 		});
 		expect(checks[0]?.hint).toContain(
 			'@hermes/discord@2026.6.8[overlay.jsonc/packageOverrides.npm]',
 		);
-		expect(checks[0]?.hint).toContain(
-			'@openai/codex@0.139.0[managed-images.json/packageOverrides.npm]',
-		);
+		expect(checks[0]?.hint).toContain('tsx@4.20.3[managed-images.json/packageOverrides.npm]');
 		expect(checks[0]?.hint).toContain('left-pad@1.3.0[overlay.jsonc/packageOverrides.npm]');
 		expect(checks[0]?.hint).toContain(`overlay ${overlayPath}`);
 	});
@@ -772,16 +722,15 @@ describe('runControllerDoctor', () => {
 			...systemConfig,
 			imageProfiles: {
 				...systemConfig.imageProfiles,
-				gateways: {
-					hermes: {
-						...systemConfig.imageProfiles.gateways.hermes,
+				toolVms: {
+					default: {
+						...systemConfig.imageProfiles.toolVms.default,
 						source: {
 							kind: 'managedBase',
-							base: 'worker-gateway',
+							base: 'tool-vm',
 							overlay: overlayPath,
 						},
 					},
-					worker: systemConfig.imageProfiles.gateways.worker,
 				},
 			},
 		} satisfies SystemConfig;
@@ -792,14 +741,14 @@ describe('runControllerDoctor', () => {
 		});
 
 		expect(checks).toContainEqual({
-			name: 'gateway-package-overrides-hermes',
+			name: 'tool-vm-package-overrides-default',
 			ok: false,
 			hint: expect.stringContaining(overlayPath),
 		});
 		expect(checks[0]?.hint).toContain('Unrecognized key: "pnpm"');
 	});
 
-	it('flags legacy managed-base Dockerfile profiles without rejecting package-owned Hermes recipes', async () => {
+	it('flags legacy Tool VM Dockerfile profiles without rejecting package-owned Hermes recipes', async () => {
 		const dockerBackedConfig = {
 			...systemConfig,
 			imageProfiles: {
@@ -809,9 +758,11 @@ describe('runControllerDoctor', () => {
 						...systemConfig.imageProfiles.gateways.hermes,
 						dockerfile: './vm-images/gateways/hermes/Dockerfile',
 					},
-					worker: {
-						...systemConfig.imageProfiles.gateways.worker,
-						dockerfile: './vm-images/gateways/worker/Dockerfile',
+				},
+				toolVms: {
+					default: {
+						...systemConfig.imageProfiles.toolVms.default,
+						dockerfile: './vm-images/tool-vms/default/Dockerfile',
 					},
 				},
 			},
@@ -833,7 +784,7 @@ describe('runControllerDoctor', () => {
 		expect(result.ok).toBe(false);
 		expect(
 			result.checks.find(
-				(check) => check.name === 'legacy-dockerfile-image-profile-gateway-worker',
+				(check) => check.name === 'legacy-dockerfile-image-profile-toolVm-default',
 			),
 		).toMatchObject({
 			ok: false,
@@ -1040,37 +991,6 @@ describe('runControllerDoctor', () => {
 		);
 	});
 
-	it('flags worker /work VFS mounts as a performance risk', async () => {
-		const result = await runControllerDoctor({
-			availableBinaries: allBinaries,
-			diskFreeBytes: 50 * 1024 * 1024 * 1024,
-			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
-			occupiedPorts: new Set<number>(),
-			nodeVersion: 'v25.9.0',
-			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			systemConfig: createWorkerOnlySystemConfig(),
-			workerGatewayVmRequirementsBuilder: () => ({
-				mounts: {
-					'/work/repos': {
-						access: 'read-write',
-						hostPath: '/host/work/repos',
-						kind: 'host-directory',
-					},
-				},
-			}),
-		});
-
-		expect(result.ok).toBe(false);
-		expect(result.checks.find((check) => check.name === 'worker-work-rootfs-worker')).toMatchObject(
-			{
-				ok: false,
-				hint: "Worker zone 'worker' mounts '/work/repos' through VFS; /work must stay on rootfs/COW.",
-			},
-		);
-	});
-});
-
-describe('collectVmHostSystemDoctorCheck', () => {
 	it('flags incomplete vm-host-system directories', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'doctor-host-'));
 		const configPath = path.join(temporaryDirectoryPath, 'config', 'system.json');
@@ -1143,10 +1063,6 @@ describe('collectVmHostSystemDoctorCheck', () => {
 					hermes: {
 						...systemConfig.imageProfiles.gateways.hermes,
 						buildConfig: '/etc/agent-vm/vm-images/gateways/hermes/build-config.json',
-					},
-					worker: {
-						...systemConfig.imageProfiles.gateways.worker,
-						buildConfig: '/etc/agent-vm/vm-images/gateways/worker/build-config.json',
 					},
 				},
 			},

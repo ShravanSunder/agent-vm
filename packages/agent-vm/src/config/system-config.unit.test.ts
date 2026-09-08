@@ -7,8 +7,12 @@ import { afterEach, describe, expect, test } from 'vitest';
 import {
 	createLoadedSystemConfig,
 	createSystemConfigSchemaArtifact,
+	deploymentCacheDirForSystemConfig,
+	deploymentCacheKeyForStorageRoot,
+	deploymentGeneratedDirForStorageRoot,
 	loadSystemConfig,
 	resolveControllerHealthConfig,
+	sharedImageCacheDirForStorageRoot,
 	type LoadedSystemConfig,
 	type SystemConfigInput,
 } from './system-config.js';
@@ -29,7 +33,6 @@ interface ValidSystemConfigZoneInput {
 	gateway: Record<string, unknown>;
 	mcp?: { readonly configDir: string };
 	secrets: Record<string, unknown>;
-	runtimeAuthHints?: unknown;
 	egressHosts?: readonly { readonly host: string; readonly audience: string }[];
 	websocketUpgrades?: readonly Record<string, unknown>[];
 	allowedHosts?: unknown;
@@ -63,25 +66,6 @@ interface ValidSystemConfigInput {
 	[key: string]: unknown;
 }
 
-function configureFirstZoneAsWorker(config: ValidSystemConfigInput): ValidSystemConfigZoneInput {
-	const zone = config.zones[0];
-	zone.gateway = {
-		type: 'worker',
-		imageProfile: 'worker',
-		memory: '2G',
-		cpus: 2,
-		port: 18791,
-		config: './shravan/worker.json',
-	};
-	delete zone.agents;
-	delete zone.defaultToolVmProfile;
-	delete zone.agentToolVmProfiles;
-	delete zone.runtimeAuthHints;
-	delete zone.toolPortal;
-	zone.secrets = {};
-	return zone;
-}
-
 afterEach(async () => {
 	await Promise.all(
 		createdDirectories
@@ -103,10 +87,6 @@ function createValidSystemConfigInput(): ValidSystemConfigInput {
 				hermes: {
 					type: 'hermes',
 					buildConfig: '../vm-images/gateways/hermes/build-config.json',
-				},
-				worker: {
-					type: 'worker',
-					buildConfig: '../vm-images/gateways/worker/build-config.json',
 				},
 			},
 			toolVms: {
@@ -302,7 +282,21 @@ describe('loadSystemConfig', () => {
 
 		// Assert
 		expect(loadedConfig.storageRootDir).toBe(expectedStorageRoot);
-		expect(loadedConfig.cacheDir).toBe(path.join(expectedStorageRoot, 'cache'));
+		expect(loadedConfig.cacheDir).toBe(path.join(path.dirname(expectedStorageRoot), 'cache'));
+		expect(sharedImageCacheDirForStorageRoot(loadedConfig.storageRootDir)).toBe(
+			path.join(path.dirname(expectedStorageRoot), 'cache', 'vm-images'),
+		);
+		expect(deploymentGeneratedDirForStorageRoot(loadedConfig.storageRootDir)).toBe(
+			path.join(expectedStorageRoot, 'generated'),
+		);
+		expect(deploymentCacheDirForSystemConfig(loadedConfig)).toBe(
+			path.join(
+				path.dirname(expectedStorageRoot),
+				'cache',
+				'deployments',
+				deploymentCacheKeyForStorageRoot(expectedStorageRoot),
+			),
+		);
 		expect(loadedConfig.controllerStateDir).toBe(
 			path.join(expectedStorageRoot, 'controller-state'),
 		);
@@ -735,59 +729,6 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/upstreamResponseTimeoutMs/u);
 	});
 
-	test('loads managed base image profiles', async () => {
-		const config = createValidSystemConfigInput();
-		config.imageProfiles = {
-			gateways: {
-				hermes: {
-					type: 'hermes',
-					buildConfig: '../vm-images/gateways/hermes/build-config.jsonc',
-				},
-				worker: {
-					type: 'worker',
-					buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
-					source: {
-						kind: 'managedBase',
-						base: 'worker-gateway',
-						overlay: '../vm-images/gateways/worker/overlay.jsonc',
-					},
-				},
-			},
-			toolVms: {
-				default: {
-					type: 'toolVm',
-					buildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
-					source: {
-						kind: 'managedBase',
-						base: 'tool-vm',
-						overlay: '../vm-images/tool-vms/default/overlay.jsonc',
-					},
-				},
-			},
-		};
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-managed-base-',
-			config,
-		);
-
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		expect(loadedConfig.imageProfiles.gateways.worker?.source).toMatchObject({
-			kind: 'managedBase',
-			base: 'worker-gateway',
-		});
-		expect(loadedConfig.imageProfiles.gateways.worker?.source?.overlay).toContain(
-			path.join('vm-images', 'gateways', 'worker', 'overlay.jsonc'),
-		);
-		expect(loadedConfig.imageProfiles.toolVms.default?.source).toMatchObject({
-			kind: 'managedBase',
-			base: 'tool-vm',
-		});
-		expect(loadedConfig.imageProfiles.toolVms.default?.source?.overlay).toContain(
-			path.join('vm-images', 'tool-vms', 'default', 'overlay.jsonc'),
-		);
-	});
-
 	test('rejects implicit always-on gateway SSH secret environments', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones[0].gateway.ssh = { secretEnv: 'always' };
@@ -979,174 +920,6 @@ describe('loadSystemConfig', () => {
 		},
 	);
 
-	test('rejects worker zones declaring agents or Tool Portal references', async () => {
-		const config = createValidSystemConfigInput();
-		const {
-			controlAuth: _controlAuth,
-			profileSecretProjectionsByAgent: _profileSecretProjectionsByAgent,
-			profilesByAgent: _profilesByAgent,
-			zoneFilesDir: _zoneFilesDir,
-			...workerGateway
-		} = config.zones[0].gateway;
-		config.zones[0] = {
-			...config.zones[0],
-			agents: [{ id: 'worker-agent' }],
-			gateway: {
-				...workerGateway,
-				type: 'worker',
-				imageProfile: 'worker',
-			},
-			toolPortal: createValidZoneToolPortalConfigInput(),
-		};
-		delete config.zones[0].defaultToolVmProfile;
-		delete config.zones[0].agentToolVmProfiles;
-		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-agents-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/must not declare agents or toolPortal/u,
-		);
-	});
-
-	test('loads a valid plan-1 controller config', async () => {
-		const workingDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-system-config-'));
-		createdDirectories.push(workingDirectoryPath);
-		const canonicalWorkingDirectoryPath = await realpath(workingDirectoryPath);
-		const configPath = path.join(workingDirectoryPath, 'config', 'system.json');
-		await mkdir(path.dirname(configPath), { recursive: true });
-
-		await writeFile(
-			configPath,
-			JSON.stringify({
-				schemaVersion: 2,
-				host: {
-					controllerPort: 18800,
-					projectNamespace: 'agent-vm-tests-a1b2c3d4',
-					githubToken: {
-						source: '1password',
-						ref: 'op://agent-vm/github-token/credential',
-					},
-					secretsProvider: {
-						type: '1password',
-						tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
-					},
-				},
-				storageRootDir: '../storage',
-				imageProfiles: {
-					gateways: {
-						hermes: {
-							type: 'hermes',
-							buildConfig: '../vm-images/gateways/hermes/build-config.json',
-							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
-						},
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.json',
-							dockerfile: '../vm-images/gateways/worker/Dockerfile',
-						},
-					},
-					toolVms: {
-						default: {
-							type: 'toolVm',
-							buildConfig: '../vm-images/tool-vms/default/build-config.json',
-							dockerfile: '../vm-images/tool-vms/default/Dockerfile',
-						},
-					},
-				},
-				zones: [
-					{
-						id: 'shravan',
-						gateway: {
-							type: 'worker',
-							imageProfile: 'worker',
-							memory: '2G',
-							cpus: 2,
-							port: 18791,
-							config: './shravan/worker.json',
-						},
-						secrets: {
-							ANTHROPIC_API_KEY: {
-								source: '1password',
-								ref: 'op://AI/anthropic/api-key',
-								injection: 'http-mediation',
-								audience: 'gateway',
-								hosts: ['api.anthropic.com'],
-							},
-						},
-						egressHosts: ['api.anthropic.com', 'api.openai.com'].map((host) => ({
-							host,
-							audience: 'gateway' as const,
-						})),
-					},
-				],
-				toolVmProfiles: {
-					standard: {
-						memory: '1G',
-						cpus: 1,
-						imageProfile: 'default',
-					},
-				},
-				tcpPool: {
-					basePort: 19000,
-					size: 5,
-				},
-			}),
-			'utf8',
-		);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			systemConfigPath: configPath,
-			host: {
-				controllerPort: 18800,
-				githubToken: {
-					source: '1password',
-					ref: 'op://agent-vm/github-token/credential',
-				},
-				projectNamespace: 'agent-vm-tests-a1b2c3d4',
-			},
-			cacheDir: path.join(canonicalWorkingDirectoryPath, 'storage', 'cache'),
-			imageProfiles: {
-				gateways: {
-					hermes: {
-						type: 'hermes',
-						buildConfig: path.join(
-							workingDirectoryPath,
-							'vm-images/gateways/hermes/build-config.json',
-						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/hermes/Dockerfile'),
-					},
-					worker: {
-						type: 'worker',
-						buildConfig: path.join(
-							workingDirectoryPath,
-							'vm-images/gateways/worker/build-config.json',
-						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/gateways/worker/Dockerfile'),
-					},
-				},
-				toolVms: {
-					default: {
-						type: 'toolVm',
-						buildConfig: path.join(
-							workingDirectoryPath,
-							'vm-images/tool-vms/default/build-config.json',
-						),
-						dockerfile: path.join(workingDirectoryPath, 'vm-images/tool-vms/default/Dockerfile'),
-					},
-				},
-			},
-			zones: [
-				{
-					id: 'shravan',
-					gateway: {
-						config: path.join(workingDirectoryPath, 'config', 'shravan', 'worker.json'),
-						type: 'worker',
-						imageProfile: 'worker',
-					},
-				},
-			],
-		});
-	});
-
 	test('adds only resolved storage paths and the runtime system config path', async () => {
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-cache-id-',
@@ -1197,7 +970,7 @@ describe('loadSystemConfig', () => {
 
 		const expectedRoot = path.join(os.homedir(), '.agent-vm', 'custom');
 		expect(config.storageRootDir).toBe(expectedRoot);
-		expect(config.cacheDir).toBe(path.join(expectedRoot, 'cache'));
+		expect(config.cacheDir).toBe(path.join(path.dirname(expectedRoot), 'cache'));
 		expect(config.controllerStateDir).toBe(path.join(expectedRoot, 'controller-state'));
 		expect(config.controllerRuntimeDir).toBe(path.join(expectedRoot, 'controller-runtime'));
 		expect(config.zones[0]?.gateway.stateDir).toBe(path.join(expectedRoot, 'shravan', 'state'));
@@ -1213,51 +986,6 @@ describe('loadSystemConfig', () => {
 		expect(config.zones[0]?.gateway.backupDir).toBe(
 			path.join(os.homedir(), '.agent-vm-backups', 'shravan'),
 		);
-	});
-
-	test('rejects worker gateway configs with zoneFilesDir', async () => {
-		const input = createValidSystemConfigInput();
-		const existingZone = input.zones[0];
-		input.zones[0] = {
-			id: existingZone.id,
-			secrets: existingZone.secrets,
-			runtimeAuthHints: existingZone.runtimeAuthHints,
-			egressHosts: existingZone.egressHosts ?? [],
-			gateway: {
-				type: 'worker',
-				imageProfile: 'worker',
-				memory: '2G',
-				cpus: 2,
-				port: 18791,
-				config: './shravan/worker.json',
-				zoneFilesDir: '../zone-files/shravan',
-			},
-		};
-		const configPath = await writeSystemConfigForTest('agent-vm-system-worker-zone-files-', input);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/zoneFilesDir/u);
-	});
-
-	test('derives Worker state and runtime without a zone-files directory', async () => {
-		// Arrange
-		const input = createValidSystemConfigInput();
-		configureFirstZoneAsWorker(input);
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-worker-derived-storage-',
-			input,
-		);
-		const canonicalConfigDirectory = await realpath(path.dirname(configPath));
-		const expectedStorageRoot = path.resolve(canonicalConfigDirectory, '../storage');
-
-		// Act
-		const config = await loadSystemConfig(configPath);
-
-		// Assert
-		expect(config.zones[0]?.gateway).toMatchObject({
-			stateDir: path.join(expectedStorageRoot, 'shravan', 'state'),
-			zoneRuntimeDir: path.join(expectedStorageRoot, 'shravan', 'runtime'),
-		});
-		expect(config.zones[0]?.gateway).not.toHaveProperty('zoneFilesDir');
 	});
 
 	test('loads strict local and remote per-agent workspace Git policies', async () => {
@@ -1422,79 +1150,82 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(duplicateInput)).toThrow(/duplicates normalized/u);
 	});
 
-	test('rejects workspace Git on Worker zones', () => {
-		const input = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(input);
-		zone.agents = [{ id: 'worker-agent', workspaceGit: { mode: 'local' } }];
-
-		expect(() => parseSystemConfigInputForTest(input)).toThrow(/workspaceGit/u);
-	});
-
 	test('loads config-backed zone secrets', async () => {
 		const input = createValidSystemConfigInput();
-		configureFirstZoneAsWorker(input);
-		input.zones[0].secrets = {
-			GITHUB_TOKEN: {
-				source: 'config',
-				value: 'gh-inline-token',
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.github.com'],
-			},
+		input.zones[0].secrets.INLINE_TOKEN = {
+			source: 'config',
+			value: 'inline-api-key',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.example.com'],
+			agentAccess: 'all',
 		};
-		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
+		input.zones[0].egressHosts = [
+			...(input.zones[0].egressHosts ?? []),
+			{ host: 'api.example.com', audience: 'tool-vm' },
+		];
 		const configPath = await writeSystemConfigForTest('agent-vm-system-config-secret-', input);
 
 		const config = await loadSystemConfig(configPath);
 
-		expect(config.zones[0]?.secrets.GITHUB_TOKEN).toEqual({
+		expect(config.zones[0]?.secrets.INLINE_TOKEN).toEqual({
 			source: 'config',
-			value: 'gh-inline-token',
+			value: 'inline-api-key',
 			injection: 'http-mediation',
-			audience: 'gateway',
-			hosts: ['api.github.com'],
+			audience: 'tool-vm',
+			hosts: ['api.example.com'],
+			agentAccess: 'all',
 		});
 	});
 
-	test('rejects config-backed zone secrets without a value', async () => {
+	test.each([
+		{ name: 'missing', invalidValue: undefined },
+		{ name: 'empty', invalidValue: '' },
+	])('rejects config-backed zone secrets with a $name value', async ({ invalidValue }) => {
 		const input = createValidSystemConfigInput();
-		configureFirstZoneAsWorker(input);
-		input.zones[0].secrets = {
-			GITHUB_TOKEN: {
-				source: 'config',
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.github.com'],
-			},
+		const configBackedSecret = {
+			source: 'config',
+			value: 'non-empty-test-value',
+			injection: 'http-mediation',
+			audience: 'tool-vm',
+			hosts: ['api.example.com'],
+			agentAccess: 'all',
 		};
-		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-secret-missing-value-',
+		input.zones[0].secrets.INLINE_TOKEN = configBackedSecret;
+		input.zones[0].egressHosts = [
+			...(input.zones[0].egressHosts ?? []),
+			{ host: 'api.example.com', audience: 'tool-vm' },
+		];
+		const validConfigPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-secret-valid-value-',
 			input,
 		);
+		const validConfig = await loadSystemConfig(validConfigPath);
+		expect(validConfig.zones[0]?.gateway.type).toBe('hermes');
 
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/value/u);
-	});
-
-	test('rejects config-backed zone secrets with an empty value', async () => {
-		const input = createValidSystemConfigInput();
-		configureFirstZoneAsWorker(input);
-		input.zones[0].secrets = {
-			GITHUB_TOKEN: {
-				source: 'config',
-				value: '',
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.github.com'],
-			},
-		};
-		input.zones[0].egressHosts = [{ host: 'api.github.com', audience: 'gateway' }];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-secret-empty-value-',
+		if (invalidValue === undefined) {
+			const { value: _value, ...secretWithoutValue } = configBackedSecret;
+			input.zones[0].secrets.INLINE_TOKEN = secretWithoutValue;
+		} else {
+			configBackedSecret.value = invalidValue;
+		}
+		const invalidConfigPath = await writeSystemConfigForTest(
+			'agent-vm-system-config-secret-invalid-value-',
 			input,
 		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/value/u);
+		await expect(loadSystemConfig(invalidConfigPath)).rejects.toMatchObject({
+			issues: expect.arrayContaining([
+				expect.objectContaining({
+					path: [
+						'zones',
+						0,
+						'secrets',
+						'INLINE_TOKEN',
+						...(invalidValue === undefined ? [] : ['value']),
+					],
+				}),
+			]),
+		});
 	});
 
 	test('rejects unsafe per-agent remote workspace Git branch names', () => {
@@ -1513,33 +1244,6 @@ describe('loadSystemConfig', () => {
 		];
 
 		expect(() => parseSystemConfigInputForTest(input)).toThrow(/git branch must/u);
-	});
-
-	test('rejects worker gateway configs with zoneGit', async () => {
-		const input = createValidSystemConfigInput();
-		const existingZone = input.zones[0];
-		input.zones[0] = {
-			id: existingZone.id,
-			secrets: existingZone.secrets,
-			runtimeAuthHints: existingZone.runtimeAuthHints,
-			allowedHosts: existingZone.allowedHosts,
-			gateway: {
-				type: 'worker',
-				imageProfile: 'worker',
-				memory: '2G',
-				cpus: 2,
-				port: 18791,
-				config: './shravan/worker.json',
-				zoneGit: {
-					remote: {
-						repoUrl: 'ShravanSunder/sunfam-zone-files',
-						branch: 'main',
-					},
-				},
-			},
-		};
-
-		expect(() => parseSystemConfigInputForTest(input)).toThrow(/zoneGit/u);
 	});
 
 	test('rejects gateway configs without an explicit gateway type', async () => {
@@ -1614,30 +1318,7 @@ describe('loadSystemConfig', () => {
 		});
 	});
 
-	test('omits zone resource policy when not present', async () => {
-		const config = parseSystemConfigInputForTest(createValidSystemConfigInput());
-
-		expect(config.zones[0]?.resources).toBeUndefined();
-	});
-
-	test('accepts explicit zone repo resource policy', async () => {
-		const config = createValidSystemConfigInput();
-		const zones = config.zones as Array<Record<string, unknown>>;
-		zones[0] = {
-			...zones[0],
-			resources: {
-				allowRepoResources: ['https://github.com/example/app.git'],
-			},
-		};
-
-		const loadedConfig = parseSystemConfigInputForTest(config);
-
-		expect(loadedConfig.zones[0]?.resources).toEqual({
-			allowRepoResources: ['https://github.com/example/app.git'],
-		});
-	});
-
-	test('rejects legacy zone resource allowedKinds', async () => {
+	test('rejects the removed zone resource policy', async () => {
 		const config = createValidSystemConfigInput();
 		const zones = config.zones as Array<Record<string, unknown>>;
 		zones[0] = {
@@ -1648,7 +1329,7 @@ describe('loadSystemConfig', () => {
 			},
 		};
 
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/allowedKinds/u);
+		expect(() => parseSystemConfigInputForTest(config)).toThrow(/resources/u);
 	});
 
 	test('rejects per-profile legacy cache fields', async () => {
@@ -1656,9 +1337,9 @@ describe('loadSystemConfig', () => {
 		const legacyFieldName = ['cache', 'Inputs'].join('');
 		const legacyFileName = ['cache', 'inputs'].join('-');
 		const imageProfiles = config.imageProfiles as {
-			readonly gateways: { readonly worker: Record<string, unknown> };
+			readonly gateways: { readonly hermes: Record<string, unknown> };
 		};
-		imageProfiles.gateways.worker[legacyFieldName] = `../${legacyFileName}.json`;
+		imageProfiles.gateways.hermes[legacyFieldName] = `../${legacyFileName}.json`;
 		const configPath = await writeSystemConfigForTest(
 			'agent-vm-system-config-legacy-cache-',
 			config,
@@ -1694,11 +1375,6 @@ describe('loadSystemConfig', () => {
 							type: 'hermes',
 							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 							dockerfile: '../vm-images/gateways/hermes/Dockerfile',
-						},
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.json',
-							dockerfile: '../vm-images/gateways/worker/Dockerfile',
 						},
 					},
 					toolVms: {
@@ -1754,10 +1430,6 @@ describe('loadSystemConfig', () => {
 						hermes: {
 							type: 'hermes',
 							buildConfig: '../vm-images/gateways/hermes/build-config.json',
-						},
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {
@@ -1836,10 +1508,6 @@ describe('loadSystemConfig', () => {
 							type: 'hermes',
 							buildConfig: '../vm-images/gateways/hermes/build-config.json',
 						},
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.json',
-						},
 					},
 					toolVms: {
 						default: {
@@ -1890,71 +1558,6 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/projectNamespace/u);
-	});
-
-	test('loads service token runtime auth hints from zone config', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [
-			{ host: 'api.github.com', audience: 'gateway' },
-			{ host: 'api.linear.app', audience: 'gateway' },
-		];
-		zone.secrets = {
-			GITHUB_TOKEN: {
-				source: 'environment',
-				envVar: 'GITHUB_TOKEN',
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.github.com'],
-			},
-			LINEAR_API_KEY: {
-				source: 'environment',
-				envVar: 'LINEAR_API_KEY',
-				injection: 'http-mediation',
-				audience: 'gateway',
-				hosts: ['api.linear.app'],
-			},
-		};
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'GITHUB_TOKEN',
-				service: 'github',
-				hosts: ['api.github.com'],
-				tools: ['gh'],
-			},
-			{
-				kind: 'service-token',
-				secret: 'LINEAR_API_KEY',
-				service: 'linear',
-				hosts: ['api.linear.app'],
-				tools: ['linear'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-', config);
-
-		await expect(loadSystemConfig(configPath)).resolves.toMatchObject({
-			zones: [
-				{
-					runtimeAuthHints: [
-						{
-							kind: 'service-token',
-							secret: 'GITHUB_TOKEN',
-							service: 'github',
-							hosts: ['api.github.com'],
-							tools: ['gh'],
-						},
-						{
-							kind: 'service-token',
-							secret: 'LINEAR_API_KEY',
-							service: 'linear',
-							hosts: ['api.linear.app'],
-							tools: ['linear'],
-						},
-					],
-				},
-			],
-		});
 	});
 
 	test('loads explicit egress host and secret audiences', async () => {
@@ -2528,24 +2131,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/agentAccess/u);
 	});
 
-	test('rejects worker-zone Tool VM agent access', () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [{ host: 'api.github.com', audience: 'tool-vm' }];
-		zone.secrets.GITHUB_TOKEN = {
-			source: 'environment',
-			envVar: 'GITHUB_TOKEN',
-			injection: 'http-mediation',
-			audience: 'tool-vm',
-			hosts: ['api.github.com'],
-			agentAccess: 'all',
-		};
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(
-			/worker zones do not boot managed-agent Tool VMs/u,
-		);
-	});
-
 	test('rejects mediated secret hosts that are not declared for the same audience', async () => {
 		const config = createValidSystemConfigInput();
 		const zone = config.zones[0];
@@ -2587,119 +2172,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/egressHosts/u);
 	});
 
-	test('allows omitted runtime auth hints', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = config.zones[0];
-		delete zone.runtimeAuthHints;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-runtime-auth-default-',
-			config,
-		);
-
-		const loadedConfig = await loadSystemConfig(configPath);
-
-		expect(loadedConfig.zones[0]?.runtimeAuthHints).toBeUndefined();
-	});
-
-	test('rejects runtime auth hints that reference missing secrets', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'NPM_AUTH_TOKEN',
-				service: 'npm',
-				hosts: ['registry.npmjs.org'],
-				tools: ['npm', 'pnpm', 'yarn'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-runtime-auth-missing-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/NPM_AUTH_TOKEN/u);
-	});
-
-	test('rejects runtime auth hints that reference hosts outside the mediated secret', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [{ host: 'registry.npmjs.org', audience: 'gateway' }];
-		zone.secrets.NPM_AUTH_TOKEN = {
-			source: 'environment',
-			envVar: 'NPM_AUTH_TOKEN',
-			injection: 'http-mediation',
-			audience: 'gateway',
-			hosts: ['registry.npmjs.org'],
-		};
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'NPM_AUTH_TOKEN',
-				service: 'npm',
-				hosts: ['npm.pkg.github.com'],
-				tools: ['npm'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-host-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/npm\.pkg\.github\.com/u);
-	});
-
-	test('rejects runtime auth hints that reference env-injected secrets', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.secrets.GITHUB_TOKEN = {
-			source: 'environment',
-			envVar: 'GITHUB_TOKEN',
-			injection: 'env',
-			audience: 'gateway',
-		};
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'GITHUB_TOKEN',
-				service: 'github',
-				hosts: ['api.github.com'],
-				tools: ['gh'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest('agent-vm-system-runtime-auth-env-', config);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/http-mediation/u);
-	});
-
-	test('rejects worker zone Tool VM-only mediated secrets before runtime auth hints', async () => {
-		const config = createValidSystemConfigInput();
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [{ host: 'api.linear.app', audience: 'tool-vm' }];
-		zone.secrets.LINEAR_API_KEY = {
-			source: 'environment',
-			envVar: 'LINEAR_API_KEY',
-			injection: 'http-mediation',
-			audience: 'tool-vm',
-			hosts: ['api.linear.app'],
-			agentAccess: 'all',
-		};
-		zone.runtimeAuthHints = [
-			{
-				kind: 'service-token',
-				secret: 'LINEAR_API_KEY',
-				service: 'linear',
-				hosts: ['api.linear.app'],
-				tools: ['linear'],
-			},
-		];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-runtime-auth-tool-vm-secret-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(
-			/worker zones do not boot managed-agent Tool VMs/u,
-		);
-	});
-
 	test('rejects zones that reference unknown tool VM profiles', async () => {
 		const workingDirectoryPath = await mkdtemp(
 			path.join(os.tmpdir(), 'agent-vm-system-config-missing-tool-vm-profile-'),
@@ -2726,10 +2198,6 @@ describe('loadSystemConfig', () => {
 						hermes: {
 							type: 'hermes',
 							buildConfig: '../vm-images/gateways/hermes/build-config.json',
-						},
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {
@@ -3317,21 +2785,6 @@ describe('loadSystemConfig', () => {
 		expect(() => parseSystemConfigInputForTest(config)).toThrow(/assigned to multiple agents/u);
 	});
 
-	test('does not invent a managed base image for Hermes', () => {
-		const config = createValidSystemConfigInput();
-		configureFirstZoneAsHermes(config);
-		const gatewayImageProfiles = config.imageProfiles.gateways;
-		if (!isRecord(gatewayImageProfiles) || !isRecord(gatewayImageProfiles.hermes)) {
-			throw new Error('Expected the Hermes image profile fixture.');
-		}
-		gatewayImageProfiles.hermes.source = {
-			kind: 'managedBase',
-			base: 'worker-gateway',
-		};
-
-		expect(() => parseSystemConfigInputForTest(config)).toThrow(/must not declare a managed base/u);
-	});
-
 	test('rejects legacy tool VM profile field names', async () => {
 		const config = createValidSystemConfigInput();
 		const legacyConfig = {
@@ -3472,52 +2925,6 @@ describe('loadSystemConfig', () => {
 		);
 	});
 
-	test('accepts worker-only configs without tool VM support', async () => {
-		const config = createValidSystemConfigInput();
-		config.imageProfiles = {
-			gateways: {
-				worker: {
-					type: 'worker',
-					buildConfig: '../vm-images/gateways/worker/build-config.json',
-				},
-			},
-		};
-		config.zones = [
-			{
-				id: 'worker-zone',
-				gateway: {
-					type: 'worker',
-					imageProfile: 'worker',
-					memory: '2G',
-					cpus: 2,
-					port: 18791,
-					config: './worker-zone/worker.json',
-				},
-				secrets: {},
-				runtimeAuthHints: [],
-				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			},
-		];
-		delete config.toolVmProfiles;
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-worker-no-tools-',
-			config,
-		);
-
-		const systemConfig = await loadSystemConfig(configPath);
-
-		expect(systemConfig).toMatchObject({
-			imageProfiles: { toolVms: {} },
-			toolVmProfiles: {},
-			zones: [
-				{
-					id: 'worker-zone',
-				},
-			],
-		});
-		expect(systemConfig.zones[0]).not.toHaveProperty('defaultToolVmProfile');
-	});
-
 	test('rejects zones that reference unknown gateway image profiles', async () => {
 		const config = createValidSystemConfigInput();
 		config.zones = [
@@ -3552,32 +2959,6 @@ describe('loadSystemConfig', () => {
 		);
 
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/unknown gateway imageProfile/u);
-	});
-
-	test('rejects gateway image profiles whose type differs from the zone gateway type', async () => {
-		const config = createValidSystemConfigInput();
-		config.zones = [
-			{
-				id: 'shravan',
-				gateway: {
-					type: 'worker',
-					imageProfile: 'hermes',
-					memory: '2G',
-					cpus: 2,
-					port: 18791,
-					config: './shravan/worker.json',
-				},
-				secrets: {},
-				runtimeAuthHints: [],
-				egressHosts: ['discord.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			},
-		];
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-config-profile-type-mismatch-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/does not match imageProfile/u);
 	});
 
 	test('rejects tool VM profiles that reference unknown tool VM image profiles', async () => {
@@ -3670,7 +3051,7 @@ describe('loadSystemConfig', () => {
 		},
 	);
 
-	test.each(['cache', 'controller-state', 'controller-runtime'])(
+	test.each(['cache', 'controller-state', 'controller-runtime', 'generated'])(
 		'rejects reserved global storage zone id %s',
 		async (reservedZoneId) => {
 			// Arrange
@@ -3683,6 +3064,81 @@ describe('loadSystemConfig', () => {
 
 			// Act / Assert
 			await expect(loadSystemConfig(configPath)).rejects.toThrow(/reserved for global storage/u);
+		},
+	);
+
+	test('rejects cache as a project namespace reserved for host-shared storage', async () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.host.projectNamespace = 'cache';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-reserved-cache-project-namespace-',
+			config,
+		);
+
+		// Act / Assert
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/projectNamespace is reserved for host-shared storage/u,
+		);
+	});
+
+	test('rejects a symlinked host cache that resolves inside the deployment root', async () => {
+		// Arrange
+		const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-shared-cache-overlap-'));
+		createdDirectories.push(fixtureRoot);
+		const hostRoot = path.join(fixtureRoot, 'host');
+		const deploymentRoot = path.join(hostRoot, 'deployment');
+		await mkdir(deploymentRoot, { recursive: true });
+		await symlink(deploymentRoot, path.join(hostRoot, 'cache'));
+		const config = createValidSystemConfigInput();
+		config.storageRootDir = deploymentRoot;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-symlinked-shared-cache-overlap-',
+			config,
+		);
+
+		// Act / Assert
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/cacheDir/u);
+	});
+
+	test('derives distinct deployment cache scopes for canonical roots sharing one namespace', () => {
+		const firstConfig = createValidSystemConfigInput();
+		const secondConfig = createValidSystemConfigInput();
+		firstConfig.host.projectNamespace = 'same-namespace';
+		secondConfig.host.projectNamespace = 'same-namespace';
+		firstConfig.storageRootDir = '/var/agent-vm/deployment-a';
+		secondConfig.storageRootDir = '/var/agent-vm/deployment-b';
+
+		const firstLoaded = parseSystemConfigInputForTest(firstConfig);
+		const secondLoaded = parseSystemConfigInputForTest(secondConfig);
+
+		expect(firstLoaded.cacheDir).toBe(secondLoaded.cacheDir);
+		expect(deploymentCacheDirForSystemConfig(firstLoaded)).not.toBe(
+			deploymentCacheDirForSystemConfig(secondLoaded),
+		);
+	});
+
+	test.each(['state', 'zone-files', 'runtime', 'backup', 'gateway-config'])(
+		'rejects a protected %s symlink into the central cache',
+		async (protectedKind) => {
+			const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-protected-'));
+			createdDirectories.push(fixtureRoot);
+			const deploymentRoot = path.join(fixtureRoot, 'deployment');
+			const cacheTarget = path.join(fixtureRoot, 'cache', 'protected-target');
+			const config = createValidSystemConfigInput();
+			config.storageRootDir = deploymentRoot;
+			const zoneId = config.zones[0].id;
+			const protectedPath = path.join(deploymentRoot, zoneId, protectedKind);
+			await mkdir(path.dirname(protectedPath), { recursive: true });
+			await mkdir(cacheTarget, { recursive: true });
+			await symlink(cacheTarget, protectedPath);
+			if (protectedKind === 'backup') config.zones[0].gateway.backupDir = protectedPath;
+			if (protectedKind === 'gateway-config') {
+				config.zones[0].gateway.config = path.join(protectedPath, 'config.yaml');
+			}
+			const configPath = await writeSystemConfigForTest('agent-vm-cache-protected-config-', config);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/cacheDir must not overlap/u);
 		},
 	);
 
@@ -4089,31 +3545,6 @@ describe('loadSystemConfig', () => {
 		await expect(loadSystemConfig(configPath)).rejects.toThrow(/host.observability/u);
 	});
 
-	test('rejects worker zone observability in v1', async () => {
-		const config = createValidSystemConfigInput();
-		config.host.observability = {
-			enabled: true,
-			stack: { mode: 'managed', scrubbing: { responsibility: 'agent-vm-managed-collector' } },
-			runner: 'docker-compose',
-			mode: 'collector',
-			dataDir: '../observability',
-			retention: {
-				metrics: { period: '30d', minFreeDiskSpaceBytes: '5GiB' },
-				logs: { period: '14d', maxDiskSpaceUsageBytes: '50GiB' },
-				traces: { period: '7d', maxDiskSpaceUsageBytes: '20GiB' },
-			},
-		};
-		const zone = configureFirstZoneAsWorker(config);
-		zone.egressHosts = [{ host: 'example.com', audience: 'gateway' }];
-		zone.observability = createZoneObservabilityInput();
-		const configPath = await writeSystemConfigForTest(
-			'agent-vm-system-worker-zone-observability-',
-			config,
-		);
-
-		await expect(loadSystemConfig(configPath)).rejects.toThrow(/managed Hermes/u);
-	});
-
 	test.each([
 		['metrics max bytes', { metrics: { period: '30d', maxDiskSpaceUsageBytes: '50GiB' } }],
 		['metrics max percent', { metrics: { period: '30d', maxDiskUsagePercent: 80 } }],
@@ -4190,7 +3621,7 @@ describe('loadSystemConfig', () => {
 	);
 
 	test.each([
-		['cacheDir', '../storage/cache/observability', /dataDir must not overlap cacheDir/u],
+		['cacheDir', '../cache/observability', /dataDir must not overlap cacheDir/u],
 		[
 			'controllerRuntimeDir',
 			'../storage/controller-runtime/observability',

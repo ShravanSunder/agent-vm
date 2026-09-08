@@ -21,13 +21,13 @@ const LEGACY_CONTROLLER_RECORD_EVIDENCE_SCANNER_PATH =
 const GENERIC_STATE_DIRECTORY_NAME_PATTERN =
 	/\b[\w$]*(?:StateDir|stateDir|StateDirectory|stateDirectory)[\w$]*\b/u;
 const FORBIDDEN_RECORD_ALIAS_NAME_PATTERN =
-	/(?:legacy|fallback|migration|migrate|compatibility|compat)[\w$]*(?:(?:controller|gatewayRuntime|managedGatewayRuntime|workerRuntime|toolVmRuntime|approval)[\w$]*record|stateDir|stateDirectory)|(?:(?:controller|gatewayRuntime|managedGatewayRuntime|workerRuntime|toolVmRuntime|approval)[\w$]*record|stateDir|stateDirectory)[\w$]*(?:legacy|fallback|migration|migrate|compatibility|compat)/iu;
+	/(?:legacy|fallback|migration|migrate|compatibility|compat)[\w$]*(?:(?:controller|gatewayRuntime|managedGatewayRuntime|toolVmRuntime|approval)[\w$]*record|stateDir|stateDirectory)|(?:(?:controller|gatewayRuntime|managedGatewayRuntime|toolVmRuntime|approval)[\w$]*record|stateDir|stateDirectory)[\w$]*(?:legacy|fallback|migration|migrate|compatibility|compat)/iu;
 const RECORD_MODULE_PATH_PATTERN =
 	/(?:^|\/)(?:[^/]*record[^/]*|controller-approval-ledger)[.](?:cts|mts|ts|tsx)$/u;
 const RECORD_CALL_NAME_PATTERN =
-	/(?:GatewayRuntimeRecord|WorkerRuntimeRecord|ToolVmRuntimeRecord|RuntimeRecord|ControllerApprovalLedger|CrashDurableRecordStore)/u;
+	/(?:GatewayRuntimeRecord|ToolVmRuntimeRecord|RuntimeRecord|ControllerApprovalLedger|CrashDurableRecordStore)/u;
 const RECORD_READ_CALL_NAME_PATTERN =
-	/(?:load|read)[\w$]*(?:GatewayRuntimeRecord|WorkerRuntimeRecord|ToolVmRuntimeRecord|Approval)/u;
+	/(?:load|read)[\w$]*(?:GatewayRuntimeRecord|ToolVmRuntimeRecord|Approval)/u;
 
 function normalizeFilePath(filePath: string): string {
 	return filePath.replaceAll('\\', '/');
@@ -133,13 +133,6 @@ function legacyLayoutReason(
 		return undefined;
 	}
 	const pathSegments = stringLiteralValues(pathArguments);
-	if (
-		pathSegments.has('tasks') &&
-		pathSegments.has('state') &&
-		pathSegments.has('gateway-runtime.json')
-	) {
-		return 'legacy Worker task runtime record layout is forbidden outside the legacy evidence scanner';
-	}
 	if (pathSegments.has('gateway-runtime.json')) {
 		return 'legacy managed Gateway runtime record layout is forbidden outside the legacy evidence scanner';
 	}

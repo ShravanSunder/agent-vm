@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
 
-import type { ConfiguredCliInput, ControllerExecutionOperation } from '@agent-vm/config-contracts';
+import type {
+	ConfiguredCliInput,
+	EffectiveControllerExecutionOperation,
+} from '@agent-vm/config-contracts';
 import {
 	evaluateCliAllowanceInvocation,
 	resolveCliAllowanceTimeout,
@@ -14,7 +17,10 @@ import { resolveConfiguredCliEnvironment } from './configured-cli-environment.js
 import { fixedSafeConfiguredCliStderrSummary } from './configured-cli-output.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
 
-type ConfiguredCliOperation = Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+type ConfiguredCliOperation = Extract<
+	EffectiveControllerExecutionOperation,
+	{ kind: 'configured_cli' }
+>;
 export interface ConfiguredCliHostExecutionResult {
 	readonly exitCode: number;
 	readonly stderrSummary?: string;

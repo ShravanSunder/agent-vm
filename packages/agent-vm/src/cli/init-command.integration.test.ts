@@ -2,15 +2,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
-	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
-	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
-	DEFAULT_WORK_AGENT_INSTRUCTIONS,
-	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
-	DEFAULT_WRAPUP_INSTRUCTIONS,
-	loadWorkerConfigDraft,
-} from '@agent-vm/agent-vm-worker';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -65,7 +56,7 @@ const scaffoldedSystemConfigSchema = z.object({
 		z.object({
 			id: z.string().min(1),
 			gateway: z.object({
-				type: z.enum(['hermes', 'worker']),
+				type: z.literal('hermes'),
 			}),
 		}),
 	]),
@@ -85,16 +76,10 @@ const scaffoldedRuntimePathsSchema = z.object({
 	}),
 	zones: z.tuple([
 		z.object({
-			gateway: z.union([
-				z.object({
-					type: z.literal('hermes'),
-					backupDir: z.string().min(1).optional(),
-				}),
-				z.object({
-					type: z.literal('worker'),
-					backupDir: z.string().min(1).optional(),
-				}),
-			]),
+			gateway: z.object({
+				type: z.literal('hermes'),
+				backupDir: z.string().min(1).optional(),
+			}),
 		}),
 	]),
 });
@@ -322,36 +307,6 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(pathExists(path.join(targetDir, 'config', 'system.jsonc'))).resolves.toBe(false);
 	});
 
-	it('scaffolds a worker gateway when requested', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'test-zone',
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-		const config = scaffoldedSystemConfigSchema.parse(await readGeneratedSystemConfig(targetDir));
-		const systemConfig = await readGeneratedSystemConfig(targetDir);
-
-		expect(config.zones[0]?.gateway.type).toBe('worker');
-		expect(systemConfig.imageProfiles?.gateways.worker?.source).toEqual({
-			kind: 'managedBase',
-			base: 'worker-gateway',
-			overlay: '../vm-images/gateways/worker/overlay.jsonc',
-		});
-		await expect(
-			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile')),
-		).rejects.toMatchObject({ code: 'ENOENT' });
-		await expect(
-			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'overlay.jsonc')),
-		).resolves.toBeUndefined();
-	});
-
 	it('scaffolds a complete valid Hermes gateway when requested', async () => {
 		const targetDir = await createTestDirectory();
 
@@ -401,133 +356,6 @@ describe('scaffoldAgentVmProject', () => {
 		await expect(
 			fs.readFile(path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'Dockerfile'), 'utf8'),
 		).resolves.toContain('agent-vm-hermes-gateway');
-	});
-
-	it('scaffolds worker.jsonc with editable prompt file references for every default prompt', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const workerConfigPath = path.join(
-			targetDir,
-			'config',
-			'gateways',
-			'test-worker',
-			'worker.jsonc',
-		);
-		const rawWorkerConfig = z
-			.object({
-				commonAgentInstructions: z.unknown(),
-				phases: z.object({
-					plan: z.object({
-						agentInstructions: z.unknown(),
-						reviewerInstructions: z.unknown(),
-					}),
-					work: z.object({
-						agentInstructions: z.unknown(),
-						reviewerInstructions: z.unknown(),
-					}),
-					wrapup: z.object({ instructions: z.unknown() }),
-				}),
-				wrapupActions: z.unknown().optional(),
-			})
-			.parse(await readGeneratedJsonc(workerConfigPath));
-		const workerConfig = await loadWorkerConfigDraft(workerConfigPath);
-
-		expect(rawWorkerConfig.commonAgentInstructions).toEqual({
-			path: './prompts/common-agent-instructions.md',
-		});
-		expect(rawWorkerConfig.phases.plan.agentInstructions).toEqual({
-			path: './prompts/plan-agent.md',
-		});
-		expect(rawWorkerConfig.phases.plan.reviewerInstructions).toEqual({
-			path: './prompts/plan-reviewer.md',
-		});
-		expect(rawWorkerConfig.phases.work.agentInstructions).toEqual({
-			path: './prompts/work-agent.md',
-		});
-		expect(rawWorkerConfig.phases.work.reviewerInstructions).toEqual({
-			path: './prompts/work-reviewer.md',
-		});
-		expect(rawWorkerConfig.phases.wrapup.instructions).toEqual({ path: './prompts/wrapup.md' });
-
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'base.md'),
-				'utf8',
-			),
-		).rejects.toMatchObject({ code: 'ENOENT' });
-		await expect(
-			fs.readFile(
-				path.join(
-					targetDir,
-					'config',
-					'gateways',
-					'test-worker',
-					'prompts',
-					'common-agent-instructions.md',
-				),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_COMMON_AGENT_INSTRUCTIONS}\n`);
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'plan-agent.md'),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_PLAN_AGENT_INSTRUCTIONS}\n`);
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'plan-reviewer.md'),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_PLAN_REVIEWER_INSTRUCTIONS}\n`);
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'work-agent.md'),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_WORK_AGENT_INSTRUCTIONS}\n`);
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'work-reviewer.md'),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_WORK_REVIEWER_INSTRUCTIONS}\n`);
-		await expect(
-			fs.readFile(
-				path.join(targetDir, 'config', 'gateways', 'test-worker', 'prompts', 'wrapup.md'),
-				'utf8',
-			),
-		).resolves.toBe(`${DEFAULT_WRAPUP_INSTRUCTIONS}\n`);
-
-		expect(workerConfig.commonAgentInstructions).toBe(`${DEFAULT_COMMON_AGENT_INSTRUCTIONS}\n`);
-		expect(workerConfig.phases.plan.agentInstructions).toBe(`${DEFAULT_PLAN_AGENT_INSTRUCTIONS}\n`);
-		expect(workerConfig.phases.plan.reviewerInstructions).toBe(
-			`${DEFAULT_PLAN_REVIEWER_INSTRUCTIONS}\n`,
-		);
-		expect(workerConfig.phases.work.agentInstructions).toBe(`${DEFAULT_WORK_AGENT_INSTRUCTIONS}\n`);
-		expect(workerConfig.phases.work.reviewerInstructions).toBe(
-			`${DEFAULT_WORK_REVIEWER_INSTRUCTIONS}\n`,
-		);
-		expect(workerConfig.phases.wrapup.instructions).toBe(`${DEFAULT_WRAPUP_INSTRUCTIONS}\n`);
-		expect(workerConfig.defaults.provider).toBe('codex');
-		expect(workerConfig.defaults.model).toBe('latest-medium');
-		expect(workerConfig.phases.plan.cycle).toEqual({ kind: 'review', cycleCount: 2 });
-		expect(workerConfig.phases.work.cycle).toEqual({ kind: 'review', cycleCount: 4 });
-		expect(rawWorkerConfig.wrapupActions).toBeUndefined();
-		expect(workerConfig.mcpServers).toEqual([
-			{ name: 'deepwiki', url: 'https://mcp.deepwiki.com/mcp' },
-		]);
 	});
 
 	it('scaffolds generated deployment manual files and CLAUDE.md symlink', async () => {
@@ -712,7 +540,11 @@ describe('scaffoldAgentVmProject', () => {
 		const storageRootDir = path.join(targetDir, '.agent-vm', systemConfig.host.projectNamespace);
 
 		expect(await pathExists(path.join(targetDir, 'config', 'gateways', 'my-zone'))).toBe(true);
-		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(true);
+		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(false);
+		expect(await pathExists(path.join(path.dirname(storageRootDir), 'cache', 'vm-images'))).toBe(
+			true,
+		);
+		expect(await pathExists(path.join(storageRootDir, 'generated'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-state'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-runtime'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'my-zone', 'state'))).toBe(true);
@@ -729,7 +561,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'my-zone',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'x86_64',
 				secretsProvider: 'environment',
 				paths: 'pod',
@@ -788,7 +620,9 @@ describe('scaffoldAgentVmProject', () => {
 			systemConfig.host.projectNamespace,
 		);
 		expect(loadedSystemConfig.storageRootDir).toBe(expectedCanonicalStorageRoot);
-		expect(loadedSystemConfig.cacheDir).toBe(path.join(expectedCanonicalStorageRoot, 'cache'));
+		expect(loadedSystemConfig.cacheDir).toBe(
+			path.join(path.dirname(expectedCanonicalStorageRoot), 'cache'),
+		);
 		expect(loadedSystemConfig.controllerStateDir).toBe(
 			path.join(expectedCanonicalStorageRoot, 'controller-state'),
 		);
@@ -843,7 +677,11 @@ describe('scaffoldAgentVmProject', () => {
 		expect(await pathExists(path.join(targetDir, 'workspaces'))).toBe(false);
 
 		// user-dir profile SHOULD create the dirs it advertises in system.json
-		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(true);
+		expect(await pathExists(path.join(storageRootDir, 'cache'))).toBe(false);
+		expect(await pathExists(path.join(path.dirname(storageRootDir), 'cache', 'vm-images'))).toBe(
+			true,
+		);
+		expect(await pathExists(path.join(storageRootDir, 'generated'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-state'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'controller-runtime'))).toBe(true);
 		expect(await pathExists(path.join(storageRootDir, 'shravan', 'state'))).toBe(true);
@@ -860,7 +698,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'my-zone',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				paths: 'local',
@@ -876,25 +714,13 @@ describe('scaffoldAgentVmProject', () => {
 		expect(systemConfig.zones[0].gateway.backupDir).toBe('../backups/my-zone');
 	});
 
-	it('scaffolds a type-specific gateway config file', async () => {
+	it('scaffolds a Hermes gateway config file', async () => {
 		const hermesTargetDir = await createTestDirectory();
 		await scaffoldAgentVmProject(
 			{
 				targetDir: hermesTargetDir,
 				zoneId: 'my-zone',
 				gatewayType: 'hermes',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const workerTargetDir = await createTestDirectory();
-		await scaffoldAgentVmProject(
-			{
-				targetDir: workerTargetDir,
-				zoneId: 'my-zone',
-				gatewayType: 'worker',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 			},
@@ -913,21 +739,6 @@ describe('scaffoldAgentVmProject', () => {
 				),
 			),
 		).toBe(true);
-		expect(
-			await pathExists(path.join(workerTargetDir, 'config', 'gateways', 'my-zone', 'worker.jsonc')),
-		).toBe(true);
-		expect(
-			await pathExists(
-				path.join(
-					workerTargetDir,
-					'config',
-					'gateways',
-					'my-zone',
-					'hermes-managed',
-					'config.yaml',
-				),
-			),
-		).toBe(false);
 	});
 
 	it('does not overwrite an existing system.json', async () => {
@@ -984,7 +795,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'test-zone',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				secretsProvider: '1password',
 				overwrite: true,
@@ -997,32 +808,6 @@ describe('scaffoldAgentVmProject', () => {
 
 		expect(result.created).toContain('config/system.json');
 		expect(config.existing).toBeUndefined();
-	});
-
-	it('scaffolds worker-appropriate secrets for worker type', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const config = await readGeneratedSystemConfig(targetDir);
-		const secrets = config.zones[0].secrets;
-
-		expect(secrets).not.toHaveProperty('DISCORD_BOT_TOKEN');
-		expect(secrets).not.toHaveProperty('OPENCLAW_GATEWAY_TOKEN');
-		expect(secrets).not.toHaveProperty('ANTHROPIC_API_KEY');
-		expect(secrets).toHaveProperty('GITHUB_TOKEN');
-		expect(secrets).toHaveProperty('OPENAI_API_KEY');
-		expect(config.host.githubToken.ref).toBe('op://agent-vm/github-token/credential');
 	});
 
 	it('scaffolds profile-isolated secrets for Hermes gateways', async () => {
@@ -1206,124 +991,15 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 	});
 
-	it('scaffolds worker-specific env references for worker type', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-				writeLocalEnvironmentFile: true,
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-		const envContent = await fs.readFile(path.join(targetDir, '.env.local'), 'utf8');
-
-		expect(envContent).not.toContain('ANTHROPIC_API_KEY_REF=');
-		expect(envContent).not.toContain('OPENAI_API_KEY_REF=');
-	});
-
-	it('scaffolds worker-specific refs in system.json for worker type', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const config = await readGeneratedSystemConfig(targetDir);
-		const secrets = config.zones[0].secrets;
-
-		expect(generatedSecretReferenceSchema.parse(secrets.OPENAI_API_KEY).ref).toBe(
-			'op://agent-vm/workers-openai/credential',
-		);
-		expect(generatedSecretReferenceSchema.parse(secrets.GITHUB_TOKEN).ref).toBe(
-			'op://agent-vm/github-token/credential',
-		);
-	});
-
-	it('scaffolds worker-specific network defaults for worker type', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const config = await readGeneratedSystemConfig(targetDir);
-		const zone = config.zones[0];
-		const egressHosts = (zone.egressHosts ?? []).map((entry) => entry.host);
-
-		expect(egressHosts).toContain('api.anthropic.com');
-		expect(egressHosts).toContain('api.openai.com');
-		expect(egressHosts).toContain('mcp.deepwiki.com');
-		expect(egressHosts).not.toContain('discord.com');
-		expect(zone).not.toHaveProperty('websocketBypass');
-	});
-
-	it('scaffolds worker runtime auth hints for mediated GitHub operations', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				targetDir,
-				zoneId: 'test-worker',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const config = (await readGeneratedSystemConfig(targetDir)) as {
-			readonly zones: readonly [
-				{
-					readonly runtimeAuthHints: readonly {
-						readonly kind: string;
-						readonly secret: string;
-						readonly service: string;
-						readonly hosts: readonly string[];
-						readonly tools: readonly string[];
-					}[];
-				},
-			];
-		};
-
-		expect(config.zones[0].runtimeAuthHints).toEqual([
-			{
-				kind: 'service-token',
-				secret: 'GITHUB_TOKEN',
-				service: 'github',
-				hosts: ['api.github.com'],
-				tools: ['gh'],
-			},
-		]);
-	});
-
 	it('scaffolds environment-backed secrets when secretsProvider is environment', async () => {
 		const targetDir = await createTestDirectory();
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'env-worker',
+				zoneId: 'env-hermes',
 				secretsProvider: 'environment',
 			},
 			noGeneratedAgeIdentityDependencies,
@@ -1335,10 +1011,10 @@ describe('scaffoldAgentVmProject', () => {
 		expect(config.host.secretsProvider).toBeUndefined();
 		expect(config.zones[0].adminAccess).toEqual({ mode: 'none' });
 		const secrets = config.zones[0]?.secrets ?? {};
-		expect(secrets['GITHUB_TOKEN']?.source).toBe('environment');
-		expect(secrets['GITHUB_TOKEN']?.envVar).toBe('GITHUB_TOKEN');
-		expect(secrets['OPENAI_API_KEY']?.source).toBe('environment');
-		expect(secrets['OPENAI_API_KEY']?.envVar).toBe('OPENAI_API_KEY');
+		expect(secrets['API_SERVER_KEY']?.source).toBe('environment');
+		expect(secrets['API_SERVER_KEY']?.envVar).toBe('API_SERVER_KEY');
+		expect(secrets['HERMES_API_SERVER_KEY_MAIN']?.source).toBe('environment');
+		expect(secrets['DISCORD_BOT_TOKEN_MAIN']?.source).toBe('environment');
 		for (const secret of Object.values(secrets)) {
 			expect(secret.ref).toBeUndefined();
 		}
@@ -1349,10 +1025,10 @@ describe('scaffoldAgentVmProject', () => {
 
 		await scaffoldAgentVmProject(
 			{
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				targetDir,
-				zoneId: 'env-worker',
+				zoneId: 'env-hermes',
 				secretsProvider: 'environment',
 			},
 			{
@@ -1372,7 +1048,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'coding-agent',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'x86_64',
 				hostSystemType: 'container',
 				paths: 'pod',
@@ -1394,7 +1070,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'coding-agent',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'x86_64',
 				hostSystemType: 'container',
 				paths: 'pod',
@@ -1432,7 +1108,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'coding-agent',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				hostSystemType: 'container',
 				paths: 'pod',
@@ -1445,7 +1121,7 @@ describe('scaffoldAgentVmProject', () => {
 			.object({ arch: z.literal('aarch64') })
 			.parse(
 				await readGeneratedJsonc(
-					path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.jsonc'),
+					path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'build-config.jsonc'),
 				),
 			);
 		const dockerfile = await fs.readFile(
@@ -1465,7 +1141,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'coding-agent',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'aarch64',
 				hostSystemType: 'bare-metal',
 				paths: 'local',
@@ -1486,7 +1162,7 @@ describe('scaffoldAgentVmProject', () => {
 			{
 				targetDir,
 				zoneId: 'coding-agent',
-				gatewayType: 'worker',
+				gatewayType: 'hermes',
 				architecture: 'x86_64',
 				paths: 'pod',
 				projectNamespace: 'agent-vm',
@@ -1497,20 +1173,16 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		const systemConfig = await readGeneratedSystemConfig(targetDir);
-		const podWorkerSystemConfig = z
+		const podHermesSystemConfig = z
 			.object({
 				schemaVersion: z.literal(2),
 				host: z.object({ projectNamespace: z.string().min(1) }),
 				storageRootDir: z.string().min(1),
 				imageProfiles: z.object({
 					gateways: z.object({
-						worker: z.object({
+						hermes: z.object({
 							buildConfig: z.string().min(1),
-							source: z.object({
-								kind: z.literal('managedBase'),
-								base: z.literal('worker-gateway'),
-								overlay: z.string().min(1),
-							}),
+							dockerfile: z.string().min(1),
 						}),
 					}),
 					toolVms: z.record(z.string(), z.unknown()).optional(),
@@ -1520,6 +1192,7 @@ describe('scaffoldAgentVmProject', () => {
 						gateway: z.object({
 							config: z.string().min(1),
 							backupDir: z.string().min(1),
+							zoneFilesDir: z.string().min(1).optional(),
 						}),
 					}),
 				]),
@@ -1527,64 +1200,38 @@ describe('scaffoldAgentVmProject', () => {
 			})
 			.parse(systemConfig);
 
-		expect(podWorkerSystemConfig.host.projectNamespace).toBe('agent-vm');
-		expect(podWorkerSystemConfig.storageRootDir).toBe('/var/agent-vm/agent-vm');
-		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.buildConfig).toBe(
-			'/etc/agent-vm/vm-images/gateways/worker/build-config.jsonc',
+		expect(podHermesSystemConfig.host.projectNamespace).toBe('agent-vm');
+		expect(podHermesSystemConfig.storageRootDir).toBe('/var/agent-vm/agent-vm');
+		expect(podHermesSystemConfig.imageProfiles.gateways.hermes.buildConfig).toBe(
+			'/etc/agent-vm/vm-images/gateways/hermes/build-config.jsonc',
 		);
-		expect(podWorkerSystemConfig.imageProfiles.gateways.worker.source).toEqual({
-			kind: 'managedBase',
-			base: 'worker-gateway',
-			overlay: '/etc/agent-vm/vm-images/gateways/worker/overlay.jsonc',
-		});
-		expect(podWorkerSystemConfig.imageProfiles.toolVms).toEqual({});
-		expect(podWorkerSystemConfig.zones[0].gateway.config).toBe(
-			'/etc/agent-vm/gateways/coding-agent/worker.jsonc',
+		expect(podHermesSystemConfig.imageProfiles.gateways.hermes.dockerfile).toBe(
+			'/etc/agent-vm/vm-images/gateways/hermes/Dockerfile',
 		);
-		expect(podWorkerSystemConfig.zones[0].gateway.backupDir).toBe('/var/agent-vm/backups');
-		expect(podWorkerSystemConfig.zones[0].gateway).not.toHaveProperty('zoneFilesDir');
-		expect(podWorkerSystemConfig.toolVmProfiles).toEqual({});
+		expect(podHermesSystemConfig.imageProfiles.toolVms).toHaveProperty('default');
+		expect(podHermesSystemConfig.zones[0].gateway.config).toBe(
+			'/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml',
+		);
+		expect(podHermesSystemConfig.zones[0].gateway.backupDir).toBe('/var/agent-vm/backups');
+		expect(podHermesSystemConfig.zones[0].gateway).not.toHaveProperty('zoneFilesDir');
+		expect(podHermesSystemConfig.toolVmProfiles).toHaveProperty('standard');
 
 		await expect(
-			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.json')),
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'build-config.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 		const gatewayBuildConfig = z
 			.object({ arch: z.string() })
 			.parse(
 				await readGeneratedJsonc(
-					path.join(targetDir, 'vm-images', 'gateways', 'worker', 'build-config.jsonc'),
+					path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'build-config.jsonc'),
 				),
 			);
 		expect(gatewayBuildConfig.arch).toBe('x86_64');
 		await expect(
-			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'worker', 'Dockerfile')),
-		).rejects.toMatchObject({ code: 'ENOENT' });
+			fs.access(path.join(targetDir, 'vm-images', 'gateways', 'hermes', 'Dockerfile')),
+		).resolves.toBeUndefined();
 		await expect(
 			fs.access(path.join(targetDir, 'vm-images', 'tool-vms', 'default', 'build-config.json')),
 		).rejects.toMatchObject({ code: 'ENOENT' });
-	});
-
-	it('includes github.com in worker allowed hosts', async () => {
-		const targetDir = await createTestDirectory();
-
-		await scaffoldAgentVmProject(
-			{
-				targetDir,
-				zoneId: 'coding-agent',
-				gatewayType: 'worker',
-				architecture: 'aarch64',
-				secretsProvider: '1password',
-			},
-			noGeneratedAgeIdentityDependencies,
-		);
-
-		const systemConfig = (await readGeneratedSystemConfig(targetDir)) as {
-			readonly zones: [{ readonly egressHosts: readonly { readonly host: string }[] }];
-		};
-		const egressHosts = systemConfig.zones[0].egressHosts.map((entry) => entry.host);
-
-		expect(egressHosts).toContain('api.github.com');
-		expect(egressHosts).toContain('github.com');
-		expect(egressHosts).toContain('mcp.deepwiki.com');
 	});
 });

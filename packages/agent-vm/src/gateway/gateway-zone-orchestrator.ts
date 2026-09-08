@@ -41,8 +41,13 @@ import {
 	type SecretResolver,
 } from '@agent-vm/secret-management';
 
+import { configuredImageSelectionRecordPath } from '../build/prepared-gondolin-image-cache.js';
 import {
-	buildGatewayControlPrivateEnvironment,
+	deploymentGeneratedDirForStorageRoot,
+	gatewayFrameworkCacheDirForSystemConfig,
+	sharedImageCacheDirForSystemConfig,
+} from '../config/system-config.js';
+import {
 	buildGatewayControlEndpoint,
 	connectGatewayControlSession,
 	createControlSessionDispatcher,
@@ -135,12 +140,6 @@ import {
 	preflightMcpPortalEffectiveConfig,
 	writeMcpPortalEffectiveConfig,
 } from './mcp-portal-effective-config.js';
-import {
-	buildWorkerRuntimeRecord,
-	deleteWorkerRuntimeRecord,
-	writeWorkerRuntimeRecord,
-	type WorkerRuntimeRecord,
-} from './worker-runtime-record.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
 
@@ -432,10 +431,8 @@ export interface GatewayManagerDependencies extends GatewayImageBuilderDependenc
 		material: GatewayControlSessionMaterial,
 	) => Promise<void>;
 	readonly writeGatewayRuntimeRecord?: (
-		target:
-			| import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget
-			| import('../controller/durable-state/controller-state-record-paths.js').ControllerWorkerTaskRuntimeRecordTarget,
-		record: ManagedGatewayRuntimeRecord | WorkerRuntimeRecord,
+		target: import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget,
+		record: ManagedGatewayRuntimeRecord,
 	) => Promise<void>;
 }
 
@@ -503,12 +500,6 @@ function mergeRuntimePluginConfigs(
 		};
 	}
 	return mergedEntries;
-}
-
-function buildControlSessionRuntimePrivateEnvironment(options: {
-	readonly material: ReturnType<typeof createGatewayControlSessionMaterial>;
-}): GatewayZoneConfig['runtimePrivateEnvironment'] {
-	return buildGatewayControlPrivateEnvironment(options.material);
 }
 
 function secretRefCacheKey(secretRef: SecretRef): string {
@@ -921,27 +912,6 @@ function selectGatewayImageProfile(options: {
 	return profile;
 }
 
-function formatCommandOutput(name: string, value: string): string {
-	const trimmedValue = value.trim();
-	return trimmedValue.length > 0 ? `\n${name}:\n${trimmedValue}` : '';
-}
-
-function formatGatewayCommandFailure(stepName: string, result: GatewayCommandResult): string {
-	return `${stepName} failed with exit ${result.exitCode}.${formatCommandOutput('stdout', result.stdout)}${formatCommandOutput('stderr', result.stderr)}`;
-}
-
-async function execGatewayCommand(options: {
-	readonly command: string;
-	readonly managedVm: ManagedVm;
-	readonly stepName: string;
-}): Promise<GatewayCommandResult> {
-	const result = await options.managedVm.exec(options.command);
-	if (result.exitCode !== 0) {
-		throw new Error(formatGatewayCommandFailure(options.stepName, result));
-	}
-	return result;
-}
-
 async function readGatewayLogTail(options: {
 	readonly logPath: string;
 	readonly managedVm: ManagedVm;
@@ -1110,11 +1080,12 @@ function applyRuntimeMcpPortalMaterialization(props: {
 }
 
 async function buildRuntimeMcpPortalMaterialization(props: {
-	readonly cacheDir: string;
 	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
+	readonly generatedDir: string;
 	readonly managedVmImages: GatewayManagerDependencies['managedVmImages'];
 	readonly mode: 'preflight' | 'write';
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
+	readonly sharedImageCacheDir: string;
 	readonly zone: GatewayZone;
 }): Promise<RuntimeMcpPortalMaterialization> {
 	const zone = props.zone;
@@ -1126,12 +1097,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 			`Managed Gateway zone '${zone.id}' requires controller-issued identity material before Tool Portal admission materialization.`,
 		);
 	}
-	const effectiveHostConfigDir = path.join(
-		props.cacheDir,
-		'gateways',
-		zone.id,
-		'tool-portal-effective',
-	);
+	const effectiveHostConfigDir = path.join(props.generatedDir, 'gateway-effective', zone.id);
 	const buildEffectiveConfig =
 		props.mode === 'preflight' ? preflightMcpPortalEffectiveConfig : writeMcpPortalEffectiveConfig;
 	const materialization = await buildEffectiveConfig({
@@ -1139,6 +1105,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,
+		sharedImageCacheDir: props.sharedImageCacheDir,
 		allowedRawEnvSecretNames: [],
 		declaredAgentIds: (zone.agents ?? []).map((agent) => agent.id),
 		secretResolver: props.secretResolver,
@@ -1213,12 +1180,16 @@ async function buildGatewayImageForZone(
 	});
 	return await buildGatewayImage(
 		{
+			artifactCacheDirectory: sharedImageCacheDirForSystemConfig(options.systemConfig),
 			buildConfigPath: gatewayImageProfile.buildConfig,
-			cacheDir: path.join(
-				options.systemConfig.cacheDir,
-				'gateway-images',
-				options.zone.gateway.imageProfile,
-			),
+			expectedBootRole: options.zone.gateway.type === 'hermes' ? 'hermes-gateway' : 'standard',
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+					options.systemConfig.storageRootDir,
+				),
+				family: 'gateway',
+				profileName: options.zone.gateway.imageProfile,
+			}),
 		},
 		dependencies,
 	);
@@ -1271,21 +1242,18 @@ async function preflightGatewayZoneStartPrerequisites(
 					zoneId: zone.id,
 				})
 			: undefined;
-	const controlSessionRuntimePrivateEnvironment =
-		controlSessionMaterial === undefined
-			? undefined
-			: buildControlSessionRuntimePrivateEnvironment({ material: controlSessionMaterial });
 	const lifecycle: GatewayLifecycle = (dependencies.loadGatewayLifecycle ?? loadGatewayLifecycle)(
 		zone.gateway.type,
 	);
 	const cachingSecretResolver = createPreflightCachingSecretResolver(options.secretResolver);
 	const [toolPortalMaterialization] = await Promise.all([
 		buildRuntimeMcpPortalMaterialization({
-			cacheDir: options.systemConfig.cacheDir,
 			controlSessionMaterial,
+			generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
 			managedVmImages: dependencies.managedVmImages,
 			mode: 'preflight',
 			secretResolver: cachingSecretResolver.resolver,
+			sharedImageCacheDir: sharedImageCacheDirForSystemConfig(options.systemConfig),
 			zone,
 		}),
 		resolveZoneSecrets({
@@ -1314,10 +1282,6 @@ async function preflightGatewayZoneStartPrerequisites(
 					},
 				}),
 		...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
-		...(controlSessionRuntimePrivateEnvironment === undefined ||
-		lifecycle.executionModel === 'managed-gateway'
-			? {}
-			: { runtimePrivateEnvironment: controlSessionRuntimePrivateEnvironment }),
 	};
 	await lifecycle.preflightHostState?.(lifecycleZone, cachingSecretResolver.resolver);
 	return { secretResolver: cachingSecretResolver.freeze() };
@@ -1377,7 +1341,7 @@ async function startGatewayZoneImplementation(
 		zone.gateway.type,
 	);
 
-	// Phase A: prove standalone Worker ownership before doing any other startup work.
+	// Phase A: prove observability readiness before doing any other startup work.
 	if (options.observabilityStartupCheck !== 'skip') {
 		await checkGatewayObservabilityStartup({
 			checkObservabilityStackReadiness:
@@ -1463,11 +1427,12 @@ async function startGatewayZoneImplementation(
 		'Materializing Tool Portal runtime',
 		async () =>
 			await buildRuntimeMcpPortalMaterialization({
-				cacheDir: options.systemConfig.cacheDir,
 				controlSessionMaterial,
+				generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
 				managedVmImages: dependencies.managedVmImages,
 				mode: 'write',
 				secretResolver: startupSecretResolver,
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(options.systemConfig),
 				zone,
 			}),
 	);
@@ -1481,17 +1446,8 @@ async function startGatewayZoneImplementation(
 		...mappedLifecycleZoneBase
 	} = mappedLifecycleZoneWithToolPortal;
 	const baseRuntimePluginConfigs = options.runtimePluginConfigs;
-	const buildLifecycleZoneForControlMaterial = (
-		material: GatewayControlSessionMaterial | undefined,
-	): GatewayZoneConfig => {
+	const buildLifecycleZone = (): GatewayZoneConfig => {
 		const runtimePluginConfigs = mergeRuntimePluginConfigs(baseRuntimePluginConfigs, undefined);
-		const runtimePrivateEnvironment =
-			material === undefined || lifecycle.executionModel === 'managed-gateway'
-				? mappedRuntimePrivateEnvironment
-				: {
-						...mappedRuntimePrivateEnvironment,
-						...buildControlSessionRuntimePrivateEnvironment({ material }),
-					};
 		return {
 			...mappedLifecycleZoneBase,
 			...(options.gitReadAllowlistRepos === undefined
@@ -1506,39 +1462,39 @@ async function startGatewayZoneImplementation(
 						},
 					}),
 			...(runtimePluginConfigs === undefined ? {} : { runtimePluginConfigs }),
-			...(runtimePrivateEnvironment === undefined ? {} : { runtimePrivateEnvironment }),
+			...(mappedRuntimePrivateEnvironment === undefined
+				? {}
+				: { runtimePrivateEnvironment: mappedRuntimePrivateEnvironment }),
 		};
 	};
-	const lifecycleZone = buildLifecycleZoneForControlMaterial(controlSessionMaterial);
+	const lifecycleZone = buildLifecycleZone();
 	await fs.mkdir(zone.gateway.stateDir, { recursive: true });
 	if (isManagedGatewayZone(zone)) {
 		await fs.mkdir(zone.gateway.zoneFilesDir, { recursive: true });
-		if (lifecycle.executionModel === 'managed-gateway') {
-			const configuredAgents = zone.agents ?? [];
-			const agentIds = configuredAgents.map((agent) => agent.id);
-			await materializeManagedAgentRootStorage({
-				agentIds,
-				controllerStateDir: options.systemConfig.controllerStateDir,
-				stateDir: zone.gateway.stateDir,
-				zoneFilesDir: zone.gateway.zoneFilesDir,
-			});
-			await fs.mkdir(zone.gateway.zoneRuntimeDir, {
-				mode: 0o700,
-				recursive: true,
-			});
-			await Promise.all(
-				configuredAgents
-					.filter((agent) => agent.workspaceGit !== undefined)
-					.map(async (agent): Promise<void> => {
-						await materializeManagedAgentGitDirectoryRoot({
-							agentId: agent.id,
-							zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
-						});
-					}),
-			);
-		}
+		const configuredAgents = zone.agents ?? [];
+		const agentIds = configuredAgents.map((agent) => agent.id);
+		await materializeManagedAgentRootStorage({
+			agentIds,
+			controllerStateDir: options.systemConfig.controllerStateDir,
+			stateDir: zone.gateway.stateDir,
+			zoneFilesDir: zone.gateway.zoneFilesDir,
+		});
+		await fs.mkdir(zone.gateway.zoneRuntimeDir, {
+			mode: 0o700,
+			recursive: true,
+		});
+		await Promise.all(
+			configuredAgents
+				.filter((agent) => agent.workspaceGit !== undefined)
+				.map(async (agent): Promise<void> => {
+					await materializeManagedAgentGitDirectoryRoot({
+						agentId: agent.id,
+						zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
+					});
+				}),
+		);
 	}
-	const gatewayCacheDir = path.join(options.systemConfig.cacheDir, 'gateways', zone.id);
+	const gatewayCacheDir = gatewayFrameworkCacheDirForSystemConfig(options.systemConfig, zone.id);
 	await fs.mkdir(gatewayCacheDir, { recursive: true });
 	if (isManagedGatewayZone(zone)) {
 		const logDir = path.join(zone.gateway.zoneRuntimeDir, 'logs');
@@ -1555,7 +1511,6 @@ async function startGatewayZoneImplementation(
 		zone: lifecycleZone,
 	});
 	const managedGatewayMediatedSecretBootProjection =
-		lifecycle.executionModel === 'managed-gateway' &&
 		toolPortalMaterialization.kind === 'configured'
 			? createManagedGatewayMediatedSecretBootProjection({
 					mediatedSecrets: vmSpec.mediatedSecrets,
@@ -1580,31 +1535,23 @@ async function startGatewayZoneImplementation(
 		...vmSpec.mounts,
 		...options.vfsMountsOverride,
 	};
-	if (lifecycle.executionModel === 'managed-gateway') {
-		if (
-			toolPortalMaterialization.kind !== 'configured' ||
-			toolPortalMaterialization.mode !== 'runtime'
-		) {
-			throw new Error(
-				`Managed Gateway zone '${zone.id}' requires validated Tool Portal admission material.`,
-			);
-		}
-		if (controlSessionMaterial === undefined) {
-			throw new Error(
-				`Managed Gateway zone '${zone.id}' requires controller-issued control session material.`,
-			);
-		}
-		if (dependencies.gatewayRuntimeArtifactLimits === undefined) {
-			throw new Error(
-				`Managed Gateway zone '${zone.id}' requires explicit Gateway Runtime artifact limits.`,
-			);
-		}
-	} else {
-		// Direct Worker host state remains fully prepared before VM ownership is
-		// reserved and before any guest process command can run.
-		await runTaskStep('Preparing host state', async () => {
-			await lifecycle.prepareHostState?.(lifecycleZone, startupSecretResolver);
-		});
+	if (
+		toolPortalMaterialization.kind !== 'configured' ||
+		toolPortalMaterialization.mode !== 'runtime'
+	) {
+		throw new Error(
+			`Managed Gateway zone '${zone.id}' requires validated Tool Portal admission material.`,
+		);
+	}
+	if (controlSessionMaterial === undefined) {
+		throw new Error(
+			`Managed Gateway zone '${zone.id}' requires controller-issued control session material.`,
+		);
+	}
+	if (dependencies.gatewayRuntimeArtifactLimits === undefined) {
+		throw new Error(
+			`Managed Gateway zone '${zone.id}' requires explicit Gateway Runtime artifact limits.`,
+		);
 	}
 	const vmOwnership = await runTaskWithResult(
 		runTaskStep,
@@ -1619,7 +1566,7 @@ async function startGatewayZoneImplementation(
 								generationId: controlSessionMaterial.generationId,
 							},
 						}),
-				kind: lifecycle.executionModel === 'managed-gateway' ? 'gateway-epoch' : 'standalone',
+				kind: 'gateway-epoch',
 				sessionLabel: vmSpec.sessionLabel,
 				zoneId: zone.id,
 			}),
@@ -1703,228 +1650,6 @@ async function startGatewayZoneImplementation(
 	};
 	const managedVmTerminationSleep = dependencies.managedVmTerminationSleep ?? sleep;
 
-	if (lifecycle.executionModel === 'direct-process') {
-		if (options.runtimeRecordTarget.kind !== 'controller-worker-task-runtime-record') {
-			throw new Error(`Worker zone '${zone.id}' requires a Worker task runtime record target.`);
-		}
-		const workerRuntimeRecordTarget = options.runtimeRecordTarget;
-		const processSpec = lifecycle.buildProcessSpec(lifecycleZone, resolvedSecrets);
-		const managedVm = await createManagedVmForMounts(vfsMounts, async () => {});
-		let gatewayIdentity: ReturnType<typeof vmOwnership.attachGatewayVm>;
-		try {
-			gatewayIdentity = vmOwnership.attachGatewayVm(managedVm.id);
-		} catch (error: unknown) {
-			try {
-				await vmOwnership.abandonUnattachedGatewaySeedAfter(async () => {
-					const unattachedRunnerPid = managedVm.getHostProcessId();
-					if (unattachedRunnerPid !== null) {
-						throw new Error(
-							`Worker VM '${managedVm.id}' attachment failed after runner pid ${String(unattachedRunnerPid)} appeared; refusing raw close without exact process identity.`,
-							{ cause: error },
-						);
-					}
-					await managedVm.close();
-				});
-			} catch (cleanupError: unknown) {
-				throw createAggregateErrorWithCause({
-					cause: cleanupError,
-					errors: [error, cleanupError],
-					message: `Worker VM '${managedVm.id}' attachment failed and unattached cleanup did not complete.`,
-				});
-			}
-			throw error;
-		}
-		let startupProcessTarget: ManagedVmProcessTarget | undefined;
-		let gatewayIngressAccess: Awaited<ReturnType<ManagedVm['enableIngress']>> | undefined;
-		const captureProcessTarget = async (): Promise<ManagedVmProcessTarget> => {
-			const hostPid = managedVm.getHostProcessId();
-			if (hostPid === null || !Number.isInteger(hostPid) || hostPid <= 0) {
-				throw new Error(
-					`Worker VM '${managedVm.id}' does not expose a valid live runner pid for controller-owned cleanup.`,
-				);
-			}
-			const processIdentity = await (dependencies.readProcessIdentity ?? readProcessIdentity)(
-				hostPid,
-			);
-			if (processIdentity === null) {
-				throw new Error(
-					`Worker VM '${managedVm.id}' pid ${String(hostPid)} disappeared before process identity capture.`,
-				);
-			}
-			return { hostPid, processIdentity, vmId: managedVm.id };
-		};
-		const withdrawWorkerIngress = async (): Promise<void> => {
-			const withdrawalErrors: unknown[] = [];
-			try {
-				managedVm.configureIngressRoutes([]);
-			} catch (error: unknown) {
-				withdrawalErrors.push(error);
-			}
-			try {
-				await gatewayIngressAccess?.close();
-			} catch (error: unknown) {
-				withdrawalErrors.push(error);
-			}
-			if (withdrawalErrors.length > 1) {
-				throw new AggregateError(
-					withdrawalErrors,
-					`Worker ingress withdrawal failed for VM '${managedVm.id}'.`,
-				);
-			}
-			if (withdrawalErrors.length === 1) throw withdrawalErrors[0];
-		};
-		const terminateExactWorkerVm = async (): Promise<void> => {
-			if (startupProcessTarget === undefined && managedVm.getHostProcessId() !== null) {
-				startupProcessTarget = await captureProcessTarget();
-			}
-			if (startupProcessTarget === undefined) {
-				const unexpectedRunnerPid = managedVm.getHostProcessId();
-				if (unexpectedRunnerPid !== null) {
-					throw new Error(
-						`Worker VM '${managedVm.id}' runner pid ${String(unexpectedRunnerPid)} appeared without a captured process identity; refusing raw close.`,
-					);
-				}
-				await managedVm.close();
-				return;
-			}
-			await terminateLiveManagedVm({
-				contextLabel: `Worker VM '${managedVm.id}' for zone '${zone.id}'`,
-				exactProcessTermination: dependencies.managedVmExactProcessTermination,
-				sleep: managedVmTerminationSleep,
-				target: startupProcessTarget,
-				vm: managedVm,
-			});
-		};
-		const destructionTransaction = createGatewayZoneDestructionTransaction({
-			destroyExactGateway: async () => await vmOwnership.destroyLive(terminateExactWorkerVm),
-			gatewayLabel: `Worker VM '${managedVm.id}' for zone '${zone.id}'`,
-			postDestructionCleanup: [
-				{
-					cleanup: async () => await deleteWorkerRuntimeRecord(workerRuntimeRecordTarget),
-					stage: 'runtime-record-deletion',
-				},
-			],
-			withdrawAdmission: [{ cleanup: withdrawWorkerIngress, stage: 'ingress-withdrawal' }],
-		});
-		try {
-			await managedVm.start();
-			startupProcessTarget = await captureProcessTarget();
-			const startupRuntimeRecord = await buildWorkerRuntimeRecord({
-				controllerPort: options.systemConfig.host.controllerPort,
-				gatewayIdentity,
-				managedVm,
-				processSpec,
-				projectNamespace: options.systemConfig.host.projectNamespace,
-				readProcessIdentity: async (hostPid) =>
-					hostPid === startupProcessTarget?.hostPid ? startupProcessTarget.processIdentity : null,
-				systemConfigPath: options.systemConfig.systemConfigPath,
-				taskId: workerRuntimeRecordTarget.taskId,
-				zoneId: zone.id,
-			});
-			if (dependencies.writeGatewayRuntimeRecord === undefined) {
-				await writeWorkerRuntimeRecord(workerRuntimeRecordTarget, startupRuntimeRecord);
-			} else {
-				await dependencies.writeGatewayRuntimeRecord(
-					workerRuntimeRecordTarget,
-					startupRuntimeRecord,
-				);
-			}
-			await runTaskStep('Configuring gateway', async () => {
-				await execGatewayCommand({
-					command: processSpec.bootstrapCommand,
-					managedVm,
-					stepName: 'Configuring gateway',
-				});
-			});
-			await runTaskStep('Starting gateway', async () => {
-				await execGatewayCommand({
-					command: processSpec.startCommand,
-					managedVm,
-					stepName: 'Starting gateway',
-				});
-			});
-			await runTaskStep('Waiting for service health', async () => {
-				await waitForGatewayServiceHealth({
-					healthCheck: processSpec.serviceHealthCheck ?? processSpec.healthCheck,
-					logPath: processSpec.logPath,
-					managedVm,
-					...(dependencies.gatewayReadinessMaxAttempts === undefined
-						? {}
-						: { maxAttempts: dependencies.gatewayReadinessMaxAttempts }),
-					...(dependencies.gatewayReadinessRetryDelayMs === undefined
-						? {}
-						: { retryDelayMs: dependencies.gatewayReadinessRetryDelayMs }),
-				});
-			});
-			managedVm.configureIngressRoutes([
-				{ port: processSpec.guestListenPort, prefix: '/', stripPrefix: true },
-			]);
-			const ingress = await managedVm.enableIngress({
-				bufferResponseBody: false,
-				listenPort: zone.gateway.port,
-				...(zone.gateway.ingress?.upstreamHeaderTimeoutMs === undefined
-					? {}
-					: { upstreamHeaderTimeoutMs: zone.gateway.ingress.upstreamHeaderTimeoutMs }),
-				...(zone.gateway.ingress?.upstreamResponseTimeoutMs === undefined
-					? {}
-					: { upstreamResponseTimeoutMs: zone.gateway.ingress.upstreamResponseTimeoutMs }),
-			});
-			gatewayIngressAccess = ingress;
-			await runTaskStep('Recording gateway runtime', async () => {
-				const admittedRuntimeRecord = await buildWorkerRuntimeRecord({
-					controllerPort: options.systemConfig.host.controllerPort,
-					gatewayIdentity,
-					ingressPort: ingress.port,
-					managedVm,
-					processSpec,
-					projectNamespace: options.systemConfig.host.projectNamespace,
-					readProcessIdentity: async (hostPid) =>
-						hostPid === startupProcessTarget?.hostPid ? startupProcessTarget.processIdentity : null,
-					systemConfigPath: options.systemConfig.systemConfigPath,
-					taskId: workerRuntimeRecordTarget.taskId,
-					zoneId: zone.id,
-				});
-				if (dependencies.writeGatewayRuntimeRecord === undefined) {
-					await writeWorkerRuntimeRecord(workerRuntimeRecordTarget, admittedRuntimeRecord);
-				} else {
-					await dependencies.writeGatewayRuntimeRecord(
-						workerRuntimeRecordTarget,
-						admittedRuntimeRecord,
-					);
-				}
-			});
-			return {
-				destroyGateway: async () => await destructionTransaction.destroyGateway(),
-				executionModel: 'direct-process',
-				gatewayIdentity,
-				image,
-				ingress: { host: ingress.host, port: ingress.port },
-				processSpec,
-				processTarget: startupProcessTarget,
-				vm: createGatewayZoneVmOperations(managedVm),
-				zone,
-			};
-		} catch (error: unknown) {
-			let destroyResult: Awaited<ReturnType<typeof destructionTransaction.destroyGateway>>;
-			try {
-				destroyResult = await destructionTransaction.destroyGateway();
-			} catch (cleanupError: unknown) {
-				throw createAggregateErrorWithCause({
-					cause: cleanupError,
-					errors: [error, cleanupError],
-					message: `Worker startup failed and VM '${managedVm.id}' teardown was not proven complete.`,
-				});
-			}
-			if (destroyResult.kind === 'destroyed-cleanup-incomplete') {
-				throw createAggregateErrorWithCause({
-					cause: error,
-					errors: [error, ...destroyResult.cleanupFailures.map((failure) => failure.error)],
-					message: `Worker startup failed after VM '${managedVm.id}' destruction with incomplete ancillary cleanup.`,
-				});
-			}
-			throw error;
-		}
-	}
 	if (options.runtimeRecordTarget.kind !== 'controller-managed-gateway-runtime-record') {
 		throw new Error(`Managed Gateway zone '${zone.id}' requires a managed runtime record target.`);
 	}

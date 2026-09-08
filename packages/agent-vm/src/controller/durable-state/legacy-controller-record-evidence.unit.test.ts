@@ -132,42 +132,12 @@ describe('legacy controller record evidence scanner', () => {
 		},
 	);
 
-	it.each(['file', 'directory', 'symbolic-link'] as const)(
-		'reports Worker legacy runtime evidence when the exact record path is a %s entry',
-		async (entryKind) => {
-			// Arrange
-			const gatewayStateDirectoryPath = await createGatewayStateDirectory();
-			const absolutePath = path.join(
-				gatewayStateDirectoryPath,
-				'tasks',
-				'task-a',
-				'state',
-				'gateway-runtime.json',
-			);
-			await createFilesystemEntry(absolutePath, entryKind);
-
-			// Act
-			const evidence = await scanLegacyControllerRecordEvidence({ gatewayStateDirectoryPath });
-
-			// Assert
-			expect(evidence).toEqual([
-				expectedEvidence({
-					absolutePath,
-					family: 'worker-task-gateway-runtime',
-					kind: entryKind,
-				}),
-			]);
-		},
-	);
-
-	it('sorts evidence deterministically across legacy families and Worker tasks', async () => {
+	it('sorts evidence deterministically across legacy families', async () => {
 		// Arrange
 		const gatewayStateDirectoryPath = await createGatewayStateDirectory();
 		const evidencePaths = [
-			path.join(gatewayStateDirectoryPath, 'tasks', 'task-z', 'state', 'gateway-runtime.json'),
 			path.join(gatewayStateDirectoryPath, 'tool-leases'),
 			path.join(gatewayStateDirectoryPath, 'gateway-runtime.json'),
-			path.join(gatewayStateDirectoryPath, 'tasks', 'task-a', 'state', 'gateway-runtime.json'),
 			path.join(gatewayStateDirectoryPath, 'approvals'),
 		];
 		await Promise.all(
@@ -182,65 +152,6 @@ describe('legacy controller record evidence scanner', () => {
 		// Assert
 		expect(evidence.map((record) => record.absolutePath)).toEqual(evidencePaths.toSorted());
 	});
-
-	it('reports unsafe Worker task topology without following symbolic links', async () => {
-		// Arrange
-		const gatewayStateDirectoryPath = await createGatewayStateDirectory();
-		const tasksDirectoryPath = path.join(gatewayStateDirectoryPath, 'tasks');
-		const missingStatePath = path.join(tasksDirectoryPath, 'missing-state', 'state');
-		const symbolicTaskPath = path.join(tasksDirectoryPath, 'symbolic-task');
-		const symbolicStatePath = path.join(tasksDirectoryPath, 'symbolic-state', 'state');
-		await mkdir(path.join(tasksDirectoryPath, 'missing-state'), { recursive: true });
-		await symlink('missing-state', symbolicTaskPath);
-		await mkdir(path.dirname(symbolicStatePath), { recursive: true });
-		await symlink('../missing-state', symbolicStatePath);
-
-		// Act
-		const evidence = await scanLegacyControllerRecordEvidence({ gatewayStateDirectoryPath });
-
-		// Assert
-		expect(evidence).toEqual(
-			[
-				expectedEvidence({
-					absolutePath: missingStatePath,
-					family: 'worker-task-gateway-runtime',
-					kind: 'missing',
-				}),
-				expectedEvidence({
-					absolutePath: symbolicStatePath,
-					family: 'worker-task-gateway-runtime',
-					kind: 'symbolic-link',
-				}),
-				expectedEvidence({
-					absolutePath: symbolicTaskPath,
-					family: 'worker-task-gateway-runtime',
-					kind: 'symbolic-link',
-				}),
-			].toSorted((left, right) => left.absolutePath.localeCompare(right.absolutePath)),
-		);
-	});
-
-	it.each(['file', 'symbolic-link'] as const)(
-		'reports an unsafe %s tasks root without traversing it',
-		async (entryKind) => {
-			// Arrange
-			const gatewayStateDirectoryPath = await createGatewayStateDirectory();
-			const tasksDirectoryPath = path.join(gatewayStateDirectoryPath, 'tasks');
-			await createFilesystemEntry(tasksDirectoryPath, entryKind);
-
-			// Act
-			const evidence = await scanLegacyControllerRecordEvidence({ gatewayStateDirectoryPath });
-
-			// Assert
-			expect(evidence).toEqual([
-				expectedEvidence({
-					absolutePath: tasksDirectoryPath,
-					family: 'worker-task-gateway-runtime',
-					kind: entryKind,
-				}),
-			]);
-		},
-	);
 
 	it('does not mutate legacy record content, metadata, or symbolic-link targets', async () => {
 		// Arrange

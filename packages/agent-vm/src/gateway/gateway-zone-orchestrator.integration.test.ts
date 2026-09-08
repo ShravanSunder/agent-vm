@@ -38,7 +38,13 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import { createLoadedSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
+import {
+	createLoadedSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	gatewayFrameworkCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	GatewayControlBindingPublicationSource,
 	GatewayControlLeaseRpcOperations,
@@ -57,13 +63,15 @@ import {
 } from '../controller/durable-state/controller-state-paths.js';
 import {
 	type ControllerManagedGatewayRuntimeRecordTarget,
-	type ControllerWorkerTaskRuntimeRecordTarget,
 	resolveControllerGatewayRecordTargets,
-	resolveControllerWorkerTaskRuntimeRecordTarget,
 } from '../controller/durable-state/controller-state-record-paths.js';
 import { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
+import {
+	createInvalidImageSelectionFixture,
+	invalidImageSelectionKinds,
+} from '../testing/image-selection-test-fixture.js';
 import {
 	TEST_SSH_SERVER_HOST_KEY,
 	createManagedExecProcessStub,
@@ -80,7 +88,6 @@ import {
 } from './gateway-zone-orchestrator.js';
 import type {
 	GatewayControlSessionConnector,
-	DirectProcessGatewayZoneStartResult,
 	GatewayZone,
 	GatewayZoneStartResult,
 	ManagedGatewayZoneStartResult,
@@ -89,7 +96,6 @@ import type {
 } from './gateway-zone-support.js';
 import { managedGatewayBootInputPaths } from './managed-gateway-boot-contract.js';
 import type { GatewayRuntimeArtifactLimits } from './managed-gateway-runtime-input-builders.js';
-import { loadWorkerRuntimeRecord } from './worker-runtime-record.js';
 
 type GatewayManagedVmFactoryOptions = ManagedVmCreateRequest;
 
@@ -130,7 +136,6 @@ interface TestVmOwnershipHarness {
 
 const testGatewayBootId = 'gateway-boot-exact';
 const testGatewayGenerationId = 'gateway-generation-exact';
-const testWorkerTaskId = 'gateway-zone-orchestrator-integration-task';
 const testManagedVmImages = {
 	prepareImage: vi.fn(async () => ({
 		built: false,
@@ -186,16 +191,6 @@ const testGatewayRuntimeArtifactLimits = Object.freeze({
 	maximumLifetimeMs: 5 * 60 * 1_000,
 	maximumTotalBytes: 8 * 1_024 * 1_024,
 }) satisfies GatewayRuntimeArtifactLimits;
-const expectedWorkerProcessSpec = Object.freeze({
-	bootstrapCommand:
-		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && mkdir -p /workspace /work/repos /work/tmp /work/cache/npm /work/cache/pnpm/store /work/cache/pip /work/cache/uv && if [ -f /state/agent-vm-worker-packages/package.json ]; then cd /state/agent-vm-worker-packages && pnpm install --prod --ignore-scripts && worker_package_root="/state/agent-vm-worker-packages/node_modules"; elif [ -f /state/agent-vm-worker.tgz ]; then pnpm add -g --ignore-scripts /state/agent-vm-worker.tgz && worker_package_root="$(pnpm root -g --silent)"; fi && if [ -n "${worker_package_root:-}" ]; then worker_bin_target="$worker_package_root/@agent-vm/agent-vm-worker/dist/main.js" && test -f "$worker_bin_target" && chmod 755 "$worker_bin_target" && ln -sfn "$worker_bin_target" /pnpm/agent-vm-worker; fi',
-	guestListenPort: 18_789,
-	healthCheck: Object.freeze({ path: '/health', port: 18_789, type: 'http' as const }),
-	logPath: '/tmp/agent-vm-worker.log',
-	serviceHealthCheck: Object.freeze({ path: '/health', port: 18_789, type: 'http' as const }),
-	startCommand:
-		'export PNPM_HOME=/pnpm PATH=/pnpm:$PATH && { printf \'worker-boot: NODE_OPTIONS=%s\\n\' "$NODE_OPTIONS" > /tmp/agent-vm-worker.log; } && cd /work && nohup agent-vm-worker serve --port 18789 --config /state/effective-worker.json --state-dir /state >> /tmp/agent-vm-worker.log 2>&1 &',
-});
 const expectedManagedHermesReadinessCommand =
 	'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:8642/health 2>/dev/null || true';
 
@@ -295,7 +290,7 @@ async function createDefaultTestVmOwnership(
 	// fixture binds that id when the fake factory returns. Focused ownership
 	// tests below use fixed identities and do not take this compatibility path.
 	const gatewayIdentity: GatewayEpochIdentity | undefined =
-		options.kind === 'gateway-epoch' && options.controlIdentity !== undefined
+		options.controlIdentity !== undefined
 			? {
 					bootId: options.controlIdentity.bootId,
 					controllerEpoch,
@@ -305,10 +300,7 @@ async function createDefaultTestVmOwnership(
 					zoneId: options.zoneId,
 				}
 			: undefined;
-	return createTestVmOwnershipHarness(
-		options.kind === 'gateway-epoch' ? reservedGatewayVmId : 'test-standalone-vm',
-		gatewayIdentity,
-	).vmOwnership;
+	return createTestVmOwnershipHarness(reservedGatewayVmId, gatewayIdentity).vmOwnership;
 }
 
 function withTestVmOwnership(
@@ -496,16 +488,6 @@ function requireManagedGatewayResult(
 	return result;
 }
 
-function requireDirectProcessGatewayResult(
-	result: GatewayZoneStartResult,
-): DirectProcessGatewayZoneStartResult {
-	expect(result.executionModel).toBe('direct-process');
-	if (result.executionModel !== 'direct-process') {
-		throw new Error('Expected a direct-process Gateway result.');
-	}
-	return result;
-}
-
 function startGatewayZone(
 	options: TestStartGatewayZoneOptions,
 	dependencies: Omit<GatewayManagerDependencies, 'managedVmExactProcessTermination'> &
@@ -612,9 +594,6 @@ function resolveTestRuntimeRecordTarget(
 		// structurally valid target. Supplying it keeps that validation path intact.
 		return resolveTestManagedGatewayRuntimeRecordTarget(options);
 	}
-	if (zone.gateway.type === 'worker') {
-		return resolveTestWorkerRuntimeRecordTarget(options);
-	}
 	return resolveTestManagedGatewayRuntimeRecordTarget(options);
 }
 
@@ -632,15 +611,6 @@ function resolveTestManagedGatewayRuntimeRecordTarget(
 ): ControllerManagedGatewayRuntimeRecordTarget {
 	const gatewayStateRoot = resolveTestGatewayStateRoot(options);
 	return resolveControllerGatewayRecordTargets({ gatewayStateRoot }).managedGatewayRuntimeRecord;
-}
-
-function resolveTestWorkerRuntimeRecordTarget(
-	options: Pick<TestStartGatewayZoneOptions, 'systemConfig' | 'zoneId'>,
-): ControllerWorkerTaskRuntimeRecordTarget {
-	return resolveControllerWorkerTaskRuntimeRecordTarget({
-		gatewayStateRoot: resolveTestGatewayStateRoot(options),
-		taskId: testWorkerTaskId,
-	});
 }
 
 function requireToolPortalConfigDir(zone: GatewayZone): string {
@@ -893,46 +863,6 @@ async function createSystemConfigPath(): Promise<string> {
 	return path.join(configDirectory, 'system.json');
 }
 
-function createHttpHealthGatewayLifecycle(): {
-	readonly executionModel: 'direct-process';
-	readonly buildProcessSpec: () => {
-		readonly bootstrapCommand: string;
-		readonly guestListenPort: number;
-		readonly healthCheck: { readonly type: 'http'; readonly port: number; readonly path: string };
-		readonly logPath: string;
-		readonly startCommand: string;
-	};
-	readonly buildVmRequirements: () => {
-		readonly allowedHosts: readonly string[];
-		readonly environment: Record<string, never>;
-		readonly mediatedSecrets: Record<string, never>;
-		readonly rootfsMode: 'cow';
-		readonly sessionLabel: string;
-		readonly tcpHosts: Record<string, never>;
-		readonly mounts: Record<string, never>;
-	};
-} {
-	return {
-		executionModel: 'direct-process',
-		buildProcessSpec: () => ({
-			bootstrapCommand: 'bootstrap-http-gateway',
-			guestListenPort: 18789,
-			healthCheck: { type: 'http', port: 18789, path: '/' },
-			logPath: '/tmp/http-gateway.log',
-			startCommand: 'start-http-gateway',
-		}),
-		buildVmRequirements: () => ({
-			allowedHosts: [],
-			environment: {},
-			mediatedSecrets: {},
-			rootfsMode: 'cow',
-			sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
-			tcpHosts: {},
-			mounts: {},
-		}),
-	};
-}
-
 async function createSystemConfig(): Promise<LoadedSystemConfig> {
 	const workingDirectoryPath = await mkdtemp(
 		path.join(os.tmpdir(), 'agent-vm-gateway-zone-state-'),
@@ -962,10 +892,6 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 					hermes: {
 						type: 'hermes',
 						buildConfig: './vm-images/gateways/hermes/build-config.json',
-					},
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.json',
 					},
 				},
 				toolVms: {
@@ -1161,29 +1087,6 @@ async function createHermesSystemConfig(): Promise<LoadedSystemConfig> {
 	};
 }
 
-async function createWorkerSystemConfig(): Promise<LoadedSystemConfig> {
-	const systemConfig = await createSystemConfig();
-	return {
-		...systemConfig,
-		zones: systemConfig.zones.map((zone) => ({
-			...zone,
-			gateway: {
-				...zone.gateway,
-				type: 'worker' as const,
-			},
-			secrets: {
-				OPENAI_API_KEY: {
-					audience: 'gateway' as const,
-					hosts: ['api.openai.com'],
-					injection: 'http-mediation' as const,
-					source: 'config' as const,
-					value: 'test-openai-key',
-				},
-			},
-		})),
-	};
-}
-
 function createObservabilitySystemConfig(
 	systemConfig: LoadedSystemConfig,
 	options: {
@@ -1212,10 +1115,6 @@ function createObservabilitySystemConfig(
 					},
 				}
 			: {};
-		if (gateway.type === 'worker') {
-			const { stateDir: _stateDir, zoneRuntimeDir: _zoneRuntimeDir, ...authoredGateway } = gateway;
-			return { ...authoredZone, ...observability, gateway: authoredGateway };
-		}
 		const {
 			stateDir: _stateDir,
 			zoneFilesDir: _zoneFilesDir,
@@ -1386,6 +1285,35 @@ function createGatewaySecretResolver(resolvedSecrets: Record<string, string>): S
 }
 
 describe('startGatewayZone', () => {
+	it.each(invalidImageSelectionKinds)(
+		'rejects %s selection before Gateway VM construction',
+		async (invalidKind) => {
+			const systemConfig = await createInvalidImageSelectionFixture({
+				family: 'gateway',
+				invalidKind,
+				profileName: 'hermes',
+				systemConfig: await createSystemConfig(),
+			});
+			const createManagedVm = vi.fn();
+			const composition = createManagedVmRuntimeComposition();
+
+			await expect(
+				startGatewayZone(
+					{
+						secretResolver: createGatewaySecretResolver({}),
+						systemConfig,
+						zoneId: 'shravan',
+					},
+					{
+						managedVmFactory: { createManagedVm },
+						managedVmImages: composition.managedVmImages,
+					},
+				),
+			).rejects.toThrow(/Run agent-vm build/u);
+			expect(createManagedVm).not.toHaveBeenCalled();
+		},
+	);
+
 	it('reports exact current Hermes attachment loss once and ignores stale readiness', async () => {
 		// Arrange
 		const systemConfig = await createHermesSystemConfig();
@@ -1609,7 +1537,7 @@ describe('startGatewayZone', () => {
 					},
 					'/home/hermes/.cache': {
 						access: 'read-write',
-						hostPath: path.join(systemConfig.cacheDir, 'gateways', 'shravan'),
+						hostPath: gatewayFrameworkCacheDirForSystemConfig(systemConfig, 'shravan'),
 						kind: 'host-directory',
 					},
 				}),
@@ -2590,107 +2518,6 @@ describe('startGatewayZone', () => {
 		expect(createManagedVm).not.toHaveBeenCalled();
 	});
 
-	it('starts one Worker gateway VM without legacy cleanup phases', async () => {
-		const systemConfig = await createSystemConfig();
-		const workerSystemConfig: LoadedSystemConfig = {
-			...systemConfig,
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				gateway: {
-					...zone.gateway,
-					type: 'worker' as const,
-				},
-				secrets: {
-					OPENAI_API_KEY: {
-						source: '1password' as const,
-						ref: 'op://agent-vm/shravan-openai/credential',
-						injection: 'http-mediation' as const,
-						audience: 'gateway' as const,
-						hosts: ['api.openai.com'],
-					},
-				},
-			})),
-		};
-		const secretResolver: SecretResolver = {
-			resolve: async () => 'openai-key',
-			resolveAll: async () => ({ OPENAI_API_KEY: 'openai-key' }),
-		};
-		const taskTitles: string[] = [];
-		const exec = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
-		const managedVm: ManagedVm = {
-			close: vi.fn(async () => completeGatewayVmClose('worker-vm-no-legacy-cleanup')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(),
-			exec,
-			getHostProcessId: vi.fn(() => 12346),
-			id: 'worker-vm-no-legacy-cleanup',
-			start: vi.fn(async () => {}),
-			configureIngressRoutes: vi.fn(),
-		};
-		const createManagedVm = vi.fn(async () => managedVm);
-		const writeGatewayRuntimeRecord = vi.fn<
-			NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
-		>(async () => {});
-
-		const result = await startGatewayZone(
-			{
-				runTask: async (title, run) => {
-					taskTitles.push(title);
-					await run();
-				},
-				secretResolver,
-				systemConfig: workerSystemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp-worker',
-						imageReference: '/tmp/worker-image',
-					})),
-				},
-				managedVmFactory: { createManagedVm },
-				writeGatewayRuntimeRecord,
-			},
-		);
-
-		const workerResult = requireDirectProcessGatewayResult(result);
-		expect(workerResult.vm).not.toBe(managedVm);
-		expect(workerResult.vm).toMatchObject({ id: managedVm.id });
-		expect(workerResult.vm).not.toHaveProperty('close');
-		expect(workerResult.vm).not.toHaveProperty('configureIngressRoutes');
-		expect(workerResult.vm).not.toHaveProperty('enableIngress');
-		expect(workerResult.vm).not.toHaveProperty('start');
-		expect(workerResult.processSpec).toEqual(expectedWorkerProcessSpec);
-		expect(exec).toHaveBeenNthCalledWith(1, expectedWorkerProcessSpec.bootstrapCommand);
-		expect(exec).toHaveBeenNthCalledWith(2, expectedWorkerProcessSpec.startCommand);
-		expect(exec).toHaveBeenNthCalledWith(
-			3,
-			'curl -sS -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:18789/health 2>/dev/null || true',
-		);
-		expect(createManagedVm).toHaveBeenCalledOnce();
-		expect(taskTitles).not.toContain('Preflighting gateway runtime ownership');
-		expect(taskTitles).not.toContain('Cleaning orphaned gateway runtime');
-		expect(cleanupOrphanedToolVmsIfPresentMock).not.toHaveBeenCalled();
-		expect(preflightOrphanedGatewayCleanupIfPresentMock).not.toHaveBeenCalled();
-		expect(cleanupOrphanedGatewayIfPresentMock).not.toHaveBeenCalled();
-		expect(writeGatewayRuntimeRecord).toHaveBeenCalledTimes(2);
-		for (const [writtenTarget, writtenRecord] of writeGatewayRuntimeRecord.mock.calls) {
-			expect(writtenTarget).toEqual(
-				resolveTestWorkerRuntimeRecordTarget({
-					systemConfig: workerSystemConfig,
-					zoneId: 'shravan',
-				}),
-			);
-			expect(writtenRecord).toMatchObject({
-				runtimeKind: 'worker-direct-process',
-				taskId: testWorkerTaskId,
-				zoneId: 'shravan',
-			});
-		}
-	});
-
 	it('resolves only gateway audience secrets while starting the gateway VM', async () => {
 		const managedVm: ManagedVm = {
 			id: 'vm-gateway-only',
@@ -2889,10 +2716,9 @@ describe('startGatewayZone', () => {
 		const { managedVm } = createHealthyGatewayVmStub('vm-portal-admission', 28_293);
 		const toolPortal = createGatewayZoneToolPortalConfig(configDir);
 		const admissionFilePath = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 			GATEWAY_RUNTIME_PORTAL_ADMISSION_FILE_NAME,
 		);
 
@@ -3141,10 +2967,9 @@ describe('startGatewayZone', () => {
 		const configDir = requireToolPortalConfigDir(baseZone);
 		await writeMinimalMcpPortalConfigs(configDir, undefined, { portalAgentId: 'shravan' });
 		const effectiveConfigDir = path.join(
-			systemConfig.cacheDir,
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+			'gateway-effective',
 			baseZone.id,
-			'tool-portal-effective',
 		);
 
 		await preflightGatewayZoneStart(
@@ -3899,74 +3724,6 @@ describe('startGatewayZone', () => {
 		).rejects.toThrow("Unknown zone 'does-not-exist'.");
 	});
 
-	it('loads the worker lifecycle for worker gateway zones', async () => {
-		const systemConfig = await createSystemConfig();
-		const workerSystemConfig: LoadedSystemConfig = {
-			...systemConfig,
-			zones: systemConfig.zones.map((zone) => ({
-				...zone,
-				gateway: {
-					...zone.gateway,
-					type: 'worker' as const,
-				},
-				secrets: {
-					OPENAI_API_KEY: {
-						source: '1password' as const,
-						ref: 'op://agent-vm/shravan-openai/credential',
-						injection: 'http-mediation' as const,
-						audience: 'gateway' as const,
-						hosts: ['api.openai.com'],
-					},
-				},
-			})),
-		};
-		const secretResolver: SecretResolver = {
-			resolve: async () => 'openai-key',
-			resolveAll: async () => ({ OPENAI_API_KEY: 'openai-key' }),
-		};
-		const execMock = vi.fn(() => createManagedExecProcessStub({ stdout: '200' }));
-		const configureIngressRoutesMock = vi.fn();
-		const enableIngressMock = vi.fn(async () => createTestIngressAccess());
-
-		const result = await startGatewayZone(
-			{
-				secretResolver,
-				systemConfig: workerSystemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp-worker',
-						imageReference: '/tmp/worker-image',
-					})),
-				},
-				managedVmFactory: {
-					createManagedVm: vi.fn(async () => ({
-						close: vi.fn(async () => completeGatewayVmClose('worker-vm-123')),
-						enableIngress: enableIngressMock,
-						enableSsh: vi.fn(),
-						exec: execMock,
-						getHostProcessId: vi.fn(() => 12345),
-						id: 'worker-vm-123',
-						start: vi.fn(async () => {}),
-						configureIngressRoutes: configureIngressRoutesMock,
-					})),
-				},
-				writeGatewayRuntimeRecord: vi.fn(async () => {}),
-			},
-		);
-
-		const workerResult = requireDirectProcessGatewayResult(result);
-		expect(workerResult.processSpec.startCommand).toContain('agent-vm-worker');
-		expect(workerResult.processSpec.healthCheck).toEqual({
-			type: 'http',
-			port: 18789,
-			path: '/health',
-		});
-	});
-
 	it('splits env secrets from http-mediation secrets based on injection config', async () => {
 		const closeMock = vi.fn(async () => completeGatewayVmClose('vm-456'));
 		const enableIngressMock = vi.fn(async () => createTestIngressAccess());
@@ -4102,382 +3859,6 @@ describe('startGatewayZone', () => {
 			{ guestHost: 'tool-3.vm.host:22', target: '127.0.0.1:19003' },
 			{ guestHost: 'tool-4.vm.host:22', target: '127.0.0.1:19004' },
 		]);
-	});
-
-	it('throws with the Worker log tail and closes the vm when service health polling exhausts all attempts', async () => {
-		const closeMock = vi.fn(async () => completeGatewayVmClose('vm-timeout'));
-		const execMock = vi.fn((command: string) => {
-			if (command === `tail -n 80 ${expectedWorkerProcessSpec.logPath} 2>/dev/null || true`) {
-				return createManagedExecProcessStub({
-					stdout: 'Worker failed to parse config: unknown verification mode\n',
-				});
-			}
-			if (command.includes('http://127.0.0.1:18789/health')) {
-				return createManagedExecProcessStub({ exitCode: 1 });
-			}
-			return createManagedExecProcessStub({ stdout: '000' });
-		});
-		const managedVm: ManagedVm = {
-			id: 'vm-timeout',
-			start: vi.fn(async () => {}),
-			close: closeMock,
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: execMock,
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28285),
-		};
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createGatewaySecretResolver({
-						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-					}),
-					systemConfig: await createWorkerSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					gatewayReadinessMaxAttempts: 2,
-					gatewayReadinessRetryDelayMs: 0,
-				},
-			),
-		).rejects.toThrow(
-			/Gateway service health check failed after 2 attempts.*Last probe: http \(empty\).*Gateway process may still be booting, or it may have crashed before opening its health port.*Worker failed to parse config/su,
-		);
-		expect(execMock).toHaveBeenCalledWith(
-			`tail -n 80 ${expectedWorkerProcessSpec.logPath} 2>/dev/null || true`,
-		);
-		expect(execMock).toHaveBeenNthCalledWith(1, expectedWorkerProcessSpec.bootstrapCommand);
-		expect(execMock).toHaveBeenNthCalledWith(2, expectedWorkerProcessSpec.startCommand);
-		expect(closeMock).toHaveBeenCalledTimes(1);
-	});
-
-	it('defaults Worker service health polling to about 60 seconds', async () => {
-		const execMock = vi.fn((command: string) => {
-			if (command.includes('tail -n 80')) {
-				return createManagedExecProcessStub();
-			}
-			if (command.includes('http://127.0.0.1:18789/health')) {
-				return createManagedExecProcessStub({ exitCode: 1 });
-			}
-			return createManagedExecProcessStub({ stdout: '000' });
-		});
-		const managedVm: ManagedVm = {
-			id: 'vm-default-timeout',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-default-timeout')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: execMock,
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28285),
-		};
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createGatewaySecretResolver({
-						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-					}),
-					systemConfig: await createWorkerSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					gatewayReadinessRetryDelayMs: 0,
-				},
-			),
-		).rejects.toThrow(/Gateway service health check failed after 120 attempts/su);
-	});
-
-	it('throws command stdout and stderr and closes the vm when Worker configuration fails', async () => {
-		const closeMock = vi.fn(async () => completeGatewayVmClose('vm-config-failed'));
-		const managedVm: ManagedVm = {
-			id: 'vm-config-failed',
-			start: vi.fn(async () => {}),
-			close: closeMock,
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn((command: string) =>
-				command === expectedWorkerProcessSpec.bootstrapCommand
-					? createManagedExecProcessStub({
-							exitCode: 42,
-							stdout: 'bootstrap stdout',
-							stderr: 'bootstrap stderr',
-						})
-					: createManagedExecProcessStub({ stdout: '200' }),
-			),
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28285),
-		};
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createGatewaySecretResolver({
-						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-					}),
-					systemConfig: await createWorkerSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					gatewayReadinessMaxAttempts: 5,
-					gatewayReadinessRetryDelayMs: 0,
-				},
-			),
-		).rejects.toThrow(/Configuring gateway failed.*exit 42.*bootstrap stdout.*bootstrap stderr/su);
-		expect(closeMock).toHaveBeenCalledTimes(1);
-	});
-
-	it('does not treat non-2xx Worker http responses as ready', async () => {
-		const managedVm: ManagedVm = {
-			id: 'vm-not-ready-500',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-not-ready-500')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi
-				.fn()
-				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
-				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
-				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
-				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
-				.mockReturnValueOnce(createManagedExecProcessStub({ stdout: '500' }))
-				.mockReturnValue(createManagedExecProcessStub({ stdout: '500' })),
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28286),
-		};
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createGatewaySecretResolver({
-						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-					}),
-					systemConfig: await createWorkerSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					gatewayReadinessMaxAttempts: 5,
-					gatewayReadinessRetryDelayMs: 0,
-					loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
-				},
-			),
-		).rejects.toThrow(/500/u);
-	});
-
-	it('supports command-based Worker health checks', async () => {
-		const execMock = vi.fn((_command: string) => createManagedExecProcessStub());
-		const managedVm: ManagedVm = {
-			id: 'vm-command-health',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-command-health')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: execMock,
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28287),
-		};
-
-		const result = await startGatewayZone(
-			{
-				secretResolver: createGatewaySecretResolver({
-					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-				}),
-				systemConfig: await createWorkerSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-				loadGatewayLifecycle: () => ({
-					executionModel: 'direct-process',
-					buildProcessSpec: () => ({
-						bootstrapCommand: 'bootstrap-worker',
-						guestListenPort: 18789,
-						healthCheck: { type: 'command', command: 'check-health' } as const,
-						logPath: '/tmp/worker.log',
-						startCommand: 'start-worker',
-					}),
-					buildVmRequirements: () => ({
-						allowedHosts: [],
-						environment: {},
-						mediatedSecrets: {},
-						rootfsMode: 'cow' as const,
-						sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
-						tcpHosts: {},
-						mounts: {},
-					}),
-				}),
-			},
-		);
-
-		expect(execMock).toHaveBeenCalledWith('check-health');
-		expect(requireDirectProcessGatewayResult(result).processSpec.logPath).toBe('/tmp/worker.log');
-	});
-
-	it('omits full Worker commands from command failure messages', async () => {
-		const secretBearingBootstrapCommand =
-			"export FUTURE_SECRET='do-not-leak-command-material' && false";
-		const managedVm: ManagedVm = {
-			id: 'vm-failed-bootstrap',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-failed-bootstrap')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: vi.fn((command: string) =>
-				command === secretBearingBootstrapCommand
-					? createManagedExecProcessStub({
-							exitCode: 1,
-							stdout: 'bootstrap stdout',
-							stderr: 'bootstrap stderr',
-						})
-					: createManagedExecProcessStub({ stdout: '200' }),
-			),
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28287),
-		};
-		const systemConfig = await createWorkerSystemConfig();
-
-		await expect(
-			startGatewayZone(
-				{
-					secretResolver: createGatewaySecretResolver({
-						TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-					}),
-					systemConfig,
-					zoneId: 'shravan',
-				},
-				{
-					managedVmImages: {
-						prepareImage: vi.fn(async () => ({
-							built: true,
-							fingerprint: 'fp',
-							imageReference: '/tmp/img',
-						})),
-					},
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					loadGatewayLifecycle: () => ({
-						executionModel: 'direct-process',
-						buildProcessSpec: () => ({
-							bootstrapCommand: secretBearingBootstrapCommand,
-							guestListenPort: 18789,
-							healthCheck: { type: 'http', port: 18789, path: '/' } as const,
-							logPath: '/tmp/worker.log',
-							startCommand: 'start-worker',
-						}),
-						buildVmRequirements: () => ({
-							allowedHosts: [],
-							environment: {},
-							mediatedSecrets: {},
-							rootfsMode: 'cow' as const,
-							sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',
-							tcpHosts: {},
-							mounts: {},
-						}),
-					}),
-				},
-			),
-		).rejects.toThrow(
-			/^(?!.*(?:do-not-leak-command-material|Command:))Configuring gateway failed with exit 1/u,
-		);
-		await expect(
-			loadWorkerRuntimeRecord(
-				resolveTestWorkerRuntimeRecordTarget({ systemConfig, zoneId: 'shravan' }),
-			),
-		).resolves.toBeNull();
-	});
-
-	it('retries Worker health checks until a 2xx response is returned', async () => {
-		const execMock = vi.fn((command: string) => {
-			if (!command.includes('curl -sS -o /dev/null -w "%{http_code}"')) {
-				return createManagedExecProcessStub();
-			}
-			healthProbeCount += 1;
-			return createManagedExecProcessStub({
-				stdout: healthProbeCount === 1 ? '000' : '200',
-			});
-		});
-		let healthProbeCount = 0;
-		const managedVm: ManagedVm = {
-			id: 'vm-retry-health',
-			start: vi.fn(async () => {}),
-			close: vi.fn(async () => completeGatewayVmClose('vm-retry-health')),
-			enableIngress: vi.fn(async () => createTestIngressAccess()),
-			enableSsh: vi.fn(async () => createTestSshAccess()),
-			exec: execMock,
-			configureIngressRoutes: vi.fn(),
-			getHostProcessId: vi.fn(() => 28288),
-		};
-
-		await startGatewayZone(
-			{
-				secretResolver: createGatewaySecretResolver({
-					TEST_GATEWAY_SECRET: 'resolved-gateway-token',
-				}),
-				systemConfig: await createWorkerSystemConfig(),
-				zoneId: 'shravan',
-			},
-			{
-				managedVmImages: {
-					prepareImage: vi.fn(async () => ({
-						built: true,
-						fingerprint: 'fp',
-						imageReference: '/tmp/img',
-					})),
-				},
-				managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-				loadGatewayLifecycle: createHttpHealthGatewayLifecycle,
-			},
-		);
-
-		expect(execMock).toHaveBeenNthCalledWith(
-			3,
-			expect.stringContaining('curl -sS -o /dev/null -w "%{http_code}"'),
-		);
-		expect(execMock).toHaveBeenNthCalledWith(
-			4,
-			expect.stringContaining('curl -sS -o /dev/null -w "%{http_code}"'),
-		);
-		expect(healthProbeCount).toBe(2);
 	});
 
 	it('aborts a pending gateway service-health retry without starting another probe', async () => {

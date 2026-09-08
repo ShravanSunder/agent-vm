@@ -42,12 +42,6 @@ type ControllerSelectedToolVmDirectory =
 	  };
 
 function expectedControllerSelectedDirectory(selection: ControllerSelectedToolVmDirectory): string {
-	if (selection.zone.gateway.type === 'worker') {
-		throw new ControllerSelectedToolVmDirectoryValidationError(
-			'unsupported-gateway',
-			`Zone '${selection.zone.id}' does not support managed framework Tool VM directories.`,
-		);
-	}
 	if (selection.kind === 'zone-files') {
 		return selection.zone.gateway.zoneFilesDir;
 	}

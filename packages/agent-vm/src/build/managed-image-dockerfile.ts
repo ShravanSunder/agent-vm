@@ -117,7 +117,6 @@ const managedImageReleaseSchema = z
 		baseImages: z
 			.object({
 				'tool-vm': managedBaseImageReferenceSchema,
-				'worker-gateway': managedBaseImageReferenceSchema,
 			})
 			.strict(),
 	})

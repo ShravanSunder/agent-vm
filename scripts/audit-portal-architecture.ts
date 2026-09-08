@@ -21,13 +21,11 @@ const portalPackageNames = new Set([
 	'gateway-control-contracts',
 	'mcp-portal',
 	'tool-portal',
-	'worker-control-contracts',
 ]);
 
 const controlContractPackageNames = new Set([
 	'control-protocol-contracts',
 	'gateway-control-contracts',
-	'worker-control-contracts',
 ]);
 
 const forbiddenBucketFolders = ['schemas', 'validation', 'mapping', 'test-support'] as const;
@@ -38,9 +36,7 @@ const runtimePortalImportPrefixes = [
 	'@agent-vm/control-protocol-contracts',
 	'@agent-vm/controller-execution-contracts',
 	'@agent-vm/gateway-control-contracts',
-	'@agent-vm/worker-control-contracts',
 	'@agent-vm/agent-vm',
-	'@agent-vm/worker-gateway',
 	'@agent-vm/gateway-lifecycle',
 	'@agent-vm/gondolin-vm-adapter',
 	'@agent-vm/managed-vm',
@@ -83,10 +79,8 @@ const toolPortalSemanticRouterHelperNames = [
 
 const managedControlSourcePrefixes = [
 	'packages/agent-vm/src/controller/',
-	'packages/agent-vm-worker/src/',
 	'packages/gateway-runtime/src/',
 	'packages/hermes-gateway/src/',
-	'packages/worker-gateway/src/',
 ] as const;
 
 const managedControlDocumentationPrefixes = [
@@ -180,7 +174,6 @@ function sourceFileNameWithoutTestSuffix(filePath: string): string {
 		.replace(/\.host\.e2e\.test$/u, '')
 		.replace(/\.vm\.e2e\.test$/u, '')
 		.replace(/\.hermes\.e2e\.test$/u, '')
-		.replace(/\.worker\.e2e\.test$/u, '')
 		.replace(/\.secrets\.e2e\.test$/u, '')
 		.replace(/\.llm\.e2e\.test$/u, '');
 }
@@ -193,7 +186,6 @@ function isTestSourceFile(filePath: string): boolean {
 		filePath.endsWith('.host.e2e.test.ts') ||
 		filePath.endsWith('.vm.e2e.test.ts') ||
 		filePath.endsWith('.hermes.e2e.test.ts') ||
-		filePath.endsWith('.worker.e2e.test.ts') ||
 		filePath.endsWith('.secrets.e2e.test.ts') ||
 		filePath.endsWith('.llm.e2e.test.ts') ||
 		filePath.endsWith('-test-fixture.ts')

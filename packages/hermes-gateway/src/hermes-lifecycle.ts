@@ -113,7 +113,7 @@ function isObjectRecord(value: unknown): value is UnknownRecord {
 function requireHermesGatewayConfig(zone: GatewayZoneConfig): HermesGatewayConfig {
 	const gateway = zone.gateway;
 	if (gateway.type !== 'hermes') {
-		throw new Error(`Hermes lifecycle cannot build gateway type '${gateway.type}'.`);
+		throw new Error('Hermes lifecycle cannot build a non-Hermes gateway.');
 	}
 	return gateway;
 }

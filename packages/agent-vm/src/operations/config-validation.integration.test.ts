@@ -28,87 +28,33 @@ async function updateJsonFile(
 	await writeJson(filePath, objectValue);
 }
 
-function minimalWorkerConfig(): unknown {
-	return {
-		phases: {
-			plan: {
-				cycle: { kind: 'review', cycleCount: 1 },
-				agentInstructions: { path: './prompts/plan-agent.md' },
-				reviewerInstructions: null,
-			},
-			work: {
-				cycle: { kind: 'review', cycleCount: 1 },
-				agentInstructions: null,
-				reviewerInstructions: null,
-			},
-			wrapup: { instructions: null },
-		},
-	};
-}
-
 async function writeContainerProjectFixture(rootPath: string): Promise<string> {
-	await writeJson(path.join(rootPath, 'config', 'system.json'), {
-		schemaVersion: 2,
-		host: {
-			controllerPort: 18800,
-			projectNamespace: 'agent-vm',
-			githubToken: { source: 'environment', envVar: 'GITHUB_TOKEN' },
-		},
-		storageRootDir: '/var/agent-vm',
-		imageProfiles: {
-			gateways: {
-				worker: {
-					type: 'worker',
-					buildConfig: '/etc/agent-vm/vm-images/gateways/worker/build-config.json',
-					dockerfile: '/etc/agent-vm/vm-images/gateways/worker/Dockerfile',
-				},
-			},
-		},
-		zones: [
-			{
-				id: 'coding-agent',
-				gateway: {
-					type: 'worker',
-					memory: '2G',
-					cpus: 2,
-					port: 18791,
-					config: '/etc/agent-vm/gateways/coding-agent/worker.json',
-					imageProfile: 'worker',
-				},
-				secrets: {},
-				egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
-			},
-		],
-		tcpPool: { basePort: 19000, size: 5 },
+	const systemConfigPath = await writeHermesProjectFixture(rootPath);
+	await updateJsonFile(systemConfigPath, (systemConfig) => {
+		systemConfig.storageRootDir = '/var/agent-vm/agent-vm';
+		const imageProfiles = systemConfig.imageProfiles as {
+			gateways: { hermes: Record<string, unknown> };
+			toolVms: { default: Record<string, unknown> };
+		};
+		imageProfiles.gateways.hermes.buildConfig =
+			'/etc/agent-vm/vm-images/gateways/hermes/build-config.json';
+		imageProfiles.gateways.hermes.dockerfile = '/etc/agent-vm/vm-images/gateways/hermes/Dockerfile';
+		imageProfiles.toolVms.default.buildConfig =
+			'/etc/agent-vm/vm-images/tool-vms/default/build-config.json';
+		imageProfiles.toolVms.default.dockerfile =
+			'/etc/agent-vm/vm-images/tool-vms/default/Dockerfile';
+		const zones = systemConfig.zones as { gateway: Record<string, unknown> }[];
+		if (zones[0] !== undefined) {
+			zones[0].gateway.config = '/etc/agent-vm/gateways/shravan/config.yaml';
+		}
 	});
-	await writeJson(
-		path.join(rootPath, 'config', 'gateways', 'coding-agent', 'worker.json'),
-		minimalWorkerConfig(),
-	);
-	await mkdir(path.join(rootPath, 'config', 'gateways', 'coding-agent', 'prompts'), {
-		recursive: true,
-	});
-	await writeFile(
-		path.join(rootPath, 'config', 'gateways', 'coding-agent', 'prompts', 'plan-agent.md'),
-		'Plan carefully.\n',
-		'utf8',
-	);
-	await writeJson(path.join(rootPath, 'vm-images', 'gateways', 'worker', 'build-config.json'), {
-		arch: 'x86_64',
-		distro: 'alpine',
-	});
-	await writeFile(
-		path.join(rootPath, 'vm-images', 'gateways', 'worker', 'Dockerfile'),
-		'FROM node:24-slim\n',
-		'utf8',
-	);
 	await mkdir(path.join(rootPath, 'vm-host-system'), { recursive: true });
 	await Promise.all(
 		['Dockerfile', 'start.sh', 'agent-vm-controller.service'].map(async (fileName) => {
 			await writeFile(path.join(rootPath, 'vm-host-system', fileName), '', 'utf8');
 		}),
 	);
-	return path.join(rootPath, 'config', 'system.json');
+	return systemConfigPath;
 }
 
 async function writeHermesProjectFixture(rootPath: string): Promise<string> {
@@ -1514,27 +1460,59 @@ describe('runConfigValidation', () => {
 				storageRootDir: '/var/agent-vm',
 				imageProfiles: {
 					gateways: {
-						worker: {
-							type: 'worker',
-							buildConfig: '/etc/agent-vm/vm-images/gateways/worker/build-config.json',
+						hermes: {
+							type: 'hermes',
+							buildConfig: '/etc/agent-vm/vm-images/gateways/hermes/build-config.json',
+						},
+					},
+					toolVms: {
+						default: {
+							buildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.json',
+							type: 'toolVm',
 						},
 					},
 				},
 				zones: [
 					{
+						agents: [{ id: 'main' }],
+						agentToolVmProfiles: {},
+						defaultToolVmProfile: 'standard',
 						id: 'coding-agent',
 						gateway: {
-							type: 'worker',
+							type: 'hermes',
 							memory: '2G',
 							cpus: 2,
 							port: 18791,
-							config: '/etc/agent-vm/gateways/coding-agent/worker.json',
-							imageProfile: 'worker',
+							config: '/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml',
+							imageProfile: 'hermes',
+							profileSecretProjectionsByAgent: {
+								main: {
+									API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+									DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+								},
+							},
+							profilesByAgent: { main: 'main' },
 						},
-						secrets: {},
-						egressHosts: ['api.openai.com'].map((host) => ({ host, audience: 'gateway' as const })),
+						secrets: {
+							API_SERVER_KEY_MAIN: {
+								audience: 'gateway',
+								envVar: 'API_SERVER_KEY_MAIN',
+								injection: 'env',
+								source: 'environment',
+							},
+							DISCORD_BOT_TOKEN_MAIN: {
+								audience: 'gateway',
+								envVar: 'DISCORD_BOT_TOKEN_MAIN',
+								injection: 'env',
+								source: 'environment',
+							},
+						},
+						egressHosts: [{ host: 'api.openai.com', audience: 'gateway' }],
 					},
 				],
+				toolVmProfiles: {
+					standard: { cpus: 1, imageProfile: 'default', memory: '1G' },
+				},
 				tcpPool: { basePort: 19000, size: 5 },
 			},
 			{ systemConfigPath: '/etc/agent-vm/system.json' },
@@ -1542,10 +1520,10 @@ describe('runConfigValidation', () => {
 
 		const resolvedPath = resolveProjectCheckoutPath(
 			systemConfig,
-			'/etc/agent-vm/gateways/coding-agent/worker.json',
+			'/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml',
 		);
 
-		expect(resolvedPath).toBe('/etc/agent-vm/gateways/coding-agent/worker.json');
+		expect(resolvedPath).toBe('/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml');
 	});
 
 	it('validates a container project from its checkout paths', async () => {
@@ -1557,10 +1535,10 @@ describe('runConfigValidation', () => {
 
 		expect(result.ok).toBe(true);
 		expect(result.checks.every((check) => check.ok)).toBe(true);
-		expect(result.checks.find((check) => check.name === 'worker-config-coding-agent')?.hint).toBe(
-			path.join(temporaryDirectoryPath, 'config', 'gateways', 'coding-agent', 'worker.json'),
+		expect(result.checks.find((check) => check.name === 'hermes-config-shravan')?.hint).toBe(
+			path.join(temporaryDirectoryPath, 'config', 'gateways', 'shravan', 'config.yaml'),
 		);
-		expect(result.checks.find((check) => check.name === 'gateway-worker-build-config')?.ok).toBe(
+		expect(result.checks.find((check) => check.name === 'gateway-hermes-build-config')?.ok).toBe(
 			true,
 		);
 
@@ -1600,52 +1578,37 @@ describe('runConfigValidation', () => {
 
 	it('rejects managed image overlays with retired non-npm override buckets', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
-		await writeJson(
-			path.join(temporaryDirectoryPath, 'vm-images', 'gateways', 'worker', 'overlay.jsonc'),
-			{
-				pnpmOverrides: { undici: '8.5.0' },
-				schemaVersion: 1,
-			},
+		const systemConfigPath = await writeHermesProjectFixture(temporaryDirectoryPath);
+		const overlayPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'overlay.jsonc',
 		);
+		await writeJson(overlayPath, {
+			pnpmOverrides: { undici: '8.5.0' },
+			schemaVersion: 1,
+		});
 		await updateJsonFile(systemConfigPath, (systemConfig) => {
-			const imageProfiles = systemConfig.imageProfiles;
-			if (
-				typeof imageProfiles !== 'object' ||
-				imageProfiles === null ||
-				Array.isArray(imageProfiles)
-			) {
-				throw new Error('Expected imageProfiles object.');
-			}
-			const gateways = (imageProfiles as Record<string, unknown>).gateways;
-			if (typeof gateways !== 'object' || gateways === null || Array.isArray(gateways)) {
-				throw new Error('Expected gateways object.');
-			}
-			const workerProfile = (gateways as Record<string, unknown>).worker;
-			if (
-				typeof workerProfile !== 'object' ||
-				workerProfile === null ||
-				Array.isArray(workerProfile)
-			) {
-				throw new Error('Expected worker profile object.');
-			}
-			(workerProfile as Record<string, unknown>).source = {
-				base: 'worker-gateway',
+			const imageProfiles = systemConfig.imageProfiles as {
+				toolVms: { default: Record<string, unknown> };
+			};
+			imageProfiles.toolVms.default.source = {
+				base: 'tool-vm',
 				kind: 'managedBase',
-				overlay: '../vm-images/gateways/worker/overlay.jsonc',
+				overlay: '../vm-images/tool-vms/default/overlay.jsonc',
 			};
 		});
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
-		const result = await runConfigValidation({
-			systemConfig,
-		});
+		const result = await runConfigValidation({ systemConfig });
 
 		expect(result.ok).toBe(false);
 		expect(result.checks).toContainEqual(
 			expect.objectContaining({
 				hint: expect.stringContaining('packageOverrides accepts only exact npm package pins'),
-				name: 'gateway-worker-overlay',
+				name: 'tool-vm-default-overlay',
 				ok: false,
 			}),
 		);
@@ -1655,51 +1618,36 @@ describe('runConfigValidation', () => {
 
 	it('accepts managed image overlays with exact packageOverrides npm pins', async () => {
 		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
-		await writeJson(
-			path.join(temporaryDirectoryPath, 'vm-images', 'gateways', 'worker', 'overlay.jsonc'),
-			{
-				packageOverrides: { npm: ['undici@8.5.0'] },
-				schemaVersion: 1,
-			},
+		const systemConfigPath = await writeHermesProjectFixture(temporaryDirectoryPath);
+		const overlayPath = path.join(
+			temporaryDirectoryPath,
+			'vm-images',
+			'tool-vms',
+			'default',
+			'overlay.jsonc',
 		);
+		await writeJson(overlayPath, {
+			packageOverrides: { npm: ['undici@8.5.0'] },
+			schemaVersion: 1,
+		});
 		await updateJsonFile(systemConfigPath, (systemConfig) => {
-			const imageProfiles = systemConfig.imageProfiles;
-			if (
-				typeof imageProfiles !== 'object' ||
-				imageProfiles === null ||
-				Array.isArray(imageProfiles)
-			) {
-				throw new Error('Expected imageProfiles object.');
-			}
-			const gateways = (imageProfiles as Record<string, unknown>).gateways;
-			if (typeof gateways !== 'object' || gateways === null || Array.isArray(gateways)) {
-				throw new Error('Expected gateways object.');
-			}
-			const workerProfile = (gateways as Record<string, unknown>).worker;
-			if (
-				typeof workerProfile !== 'object' ||
-				workerProfile === null ||
-				Array.isArray(workerProfile)
-			) {
-				throw new Error('Expected worker profile object.');
-			}
-			(workerProfile as Record<string, unknown>).source = {
-				base: 'worker-gateway',
+			const imageProfiles = systemConfig.imageProfiles as {
+				toolVms: { default: Record<string, unknown> };
+			};
+			imageProfiles.toolVms.default.source = {
+				base: 'tool-vm',
 				kind: 'managedBase',
-				overlay: '../vm-images/gateways/worker/overlay.jsonc',
+				overlay: '../vm-images/tool-vms/default/overlay.jsonc',
 			};
 		});
 		const systemConfig = await loadSystemConfig(systemConfigPath);
 
-		const result = await runConfigValidation({
-			systemConfig,
-		});
+		const result = await runConfigValidation({ systemConfig });
 
 		expect(result.ok).toBe(true);
 		expect(result.checks).toContainEqual(
 			expect.objectContaining({
-				name: 'gateway-worker-overlay',
+				name: 'tool-vm-default-overlay',
 				ok: true,
 			}),
 		);
@@ -1747,33 +1695,6 @@ describe('runConfigValidation', () => {
 			ok: false,
 			hint: 'controllerRuntimeDir must not overlap cacheDir',
 		});
-
-		await rm(temporaryDirectoryPath, { force: true, recursive: true });
-	});
-
-	it('reports missing project-local worker prompt files', async () => {
-		const temporaryDirectoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-validate-'));
-		const systemConfigPath = await writeContainerProjectFixture(temporaryDirectoryPath);
-		await rm(
-			path.join(
-				temporaryDirectoryPath,
-				'config',
-				'gateways',
-				'coding-agent',
-				'prompts',
-				'plan-agent.md',
-			),
-		);
-		const systemConfig = await loadSystemConfig(systemConfigPath);
-
-		const result = await runConfigValidation({ systemConfig });
-
-		expect(result.ok).toBe(false);
-		const workerConfigCheck = result.checks.find(
-			(check) => check.name === 'worker-config-coding-agent',
-		);
-		expect(workerConfigCheck?.ok).toBe(false);
-		expect(workerConfigCheck?.hint).toMatch(/plan-agent\.md/u);
 
 		await rm(temporaryDirectoryPath, { force: true, recursive: true });
 	});

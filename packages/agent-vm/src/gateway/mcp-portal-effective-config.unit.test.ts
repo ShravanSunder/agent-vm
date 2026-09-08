@@ -5,7 +5,7 @@ import {
 	decodeConfiguredCliPreparedImageIdentity,
 	mcpConfigSchema,
 	toolPortalConfigSchema,
-	type ControllerExecutionOperation,
+	type ControllerEnforcedConfiguredCliOperation,
 	type McpConfig,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
@@ -215,7 +215,7 @@ function createConfiguredCliOperationForOverlapTest(props: {
 	readonly commandPath: readonly string[];
 	readonly mandatoryArgvPrefix: readonly string[];
 	readonly safeHelp: string;
-}): Extract<ControllerExecutionOperation, { kind: 'configured_cli' }> {
+}): ControllerEnforcedConfiguredCliOperation {
 	return {
 		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
 		commands: [{ flagRules: [], path: [...props.commandPath] }],
@@ -259,6 +259,7 @@ describe('MCP Portal effective config materialization', () => {
 			authoredConfigDir,
 			effectiveHostConfigDir,
 			managedVmImages: { prepareImage },
+			sharedImageCacheDir: '/cache/vm-images',
 		});
 		const operation = result.credentialedRuntimeRegistrySnapshot.resolve({
 			agentId: 'shravan',
@@ -272,9 +273,7 @@ describe('MCP Portal effective config materialization', () => {
 		}
 
 		expect(prepareImage).toHaveBeenCalledWith({
-			cacheDirectory: expect.stringMatching(
-				/agent-vm-effective-tool-portal\/controller-execution-images\/[a-f0-9]{64}$/u,
-			),
+			artifactCacheDirectory: '/cache/vm-images',
 			recipePath: path.resolve(
 				authoredConfigDir,
 				'../../vm-images/controller-runners/default/build-config.json',
@@ -340,6 +339,7 @@ describe('MCP Portal effective config materialization', () => {
 					imageReference: `/cache/${fingerprint}`,
 				}),
 			},
+			sharedImageCacheDir: '/cache/vm-images',
 		};
 		const first = await resolveMcpPortalEffectiveConfigFromConfig(props);
 		fingerprint = 'fingerprint-prepared-b';

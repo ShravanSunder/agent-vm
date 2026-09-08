@@ -198,10 +198,6 @@ describe('runControllerDestroy', () => {
 						type: 'hermes',
 						buildConfig: './vm-images/gateways/hermes/build-config.json',
 					},
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.json',
-					},
 				},
 				toolVms: {
 					default: {
@@ -283,82 +279,5 @@ describe('runControllerDestroy', () => {
 			purged: true,
 			zoneId: 'shravan',
 		});
-	});
-
-	it('purges worker runtime artifacts for the zone', async () => {
-		const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-vm-destroy-worker-'));
-		createdDirectories.push(tempDirectory);
-		const zoneRuntimeDir = path.join(tempDirectory, 'runtime');
-		const workerRuntimeDir = path.join(zoneRuntimeDir, 'worker-tasks');
-		const stateDir = path.join(tempDirectory, 'state', 'shravan');
-		fs.mkdirSync(path.join(workerRuntimeDir, 'task-1', 'gitdirs'), { recursive: true });
-		fs.mkdirSync(stateDir, { recursive: true });
-
-		const systemConfig = {
-			schemaVersion: 2,
-			storageRootDir: tempDirectory,
-			cacheDir: './cache',
-			controllerStateDir: path.join(tempDirectory, 'controller-state'),
-			controllerRuntimeDir: path.join(tempDirectory, 'controller-runtime'),
-			host: {
-				controllerPort: 18800,
-				projectNamespace: 'agent-vm-tests-a1b2c3d4',
-				secretsProvider: {
-					type: '1password',
-					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
-				},
-			},
-			imageProfiles: {
-				gateways: {
-					worker: {
-						type: 'worker',
-						buildConfig: './vm-images/gateways/worker/build-config.json',
-					},
-				},
-				toolVms: {},
-			},
-			zones: [
-				{
-					id: 'shravan',
-					gateway: {
-						type: 'worker',
-						imageProfile: 'worker',
-						memory: '2G',
-						cpus: 2,
-						port: 18791,
-						config: './config/shravan/worker.json',
-						stateDir,
-						zoneRuntimeDir,
-					},
-					secrets: {},
-					egressHosts: ['github.com'].map((host) => ({ host, audience: 'gateway' as const })),
-				},
-			],
-			toolVmProfiles: {
-				standard: {
-					memory: '1G',
-					cpus: 1,
-					imageProfile: 'default',
-				},
-			},
-			tcpPool: {
-				basePort: 19000,
-				size: 5,
-			},
-		} satisfies SystemConfig;
-
-		await runControllerDestroy(
-			{
-				purge: true,
-				systemConfig,
-				zoneId: 'shravan',
-			},
-			{
-				releaseZoneLeases: async () => {},
-				stopGatewayZone: async () => {},
-			},
-		);
-
-		expect(fs.existsSync(workerRuntimeDir)).toBe(false);
 	});
 });

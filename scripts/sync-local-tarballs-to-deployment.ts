@@ -14,7 +14,6 @@ const execFileAsync = promisify(execFile);
 export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/agent-vm',
 	'@agent-vm/agent-portal-sdk',
-	'@agent-vm/agent-vm-worker',
 	'@agent-vm/config-contracts',
 	'@agent-vm/control-protocol-contracts',
 	'@agent-vm/controller-execution-contracts',
@@ -30,8 +29,6 @@ export const AGENT_VM_PACKAGE_NAMES = [
 	'@agent-vm/oauth-broker-contracts',
 	'@agent-vm/secret-management',
 	'@agent-vm/tool-portal',
-	'@agent-vm/worker-control-contracts',
-	'@agent-vm/worker-gateway',
 ] as const;
 
 export const TOOL_VM_TARBALL_PACKAGE_NAMES = [

@@ -2,31 +2,50 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { managedVmImageAssetFileNames as buildImageAssetFileNames } from './gondolin-managed-vm-build-tooling.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
+
+import { computeFingerprintFromConfigPath } from './gondolin-image-builder.js';
 import {
+	configuredImageSelectionRecordPath,
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 } from './prepared-gondolin-image-cache.js';
 
 const temporaryDirectories: string[] = [];
 
-async function createTemporaryDirectory(): Promise<string> {
-	const temporaryDirectory = await fs.mkdtemp(
-		path.join(os.tmpdir(), 'agent-vm-prepared-image-'),
-	);
+async function createFixture(): Promise<{
+	readonly buildConfigPath: string;
+	readonly deploymentGeneratedDir: string;
+	readonly selectionRecordPath: string;
+	readonly sharedImageCacheDir: string;
+}> {
+	const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-vm-image-selection-'));
 	temporaryDirectories.push(temporaryDirectory);
-	return temporaryDirectory;
+	const buildConfigPath = path.join(temporaryDirectory, 'build-config.jsonc');
+	const deploymentGeneratedDir = path.join(temporaryDirectory, 'deployment-generated');
+	const sharedImageCacheDir = path.join(temporaryDirectory, 'shared-images');
+	await fs.writeFile(
+		buildConfigPath,
+		JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
+		'utf8',
+	);
+	await fs.mkdir(sharedImageCacheDir, { recursive: true });
+	return {
+		buildConfigPath,
+		deploymentGeneratedDir,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir,
+			family: 'gateway',
+			profileName: 'hermes',
+		}),
+		sharedImageCacheDir,
+	};
 }
 
 async function writeFakeImageAssets(imagePath: string): Promise<void> {
-	await fs.mkdir(imagePath, { recursive: true });
-	await Promise.all(
-		buildImageAssetFileNames.map(
-			async (fileName) => await fs.writeFile(path.join(imagePath, fileName), '', 'utf8'),
-		),
-	);
+	await writeImageArtifactFixture(imagePath);
 }
 
 afterEach(async () => {
@@ -37,133 +56,146 @@ afterEach(async () => {
 	);
 });
 
-describe('prepared Gondolin image cache', () => {
-	it('reads a prepared image when the record matches the build config and assets exist', async () => {
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
-		const imagePath = path.join(cacheDir, 'fingerprint-1');
+describe('prepared Gondolin image selection', () => {
+	it('returns invalid when a previously selected referenced input disappears', async () => {
+		const fixture = await createFixture();
+		const inputPath = path.join(path.dirname(fixture.buildConfigPath), 'input.txt');
+		await fs.writeFile(inputPath, 'input');
+		await fs.writeFile(fixture.buildConfigPath, JSON.stringify({ arch: 'aarch64', distro: 'alpine', postBuild: { copy: [{ src: './input.txt', dest: '/input' }] } }));
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath);
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
 		await writeFakeImageAssets(imagePath);
-		const fingerprintInput = {
-			dockerRootfsIdentity: {
-				architecture: 'arm64',
-				layers: ['sha256:layer-a'],
-				os: 'linux',
-			},
-			schemaVersion: 1,
-		};
+		await writePreparedManagedVmImage({ ...fixture, imagePath, fingerprint });
+		await fs.rm(inputPath);
+
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
+	});
+	it('rejects a self-consistent Hermes image for a standard consumer', async () => {
+		const fixture = await createFixture();
+		const managedGatewayBoot = { kind: 'managed-gateway-exact-two-role', frameworkBootEntry: 'hermes-framework-service' } as const;
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath, { managedGatewayBoot });
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedManagedVmImage({ ...fixture, fingerprint, imagePath, managedGatewayBoot });
+
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
+		await expect(readPreparedManagedVmImage({ ...fixture, expectedManagedGatewayBoot: managedGatewayBoot })).resolves.toMatchObject({ fingerprint });
+	});
+	it('reads a matching selection and derives its image path from the shared root', async () => {
+		const fixture = await createFixture();
+		const fingerprintInput = { dockerRootfsIdentity: { layers: ['sha256:layer-a'] } };
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath, {
+			fingerprintInput,
+		});
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
+		await writeFakeImageAssets(imagePath);
 
 		await writePreparedManagedVmImage({
-			buildConfigPath,
-			cacheDir,
-			fingerprint: 'fingerprint-1',
+			buildConfigPath: fixture.buildConfigPath,
+			fingerprint,
 			fingerprintInput,
 			imagePath,
+			selectionRecordPath: fixture.selectionRecordPath,
+			sharedImageCacheDir: fixture.sharedImageCacheDir,
 		});
 
-		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toEqual({
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toEqual({
 			built: false,
-			fingerprint: 'fingerprint-1',
+			fingerprint,
 			fingerprintInput,
-			imagePath,
+			imagePath: await fs.realpath(imagePath),
 		});
 	});
 
-	it('ignores a prepared image record when the expected assets are missing', async () => {
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
+	it('rejects writing a selection for an incomplete artifact', async () => {
+		const fixture = await createFixture();
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath);
 
-		await writePreparedManagedVmImage({
-			buildConfigPath,
-			cacheDir,
-			fingerprint: 'fingerprint-1',
-			fingerprintInput: undefined,
-			imagePath: path.join(cacheDir, 'fingerprint-1'),
-		});
-
-		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+		await expect(
+			writePreparedManagedVmImage({
+				buildConfigPath: fixture.buildConfigPath,
+				fingerprint,
+				imagePath: path.join(fixture.sharedImageCacheDir, fingerprint),
+				selectionRecordPath: fixture.selectionRecordPath,
+				sharedImageCacheDir: fixture.sharedImageCacheDir,
+			}),
+		).rejects.toThrow(/incomplete/u);
 	});
 
-	it('preserves the exact managed Gateway boot projection in the prepared receipt', async () => {
-		// Arrange
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
-		const imagePath = path.join(cacheDir, 'managed-gateway-fingerprint');
-		const managedGatewayBoot = {
-			frameworkBootEntry: 'hermes-framework-service',
-			kind: 'managed-gateway-exact-two-role',
-		} as const;
-		await writeFakeImageAssets(imagePath);
+	it('ignores malformed and legacy selection records', async () => {
+		const fixture = await createFixture();
+		await fs.mkdir(path.dirname(fixture.selectionRecordPath), { recursive: true });
+		await fs.writeFile(fixture.selectionRecordPath, '{not-json', 'utf8');
 
-		// Act
-		await writePreparedManagedVmImage({
-			buildConfigPath,
-			cacheDir,
-			fingerprint: 'managed-gateway-fingerprint',
-			imagePath,
-			managedGatewayBoot,
-		});
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
 
-		// Assert
-		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toMatchObject(
-			{
-				managedGatewayBoot,
-			},
-		);
-	});
-
-	it('invalidates legacy prepared-image receipts that predate the managed boot contract', async () => {
-		// Arrange
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
-		const imagePath = path.join(cacheDir, 'legacy-fingerprint');
-		await writeFakeImageAssets(imagePath);
 		await fs.writeFile(
-			path.join(cacheDir, 'prepared-image.json'),
-			`${JSON.stringify({
-				buildConfigPath: path.resolve(buildConfigPath),
-				fingerprint: 'legacy-fingerprint',
-				imagePath: path.resolve(imagePath),
-				schemaVersion: 1,
-			})}\n`,
+			fixture.selectionRecordPath,
+			JSON.stringify({ fingerprint: '0123456789abcdef', schemaVersion: 2 }),
+			'utf8',
+		);
+		await expect(readPreparedManagedVmImage(fixture)).resolves.toBeUndefined();
+	});
+
+	it('ignores a selection whose recipe identity no longer matches', async () => {
+		const fixture = await createFixture();
+		const fingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath);
+		const imagePath = path.join(fixture.sharedImageCacheDir, fingerprint);
+		await writeFakeImageAssets(imagePath);
+		await writePreparedManagedVmImage({
+			buildConfigPath: fixture.buildConfigPath,
+			fingerprint,
+			imagePath,
+			selectionRecordPath: fixture.selectionRecordPath,
+			sharedImageCacheDir: fixture.sharedImageCacheDir,
+		});
+		const otherBuildConfigPath = path.join(path.dirname(fixture.buildConfigPath), 'other.jsonc');
+		await fs.writeFile(
+			otherBuildConfigPath,
+			JSON.stringify({ arch: 'aarch64', distro: 'alpine' }),
 			'utf8',
 		);
 
-		// Act and assert
-		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
+		await expect(
+			readPreparedManagedVmImage({ ...fixture, buildConfigPath: otherBuildConfigPath }),
+		).resolves.toBeUndefined();
 	});
 
-	it('ignores a corrupted prepared image record', async () => {
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
-		await fs.writeFile(path.join(cacheDir, 'prepared-image.json'), '{not-json', 'utf8');
-
-		await expect(readPreparedManagedVmImage({ buildConfigPath, cacheDir })).resolves.toBeUndefined();
-	});
-
-	it('uses unique temporary record paths for concurrent writers', async () => {
-		const cacheDir = await createTemporaryDirectory();
-		const buildConfigPath = path.join(cacheDir, '..', 'build-config.jsonc');
-		const firstImagePath = path.join(cacheDir, 'fingerprint-1');
-		const secondImagePath = path.join(cacheDir, 'fingerprint-2');
-		await writeFakeImageAssets(firstImagePath);
-		await writeFakeImageAssets(secondImagePath);
+	it('uses unique temporary paths for concurrent selection writers', async () => {
+		const fixture = await createFixture();
+		const firstInput = { dockerRootfsIdentity: { layers: ['sha256:first'] } };
+		const secondInput = { dockerRootfsIdentity: { layers: ['sha256:second'] } };
+		const firstFingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath, {
+			fingerprintInput: firstInput,
+		});
+		const secondFingerprint = await computeFingerprintFromConfigPath(fixture.buildConfigPath, {
+			fingerprintInput: secondInput,
+		});
+		await Promise.all([
+			writeFakeImageAssets(path.join(fixture.sharedImageCacheDir, firstFingerprint)),
+			writeFakeImageAssets(path.join(fixture.sharedImageCacheDir, secondFingerprint)),
+		]);
 
 		await Promise.all([
 			writePreparedManagedVmImage({
-				buildConfigPath,
-				cacheDir,
-				fingerprint: 'fingerprint-1',
-				imagePath: firstImagePath,
+				buildConfigPath: fixture.buildConfigPath,
+				fingerprint: firstFingerprint,
+				fingerprintInput: firstInput,
+				imagePath: path.join(fixture.sharedImageCacheDir, firstFingerprint),
+				selectionRecordPath: fixture.selectionRecordPath,
+				sharedImageCacheDir: fixture.sharedImageCacheDir,
 			}),
 			writePreparedManagedVmImage({
-				buildConfigPath,
-				cacheDir,
-				fingerprint: 'fingerprint-2',
-				imagePath: secondImagePath,
+				buildConfigPath: fixture.buildConfigPath,
+				fingerprint: secondFingerprint,
+				fingerprintInput: secondInput,
+				imagePath: path.join(fixture.sharedImageCacheDir, secondFingerprint),
+				selectionRecordPath: fixture.selectionRecordPath,
+				sharedImageCacheDir: fixture.sharedImageCacheDir,
 			}),
 		]);
 
-		const preparedImage = await readPreparedManagedVmImage({ buildConfigPath, cacheDir });
-		expect(preparedImage?.fingerprint).toMatch(/^fingerprint-[12]$/u);
+		const preparedImage = await readPreparedManagedVmImage(fixture);
+		expect([firstFingerprint, secondFingerprint]).toContain(preparedImage?.fingerprint);
 	});
 });

@@ -3,33 +3,45 @@
 [Overview](../README.md) > [Architecture](overview.md) > Storage Model
 
 agent-vm separates source config, VM-local runtime files, durable state,
-rebuildable cache, zone files, worker repo files, git metadata, and backup artifacts. Do not
+rebuildable cache, zone files, workspace files, Git metadata, and backup artifacts. Do not
 collapse these storage classes to fix a boot or restore symptom; moving data
 between them changes backup semantics and often changes performance by crossing
 the Gondolin VFS boundary.
 
-For the concrete Hermes and Worker Gateway path matrix, see
+For the concrete Hermes Gateway and Tool VM path matrix, see
 [Storage Matrix](storage-matrix.md).
+
+New immutable VM images are published only after streamed SHA-256 verification
+against their manifest. Reuse checks supported manifest structure and regular,
+non-empty asset files without rehashing image contents. Later binary corruption
+that preserves those structural properties is not detected on the cache fast path.
 
 ## Config-Level Path Map
 
 `storageRootDir` is the sole authored standard operational storage path. The
-generated root is scoped by the deployment's `projectNamespace` for local,
-user-dir, and pod scaffolds. The controller loads that final root and derives
-the remaining paths from it and validated zone IDs; it does not append the
-namespace again.
+controller loads and canonicalizes that final root, then derives one shared
+cache beside it and one small generated-metadata root inside it. The cache's
+deployment scope is the SHA-256 digest of the canonical `storageRootDir`, not
+`projectNamespace`, so two deployments cannot collide when they reuse a
+namespace.
 
 ```text
 path                  scope                 durable?          backup?   contains
 ──────────────────    ──────────────────    ──────────────    ───────   ─────────────────────────────
 
-cacheDir              global derived        yes               no        rebuildable image/plugin/tool
-                                                                           cache
+cacheDir              host shared derived   rebuildable       no        shared images and
+                                                                           deployment-scoped caches
+
+deploymentCacheDir    per-deployment        rebuildable       no        Docker contexts and
+                      digest scope                                          zone framework caches
+
+generatedDir          per-deployment        generated         no        image selections and
+                                                                           Gateway-effective config
 
 controllerRuntimeDir  global derived        runtime-scoped    no        controller lock, health evidence,
                                                                            observability runtime config
 
-zoneRuntimeDir        per-zone derived      runtime-scoped    no        worker artifacts, zone logs,
+zoneRuntimeDir        per-zone derived      runtime-scoped    no        zone logs,
                                                                            per-agent gitdirs, control material
 
 stateDir              per-zone derived      yes               yes       gateway identity, auth profiles,
@@ -44,19 +56,11 @@ zoneFilesDir          Hermes Gateway        yes               yes       durable 
 backupDir             per-zone output       artifact          no        encrypted backup archives
 ```
 
-Worker zones do not have an active `zoneFilesDir`. Worker repo files live inside
-the VM under `/work/repos/<repoId>`, while worker gitdirs live under the zone's
-derived `zoneRuntimeDir`.
-
 ### Controller runtime and zone runtime are distinct
 
 ```text
 subtree                                             lifecycle              wiped by
 ─────────────────────────────────────────           ─────────────────      ────────────────────────
-zoneRuntimeDir/worker-tasks/<task>/                 per-task               postStopGateway runs
-  work/, gitdirs/, repo-metadata/                                          fs.rm(taskRuntimeRoot)
-                                                                           on every task end
-
 zoneRuntimeDir/logs/                                per-zone               destroy-zone --purge
                                                                            (orchestrator creates,
                                                                            Hermes appends across
@@ -119,21 +123,13 @@ gitdirs/agents/<agentId>            controller-selected host root      optional 
 effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands;
 	                                controller-selected                normally /work or a child
 
-/work/repos/<repoId>                Worker VM guest path               rootfs/COW
-                                    worker task repo files             disposable after worker VM closes
-
-/gitdirs/<repoId>.git               Worker VM / host runtime           RealFS zoneRuntimeDir
-                                    git metadata                       not normal zone backup
-
 /agent-vm/logs                      Hermes Gateway VM                 RealFS ->
                                                                        zoneRuntimeDir/logs
                                     gateway/runtime logs               not normal zone backup
 
-/home/hermes/.cache                 Hermes Gateway VM                 RealFS -> cacheDir
+/home/hermes/.cache                 Hermes Gateway VM                 RealFS -> deploymentCacheDir
                                     rebuildable cache                  not backed up
 
-/state                              gateway / worker VM                RealFS -> stateDir or runtime state
-                                    control/state plumbing             depends on gateway type
 ```
 
 ## Storage Classes
@@ -155,7 +151,7 @@ rootfs / image
 Gateway durable state
   Owner: gateway runtime
   Host: <storageRootDir>/<zoneId>/state (`stateDir`)
-  VM: /home/hermes/.hermes or /state
+  VM: /home/hermes/.hermes
   Backup: yes
   Rule: preserve existing Gateway-visible identity, auth, effective config,
         sandbox, and framework state paths exactly
@@ -173,9 +169,7 @@ controller durable authority
   - `credentialed-runtimes/<recordId>.json` for reusable credentialed Managed
     runtime cleanup records;
   - `gateway-runtime.json` for the managed Gateway cleanup record;
-  - `tool-leases/<recordId>.json` for Tool VM cleanup records; and
-  - `worker-tasks/<taskId>/gateway-runtime.json` for Worker task cleanup
-    records.
+  - `tool-leases/<recordId>.json` for Tool VM cleanup records.
 
   The managed Gateway record captures canonical config path, controller port,
   project namespace, zone, full Gateway epoch identity, VM id, host pid,
@@ -225,10 +219,21 @@ controller durable authority
 
 rebuildable cache
   Owner: controller/runtime tooling
-  Host: <storageRootDir>/cache (`cacheDir`)
+  Host: <dirname(storageRootDir)>/cache (`cacheDir`)
+        vm-images/<fingerprint>/ for shared immutable VM image artifacts
+        deployments/<deploymentCacheKey>/ for deployment-scoped mutable cache
   VM: gateway-specific cache mounts
   Backup: no
-  Rule: can be deleted and repaired; may persist across reboot for speed
+  Rule: can be deleted and repaired; complete shared fingerprints are immutable
+
+generated deployment metadata
+  Owner: controller/build tooling
+  Host: <storageRootDir>/generated (`generatedDir`)
+        image-selections/<family>/<profile>.json
+        gateway-effective/<zone>/
+  VM: narrow generated inputs only where an owning runtime contract requires them
+  Backup: no
+  Rule: small reproducible metadata, never large Docker/image/cache artifacts
 
 controller runtime artifacts
 	Owner: controller deployment runtime
@@ -240,11 +245,10 @@ controller runtime artifacts
 zone runtime artifacts
 	Owner: runtime subsystems acting for one zone
 	Host: <storageRootDir>/<zoneId>/runtime (`zoneRuntimeDir`)
-	VM: optional /gitdirs/workspace.git for a managed agent; /gitdirs for
-	    Worker task Git metadata
-  Backup: no normal zone backup; explicit recovery/export only
-  Rule: active task runtime state that is not rebuildable cache and not
-        durable state
+	VM: optional /gitdirs/workspace.git for a managed agent
+  Backup: no normal zone backup
+  Rule: active runtime evidence that is not rebuildable cache and not durable
+        state
 
 zone files
 	Owner: long-lived gateway/user workflow
@@ -253,21 +257,13 @@ zone files
   Backup: yes for long-lived Hermes zone backups
   Rule: RealFS-mounted durable household/user files, not hot package-manager work
 
-worker repo files
-  Owner: per-task VM execution
-  Host: none for the target worker hot path
-  VM: /work/repos/<repoId>
-  Backup: no
-  Rule: rootfs/COW repo files for source edits, package installs, builds, tests
-
 gitdir
-  Owner: controller + selected agent or worker runtime
-  Host: <zoneRuntimeDir>/gitdirs/agents/<agentId>/workspace.git or
-        <zoneRuntimeDir>/worker-tasks/<task>/gitdirs/<repo>.git
-  VM: optional managed-agent /gitdirs/workspace.git or Worker /gitdirs/<repo>.git
+  Owner: controller + selected managed agent
+  Host: <zoneRuntimeDir>/gitdirs/agents/<agentId>/workspace.git
+  VM: optional managed-agent /gitdirs/workspace.git
   Backup: explicit recovery/export only, not normal zone backup
-  Rule: host-visible Git objects/refs/index used with VM-local repo files;
-        never place under stateDir or normal backup-copied zone files
+  Rule: host-visible Git objects, refs, and index for the selected durable
+        workspace; never place under stateDir or normal backup-copied zone files
 
 backup output
   Owner: backup commands
@@ -295,14 +291,22 @@ host controllerStateDir
       approvals/
       gateway-runtime.json
       tool-leases/<recordId>.json
-      worker-tasks/<taskId>/gateway-runtime.json
 
 host cacheDir
-  ~/.agent-vm/<projectNamespace>/cache/
-    gateway-images/<imageProfile>/
-      prepared-image.json
-    tool-vm-images/<imageProfile>/
-      prepared-image.json
+  ~/.agent-vm/cache/
+    vm-images/<fingerprint>/
+      manifest.json
+      rootfs.ext4
+      initramfs.cpio.lz4
+      vmlinuz-virt
+    deployments/<deploymentCacheKey>/
+      docker-contexts/<family>/<profile>/
+      zones/<zone>/framework-cache/
+
+host generatedDir
+  ~/.agent-vm/<projectNamespace>/generated/
+    image-selections/<family>/<profile>.json
+    gateway-effective/<zone>/
 
 host controllerRuntimeDir
   ~/.agent-vm/<projectNamespace>/controller-runtime/
@@ -315,8 +319,6 @@ host zoneRuntimeDir
     logs/
     gitdirs/agents/<agentId>/
       workspace.git
-    worker-tasks/<task>/
-      gitdirs/<repo>.git
 
 host zoneFilesDir
   ~/.agent-vm/<projectNamespace>/<zone>/zone-files/
@@ -344,19 +346,6 @@ rootfs/COW and `/gitdirs` exposes only the optional selected agent workspace Git
 database. Remote workspace push is controller-owned over HTTPS through
 `workspace_git_push`; Tool VM Git SSH remains read-only.
 
-## Worker Repo Files And Git
-
-Worker task repo files should use VM-local rootfs/COW storage for source files,
-package manager installs, `node_modules`, build outputs, search, and tests.
-
-Git metadata should be stored separately in a RealFS-backed gitdir. The VM
-repo files can use a `.git` file or explicit `GIT_DIR` / `GIT_WORK_TREE` plumbing
-that points at `/gitdirs/<repo>.git`, while the controller retains push
-credentials and default-branch operations.
-
-This split gives the agent fast local filesystem behavior for hot work while
-keeping commits, refs, and the index visible to the host.
-
 ## Gondolin VFS Performance Notes
 
 Local benchmarking on this machine supports this policy direction, with an
@@ -365,7 +354,7 @@ workload, and pnpm install behavior is still unmeasured.
 
 ```text
 rootfs/COW
-  Use for hot disposable work: worker repo files, package trees, build outputs.
+  Use for hot disposable work: package trees and build outputs.
   Local data on the real 4 GiB agent-vm image showed 128 MiB rootfs writes in
   roughly 20-30 ms, compared with roughly 1.5 s through RealFS.
 
@@ -389,15 +378,16 @@ path. They are isolation tools, not a substitute for rootfs when the workload is
 a hot package tree. Linux `/tmp` tmpfs is a different class and is best for
 scratch, not durable runtime state.
 
-The worker Git benchmark directly supports the rootfs work area + RealFS gitdir
-split. With 1000 files and a 128 MiB build artifact, full RealFS kept every
-repo-file operation on the slow path, while the split preserved rootfs-speed file
-writes and paid the RealFS cost only for Git object/index operations.
+A historical Git benchmark with 1000 files and a 128 MiB build artifact found
+that full RealFS kept every repo-file operation on the slow path, while a split
+layout preserved rootfs-speed file writes and paid the RealFS cost only for Git
+object/index operations. This is performance evidence, not current product
+guidance for a task runtime.
 
 `rootfs.mode = "readonly"` did not boot the default local benchmark VM within
 30 seconds or 120 seconds during this investigation. That failure has not been
 root-caused yet. Treat readonly rootfs as a separate hardening target, not the
-default for Hermes or Worker performance work.
+default for Hermes performance work.
 
 For the full rootfs/VFS knob matrix, reproducible benchmark command, and
 environment-portable interpretation guide, see

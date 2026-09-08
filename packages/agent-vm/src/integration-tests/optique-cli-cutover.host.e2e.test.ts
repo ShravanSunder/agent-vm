@@ -1,5 +1,4 @@
 import { readFile, stat } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -28,13 +27,8 @@ const nodeSqliteExperimentalWarningLinePattern =
 const cliPackageInventory = [
 	{
 		executableName: 'agent-vm',
-		helpDescription: 'Gondolin-based VM controller for Hermes and Worker agents',
+		helpDescription: 'Gondolin-based VM controller for Hermes gateways',
 		packageDirectory: 'packages/agent-vm',
-	},
-	{
-		executableName: 'agent-vm-worker',
-		helpDescription: 'Configurable task worker for Gondolin VMs',
-		packageDirectory: 'packages/agent-vm-worker',
 	},
 	{
 		executableName: 'tool-portal',
@@ -120,44 +114,6 @@ function expectNoOrdinaryStack(stderr: string): void {
 	expect(stderr).not.toContain('node:internal');
 }
 
-interface RunningWorkerHealthServer {
-	readonly close: () => Promise<void>;
-	readonly port: number;
-}
-
-async function startWorkerHealthServer(): Promise<RunningWorkerHealthServer> {
-	const server = createServer((request, response) => {
-		if (request.url !== '/health') {
-			response.writeHead(404).end();
-			return;
-		}
-		response.writeHead(200, { 'content-type': 'application/json' });
-		response.end(JSON.stringify({ status: 'ok' }));
-	});
-	await new Promise<void>((resolve, reject) => {
-		server.once('error', reject);
-		server.listen(0, () => {
-			server.off('error', reject);
-			resolve();
-		});
-	});
-	const address = server.address();
-	if (address === null || typeof address === 'string') {
-		await closeHttpServer(server);
-		throw new Error('Worker health fixture did not bind a TCP port.');
-	}
-	return { close: async () => await closeHttpServer(server), port: address.port };
-}
-
-async function closeHttpServer(server: Server): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
-		server.close((error) => {
-			if (error === undefined) resolve();
-			else reject(error);
-		});
-	});
-}
-
 beforeAll(async () => {
 	const targets = await Promise.all(cliPackageInventory.map(resolveBuiltCliTarget));
 	builtCliTargets = new Map(targets.map((target) => [target.executableName, target]));
@@ -181,7 +137,7 @@ describe('Optique cutover built CLI contract', () => {
 		}
 	});
 
-	it('resolves all five executable paths only from package manifests and built dist output', () => {
+	it('resolves all four executable paths only from package manifests and built dist output', () => {
 		// Arrange / Act
 		const targets = [...builtCliTargets.values()];
 
@@ -212,7 +168,7 @@ describe('Optique cutover built CLI contract', () => {
 		},
 	);
 
-	it.each(['agent-vm', 'agent-vm-worker'] as const)(
+	it.each(['agent-vm'] as const)(
 		'$executableName preserves the supported -h help alias',
 		async (executableName) => {
 			// Arrange / Act
@@ -227,7 +183,6 @@ describe('Optique cutover built CLI contract', () => {
 
 	it.each([
 		{ arguments_: ['init', '--help'], executableName: 'agent-vm' },
-		{ arguments_: ['health', '--help'], executableName: 'agent-vm-worker' },
 		{ arguments_: ['call', '--help'], executableName: 'tool-portal' },
 		{ arguments_: ['mcp-proxy', 'serve', '--help'], executableName: 'mcp-portal' },
 	] as const)(
@@ -266,27 +221,6 @@ describe('Optique cutover built CLI contract', () => {
 		expect(proxyHelp.stdout).toContain('--master-key-fingerprint SHA256_FINGERPRINT');
 	});
 
-	it('agent-vm-worker executes a valid built health operation against a real listener', async () => {
-		// Arrange
-		const healthServer = await startWorkerHealthServer();
-
-		try {
-			// Act
-			const result = await runBuiltCli('agent-vm-worker', [
-				'health',
-				'--port',
-				String(healthServer.port),
-			]);
-
-			// Assert
-			expect(result.exitCode).toBe(0);
-			expect(JSON.parse(result.stdout)).toEqual({ status: 'ok' });
-			expect(result.stderr).toBe('');
-		} finally {
-			await healthServer.close();
-		}
-	});
-
 	it('agent-vm init leaf help renders its Zod default exactly once', async () => {
 		// Arrange / Act
 		const result = await runBuiltCli('agent-vm', ['init', '--help']);
@@ -295,58 +229,6 @@ describe('Optique cutover built CLI contract', () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout.match(/"default"/gu)).toHaveLength(1);
 		expect(result.stderr).toBe('');
-	});
-
-	it('agent-vm-worker accepts port zero and reaches the health operation', async () => {
-		// Arrange / Act
-		const result = await runBuiltCli('agent-vm-worker', ['health', '--port', '0']);
-
-		// Assert
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stdout).toBe('');
-		expect(result.stderr).toContain('Health check failed');
-		expect(result.stderr).not.toContain('>=0');
-		expectNoOrdinaryStack(result.stderr);
-	});
-
-	it('agent-vm-worker renders the schema-owned default port in built leaf help', async () => {
-		// Arrange / Act
-		const result = await runBuiltCli('agent-vm-worker', ['serve', '--help']);
-
-		// Assert
-		expect(result.exitCode).toBe(0);
-		expect(result.stdout.match(/18789/gu)).toHaveLength(1);
-		expect(result.stderr).toBe('');
-	});
-
-	it('agent-vm-worker preserves command and option descriptions in built help', async () => {
-		// Arrange / Act
-		const rootHelp = await runBuiltCli('agent-vm-worker', ['--help']);
-		const serveHelp = await runBuiltCli('agent-vm-worker', ['serve', '--help']);
-
-		// Assert
-		for (const result of [rootHelp, serveHelp]) {
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toBe('');
-		}
-		expect(rootHelp.stdout).toContain('Start the agent-vm-worker HTTP server');
-		expect(rootHelp.stdout).toContain('Check worker health');
-		expect(serveHelp.stdout).toContain('--config PATH');
-		expect(serveHelp.stdout).toContain('Path to worker config JSON');
-		expect(serveHelp.stdout).toContain('--state-dir PATH');
-		expect(serveHelp.stdout).toContain('State directory path');
-	});
-
-	it('agent-vm-worker accepts the maximum port and reaches the health operation', async () => {
-		// Arrange / Act
-		const result = await runBuiltCli('agent-vm-worker', ['health', '--port', '65535']);
-
-		// Assert
-		expect(result.exitCode).not.toBe(0);
-		expect(result.stdout).toBe('');
-		expect(result.stderr).toContain('Health check failed');
-		expect(result.stderr).not.toContain('<=65535');
-		expectNoOrdinaryStack(result.stderr);
 	});
 
 	it('preserves the existing agent-vm version surface', async () => {
@@ -397,7 +279,6 @@ describe('Optique cutover built CLI contract', () => {
 
 	it.each([
 		{ arguments_: ['unknown-command'], executableName: 'agent-vm' },
-		{ arguments_: ['serve', '--port', 'not-a-port'], executableName: 'agent-vm-worker' },
 		{
 			arguments_: [
 				'list',
@@ -424,25 +305,6 @@ describe('Optique cutover built CLI contract', () => {
 			expect(result.exitCode).not.toBe(0);
 			expect(result.stdout).toBe('');
 			expect(result.stderr.trim().length).toBeGreaterThan(0);
-			expectNoOrdinaryStack(result.stderr);
-		},
-	);
-
-	it.each([
-		{ arguments_: ['health', '--port', '-1'], boundary: '-1', constraint: '>=0' },
-		{ arguments_: ['health', '--port', '65536'], boundary: '65536', constraint: '<=65535' },
-	])(
-		'agent-vm-worker rejects out-of-range port $boundary before health IO',
-		async ({ arguments_, constraint }) => {
-			// Arrange / Act
-			const result = await runBuiltCli('agent-vm-worker', arguments_);
-
-			// Assert
-			expect(result.exitCode).not.toBe(0);
-			expect(result.stdout).toBe('');
-			expect(result.stderr).toContain(constraint);
-			expect(result.stderr.toLowerCase()).toContain('port');
-			expect(result.stderr).not.toContain('Health check failed: fetch failed');
 			expectNoOrdinaryStack(result.stderr);
 		},
 	);

@@ -312,23 +312,7 @@ function cleanupStageSucceeded(
 export async function requireManagedGatewayStartResult(
 	result: GatewayZoneStartResult,
 ): Promise<ManagedGatewayZoneStartResult> {
-	if (result.executionModel === 'managed-gateway') {
-		return result;
-	}
-
-	let cleanupDebt: string | undefined;
-	try {
-		cleanupDebt = formatGatewayCleanupDebt(result, await result.destroyGateway());
-	} catch (error) {
-		throw new Error(
-			`Managed Gateway zone runtime rejected direct-process Gateway result for VM '${result.gatewayIdentity.gatewayVmId}' and failed to contain it.`,
-			{ cause: error },
-		);
-	}
-
-	throw new Error(
-		`Managed Gateway zone runtime rejected direct-process Gateway result for VM '${result.gatewayIdentity.gatewayVmId}'; managed-gateway lifecycle is required.${cleanupDebt === undefined ? '' : ` ${cleanupDebt}`}`,
-	);
+	return result;
 }
 
 async function closeGateway(

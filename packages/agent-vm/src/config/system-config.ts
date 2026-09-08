@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { access, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -20,7 +21,6 @@ import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
 import { resolveConfigPath } from './path-resolver.js';
-import { zoneResourcesPolicySchema } from './resource-contracts/index.js';
 import {
 	agentIdSchema,
 	projectNamespaceSchema,
@@ -29,7 +29,7 @@ import {
 
 export { agentIdSchema, projectNamespaceSchema, zoneIdSchema };
 
-const gatewayTypeValues = ['hermes', 'worker'] as const;
+const gatewayTypeValues = ['hermes'] as const;
 
 function escapeRegExpLiteral(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -182,18 +182,6 @@ const secretReferenceSchema = z.union([
 	configToolVmMediatedSecretSchema,
 ]);
 
-const runtimeAuthHintSchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			kind: z.literal('service-token'),
-			secret: secretNameSchema,
-			service: z.string().min(1),
-			hosts: z.array(z.string().min(1)).min(1),
-			tools: z.array(z.string().min(1)).default([]),
-		})
-		.strict(),
-]);
-
 const tokenSourceSchema = z.discriminatedUnion('type', [
 	z
 		.object({
@@ -265,14 +253,6 @@ export const gitBranchNameSchema = z
 	.regex(
 		/^(?!\/)(?!.*(?:^|\/)\.)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*[\\\s~^:?*[])(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/-]+$/u,
 		'git branch must be a safe branch name without spaces, control characters, traversal, refspec, or glob metacharacters',
-	);
-
-const gitBranchPatternSchema = z
-	.string()
-	.min(1)
-	.regex(
-		/^(?!\/)(?!.*(?:^|\/)\.)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)(?!.*[\\\s~^:?[])(?!.*\/$)(?!.*\.lock$)[A-Za-z0-9._/*-]+$/u,
-		'git branch pattern must be a safe branch pattern without spaces, control characters, traversal, refspec, or glob metacharacters',
 	);
 
 const workspaceGitRemoteSchema = z
@@ -389,26 +369,7 @@ const hermesZoneGatewaySchema = zoneGatewayBaseSchema
 	})
 	.strict();
 
-const workerRepoPushPolicySchema = z
-	.object({
-		repoUrl: z.string().min(1),
-		defaultBranch: gitBranchNameSchema.default('main'),
-		protectedBranches: z.array(gitBranchNameSchema).default([]),
-		protectedBranchPatterns: z.array(gitBranchPatternSchema).default([]),
-	})
-	.strict();
-
-const workerZoneGatewaySchema = zoneGatewayBaseSchema
-	.extend({
-		type: z.literal('worker'),
-		repoPushPolicies: z.array(workerRepoPushPolicySchema).optional(),
-	})
-	.strict();
-
-const zoneGatewaySchema = z.discriminatedUnion('type', [
-	hermesZoneGatewaySchema,
-	workerZoneGatewaySchema,
-]);
+const zoneGatewaySchema = hermesZoneGatewaySchema;
 
 const toolVmProfileSchema = z
 	.object({
@@ -567,7 +528,7 @@ const imageConfigSchema = z
 		source: z
 			.object({
 				kind: z.literal('managedBase'),
-				base: z.enum(['worker-gateway', 'tool-vm']),
+				base: z.literal('tool-vm'),
 				overlay: z.string().min(1).optional(),
 			})
 			.strict()
@@ -812,9 +773,7 @@ const systemConfigSchema = z
 						approvalAccess: zoneApprovalAccessSchema.optional(),
 						gateway: zoneGatewaySchema,
 						toolPortal: zoneToolPortalConfigSchema.optional(),
-						resources: zoneResourcesPolicySchema.optional(),
 						secrets: z.record(secretNameSchema, secretReferenceSchema),
-						runtimeAuthHints: z.array(runtimeAuthHintSchema).optional(),
 						observability: zoneObservabilitySchema.optional(),
 						egressHosts: z.array(egressHostSchema).min(1),
 						websocketUpgrades: z.array(websocketUpgradeSchema).optional(),
@@ -886,14 +845,6 @@ const systemConfigSchema = z
 				});
 				continue;
 			}
-			const expectedManagedBase = 'worker-gateway';
-			if (profile.source.base !== expectedManagedBase) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Gateway image profile '${profileName}' type '${profile.type}' must use managed base '${expectedManagedBase}'.`,
-					path: ['imageProfiles', 'gateways', profileName, 'source', 'base'],
-				});
-			}
 		}
 
 		for (const [profileName, profile] of Object.entries(config.imageProfiles.toolVms)) {
@@ -911,32 +862,12 @@ const systemConfigSchema = z
 			{ readonly agentId: string; readonly zoneId: string }
 		>();
 		for (const [zoneIndex, zone] of config.zones.entries()) {
-			if (
-				zone.gateway.type !== 'hermes' &&
-				zone.approvalAccess?.approvers.some((approver) => approver.kind === 'managed_gateway') ===
-					true
-			) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message:
-						'managed_gateway approval authority requires a Gateway lifecycle with native approval presentation; only Hermes supports it.',
-					path: ['zones', zoneIndex, 'approvalAccess', 'approvers'],
-				});
-			}
 			const zoneAgents = zone.agents ?? [];
 			const zoneAgentIds = new Set(zoneAgents.map((agent) => agent.id));
-			const isManagedAgentGateway = zone.gateway.type !== 'worker';
 			if (zone.observability?.enabled === true && config.host.observability?.enabled !== true) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Zone '${zone.id}' observability requires host.observability.enabled to be true.`,
-					path: ['zones', zoneIndex, 'observability'],
-				});
-			}
-			if (zone.observability?.enabled === true && zone.gateway.type === 'worker') {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' observability is supported only for managed Hermes gateways.`,
 					path: ['zones', zoneIndex, 'observability'],
 				});
 			}
@@ -975,14 +906,6 @@ const systemConfigSchema = z
 				) {
 					continue;
 				}
-				if (!isManagedAgentGateway) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Worker zone '${zone.id}' secret '${secretName}' must not declare agentAccess because worker zones do not boot managed-agent Tool VMs.`,
-						path: ['zones', zoneIndex, 'secrets', secretName, 'agentAccess'],
-					});
-					continue;
-				}
 				if (zoneAgentIds.size === 0) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
@@ -1005,9 +928,6 @@ const systemConfigSchema = z
 				}
 			}
 
-			// Keep zone gateway type readable at the use site while image profiles
-			// remain the source of boot-image details. This cross-check prevents
-			// a worker lifecycle from accidentally booting a Hermes image, or vice versa.
 			const gatewayImageProfile = config.imageProfiles.gateways[zone.gateway.imageProfile];
 			if (!gatewayImageProfile) {
 				context.addIssue({
@@ -1015,50 +935,23 @@ const systemConfigSchema = z
 					message: `Zone '${zone.id}' references unknown gateway imageProfile '${zone.gateway.imageProfile}'.`,
 					path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
 				});
-			} else if (gatewayImageProfile.type !== zone.gateway.type) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Zone '${zone.id}' gateway type '${zone.gateway.type}' does not match imageProfile '${zone.gateway.imageProfile}' type '${gatewayImageProfile.type}'.`,
-					path: ['zones', zoneIndex, 'gateway', 'imageProfile'],
-				});
 			}
 
-			if (!isManagedAgentGateway && zone.defaultToolVmProfile !== undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare defaultToolVmProfile.`,
-					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
-				});
-			}
-			if (!isManagedAgentGateway && (zoneAgents.length > 0 || zone.toolPortal !== undefined)) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare agents or toolPortal.`,
-					path: ['zones', zoneIndex],
-				});
-			}
-			if (!isManagedAgentGateway && zone.agentToolVmProfiles !== undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Worker zone '${zone.id}' must not declare agentToolVmProfiles.`,
-					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
-				});
-			}
-			if (isManagedAgentGateway && zone.defaultToolVmProfile === undefined) {
+			if (zone.defaultToolVmProfile === undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Managed-agent zone '${zone.id}' must declare a defaultToolVmProfile.`,
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			if (isManagedAgentGateway && zone.agentToolVmProfiles === undefined) {
+			if (zone.agentToolVmProfiles === undefined) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Managed-agent zone '${zone.id}' must declare agentToolVmProfiles, even when it is empty.`,
 					path: ['zones', zoneIndex, 'agentToolVmProfiles'],
 				});
 			}
-			if (isManagedAgentGateway && zoneAgentIds.size === 0) {
+			if (zoneAgentIds.size === 0) {
 				context.addIssue({
 					code: z.ZodIssueCode.custom,
 					message: `Managed-agent zone '${zone.id}' must declare at least one trusted agent.`,
@@ -1075,13 +968,6 @@ const systemConfigSchema = z
 					});
 				}
 				seenAgentIds.add(agent.id);
-				if (zone.gateway.type === 'worker' && agent.workspaceGit !== undefined) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Worker zone '${zone.id}' agent '${agent.id}' must not declare workspaceGit.`,
-						path: ['zones', zoneIndex, 'agents', agentIndex, 'workspaceGit'],
-					});
-				}
 				if (agent.workspaceGit?.mode === 'remote') {
 					const repositoryIdentity = normalizeWorkspaceGitRepositoryIdentity(
 						agent.workspaceGit.remote.repoUrl,
@@ -1299,7 +1185,6 @@ const systemConfigSchema = z
 				}
 			}
 			if (
-				isManagedAgentGateway &&
 				zone.defaultToolVmProfile !== undefined &&
 				config.toolVmProfiles[zone.defaultToolVmProfile] === undefined
 			) {
@@ -1309,64 +1194,19 @@ const systemConfigSchema = z
 					path: ['zones', zoneIndex, 'defaultToolVmProfile'],
 				});
 			}
-			if (isManagedAgentGateway) {
-				for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
-					if (!zoneAgentIds.has(agentId)) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references undeclared agent '${agentId}'.`,
-							path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
-						});
-					}
-					if (!config.toolVmProfiles[toolVmProfileId]) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
-							path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
-						});
-					}
-				}
-			}
-
-			if (zone.gateway.type !== 'worker' && zone.runtimeAuthHints !== undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Managed-agent zone '${zone.id}' must not declare runtimeAuthHints because they are consumed only by worker gateway runtime instructions.`,
-					path: ['zones', zoneIndex, 'runtimeAuthHints'],
-				});
-			}
-
-			for (const [hintIndex, hint] of (zone.runtimeAuthHints ?? []).entries()) {
-				const secret = zone.secrets[hint.secret];
-				if (!secret) {
+			for (const [agentId, toolVmProfileId] of Object.entries(zone.agentToolVmProfiles ?? {})) {
+				if (!zoneAgentIds.has(agentId)) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] references unknown secret '${hint.secret}'.`,
-						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
-					});
-					continue;
-				}
-				if (secret.injection !== 'http-mediation') {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] secret '${hint.secret}' must use injection 'http-mediation'.`,
-						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
+						message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references undeclared agent '${agentId}'.`,
+						path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
 					});
 				}
-				if (zone.gateway.type === 'worker' && secret.audience === 'tool-vm') {
+				if (!config.toolVmProfiles[toolVmProfileId]) {
 					context.addIssue({
 						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' runtimeAuthHints[${String(hintIndex)}] secret '${hint.secret}' must target the agent runtime audience for gateway type '${zone.gateway.type}'.`,
-						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'secret'],
-					});
-				}
-				const secretHosts = secret.injection === 'http-mediation' ? secret.hosts : [];
-				const missingHosts = hint.hosts.filter((host) => !secretHosts.includes(host));
-				for (const missingHost of missingHosts) {
-					context.addIssue({
-						code: z.ZodIssueCode.custom,
-						message: `Zone '${zone.id}' service token hint host '${missingHost}' must be listed in secret '${hint.secret}' hosts.`,
-						path: ['zones', zoneIndex, 'runtimeAuthHints', hintIndex, 'hosts'],
+						message: `Zone '${zone.id}' agentToolVmProfiles['${agentId}'] references unknown toolVmProfile '${toolVmProfileId}'.`,
+						path: ['zones', zoneIndex, 'agentToolVmProfiles', agentId],
 					});
 				}
 			}
@@ -1393,20 +1233,11 @@ type ManagedHostObservabilityConfig = Extract<
 
 type ParsedSystemZone = ParsedSystemConfig['zones'][number];
 type ParsedZoneGateway = ParsedSystemZone['gateway'];
-type ResolvedZoneGateway = ParsedZoneGateway extends infer TGateway
-	? TGateway extends { readonly type: 'hermes' }
-		? TGateway & {
-				readonly stateDir: string;
-				readonly zoneFilesDir: string;
-				readonly zoneRuntimeDir: string;
-			}
-		: TGateway extends { readonly type: 'worker' }
-			? TGateway & {
-					readonly stateDir: string;
-					readonly zoneRuntimeDir: string;
-				}
-			: never
-	: never;
+type ResolvedZoneGateway = ParsedZoneGateway & {
+	readonly stateDir: string;
+	readonly zoneFilesDir: string;
+	readonly zoneRuntimeDir: string;
+};
 type ResolvedSystemZone = Omit<ParsedSystemZone, 'gateway'> & {
 	readonly gateway: ResolvedZoneGateway;
 };
@@ -1454,6 +1285,39 @@ function pathsOverlap(firstPath: string, secondPath: string): boolean {
 	);
 }
 
+export function sharedImageCacheDirForStorageRoot(storageRootDir: string): string {
+	return path.join(path.dirname(storageRootDir), 'cache', 'vm-images');
+}
+
+export function sharedImageCacheDirForSystemConfig(config: Pick<SystemConfig, 'cacheDir'>): string {
+	return path.join(config.cacheDir, 'vm-images');
+}
+
+export function deploymentGeneratedDirForStorageRoot(storageRootDir: string): string {
+	return path.join(storageRootDir, 'generated');
+}
+
+export function deploymentCacheKeyForStorageRoot(storageRootDir: string): string {
+	return crypto.createHash('sha256').update(path.resolve(storageRootDir)).digest('hex');
+}
+
+export function deploymentCacheDirForSystemConfig(
+	config: Pick<SystemConfig, 'cacheDir' | 'storageRootDir'>,
+): string {
+	return path.join(
+		config.cacheDir,
+		'deployments',
+		deploymentCacheKeyForStorageRoot(config.storageRootDir),
+	);
+}
+
+export function gatewayFrameworkCacheDirForSystemConfig(
+	config: Pick<SystemConfig, 'cacheDir' | 'storageRootDir'>,
+	zoneId: string,
+): string {
+	return path.join(deploymentCacheDirForSystemConfig(config), 'zones', zoneId, 'framework-cache');
+}
+
 function isManagedHostObservabilityConfig(
 	observability: HostObservabilityConfig,
 ): observability is ManagedHostObservabilityConfig {
@@ -1492,15 +1356,13 @@ function collectControllerStateProtectedPaths(
 				path: zone.gateway.backupDir ?? path.join(zone.gateway.stateDir, 'backups'),
 			},
 		);
-		if (zone.gateway.type !== 'worker') {
-			protectedPaths.push(
-				{ label: `zoneFilesDir for zone '${zone.id}'`, path: zone.gateway.zoneFilesDir },
-				{
-					label: `mounted gateway config directory for zone '${zone.id}'`,
-					path: path.dirname(zone.gateway.config),
-				},
-			);
-		}
+		protectedPaths.push(
+			{ label: `zoneFilesDir for zone '${zone.id}'`, path: zone.gateway.zoneFilesDir },
+			{
+				label: `mounted gateway config directory for zone '${zone.id}'`,
+				path: path.dirname(zone.gateway.config),
+			},
+		);
 	}
 	return protectedPaths;
 }
@@ -1517,6 +1379,25 @@ function assertControllerStatePathIsolation(options: {
 }
 
 function assertResolvedRuntimePathIsolation(config: SystemConfig, systemConfigPath: string): void {
+	const cacheProtectedPaths: readonly ControllerStateProtectedPath[] = [
+		{ label: 'deployment storageRootDir', path: config.storageRootDir },
+		{ label: 'system config file', path: systemConfigPath },
+		{ label: 'controllerStateDir', path: config.controllerStateDir },
+		{ label: 'controllerRuntimeDir', path: config.controllerRuntimeDir },
+		...config.zones.flatMap((zone): readonly ControllerStateProtectedPath[] => [
+			{ label: `stateDir for zone '${zone.id}'`, path: zone.gateway.stateDir },
+			{
+				label: `backup output for zone '${zone.id}'`,
+				path: zone.gateway.backupDir ?? path.join(zone.gateway.stateDir, 'backups'),
+			},
+			{ label: `zoneFilesDir for zone '${zone.id}'`, path: zone.gateway.zoneFilesDir },
+		]),
+	];
+	for (const protectedPath of cacheProtectedPaths) {
+		if (pathsOverlap(config.cacheDir, protectedPath.path)) {
+			throw new Error(`cacheDir must not overlap ${protectedPath.label}.`);
+		}
+	}
 	assertControllerStatePathIsolation({
 		controllerStateDir: config.controllerStateDir,
 		protectedPaths: collectControllerStateProtectedPaths(config, systemConfigPath),
@@ -1547,20 +1428,13 @@ function assertResolvedRuntimePathIsolation(config: SystemConfig, systemConfigPa
 		) {
 			throw new Error(`backupDir must not overlap stateDir for zone '${zone.id}'.`);
 		}
-		if (
-			zone.gateway.type !== 'worker' &&
-			pathsOverlap(config.controllerRuntimeDir, zone.gateway.zoneFilesDir)
-		) {
+		if (pathsOverlap(config.controllerRuntimeDir, zone.gateway.zoneFilesDir)) {
 			throw new Error(`controllerRuntimeDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
 		}
-		if (
-			zone.gateway.type !== 'worker' &&
-			pathsOverlap(config.cacheDir, zone.gateway.zoneFilesDir)
-		) {
+		if (pathsOverlap(config.cacheDir, zone.gateway.zoneFilesDir)) {
 			throw new Error(`cacheDir must not overlap zoneFilesDir for zone '${zone.id}'.`);
 		}
 		if (
-			zone.gateway.type !== 'worker' &&
 			zone.gateway.backupDir !== undefined &&
 			pathsOverlap(zone.gateway.backupDir, zone.gateway.zoneFilesDir)
 		) {
@@ -1571,7 +1445,7 @@ function assertResolvedRuntimePathIsolation(config: SystemConfig, systemConfigPa
 			if (pathsOverlap(dataDir, zone.gateway.stateDir)) {
 				throw new Error(`observability dataDir must not overlap stateDir for zone '${zone.id}'.`);
 			}
-			if (zone.gateway.type !== 'worker' && pathsOverlap(dataDir, zone.gateway.zoneFilesDir)) {
+			if (pathsOverlap(dataDir, zone.gateway.zoneFilesDir)) {
 				throw new Error(
 					`observability dataDir must not overlap zoneFilesDir for zone '${zone.id}'.`,
 				);
@@ -1588,36 +1462,20 @@ function deriveResolvedStorage(
 		const zoneRootDir = path.join(storageRootDir, zone.id);
 		const stateDir = path.join(zoneRootDir, 'state');
 		const zoneRuntimeDir = path.join(zoneRootDir, 'runtime');
-		switch (zone.gateway.type) {
-			case 'hermes':
-				return {
-					...zone,
-					gateway: {
-						...zone.gateway,
-						stateDir,
-						zoneFilesDir: path.join(zoneRootDir, 'zone-files'),
-						zoneRuntimeDir,
-					},
-				};
-			case 'worker':
-				return {
-					...zone,
-					gateway: {
-						...zone.gateway,
-						stateDir,
-						zoneRuntimeDir,
-					},
-				};
-			default: {
-				const exhaustiveGateway: never = zone.gateway;
-				throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
-			}
-		}
+		return {
+			...zone,
+			gateway: {
+				...zone.gateway,
+				stateDir,
+				zoneFilesDir: path.join(zoneRootDir, 'zone-files'),
+				zoneRuntimeDir,
+			},
+		};
 	});
 	return {
 		...config,
 		storageRootDir,
-		cacheDir: path.join(storageRootDir, 'cache'),
+		cacheDir: path.join(path.dirname(storageRootDir), 'cache'),
 		controllerStateDir: path.join(storageRootDir, 'controller-state'),
 		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
 		zones,
@@ -1649,24 +1507,11 @@ function resolveRelativePaths(
 	const resolveZoneGatewayPaths = (
 		gateway: z.infer<typeof zoneGatewaySchema>,
 	): z.infer<typeof zoneGatewaySchema> => {
-		switch (gateway.type) {
-			case 'hermes':
-				return {
-					...gateway,
-					config: resolvePath(gateway.config),
-					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
-				};
-			case 'worker':
-				return {
-					...gateway,
-					config: resolvePath(gateway.config),
-					...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
-				};
-			default: {
-				const exhaustiveGateway: never = gateway;
-				throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
-			}
-		}
+		return {
+			...gateway,
+			config: resolvePath(gateway.config),
+			...(gateway.backupDir ? { backupDir: resolvePath(gateway.backupDir) } : {}),
+		};
 	};
 
 	return {
@@ -1796,6 +1641,12 @@ async function canonicalizeStorageRootPath(
 ): Promise<LoadedSystemConfig> {
 	const storageRootDir = await resolveCanonicalPathIdentity(config.storageRootDir);
 	const resolvedConfig = deriveResolvedStorage(config, storageRootDir);
+	const canonicalCacheDir = await resolveCanonicalPathIdentity(resolvedConfig.cacheDir);
+	if (canonicalCacheDir !== path.resolve(resolvedConfig.cacheDir)) {
+		throw new Error(
+			`cacheDir must not traverse symlinks: '${resolvedConfig.cacheDir}' resolves to '${canonicalCacheDir}'.`,
+		);
+	}
 	const protectedPaths = await Promise.all(
 		collectControllerStateProtectedPaths(resolvedConfig, config.systemConfigPath).map(
 			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
@@ -1808,6 +1659,29 @@ async function canonicalizeStorageRootPath(
 		controllerStateDir: resolvedConfig.controllerStateDir,
 		protectedPaths,
 	});
+	const cacheProtectedPaths = await Promise.all(
+		[
+			...protectedPaths.filter(
+				({ label }) => label !== 'cacheDir' && label !== 'system config parent directory',
+			),
+			{ label: 'deployment storageRootDir', path: storageRootDir },
+			{ label: 'controllerStateDir', path: resolvedConfig.controllerStateDir },
+			...resolvedConfig.zones.map((zone) => ({
+				label: `zoneRuntimeDir for zone '${zone.id}'`,
+				path: zone.gateway.zoneRuntimeDir,
+			})),
+		].map(
+			async (protectedPath): Promise<ControllerStateProtectedPath> => ({
+				label: protectedPath.label,
+				path: await resolveCanonicalPathIdentity(protectedPath.path),
+			}),
+		),
+	);
+	for (const protectedPath of cacheProtectedPaths) {
+		if (pathsOverlap(canonicalCacheDir, protectedPath.path)) {
+			throw new Error(`cacheDir must not overlap ${protectedPath.label}.`);
+		}
+	}
 	return { ...resolvedConfig, systemConfigPath: config.systemConfigPath };
 }
 

@@ -34,9 +34,6 @@ export function buildManagedAgentSecretAccessChecks(
 	systemConfig: Pick<SystemConfig, 'zones'>,
 ): readonly AgentSecretAccessCheck[] {
 	return systemConfig.zones.flatMap((zone) => {
-		if (zone.gateway.type === 'worker') {
-			return [];
-		}
 		return Object.entries(zone.secrets).flatMap(([secretName, secret]) => {
 			if (secret.injection !== 'http-mediation' || !targetsAudience(secret.audience, 'tool-vm')) {
 				return [];

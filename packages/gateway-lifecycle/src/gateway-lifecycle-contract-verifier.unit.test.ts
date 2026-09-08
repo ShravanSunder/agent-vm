@@ -7,8 +7,6 @@ describe('gateway-lifecycle compile contracts', () => {
 		const verification = verifyGatewayLifecycleContracts();
 
 		expect(verification.managedPositiveDiagnostics).toEqual([]);
-		expect(verification.positiveDiagnostics).toEqual([]);
-		expect(verification.positiveFixtureUsesForbiddenGatewaySpecificSurface).toBe(false);
 		expect(verification.negativeFixtures).toEqual([
 			{
 				fixtureName: 'concrete-adapter-import',

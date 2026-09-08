@@ -25,7 +25,6 @@ const systemConfig = {
 				type: 'hermes',
 				buildConfig: './vm-images/gateways/hermes/build-config.json',
 			},
-			worker: { type: 'worker', buildConfig: './vm-images/gateways/worker/build-config.json' },
 		},
 		toolVms: {
 			default: { type: 'toolVm', buildConfig: './vm-images/tool-vms/default/build-config.json' },
@@ -107,27 +106,6 @@ const hermesSystemConfig = {
 	],
 } satisfies SystemConfig;
 
-const workerSystemConfig = {
-	...systemConfig,
-	zones: [
-		{
-			...baseZone,
-			gateway: {
-				type: 'worker',
-				imageProfile: 'worker',
-				cpus: 2,
-				memory: '2G',
-				config: './config/worker/worker.json',
-				port: 18793,
-				stateDir: './state/worker',
-				zoneRuntimeDir: './runtime/worker',
-			},
-			id: 'worker-zone',
-			secrets: {},
-		},
-	],
-} satisfies SystemConfig;
-
 function createControllerClientStub(
 	enableZoneSsh: ControllerClient['enableZoneSsh'],
 ): ControllerClient {
@@ -171,34 +149,6 @@ describe('runSshCommand', () => {
 		expect(remoteCommand).not.toEqual(expect.stringContaining('openclaw'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('OPENCLAW_GATEWAY_TOKEN'));
 		expect(remoteCommand).not.toEqual(expect.stringContaining('framework.environment.sh'));
-	});
-
-	it('rejects controller SSH for Worker before contacting the controller', async () => {
-		const enableZoneSsh = vi.fn(async () => ({
-			host: '127.0.0.1',
-			port: 2224,
-			user: 'root',
-		}));
-		const runInteractiveProcess = vi.fn(
-			async (_command: string, _arguments: readonly string[]): Promise<void> => {},
-		);
-
-		await expect(
-			runSshCommand({
-				dependencies: {
-					...defaultCliDependencies,
-					createControllerClient: () => createControllerClientStub(enableZoneSsh),
-					runInteractiveProcess,
-				},
-				io: { stderr: { write: () => true }, stdout: { write: () => true } },
-				systemConfig: workerSystemConfig,
-				zoneId: 'worker-zone',
-			}),
-		).rejects.toThrow(
-			"controller ssh is not implemented for gateway type 'worker'; use the Worker task APIs.",
-		);
-		expect(enableZoneSsh).not.toHaveBeenCalled();
-		expect(runInteractiveProcess).not.toHaveBeenCalled();
 	});
 
 	it('throws when the controller returns incomplete ssh data without a printable command', async () => {

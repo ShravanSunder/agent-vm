@@ -1020,7 +1020,7 @@ describe('createGondolinManagedVmProvider', () => {
 		try {
 			await expect(
 				provider.images.prepareImage({
-					cacheDirectory: '/cache',
+					artifactCacheDirectory: '/cache',
 					forceRebuild: true,
 					recipePath,
 				}),
@@ -1048,7 +1048,7 @@ describe('createGondolinManagedVmProvider', () => {
 
 		try {
 			await expect(
-				provider.images.prepareImage({ cacheDirectory: '/cache', recipePath }),
+				provider.images.prepareImage({ artifactCacheDirectory: '/cache', recipePath }),
 			).rejects.toThrow('invalid build shape');
 			expect(buildImageMock).not.toHaveBeenCalled();
 		} finally {
@@ -1064,7 +1064,7 @@ describe('createGondolinManagedVmProvider', () => {
 
 		try {
 			await expect(
-				provider.images.prepareImage({ cacheDirectory: '/cache', recipePath }),
+				provider.images.prepareImage({ artifactCacheDirectory: '/cache', recipePath }),
 			).rejects.toThrow('Invalid managed VM image recipe');
 			expect(buildImageMock).not.toHaveBeenCalled();
 		} finally {

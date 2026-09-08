@@ -2,12 +2,9 @@
 
 [Overview](../README.md) > [Architecture](../architecture/overview.md) > Gateway Lifecycle
 
-The `gateway-lifecycle` package separates workload-specific requirements from
-controller and VM-provider orchestration. Agent VM supports exactly two Gateway
-types:
-
-- `hermes`: a long-running managed interactive-agent Gateway;
-- `worker`: an on-demand direct-process task Gateway.
+The `gateway-lifecycle` package separates Hermes-specific requirements from
+controller and VM-provider orchestration. Agent VM supports one Gateway type:
+`hermes`, a long-running managed interactive-agent Gateway.
 
 The lifecycle contract produces neutral data. It does not create VMs, resolve
 native Gondolin handles, own controller state, or implement Tool VM leases.
@@ -32,14 +29,11 @@ GatewayLifecycle
     buildFrameworkServiceBootInputs(options)
     interactiveSsh
 
-  executionModel = direct-process
-    buildProcessSpec(options)
 ```
 
-`gatewayTypeValues` is the exhaustive `['hermes', 'worker']` vocabulary.
-`gateway-lifecycle-loader.ts` statically maps those values to
-`hermesLifecycle` and `workerLifecycle`; there is no dynamic framework
-registry or fallback.
+`gatewayTypeValues` is the exhaustive `['hermes']` vocabulary.
+`gateway-lifecycle-loader.ts` statically selects `hermesLifecycle`; there is no
+dynamic framework registry or fallback.
 
 ## Shared VM requirements
 
@@ -61,7 +55,7 @@ exact process identity, publishing ingress, recovery, and cleanup.
 
 ## Hermes implementation
 
-`@agent-vm/hermes-gateway` implements the managed-Gateway branch.
+`@agent-vm/hermes-gateway` implements the managed-Gateway lifecycle.
 
 ### Host state
 
@@ -114,41 +108,9 @@ Hermes declares `nativeApprovalPresenter: true`. Its protected interactive SSH
 session opens the Hermes shell environment without enabling the removed
 all-secrets mode.
 
-## Worker implementation
-
-`@agent-vm/worker-gateway` implements the direct-process branch. A Worker zone
-does not start a long-running VM at controller boot. The controller creates one
-task VM when `POST /zones/:zoneId/worker-tasks` is admitted.
-
-Worker lifecycle data includes:
-
-- RealFS task state and Git-directory mounts;
-- rootfs/COW `/work/repos` for hot source/build activity;
-- the private Worker control-session ingress;
-- `WORKER_CONFIG_PATH` and task runtime environment;
-- optional local Worker tarball installation during bootstrap;
-- `agent-vm-worker serve` as the direct process;
-- the Worker HTTP health check.
-
-Worker has no managed-framework profile material, Tool VM lease policy, or
-interactive admin shell.
-
-## Comparison
-
-| Concern | Hermes | Worker |
-| --- | --- | --- |
-| Execution model | Long-running managed Gateway | Per-task direct process |
-| Startup | Controller starts selected zone | Task submission starts VM |
-| Framework boot | Exact Hermes managed boot contract | None |
-| Host preparation | Protected profile directories | Task runner writes effective config |
-| Tool VMs | Controller-authorized per-agent leases | Not used |
-| Workspace | Selected durable agent workspace reaches Tool VM | VM-local rootfs/COW repos |
-| Interactive SSH | Protected Hermes shell | Unsupported |
-| Rootfs | Copy-on-write | Copy-on-write |
-
 ## Secret placement
 
-Both lifecycles consume the shared secret-placement contract:
+The Hermes lifecycle consumes the shared secret-placement contract:
 
 - `injection: "env"` places an explicitly allowed Gateway-audience secret in
   the runtime environment;
@@ -162,9 +124,8 @@ Hermes profile-secret projections are a separate, profile-scoped contract. See
 
 | Source | Owner |
 | --- | --- |
-| `packages/gateway-lifecycle/src/gateway-lifecycle.ts` | Shared lifecycle and zone contracts |
+| `packages/gateway-lifecycle/src/gateway-lifecycle.ts` | Managed lifecycle and zone contracts |
 | `packages/gateway-lifecycle/src/gateway-runtime-contract.ts` | Supported Gateway vocabulary |
 | `packages/agent-vm/src/gateway/gateway-lifecycle-loader.ts` | Static lifecycle composition |
 | `packages/hermes-gateway/src/hermes-lifecycle.ts` | Hermes managed lifecycle |
 | `packages/hermes-gateway/src/hermes-profile-directory-materialization.ts` | Protected Hermes host state |
-| `packages/worker-gateway/src/worker-lifecycle.ts` | Worker direct-process lifecycle |

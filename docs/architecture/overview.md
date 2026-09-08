@@ -2,9 +2,8 @@
 
 [Overview](../README.md) > Architecture
 
-System architecture covering all packages, both gateway types, the controller,
+System architecture covering all packages, the Hermes Gateway, the controller,
 and the Gondolin VM layer. For mode-specific details:
-[Agent Worker Gateway](agent-worker-gateway.md) |
 [Hermes configuration](../reference/configuration/system-json.md) |
 [Credentialed Managed Runtimes](credentialed-runtimes.md) |
 [Storage Model](storage-model.md).
@@ -13,45 +12,34 @@ and the Gondolin VM layer. For mode-specific details:
 
 ## How Components Interact
 
-The system is nested containers. A caller sends tasks to the agent runtime. The
-controller inside that runtime manages VMs and secrets. The agent runs inside a
-Gondolin VM. Docker services run alongside when repo resources require them.
-
-The inner VM is the sandbox boundary. In Agent Worker Gateway we usually call it the
-Worker VM or Agent VM because it runs `agent-vm-worker`.
-
-Target worker storage model: Git metadata lives in a controller-visible RealFS
-gitdir, while the worker edits VM-local rootfs/COW repo files under `/work/repos/<repoId>`.
-The worker requests host-side push/PR work through the controller instead of
-pushing directly. Hermes profile files are durable zone files, not Worker zone
-files.
+The system is nested containers. A caller reaches the managed Hermes agent
+runtime. The controller manages Gateway and Tool VMs, secrets, authorization,
+and durable state. The inner Gondolin VMs are the sandbox boundary.
 
 ```
   Caller (CLI / CI / API)
        |
-       v  Submit task
+       v
   +----------------------------------------------------+
   | Agent Runtime (host process)                        |
   |                                                     |
-  |  +----------------------+  +---------------------+ |
-  |  | Controller :18800    |  | Environment         | |
-  |  | - secret resolver    |  | (Docker Compose)    | |
-  |  | - git push (host)    |  | PG, Redis, etc.     | |
-  |  | - VM lifecycle       |  |                     | |
-  |  | - lease manager      |  |                     | |
-  |  +----------------------+  +---------------------+ |
-  |          |                         |                |
-  |          v (boot VM)               | (tcpHosts)     |
+  |  +----------------------+                           |
+  |  | Controller :18800    |                           |
+  |  | - secret resolver    |                           |
+  |  | - VM lifecycle       |                           |
+  |  | - lease manager      |                           |
+  |  +----------------------+                           |
+  |          |                                          |
+  |          v (boot VM)                                |
   |  +------------------------------------------+       |
   |  | Gondolin VM                              |       |
   |  |                                          |       |
   |  |  +------------------------------------+  |       |
-  |  |  | Agent (Worker or managed Hermes)   |  |       |
+  |  |  | Managed Hermes agent               |  |       |
   |  |  +------------------------------------+  |       |
   |  |                                          |       |
-  |  |  /work/repos (worker rootfs/COW repo files)     |       |
-  |  |  /gitdirs   (worker RealFS git metadata) |       |
-  |  |  /state     (RealFS state)               |       |
+  |  |  /home/hermes/.hermes (durable state)    |       |
+  |  |  /agent-vm/logs       (runtime logs)      |       |
   |  +------------------------------------------+       |
   +----------------------------------------------------+
 ```
@@ -71,13 +59,6 @@ uses audience-scoped `egressHosts`; lifecycle code derives the per-VM
 → Deep dive: [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md)
 → Upstream Gondolin sandbox example:
 [Quick Example](https://github.com/earendil-works/gondolin/blob/main/README.md#quick-example)
-
-### Controller ↔ Worker (Agent Worker Gateway)
-
-The controller POSTs a task to the worker's HTTP API inside the VM, then polls until complete. Worker controller tools send `worker_control_rpc` git intents over the private control session; the controller performs host-side git push or default-branch refresh from trusted state. After the push succeeds, the worker can run `gh pr create`; GitHub HTTP traffic is mediated by the controller proxy.
-
-→ Full gateway: [agent-worker-gateway.md](agent-worker-gateway.md)
-→ Controller-side lifecycle: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md)
 
 ### Controller ↔ Hermes (managed Gateway)
 
@@ -129,9 +110,12 @@ minutes. File credentials are finalized into read-only memory before boot, HTTP
 credentials remain host-side behind opaque placeholders, and CLI
 config/state/cache stays on disposable COW rootfs.
 
-This is separate from leased Tool VMs: credentialed calls execute direct array
-argv through the controller, while `tool_vm_runner` and framework Sandbox APIs
-continue to use direct strict-pinned SSH to the current Tool VM.
+The credentialed runtime remains separate from leased Tool VMs. A configured
+CLI may instead select `executionTarget.kind: "tool_vm"`; the Gateway then uses
+the same current Tool VM lease and direct strict-pinned SSH path as
+`tool_vm_runner` and framework Sandbox APIs. That target authors its Portal-call
+policy with `suggest*` names because direct terminal, Python, SSH, or other Tool
+VM execution bypasses the Tool Portal route.
 
 → Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
 
@@ -172,80 +156,21 @@ zone.secrets"]
 → Upstream mediation reference:
 [Quick Example](https://github.com/earendil-works/gondolin/blob/main/README.md#quick-example)
 
-### Docker Services ↔ VM
-
-The controller resolves task-level repo resources, starts only the selected
-repo-local Compose providers, extracts container IPs, and passes them to
-Gondolin as TCP host mappings. The VM sees services via synthetic DNS.
-Selected Compose services must not publish host ports; Docker-network IPs are
-the resource boundary so parallel repos and parallel tasks do not collide.
-
-```
-  docker compose -p agent-vm-<taskId>-<repoId> up
-       |
-       v
-  selected container starts (IP: 172.17.0.2)
-       |
-       v
-  Controller passes tcpHosts to Gondolin:
-    "postgres.local:5432" → "172.17.0.2:5432"
-       |
-       v
-  Inside VM: Gondolin synthetic DNS
-    postgres.local resolves → virtual IP → TCP forwarded to 172.17.0.2:5432
-       |
-       v
-  Agent connects to postgres.local:5432 (standard connection string)
-```
-
-Note: `<taskId>` is currently the worker-task id used as a temporary
-per-run namespace. Resource task segregation is not fully modeled yet;
-future resource lifecycles should introduce an explicit resource
-namespace/id rather than treating the worker task id as the final
-resource boundary.
-
-→ Deep dive: [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md#repo-resource-routing)
-
 ### Gateway Lifecycle Contract
 
-Both modes implement the same `GatewayLifecycle` interface. The controller gets
-neutral VM requirements from both. Hermes supplies managed-framework boot
-metadata and inputs; Worker supplies a direct process spec.
+Hermes implements the `GatewayLifecycle` interface. The controller gets neutral
+VM requirements plus managed-framework boot metadata and protected inputs.
 
 → Deep dive: [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md)
-
-### Worker Task Lifecycle
-
-```mermaid
-flowchart TB
-    request["submit worker task"]
-    prepare["clone repo
-merge config
-start repo services"]
-    boot["boot Gondolin VM"]
-    run["worker runs task"]
-    push["host-side push + PR"]
-    teardown["teardown VM and task files"]
-    result["return final state"]
-
-    request --> prepare
-    prepare --> boot
-    boot --> run
-    run --> push
-    push --> teardown
-    teardown --> result
-```
 
 ---
 
 ## Package Dependency Graph
 
-Seventeen workspace packages compose the system. Dependencies flow downward.
+Workspace packages compose the system. Dependencies flow downward.
 
 ```
-  hermes-gateway ------+
-                       +--> gateway-lifecycle --> managed-vm
-  worker-gateway ------+                           ^
+  hermes-gateway ----------> gateway-lifecycle --> managed-vm
                                                    |
   agent-vm -----------------------------------------+
       |
@@ -253,8 +178,6 @@ Seventeen workspace packages compose the system. Dependencies flow downward.
                  |
                  v
          @earendil-works/gondolin
-
-  agent-vm --> agent-vm-worker
 
   control-protocol-contracts
         |
@@ -265,12 +188,6 @@ Seventeen workspace packages compose the system. Dependencies flow downward.
         |          |
         |          v
         |       agent-vm
-        |
-        +--> worker-control-contracts
-                   |
-                   v
-              agent-vm-worker
-
   agent-portal-sdk ---> mcp-portal
             |              |
             |              v
@@ -294,22 +211,19 @@ Seventeen workspace packages compose the system. Dependencies flow downward.
 | Package | Responsibility |
 |---------|----------------|
 | **secret-management** | Shared secret contracts and resolvers for environment and 1Password-backed references. |
-| **config-contracts** | Zod-owned configuration contracts and generated schema sources for system, worker, MCP Portal, and Tool Portal config. |
+| **config-contracts** | Zod-owned configuration contracts and generated schema sources for system, MCP Portal, and Tool Portal config. |
 | **control-protocol-contracts** | Shared Socket.IO control-session envelope, identity, fencing, delivery, sequencing, close reason, and ack/result Zod contracts. |
 | **gateway-control-contracts** | Gateway-domain control RPC Zod contracts for gateway readiness, lease intent/observation, health, recovery, and controller-host-action requests. |
-| **worker-control-contracts** | Worker-domain control RPC Zod contracts for worker readiness, task lifecycle observations, runtime status, and controller-backed git operations. |
 | **managed-vm** | Backend-neutral structural contracts for VM creation/runtime, images, diagnostics, and owned host-directory capabilities. It exposes no native provider handle or filesystem escape hatch. |
 | **gondolin-vm-adapter** | Implements `managed-vm` with the Gondolin SDK, including VM translation, owned host directories, image builds, VFS, ingress, SSH, and HTTP mediation. |
-| **gateway-lifecycle** | The gateway contract: `GatewayLifecycle`, neutral `GatewayVmRequirements`, process specs, shared runtime policy, and secret-placement intent. |
+| **gateway-lifecycle** | The managed gateway contract: `GatewayLifecycle`, neutral `GatewayVmRequirements`, managed-framework boot inputs, shared runtime policy, and secret-placement intent. |
 | **hermes-gateway** | Hermes lifecycle and immutable managed image recipe: profile directories, exact managed-framework boot inputs, protected interactive SSH, Tool VM TCP hosts, and telemetry projection. |
-| **worker-gateway** | Worker lifecycle: RealFS control mounts (`/state` + task `/gitdirs`), rootfs/COW `/work/repos`, private control-session ingress wiring, no auth, no `prepareHostState`. |
 | **agent-portal-sdk** | Portal-neutral Zod v4 contracts for list/search/describe/call results, capability descriptions, approvals, artifacts, diagnostics, and adapter envelopes. |
 | **mcp-portal** | MCP-specific capability facade, upstream MCP client runtime, scoped catalog/search, schema validation, approval evaluation, external MCP proxy, and MCP provider backend for Tool Portal composition. |
 | **tool-portal** | Cross-backend capability portal contracts, CLI allowance validation, and in-process entrypoint that dispatches MCP-backed capabilities through the MCP Portal backend and controller-owned host actions. |
 | **gateway-runtime** | Private managed-Gateway attachment, Gateway Control coordination, Tool Portal composition, and common sandbox/process/filesystem/stream execution over controller-authorized Tool VMs. |
 | **controller-execution-contracts** | Zod contracts for controller dispatch, controller host-action, and Tool VM runner boundaries. |
 | **agent-vm** | The controller and application composition root. Its regular Gondolin adapter dependency is confined to the provider-composition and build-tooling modules; controller domains consume narrow `managed-vm` projections. |
-| **agent-vm-worker** | Runs inside the VM. 6-phase coordinator, Codex/Claude executors with thread persistence, JSONL event sourcing, and control-session-backed controller tools such as `git-push` and `git-pull-default`. |
 
 ---
 
@@ -328,16 +242,13 @@ The controller is the host-side process that owns VM lifecycles, serves the HTTP
 	4. Create credential manager and recover recorded child runtimes
 	5. Start idle reapers      Tool VM policy + fixed credential-runtime TTL
 	6. Create zone registry    one runtime per selected configured zone
-	7. Start selected zones    Hermes Gateways at boot; Worker zones on task submit
+	7. Start selected zones    Hermes Gateways at boot
 	8. Wire HTTP routes        createControllerService() -> Hono app
 	9. Bind HTTP server        startControllerHttpServer({ port: config.host.controllerPort })
 ```
 
-For worker-type zones, the gateway is not started at boot. Instead, a per-task
-VM is created on demand when a worker task is submitted (see Agent Worker
-Gateway below). Hermes and Worker routes dispatch through the requested
-`zoneId`; wrong-type operations return typed HTTP errors instead of using one
-process-wide active zone.
+Hermes routes dispatch through the requested `zoneId`; unknown-zone operations
+return typed HTTP errors instead of using one process-wide active zone.
 
 ### HTTP API (Hono on :18800)
 
@@ -347,7 +258,7 @@ private control-session owned lease handling, and zone operation routes in
 
 | Method | Path | Purpose | Mode |
 |--------|------|---------|------|
-| `GET` | `/health` | Controller liveness check | Both |
+| `GET` | `/health` | Controller liveness check | Controller |
 | `GET` | `/controller-status` | Controller operational status | Managed Gateway |
 | `GET` | `/zones/:zoneId/health` | Live gateway health probe | Hermes |
 | `GET` | `/zones/:zoneId/logs` | Fetch gateway VM logs | Hermes |
@@ -356,9 +267,7 @@ private control-session owned lease handling, and zone operation routes in
 | `POST` | `/zones/:zoneId/upgrade` | Restart gateway zone with fresh image | Hermes |
 | `POST` | `/zones/:zoneId/enable-ssh` | Enable SSH access to the gateway VM | Hermes |
 | `POST` | `/zones/:zoneId/execute-command` | Execute a shell command in the gateway VM; requires zone admin token when adminAccess is configured | Hermes |
-| `POST` | `/zones/:zoneId/worker-tasks` | Submit a worker task (`requestTaskId`, prompt, repos, context) | Worker |
-| `GET` | `/zones/:zoneId/tasks/:taskId` | Read worker task state snapshot | Worker |
-| `POST` | `/stop-controller` | Graceful shutdown: release leases, stop gateway, close server | Both |
+| `POST` | `/stop-controller` | Graceful shutdown: release leases, stop gateway, close server | Controller |
 
 ### Key Subsystems
 
@@ -382,15 +291,13 @@ command without queueing, projects credentials only during creation, retires
 after 15 idle minutes, and performs exact crash recovery and operator
 retirement.
 
-**Active Task Registry** (`active-task-registry.ts`): Tracks in-flight worker tasks by zone and task ID. Used by controller-owned worker control operations to verify a task is still active before allowing branch pushes.
-
 ---
 
 ## Gateway Abstraction
 
 The `GatewayLifecycle` interface (`gateway-lifecycle` package) is the contract
-every Gateway type must implement. The controller consumes neutral lifecycle
-data rather than framework-native VM handles.
+the Hermes Gateway implements. The controller consumes neutral lifecycle data
+rather than framework-native VM handles.
 
 ### Interface
 
@@ -411,30 +318,22 @@ data rather than framework-native VM handles.
   |     buildFrameworkServiceBootInputs()
   |     interactiveSsh
   |
-  |-- executionModel = direct-process
-  |     buildProcessSpec()
-  |
   |-- prepareHostState?(zone, resolver)
 ```
 
 ### Lifecycle Loader
 
-`gateway-lifecycle-loader.ts` dispatches by the zone's `gateway.type` field. Both implementations are statically imported -- no dynamic loading.
+`gateway-lifecycle-loader.ts` accepts the Hermes gateway type and returns the
+statically imported Hermes lifecycle; there is no dynamic loading.
 
-### How the Implementations Differ
+### Hermes Implementation
 
-| Concern | Hermes (`hermes-lifecycle.ts`) | Worker (`worker-lifecycle.ts`) |
-|---------|------|--------|
-| **Execution model** | Managed Gateway with exact framework boot inputs | Direct process |
-| **VFS mounts** | Protected Hermes home, cache, and profile zone files | State + task gitdirs; `/work/repos` is rootfs/COW |
-| **Environment** | Controller-authored Hermes framework/profile environment | `WORKER_CONFIG_PATH`, `HOME=/home/coder` |
-| **TCP hosts** | Tool VM SSH slots only | No controller raw TCP control mapping |
-| **Bootstrap** | Exact-two-role Gateway Runtime + Hermes service boot | Conditionally install Worker tarball from `/state/` |
-| **Start owner** | Managed-framework boot contract | `agent-vm-worker serve --port 18789 --config ...` |
-| **prepareHostState** | Creates protected Hermes profile directories | None |
-| **Rootfs mode** | `cow` (copy-on-write) | `cow` (copy-on-write) |
-
-Both implementations call `splitResolvedGatewaySecrets()` to partition resolved secrets into environment variables (injection: `env`) and HTTP-mediated secrets (injection: `http-mediation` with required `hosts[]`). See the Secrets Flow section below for the full picture.
+Hermes uses the managed-Gateway execution model, protected profile and zone
+files, controller-authored framework environment, Tool VM SSH slots, and the
+exact-two-role Gateway Runtime plus Hermes service boot. It calls
+`splitResolvedGatewaySecrets()` to partition resolved secrets into environment
+variables (`injection: env`) and HTTP-mediated secrets (`injection:
+http-mediation` with required `hosts[]`). See the Secrets Flow section below.
 
 ---
 
@@ -555,81 +454,6 @@ directories before boot. The Gateway reaches Tool VMs through synthetic DNS
 
 ---
 
-## Agent Worker Gateway
-
-Agent Worker Gateway runs a per-task ephemeral VM. There is no long-running gateway -- each task gets a fresh VM that is destroyed on completion.
-
-### Task Lifecycle
-
-```mermaid
-flowchart TB
-    api["POST /worker-tasks"]
-    host["controller host prep"]
-    vm["boot Worker VM"]
-    worker["run 6-phase pipeline"]
-    rpc["worker_control_rpc git intent"]
-    finalize["host push + teardown"]
-
-    api --> host
-    host --> vm
-    vm --> worker
-    worker --> rpc
-    rpc --> finalize
-```
-
-### Controller-Side Lifecycle
-
-The full per-task lifecycle is managed by `worker-task-runner.ts`:
-
-```
-  POST /zones/:zoneId/worker-tasks
-    { requestTaskId, prompt, repos: [{ repoUrl, baseBranch }], context }
-       |
-       v
-  1. PRE-START (preStartGateway)
-     |-- Generate task ID (UUID)
-     |-- Create task state and non-backup task runtime directories
-     |-- Copy local worker tarball if AGENT_VM_WORKER_TARBALL_PATH set
-     |-- Create RealFS gitdirs under the task runtime root
-     |-- Read .agent-vm/config.jsonc or .agent-vm/config.json from primary repo
-     |-- Deep-merge: zone gateway config + project config -> effective config
-     |-- Validate against workerConfigSchema
-     |-- Write effective-worker.json to taskRoot/state/
-     |-- Resolve typed repo resources from .agent-vm/repo-resources.ts
-     |-- Start only selected repo-local Compose providers
-     |
-  2. BOOT VM (startGatewayZone with zoneOverride)
-     |-- Use worker lifecycle (buildVmRequirements, buildProcessSpec)
-     |-- Keep /work/repos as VM-local rootfs/COW
-     |-- Mount task state -> /state
-     |-- Mount task gitdirs -> /gitdirs
-     |-- Apply resource TCP, env, and read-only VFS overlays
-     |-- Bootstrap: install agent-vm-worker from tarball
-     |-- Start: agent-vm-worker serve --port 18789
-     |-- Wait for health check: GET :18789/health
-     |
-  3. SUBMIT TASK
-     |-- POST http://vm:18789/tasks
-     |   { taskId, prompt, repos, context }
-     |
-  4. POLL
-     |-- GET http://vm:18789/tasks/:taskId
-     |-- Repeat every 1s until status is completed | failed | closed
-     |-- 3 consecutive poll failures = abort
-     |-- 30-minute timeout (configurable)
-     |
-  5. TEARDOWN (always runs, even on failure)
-     |-- vm.close() -- RAM filesystem wiped
-     |-- Stop selected repo resource Compose providers
-     |-- Check worker gitdirs for unpushed/dirty work before cleanup
-     |-- Clean task runtime gitdirs after push/export/discard decision
-     |-- Deregister task from active task registry
-```
-
-For the worker pipeline internals (what happens inside the VM after step 3), see [agent-worker-gateway.md](agent-worker-gateway.md). That document covers the 6-phase pipeline: plan, plan-review, work, verification, work-review, and wrapup.
-
----
-
 ## Secrets Flow
 
 Secrets are resolved on the host and delivered to VMs through two channels. Host-only secrets (e.g., `githubToken` for controller-owned git push) never enter any VM.
@@ -699,14 +523,19 @@ VM images are built from Docker OCI base images via Gondolin's build pipeline. I
     v
   buildGatewayImage() / buildGondolinImage()
     |-- 1. Load authored build config JSONC
-    |-- 2. Fingerprint: SHA-256(buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
-    |-- 3. Cache hit?  cacheDir/{fingerprint}/ has all 4 assets -> return cached
-    |-- 4. Cache miss: gondolin.buildAssets() -> Docker pull, extract, build rootfs
+    |-- 2. Fingerprint: SHA-256(content-normalized buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
+    |-- 3. Cache hit?  cacheDir/vm-images/{fingerprint}/ passes manifest and file-structure validation -> return cached
+    |-- 4. Cache miss: staged Gondolin build -> verify checksums -> native no-replace publication
     |-- 5. Output: { imagePath, fingerprint, built: true|false }
     v
-  cacheDir/{fingerprint}/
+  cacheDir/vm-images/{fingerprint}/
     manifest.json, rootfs.ext4, initramfs.cpio.lz4, vmlinuz-virt
 ```
+
+Referenced local build inputs contribute their content and relevant file modes,
+not their placement on the host, to the effective fingerprint. Python 3 provides
+the standard-library bridge to native no-replace publication on macOS/Linux.
+Reuse avoids rehashing large image assets; new publication verifies full hashes.
 
 The identifier file is shared by all image profiles because it represents
 the system build environment, not an individual gateway or tool VM.
@@ -715,7 +544,7 @@ the system build environment, not an individual gateway or tool VM.
 
 | Image | Config Path | Used By | Rootfs Mode |
 |-------|-------------|---------|-------------|
-| Gateway | `imageProfiles.gateways.<name>.buildConfig` | Gateway VMs (Hermes or Worker) | `cow` |
+| Gateway | `imageProfiles.gateways.<name>.buildConfig` | Hermes Gateway VMs | `cow` |
 | Tool | `imageProfiles.toolVms.<name>.buildConfig` | Tool VMs (on-demand code execution) | `cow` |
 
 Gateway and Tool VM images use copy-on-write rootfs so their processes can
@@ -737,31 +566,30 @@ directory.
   |                      Derives global cache/controller paths and each zone's
   |                      state, zone-files, and runtime leaves
   |-- images            Build config paths for gateway and tool VM images
-  |-- zones[]           Zone definitions: gateway type, resources, secrets, audience-scoped egress hosts
+  |-- zones[]           Zone definitions: gateway type, secrets, audience-scoped egress hosts
   |                      and managed Tool Portal agent credential bindings
   |-- toolVmProfiles    Named Tool VM profiles (memory, cpus, image profile)
   |-- tcpPool           Port range and pool size for tool VM TCP slots
   |-- leaseIdleTtl      Optional lease idle TTL policy
 ```
 
-Each zone declares its `gateway.type` (`hermes` or `worker`), resource
-limits, secret references, and audience-scoped outbound `egressHosts`.
+Each zone declares `gateway.type: "hermes"`, resource limits, secret references,
+and audience-scoped outbound `egressHosts`.
 Gateway VMs receive `gateway | both` egress hosts and secrets; Hermes Tool VMs
 receive only `tool-vm | both` mediated secrets and egress hosts. Hermes
 zones also declare a fallback `defaultToolVmProfile` and an explicit
 `agentToolVmProfiles` map. `agentToolVmProfiles` can override that fallback for
-`agent:<agentId>` tool leases inside the same zone. Worker-only zones omit Tool
-VM profile fields. The schema validates image profile references and requires
+`agent:<agentId>` tool leases inside the same zone. The schema validates image
+profile references and requires
 `host.secretsProvider` when any secret uses the `1password` source.
 
 For the field-by-field reference, see
 [configuration/README.md](../reference/configuration/README.md).
 
-For state/cache/repo-files/gitdir/backup boundaries, see
+For state/cache/workspace/gitdir/backup boundaries, see
 [storage-model.md](storage-model.md) and [storage-matrix.md](storage-matrix.md).
-Do not move rebuildable dependency trees, worker repos, or worker gitdirs into
-`stateDir` just to make them survive VM reboot; use image/rootfs, cache, or
-explicit task recovery paths instead.
+Do not move rebuildable dependency trees into `stateDir` just to make them
+survive VM reboot; use image/rootfs or cache instead.
 
 For upstream Gondolin image-build capabilities and sandbox features, see
 [Feature Highlights](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).
@@ -783,7 +611,7 @@ The system operates across three trust boundaries:
   |  +---------------------------------------------------------------+  |
   |  |  ZONE 2: GATEWAY VM  (partially trusted)                      |  |
   |  |                                                                |  |
-  |  |  Long-running (Hermes) or per-task (Worker) process            |  |
+  |  |  Long-running Hermes process                                   |  |
   |  |  Has: gateway-audience env and HTTP-mediated secrets            |  |
   |  |  Can: make outbound HTTP to gateway-audience hosts, reach       |  |
   |  |       controller                                                |  |
@@ -811,7 +639,6 @@ The system operates across three trust boundaries:
 
 | Document | Scope |
 |----------|-------|
-| [agent-worker-gateway.md](agent-worker-gateway.md) | Agent Worker Gateway: 6-phase state machine, event sourcing, executors, MCP tools |
 | [reference/configuration/system-json.md](../reference/configuration/system-json.md) | Hermes managed Gateway configuration, profiles, secrets, ingress, and Tool VM policy |
 | [credentialed-runtimes.md](credentialed-runtimes.md) | Per-agent configured CLI runtime ownership, admission, credentials, reuse, and retirement |
 | [reference/configuration/README.md](../reference/configuration/README.md) | Progressive configuration reference |
@@ -819,5 +646,4 @@ The system operates across three trust boundaries:
 | [subsystems/controller.md](../subsystems/controller.md) | Controller internals: lease lifecycle, TCP pool, idle reaper |
 | [subsystems/secrets-and-credentials.md](../subsystems/secrets-and-credentials.md) | Secret resolution, 1Password integration, HTTP mediation details |
 | [subsystems/gondolin-vm-layer.md](../subsystems/gondolin-vm-layer.md) | Gondolin VM adapter, VFS mounts, rootfs modes, HTTP mediation, image build pipeline |
-| [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md) | Gateway abstraction: GatewayLifecycle interface, Hermes managed Gateway vs Agent Worker Gateway |
-| [subsystems/worker-task-pipeline.md](../subsystems/worker-task-pipeline.md) | Controller-side task lifecycle: pre-start, boot, poll, teardown |
+| [subsystems/gateway-lifecycle.md](../subsystems/gateway-lifecycle.md) | Gateway abstraction: GatewayLifecycle interface and Hermes managed Gateway |

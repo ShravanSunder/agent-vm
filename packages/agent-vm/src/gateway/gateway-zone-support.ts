@@ -1,7 +1,6 @@
 import type {
 	GatewayIngressConfig,
 	ManagedGatewayBootContract,
-	GatewayProcessSpec,
 	GatewayZoneConfig,
 	GatewayZoneObservabilityConfig,
 } from '@agent-vm/gateway-lifecycle';
@@ -46,7 +45,6 @@ import type {
 import type { HealthEventStore } from '../controller/health/health-event-store.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
-import type { ManagedVmProcessTarget } from '../shared/controller-managed-vm-termination.js';
 import type { RunTaskFn } from '../shared/run-task.js';
 import type { GatewayExpectedAdmissionCohort } from './gateway-aggregate-admission-state.js';
 
@@ -96,7 +94,7 @@ export interface StartGatewayZoneOptions {
 			readonly bootId: string;
 			readonly generationId: string;
 		};
-		readonly kind: 'gateway-epoch' | 'standalone';
+		readonly kind: 'gateway-epoch';
 		readonly sessionLabel: string;
 		readonly zoneId: string;
 	}) => Promise<GatewayVmLifecycleAuthority>;
@@ -125,9 +123,7 @@ export interface StartGatewayZoneOptions {
 	readonly prebuiltImage?: ManagedVmImageBuildResult | undefined;
 	readonly runTask?: RunTaskFn;
 	readonly runtimeEnvironment?: Readonly<Record<string, string>>;
-	readonly runtimeRecordTarget:
-		| import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget
-		| import('../controller/durable-state/controller-state-record-paths.js').ControllerWorkerTaskRuntimeRecordTarget;
+	readonly runtimeRecordTarget: import('../controller/durable-state/controller-state-record-paths.js').ControllerManagedGatewayRuntimeRecordTarget;
 	readonly runtimePluginConfigs?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 	readonly secretResolver: import('@agent-vm/secret-management').SecretResolver;
 	readonly systemConfig: LoadedSystemConfig;
@@ -207,15 +203,7 @@ export interface ManagedGatewayZoneStartResult extends GatewayZoneStartResultBas
 	readonly expectedCohort: GatewayExpectedAdmissionCohort;
 }
 
-export interface DirectProcessGatewayZoneStartResult extends GatewayZoneStartResultBase {
-	readonly executionModel: 'direct-process';
-	readonly processSpec: GatewayProcessSpec;
-	readonly processTarget: ManagedVmProcessTarget;
-}
-
-export type GatewayZoneStartResult =
-	| DirectProcessGatewayZoneStartResult
-	| ManagedGatewayZoneStartResult;
+export type GatewayZoneStartResult = ManagedGatewayZoneStartResult;
 
 export type GatewayControlSessionMaterialFactory = (options: {
 	readonly controllerEpoch: string;
@@ -336,27 +324,13 @@ export function mapSystemGatewayZoneToLifecycleZone(
 	return {
 		id: zone.id,
 		...(zone.agents === undefined ? {} : { agents: zone.agents }),
-		gateway: (() => {
-			switch (zone.gateway.type) {
-				case 'hermes':
-					return {
-						...baseGateway,
-						type: 'hermes',
-						profileSecretProjectionsByAgent: zone.gateway.profileSecretProjectionsByAgent,
-						profilesByAgent: zone.gateway.profilesByAgent,
-						zoneFilesDir: zone.gateway.zoneFilesDir,
-					};
-				case 'worker':
-					return {
-						...baseGateway,
-						type: 'worker',
-					};
-				default: {
-					const exhaustiveGateway: never = zone.gateway;
-					throw new Error(`Unhandled gateway type: ${String(exhaustiveGateway)}`);
-				}
-			}
-		})(),
+		gateway: {
+			...baseGateway,
+			type: 'hermes',
+			profileSecretProjectionsByAgent: zone.gateway.profileSecretProjectionsByAgent,
+			profilesByAgent: zone.gateway.profilesByAgent,
+			zoneFilesDir: zone.gateway.zoneFilesDir,
+		},
 		secrets: zone.secrets,
 		egressHosts: zone.egressHosts,
 		...(zone.defaultToolVmProfile ? { defaultToolVmProfile: zone.defaultToolVmProfile } : {}),

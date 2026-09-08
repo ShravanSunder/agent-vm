@@ -20,6 +20,5 @@ export * from './controller/leases/lease-manager.js';
 export * from './operations/zone-logs.js';
 export * from './operations/controller-status.js';
 export * from './config/system-config.js';
-export * from './config/resource-contracts/index.js';
 export * from './controller/leases/tcp-pool.js';
 export * from './operations/upgrade-zone.js';

@@ -3,14 +3,6 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 
 import {
-	DEFAULT_COMMON_AGENT_INSTRUCTIONS,
-	DEFAULT_PLAN_AGENT_INSTRUCTIONS,
-	DEFAULT_PLAN_REVIEWER_INSTRUCTIONS,
-	DEFAULT_WORK_AGENT_INSTRUCTIONS,
-	DEFAULT_WORK_REVIEWER_INSTRUCTIONS,
-	DEFAULT_WRAPUP_INSTRUCTIONS,
-} from '@agent-vm/agent-vm-worker';
-import {
 	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaPaths,
 } from '@agent-vm/config-contracts';
@@ -22,7 +14,11 @@ import {
 } from '../build/managed-vm-build-tooling.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
-import { createSystemConfigSchemaArtifact } from '../config/system-config.js';
+import {
+	createSystemConfigSchemaArtifact,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+} from '../config/system-config.js';
 import { buildDefaultProjectNamespace } from '../runtime/project-namespace.js';
 import { resolveCliVersion } from './cli-version.js';
 import {
@@ -96,63 +92,8 @@ interface ScaffoldPathProfile {
 	readonly gatewayDockerfile: (gatewayType: GatewayType) => string;
 	readonly gatewayBackupDir: (zoneId: string) => string;
 	readonly gatewayBuildConfig: (gatewayType: GatewayType) => string;
-	readonly gatewayOverlay: (gatewayType: GatewayType) => string;
 	readonly toolVmBuildConfig: string;
 	readonly toolVmOverlay: string;
-}
-
-interface PromptReference {
-	readonly path: string;
-}
-
-interface ScaffoldMcpServer {
-	readonly name: string;
-	readonly url: string;
-	readonly bearerTokenEnvVar?: string;
-}
-
-interface ScaffoldWorkerGatewayConfig {
-	readonly commonAgentInstructions: PromptReference;
-	readonly defaults: {
-		readonly provider: string;
-		readonly model: string;
-	};
-	readonly phases: {
-		readonly plan: {
-			readonly cycle: { readonly kind: 'review'; readonly cycleCount: number };
-			readonly agentInstructions: PromptReference;
-			readonly reviewerInstructions: PromptReference;
-			readonly agentTurnTimeoutMs: number;
-			readonly reviewerTurnTimeoutMs: number;
-			readonly skills: readonly [];
-		};
-		readonly work: {
-			readonly cycle: { readonly kind: 'review'; readonly cycleCount: number };
-			readonly agentInstructions: PromptReference;
-			readonly reviewerInstructions: PromptReference;
-			readonly agentTurnTimeoutMs: number;
-			readonly reviewerTurnTimeoutMs: number;
-			readonly skills: readonly [];
-		};
-		readonly wrapup: {
-			readonly instructions: PromptReference;
-			readonly turnTimeoutMs: number;
-			readonly skills: readonly [];
-		};
-	};
-	readonly mcpServers: readonly ScaffoldMcpServer[];
-	readonly verification: readonly [];
-	readonly verificationTimeoutMs: number;
-	readonly branchPrefix: string;
-	readonly stateDir: string;
-}
-
-interface RuntimeAuthHint {
-	readonly kind: 'service-token';
-	readonly secret: string;
-	readonly service: string;
-	readonly hosts: readonly string[];
-	readonly tools: readonly string[];
 }
 
 interface DefaultManagedImageOverlay {
@@ -164,10 +105,8 @@ interface DefaultManagedImageOverlay {
 
 const defaultGatewayIngressPort = 18791;
 
-function resolveGatewayConfigFileName(
-	gatewayType: GatewayType,
-): 'worker.jsonc' | 'hermes-managed/config.yaml' {
-	return gatewayType === 'worker' ? 'worker.jsonc' : 'hermes-managed/config.yaml';
+function resolveGatewayConfigFileName(_gatewayType: GatewayType): 'hermes-managed/config.yaml' {
+	return 'hermes-managed/config.yaml';
 }
 
 const localPathProfile: ScaffoldPathProfile = {
@@ -179,7 +118,6 @@ const localPathProfile: ScaffoldPathProfile = {
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	gatewayBackupDir: (zoneId) => `../backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
 	toolVmOverlay: '../vm-images/tool-vms/default/overlay.jsonc',
 };
@@ -194,7 +132,6 @@ const podPathProfile: ScaffoldPathProfile = {
 	gatewayBackupDir: () => '/var/agent-vm/backups',
 	gatewayBuildConfig: (gatewayType) =>
 		`/etc/agent-vm/vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayOverlay: (gatewayType) => `/etc/agent-vm/vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '/etc/agent-vm/vm-images/tool-vms/default/build-config.jsonc',
 	toolVmOverlay: '/etc/agent-vm/vm-images/tool-vms/default/overlay.jsonc',
 };
@@ -214,7 +151,6 @@ const userDirPathProfile: ScaffoldPathProfile = {
 	gatewayDockerfile: (gatewayType) => `../vm-images/gateways/${gatewayType}/Dockerfile`,
 	gatewayBackupDir: (zoneId) => `~/.agent-vm-backups/${zoneId}`,
 	gatewayBuildConfig: (gatewayType) => `../vm-images/gateways/${gatewayType}/build-config.jsonc`,
-	gatewayOverlay: (gatewayType) => `../vm-images/gateways/${gatewayType}/overlay.jsonc`,
 	toolVmBuildConfig: '../vm-images/tool-vms/default/build-config.jsonc',
 	toolVmOverlay: '../vm-images/tool-vms/default/overlay.jsonc',
 };
@@ -273,9 +209,7 @@ function defaultToolVmImageProfiles(
 		};
 	}
 > {
-	if (gatewayType === 'worker') {
-		return {};
-	}
+	void gatewayType;
 	return {
 		default: {
 			type: 'toolVm',
@@ -287,15 +221,6 @@ function defaultToolVmImageProfiles(
 			},
 		},
 	};
-}
-
-function defaultGatewayManagedBase(gatewayType: GatewayType): 'worker-gateway' {
-	if (gatewayType !== 'worker') {
-		throw new Error(
-			'Hermes gateways use a deployment-owned Dockerfile rather than a managed base.',
-		);
-	}
-	return 'worker-gateway';
 }
 
 function defaultManagedImageOverlay(): DefaultManagedImageOverlay {
@@ -316,9 +241,7 @@ function defaultToolVmProfiles(gatewayType: GatewayType): Record<
 		readonly runtimeRootfsSize?: string;
 	}
 > {
-	if (gatewayType === 'worker') {
-		return {};
-	}
+	void gatewayType;
 	return {
 		standard: {
 			memory: '1G',
@@ -360,22 +283,11 @@ const defaultSystemConfig = (
 	storageRootDir: pathProfile.storageRootDir,
 	imageProfiles: {
 		gateways: {
-			[gatewayType]:
-				gatewayType === 'worker'
-					? {
-							type: gatewayType,
-							buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
-							source: {
-								kind: 'managedBase',
-								base: defaultGatewayManagedBase(gatewayType),
-								overlay: pathProfile.gatewayOverlay(gatewayType),
-							},
-						}
-					: {
-							type: gatewayType,
-							buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
-							dockerfile: pathProfile.gatewayDockerfile(gatewayType),
-						},
+			[gatewayType]: {
+				type: gatewayType,
+				buildConfig: pathProfile.gatewayBuildConfig(gatewayType),
+				dockerfile: pathProfile.gatewayDockerfile(gatewayType),
+			},
 		},
 		toolVms: defaultToolVmImageProfiles(gatewayType, pathProfile),
 	},
@@ -390,34 +302,20 @@ const defaultSystemConfig = (
 				port: defaultGatewayIngressPort,
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),
 				imageProfile: gatewayType,
-				runtimeRootfsSize: gatewayType === 'hermes' ? '12G' : '8G',
-				...(gatewayType === 'hermes'
-					? {
-							profileSecretProjectionsByAgent: createHermesProfileSecretProjections(agentIds),
-							profilesByAgent: createHermesProfileAssignments(agentIds),
-						}
-					: {}),
+				runtimeRootfsSize: '12G',
+				profileSecretProjectionsByAgent: createHermesProfileSecretProjections(agentIds),
+				profilesByAgent: createHermesProfileAssignments(agentIds),
 				backupDir: pathProfile.gatewayBackupDir(zoneId),
 			},
 			secrets: defaultSecretsForGatewayType(zoneId, gatewayType, secretsProvider, agentIds),
-			...(gatewayType === 'worker'
-				? { runtimeAuthHints: defaultRuntimeAuthHintsForGatewayType(gatewayType) }
-				: {}),
 			egressHosts: defaultEgressHostsForGatewayType(gatewayType),
-			...(gatewayType === 'hermes'
-				? { defaultToolVmProfile: 'standard', agentToolVmProfiles: {} }
-				: {}),
-			...(gatewayType === 'hermes'
-				? {
-						agents: resolveHermesScaffoldAgentIds(agentIds).map((agentId) => ({
-							id: agentId,
-						})),
-						toolPortal: {
-							configDir: pathProfile.gatewayConfigDir(zoneId),
-							surfaceEligibilityByProfile: { default: {} },
-						},
-					}
-				: {}),
+			defaultToolVmProfile: 'standard',
+			agentToolVmProfiles: {},
+			agents: resolveHermesScaffoldAgentIds(agentIds).map((agentId) => ({ id: agentId })),
+			toolPortal: {
+				configDir: pathProfile.gatewayConfigDir(zoneId),
+				surfaceEligibilityByProfile: { default: {} },
+			},
 		},
 	],
 	toolVmProfiles: defaultToolVmProfiles(gatewayType),
@@ -464,103 +362,16 @@ function defaultHostGithubToken(secretsProvider: SecretsProvider): HostGithubTok
 	}
 }
 
-interface SecretShape {
-	readonly envVar: string;
-	readonly opRef: string;
-	readonly injection: SecretInjection;
-	readonly audience: VmAudience;
-	readonly hosts?: readonly string[];
-}
-
-function secretFromShape(shape: SecretShape, secretsProvider: SecretsProvider): SecretReference {
-	const hostsField = shape.hosts ? { hosts: shape.hosts } : {};
-	switch (secretsProvider) {
-		case '1password':
-			return {
-				source: '1password',
-				ref: shape.opRef,
-				injection: shape.injection,
-				audience: shape.audience,
-				...hostsField,
-			};
-		case 'environment':
-			return {
-				source: 'environment',
-				envVar: shape.envVar,
-				injection: shape.injection,
-				audience: shape.audience,
-				...hostsField,
-			};
-		default:
-			return assertNeverSecretsProvider(secretsProvider);
-	}
-}
-
 function defaultSecretsForGatewayType(
 	zoneId: string,
-	gatewayType: GatewayType,
+	_gatewayType: GatewayType,
 	secretsProvider: SecretsProvider,
 	agentIds: readonly string[] | undefined,
 ): Record<string, SecretReference> {
-	if (gatewayType === 'worker') {
-		return {
-			GITHUB_TOKEN: secretFromShape(
-				{
-					envVar: 'GITHUB_TOKEN',
-					opRef: 'op://agent-vm/github-token/credential',
-					injection: 'http-mediation',
-					audience: 'gateway',
-					hosts: ['api.github.com'],
-				},
-				secretsProvider,
-			),
-			OPENAI_API_KEY: secretFromShape(
-				{
-					envVar: 'OPENAI_API_KEY',
-					opRef: 'op://agent-vm/workers-openai/credential',
-					injection: 'http-mediation',
-					audience: 'gateway',
-					hosts: ['api.openai.com'],
-				},
-				secretsProvider,
-			),
-		};
-	}
-
 	return createHermesScaffoldSecrets({ agentIds, secretsProvider, zoneId });
 }
 
-function defaultRuntimeAuthHintsForGatewayType(
-	gatewayType: GatewayType,
-): readonly RuntimeAuthHint[] {
-	if (gatewayType !== 'worker') {
-		return [];
-	}
-
-	return [
-		{
-			kind: 'service-token',
-			secret: 'GITHUB_TOKEN',
-			service: 'github',
-			hosts: ['api.github.com'],
-			tools: ['gh'],
-		},
-	];
-}
-
-function defaultEgressHostsForGatewayType(gatewayType: GatewayType): readonly EgressHostConfig[] {
-	if (gatewayType === 'worker') {
-		return [
-			'api.anthropic.com',
-			'api.openai.com',
-			'auth.openai.com',
-			'api.github.com',
-			'github.com',
-			'registry.npmjs.org',
-			'mcp.deepwiki.com',
-		].map((host) => ({ host, audience: 'gateway' }));
-	}
-
+function defaultEgressHostsForGatewayType(_gatewayType: GatewayType): readonly EgressHostConfig[] {
 	return [
 		'api.anthropic.com',
 		'api.openai.com',
@@ -591,22 +402,14 @@ function envVarsForGatewayType(
 	agentIds: readonly string[] | undefined,
 ): readonly string[] {
 	void zoneId;
-	switch (gatewayType) {
-		case 'worker':
-			return ['GITHUB_TOKEN', 'OPENAI_API_KEY'];
-		case 'hermes':
-			return [
-				'API_SERVER_KEY',
-				...resolveHermesScaffoldAgentIds(agentIds).flatMap((agentId) => {
-					const suffix = agentId.toUpperCase().replaceAll(/[^A-Z0-9]/gu, '_');
-					return [`HERMES_API_SERVER_KEY_${suffix}`, `DISCORD_BOT_TOKEN_${suffix}`];
-				}),
-			];
-		default: {
-			const exhaustive: never = gatewayType;
-			throw new Error(`Unhandled gateway type: ${String(exhaustive)}`);
-		}
-	}
+	void gatewayType;
+	return [
+		'API_SERVER_KEY',
+		...resolveHermesScaffoldAgentIds(agentIds).flatMap((agentId) => {
+			const suffix = agentId.toUpperCase().replaceAll(/[^A-Z0-9]/gu, '_');
+			return [`HERMES_API_SERVER_KEY_${suffix}`, `DISCORD_BOT_TOKEN_${suffix}`];
+		}),
+	];
 }
 
 function defaultEnvTemplate(
@@ -635,26 +438,6 @@ function defaultEnvTemplate(
 			return assertNeverSecretsProvider(secretsProvider);
 	}
 }
-
-const defaultGatewayBuildConfig = (architecture: ImageArchitecture): object => ({
-	arch: architecture,
-	distro: 'alpine',
-	alpine: {
-		version: '3.23.0',
-		kernelPackage: 'linux-virt',
-		kernelImage: 'vmlinuz-virt',
-		rootfsPackages: [],
-		initramfsPackages: [],
-	},
-	oci: {
-		image: 'agent-vm-gateway:latest',
-		pullPolicy: 'never',
-	},
-	rootfs: {
-		label: 'gondolin-root',
-		sizeMb: 4096,
-	},
-});
 
 const defaultToolBuildConfig = (architecture: ImageArchitecture): object => ({
 	arch: architecture,
@@ -772,60 +555,6 @@ async function writeConfigSchemaArtifacts(options: {
 	}
 }
 
-const defaultWorkerPromptFiles = [
-	{ fileName: 'common-agent-instructions.md', content: DEFAULT_COMMON_AGENT_INSTRUCTIONS },
-	{ fileName: 'plan-agent.md', content: DEFAULT_PLAN_AGENT_INSTRUCTIONS },
-	{ fileName: 'plan-reviewer.md', content: DEFAULT_PLAN_REVIEWER_INSTRUCTIONS },
-	{ fileName: 'work-agent.md', content: DEFAULT_WORK_AGENT_INSTRUCTIONS },
-	{ fileName: 'work-reviewer.md', content: DEFAULT_WORK_REVIEWER_INSTRUCTIONS },
-	{ fileName: 'wrapup.md', content: DEFAULT_WRAPUP_INSTRUCTIONS },
-] as const;
-
-function defaultWorkerPromptReference(fileName: string): PromptReference {
-	return { path: `./prompts/${fileName}` };
-}
-
-const defaultWorkerGatewayConfig = (): ScaffoldWorkerGatewayConfig => ({
-	commonAgentInstructions: defaultWorkerPromptReference('common-agent-instructions.md'),
-	defaults: {
-		provider: 'codex',
-		model: 'latest-medium',
-	},
-	phases: {
-		plan: {
-			cycle: { kind: 'review', cycleCount: 2 },
-			agentInstructions: defaultWorkerPromptReference('plan-agent.md'),
-			reviewerInstructions: defaultWorkerPromptReference('plan-reviewer.md'),
-			agentTurnTimeoutMs: 900_000,
-			reviewerTurnTimeoutMs: 900_000,
-			skills: [],
-		},
-		work: {
-			cycle: { kind: 'review', cycleCount: 4 },
-			agentInstructions: defaultWorkerPromptReference('work-agent.md'),
-			reviewerInstructions: defaultWorkerPromptReference('work-reviewer.md'),
-			agentTurnTimeoutMs: 2_700_000,
-			reviewerTurnTimeoutMs: 900_000,
-			skills: [],
-		},
-		wrapup: {
-			instructions: defaultWorkerPromptReference('wrapup.md'),
-			turnTimeoutMs: 900_000,
-			skills: [],
-		},
-	},
-	mcpServers: [
-		{
-			name: 'deepwiki',
-			url: 'https://mcp.deepwiki.com/mcp',
-		},
-	],
-	verification: [],
-	verificationTimeoutMs: 300_000,
-	branchPrefix: 'agent/',
-	stateDir: '/state',
-});
-
 async function writeFileIfMissing(
 	filePath: string,
 	content: string,
@@ -862,23 +591,14 @@ async function scaffoldAgentVmProjectInternal(
 	options: ScaffoldAgentVmProjectOptions,
 	dependencies: ScaffoldAgentVmProjectDependencies = {},
 ): Promise<ScaffoldAgentVmProjectResult> {
-	if (options.hostSystemType === 'container') {
-		if (options.gatewayType !== 'worker') {
-			throw new Error('Container-host scaffolds currently support only worker gateways.');
-		}
-	}
-
 	const created: string[] = [];
 	const skipped: string[] = [];
 	const gatewayType = options.gatewayType;
 	const architecture = options.architecture;
-	const hermesImageRecipe =
-		gatewayType === 'hermes'
-			? createHermesScaffoldImageRecipe({
-					agentVmVersion: await resolveCliVersion(),
-					architecture,
-				})
-			: undefined;
+	const hermesImageRecipe = createHermesScaffoldImageRecipe({
+		agentVmVersion: await resolveCliVersion(),
+		architecture,
+	});
 	const overwrite = options.overwrite ?? false;
 	const projectNamespace = projectNamespaceSchema.parse(
 		options.projectNamespace ?? (await buildDefaultProjectNamespace(options.targetDir)),
@@ -948,18 +668,13 @@ async function scaffoldAgentVmProjectInternal(
 	);
 	const configStatus = await writeFileIfMissing(
 		configPath,
-		gatewayType === 'hermes'
-			? renderHermesManagedConfiguration()
-			: formatJsoncConfig(
-					'Human-authored Agent Worker gateway config. Comments are allowed here; /state/effective-worker.json stays strict JSON.',
-					defaultWorkerGatewayConfig(),
-				),
+		renderHermesManagedConfiguration(),
 		overwrite,
 	);
 	(configStatus === 'created' ? created : skipped).push(
 		`config/gateways/${options.zoneId}/${configFileName}`,
 	);
-	if (gatewayType === 'hermes') {
+	{
 		const mcpConfigPath = path.join(
 			options.targetDir,
 			'config',
@@ -998,51 +713,7 @@ async function scaffoldAgentVmProjectInternal(
 			`config/gateways/${options.zoneId}/tool-portal.config.jsonc`,
 		);
 	}
-	if (gatewayType === 'worker') {
-		const promptFileResults = await Promise.all(
-			defaultWorkerPromptFiles.map(async (promptFile) => {
-				const promptFilePath = path.join(
-					options.targetDir,
-					'config',
-					'gateways',
-					options.zoneId,
-					'prompts',
-					promptFile.fileName,
-				);
-				return {
-					fileName: promptFile.fileName,
-					status: await writeFileIfMissing(promptFilePath, `${promptFile.content}\n`, overwrite),
-				};
-			}),
-		);
-		for (const promptFileResult of promptFileResults) {
-			const promptFileStatus = promptFileResult.status;
-			(promptFileStatus === 'created' ? created : skipped).push(
-				`config/gateways/${options.zoneId}/prompts/${promptFileResult.fileName}`,
-			);
-		}
-	}
-
-	if (gatewayType === 'worker') {
-		const gatewayOverlayPath = path.join(
-			options.targetDir,
-			'vm-images',
-			'gateways',
-			gatewayType,
-			'overlay.jsonc',
-		);
-		const gatewayOverlayStatus = await writeFileIfMissing(
-			gatewayOverlayPath,
-			formatJsoncConfig(
-				'Human-authored managed gateway image overlay. Comments are allowed here.',
-				defaultManagedImageOverlay(),
-			),
-			overwrite,
-		);
-		(gatewayOverlayStatus === 'created' ? created : skipped).push(
-			`vm-images/gateways/${gatewayType}/overlay.jsonc`,
-		);
-	} else {
+	{
 		const gatewayDockerfilePath = path.join(
 			options.targetDir,
 			'vm-images',
@@ -1052,7 +723,7 @@ async function scaffoldAgentVmProjectInternal(
 		);
 		const gatewayDockerfileStatus = await writeFileIfMissing(
 			gatewayDockerfilePath,
-			hermesImageRecipe?.dockerfile ?? '',
+			hermesImageRecipe.dockerfile,
 			overwrite,
 		);
 		(gatewayDockerfileStatus === 'created' ? created : skipped).push(
@@ -1071,14 +742,14 @@ async function scaffoldAgentVmProjectInternal(
 		gatewayBuildConfigPath,
 		formatJsoncConfig(
 			'Human-authored Gondolin image build config. Comments are allowed here.',
-			hermesImageRecipe?.buildConfig ?? defaultGatewayBuildConfig(architecture),
+			hermesImageRecipe.buildConfig,
 		),
 		overwrite,
 	);
 	(gatewayBuildConfigStatus === 'created' ? created : skipped).push(
 		`vm-images/gateways/${gatewayType}/build-config.jsonc`,
 	);
-	if (gatewayType === 'hermes') {
+	{
 		const toolBuildConfigPath = path.join(
 			options.targetDir,
 			'vm-images',
@@ -1160,7 +831,8 @@ async function scaffoldAgentVmProjectInternal(
 		const storageRootDir = resolveConfigPath(pathProfile.storageRootDir, configDir, homeDir);
 		const zoneRootDir = path.join(storageRootDir, options.zoneId);
 		const directoriesToCreate = [
-			path.join(storageRootDir, 'cache'),
+			sharedImageCacheDirForStorageRoot(storageRootDir),
+			deploymentGeneratedDirForStorageRoot(storageRootDir),
 			path.join(storageRootDir, 'controller-state'),
 			path.join(storageRootDir, 'controller-runtime'),
 			path.join(zoneRootDir, 'state'),

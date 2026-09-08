@@ -12,7 +12,6 @@ import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidence
 import { cleanupRecordedToolVmRuntimes as cleanupRecordedToolVmRuntimesDefault } from '../controller/leases/tool-vm-recovery.js';
 import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault } from '../controller/vm-ownership/controller-ownership-lock.js';
 import { cleanupRecordedGatewayRuntime as cleanupRecordedGatewayRuntimeDefault } from '../gateway/gateway-recovery.js';
-import { cleanupRecordedWorkerRuntimes as cleanupRecordedWorkerRuntimesDefault } from '../gateway/worker-runtime-recovery.js';
 
 export interface ControllerOfflineCleanupResult {
 	readonly results: readonly {
@@ -70,7 +69,6 @@ export interface RecordedVmTreeReconciliationDependencies {
 	readonly containCredentialedRuntimeRecords?: typeof containCredentialedRuntimeRecordsDefault;
 	readonly cleanupRecordedGatewayRuntime?: typeof cleanupRecordedGatewayRuntimeDefault;
 	readonly cleanupRecordedToolVmRuntimes?: typeof cleanupRecordedToolVmRuntimesDefault;
-	readonly cleanupRecordedWorkerRuntimes?: typeof cleanupRecordedWorkerRuntimesDefault;
 	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
 }
 
@@ -117,15 +115,6 @@ export async function reconcileRecordedVmTree(options: {
 		mode: 'offline-cleanup' as const,
 		projectNamespace: options.systemConfig.host.projectNamespace,
 	};
-	if (zone.gateway.type === 'worker') {
-		await (
-			options.dependencies?.cleanupRecordedWorkerRuntimes ?? cleanupRecordedWorkerRuntimesDefault
-		)(
-			{ ...cleanupScope, gatewayStateRoot },
-			{ exactProcessTermination: options.exactProcessTermination },
-		);
-		return;
-	}
 	const unsafeCredentialedRuntimes = await (
 		options.dependencies?.containCredentialedRuntimeRecords ??
 		containCredentialedRuntimeRecordsDefault
@@ -218,9 +207,6 @@ export async function runControllerOfflineCleanup(
 						: {}),
 					...(dependencies.cleanupRecordedToolVmRuntimes
 						? { cleanupRecordedToolVmRuntimes: dependencies.cleanupRecordedToolVmRuntimes }
-						: {}),
-					...(dependencies.cleanupRecordedWorkerRuntimes
-						? { cleanupRecordedWorkerRuntimes: dependencies.cleanupRecordedWorkerRuntimes }
 						: {}),
 					...(dependencies.scanGatewayStateAuthorityEvidence
 						? {

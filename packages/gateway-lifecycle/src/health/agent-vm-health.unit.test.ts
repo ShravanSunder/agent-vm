@@ -138,17 +138,17 @@ describe('agent-vm health events', () => {
 		).toBe(true);
 	});
 
-	it('keeps gateway plugin health generic over gateway type', () => {
-		const workerEvent = {
-			gatewayService: 'worker',
+	it('accepts Hermes gateway plugin health', () => {
+		const gatewayEvent = {
+			gatewayService: 'hermes',
 			kind: 'gateway-plugin-health',
 			observedAtMs: 2_000,
 			result: 'ok',
 			state: 'ready',
-			zoneId: 'worker-zone',
+			zoneId: 'custom-zone',
 		} satisfies AgentVmHealthEvent;
 
-		expect(isAgentVmHealthEvent(workerEvent)).toBe(true);
+		expect(isAgentVmHealthEvent(gatewayEvent)).toBe(true);
 	});
 
 	it('treats gateway service health as one zone-level bucket', () => {

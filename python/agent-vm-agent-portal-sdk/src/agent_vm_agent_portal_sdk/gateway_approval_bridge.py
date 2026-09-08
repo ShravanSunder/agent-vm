@@ -159,6 +159,13 @@ async def _retry_approved_item(
     return retry_items[0]
 
 
+def _validate_portal_call_request(request: Mapping[str, object]) -> JsonObject:
+    validated_request = PORTABLE_CONTRACT_ADAPTERS["portal.call.request"].validate_python(request)
+    if not isinstance(validated_request, BaseModel):
+        raise TypeError("Portal call request did not produce a typed model.")
+    return _model_mapping(validated_request)
+
+
 async def execute_portal_call_with_approval(
     request: Mapping[str, object],
     *,
@@ -168,10 +175,7 @@ async def execute_portal_call_with_approval(
     present_approval: PresentApproval,
 ) -> BaseModel:
     """Run one Portal call, present protected items, and retry only approved items."""
-    validated_request = PORTABLE_CONTRACT_ADAPTERS["portal.call.request"].validate_python(request)
-    if not isinstance(validated_request, BaseModel):
-        raise TypeError("Portal call request did not produce a typed model.")
-    request_mapping = _model_mapping(validated_request)
+    request_mapping = _validate_portal_call_request(request)
     original_calls = t.cast("list[JsonObject]", request_mapping["calls"])
     call_by_id = {t.cast("str", call["id"]): call for call in original_calls}
     initial_result = await call_portal(request_mapping) if initial_result is None else initial_result

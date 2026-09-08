@@ -1,6 +1,11 @@
 // oxlint-disable eslint/no-await-in-loop -- path sizing walks the filesystem sequentially
 import fs from 'node:fs/promises';
 
+import {
+	deploymentCacheDirForSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+} from '../../config/system-config.js';
 import { runConfigValidation } from '../../operations/config-validation.js';
 import {
 	createResolverFromSystemConfig,
@@ -13,15 +18,9 @@ import type { AgentVmCommand } from '../agent-vm-command-parser.js';
 import { runBackupCommand } from '../backup-commands.js';
 import { runBuildCommand } from '../build-command.js';
 import { runCacheCommand } from '../cache-commands.js';
-import { resetWorkerInstructions } from '../config-commands.js';
 import { runControllerOperationCommand } from '../controller-operation-commands.js';
 import { updateAgentVmManual } from '../manual-commands.js';
 import { runMigrateImagesCommand } from '../migrate-commands.js';
-import {
-	initRepoResources,
-	updateRepoResources,
-	validateRepoResources,
-} from '../resources-commands.js';
 import { createRunTask, createRunTaskGroup } from '../run-task.js';
 import { loadSystemConfigFromCliOption } from './command-operation-support.js';
 
@@ -29,14 +28,9 @@ type BuildCommand = Extract<AgentVmCommand, { readonly command: 'build' }>;
 type ValidateCommand = Extract<AgentVmCommand, { readonly command: 'validate' }>;
 type DoctorCommand = Extract<AgentVmCommand, { readonly command: 'doctor' }>;
 type CacheCommand = Extract<AgentVmCommand, { readonly command: 'cache.list' | 'cache.clean' }>;
-type ConfigCommand = Extract<AgentVmCommand, { readonly command: 'config.reset-instructions' }>;
 type ManualCommand = Extract<AgentVmCommand, { readonly command: 'manual.update' }>;
 type MigrateCommand = Extract<AgentVmCommand, { readonly command: 'migrate.images' }>;
 type PathsCommand = Extract<AgentVmCommand, { readonly command: 'paths.show' }>;
-type ResourcesCommand = Extract<
-	AgentVmCommand,
-	{ readonly command: 'resources.init' | 'resources.validate' | 'resources.update' }
->;
 type BackupCommand = Extract<
 	AgentVmCommand,
 	{ readonly command: 'backup.create' | 'backup.list' | 'backup.restore' }
@@ -118,40 +112,6 @@ export async function runCacheCommandOperation(
 		{ confirm: command.options.confirm, subcommand: 'clean', systemConfig },
 		io,
 	);
-}
-
-export async function runConfigCommandOperation(
-	io: CliIo,
-	dependencies: CliDependencies,
-	command: ConfigCommand,
-): Promise<void> {
-	const systemConfig = await loadSystemConfigFromCliOption(command.options.config, dependencies);
-	const selectedZone =
-		command.options.zone === undefined
-			? systemConfig.zones.length === 1
-				? systemConfig.zones[0]
-				: undefined
-			: systemConfig.zones.find((zone) => zone.id === command.options.zone);
-	if (!selectedZone) {
-		if (command.options.zone === undefined && systemConfig.zones.length === 0) {
-			throw new Error('No zones configured in the system config.');
-		}
-		throw new Error(
-			command.options.zone === undefined
-				? 'Multiple zones configured; pass --zone <zone-id>.'
-				: `Unknown zone '${command.options.zone}'.`,
-		);
-	}
-	if (selectedZone.gateway.type !== 'worker') {
-		throw new Error(
-			`Zone '${selectedZone.id}' uses gateway type '${selectedZone.gateway.type}'; reset-instructions only supports worker gateways.`,
-		);
-	}
-	const result = await (dependencies.resetWorkerInstructions ?? resetWorkerInstructions)({
-		workerConfigPath: selectedZone.gateway.config,
-		phase: command.options.phase,
-	});
-	io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 function writePathGroup(io: CliIo, label: string, paths: readonly string[]): void {
@@ -267,20 +227,33 @@ export async function runPathsCommandOperation(
 				command.options.sizes,
 			),
 		];
-		return zone.gateway.type === 'worker'
-			? entries
-			: [
-					...entries,
-					buildPathEntry(
-						`zone[${zone.id}].zoneFilesDir`,
-						zone.gateway.zoneFilesDir,
-						command.options.sizes,
-					),
-				];
+		return [
+			...entries,
+			buildPathEntry(
+				`zone[${zone.id}].zoneFilesDir`,
+				zone.gateway.zoneFilesDir,
+				command.options.sizes,
+			),
+		];
 	});
 	const entries = await Promise.all([
 		buildPathEntry('storageRootDir', config.storageRootDir, command.options.sizes),
 		buildPathEntry('cacheDir', config.cacheDir, command.options.sizes),
+		buildPathEntry(
+			'deploymentCacheDir',
+			deploymentCacheDirForSystemConfig(config),
+			command.options.sizes,
+		),
+		buildPathEntry(
+			'generatedDir',
+			deploymentGeneratedDirForStorageRoot(config.storageRootDir),
+			command.options.sizes,
+		),
+		buildPathEntry(
+			'sharedImageCacheDir',
+			sharedImageCacheDirForStorageRoot(config.storageRootDir),
+			command.options.sizes,
+		),
 		buildPathEntry('controllerStateDir', config.controllerStateDir, command.options.sizes),
 		buildPathEntry('controllerRuntimeDir', config.controllerRuntimeDir, command.options.sizes),
 		...zoneEntries,
@@ -289,42 +262,6 @@ export async function runPathsCommandOperation(
 	io.stdout.write(
 		`${entries.map((entry) => `${entry.exists ? '✓' : '✗'} ${entry.label.padEnd(labelWidth)}  ${entry.path}${command.options.sizes ? `  ${formatBytes(entry.sizeBytes)}` : ''}`).join('\n')}\n`,
 	);
-}
-
-export async function runResourcesCommandOperation(
-	io: CliIo,
-	dependencies: CliDependencies,
-	command: ResourcesCommand,
-): Promise<void> {
-	const targetDir = dependencies.getCurrentWorkingDirectory?.() ?? process.cwd();
-	if (command.command === 'resources.init') {
-		const result = await (dependencies.initRepoResources ?? initRepoResources)({ targetDir });
-		if (command.options.json) writeJson(io, result);
-		else {
-			io.stdout.write(`Scaffolded .agent-vm resources in ${targetDir}\n`);
-			writePathGroup(io, 'created', result.created);
-			writePathGroup(io, 'updated', result.updated);
-			writePathGroup(io, 'skipped', result.skipped);
-			io.stdout.write(
-				'Next: edit .agent-vm/repo-resources.ts and .agent-vm/docker-compose.yml, then run agent-vm resources validate.\n',
-			);
-		}
-		return;
-	}
-	if (command.command === 'resources.validate') {
-		const result = await (dependencies.validateRepoResources ?? validateRepoResources)({
-			targetDir,
-		});
-		if (command.options.json) writeJson(io, result);
-		else io.stdout.write('Repo resource contract is valid.\n');
-		return;
-	}
-	const result = await (dependencies.updateRepoResources ?? updateRepoResources)({ targetDir });
-	if (command.options.json) writeJson(io, result);
-	else {
-		io.stdout.write('Updated generated .agent-vm resource support files\n');
-		writePathGroup(io, 'updated', result.updated);
-	}
 }
 
 export async function runBackupCommandOperation(

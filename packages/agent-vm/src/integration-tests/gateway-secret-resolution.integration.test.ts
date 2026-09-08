@@ -1,10 +1,9 @@
-import fs from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import type { GatewayLifecycle } from '@agent-vm/gateway-lifecycle';
 import type {
-	ManagedVm,
 	ManagedVmCreateRequest,
 	ManagedVmFactory,
 	ManagedVmImageCapability,
@@ -12,156 +11,183 @@ import type {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import { createLoadedSystemConfig } from '../config/system-config.js';
 import { createSecretResolverFromSystemConfig } from '../controller/controller-runtime-support.js';
 import {
 	createControllerStateRoot,
 	resolveControllerGatewayStateRoot,
 } from '../controller/durable-state/controller-state-paths.js';
-import { resolveControllerWorkerTaskRuntimeRecordTarget } from '../controller/durable-state/controller-state-record-paths.js';
+import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
+import { loadGatewayLifecycle } from '../gateway/gateway-lifecycle-loader.js';
 import {
 	startGatewayZone,
 	type GatewayManagerDependencies,
 } from '../gateway/gateway-zone-orchestrator.js';
-import {
-	TEST_SSH_SERVER_HOST_KEY,
-	createManagedExecProcessStub,
-} from '../testing/managed-vm-test-helpers.js';
 
-function createFakeManagedVm(): ManagedVm {
-	return {
-		id: 'gateway-secret-resolution-smoke-vm',
-		close: async () => {},
-		configureIngressRoutes: () => {},
-		enableIngress: async () => ({ close: async () => {}, host: '127.0.0.1', port: 18791 }),
-		enableSsh: async () => ({
-			close: async () => {},
-			serverHostKey: TEST_SSH_SERVER_HOST_KEY,
-			command: 'ssh fake',
-			host: '127.0.0.1',
-			identityFile: '/tmp/fake-key',
-			port: 2222,
-			privateKeyPath: '/tmp/fake-key',
-			user: 'root',
-		}),
-		exec: () => createManagedExecProcessStub(),
-		getHostProcessId: () => 12_345,
-		start: async () => {},
-	};
-}
+const capturedManagedVmCreation = new Error('captured managed VM creation');
 
-function createExactVmOwnershipStub(vmId: string): GatewayVmLifecycleAuthority {
+function createExactVmOwnershipStub(options: {
+	readonly bootId: string;
+	readonly controllerEpoch: string;
+	readonly generationId: string;
+	readonly zoneId: string;
+}): GatewayVmLifecycleAuthority {
 	const gatewaySeed = {
-		bootId: 'worker-secret-smoke',
-		controllerEpoch: 'controller-secret-smoke',
-		gatewayEpochId: 'gateway-secret-smoke',
-		generationId: 'generation-secret-smoke',
-		zoneId: 'secret-smoke',
+		...options,
+		gatewayEpochId: 'gateway-secret-resolution',
 	};
-	const gatewayIdentity = { ...gatewaySeed, gatewayVmId: vmId };
+	let gatewayIdentity: GatewayVmLifecycleAuthority['gatewayIdentity'];
 	return {
 		abandonUnattachedGatewaySeedAfter: async (cleanupOwnedResources) => {
 			await cleanupOwnedResources();
 		},
-		attachGatewayVm: () => gatewayIdentity,
-		containPendingCreate: async () => {},
-		destroyLive: async (destroyVm) => await destroyVm(),
-		gatewayIdentity,
+		attachGatewayVm: (gatewayVmId) => {
+			gatewayIdentity = { ...gatewaySeed, gatewayVmId };
+			return gatewayIdentity;
+		},
+		containPendingCreate: async ({ closeLateCreatedVm, pendingCreate }) => {
+			await closeLateCreatedVm(await pendingCreate);
+		},
+		destroyLive: async (destroyGatewayVm) => await destroyGatewayVm(),
+		get gatewayIdentity() {
+			return gatewayIdentity;
+		},
 		gatewaySeed,
 	};
 }
 
-describe('smoke: gateway startup secret resolution', () => {
-	it('batches gateway startup 1Password refs through the production composite resolver', async () => {
-		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gateway-secret-resolution-smoke-'));
-		const stateDir = path.join(tempRoot, 'secret-smoke', 'state');
-		const cacheDir = path.join(tempRoot, 'cache');
-		const zoneRuntimeDir = path.join(tempRoot, 'secret-smoke', 'runtime');
-		const buildConfigPath = path.join(tempRoot, 'gateway-build.json');
-		const gatewayConfigPath = path.join(tempRoot, 'worker-gateway.json');
-		await fs.mkdir(stateDir, { recursive: true });
-		await fs.mkdir(cacheDir, { recursive: true });
-		await fs.mkdir(zoneRuntimeDir, { recursive: true });
-		await fs.writeFile(buildConfigPath, '{}');
-		await fs.writeFile(gatewayConfigPath, '{}');
+describe('managed Hermes secret resolution', () => {
+	it('batches startup 1Password refs through the production resolver and preserves audience boundaries', async () => {
+		const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'gateway-secret-resolution-'));
+		const gatewayConfigPath = path.join(tempRoot, 'config', 'hermes', 'config.yaml');
+		const toolPortalConfigDir = path.join(tempRoot, 'config', 'tool-portal');
+		await mkdir(path.dirname(gatewayConfigPath), { recursive: true });
+		await mkdir(toolPortalConfigDir, { recursive: true });
+		await writeFile(
+			gatewayConfigPath,
+			'plugins:\n  enabled:\n    - agent-vm-tool-portal\n  disabled: []\n',
+			'utf8',
+		);
+		await writeFile(
+			path.join(toolPortalConfigDir, 'mcp.config.jsonc'),
+			JSON.stringify({ providers: {}, schemaVersion: 1 }),
+			'utf8',
+		);
+		await writeFile(
+			path.join(toolPortalConfigDir, 'tool-portal.config.jsonc'),
+			JSON.stringify({
+				agents: { main: { profile: 'default' } },
+				mode: 'managed',
+				profiles: { default: { namespaces: {} } },
+				schemaVersion: 1,
+			}),
+			'utf8',
+		);
 
-		const systemConfig = {
-			schemaVersion: 2,
-			storageRootDir: tempRoot,
-			cacheDir,
-			controllerRuntimeDir: path.join(tempRoot, 'controller-runtime'),
-			controllerStateDir: path.join(tempRoot, 'controller-state'),
-			host: {
-				controllerPort: 18800,
-				projectNamespace: 'agent-vm-tests-a1b2c3d4',
-				secretsProvider: {
-					type: '1password',
-					tokenSource: { type: 'env', envVar: 'OP_SERVICE_ACCOUNT_TOKEN' },
+		const systemConfig = createLoadedSystemConfig(
+			{
+				schemaVersion: 2,
+				host: {
+					controllerPort: 18_800,
+					projectNamespace: 'gateway-secret-resolution',
+					secretsProvider: {
+						type: '1password',
+						tokenSource: { envVar: 'OP_SERVICE_ACCOUNT_TOKEN', type: 'env' },
+					},
 				},
+				imageProfiles: {
+					gateways: {
+						hermes: {
+							buildConfig: path.join(tempRoot, 'hermes-image.json'),
+							type: 'hermes',
+						},
+					},
+					toolVms: {
+						default: {
+							buildConfig: path.join(tempRoot, 'tool-vm-image.json'),
+							type: 'toolVm',
+						},
+					},
+				},
+				storageRootDir: path.join(tempRoot, 'storage'),
+				tcpPool: { basePort: 19_000, size: 4 },
+				toolVmProfiles: {
+					standard: { cpus: 1, imageProfile: 'default', memory: '1G' },
+				},
+				zones: [
+					{
+						agents: [{ id: 'main' }],
+						agentToolVmProfiles: {},
+						defaultToolVmProfile: 'standard',
+						egressHosts: [
+							{ audience: 'gateway', host: 'api.perplexity.ai' },
+							{ audience: 'tool-vm', host: 'api.example.test' },
+						],
+						gateway: {
+							config: gatewayConfigPath,
+							cpus: 1,
+							imageProfile: 'hermes',
+							memory: '1G',
+							port: 18_791,
+							profileSecretProjectionsByAgent: {
+								main: {
+									API_SERVER_KEY: 'API_SERVER_KEY_MAIN',
+									DISCORD_BOT_TOKEN: 'DISCORD_BOT_TOKEN_MAIN',
+									PERPLEXITY_API_KEY: 'PERPLEXITY_API_KEY',
+								},
+							},
+							profilesByAgent: { main: 'main' },
+							type: 'hermes',
+						},
+						id: 'secret-smoke',
+						secrets: {
+							API_SERVER_KEY: {
+								audience: 'gateway',
+								injection: 'env',
+								source: 'config',
+								value: 'test-root-api-server-key',
+							},
+							API_SERVER_KEY_MAIN: {
+								audience: 'gateway',
+								envVar: 'SECRET_SMOKE_ENV_ONLY_TOKEN',
+								injection: 'env',
+								source: 'environment',
+							},
+							PERPLEXITY_API_KEY: {
+								audience: 'gateway',
+								hosts: ['api.perplexity.ai'],
+								injection: 'http-mediation',
+								ref: 'op://agent-vm/secret-smoke-perplexity/credential',
+								source: '1password',
+							},
+							DISCORD_BOT_TOKEN_MAIN: {
+								audience: 'gateway',
+								injection: 'env',
+								ref: 'op://agent-vm/secret-smoke-gateway/password',
+								source: '1password',
+							},
+							TOOL_VM_HTTP_TOKEN: {
+								agentAccess: 'all',
+								audience: 'tool-vm',
+								hosts: ['api.example.test'],
+								injection: 'http-mediation',
+								ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
+								source: '1password',
+							},
+						},
+						toolPortal: {
+							configDir: toolPortalConfigDir,
+							surfaceEligibilityByProfile: { default: {} },
+						},
+					},
+				],
 			},
-			imageProfiles: {
-				gateways: {
-					worker: {
-						type: 'worker',
-						buildConfig: buildConfigPath,
-					},
-				},
-				toolVms: {},
-			},
-			zones: [
-				{
-					id: 'secret-smoke',
-					gateway: {
-						type: 'worker',
-						imageProfile: 'worker',
-						memory: '1G',
-						cpus: 1,
-						port: 18791,
-						config: gatewayConfigPath,
-						stateDir,
-						zoneRuntimeDir,
-					},
-					secrets: {
-						ENV_ONLY_TOKEN: {
-							source: 'environment',
-							envVar: 'SECRET_SMOKE_ENV_ONLY_TOKEN',
-							injection: 'env',
-							audience: 'gateway',
-						},
-						TEST_GATEWAY_SECRET: {
-							source: '1password',
-							ref: 'op://agent-vm/secret-smoke-gateway/password',
-							injection: 'env',
-							audience: 'gateway',
-						},
-						PERPLEXITY_API_KEY: {
-							source: '1password',
-							ref: 'op://agent-vm/secret-smoke-perplexity/credential',
-							injection: 'http-mediation',
-							audience: 'gateway',
-							hosts: ['api.perplexity.ai'],
-						},
-						TOOL_VM_HTTP_TOKEN: {
-							source: '1password',
-							ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
-							injection: 'http-mediation',
-							audience: 'tool-vm',
-							hosts: ['api.example.test'],
-							agentAccess: 'all',
-						},
-					},
-					egressHosts: [{ host: 'api.perplexity.ai', audience: 'gateway' }],
-				},
-			],
-			tcpPool: { basePort: 19000, size: 4 },
-			toolVmProfiles: {},
-			systemConfigPath: path.join(tempRoot, 'system.jsonc'),
-		} satisfies LoadedSystemConfig;
-
+			{ systemConfigPath: path.join(tempRoot, 'config', 'system.jsonc') },
+		);
 		const innerResolve = vi.fn(async () => {
-			throw new Error('inner resolve should not be used during startup batch resolution');
+			throw new Error('single-secret resolution must not be used');
 		});
 		const innerResolveAll = vi.fn(async (refs: Record<string, SecretRef>) =>
 			Object.fromEntries(Object.keys(refs).map((name) => [name, `resolved:${name}`])),
@@ -176,164 +202,145 @@ describe('smoke: gateway startup secret resolution', () => {
 				return innerResolver;
 			},
 		);
-
 		const secretResolver = await createSecretResolverFromSystemConfig(
 			systemConfig,
 			createInnerResolver,
 			async () => 'service-token',
 		);
-		const previousEnvOnlyToken = process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
+		const previousEnvironmentToken = process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
 		process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = 'env-only-token';
-
-		const lifecycle: GatewayLifecycle = {
-			executionModel: 'direct-process',
-			buildProcessSpec: () => ({
-				bootstrapCommand: 'true',
-				startCommand: 'true',
-				healthCheck: { type: 'command', command: 'true' },
-				guestListenPort: 18789,
-				logPath: '/tmp/gateway.log',
-			}),
-			buildVmRequirements: ({ resolvedSecrets }) => ({
-				allowedHosts: [],
-				environment: {
-					ENV_ONLY_TOKEN: resolvedSecrets.ENV_ONLY_TOKEN ?? '',
-					TEST_GATEWAY_SECRET: resolvedSecrets.TEST_GATEWAY_SECRET ?? '',
-				},
-				mediatedSecrets: {
-					PERPLEXITY_API_KEY: {
-						hosts: ['api.perplexity.ai'],
-						value: resolvedSecrets.PERPLEXITY_API_KEY ?? '',
-					},
-				},
-				rootfsMode: 'memory',
-				sessionLabel: 'secret-smoke',
-				tcpHosts: {},
-				mounts: {},
-			}),
-			prepareHostState: async () => {},
-		};
 		let capturedCreateRequest: ManagedVmCreateRequest | undefined;
+		let capturedStartupSecrets: Record<string, string> | undefined;
+		const hermesLifecycle = loadGatewayLifecycle('hermes');
 		const managedVmFactory = {
-			createManagedVm: async (request: ManagedVmCreateRequest) => {
+			createManagedVm: vi.fn(async (request: ManagedVmCreateRequest) => {
 				capturedCreateRequest = request;
-				return createFakeManagedVm();
-			},
+				throw capturedManagedVmCreation;
+			}),
 		} satisfies ManagedVmFactory;
 		const managedVmImages = {
-			prepareImage: async () => ({
+			prepareImage: vi.fn(async () => ({
 				built: false,
-				fingerprint: 'gateway-secret-resolution-smoke',
+				fingerprint: 'gateway-secret-resolution',
 				imageReference: path.join(tempRoot, 'image'),
-			}),
+			})),
 		} satisfies ManagedVmImageCapability;
-		const controllerStateRoot = createControllerStateRoot({
-			controllerStateDirectoryPath: systemConfig.controllerStateDir,
-		});
 		const gatewayStateRoot = resolveControllerGatewayStateRoot({
-			controllerStateRoot,
+			controllerStateRoot: createControllerStateRoot({
+				controllerStateDirectoryPath: systemConfig.controllerStateDir,
+			}),
 			zoneId: 'secret-smoke',
 		});
-		const testTaskId = 'gateway-secret-resolution-integration-task';
-		const runtimeRecordTarget = resolveControllerWorkerTaskRuntimeRecordTarget({
-			gatewayStateRoot,
-			taskId: testTaskId,
-		});
-		const writeGatewayRuntimeRecord = vi.fn<
-			NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
-		>(async () => {});
 
 		try {
-			await startGatewayZone(
+			await expect(
+				startGatewayZone(
+					{
+						controlSession: { controllerEpoch: 'controller-secret-resolution' },
+						createVmOwnership: async ({ controlIdentity, zoneId }) => {
+							if (controlIdentity === undefined) {
+								throw new Error('Expected managed Gateway control identity.');
+							}
+							return createExactVmOwnershipStub({
+								bootId: controlIdentity.bootId,
+								controllerEpoch: 'controller-secret-resolution',
+								generationId: controlIdentity.generationId,
+								zoneId,
+							});
+						},
+						observabilityStartupCheck: 'skip',
+						runtimeRecordTarget: resolveControllerGatewayRecordTargets({ gatewayStateRoot })
+							.managedGatewayRuntimeRecord,
+						secretResolver,
+						systemConfig,
+						zoneId: 'secret-smoke',
+					},
+					{
+						gatewayRuntimeArtifactLimits: {
+							maximumArtifactBytes: 1_024 * 1_024,
+							maximumArtifactCount: 32,
+							maximumLifetimeMs: 5 * 60 * 1_000,
+							maximumTotalBytes: 8 * 1_024 * 1_024,
+						},
+						loadGatewayLifecycle: () =>
+							({
+								...hermesLifecycle,
+								buildVmRequirements: (options) => {
+									capturedStartupSecrets = { ...options.resolvedSecrets };
+									return hermesLifecycle.buildVmRequirements(options);
+								},
+								preflightHostState: async () => {},
+								prepareHostState: async () => {},
+							}) satisfies GatewayLifecycle,
+						managedVmExactProcessTermination: {
+							terminateRecordedHostProcess: async ({ identity }) => ({
+								hostProcessId: identity.hostProcessId,
+								kind: 'already-absent',
+							}),
+						},
+						managedVmFactory,
+						managedVmImages,
+					} satisfies GatewayManagerDependencies,
+				),
+			).rejects.toBe(capturedManagedVmCreation);
+
+			expect(createInnerResolver).toHaveBeenCalledOnce();
+			expect(innerResolve).not.toHaveBeenCalled();
+			expect(innerResolveAll).toHaveBeenCalledOnce();
+			expect(innerResolveAll).toHaveBeenCalledWith({
+				DISCORD_BOT_TOKEN_MAIN: {
+					ref: 'op://agent-vm/secret-smoke-gateway/password',
+					source: '1password',
+				},
+				PERPLEXITY_API_KEY: {
+					ref: 'op://agent-vm/secret-smoke-perplexity/credential',
+					source: '1password',
+				},
+			});
+			expect(capturedStartupSecrets).toEqual({
+				API_SERVER_KEY: 'test-root-api-server-key',
+				API_SERVER_KEY_MAIN: 'env-only-token',
+				DISCORD_BOT_TOKEN_MAIN: 'resolved:DISCORD_BOT_TOKEN_MAIN',
+				PERPLEXITY_API_KEY: 'resolved:PERPLEXITY_API_KEY',
+			});
+			expect(capturedCreateRequest).toBeDefined();
+			expect(capturedCreateRequest?.mediatedSecrets).toMatchObject([
 				{
-					createVmOwnership: async () =>
-						createExactVmOwnershipStub('gateway-secret-resolution-smoke-vm'),
-					runtimeRecordTarget,
+					allowedHosts: ['api.perplexity.ai'],
+					environmentVariable: 'PERPLEXITY_API_KEY',
+					value: 'resolved:PERPLEXITY_API_KEY',
+				},
+			]);
+			expect(capturedCreateRequest?.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
+			expect(Object.values(capturedCreateRequest?.environment ?? {})).not.toContain(
+				'resolved:PERPLEXITY_API_KEY',
+			);
+			expect(capturedCreateRequest?.imageReference).not.toContain('resolved:');
+
+			await expect(
+				resolveZoneSecrets({
+					audience: 'tool-vm',
+					injection: 'http-mediation',
+					secretNames: new Set(['TOOL_VM_HTTP_TOKEN']),
 					secretResolver,
 					systemConfig,
 					zoneId: 'secret-smoke',
+				}),
+			).resolves.toEqual({ TOOL_VM_HTTP_TOKEN: 'resolved:TOOL_VM_HTTP_TOKEN' });
+			expect(innerResolveAll).toHaveBeenCalledTimes(2);
+			expect(innerResolveAll).toHaveBeenLastCalledWith({
+				TOOL_VM_HTTP_TOKEN: {
+					ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
+					source: '1password',
 				},
-				{
-					managedVmExactProcessTermination: {
-						terminateRecordedHostProcess: async ({ identity }) => ({
-							hostProcessId: identity.hostProcessId,
-							kind: 'already-absent',
-						}),
-					},
-					managedVmFactory,
-					managedVmImages,
-					loadGatewayLifecycle: () => lifecycle,
-					readProcessIdentity: async () => ({
-						command: 'qemu-system-aarch64 -m 2G',
-						lstart: 'Fri May 22 10:00:00 2026',
-					}),
-					writeGatewayRuntimeRecord,
-				},
-			);
+			});
 		} finally {
-			if (previousEnvOnlyToken === undefined) {
+			if (previousEnvironmentToken === undefined) {
 				delete process.env.SECRET_SMOKE_ENV_ONLY_TOKEN;
 			} else {
-				process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = previousEnvOnlyToken;
+				process.env.SECRET_SMOKE_ENV_ONLY_TOKEN = previousEnvironmentToken;
 			}
+			await rm(tempRoot, { force: true, recursive: true });
 		}
-
-		expect(createInnerResolver).toHaveBeenCalledTimes(1);
-		expect(innerResolve).not.toHaveBeenCalled();
-		expect(innerResolveAll).toHaveBeenCalledTimes(1);
-		expect(innerResolveAll).toHaveBeenCalledWith({
-			TEST_GATEWAY_SECRET: {
-				source: '1password',
-				ref: 'op://agent-vm/secret-smoke-gateway/password',
-			},
-			PERPLEXITY_API_KEY: {
-				source: '1password',
-				ref: 'op://agent-vm/secret-smoke-perplexity/credential',
-			},
-		});
-		expect(capturedCreateRequest).toBeDefined();
-		expect(capturedCreateRequest?.environment).toMatchObject({
-			ENV_ONLY_TOKEN: 'env-only-token',
-			TEST_GATEWAY_SECRET: 'resolved:TEST_GATEWAY_SECRET',
-		});
-		expect(capturedCreateRequest?.environment).not.toHaveProperty('PERPLEXITY_API_KEY');
-		expect(capturedCreateRequest?.mediatedSecrets).toEqual([
-			{
-				allowedHosts: ['api.perplexity.ai'],
-				environmentVariable: 'PERPLEXITY_API_KEY',
-				value: 'resolved:PERPLEXITY_API_KEY',
-			},
-		]);
-		expect(capturedCreateRequest?.imageReference).not.toContain('resolved:');
-		expect(writeGatewayRuntimeRecord).toHaveBeenCalledTimes(2);
-		for (const [writtenTarget, writtenRecord] of writeGatewayRuntimeRecord.mock.calls) {
-			expect(writtenTarget).toBe(runtimeRecordTarget);
-			expect(writtenRecord).toMatchObject({
-				runtimeKind: 'worker-direct-process',
-				taskId: testTaskId,
-				zoneId: 'secret-smoke',
-			});
-		}
-
-		await expect(
-			resolveZoneSecrets({
-				audience: 'tool-vm',
-				injection: 'http-mediation',
-				secretNames: new Set(['TOOL_VM_HTTP_TOKEN']),
-				secretResolver,
-				systemConfig,
-				zoneId: 'secret-smoke',
-			}),
-		).resolves.toEqual({
-			TOOL_VM_HTTP_TOKEN: 'resolved:TOOL_VM_HTTP_TOKEN',
-		});
-		expect(innerResolve).not.toHaveBeenCalled();
-		expect(innerResolveAll).toHaveBeenCalledTimes(2);
-		expect(innerResolveAll).toHaveBeenLastCalledWith({
-			TOOL_VM_HTTP_TOKEN: {
-				source: '1password',
-				ref: 'op://agent-vm/secret-smoke-tool-vm/credential',
-			},
-		});
 	});
 });

@@ -12,6 +12,7 @@ import type {
 	ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import {
+	configuredCliPolicyFromSuggestions,
 	openConfiguredCliInputSchema,
 	openOAuthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
@@ -208,13 +209,16 @@ export function capabilityDiscoveryMetadata(props: {
 			},
 		};
 	}
-	const hasInvocationApprovalRules = operation.calls.requiresApproval.length > 0;
+	const operationPolicy =
+		'suggestCalls' in operation ? configuredCliPolicyFromSuggestions(operation) : operation;
+	const hasInvocationApprovalRules = operationPolicy.calls.requiresApproval.length > 0;
+	const authorization = 'authorization' in operation ? operation.authorization : undefined;
 	const oauthRequirement = ((): CapabilityDiscoveryMetadata['oauthRequirement'] | undefined => {
-		if (operation.authorization?.kind !== 'oauth_account_profile') return undefined;
-		const firstRequirement = operation.authorization.rules[0]?.requirement;
+		if (authorization?.kind !== 'oauth_account_profile') return undefined;
+		const firstRequirement = authorization.rules[0]?.requirement;
 		if (
 			firstRequirement?.kind === 'oauth' &&
-			operation.authorization.rules.every(
+			authorization.rules.every(
 				(rule) =>
 					rule.requirement.kind === 'oauth' &&
 					rule.requirement.applicationId === firstRequirement.applicationId &&
@@ -279,18 +283,21 @@ export function callPolicyDecision(props: {
 	if (policy.backend.kind === 'controller_execution') {
 		const operation = policy.backend.operations[props.call.name];
 		if (operation?.kind === 'configured_cli') {
+			const operationPolicy =
+				'suggestCalls' in operation ? configuredCliPolicyFromSuggestions(operation) : operation;
+			const authorization = 'authorization' in operation ? operation.authorization : undefined;
 			const inputSchema =
-				operation.authorization?.kind === 'oauth_account_profile'
-					? operation.timeout.kind === 'quick'
+				authorization?.kind === 'oauth_account_profile'
+					? operationPolicy.timeout.kind === 'quick'
 						? quickOAuthConfiguredCliInputSchema
 						: openOAuthConfiguredCliInputSchema
-					: operation.timeout.kind === 'quick'
+					: operationPolicy.timeout.kind === 'quick'
 						? quickConfiguredCliInputSchema
 						: openConfiguredCliInputSchema;
 			const parsedInput = inputSchema.safeParse(props.call.arguments);
 			if (!parsedInput.success) return { kind: 'denied' };
 			const evaluation = evaluateCliAllowanceInvocation({
-				allowance: operation,
+				allowance: operationPolicy,
 				baseline,
 				input: parsedInput.data,
 			});

@@ -53,7 +53,7 @@ function deriveManagedAgentProjectionInput(props: {
 		.filter(([namespaceName]) =>
 			profileSurfaceEligibility[namespaceName]?.includes('protected_uds'),
 		)
-		.map(([namespace, namespacePolicy]) => ({ namespace, ...namespacePolicy.discovery }))
+		.map(([namespace, namespacePolicy]) => Object.assign({ namespace }, namespacePolicy.discovery))
 		.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
 	return {
 		...props.frameworkAgentProjection,

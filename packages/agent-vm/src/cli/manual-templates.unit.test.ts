@@ -43,7 +43,7 @@ describe('manual templates', () => {
 		expect(content).not.toMatch(/openclaw/iu);
 	});
 
-	it('generates the Hermes and Worker manual topology without removed pages', () => {
+	it('generates the Hermes-only manual topology without removed pages', () => {
 		const files = buildTestManualFiles();
 
 		expect(files.map((file) => file.relativePath)).toEqual([
@@ -56,7 +56,6 @@ describe('manual templates', () => {
 			'docs/manual/observability.md',
 			'docs/manual/gateway-ingress.md',
 			'docs/manual/mcp-portal.md',
-			'docs/manual/agent-worker.md',
 			'docs/manual/secrets.md',
 			'docs/manual/tool-access.md',
 			'docs/manual/channels.md',
@@ -77,6 +76,16 @@ describe('manual templates', () => {
 		const hermes = findManual(files, 'docs/manual/hermes.md');
 		const layout = findManual(files, 'docs/manual/layout.md');
 		const imageVersioning = findManual(files, 'docs/manual/image-versioning.md');
+		expect(imageVersioning).toContain(
+			'Cache cleanup also requires Python 3 with symlink-resistant directory operations.',
+		);
+		expect(imageVersioning).toContain(
+			'anchors deletion to opened directories without following ancestor symlinks',
+		);
+		expect(imageVersioning).toContain('New images are checksum-verified before publication.');
+		expect(imageVersioning).toContain(
+			'Reuse validates manifest and file structure without hashing large images again',
+		);
 		const ingress = findManual(files, 'docs/manual/gateway-ingress.md');
 		const secrets = findManual(files, 'docs/manual/secrets.md');
 		const channels = findManual(files, 'docs/manual/channels.md');
@@ -110,7 +119,11 @@ describe('manual templates', () => {
 		);
 		expect(imageVersioning).toContain('immutable upstream distribution pin');
 		expect(imageVersioning).toContain('packageOverrides.npm');
-		expect(imageVersioning).toContain('Do not edit cacheDir/generated-dockerfiles');
+		expect(imageVersioning).toContain(
+			'Do not edit generated Docker build contexts under cacheDir/deployments',
+		);
+		expect(imageVersioning).toContain('cacheDir/vm-images/<fingerprint>');
+		expect(imageVersioning).toContain('storageRootDir/generated/image-selections');
 		expect(imageVersioning).not.toContain('packageOverrides.pnpm');
 
 		expect(ingress).toContain('zones[].gateway.port');
@@ -156,7 +169,7 @@ describe('manual templates', () => {
 		expect(perAgent).toContain('Tool VM Git SSH is read-only');
 	});
 
-	it('preserves generic Tool Portal, Tool VM, controller, storage, and Worker guidance', () => {
+	it('preserves Tool Portal, Tool VM, controller, and storage guidance', () => {
 		const files = buildTestManualFiles();
 		const leases = findManual(files, 'docs/manual/tool-vm-leases.md');
 		const operations = findManual(files, 'docs/manual/operations.md');
@@ -167,7 +180,6 @@ describe('manual templates', () => {
 		expect(portal).toContain('AGENT_VM_TOOL_PORTAL_SOCKET');
 		expect(portal).toContain('The endpoint ends with the invocation');
 		const runtimePaths = findManual(files, 'docs/manual/runtime-paths.md');
-		const worker = findManual(files, 'docs/manual/agent-worker.md');
 		const toolAccess = findManual(files, 'docs/manual/tool-access.md');
 
 		expect(leases).toContain('one compatible Tool VM per zone and Agent VM agent id');
@@ -228,12 +240,18 @@ describe('manual templates', () => {
 		expect(portal).toContain('calls.requiresApproval requires zone approvalAccess');
 		expect(portal).toContain('Static validation and Gateway preflight fail closed');
 		expect(portal).toContain('Hermes presents managed approvals natively');
-		expect(portal).toContain('controller_host or a reusable credentialed ephemeral_managed_vm');
+		expect(portal).toContain(
+			'controller_host, a reusable credentialed ephemeral_managed_vm, or the current leased tool_vm',
+		);
+		expect(portal).toContain('suggestCalls, suggestCommands, suggestDeniedPatterns');
+		expect(portal).toContain('govern only tool_portal_call');
 		expect(portal).toContain('it does not mean one VM per RPC');
 		expect(portal).toContain('one current credentialed VM per zone and authenticated agent');
 		expect(portal).toContain('targets do not declare runtime ids');
 		expect(portal).toContain('file_binding or http_mediation credentialProjection');
-		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
+		expect(portal).toContain('current Tool VM strict-SSH lease');
+		expect(portal).toContain('without a controller execution RPC');
+		expect(portal).toContain('arm their controller-issued reservation');
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(
 			'Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider',
@@ -248,16 +266,12 @@ describe('manual templates', () => {
 		expect(runtimePaths).toContain('stateDir/profiles/<profileName>');
 		expect(runtimePaths).toContain('Controller restart adopts no VM');
 		expect(runtimePaths).toContain('HTTP health and telemetry remain diagnostic only');
-		expect(runtimePaths).toContain('worker repo edits live under /work/repos');
-
-		expect(worker).toContain('plan, work, review, and wrapup');
-		expect(worker).toContain('/work/repos/<repoId>');
 		expect(toolAccess).toContain('agentToolVmProfiles');
 		expect(toolAccess).toContain('Tool Portal capability policy');
 		expect(toolAccess).toContain('Per-zone Tool VM images');
 	});
 
-	it('keeps the only OpenClaw guidance in the ordered predecessor shutdown boundary', () => {
+	it('keeps Worker retirement guidance in the ordered predecessor shutdown boundary', () => {
 		const files = buildTestManualFiles();
 		const operations = findManual(files, 'docs/manual/operations.md');
 		const nonOperationsContent = files
@@ -265,15 +279,15 @@ describe('manual templates', () => {
 			.map((file) => file.content)
 			.join('\n');
 
-		expect(nonOperationsContent).not.toMatch(/openclaw/iu);
-		expect(operations).toContain('OpenClaw predecessor shutdown boundary');
-		expect(operations).toContain('use the still-installed pre-cutover release');
+		expect(nonOperationsContent).not.toMatch(/worker/iu);
+		expect(operations).toContain('Worker predecessor shutdown boundary');
+		expect(operations).toContain('use the old binary and old config');
 		expect(operations).toContain(
-			'Prove its Tool VM lease records and Gateway runtime record are cleared and the configured ingress is no longer owned',
+			'Prove every Worker VM and runtime record is absent, leases are released, and configured ingress is no longer owned',
 		);
 		expect(operations).toContain('Only then replace the package train');
 		expect(operations).toContain(
-			'The new release does not parse, migrate, or delete predecessor state',
+			'the new release does not parse, migrate, adopt, or delete Worker state',
 		);
 	});
 

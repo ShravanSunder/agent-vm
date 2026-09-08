@@ -29,6 +29,7 @@ import {
 	managedToolVmLoginProfileFileName,
 } from '../build/managed-image-tool-portal-guide.js';
 import {
+	configuredImageSelectionRecordPath,
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 	type PreparedManagedVmImage,
@@ -36,10 +37,13 @@ import {
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
 import type { ImageArchitecture } from '../cli/init-command-schemas.js';
-import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
-import { loadSystemConfig, type LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type {
 	ControllerRuntime,
 	ControllerRuntimeDependencies,
@@ -111,13 +115,6 @@ export async function startE2eGatewayZoneForController(
 	});
 }
 
-interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
-	readonly gateway: Extract<
-		LoadedSystemConfig['zones'][number]['gateway'],
-		{ readonly type: 'worker' }
-	>;
-}
-
 interface LocalNpmPackageTarball {
 	readonly packageDirectory: string;
 	readonly packageName: string;
@@ -150,6 +147,7 @@ interface E2eImageTarget {
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	readonly name: string;
 	readonly recipeFingerprint: string;
+	readonly selectionRecordPath: string;
 	readonly source?: unknown;
 }
 
@@ -177,11 +175,11 @@ const execFileAsync = promisify(execFile);
 const e2eTempRootPrefixes = [
 	'agent-vm-gateway-e2e-project-',
 	'agent-vm-e2e-harness-',
+	'agent-vm-hermes-e2e-harness-',
 	'hermes-framework-observability-e2e-',
 	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
 	'hermes-tool-portal-orientation-e2e-',
-	'worker-loop-e2e-',
 ] as const;
 
 export function resolveE2eCacheRoot(): string {
@@ -215,14 +213,6 @@ export interface E2eHarnessCloseOptions {
 
 export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
 	readonly env?: Partial<Record<'AGENT_VM_E2E_CLEAN_IMAGES', string>>;
-}
-
-export interface WorkerE2eProject {
-	readonly controllerPort: number;
-	readonly gatewayPort: number;
-	readonly systemConfig: LoadedSystemConfig;
-	readonly tempRoot: string;
-	readonly zone: WorkerE2eZone;
 }
 
 export interface GatewayE2eImageProject {
@@ -324,31 +314,6 @@ export async function canRunManagedVmE2e(
 		installedZigVersion !== undefined &&
 		isZigVersionAtLeast(installedZigVersion, requiredZigVersion)
 	);
-}
-
-export async function shouldRunWorkerGatewayE2e(options: {
-	readonly architecture: ImageArchitecture;
-	readonly commandExists?: (command: string) => boolean;
-	readonly env?: Partial<Record<'AGENT_VM_WORKER_E2E' | 'AGENT_VM_TEST_OPENAI_API_KEY', string>>;
-	readonly resolveRequiredZigVersion?: () => Promise<string>;
-	readonly resolveZigVersion?: () => Promise<string | undefined>;
-}): Promise<boolean> {
-	const env = options.env ?? process.env;
-	if (
-		env.AGENT_VM_WORKER_E2E !== '1' ||
-		typeof env.AGENT_VM_TEST_OPENAI_API_KEY !== 'string' ||
-		env.AGENT_VM_TEST_OPENAI_API_KEY.length === 0
-	) {
-		return false;
-	}
-	return await canRunManagedVmE2e({
-		architecture: options.architecture,
-		...(options.commandExists ? { commandExists: options.commandExists } : {}),
-		...(options.resolveRequiredZigVersion
-			? { resolveRequiredZigVersion: options.resolveRequiredZigVersion }
-			: {}),
-		...(options.resolveZigVersion ? { resolveZigVersion: options.resolveZigVersion } : {}),
-	});
 }
 
 export async function findAvailablePort(): Promise<number> {
@@ -612,11 +577,7 @@ async function collectE2eImageTargets(
 		const managedGatewayBoot = managedGatewayBootProjectionForE2eTarget(family, profile);
 		const target: E2eImageTarget = {
 			buildConfigPath: profile.buildConfig,
-			cacheDirectory: path.join(
-				project.systemConfig.cacheDir,
-				family === 'gateway' ? 'gateway-images' : 'tool-vm-images',
-				profileName,
-			),
+			cacheDirectory: sharedImageCacheDirForSystemConfig(project.systemConfig),
 			e2eManifestEligible:
 				profile.source === undefined ||
 				(selectedFamilies.size === 1 && selectedFamilies.has(family)),
@@ -628,6 +589,13 @@ async function collectE2eImageTargets(
 				...(profile.dockerfile === undefined ? {} : { dockerfile: profile.dockerfile }),
 				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
 				...(profile.source === undefined ? {} : { source: profile.source }),
+			}),
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(
+					project.systemConfig.storageRootDir,
+				),
+				family,
+				profileName,
 			}),
 		};
 		if (profile.dockerfile !== undefined) {
@@ -763,12 +731,13 @@ async function materializePreparedE2eImagesFromManifest(
 			}
 			await writePreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
-				cacheDir: target.cacheDirectory,
 				fingerprint: entry.fingerprint,
 				...(entry.fingerprintInput === undefined
 					? {}
 					: { fingerprintInput: entry.fingerprintInput }),
 				imagePath: entry.imagePath,
+				selectionRecordPath: target.selectionRecordPath,
+				sharedImageCacheDir: target.cacheDirectory,
 				...(entry.managedGatewayBoot === undefined
 					? {}
 					: { managedGatewayBoot: entry.managedGatewayBoot }),
@@ -793,7 +762,9 @@ async function recordPreparedE2eImages(
 			}
 			const preparedImage: PreparedManagedVmImage | undefined = await readPreparedManagedVmImage({
 				buildConfigPath: target.buildConfigPath,
-				cacheDir: target.cacheDirectory,
+				expectedManagedGatewayBoot: target.managedGatewayBoot,
+				selectionRecordPath: target.selectionRecordPath,
+				sharedImageCacheDir: target.cacheDirectory,
 			});
 			return { preparedImage, target };
 		}),
@@ -843,7 +814,6 @@ export async function findReusableGatewayImageDirectory(options: {
 	readonly imageProfileName?: string;
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<string | null> {
-	const imageProfileName = options.imageProfileName ?? 'worker';
 	const explicitE2eCacheRoot = process.env.AGENT_VM_E2E_CACHE_DIR;
 	if (!explicitE2eCacheRoot) {
 		return null;
@@ -867,8 +837,8 @@ export async function findReusableGatewayImageDirectory(options: {
 			continue;
 		}
 		const candidateImageDirectories = [
-			path.join(e2eRunDirectory, 'gateway-images', imageProfileName, requiredFingerprint),
-			path.join(e2eRunDirectory, 'cache', 'gateway-images', imageProfileName, requiredFingerprint),
+			path.join(e2eRunDirectory, 'vm-images', requiredFingerprint),
+			path.join(e2eRunDirectory, 'cache', 'vm-images', requiredFingerprint),
 		];
 		for (const candidateImageDir of candidateImageDirectories) {
 			// oxlint-disable-next-line eslint/no-await-in-loop -- intentionally searches cache candidates
@@ -888,7 +858,7 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	readonly imageProfileName?: string;
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<void> {
-	const imageProfileName = options.imageProfileName ?? 'worker';
+	const imageProfileName = options.imageProfileName ?? 'hermes';
 	const reusableImageDir = await findReusableGatewayImageDirectory({
 		currentProjectRoot: options.currentProjectRoot,
 		gatewayBuildConfigPath: options.gatewayBuildConfigPath,
@@ -907,12 +877,7 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 			? {}
 			: { managedGatewayBoot: options.managedGatewayBoot },
 	);
-	const activeImageDir = path.join(
-		options.activeCacheDir,
-		'gateway-images',
-		imageProfileName,
-		requiredFingerprint,
-	);
+	const activeImageDir = path.join(options.activeCacheDir, 'vm-images', requiredFingerprint);
 	if (activeImageDir === reusableImageDir) {
 		return;
 	}
@@ -928,6 +893,7 @@ export async function prepareGatewayE2eProjectImages(
 	const imageFamilies = options.imageFamilies ?? ['gateway', 'toolVm'];
 	if (process.env.AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE === '1' && imageFamilies.length > 1) {
 		for (const imageFamily of imageFamilies) {
+			// oxlint-disable-next-line no-await-in-loop -- each family records into one shared manifest before the next family reads it.
 			await prepareGatewayE2eProjectImages({
 				imageFamilies: [imageFamily],
 				project: options.project,
@@ -1039,14 +1005,6 @@ function applySmokeEnvironment(secrets: E2eHarnessSecretMap): () => void {
 			}
 		}
 	};
-}
-
-function getWorkerE2eZone(systemConfig: LoadedSystemConfig): WorkerE2eProject['zone'] {
-	const zone = systemConfig.zones[0];
-	if (!zone || zone.gateway.type !== 'worker') {
-		throw new Error('Expected smoke system config to contain a Worker Gateway zone.');
-	}
-	return { ...zone, gateway: zone.gateway };
 }
 
 function packageFileEntryIsLiteral(fileEntry: string): boolean {
@@ -1883,79 +1841,6 @@ function throwIfE2eHarnessCleanupFailed(errors: readonly unknown[]): void {
 		throw firstError;
 	}
 	throw new AggregateError(errors, 'Smoke harness cleanup failed.');
-}
-
-export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
-	return await packLocalPackageTarball({
-		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
-		packageName: 'agent-vm-worker',
-		repoRoot,
-	});
-}
-
-export interface LocalWorkerPackageTarball {
-	readonly packageName: string;
-	readonly sourcePath: string;
-}
-
-export async function prepareLocalWorkerPackageSetForGatewayImage(
-	repoRoot: string,
-): Promise<readonly LocalWorkerPackageTarball[]> {
-	const packageNames = [
-		'agent-vm-worker',
-		'control-protocol-contracts',
-		'gateway-lifecycle',
-		'gondolin-vm-adapter',
-		'managed-vm',
-		'secret-management',
-		'worker-control-contracts',
-	] as const;
-	return await Promise.all(
-		packageNames.map(async (packageName) => ({
-			packageName,
-			sourcePath: await packLocalAgentVmPackageTarball({
-				packageName,
-				repoRoot,
-			}),
-		})),
-	);
-}
-
-export async function scaffoldWorkerE2eProject(options: {
-	readonly architecture: ImageArchitecture;
-	readonly prefix: string;
-	readonly zoneId: string;
-}): Promise<WorkerE2eProject> {
-	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
-	const controllerPort = await findAvailablePort();
-	const gatewayPort = await findAvailablePort();
-	await scaffoldAgentVmProject({
-		architecture: options.architecture,
-		gatewayType: 'worker',
-		secretsProvider: '1password',
-		targetDir: tempRoot,
-		zoneId: options.zoneId,
-	});
-	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
-	const systemConfig: LoadedSystemConfig = {
-		...loadedSystemConfig,
-		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
-	};
-	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'agent-vm-tests-worker';
-	systemConfig.host.secretsProvider = {
-		type: '1password',
-		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
-	};
-	const zone = getWorkerE2eZone(systemConfig);
-	zone.gateway.port = gatewayPort;
-	return {
-		controllerPort,
-		gatewayPort,
-		systemConfig,
-		tempRoot,
-		zone,
-	};
 }
 
 export async function startE2eControllerRuntime(
