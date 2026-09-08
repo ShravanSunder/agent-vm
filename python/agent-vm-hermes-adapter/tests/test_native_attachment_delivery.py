@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import typing as t
 
 import pytest
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
@@ -100,7 +99,12 @@ def test_native_sender_is_bound_to_the_captured_profile_and_never_retries(
                 result = {
                     "kind": "staged",
                     "stagingId": "11111111-1111-4111-8111-111111111111",
-                    "path": "/home/hermes/.cache/agent-vm-native/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/portal-native-sun-11111111-1111-4111-8111-111111111111/report.bin",
+                    "path": (
+                        "/home/hermes/.cache/agent-vm-native/"
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/"
+                        "portal-native-sun-11111111-1111-4111-8111-111111111111/report.bin"
+                    ),
                     "byteLength": 4,
                     "sha256": hashlib.sha256(b"test").hexdigest(),
                 }

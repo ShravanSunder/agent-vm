@@ -1,4 +1,4 @@
-"""Explicit native file delivery; no text fallback, caller-selected recipient, or automatic resend."""
+"""Native file delivery without text fallback, caller-selected recipients, or automatic resend."""
 
 import asyncio
 import hashlib

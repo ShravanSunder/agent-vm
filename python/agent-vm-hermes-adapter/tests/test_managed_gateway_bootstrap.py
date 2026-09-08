@@ -10,9 +10,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, Mock, call, patch
 
-import agent_vm_hermes_adapter.managed_gateway_bootstrap as managed_gateway_bootstrap
 import hermes_constants
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from gateway import run as hermes_gateway_run
+from tools import file_tools as hermes_file_tools
+from tools.environments import local as local_environment_module
+from tools.environments import ssh as ssh_environment_module
+from tools.process_registry import ProcessSession
+from tools.process_registry import process_registry as hermes_process_registry
+
+import agent_vm_hermes_adapter.managed_gateway_bootstrap as managed_gateway_bootstrap
 from agent_vm_hermes_adapter.managed_gateway_bootstrap import (
     HermesManagedEnvironmentHooks,
     load_managed_adapter_material,
@@ -35,12 +42,6 @@ from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     register as register_managed_tool_portal_plugin,
 )
 from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
-from gateway import run as hermes_gateway_run
-from tools import file_tools as hermes_file_tools
-from tools.environments import local as local_environment_module
-from tools.environments import ssh as ssh_environment_module
-from tools.process_registry import ProcessSession
-from tools.process_registry import process_registry as hermes_process_registry
 
 PROJECTION_COHORT_DIGEST = (
     "projection-cohort:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
