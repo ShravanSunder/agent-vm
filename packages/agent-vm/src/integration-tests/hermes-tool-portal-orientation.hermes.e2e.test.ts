@@ -64,17 +64,20 @@ const controllerExecutionPrompt = 'call-controller-host-probe-through-tool-porta
 const controllerExecutionSuccessMarker = 'hermes-controller-execution-succeeded';
 const oauthListPrompt = 'list-google-authorizations-through-tool-portal';
 const oauthListSuccessMarker = 'hermes-oauth-list-action-reached-controller';
+const oauthDiscoveryPrompt = 'discover-google-authorization-tools-through-list';
+const oauthDiscoverySuccessMarker = 'hermes-oauth-lifecycle-tools-discovered';
 const oauthDisconnectPrompt = 'disconnect-google-authorization-requires-approval';
 const oauthDisconnectSuccessMarker = 'hermes-oauth-disconnect-approval-required';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker =
-	'Tool Portal exposes profile-authorized capabilities through four operations:';
+	'Tool Portal exposes profile-authorized capabilities and operation files:';
 const operationNames = [
 	'tool_portal_list',
 	'tool_portal_search',
 	'tool_portal_describe',
 	'tool_portal_call',
+	'tool_portal_file',
 ] as const;
 
 interface ProviderMessage {
@@ -276,6 +279,30 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 		const latestToolResult = messagesAfterLatestUser(observation).find(
 			({ role }) => role === 'tool',
 		)?.content;
+		if (latestUserContent === oauthDiscoveryPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							requests: [{ id: 'oauth-discovery', namespaces: [oauthAuthorizationNamespace] }],
+						},
+						name: 'tool_portal_list',
+					},
+					id: 'hermes-oauth-discovery-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const lifecycleToolsDiscovered =
+				/"status"\s*:\s*"ok"/u.test(latestToolResult) &&
+				/"name"\s*:\s*"list"/u.test(latestToolResult) &&
+				/"name"\s*:\s*"disconnect"/u.test(latestToolResult);
+			writeServerSentCompletion(
+				response,
+				lifecycleToolsDiscovered ? oauthDiscoverySuccessMarker : 'hermes-oauth-discovery-failed',
+			);
+			return;
+		}
 		if (latestUserContent === oauthListPrompt) {
 			if (latestToolResult === undefined) {
 				writeServerSentToolCall(response, {
@@ -935,8 +962,11 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			orientedUserContent,
 			oauthAuthorizationNamespace,
 		);
-		expect(oauthAuthorizationNamespaceBlock).toContain('  list');
-		expect(oauthAuthorizationNamespaceBlock).toContain('  disconnect');
+		// Orientation is a bounded prefix, not the full capability inventory.
+		expect(oauthAuthorizationNamespaceBlock).toContain('Tools:');
+		expect(oauthAuthorizationNamespaceBlock).toContain(
+			'Additional tools are available through list/search.',
+		);
 		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(availableNamespaceSummary)}`);
 		expect(orientedUserContent).toContain(
 			`Summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
@@ -981,6 +1011,12 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			prompt: controllerExecutionPrompt,
 		});
 		expect(controllerExecutionResponse).toContain(controllerExecutionSuccessMarker);
+
+		const oauthDiscoveryResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: oauthDiscoveryPrompt,
+		});
+		expect(oauthDiscoveryResponse).toContain(oauthDiscoverySuccessMarker);
 
 		const oauthListResponse = await requestHermesTurn({
 			gatewayPort: project.gatewayPort,
