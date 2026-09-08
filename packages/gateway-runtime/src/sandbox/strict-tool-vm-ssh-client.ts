@@ -62,8 +62,10 @@ export type StrictToolVmSshProcessTerminalEvent =
 
 export interface StrictToolVmSshProcessChannel {
 	readonly endInput: () => void;
+	readonly pauseOutput: (channel: 'stderr' | 'stdout') => void;
 	readonly requestCancellation: () => void;
 	readonly resizeTerminal: (size: StrictToolVmSshTerminalSize) => void;
+	readonly resumeOutput: (channel: 'stderr' | 'stdout') => void;
 	readonly write: (bytes: Uint8Array) => Promise<void>;
 }
 
@@ -87,6 +89,7 @@ export interface StrictToolVmSshDirectShellRequest {
 export interface StrictToolVmSshOpenProcessChannelRequest {
 	readonly argv: readonly string[];
 	readonly cwd: string;
+	readonly ioProfile?: 'portal-relay' | 'standard';
 	readonly onStderr: (bytes: Uint8Array) => void;
 	readonly onStdout: (bytes: Uint8Array) => void;
 	readonly onTerminal: (event: StrictToolVmSshProcessTerminalEvent) => void;
@@ -94,6 +97,7 @@ export interface StrictToolVmSshOpenProcessChannelRequest {
 }
 
 export interface StrictToolVmSshOpenShellProcessChannelRequest extends StrictToolVmSshDirectShellRequest {
+	readonly ioProfile?: 'portal-relay' | 'standard';
 	readonly onStderr: (bytes: Uint8Array) => void;
 	readonly onStdout: (bytes: Uint8Array) => void;
 	readonly onTerminal: (event: StrictToolVmSshProcessTerminalEvent) => void;
@@ -670,6 +674,7 @@ export function createStrictToolVmSshClient(
 		readonly onStderr: (bytes: Uint8Array) => void;
 		readonly onStdout: (bytes: Uint8Array) => void;
 		readonly onTerminal: (event: StrictToolVmSshProcessTerminalEvent) => void;
+		readonly ioProfile: 'portal-relay' | 'standard';
 		readonly signal?: AbortSignal;
 		readonly terminalAllocated: boolean;
 	}): Promise<StrictToolVmSshProcessChannel> => {
@@ -778,7 +783,10 @@ export function createStrictToolVmSshClient(
 					stdoutBytes = deliverBoundedOutput({
 						bytes: chunk,
 						currentBytes: stdoutBytes,
-						maximumBytes: options.limits.maxStdoutBytes,
+						maximumBytes:
+							request.ioProfile === 'portal-relay'
+								? 64 * 1_024 * 1_024
+								: options.limits.maxStdoutBytes,
 						onOutput: request.onStdout,
 					});
 				});
@@ -786,7 +794,10 @@ export function createStrictToolVmSshClient(
 					stderrBytes = deliverBoundedOutput({
 						bytes: chunk,
 						currentBytes: stderrBytes,
-						maximumBytes: options.limits.maxStderrBytes,
+						maximumBytes:
+							request.ioProfile === 'portal-relay'
+								? 64 * 1_024 * 1_024
+								: options.limits.maxStderrBytes,
 						onOutput: request.onStderr,
 					});
 				});
@@ -811,6 +822,10 @@ export function createStrictToolVmSshClient(
 						inputEnded = true;
 						openedChannel.end();
 					},
+					pauseOutput: (channel): void => {
+						if (terminalObserved) return;
+						(channel === 'stdout' ? openedChannel : openedChannel.stderr).pause();
+					},
 					requestCancellation: requestChannelCancellation,
 					resizeTerminal: (size): void => {
 						if (!request.terminalAllocated || terminalObserved) {
@@ -818,6 +833,10 @@ export function createStrictToolVmSshClient(
 						}
 						requireTerminalSize(size);
 						openedChannel.setWindow(size.rows, size.columns, 0, 0);
+					},
+					resumeOutput: (channel): void => {
+						if (terminalObserved) return;
+						(channel === 'stdout' ? openedChannel : openedChannel.stderr).resume();
 					},
 					write: async (bytes): Promise<void> => {
 						if (terminalObserved) {
@@ -829,7 +848,9 @@ export function createStrictToolVmSshClient(
 						if (cancellationRequested) {
 							throw new Error('Strict SSH process cancellation was requested.');
 						}
-						if (bytes.byteLength > options.limits.maxWriteBytes) {
+						const maximumWriteBytes =
+							request.ioProfile === 'portal-relay' ? 64 * 1_024 : options.limits.maxWriteBytes;
+						if (bytes.byteLength > maximumWriteBytes) {
 							throw new Error('Strict SSH process write byte limit exceeded.');
 						}
 						if (openedChannel.write(Buffer.from(bytes))) return;
@@ -867,6 +888,7 @@ export function createStrictToolVmSshClient(
 		return await openCommandProcessChannel({
 			command: `cd -- ${quotePosixShellToken(pathResolution.guestPath)} && exec -- ${encodePosixShellArgv(request.argv)}`,
 			execOptions: {},
+			ioProfile: request.ioProfile ?? 'standard',
 			onStderr: request.onStderr,
 			onStdout: request.onStdout,
 			onTerminal: request.onTerminal,
@@ -889,6 +911,7 @@ export function createStrictToolVmSshClient(
 			return await openCommandProcessChannel({
 				command: directShellExecCommand(request),
 				execOptions,
+				ioProfile: request.ioProfile ?? 'standard',
 				onStderr: request.onStderr,
 				onStdout: request.onStdout,
 				onTerminal: request.onTerminal,

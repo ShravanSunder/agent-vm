@@ -115,17 +115,18 @@ export async function executeConfiguredCliOnControllerHost(props: {
 
 	return await new Promise<ConfiguredCliHostExecutionResult>((resolve, reject) => {
 		let settled = false;
-		const settleFailure = (error: Error): void => {
-			if (settled) return;
-			settled = true;
+		let spawnObserved = false;
+		let requestedFailure: Error | undefined;
+		const requestFailure = (error: Error): void => {
+			if (settled || requestedFailure !== undefined) return;
+			requestedFailure = error;
 			if (commandTimer !== undefined) clearTimeout(commandTimer);
 			props.signal?.removeEventListener('abort', abortExecution);
 			child.kill('SIGKILL');
-			reject(error);
 		};
 		const abortExecution = (): void => {
 			const reason = props.signal?.reason;
-			settleFailure(
+			requestFailure(
 				reason instanceof ConfiguredControllerExecutionError
 					? reason
 					: new ConfiguredControllerExecutionError(
@@ -134,28 +135,38 @@ export async function executeConfiguredCliOnControllerHost(props: {
 						),
 			);
 		};
-		props.signal?.addEventListener('abort', abortExecution, { once: true });
-		if (props.signal?.aborted === true) {
-			abortExecution();
-			return;
-		}
-
-		child.once('error', () =>
-			settleFailure(
-				new ConfiguredControllerExecutionError(
-					'not_dispatched',
-					'Configured CLI process could not be started.',
-				),
-			),
-		);
+		child.once('error', () => {
+			if (settled) return;
+			if (spawnObserved) {
+				requestFailure(
+					requestedFailure ??
+						new ConfiguredControllerExecutionError(
+							'execution_failed',
+							'Configured CLI process failed after starting.',
+						),
+				);
+				return;
+			}
+			settled = true;
+			if (commandTimer !== undefined) clearTimeout(commandTimer);
+			props.signal?.removeEventListener('abort', abortExecution);
+			reject(
+				requestedFailure ??
+					new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Configured CLI process could not be started.',
+					),
+			);
+		});
 		child.once('spawn', () => {
+			spawnObserved = true;
 			const timeout = resolveCliAllowanceTimeout({
 				input: props.input,
 				kind: currentOperation.timeout.kind,
 			});
 			commandTimer = setTimeout(
 				() =>
-					settleFailure(
+					requestFailure(
 						new ConfiguredControllerExecutionError(
 							'timeout',
 							'Configured CLI execution timed out.',
@@ -178,7 +189,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				stdoutBytes = appended.nextTotalBytes;
 				stdoutTruncated ||= appended.truncated;
 			} catch (error) {
-				settleFailure(error instanceof Error ? error : new Error(String(error)));
+				requestFailure(error instanceof Error ? error : new Error(String(error)));
 			}
 		});
 		child.stderr.on('data', (chunk: Buffer) => {
@@ -194,7 +205,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				stderrBytes = appended.nextTotalBytes;
 				stderrTruncated ||= appended.truncated;
 			} catch (error) {
-				settleFailure(error instanceof Error ? error : new Error(String(error)));
+				requestFailure(error instanceof Error ? error : new Error(String(error)));
 			}
 		});
 		child.once('close', (exitCode) => {
@@ -202,6 +213,10 @@ export async function executeConfiguredCliOnControllerHost(props: {
 			settled = true;
 			if (commandTimer !== undefined) clearTimeout(commandTimer);
 			props.signal?.removeEventListener('abort', abortExecution);
+			if (requestedFailure !== undefined) {
+				reject(requestedFailure);
+				return;
+			}
 			const stderr = Buffer.concat(stderrChunks);
 			resolve({
 				exitCode: exitCode ?? -1,
@@ -214,5 +229,7 @@ export async function executeConfiguredCliOnControllerHost(props: {
 				stdoutTruncated,
 			});
 		});
+		props.signal?.addEventListener('abort', abortExecution, { once: true });
+		if (props.signal?.aborted === true) abortExecution();
 	});
 }

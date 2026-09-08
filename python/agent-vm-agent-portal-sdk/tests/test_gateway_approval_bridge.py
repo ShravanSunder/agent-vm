@@ -2,11 +2,13 @@ import asyncio
 import typing as t
 from collections.abc import Mapping
 
+import pytest
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from agent_vm_agent_portal_sdk.gateway_approval_bridge import (
     execute_portal_call_with_approval,
     sanitize_gateway_approval_arguments,
 )
+from agent_vm_agent_portal_sdk.portal_invocation_scope import PortalInvocationScope
 from pydantic import BaseModel
 
 type JsonObject = dict[str, object]
@@ -161,3 +163,47 @@ def test_display_sanitizer_is_deterministic_and_bounded() -> None:
     assert first == second
     assert "[TRUNCATED]" in first
     assert len(first.encode()) <= 4_096
+
+
+@pytest.mark.parametrize("close_stage", ["presentation", "decision"])
+def test_scope_closed_after_presentation_preserves_free_results_and_prevents_retry(close_stage: str) -> None:
+    async def scenario() -> None:
+        scope = PortalInvocationScope()
+        effects: list[str] = []
+
+        async def dispatch(_request: Mapping[str, object]) -> BaseModel:
+            effects.append("dispatch")
+            return _model("portal.call.result", RETRY_RESULT)
+
+        async def call_portal(request: Mapping[str, object]) -> BaseModel:
+            return await scope.admit(lambda: dispatch(request))
+
+        async def decide_effect(_request: Mapping[str, object]) -> BaseModel:
+            effects.append("decision")
+            return _model("gateway.approval.decision-result", {"kind": "recorded", "state": "approved"})
+
+        async def decide(request: Mapping[str, object]) -> BaseModel:
+            recorded = await scope.admit(lambda: decide_effect(request))
+            if close_stage == "decision":
+                scope.close()
+            return recorded
+
+        async def present(_request: BaseModel) -> BaseModel:
+            if close_stage == "presentation":
+                scope.close()
+            return _model("gateway.approval.presentation-outcome", {"kind": "approved"})
+
+        result = await execute_portal_call_with_approval(
+            REQUEST,
+            call_portal=call_portal,
+            decide_approval=decide,
+            present_approval=present,
+            initial_result=_model("portal.call.result", INITIAL_RESULT),
+        )
+        items = t.cast("list[JsonObject]", result.model_dump(by_alias=True)["items"])
+        assert items[0] == t.cast("list[JsonObject]", INITIAL_RESULT["items"])[0]
+        assert t.cast("JsonObject", items[1]["error"])["code"] == "cancelled"
+        assert items[1]["outcome"] == NOT_DISPATCHED
+        assert effects == ([] if close_stage == "presentation" else ["decision"])
+
+    asyncio.run(scenario())

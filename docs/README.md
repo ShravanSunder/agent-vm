@@ -12,6 +12,7 @@ directory is the deeper map.
 | Understand the Worker gateway | [architecture/agent-worker-gateway.md](architecture/agent-worker-gateway.md) |
 | Understand state/cache/backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand reusable credentialed CLI runtimes | [architecture/credentialed-runtimes.md](architecture/credentialed-runtimes.md) |
+| Compose Tool Portal calls from Tool VM code | [architecture/tool-vm-portal-composition.md](architecture/tool-vm-portal-composition.md) |
 | Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
 | Review the accepted Gateway runtime and Tool Portal contract | [specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md](specs/2026-07-12-agent-vm-gateway-runtime/agent-vm-gateway-runtime.md) and its [glossary](specs/2026-07-12-agent-vm-gateway-runtime/glossary.md) |
 | Review concrete Hermes/Worker storage paths | [architecture/storage-matrix.md](architecture/storage-matrix.md) |
@@ -31,6 +32,7 @@ docs/
   architecture/
     overview.md
     credentialed-runtimes.md
+    tool-vm-portal-composition.md
     storage-model.md
     storage-matrix.md
     agent-worker-gateway.md

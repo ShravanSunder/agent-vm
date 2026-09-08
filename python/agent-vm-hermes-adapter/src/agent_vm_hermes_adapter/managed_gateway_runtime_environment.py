@@ -9,7 +9,11 @@ import shlex
 import threading
 import typing as t
 
+from agent_vm_agent_portal_sdk.gateway_portal_session import GatewayPortalSessionConfig
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
+from agent_vm_agent_portal_sdk.local_tool_portal_transport import (
+    PortalConnectionUnavailableError,
+)
 from pydantic import BaseModel
 from tools.environments.base import BaseEnvironment
 
@@ -21,9 +25,14 @@ from .managed_profile_adapter import (
     _projection_string_field,
     build_managed_trusted_context,
 )
+from .managed_tool_portal.execution_middleware import (
+    HermesPortalInvocationScope,
+    current_hermes_portal_invocation_scope,
+)
 
 _DEFAULT_TOOL_VM_CWD = "/work"
 _MAXIMUM_STREAM_CHUNK_BYTES = 1024 * 1024
+_TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME = "AGENT_VM_TOOL_PORTAL_SOCKET"
 
 
 class HermesGatewayRuntimeOutcomeError(RuntimeError):
@@ -79,9 +88,19 @@ def _content_digest(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
 
-def _render_remote_bash_command(command: str, *, login: bool) -> str:
+def _render_remote_bash_command(
+    command: str,
+    *,
+    login: bool,
+    portal_socket_path: str | None,
+) -> str:
     login_flag = "-l " if login else ""
-    return f"bash {login_flag}-c {shlex.quote(command)}"
+    bash_command = f"bash {login_flag}-c {shlex.quote(command)}"
+    if portal_socket_path is None:
+        return bash_command
+    return (
+        f"{_TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME}={shlex.quote(portal_socket_path)} {bash_command}"
+    )
 
 
 class HermesGatewayRuntimeProcessHandle:
@@ -391,6 +410,37 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             if self._closed:
                 raise RuntimeError("Hermes managed Gateway Runtime environment is closed")
 
+    def _portal_socket_path_for_scope(
+        self,
+        scope: HermesPortalInvocationScope,
+    ) -> str:
+        identity = scope.identity
+        if identity.projection != self._projection:
+            raise HermesProfileAdmissionError(
+                "Hermes Portal invocation projection does not match the managed environment."
+            )
+        invocation_context = build_managed_trusted_context(
+            identity.projection,
+            session_id=identity.session_id,
+        ).model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
+        config = GatewayPortalSessionConfig(
+            environment=dict(self._environment_handle),
+            sandbox_context=invocation_context,
+            portal_context=invocation_context,
+            maximum_runtime_ms=scope.remaining_runtime_milliseconds(),
+        )
+        return self._adapter.run_gateway_runtime_coroutine(
+            scope.socket_path_for_environment(
+                client=self.gateway_runtime_client,
+                owning_generation=self.owning_generation,
+                config=config,
+            )
+        )
+
     def retire_locally(self) -> None:
         with self._cleanup_lock:
             self._closed = True
@@ -475,11 +525,16 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         close_stdout_write: t.Callable[[], None],
         operation_state: dict[str, t.Mapping[str, object]],
         operation_ready: threading.Event,
+        portal_socket_path: str | None,
     ) -> int:
         try:
             started = await self.gateway_runtime_client.sandbox.execution.start(
                 {
-                    "command": _render_remote_bash_command(command, login=login),
+                    "command": _render_remote_bash_command(
+                        command,
+                        login=login,
+                        portal_socket_path=portal_socket_path,
+                    ),
                     "cwd": self.cwd,
                     "environment": dict(self._environment_handle),
                     "mode": {"kind": "direct"},
@@ -543,6 +598,13 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         stdin_data: str | None = None,
     ) -> HermesGatewayRuntimeProcessHandle:
         self._require_open()
+        portal_scope = current_hermes_portal_invocation_scope()
+        portal_socket_path: str | None = None
+        if portal_scope is not None:
+            try:
+                portal_socket_path = self._portal_socket_path_for_scope(portal_scope)
+            except PortalConnectionUnavailableError:
+                pass
         stdout_read_fd, stdout_write_fd = os.pipe()
         stdout_write_lock = threading.Lock()
         stdout_write_closed = False
@@ -570,6 +632,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                 close_stdout_write=close_stdout_write,
                 operation_state=operation_state,
                 operation_ready=operation_ready,
+                portal_socket_path=portal_socket_path,
             )
         )
 

@@ -127,6 +127,18 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertIn("- (none admitted)", rendered.orientation)
         self.assertNotIn("example", rendered.orientation)
 
+    def test_describes_bounded_tool_vm_composition_without_claiming_a_live_endpoint(self) -> None:
+        rendered = _require_rendered(render_orientation(_inventory("filesystem")))
+
+        self.assertIn("Python connect_tool_portal()", rendered.orientation)
+        self.assertIn("TypeScript connectToolPortal()", rendered.orientation)
+        self.assertIn("tool-portal CLI", rendered.orientation)
+        self.assertIn("active foreground invocation", rendered.orientation)
+        self.assertIn("wait for human approval", rendered.orientation)
+        self.assertIn("do not replay uncertain effects", rendered.orientation)
+        self.assertIn("/agent-vm/tool-portal.md", rendered.orientation)
+        self.assertLessEqual(rendered.utf8_byte_count, 2_000)
+
     def test_names_are_sorted_and_limited_to_twenty_with_exact_omitted_count(self) -> None:
         inventory = _inventory(*[f"namespace-{index:02d}" for index in range(25, -1, -1)])
 
@@ -216,6 +228,109 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             "  begin\n    Start a human authorization ceremony.",
             rendered.orientation,
         )
+
+    def test_four_namespace_runtime_inventory_retains_proven_child_examples(self) -> None:
+        inventory = NamespaceInventory(
+            inventory_id="inventory-runtime-e2e",
+            namespaces=(
+                NamespaceAvailability(
+                    namespace="controller_execution",
+                    status="available",
+                    summary="Controller-owned orientation E2E operations",
+                    tools=(
+                        NamespaceToolSummary(
+                            name="controller_host_probe",
+                            description=(
+                                "Run the fixed read-only controller host availability probe."
+                            ),
+                        ),
+                    ),
+                ),
+                NamespaceAvailability(
+                    namespace="oauth_authorization",
+                    status="available",
+                    summary=(
+                        "Set up Google account authorization. OAuth consent does not replace "
+                        "Tool Portal approval."
+                    ),
+                    tools=(
+                        NamespaceToolSummary(
+                            name="begin",
+                            description=(
+                                "Begin a human-controlled Google authorization ceremony for one "
+                                "account profile."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="cancel",
+                            description=(
+                                "Cancel a pending Google authorization ceremony owned by this "
+                                "agent."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="list",
+                            description=(
+                                "List Google account profiles, configured application and service "
+                                "IDs, maximum permissions, and safe authorization status. Build "
+                                "begin suggestedSelections as applicationId → serviceId → "
+                                "none|read|write."
+                            )[:119]
+                            + "…",
+                        ),
+                        NamespaceToolSummary(
+                            name="reauthorize",
+                            description=(
+                                "Begin human-approved reauthorization for one configured Google "
+                                "application."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="revoke",
+                            description=(
+                                "Revoke and remove one configured Google application authorization."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="status",
+                            description=(
+                                "Check the safe status of a pending Google authorization ceremony."
+                            ),
+                        ),
+                    ),
+                ),
+                NamespaceAvailability(
+                    namespace="orientation-unavailable",
+                    status="unavailable",
+                    summary="Unavailable orientation E2E upstream",
+                ),
+                NamespaceAvailability(
+                    namespace="upstream-mock",
+                    status="available",
+                    summary="Available orientation E2E upstream",
+                    tools=(
+                        NamespaceToolSummary(
+                            name="read_thing",
+                            description="Reads a mock record.",
+                        ),
+                        NamespaceToolSummary(
+                            name="write_thing",
+                            description="Writes a mock record.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        rendered = _require_rendered(render_orientation(inventory))
+
+        self.assertEqual(rendered.displayed_count, 4)
+        self.assertIn("  controller_host_probe", rendered.orientation)
+        self.assertIn("  list", rendered.orientation)
+        self.assertIn("  revoke", rendered.orientation)
+        self.assertIn("  read_thing", rendered.orientation)
+        self.assertIn("  write_thing", rendered.orientation)
+        self.assertLessEqual(rendered.utf8_byte_count, 2_000)
 
     def test_reports_additional_tools_when_the_inventory_probe_has_a_next_page(self) -> None:
         rendered = _require_rendered(

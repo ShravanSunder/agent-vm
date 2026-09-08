@@ -246,7 +246,8 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 				case 'portal.list':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,
-						projection: props.portalOperations.list,
+						projection: async (invocation) =>
+							await props.portalOperations.list({ ...invocation, signal: request.signal }),
 						request,
 						requestSchema: PortalListRequestSchema,
 						resultSchema: PortalListResultSchema,
@@ -254,7 +255,8 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 				case 'portal.search':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,
-						projection: props.portalOperations.search,
+						projection: async (invocation) =>
+							await props.portalOperations.search({ ...invocation, signal: request.signal }),
 						request,
 						requestSchema: PortalSearchRequestSchema,
 						resultSchema: PortalSearchResultSchema,
@@ -262,7 +264,8 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 				case 'portal.describe':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,
-						projection: props.portalOperations.describe,
+						projection: async (invocation) =>
+							await props.portalOperations.describe({ ...invocation, signal: request.signal }),
 						request,
 						requestSchema: PortalDescribeRequestSchema,
 						resultSchema: PortalDescribeResultSchema,
@@ -270,7 +273,8 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 				case 'portal.call':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,
-						projection: props.portalOperations.call,
+						projection: async (invocation) =>
+							await props.portalOperations.call({ ...invocation, signal: request.signal }),
 						request,
 						requestSchema: PortalCallRequestSchema,
 						resultSchema: PortalCallResultSchema,

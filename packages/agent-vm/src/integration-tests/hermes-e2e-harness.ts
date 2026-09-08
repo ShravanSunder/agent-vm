@@ -262,6 +262,7 @@ export async function materializeLocalHermesGatewayImagePackages(options: {
 				'utf8',
 			),
 			useLocalToolVmMcpPortalPackageTarballs({
+				localAgentPortalSdkWheelPath: agentPortalSdkWheelPath,
 				localAgentPortalSdkTarballPath: requireLocalPackageTarballPath(
 					packedTarballPaths,
 					'agent-portal-sdk',

@@ -24,6 +24,18 @@ const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
 const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_CONTROLLER_RPC';
+const operationCancelEvidence = {
+	agentAuthority: { algorithm: 'hmac-sha256', digest: 'a'.repeat(43), keyId: 'agent-a' },
+	principal: {
+		agentId: 'agent-a',
+		frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
+		profileAssignmentRevision: 'profile-assignment-a',
+		toolPortalProfileId: 'code-builder',
+	},
+	proof: { algorithm: 'hmac-sha256', digest: 'b'.repeat(43) },
+	purpose: 'tool_portal_controller_execution',
+	zoneId: 'zone-a',
+} as const;
 const quickOAuthConfiguredCliOperation = controllerConfiguredCliOperationSchema.parse({
 	authorization: {
 		kind: 'oauth_account_profile',
@@ -282,6 +294,7 @@ function createFixture(
 			(async () => ({
 				admissionPrincipal: 'b'.repeat(64),
 				callerContextId,
+				operationCancelEvidence,
 			})),
 	);
 	const sendCommand = vi.fn<GatewayRuntimeControlCommandClient['sendCommand']>(
@@ -322,6 +335,55 @@ function createFixture(
 		}),
 		register,
 		sendCommand,
+	};
+}
+
+function configuredCliSuccessResponse(
+	stdout = 'inspected',
+): Awaited<ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>> {
+	return {
+		acceptedSession,
+		messageId: responseMessageId,
+		response: {
+			kind: 'command_result' as const,
+			operation: 'tool_portal_controller_execution' as const,
+			payload: {
+				controllerExecution: {
+					kind: 'configured_cli' as const,
+					operationName: 'inspect_host',
+					result: {
+						exitCode: 0,
+						stderrTruncated: false,
+						stdout,
+						stdoutTruncated: false,
+					},
+				},
+				responseToMessageId: responseMessageId,
+				result: 'ok' as const,
+			},
+		},
+	};
+}
+
+function configuredCliRejectedResponse(): Awaited<
+	ReturnType<GatewayRuntimeControlCommandClient['sendCommand']>
+> {
+	return {
+		acceptedSession,
+		messageId: responseMessageId,
+		response: {
+			kind: 'command_result' as const,
+			operation: 'tool_portal_controller_execution' as const,
+			payload: {
+				error: {
+					errorClass: 'controller_execution_policy_denied',
+					retryable: false,
+					safeMessage: 'configured CLI was denied',
+				},
+				responseToMessageId: responseMessageId,
+				result: 'rejected' as const,
+			},
+		},
 	};
 }
 
@@ -626,6 +688,62 @@ describe('Gateway Control controller-execution adapter', () => {
 		});
 	});
 
+	it.each([
+		['completed success', configuredCliSuccessResponse('known-output'), 'ok'],
+		['known rejection', configuredCliRejectedResponse(), 'error'],
+	] as const)(
+		'preserves a response-first configured CLI %s when cancellation arrives before continuation',
+		async (_label, controllerResponse, expectedStatus) => {
+			// Arrange: preserve actual AbortSignal and promise scheduling semantics.
+			const cancellation = new AbortController();
+			const commandStarted = Promise.withResolvers<void>();
+			const response = Promise.withResolvers<typeof controllerResponse>();
+			const fixture = createFixture({
+				sendCommand: () => {
+					commandStarted.resolve();
+					return response.promise;
+				},
+			});
+
+			const pendingResult = fixture.backend.call(
+				{
+					calls: [
+						{
+							arguments: { argv: ['inspect'], reason: 'preserve known response' },
+							id: 'configured-response-first',
+							name: 'inspect_host',
+							namespace: 'controller_execution',
+						},
+					],
+				},
+				callOptions(cancellation.signal),
+			);
+			// Act: response wins first; abort runs before the awaiting continuation.
+			await commandStarted.promise;
+			response.resolve(controllerResponse);
+			queueMicrotask(() => cancellation.abort());
+			const result = await pendingResult;
+
+			// Assert: no manufactured signal getters or dependency on property reads.
+			expect(cancellation.signal.aborted).toBe(true);
+			expect(fixture.sendCommand).toHaveBeenCalledTimes(1);
+			expect(result.items[0]?.status).toBe(expectedStatus);
+			if (expectedStatus === 'ok') {
+				expect(result).toMatchObject({
+					items: [
+						{ outcome: { kind: 'completed' }, value: { result: { stdout: 'known-output' } } },
+					],
+					ok: true,
+				});
+			} else {
+				expect(result).toMatchObject({
+					items: [{ error: { code: 'capability_denied' }, outcome: { kind: 'not-dispatched' } }],
+					ok: false,
+				});
+			}
+		},
+	);
+
 	it('routes by the configured operation discriminant instead of a built-in action name', async () => {
 		const fixture = createFixture({
 			sendCommand: async () => ({
@@ -820,6 +938,136 @@ describe('Gateway Control controller-execution adapter', () => {
 		expect(result).toMatchObject({
 			items: [{ outcome: { kind: 'ambiguous' }, status: 'error' }],
 			ok: false,
+		});
+	});
+
+	it('waits for the original admission receipt before sending same-session configured CLI cancellation', async () => {
+		const cancellation = new AbortController();
+		const observations: string[] = [];
+		let markOriginalStarted!: () => void;
+		const originalStarted = new Promise<void>((resolve) => {
+			markOriginalStarted = resolve;
+		});
+		const fixture = createFixture({
+			sendCommand: async (commandRequest) => {
+				if (commandRequest.message.operation === 'operation_cancel') {
+					observations.push('cancel-sent');
+					return {
+						acceptedSession,
+						messageId: responseMessageId,
+						response: {
+							kind: 'command_result',
+							operation: 'operation_cancel',
+							payload: {
+								activeOperationId: commandId,
+								responseToMessageId: responseMessageId,
+								result: 'ok',
+							},
+						},
+					};
+				}
+				markOriginalStarted();
+				commandRequest.onAdmissionReceipt?.({ acceptedSession, messageId: responseMessageId });
+				observations.push('original-receipt');
+				return await new Promise<never>(() => undefined);
+			},
+		});
+		const resultPromise = fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['inspect'], reason: 'cancel configured CLI' },
+						id: 'configured-cli-cancelled',
+						name: 'inspect_host',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(cancellation.signal),
+		);
+		await originalStarted;
+		cancellation.abort();
+		const result = await resultPromise;
+
+		expect(observations).toEqual(['original-receipt', 'cancel-sent']);
+		expect(result).toMatchObject({
+			items: [{ outcome: { kind: 'ambiguous' }, status: 'error' }],
+			ok: false,
+		});
+		const cancelRequest = fixture.sendCommand.mock.calls[1]?.[0];
+		expect(cancelRequest).toMatchObject({
+			admissionPrincipal: 'b'.repeat(64),
+			message: {
+				operation: 'operation_cancel',
+				payload: { activeOperationId: commandId, adapterEvidence: operationCancelEvidence },
+			},
+			requiredAcceptedSession: acceptedSession,
+		});
+	});
+
+	it('preserves an original terminal response observed while cancellation acknowledgement is pending', async () => {
+		const cancellation = new AbortController();
+		let originalRequest: GatewayRuntimeControlCommandRequest | undefined;
+		let resolveOriginal!: (response: ReturnType<typeof configuredCliSuccessResponse>) => void;
+		const originalResponse = new Promise<ReturnType<typeof configuredCliSuccessResponse>>(
+			(resolve) => {
+				resolveOriginal = resolve;
+			},
+		);
+		let markOriginalStarted!: () => void;
+		const originalStarted = new Promise<void>((resolve) => {
+			markOriginalStarted = resolve;
+		});
+		const fixture = createFixture({
+			sendCommand: async (request) => {
+				if (request.message.operation !== 'operation_cancel') {
+					originalRequest = request;
+					markOriginalStarted();
+					return await originalResponse;
+				}
+				resolveOriginal(configuredCliSuccessResponse('completed-during-cancel'));
+				await Promise.resolve();
+				return {
+					acceptedSession,
+					messageId: responseMessageId,
+					response: {
+						kind: 'command_result',
+						operation: 'operation_cancel',
+						payload: {
+							activeOperationId: commandId,
+							responseToMessageId: responseMessageId,
+							result: 'ok',
+						},
+					},
+				};
+			},
+		});
+		const resultPromise = fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['inspect'], reason: 'observe terminal during cancel' },
+						id: 'configured-cancel-terminal',
+						name: 'inspect_host',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(cancellation.signal),
+		);
+		await originalStarted;
+		cancellation.abort();
+		originalRequest?.onAdmissionReceipt?.({ acceptedSession, messageId: responseMessageId });
+
+		await expect(resultPromise).resolves.toMatchObject({
+			items: [
+				{
+					outcome: { kind: 'completed' },
+					status: 'ok',
+					value: { result: { stdout: 'completed-during-cancel' } },
+				},
+			],
+			ok: true,
 		});
 	});
 });

@@ -162,6 +162,10 @@ describe('manual templates', () => {
 		const operations = findManual(files, 'docs/manual/operations.md');
 		const observability = findManual(files, 'docs/manual/observability.md');
 		const portal = findManual(files, 'docs/manual/mcp-portal.md');
+		expect(portal).toContain('Python connect_tool_portal, TypeScript connectToolPortal');
+		expect(portal).toContain('/agent-vm/tool-portal.md');
+		expect(portal).toContain('AGENT_VM_TOOL_PORTAL_SOCKET');
+		expect(portal).toContain('The endpoint ends with the invocation');
 		const runtimePaths = findManual(files, 'docs/manual/runtime-paths.md');
 		const worker = findManual(files, 'docs/manual/agent-worker.md');
 		const toolAccess = findManual(files, 'docs/manual/tool-access.md');

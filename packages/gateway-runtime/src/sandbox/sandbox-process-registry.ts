@@ -30,7 +30,9 @@ export interface GatewayRuntimeSandboxProcessRegistry {
 	readonly cancel: (request: SandboxProcessCancelRequest) => SandboxOperationControlResult;
 	readonly closeStream: (request: SandboxStreamCloseRequest) => SandboxStreamCloseResult;
 	readonly logs: (request: SandboxProcessLogsRequest) => SandboxProcessLogsResult;
-	readonly read: (request: SandboxStreamReadRequest) => SandboxStreamReadResult;
+	readonly read: (
+		request: SandboxStreamReadRequest,
+	) => SandboxStreamReadResult | Promise<SandboxStreamReadResult>;
 	readonly retire: () => Promise<void>;
 	readonly start: (
 		request: ResolvedStrictToolVmSshProcessStartRequest,

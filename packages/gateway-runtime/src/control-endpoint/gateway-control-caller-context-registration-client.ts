@@ -4,6 +4,9 @@ import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/co
 import {
 	buildGatewayControlCallerContextAgentAuthorityPayload,
 	buildGatewayControlCallerContextProofPayload,
+	type GatewayControlCallerContextRegisterPayload,
+	GatewayControlOperationCancelAdapterEvidenceSchema,
+	type GatewayControlOperationCancelAdapterEvidence,
 	type GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
 
@@ -28,6 +31,7 @@ export interface GatewayControlCallerContextRegistrationRequest {
 export interface GatewayControlRegisteredCallerContext {
 	readonly admissionPrincipal: GatewayStablePrincipalDigest;
 	readonly callerContextId: string;
+	readonly operationCancelEvidence?: GatewayControlOperationCancelAdapterEvidence;
 }
 
 export interface GatewayControlCallerContextRegistrationClient {
@@ -53,6 +57,7 @@ function buildRegistrationCommand(options: {
 	readonly request: GatewayControlCallerContextRegistrationRequest;
 	readonly session: GatewayControlAcceptedSession;
 }): {
+	readonly adapterEvidence: GatewayControlCallerContextRegisterPayload['adapterEvidence'];
 	readonly cacheKey: string;
 	readonly command: GatewayRuntimeControlCommand;
 	readonly idempotencyKey: string;
@@ -100,6 +105,7 @@ function buildRegistrationCommand(options: {
 	} satisfies GatewayRuntimeControlCommand;
 	const registrationDigest = createHash('sha256').update(proofPayload, 'utf8').digest('hex');
 	return {
+		adapterEvidence: command.payload.adapterEvidence,
 		cacheKey: proofPayload,
 		command,
 		idempotencyKey: `caller-context:${registrationDigest}`,
@@ -173,6 +179,13 @@ export function createGatewayControlCallerContextRegistrationClient(
 			return Object.freeze({
 				admissionPrincipal: responsePayload.callerContext.admissionPrincipal,
 				callerContextId: responsePayload.callerContext.callerContextId,
+				...(request.purpose === 'tool_portal_controller_execution'
+					? {
+							operationCancelEvidence: GatewayControlOperationCancelAdapterEvidenceSchema.parse(
+								registrationCommand.adapterEvidence,
+							),
+						}
+					: {}),
 			});
 		})();
 		sessionRegistrations.set(registrationCommand.cacheKey, registration);

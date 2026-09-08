@@ -118,14 +118,18 @@ function createStrictSshClientFixture(
 		),
 		openProcessChannel: vi.fn(async () => ({
 			endInput: () => undefined,
+			pauseOutput: () => undefined,
 			requestCancellation: () => undefined,
 			resizeTerminal: () => undefined,
+			resumeOutput: () => undefined,
 			write: async () => undefined,
 		})),
 		openShellProcessChannel: vi.fn(async () => ({
 			endInput: () => undefined,
+			pauseOutput: () => undefined,
 			requestCancellation: () => undefined,
 			resizeTerminal: () => undefined,
+			resumeOutput: () => undefined,
 			write: async () => undefined,
 		})),
 		readFile: vi.fn(async () => new Uint8Array()),

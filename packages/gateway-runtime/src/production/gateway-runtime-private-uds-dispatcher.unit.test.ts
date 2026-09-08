@@ -117,6 +117,40 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		expect(decide).toHaveBeenCalledWith({ publicRequest: decision, trustedContext });
 	});
 
+	it('propagates the private UDS cancellation signal into Portal projections', async () => {
+		const listRequest = { requests: [{ id: 'list-signal', namespaces: [] }] };
+		const list = vi.fn(async () => ({
+			items: [
+				{
+					id: 'list-signal',
+					status: 'ok' as const,
+					value: { namespaceDiscovery: [], namespaces: [], tools: [] },
+				},
+			],
+			ok: true,
+		}));
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
+			artifactOperations: { read: vi.fn() },
+			portalOperations: { call: vi.fn(), describe: vi.fn(), list, search: vi.fn() },
+			sandboxDispatch: vi.fn(),
+		});
+		const abortController = new AbortController();
+
+		await dispatcher.dispatch({
+			connectionId: 'connection-a',
+			method: 'portal.list',
+			params: { publicRequest: listRequest, trustedContext },
+			signal: abortController.signal,
+		});
+
+		expect(list).toHaveBeenCalledWith({
+			publicRequest: { requests: [{ ...listRequest.requests[0], limit: 20 }] },
+			signal: abortController.signal,
+			trustedContext,
+		});
+	});
+
 	it('validates the trusted envelope and routes portal plus sandbox calls through one projection', async () => {
 		// Arrange
 		const list = vi.fn(async () => ({
@@ -174,6 +208,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		expect(listResult).toMatchObject({ ok: true });
 		expect(list).toHaveBeenCalledWith({
 			publicRequest: { requests: [{ id: 'list-1', limit: 20, namespaces: [] }] },
+			signal: expect.any(AbortSignal),
 			trustedContext,
 		});
 		expect(sandboxResult).toMatchObject({ kind: 'opened' });
@@ -250,6 +285,7 @@ describe('Gateway runtime private UDS dispatcher', () => {
 		]);
 		expect(list).toHaveBeenCalledWith({
 			publicRequest: { requests: [{ id: 'list-1', limit: 20 }] },
+			signal: expect.any(AbortSignal),
 			trustedContext,
 		});
 		expect(sandboxDispatch).toHaveBeenCalledWith(

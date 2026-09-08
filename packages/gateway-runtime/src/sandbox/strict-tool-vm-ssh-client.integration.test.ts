@@ -111,8 +111,23 @@ class ManualDeadlineScheduler {
 	}
 }
 
-class FakeSshChannel extends EventEmitter {
-	readonly stderr = new EventEmitter();
+class FakeOutputStream extends EventEmitter {
+	pauseCallCount = 0;
+	resumeCallCount = 0;
+
+	pause(): this {
+		this.pauseCallCount += 1;
+		return this;
+	}
+
+	resume(): this {
+		this.resumeCallCount += 1;
+		return this;
+	}
+}
+
+class FakeSshChannel extends FakeOutputStream {
+	readonly stderr = new FakeOutputStream();
 	readonly writeCalls: Uint8Array[] = [];
 	closeCallCount = 0;
 	destroyCallCount = 0;
@@ -776,6 +791,57 @@ describe('strict Tool VM SSH client', () => {
 		expect(fixture.deadlineScheduler.pendingDeadlineDelays).toEqual([]);
 		expect(channel).not.toHaveProperty('stderr');
 		expect(channel).not.toHaveProperty('emit');
+	});
+
+	it('pauses and resumes only the selected process output channel', async () => {
+		const fixture = createStrictSshFixture();
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+		const channel = await fixture.client.openProcessChannel({
+			argv: ['/usr/bin/cat'],
+			cwd: '',
+			ioProfile: 'portal-relay',
+			onStderr: () => undefined,
+			onStdout: () => undefined,
+			onTerminal: () => undefined,
+		});
+
+		channel.pauseOutput('stdout');
+		channel.pauseOutput('stderr');
+		channel.resumeOutput('stdout');
+		channel.resumeOutput('stderr');
+
+		expect(fixture.sshTransport.channel.pauseCallCount).toBe(1);
+		expect(fixture.sshTransport.channel.resumeCallCount).toBe(1);
+		expect(fixture.sshTransport.channel.stderr.pauseCallCount).toBe(1);
+		expect(fixture.sshTransport.channel.stderr.resumeCallCount).toBe(1);
+	});
+
+	it('uses fixed relay transfer bounds without changing standard channel limits', async () => {
+		const fixture = createStrictSshFixture();
+		const stdoutChunks: Uint8Array[] = [];
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+		const channel = await fixture.client.openProcessChannel({
+			argv: ['/usr/bin/cat'],
+			cwd: '',
+			ioProfile: 'portal-relay',
+			onStderr: () => undefined,
+			onStdout: (bytes) => stdoutChunks.push(bytes),
+			onTerminal: () => undefined,
+		});
+		const beyondStandardLimit = Buffer.alloc(strictLimits.maxStdoutBytes + 1, 1);
+
+		fixture.sshTransport.channel.emit('data', beyondStandardLimit);
+		await channel.write(Buffer.alloc(strictLimits.maxWriteBytes + 1, 1));
+		const oversizedRelayWrite = channel.write(Buffer.alloc(64 * 1_024 + 1, 1));
+
+		expect(stdoutChunks).toEqual([beyondStandardLimit]);
+		await expect(oversizedRelayWrite).rejects.toThrow(/write byte limit/i);
 	});
 
 	it('opens a direct shell process with guest cwd, native environment, PTY, and resize', async () => {

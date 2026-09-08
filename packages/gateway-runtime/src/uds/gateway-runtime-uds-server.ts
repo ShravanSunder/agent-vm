@@ -130,6 +130,8 @@ type JsonRpcRequestId = number | string | null;
 
 interface PendingDispatch {
 	readonly cancellation: AbortController;
+	readonly operationGroup: string | undefined;
+	replySettled: boolean;
 	readonly requestId: JsonRpcRequestId;
 }
 
@@ -647,6 +649,19 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 			if (!connection.completedRequestIds.has(requestId)) connection.socket.destroy();
 			return;
 		}
+		if (pendingDispatch.operationGroup === 'portal' && !pendingDispatch.replySettled) {
+			// The caller can stop waiting without releasing ownership of unfinished dispatch.
+			pendingDispatch.replySettled = true;
+			this.#writeMessage(
+				connection,
+				createJsonRpcErrorResponse({
+					code: -32_800,
+					dataCode: 'request-cancelled',
+					message: 'Portal request was cancelled; execution may already have occurred.',
+					requestId,
+				}),
+			);
+		}
 		pendingDispatch.cancellation.abort(
 			new Error('Gateway runtime request was cancelled locally by its attached client.'),
 		);
@@ -686,7 +701,12 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 			return;
 		}
 		const cancellation = new AbortController();
-		const pendingDispatch = { cancellation, requestId } satisfies PendingDispatch;
+		const pendingDispatch = {
+			cancellation,
+			operationGroup: this.#resolveOperationGroup(method),
+			replySettled: false,
+			requestId,
+		} satisfies PendingDispatch;
 		connection.pendingDispatches.set(requestId, pendingDispatch);
 		this.#pendingRequestCount += 1;
 		void Promise.resolve()
@@ -723,7 +743,8 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 		this.#recordCompletedRequestId(connection, pendingDispatch.requestId);
 		this.#pendingRequestCount -= 1;
 		this.#notifyDrainedIfNeeded();
-		if (connection.closed) return;
+		if (connection.closed || pendingDispatch.replySettled) return;
+		pendingDispatch.replySettled = true;
 		if ('error' in settlement) {
 			this.#writeMessage(connection, settlement.error);
 			return;

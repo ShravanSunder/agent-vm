@@ -477,9 +477,33 @@ type RegisteredHook = (
 )
 
 
+class RegisteredMiddleware(t.Protocol):
+    def __call__(
+        self,
+        *,
+        tool_name: str,
+        args: dict[str, object],
+        original_args: dict[str, object],
+        task_id: object,
+        session_id: object,
+        tool_call_id: object,
+        turn_id: object,
+        api_request_id: object,
+        telemetry_schema_version: object,
+        middleware_schema_version: object,
+        next_call: t.Callable[[dict[str, object]], object],
+    ) -> object: ...
+
+
 @t.runtime_checkable
 class HermesPluginContext(t.Protocol):
     def register_hook(self, hook_name: str, callback: RegisteredHook) -> None: ...
+
+    def register_middleware(
+        self,
+        middleware_name: str,
+        callback: RegisteredMiddleware,
+    ) -> object: ...
 
     def register_tool(
         self,
@@ -519,5 +543,6 @@ __all__ = (
     "PreLlmCall",
     "ProjectionResolver",
     "RegisteredHook",
+    "RegisteredMiddleware",
     "register_managed_tool_portal_hooks",
 )

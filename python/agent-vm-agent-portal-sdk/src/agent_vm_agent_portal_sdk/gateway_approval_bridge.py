@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from pydantic import BaseModel
 
 from .contracts import PORTABLE_CONTRACT_ADAPTERS
+from .portal_invocation_scope import PortalScopeClosedError
 
 type JsonObject = dict[str, object]
 type PortalCall = Callable[[Mapping[str, object]], Awaitable[BaseModel]]
@@ -123,6 +124,41 @@ def _decision_rejection_code(reason: object) -> str:
     return "not_authorized"
 
 
+def _presentation_terminal_item(item: Mapping[str, object], outcome: Mapping[str, object]) -> JsonObject | None:
+    if outcome["kind"] == "cancelled":
+        return _project_non_dispatch_result(item, code="timeout" if outcome.get("reason") == "challenge-expired" else "cancelled")
+    if outcome["kind"] == "unavailable":
+        return _project_non_dispatch_result(item, code="provider_unavailable")
+    return None
+
+
+async def _decide_or_cancel(
+    decide_approval: DecideApproval,
+    decision_request: Mapping[str, object],
+) -> JsonObject:
+    try:
+        return _model_mapping(await decide_approval(decision_request))
+    except PortalScopeClosedError:
+        return {"kind": "scope-closed"}
+    except Exception:
+        return {"kind": "rejected", "reason": "already-decided" if decision_request["decision"] == "approve" else "not-authorized"}
+
+
+async def _retry_approved_item(
+    call_portal: PortalCall,
+    request: Mapping[str, object],
+    item: Mapping[str, object],
+) -> JsonObject:
+    try:
+        result = _model_mapping(await call_portal(request))
+    except PortalScopeClosedError:
+        return _project_non_dispatch_result(item, code="cancelled")
+    retry_items = t.cast("list[JsonObject]", result["items"])
+    if len(retry_items) != 1 or retry_items[0].get("id") != item["id"]:
+        raise ValueError("Approved Portal retry did not return the exact protected item.")
+    return retry_items[0]
+
+
 async def execute_portal_call_with_approval(
     request: Mapping[str, object],
     *,
@@ -171,37 +207,23 @@ async def execute_portal_call_with_approval(
             continue
         outcome = _model_mapping(presentation_outcome)
         outcome_kind = outcome["kind"]
-        if outcome_kind == "cancelled":
-            final_items.append(
-                _project_non_dispatch_result(
-                    item,
-                    code="timeout" if outcome.get("reason") == "challenge-expired" else "cancelled",
-                ),
-            )
-            continue
-        if outcome_kind == "unavailable":
-            final_items.append(_project_non_dispatch_result(item, code="provider_unavailable"))
+        terminal_item = _presentation_terminal_item(item, outcome)
+        if terminal_item is not None:
+            final_items.append(terminal_item)
             continue
 
         decision_name = "approve" if outcome_kind == "approved" else "deny"
         decision_request: JsonObject = {"challengeId": challenge["challengeId"], "decision": decision_name}
-        try:
-            decision_result = _model_mapping(await decide_approval(decision_request))
-        except Exception:
-            if decision_name != "approve":
-                final_items.append(_project_non_dispatch_result(item, code="not_authorized"))
-                continue
-            decision_result = {"kind": "rejected", "reason": "already-decided"}
+        decision_result = await _decide_or_cancel(decide_approval, decision_request)
+        if decision_result.get("kind") == "scope-closed":
+            final_items.append(_project_non_dispatch_result(item, code="cancelled"))
+            continue
 
         if decision_name == "approve" and (
             (decision_result.get("kind") == "recorded" and decision_result.get("state") == "approved") or decision_result.get("reason") == "already-decided"
         ):
             retry_request = {**request_mapping, "calls": [original_call]}
-            retry_result = _model_mapping(await call_portal(retry_request))
-            retry_items = t.cast("list[JsonObject]", retry_result["items"])
-            if len(retry_items) != 1 or retry_items[0].get("id") != item_id:
-                raise ValueError("Approved Portal retry did not return the exact protected item.")
-            final_items.append(retry_items[0])
+            final_items.append(await _retry_approved_item(call_portal, retry_request, item))
             continue
         if decision_name == "deny" and decision_result.get("kind") == "recorded" and decision_result.get("state") == "denied":
             final_items.append(_project_non_dispatch_result(item, code="capability_denied"))

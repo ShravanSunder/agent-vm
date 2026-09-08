@@ -17,7 +17,10 @@ import {
 	SandboxTerminalOutcomeSchema,
 } from './operation-contracts.js';
 
+export const SandboxProcessIoProfileSchema = z.enum(['standard', 'portal-relay']);
+
 export const SandboxProcessStartRequestSchema = SandboxDirectShellStartRequestSchema.extend({
+	ioProfile: SandboxProcessIoProfileSchema.optional(),
 	maxRuntimeMs: BoundedOperationMillisecondsSchema,
 	retainOutputBytes: BoundedByteCountSchema,
 }).strict();
@@ -87,6 +90,7 @@ export const SandboxProcessCancelRequestSchema = SandboxProcessHandleRequestSche
 export const SandboxProcessCancelResultSchema = SandboxOperationControlResultSchema;
 
 export type SandboxProcessStartRequest = z.infer<typeof SandboxProcessStartRequestSchema>;
+export type SandboxProcessIoProfile = z.infer<typeof SandboxProcessIoProfileSchema>;
 export type SandboxProcessStartResult = z.infer<typeof SandboxProcessStartResultSchema>;
 export type SandboxProcessStatusRequest = z.infer<typeof SandboxProcessHandleRequestSchema>;
 export type SandboxProcessStatusResult = z.infer<typeof SandboxProcessStatusResultSchema>;

@@ -4,6 +4,8 @@ import {
 	BoundedByteCountSchema,
 	BoundedOpaqueIdentifierSchema,
 	NonnegativeSafeIntegerSchema,
+	PORTABLE_MAXIMUM_SAFE_INTEGER,
+	SANDBOX_MAXIMUM_OPERATION_MILLISECONDS,
 	SandboxBinaryChunkSchema,
 	SandboxStreamHandleSchema,
 	Sha256DigestSchema,
@@ -14,6 +16,7 @@ export const SandboxStreamReadRequestSchema = z
 		cursor: BoundedOpaqueIdentifierSchema.optional(),
 		maxBytes: BoundedByteCountSchema,
 		stream: SandboxStreamHandleSchema,
+		waitMs: NonnegativeSafeIntegerSchema.max(SANDBOX_MAXIMUM_OPERATION_MILLISECONDS).optional(),
 	})
 	.strict();
 
@@ -30,6 +33,7 @@ export const SandboxStreamReadResultSchema = z
 
 export const SandboxStreamWriteRequestSchema = z
 	.object({
+		acknowledgedThrough: z.number().int().min(-1).max(PORTABLE_MAXIMUM_SAFE_INTEGER).optional(),
 		content: SandboxBinaryChunkSchema,
 		contentDigest: Sha256DigestSchema,
 		sequence: NonnegativeSafeIntegerSchema,

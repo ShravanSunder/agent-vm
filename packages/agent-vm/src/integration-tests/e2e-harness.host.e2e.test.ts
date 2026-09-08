@@ -670,8 +670,10 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
 		await createFakePortalDist(repoRoot);
+		const localAgentPortalSdkWheelPath = await createFakeAgentPortalSdkWheel(temporaryRoot);
 
 		await useLocalToolVmMcpPortalPackage({
+			localAgentPortalSdkWheelPath,
 			projectRoot: temporaryRoot,
 			repoRoot,
 			systemConfig,
@@ -701,7 +703,21 @@ describe('startE2eControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain(
 			'COPY agent-vm-mcp-portal-0.0.0-smoke.tgz /tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz',
 		);
+		expect(toolVmDockerfile).toContain(
+			'COPY agent_vm_agent_portal_sdk-0.0.147-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.147-py3-none-any.whl',
+		);
+		expect(toolVmDockerfile).toContain(
+			'uv pip install --python /opt/agent-vm-tools/bin/python /tmp/agent_vm_agent_portal_sdk-0.0.147-py3-none-any.whl',
+		);
+		expect(toolVmDockerfile).toContain('COPY agent-vm-tool-portal.md /agent-vm/tool-portal.md');
+		expect(toolVmDockerfile).toContain(
+			'COPY agent-vm-tool-vm-login-profile.sh /etc/profile.d/agent-vm-tools.sh',
+		);
 		expect(toolVmDockerfile).toContain('pnpm install --prod --ignore-scripts');
+		expect(toolVmDockerfile).toContain(
+			'/opt/agent-vm/local-packages/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js /pnpm/tool-portal',
+		);
+		expect(toolVmDockerfile).not.toContain('node_modules/.bin/tool-portal /pnpm/tool-portal');
 		expect(toolVmDockerfile).toContain('@agent-vm/config-contracts');
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-config-contracts-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).toContain('@agent-vm/oauth-broker-contracts');
@@ -720,6 +736,7 @@ describe('startE2eControllerRuntime', () => {
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
+		const localAgentPortalSdkWheelPath = await createFakeAgentPortalSdkWheel(temporaryRoot);
 		await fs.mkdir(packageDir, { recursive: true });
 		await fs.writeFile(
 			path.join(packageDir, 'package.json'),
@@ -737,6 +754,7 @@ describe('startE2eControllerRuntime', () => {
 
 		await expect(
 			useLocalToolVmMcpPortalPackage({
+				localAgentPortalSdkWheelPath,
 				projectRoot: temporaryRoot,
 				repoRoot,
 				systemConfig,
@@ -980,6 +998,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 				),
 			).toHaveLength(5);
 			expect(
+				derivedOverlay.copy.filter((copyEntry) =>
+					/^local-agent-vm\/agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(copyEntry.from),
+				),
+			).toHaveLength(1);
+			expect(
 				derivedOverlay.runAfterBase.filter((command) =>
 					command.includes('/opt/agent-vm/local-packages/package.json'),
 				),
@@ -1015,6 +1038,10 @@ describe('prepareGatewayE2eProjectImages', () => {
 				/COPY overlay\/local-agent-vm\/agent-vm-mcp-portal-[^\s]+\.tgz \/tmp\/agent-vm-mcp-portal-[^\s]+\.tgz/u,
 			);
 			expect(dockerfile).toContain('file:/tmp/agent-vm-mcp-portal-');
+			expect(dockerfile).toMatch(
+				/RUN uv pip install --python \/opt\/agent-vm-tools\/bin\/python "\/tmp\/agent_vm_agent_portal_sdk-[^"]+\.whl"/u,
+			);
+			expect(dockerfile).toContain('COPY agent-vm-tool-portal.md /agent-vm/tool-portal.md');
 			expect(dockerfile).not.toMatch(/pnpm add -g "@agent-vm\/mcp-portal@/u);
 			expect(generatedManagedDockerfile.plan.mcpPortalPackage).toMatchObject({
 				name: '@agent-vm/mcp-portal',
@@ -1930,6 +1957,12 @@ async function createFakeAgentPortalSdkPackage(repoRoot: string): Promise<void> 
 	await createFakeSimplePackage(repoRoot, 'agent-portal-sdk', {
 		'@agent-vm/oauth-broker-contracts': '0.0.0-smoke',
 	});
+}
+
+async function createFakeAgentPortalSdkWheel(projectRoot: string): Promise<string> {
+	const wheelPath = path.join(projectRoot, 'agent_vm_agent_portal_sdk-0.0.147-py3-none-any.whl');
+	await fs.writeFile(wheelPath, 'fake local Python SDK wheel\n', 'utf8');
+	return wheelPath;
 }
 
 async function createFakePortalDist(repoRoot: string): Promise<void> {

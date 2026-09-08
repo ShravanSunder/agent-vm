@@ -20,6 +20,7 @@ from .managed_profile_adapter import (
     build_managed_trusted_context,
 )
 from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.execution_middleware import HermesToolExecutionMiddleware
 from .managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalPresenter,
     HermesGatewayApprovalRouteStore,
@@ -300,6 +301,7 @@ def register(context: object) -> None:
         raise TypeError("Hermes plugin registration requires a compatible PluginContext")
     runtime = _require_configured_runtime()
     register_managed_tool_portal_hooks(context, runtime)
+    context.register_middleware("tool_execution", HermesToolExecutionMiddleware(runtime))
     for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
         context.register_tool(
             name=tool_name,

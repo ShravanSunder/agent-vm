@@ -7418,6 +7418,10 @@
 							"additionalProperties": false
 						}
 					},
+					"ioProfile": {
+						"type": "string",
+						"enum": ["standard", "portal-relay"]
+					},
 					"maxRuntimeMs": {
 						"type": "integer",
 						"exclusiveMinimum": 0,
@@ -8258,6 +8262,11 @@
 						},
 						"required": ["handleId", "kind", "owningGeneration", "channel"],
 						"additionalProperties": false
+					},
+					"waitMs": {
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 3600000
 					}
 				},
 				"required": ["maxBytes", "stream"],
@@ -8344,6 +8353,11 @@
 				"$schema": "https://json-schema.org/draft/2020-12/schema",
 				"type": "object",
 				"properties": {
+					"acknowledgedThrough": {
+						"type": "integer",
+						"minimum": -1,
+						"maximum": 9007199254740991
+					},
 					"content": {
 						"type": "object",
 						"properties": {

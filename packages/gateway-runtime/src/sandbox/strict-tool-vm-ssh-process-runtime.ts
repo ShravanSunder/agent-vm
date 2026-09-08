@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type {
 	SandboxOperationControlResult,
 	SandboxOperationIdentity,
+	SandboxProcessIoProfile,
 	SandboxProcessCancelRequest,
 	SandboxProcessHandle,
 	SandboxProcessLogsRequest,
@@ -29,6 +30,12 @@ import type {
 	StrictToolVmSshTerminalSize,
 } from './strict-tool-vm-ssh-client.js';
 import {
+	createStrictToolVmSshPortalRelayOutput,
+	PORTAL_RELAY_STREAM_CHUNK_BYTES,
+	PORTAL_RELAY_TOTAL_TRANSFER_BYTES,
+	type StrictToolVmSshPortalRelayOutput,
+} from './strict-tool-vm-ssh-portal-relay-output.js';
+import {
 	createStrictToolVmSshRetainedOutput,
 	type StrictToolVmSshRetainedOutput,
 } from './strict-tool-vm-ssh-retained-output.js';
@@ -45,6 +52,7 @@ export interface ResolvedStrictToolVmSshProcessStartRequest {
 	readonly cwd: string;
 	readonly maxRuntimeMs: number;
 	readonly retainOutputBytes: number;
+	readonly ioProfile?: SandboxProcessIoProfile;
 }
 
 export interface ResolvedStrictToolVmSshShellProcessStartRequest {
@@ -56,6 +64,7 @@ export interface ResolvedStrictToolVmSshShellProcessStartRequest {
 	}[];
 	readonly maxRuntimeMs: number;
 	readonly retainOutputBytes: number;
+	readonly ioProfile?: SandboxProcessIoProfile;
 	readonly terminalSize?: StrictToolVmSshTerminalSize;
 }
 
@@ -79,7 +88,9 @@ export interface StrictToolVmSshProcessRuntime {
 	readonly cancel: (request: SandboxProcessCancelRequest) => SandboxOperationControlResult;
 	readonly closeStream: (request: SandboxStreamCloseRequest) => SandboxStreamCloseResult;
 	readonly logs: (request: SandboxProcessLogsRequest) => SandboxProcessLogsResult;
-	readonly read: (request: SandboxStreamReadRequest) => SandboxStreamReadResult;
+	readonly read: (
+		request: SandboxStreamReadRequest,
+	) => SandboxStreamReadResult | Promise<SandboxStreamReadResult>;
 	readonly retire: () => Promise<void>;
 	readonly start: (
 		request: ResolvedStrictToolVmSshProcessStartRequest,
@@ -123,15 +134,18 @@ interface TerminalWaiter {
 }
 
 interface ProcessRecord {
+	acknowledgedThrough: number;
 	acceptTerminalEvents: boolean;
 	readonly abortOpening: AbortController;
 	cancelOpening?: () => void;
 	channel?: StrictToolVmSshProcessChannel;
 	cancellationReason?: 'cancelled' | 'replaced' | 'timed-out';
 	inputClosed: boolean;
+	readonly ioProfile: SandboxProcessIoProfile;
 	nextWriteSequence: number;
 	readonly operation: SandboxOperationIdentity;
 	readonly output: StrictToolVmSshRetainedOutput;
+	readonly portalRelayOutput?: StrictToolVmSshPortalRelayOutput;
 	readonly process: SandboxProcessHandle;
 	readonly retainedWrites: Map<number, RetainedWrite>;
 	runtimeDeadline?: { readonly cancel: () => void };
@@ -139,6 +153,8 @@ interface ProcessRecord {
 	terminalExitCode?: number;
 	terminalOutcome?: SandboxTerminalOutcome;
 	totalWrittenBytes: number;
+	evictedThrough: number;
+	relayWriteAmbiguous: boolean;
 	readonly waiters: Set<TerminalWaiter>;
 	writeTail: Promise<void>;
 }
@@ -168,6 +184,13 @@ function requirePositiveSafeInteger(value: number, name: string): void {
 	if (!Number.isSafeInteger(value) || value <= 0) {
 		throw new Error(`${name} must be a positive safe integer.`);
 	}
+}
+
+function requireRelayAcknowledgment(value: number | undefined): number {
+	if (value === undefined || !Number.isSafeInteger(value) || value < -1) {
+		throw new Error('Portal relay writes require a safe acknowledgedThrough value of at least -1.');
+	}
+	return value;
 }
 
 function processStartError(options: {
@@ -388,6 +411,7 @@ export function createStrictToolVmSshProcessRuntime(
 		if (event.kind === 'exited' && record.terminalOutcome.kind === 'completed') {
 			record.terminalExitCode = event.exitCode;
 		}
+		record.portalRelayOutput?.finish();
 		safeCancelDeadline(record.runtimeDeadline);
 		terminalProcessHandleOrder.push(record.process.handleId);
 		settleWaiters(record);
@@ -404,6 +428,7 @@ export function createStrictToolVmSshProcessRuntime(
 			return 'pending';
 		}
 		record.cancellationReason = reason;
+		record.portalRelayOutput?.failPendingReads(new Error(`Portal relay process was ${reason}.`));
 		record.abortOpening.abort();
 		if (record.channel !== undefined && !safeRequestCancellation(record.channel)) {
 			finishAmbiguous(record);
@@ -414,6 +439,7 @@ export function createStrictToolVmSshProcessRuntime(
 
 	const startProcess = async (
 		request: {
+			readonly ioProfile?: SandboxProcessIoProfile;
 			readonly maxRuntimeMs: number;
 			readonly retainOutputBytes: number;
 		},
@@ -431,7 +457,10 @@ export function createStrictToolVmSshProcessRuntime(
 			if (request.maxRuntimeMs > options.limits.maximumRuntimeMilliseconds) {
 				throw new Error('Process max runtime limit exceeded.');
 			}
-			if (request.retainOutputBytes > options.limits.maximumRetainedOutputBytesPerProcess) {
+			if (
+				(request.ioProfile ?? 'standard') === 'standard' &&
+				request.retainOutputBytes > options.limits.maximumRetainedOutputBytesPerProcess
+			) {
 				throw new Error('Process retained output byte limit exceeded.');
 			}
 			while (recordsByProcessHandle.size >= options.limits.maximumProcessCount) {
@@ -491,10 +520,14 @@ export function createStrictToolVmSshProcessRuntime(
 			) {
 				throw new Error('Strict SSH process handle identifier collided or was empty.');
 			}
+			const ioProfile = request.ioProfile ?? 'standard';
 			const record: ProcessRecord = {
 				acceptTerminalEvents: true,
+				acknowledgedThrough: -1,
 				abortOpening: new AbortController(),
+				evictedThrough: -1,
 				inputClosed: false,
+				ioProfile,
 				nextWriteSequence: 0,
 				operation,
 				output: createStrictToolVmSshRetainedOutput({
@@ -502,9 +535,23 @@ export function createStrictToolVmSshProcessRuntime(
 					maximumCursorRecords: options.limits.maximumCursorRecordsPerProcess,
 					maximumLogChunksPerCall: options.limits.maximumLogChunksPerCall,
 					maximumReadBytes: options.limits.maximumReadBytes,
-					maximumRetainedBytes: request.retainOutputBytes,
+					maximumRetainedBytes: Math.min(
+						request.retainOutputBytes,
+						options.limits.maximumRetainedOutputBytesPerProcess,
+					),
 				}),
+				...(ioProfile === 'portal-relay'
+					? {
+							portalRelayOutput: createStrictToolVmSshPortalRelayOutput({
+								createCursorId: () => options.createHandleId('cursor'),
+								pauseOutput: (channel) => record.channel?.pauseOutput(channel),
+								resumeOutput: (channel) => record.channel?.resumeOutput(channel),
+								scheduler: options.scheduler,
+							}),
+						}
+					: {}),
 				process,
+				relayWriteAmbiguous: false,
 				retainedWrites: new Map(),
 				streams,
 				totalWrittenBytes: 0,
@@ -531,18 +578,28 @@ export function createStrictToolVmSshProcessRuntime(
 				onStderr: (bytes) => {
 					try {
 						if (!retired && isCurrentRecord(record) && record.terminalOutcome === undefined) {
-							record.output.append('stderr', bytes);
+							if (record.ioProfile === 'portal-relay') {
+								record.portalRelayOutput?.append('stderr', bytes);
+							} else {
+								record.output.append('stderr', bytes);
+							}
 						}
 					} catch {
+						if (record.channel !== undefined) safeRequestCancellation(record.channel);
 						finishAmbiguous(record);
 					}
 				},
 				onStdout: (bytes) => {
 					try {
 						if (!retired && isCurrentRecord(record) && record.terminalOutcome === undefined) {
-							record.output.append('stdout', bytes);
+							if (record.ioProfile === 'portal-relay') {
+								record.portalRelayOutput?.append('stdout', bytes);
+							} else {
+								record.output.append('stdout', bytes);
+							}
 						}
 					} catch {
+						if (record.channel !== undefined) safeRequestCancellation(record.channel);
 						finishAmbiguous(record);
 					}
 				},
@@ -633,6 +690,7 @@ export function createStrictToolVmSshProcessRuntime(
 			options.strictSshClient.openProcessChannel({
 				argv: request.argv,
 				cwd: request.cwd,
+				ioProfile: request.ioProfile ?? 'standard',
 				...callbacks,
 			}),
 		);
@@ -641,6 +699,7 @@ export function createStrictToolVmSshProcessRuntime(
 			options.strictSshClient.openShellProcessChannel({
 				command: request.command,
 				cwd: request.cwd,
+				ioProfile: request.ioProfile ?? 'standard',
 				...(request.environmentVariables === undefined
 					? {}
 					: { environmentVariables: request.environmentVariables }),
@@ -660,9 +719,23 @@ export function createStrictToolVmSshProcessRuntime(
 		requirePositiveSafeInteger(request.maxBytes, 'Process log byte limit');
 		return record.output.logs(request, record.process, record.terminalOutcome !== undefined);
 	};
-	const read: StrictToolVmSshProcessRuntime['read'] = (request) => {
+	const read: StrictToolVmSshProcessRuntime['read'] = async (request) => {
 		const record = requireStream(request.stream);
 		requirePositiveSafeInteger(request.maxBytes, 'Process stream read byte limit');
+		if (record.ioProfile === 'portal-relay') {
+			if (
+				request.waitMs !== undefined &&
+				(!Number.isSafeInteger(request.waitMs) ||
+					request.waitMs < 0 ||
+					request.waitMs > options.limits.maximumWaitMilliseconds)
+			) {
+				throw new Error('Portal relay stream read wait must be a bounded nonnegative integer.');
+			}
+			if (record.portalRelayOutput === undefined) {
+				throw new Error('Portal relay output owner is unavailable.');
+			}
+			return await record.portalRelayOutput.read(request);
+		}
 		return record.output.read(request, request.stream, record.terminalOutcome !== undefined);
 	};
 	const write: StrictToolVmSshProcessRuntime['write'] = (request) => {
@@ -685,11 +758,30 @@ export function createStrictToolVmSshProcessRuntime(
 			) {
 				throw new Error('Process write content is not canonical base64 with the declared length.');
 			}
-			if (bytes.byteLength > options.limits.maximumWriteBytes) {
+			const maximumWriteBytes =
+				record.ioProfile === 'portal-relay'
+					? PORTAL_RELAY_STREAM_CHUNK_BYTES
+					: options.limits.maximumWriteBytes;
+			if (bytes.byteLength > maximumWriteBytes) {
 				throw new Error('Process write byte limit exceeded.');
 			}
 			if (sha256Digest(bytes) !== request.contentDigest) {
 				throw new Error('Process write content digest does not match.');
+			}
+			if (record.ioProfile === 'portal-relay' && record.relayWriteAmbiguous) {
+				throw new Error('Portal relay write outcome is ambiguous and admission is closed.');
+			}
+			if (record.ioProfile === 'portal-relay') {
+				const acknowledgedThrough = requireRelayAcknowledgment(request.acknowledgedThrough);
+				if (acknowledgedThrough < record.acknowledgedThrough) {
+					throw new Error('Portal relay acknowledgment must be monotone.');
+				}
+				if (acknowledgedThrough >= record.nextWriteSequence) {
+					throw new Error('Portal relay future acknowledgment is invalid.');
+				}
+				if (request.sequence <= record.evictedThrough) {
+					throw new Error('Portal relay write sequence was already evicted.');
+				}
 			}
 			const retainedWrite = record.retainedWrites.get(request.sequence);
 			if (retainedWrite !== undefined) {
@@ -702,24 +794,49 @@ export function createStrictToolVmSshProcessRuntime(
 				if (retainedWrite.outcome === 'ambiguous') {
 					throw new Error('Process write outcome is ambiguous and retry is forbidden.');
 				}
+				if (record.ioProfile === 'portal-relay') {
+					record.acknowledgedThrough = request.acknowledgedThrough ?? -1;
+				}
 				return { kind: 'already-written', sequence: request.sequence, stream: stdinStream };
 			}
 			if (request.sequence !== record.nextWriteSequence) {
 				throw new Error('Process write sequence is not the next expected sequence.');
 			}
-			if (record.retainedWrites.size >= options.limits.maximumWriteRecordsPerProcess) {
+			const maximumWriteRecords =
+				record.ioProfile === 'portal-relay' ? 64 : options.limits.maximumWriteRecordsPerProcess;
+			const relayAcknowledgment = request.acknowledgedThrough ?? -1;
+			const requiredEvictionCount = Math.max(
+				0,
+				record.retainedWrites.size - maximumWriteRecords + 1,
+			);
+			const evictableSequences =
+				record.ioProfile === 'portal-relay'
+					? [...record.retainedWrites.keys()]
+							.filter((sequence) => sequence <= relayAcknowledgment)
+							.slice(0, requiredEvictionCount)
+					: [];
+			if (record.retainedWrites.size - evictableSequences.length >= maximumWriteRecords) {
 				throw new Error('Process write record limit exceeded.');
 			}
-			if (
-				record.totalWrittenBytes + bytes.byteLength >
-				options.limits.maximumWrittenBytesPerProcess
-			) {
+			const maximumWrittenBytes =
+				record.ioProfile === 'portal-relay'
+					? PORTAL_RELAY_TOTAL_TRANSFER_BYTES
+					: options.limits.maximumWrittenBytesPerProcess;
+			if (record.totalWrittenBytes + bytes.byteLength > maximumWrittenBytes) {
 				throw new Error('Per-process written byte limit exceeded.');
 			}
 			if (record.channel === undefined) throw new Error('Process channel is not ready.');
+			if (record.ioProfile === 'portal-relay') {
+				record.acknowledgedThrough = relayAcknowledgment;
+				for (const sequence of evictableSequences) {
+					record.retainedWrites.delete(sequence);
+					record.evictedThrough = sequence;
+				}
+			}
 			try {
 				await record.channel.write(bytes);
 			} catch {
+				record.relayWriteAmbiguous = record.ioProfile === 'portal-relay';
 				record.retainedWrites.set(request.sequence, {
 					bytes: bytes.slice(),
 					contentDigest: request.contentDigest,

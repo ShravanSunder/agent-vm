@@ -158,9 +158,11 @@ export function classifyGatewayControlAdmission(
 						status: 'classified',
 					};
 		case 'operation_cancel':
-			return message.payload.initiatedBy === 'gateway'
-				? { reason: 'unproven_gateway_cancel', status: 'refused' }
-				: { reason: 'direction_violation', status: 'fence' };
+			return message.payload.initiatedBy === 'gateway' && options.stablePrincipal !== undefined
+				? { messageClass: 'safety', stablePrincipal: options.stablePrincipal, status: 'classified' }
+				: message.payload.initiatedBy === 'gateway'
+					? { reason: 'unproven_gateway_cancel', status: 'refused' }
+					: { reason: 'direction_violation', status: 'fence' };
 		case 'recovery_command':
 			return { reason: 'direction_violation', status: 'fence' };
 		case 'tool_vm_binding_publish':

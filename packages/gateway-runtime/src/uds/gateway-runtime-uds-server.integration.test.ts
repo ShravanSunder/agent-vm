@@ -583,6 +583,146 @@ describe('production Gateway runtime private UDS server', () => {
 		}
 	});
 
+	it('settles Portal cancellation before cleanup without releasing its capacity or replying twice', async () => {
+		// Arrange: both dispatches stay held independently of their caller responses.
+		const started = Promise.withResolvers<void>();
+		const siblingStarted = Promise.withResolvers<void>();
+		const heldCleanup = Promise.withResolvers<unknown>();
+		const siblingCleanup = Promise.withResolvers<unknown>();
+		const server = await startTestServer({
+			maxPendingRequestsPerConnection: 2,
+			dispatch: async ({ method }): Promise<unknown> => {
+				if (method === 'portal.held') {
+					started.resolve();
+					return await heldCleanup.promise;
+				}
+				if (method === 'portal.sibling') {
+					siblingStarted.resolve();
+					return await siblingCleanup.promise;
+				}
+				return { kind: 'independent-result' };
+			},
+		});
+		const socket = await connectRawSocket(server.readiness.socketPath);
+		const observed: GatewayRuntimeJsonRpcMessage[] = [];
+		const decoder = new GatewayRuntimeFrameDecoder();
+		socket.on('data', (chunk: Buffer) => observed.push(...decoder.push(chunk)));
+		const request = (id: string, method: string): Promise<GatewayRuntimeJsonRpcMessage> =>
+			sendRawRequest({ socket, message: { id, jsonrpc: '2.0', method, params: {} } });
+		await sendRawRequest({
+			socket,
+			message: {
+				id: 'handshake',
+				jsonrpc: '2.0',
+				method: 'managed-plugin.handshake',
+				params: CURRENT_ATTACHMENT,
+			},
+		});
+		const cancelledResponse = request('held', 'portal.held');
+		const siblingResponse = request('sibling', 'portal.sibling');
+		await Promise.all([started.promise, siblingStarted.promise]);
+		try {
+			// Act: notification must settle the reply while cleanup remains blocked.
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'held' },
+				}),
+			);
+			const reply = await waitForPressureSafetyProof(
+				cancelledResponse,
+				'request-local cancellation reply',
+			);
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'held' },
+				}),
+			);
+			// Assert: no fabricated non-dispatch, no freed cleanup slot, no lost sibling.
+			expect(reply).toMatchObject({
+				id: 'held',
+				error: { code: -32_800, data: { code: 'request-cancelled' } },
+			});
+			expect(await request('over-capacity', 'portal.next')).toMatchObject({
+				error: { data: { code: 'pending-request-limit-exceeded' } },
+			});
+			siblingCleanup.resolve({ kind: 'sibling-complete' });
+			expect(await siblingResponse).toMatchObject({ result: { kind: 'sibling-complete' } });
+			heldCleanup.resolve({ kind: 'late-result' });
+			expect(await request('after-cleanup', 'portal.next')).toMatchObject({
+				result: { kind: 'independent-result' },
+			});
+			expect(observed.filter((message) => message['id'] === 'held')).toHaveLength(1);
+		} finally {
+			heldCleanup.resolve({ kind: 'cleanup' });
+			siblingCleanup.resolve({ kind: 'cleanup' });
+			await Promise.allSettled([cancelledResponse, siblingResponse]);
+			socket.destroy();
+		}
+	});
+
+	it('preserves non-Portal cancellation settlement until its dispatcher completes', async () => {
+		// Arrange: sandbox terminal has its existing result/cleanup contract.
+		const started = Promise.withResolvers<void>();
+		const cleanup = Promise.withResolvers<unknown>();
+		const server = await startTestServer({
+			dispatch: async ({ method }): Promise<unknown> => {
+				if (method === 'sandbox.terminal.attach') {
+					started.resolve();
+					return await cleanup.promise;
+				}
+				return { kind: 'barrier' };
+			},
+		});
+		const socket = await connectRawSocket(server.readiness.socketPath);
+		await sendRawRequest({
+			socket,
+			message: {
+				id: 'handshake',
+				jsonrpc: '2.0',
+				method: 'managed-plugin.handshake',
+				params: CURRENT_ATTACHMENT,
+			},
+		});
+		let receivedTerminalReply = false;
+		const terminal = sendRawRequest({
+			socket,
+			message: { id: 'terminal', jsonrpc: '2.0', method: 'sandbox.terminal.attach', params: {} },
+		});
+		void terminal.then(
+			() => {
+				receivedTerminalReply = true;
+			},
+			() => undefined,
+		);
+		await started.promise;
+		try {
+			// Act: subsequent reply proves the earlier cancellation was processed.
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'terminal' },
+				}),
+			);
+			await sendRawRequest({
+				socket,
+				message: { id: 'barrier', jsonrpc: '2.0', method: 'portal.list', params: {} },
+			});
+			// Assert: ordinary cancellation did not gain the Portal-only early error.
+			expect(receivedTerminalReply).toBe(false);
+			cleanup.resolve({ kind: 'terminal-finished' });
+			expect(await terminal).toMatchObject({ result: { kind: 'terminal-finished' } });
+		} finally {
+			cleanup.resolve({ kind: 'cleanup' });
+			await Promise.allSettled([terminal]);
+			socket.destroy();
+		}
+	});
+
 	it('keeps cancellation and terminal access live while bounding admission under frozen outbound pressure', async () => {
 		// Arrange
 		const cancelledDispatchStarted = Promise.withResolvers<void>();

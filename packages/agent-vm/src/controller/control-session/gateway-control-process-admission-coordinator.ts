@@ -28,6 +28,16 @@ export type GatewayControlProcessSessionRegistrationResult =
 	  };
 
 export interface GatewayControlProcessAdmissionCoordinator {
+	cancelOperation(options: {
+		readonly activeOperationId: string;
+		readonly attachmentGeneration: number;
+		readonly connectionId: string;
+		readonly registration: GatewayControlProcessSessionRegistration;
+		readonly sessionId: string;
+		readonly stablePrincipal: string;
+	}):
+		| { readonly status: 'cancelled' | 'already_cancelled' }
+		| { readonly status: 'not_found' | 'not_owned' };
 	diagnostics(): {
 		readonly activeSessions: number;
 		readonly nonSafetyBytes: number;
@@ -58,18 +68,37 @@ interface RegisteredGatewayControlProcessSession {
 }
 
 interface PendingGatewayControlProcessWork {
+	readonly cancellationController?: AbortController;
+	localSubmissionStarted: boolean;
 	processCompletionActive: boolean;
 	readonly localExecutor: GatewayControlAdmissionExecutor<unknown>;
+	readonly ownerSession: RegisteredGatewayControlProcessSession;
 	readonly registration: GatewayControlProcessSessionRegistration;
 	readonly request: GatewayControlAdmissionExecutionRequest<unknown>;
 	readonly reject: (error: unknown) => void;
+	readonly resolveCleanup: () => void;
 	readonly resolve: (result: GatewayControlAdmissionExecutionResult) => void;
 	settled: boolean;
 }
 
 function closedSubmission(reason: string): GatewayControlAdmissionSubmission {
 	const result = { reason, status: 'closed' } as const;
-	return { admission: result, completion: Promise.resolve(result) };
+	return { admission: result, cleanup: Promise.resolve(), completion: Promise.resolve(result) };
+}
+
+function settleProcessWork(
+	work: PendingGatewayControlProcessWork,
+	result: GatewayControlAdmissionExecutionResult,
+): void {
+	if (work.settled) return;
+	work.settled = true;
+	work.resolve(result);
+}
+
+function rejectProcessWork(work: PendingGatewayControlProcessWork, error: unknown): void {
+	if (work.settled) return;
+	work.settled = true;
+	work.reject(error);
 }
 
 export function createGatewayControlProcessAdmissionCoordinator(
@@ -94,6 +123,7 @@ export function createGatewayControlProcessAdmissionCoordinator(
 	const scheduleImmediate =
 		options.scheduleImmediate ?? ((callback: () => void) => setImmediate(callback));
 	const sessionsByZone = new Map<string, RegisteredGatewayControlProcessSession>();
+	const retiredSessionsByZone = new Map<string, Set<RegisteredGatewayControlProcessSession>>();
 	let pumpScheduled = false;
 
 	const currentSessionFor = (
@@ -103,25 +133,20 @@ export function createGatewayControlProcessAdmissionCoordinator(
 		return session?.registration === registration ? session : undefined;
 	};
 
-	const settleWork = (
-		work: PendingGatewayControlProcessWork,
-		result: GatewayControlAdmissionExecutionResult,
-	): void => {
-		if (work.settled) {
-			return;
+	const releaseWork = (work: PendingGatewayControlProcessWork): void => {
+		work.ownerSession.work.delete(work);
+		work.resolveCleanup();
+		if (work.ownerSession.work.size === 0) {
+			const retiredSessions = retiredSessionsByZone.get(work.registration.zoneId);
+			retiredSessions?.delete(work.ownerSession);
+			if (retiredSessions?.size === 0) retiredSessionsByZone.delete(work.registration.zoneId);
 		}
-		work.settled = true;
-		currentSessionFor(work.registration)?.work.delete(work);
-		work.resolve(result);
-	};
-
-	const rejectWork = (work: PendingGatewayControlProcessWork, error: unknown): void => {
-		if (work.settled) {
-			return;
+		if (
+			!sessionsByZone.has(work.registration.zoneId) &&
+			!retiredSessionsByZone.has(work.registration.zoneId)
+		) {
+			processAdmission.unregisterZone(work.registration.zoneId);
 		}
-		work.settled = true;
-		currentSessionFor(work.registration)?.work.delete(work);
-		work.reject(error);
 	};
 
 	const completeProcessToken = (
@@ -141,26 +166,58 @@ export function createGatewayControlProcessAdmissionCoordinator(
 		const work = processWork.message.payload;
 		if (work.settled || currentSessionFor(work.registration) === undefined) {
 			processAdmission.complete(processWork.completionToken);
+			releaseWork(work);
 			return;
 		}
 		work.processCompletionActive = true;
+		work.localSubmissionStarted = true;
 		let localSubmission: GatewayControlAdmissionSubmission;
 		try {
-			localSubmission = work.localExecutor.submit(work.request);
+			localSubmission = work.localExecutor.submit({
+				...work.request,
+				execute: async () =>
+					await work.request.execute(
+						work.cancellationController === undefined
+							? {}
+							: { cancellationSignal: work.cancellationController.signal },
+					),
+			});
 		} catch (error) {
 			completeProcessToken(work, processWork.completionToken);
-			rejectWork(work, error);
+			rejectProcessWork(work, error);
+			releaseWork(work);
 			return;
 		}
 		void localSubmission.completion.then(
 			(result) => {
+				settleProcessWork(work, result);
+				if (work.request.retainProcessAdmissionUntilCleanup !== true) {
+					completeProcessToken(work, processWork.completionToken);
+					releaseWork(work);
+					schedulePump();
+				}
+			},
+			(error: unknown) => {
+				rejectProcessWork(work, error);
+				if (work.request.retainProcessAdmissionUntilCleanup !== true) {
+					completeProcessToken(work, processWork.completionToken);
+					releaseWork(work);
+					schedulePump();
+				}
+			},
+		);
+		void localSubmission.cleanup.then(
+			() => {
+				if (work.request.retainProcessAdmissionUntilCleanup !== true) return;
 				completeProcessToken(work, processWork.completionToken);
-				settleWork(work, result);
+				releaseWork(work);
 				schedulePump();
 			},
 			(error: unknown) => {
+				if (work.request.retainProcessAdmissionUntilCleanup !== true) return;
 				completeProcessToken(work, processWork.completionToken);
-				rejectWork(work, error);
+				rejectProcessWork(work, error);
+				releaseWork(work);
 				schedulePump();
 			},
 		);
@@ -191,16 +248,58 @@ export function createGatewayControlProcessAdmissionCoordinator(
 		if (currentSessionFor(session.registration) !== session) {
 			return;
 		}
-		for (const work of session.work) {
-			work.processCompletionActive = false;
-			work.request.onCancel?.(reason);
-			settleWork(work, { reason, status: 'closed' });
-		}
-		processAdmission.unregisterZone(session.registration.zoneId);
 		sessionsByZone.delete(session.registration.zoneId);
+		for (const work of session.work) {
+			work.cancellationController?.abort(new Error(reason));
+			work.request.onCancel?.(reason);
+			settleProcessWork(work, { reason, status: 'closed' });
+		}
+		if (session.work.size === 0) {
+			if (!retiredSessionsByZone.has(session.registration.zoneId)) {
+				processAdmission.unregisterZone(session.registration.zoneId);
+			}
+		} else {
+			const retiredSessions = retiredSessionsByZone.get(session.registration.zoneId) ?? new Set();
+			retiredSessions.add(session);
+			retiredSessionsByZone.set(session.registration.zoneId, retiredSessions);
+		}
 	};
 
 	return {
+		cancelOperation: (cancellation) => {
+			const session = currentSessionFor(cancellation.registration);
+			if (session === undefined) return { status: 'not_found' };
+			const matchingId = [...session.work].find(
+				(work) =>
+					work.request.cancellableOperation?.activeOperationId === cancellation.activeOperationId,
+			);
+			if (matchingId === undefined) return { status: 'not_found' };
+			const owner = matchingId.request.cancellableOperation;
+			if (
+				owner === undefined ||
+				owner.attachmentGeneration !== cancellation.attachmentGeneration ||
+				owner.connectionId !== cancellation.connectionId ||
+				owner.sessionId !== cancellation.sessionId ||
+				owner.stablePrincipal !== cancellation.stablePrincipal
+			) {
+				return { status: 'not_owned' };
+			}
+			if (matchingId.cancellationController?.signal.aborted === true) {
+				return { status: 'already_cancelled' };
+			}
+			if (matchingId.settled) return { status: 'not_found' };
+			matchingId.cancellationController?.abort(
+				new Error('configured CLI operation cancelled by its authenticated Gateway caller'),
+			);
+			if (!matchingId.localSubmissionStarted) {
+				settleProcessWork(matchingId, {
+					reason: 'configured CLI operation cancelled before execution',
+					status: 'closed',
+				});
+				schedulePump();
+			}
+			return { status: 'cancelled' };
+		},
 		diagnostics: () => processAdmission.diagnostics(),
 		registerSession: (identity, registrationOptions) => {
 			const zoneId = identity.zoneId;
@@ -247,16 +346,26 @@ export function createGatewayControlProcessAdmissionCoordinator(
 			}
 			let resolveCompletion!: (result: GatewayControlAdmissionExecutionResult) => void;
 			let rejectCompletion!: (error: unknown) => void;
+			let resolveCleanup!: () => void;
+			const cleanup = new Promise<void>((resolve) => {
+				resolveCleanup = resolve;
+			});
 			const completion = new Promise<GatewayControlAdmissionExecutionResult>((resolve, reject) => {
 				resolveCompletion = resolve;
 				rejectCompletion = reject;
 			});
 			const work = {
+				...(request.cancellableOperation === undefined
+					? {}
+					: { cancellationController: new AbortController() }),
 				localExecutor,
+				localSubmissionStarted: false,
+				ownerSession: session,
 				processCompletionActive: false,
 				registration,
 				reject: rejectCompletion,
 				request,
+				resolveCleanup,
 				resolve: resolveCompletion,
 				settled: false,
 			} satisfies PendingGatewayControlProcessWork;
@@ -275,19 +384,21 @@ export function createGatewayControlProcessAdmissionCoordinator(
 				case 'admitted':
 					session.work.add(work);
 					schedulePump();
-					return { admission: { status: 'admitted' }, completion };
+					return { admission: { status: 'admitted' }, cleanup, completion };
 				case 'replaced':
 					admission.replacedMessage.payload.request.onCancel?.('replaced');
-					settleWork(admission.replacedMessage.payload, { status: 'replaced' });
+					settleProcessWork(admission.replacedMessage.payload, { status: 'replaced' });
+					releaseWork(admission.replacedMessage.payload);
 					session.work.add(work);
 					schedulePump();
-					return { admission: { status: 'replaced' }, completion };
+					return { admission: { status: 'replaced' }, cleanup, completion };
 				case 'dropped':
 				case 'fence':
 				case 'refused':
 				case 'shed':
+					resolveCleanup();
 					resolveCompletion(admission);
-					return { admission, completion };
+					return { admission, cleanup, completion };
 			}
 			throw new Error('unsupported gateway process admission result');
 		},

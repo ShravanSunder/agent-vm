@@ -238,4 +238,301 @@ describe('Gateway control process admission coordinator', () => {
 		);
 		heldAuthority.resolve();
 	});
+
+	it('retains predecessor process capacity until active cleanup settles', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator({
+			maxNonSafetyMessages: 1,
+		});
+		const first = coordinator.registerSession(sessionIdentity('zone-a', 1));
+		if (first.status !== 'admitted') throw new Error('first session registration failed');
+		const blocked = deferred();
+		const firstExecutor = createGatewayControlAdmissionExecutor<string>();
+		const firstSubmission = coordinator.submit({
+			localExecutor: firstExecutor,
+			registration: first.registration,
+			request: {
+				byteLength: 1,
+				execute: async () => await blocked.promise,
+				id: 'first-authority',
+				messageClass: 'authority',
+				payload: 'first-authority',
+				retainProcessAdmissionUntilCleanup: true,
+				stablePrincipal: 'principal-a',
+			},
+		});
+		await flushImmediate();
+		await flushImmediate();
+		coordinator.unregisterSession(first.registration, 'first retired');
+		firstExecutor.close('first retired');
+		await expect(firstSubmission.completion).resolves.toEqual({
+			reason: 'first retired',
+			status: 'closed',
+		});
+
+		const second = coordinator.registerSession(sessionIdentity('zone-a', 2));
+		if (second.status !== 'admitted') throw new Error('second session registration failed');
+		const secondExecutor = createGatewayControlAdmissionExecutor<string>();
+		const refused = coordinator.submit({
+			localExecutor: secondExecutor,
+			registration: second.registration,
+			request: {
+				byteLength: 1,
+				execute: async () => undefined,
+				id: 'second-authority-refused',
+				messageClass: 'authority',
+				payload: 'second-authority-refused',
+				stablePrincipal: 'principal-a',
+			},
+		});
+		expect(refused.admission).toEqual({ reason: 'global_capacity', status: 'refused' });
+		expect(coordinator.diagnostics().nonSafetyMessages).toBe(1);
+
+		blocked.resolve();
+		await firstSubmission.cleanup;
+		const recovered = coordinator.submit({
+			localExecutor: secondExecutor,
+			registration: second.registration,
+			request: {
+				byteLength: 1,
+				execute: async () => undefined,
+				id: 'second-authority-recovered',
+				messageClass: 'authority',
+				payload: 'second-authority-recovered',
+				stablePrincipal: 'principal-a',
+			},
+		});
+		expect(recovered.admission).toEqual({ status: 'admitted' });
+	});
+
+	it('cancels only the exact configured CLI operation owner and makes duplicates inert', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator();
+		const registered = coordinator.registerSession(sessionIdentity('zone-a', 3));
+		if (registered.status !== 'admitted') throw new Error('session registration failed');
+		const cleanup = deferred();
+		let observedSignal: AbortSignal | undefined;
+		const executor = createGatewayControlAdmissionExecutor<string>();
+		const submission = coordinator.submit({
+			localExecutor: executor,
+			registration: registered.registration,
+			request: {
+				byteLength: 1,
+				cancellableOperation: {
+					activeOperationId: '11111111-1111-4111-8111-111111111111',
+					attachmentGeneration: 3,
+					connectionId: '22222222-2222-4222-8222-222222222222',
+					sessionId: '33333333-3333-4333-8333-333333333333',
+					stablePrincipal: 'principal-a',
+				},
+				execute: async ({ cancellationSignal }) => {
+					observedSignal = cancellationSignal;
+					await cleanup.promise;
+				},
+				id: 'configured-cli-a',
+				messageClass: 'authority',
+				payload: 'configured-cli-a',
+				retainProcessAdmissionUntilCleanup: true,
+				stablePrincipal: 'principal-a',
+			},
+		});
+		await flushImmediate();
+		await flushImmediate();
+		expect(
+			coordinator.cancelOperation({
+				activeOperationId: '11111111-1111-4111-8111-111111111111',
+				attachmentGeneration: 3,
+				connectionId: '22222222-2222-4222-8222-222222222222',
+				registration: registered.registration,
+				sessionId: '33333333-3333-4333-8333-333333333333',
+				stablePrincipal: 'principal-b',
+			}),
+		).toEqual({ status: 'not_owned' });
+		expect(observedSignal?.aborted).toBe(false);
+		const exactCancellation = {
+			activeOperationId: '11111111-1111-4111-8111-111111111111',
+			attachmentGeneration: 3,
+			connectionId: '22222222-2222-4222-8222-222222222222',
+			registration: registered.registration,
+			sessionId: '33333333-3333-4333-8333-333333333333',
+			stablePrincipal: 'principal-a',
+		} as const;
+		expect(coordinator.cancelOperation(exactCancellation)).toEqual({ status: 'cancelled' });
+		expect(observedSignal?.aborted).toBe(true);
+		expect(coordinator.cancelOperation(exactCancellation)).toEqual({
+			status: 'already_cancelled',
+		});
+		expect(coordinator.diagnostics().nonSafetyMessages).toBe(1);
+		cleanup.resolve();
+		await submission.cleanup;
+		expect(coordinator.diagnostics().nonSafetyMessages).toBe(0);
+	});
+
+	it('bounds repeated retained replacements by both process count and bytes then recovers', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator({
+			maxNonSafetyBytes: 2,
+			maxNonSafetyMessages: 2,
+		});
+		const heldCleanup = [deferred(), deferred()] as const;
+		const retainReplacement = async (
+			index: number,
+			held: ReturnType<typeof deferred>,
+		): Promise<ReturnType<typeof coordinator.submit>> => {
+			const registration = coordinator.registerSession(sessionIdentity('zone-a', index + 1));
+			if (registration.status !== 'admitted') throw new Error('replacement registration failed');
+			const executor = createGatewayControlAdmissionExecutor<string>();
+			const submission = coordinator.submit({
+				localExecutor: executor,
+				registration: registration.registration,
+				request: {
+					byteLength: 1,
+					execute: async () => await held.promise,
+					id: `retained-${String(index)}`,
+					messageClass: 'authority',
+					payload: `retained-${String(index)}`,
+					retainProcessAdmissionUntilCleanup: true,
+					stablePrincipal: `principal-${String(index)}`,
+				},
+			});
+			await flushImmediate();
+			await flushImmediate();
+			coordinator.unregisterSession(registration.registration, 'replacement retained');
+			executor.close('replacement retained');
+			return submission;
+		};
+		const retainedSubmissions = [
+			await retainReplacement(0, heldCleanup[0]),
+			await retainReplacement(1, heldCleanup[1]),
+		];
+		expect(coordinator.diagnostics()).toMatchObject({
+			nonSafetyBytes: 2,
+			nonSafetyMessages: 2,
+		});
+		const third = coordinator.registerSession(sessionIdentity('zone-a', 3));
+		if (third.status !== 'admitted') throw new Error('third registration failed');
+		const thirdExecutor = createGatewayControlAdmissionExecutor<string>();
+		const refused = coordinator.submit({
+			localExecutor: thirdExecutor,
+			registration: third.registration,
+			request: {
+				byteLength: 1,
+				execute: async () => undefined,
+				id: 'third-refused',
+				messageClass: 'authority',
+				payload: 'third-refused',
+				retainProcessAdmissionUntilCleanup: true,
+				stablePrincipal: 'principal-third',
+			},
+		});
+		expect(refused.admission).toEqual({ reason: 'global_capacity', status: 'refused' });
+
+		for (const held of heldCleanup) held.resolve();
+		await Promise.all(retainedSubmissions.map((submission) => submission.cleanup));
+		expect(coordinator.diagnostics()).toMatchObject({
+			nonSafetyBytes: 0,
+			nonSafetyMessages: 0,
+		});
+		expect(
+			coordinator.submit({
+				localExecutor: thirdExecutor,
+				registration: third.registration,
+				request: {
+					byteLength: 1,
+					execute: async () => undefined,
+					id: 'third-recovered',
+					messageClass: 'authority',
+					payload: 'third-recovered',
+					stablePrincipal: 'principal-third',
+				},
+			}).admission,
+		).toEqual({ status: 'admitted' });
+	});
+
+	it('keeps the zone registered until every retired predecessor cleanup settles', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator();
+		const heldCleanup = [deferred(), deferred()] as const;
+		const retainRetiredSession = async (
+			index: number,
+			held: ReturnType<typeof deferred>,
+		): Promise<ReturnType<typeof coordinator.submit>> => {
+			const registration = coordinator.registerSession(sessionIdentity('zone-a', index + 1));
+			if (registration.status !== 'admitted') throw new Error('session registration failed');
+			const executor = createGatewayControlAdmissionExecutor<string>();
+			const submission = coordinator.submit({
+				localExecutor: executor,
+				registration: registration.registration,
+				request: {
+					byteLength: 1,
+					execute: async () => await held.promise,
+					id: `retired-${String(index)}`,
+					messageClass: 'authority',
+					payload: `retired-${String(index)}`,
+					retainProcessAdmissionUntilCleanup: true,
+					stablePrincipal: `principal-${String(index)}`,
+				},
+			});
+			await flushImmediate();
+			await flushImmediate();
+			coordinator.unregisterSession(registration.registration, 'retired');
+			executor.close('retired');
+			return submission;
+		};
+		const submissions = [
+			await retainRetiredSession(0, heldCleanup[0]),
+			await retainRetiredSession(1, heldCleanup[1]),
+		];
+		const emptySuccessor = coordinator.registerSession(sessionIdentity('zone-a', 3));
+		if (emptySuccessor.status !== 'admitted') {
+			throw new Error('empty successor registration failed');
+		}
+		coordinator.unregisterSession(emptySuccessor.registration, 'empty successor retired');
+		expect(coordinator.diagnostics()).toMatchObject({
+			activeSessions: 1,
+			nonSafetyMessages: 2,
+		});
+		heldCleanup[0].resolve();
+		await submissions[0]?.cleanup;
+		expect(coordinator.diagnostics()).toMatchObject({
+			activeSessions: 1,
+			nonSafetyMessages: 1,
+		});
+		heldCleanup[1].resolve();
+		await submissions[1]?.cleanup;
+		expect(coordinator.diagnostics()).toMatchObject({
+			activeSessions: 0,
+			nonSafetyMessages: 0,
+		});
+	});
+
+	it('releases displaced coalesced work cleanup without waiting for a dequeue', async () => {
+		const scheduled: Array<() => void> = [];
+		const coordinator = createGatewayControlProcessAdmissionCoordinator({
+			scheduleImmediate: (callback) => scheduled.push(callback),
+		});
+		const registration = coordinator.registerSession(sessionIdentity('zone-a'));
+		if (registration.status !== 'admitted') throw new Error('session registration failed');
+		const executor = createGatewayControlAdmissionExecutor<string>();
+		const submit = (id: string): ReturnType<typeof coordinator.submit> =>
+			coordinator.submit({
+				localExecutor: executor,
+				registration: registration.registration,
+				request: {
+					byteLength: 1,
+					coalesceKey: 'same-liveness',
+					execute: async () => undefined,
+					id,
+					messageClass: 'liveness',
+					payload: id,
+				},
+			});
+		const first = submit('first');
+		const second = submit('second');
+		await expect(first.completion).resolves.toEqual({ status: 'replaced' });
+		await first.cleanup;
+		coordinator.unregisterSession(registration.registration, 'closed before pump');
+		scheduled.shift()?.();
+		await second.cleanup;
+		expect(coordinator.diagnostics()).toMatchObject({
+			activeSessions: 0,
+			nonSafetyMessages: 0,
+		});
+	});
 });

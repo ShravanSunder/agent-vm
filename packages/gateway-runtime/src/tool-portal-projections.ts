@@ -44,6 +44,7 @@ export type GatewayRuntimePrivateUdsOperationGroup = z.infer<typeof PrivateUdsOp
 
 export interface GatewayRuntimePortalCallInvocation {
 	readonly publicRequest: PortalCallRequest;
+	readonly signal?: AbortSignal;
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 
@@ -60,16 +61,19 @@ export interface GatewayRuntimeArtifactProjectionOperations {
 
 export interface GatewayRuntimePortalDescribeInvocation {
 	readonly publicRequest: PortalDescribeRequest;
+	readonly signal?: AbortSignal;
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 
 export interface GatewayRuntimePortalListInvocation {
 	readonly publicRequest: PortalListRequest;
+	readonly signal?: AbortSignal;
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 
 export interface GatewayRuntimePortalSearchInvocation {
 	readonly publicRequest: PortalSearchRequest;
+	readonly signal?: AbortSignal;
 	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
 }
 
@@ -177,21 +181,25 @@ function createPortalProjectionOperations(props: {
 		call: async (invocation) =>
 			await props.capabilityCore.call(invocation.publicRequest, {
 				origin: { kind: 'managed', trustedContext: invocation.trustedContext },
+				...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
 				surfaceClass: 'protected_uds',
 			}),
 		describe: async (invocation) =>
 			await props.capabilityCore.describe(invocation.publicRequest, {
 				origin: { kind: 'managed', trustedContext: invocation.trustedContext },
+				...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
 				surfaceClass: 'protected_uds',
 			}),
 		list: async (invocation) =>
 			await props.capabilityCore.list(invocation.publicRequest, {
 				origin: { kind: 'managed', trustedContext: invocation.trustedContext },
+				...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
 				surfaceClass: 'protected_uds',
 			}),
 		search: async (invocation) =>
 			await props.capabilityCore.search(invocation.publicRequest, {
 				origin: { kind: 'managed', trustedContext: invocation.trustedContext },
+				...(invocation.signal === undefined ? {} : { signal: invocation.signal }),
 				surfaceClass: 'protected_uds',
 			}),
 	};

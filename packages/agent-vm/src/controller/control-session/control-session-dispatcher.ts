@@ -16,6 +16,7 @@ import type {
 
 export interface ControlSessionDispatchContext {
 	readonly attachmentGeneration?: number;
+	readonly cancellationSignal?: AbortSignal;
 	readonly envelope: ControlEnvelope;
 	readonly payload: unknown;
 }

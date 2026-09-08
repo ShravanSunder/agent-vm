@@ -23,6 +23,12 @@ import {
 	type ManagedImageOverlay,
 } from '../build/managed-image-dockerfile.js';
 import {
+	managedToolPortalGuide,
+	managedToolPortalGuideFileName,
+	managedToolVmLoginProfile,
+	managedToolVmLoginProfileFileName,
+} from '../build/managed-image-tool-portal-guide.js';
+import {
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 	type PreparedManagedVmImage,
@@ -1506,8 +1512,24 @@ function renderLocalDockerPackageInstallCommand(
 
 function isLocalToolVmPackageInstallCommand(command: string): boolean {
 	return (
-		command.includes('/opt/agent-vm/local-packages/package.json') &&
-		command.includes('file:/tmp/agent-vm-mcp-portal-')
+		(command.includes('/opt/agent-vm/local-packages/package.json') &&
+			command.includes('file:/tmp/agent-vm-mcp-portal-')) ||
+		(command.includes('uv pip install') && command.includes('agent_vm_agent_portal_sdk-'))
+	);
+}
+
+function isLocalToolVmGeneratedPackageCopyEntry(options: {
+	readonly copyEntry: ManagedImageOverlay['copy'][number];
+	readonly localPackageTarballs: readonly LocalDockerPackageTarball[];
+}): boolean {
+	const sourceFileName = path.basename(options.copyEntry.from);
+	if (/^agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(sourceFileName)) {
+		return true;
+	}
+	return options.localPackageTarballs.some(
+		(tarball) =>
+			sourceFileName.startsWith(`agent-vm-${tarball.packageName}-`) &&
+			sourceFileName.endsWith('.tgz'),
 	);
 }
 
@@ -1524,6 +1546,7 @@ function resolveManagedOverlayCopySourcePath(
 }
 
 async function writeLocalToolVmManagedOverlay(options: {
+	readonly localAgentPortalSdkWheelPath: string;
 	readonly localPackageTarballs: readonly LocalDockerPackageTarball[];
 	readonly originalOverlayPath: string | undefined;
 	readonly overlayDirectory: string;
@@ -1533,11 +1556,12 @@ async function writeLocalToolVmManagedOverlay(options: {
 		options.originalOverlayPath === undefined
 			? undefined
 			: path.dirname(options.originalOverlayPath);
-	const generatedCopySourcePaths = new Set(
-		options.localPackageTarballs.map((tarball) => `local-agent-vm/${tarball.archiveName}`),
-	);
 	const preservedCopyEntries = originalOverlay.copy.filter(
-		(copyEntry) => !generatedCopySourcePaths.has(copyEntry.from),
+		(copyEntry) =>
+			!isLocalToolVmGeneratedPackageCopyEntry({
+				copyEntry,
+				localPackageTarballs: options.localPackageTarballs,
+			}),
 	);
 	await fs.mkdir(options.overlayDirectory, { recursive: true });
 	await Promise.all(
@@ -1562,11 +1586,15 @@ async function writeLocalToolVmManagedOverlay(options: {
 	);
 	const localPackageDirectory = path.join(options.overlayDirectory, 'local-agent-vm');
 	await fs.mkdir(localPackageDirectory, { recursive: true });
-	await Promise.all(
-		options.localPackageTarballs.map(async (tarball): Promise<void> => {
+	await Promise.all([
+		...options.localPackageTarballs.map(async (tarball): Promise<void> => {
 			await fs.copyFile(tarball.sourcePath, path.join(localPackageDirectory, tarball.archiveName));
 		}),
-	);
+		fs.copyFile(
+			options.localAgentPortalSdkWheelPath,
+			path.join(localPackageDirectory, path.basename(options.localAgentPortalSdkWheelPath)),
+		),
+	]);
 	const derivedOverlay = {
 		...originalOverlay,
 		copy: [
@@ -1575,6 +1603,10 @@ async function writeLocalToolVmManagedOverlay(options: {
 				from: `local-agent-vm/${tarball.archiveName}`,
 				to: `/tmp/${tarball.archiveName}`,
 			})),
+			{
+				from: `local-agent-vm/${path.basename(options.localAgentPortalSdkWheelPath)}`,
+				to: `/tmp/${path.basename(options.localAgentPortalSdkWheelPath)}`,
+			},
 		],
 		runAfterBase: [
 			...originalOverlay.runAfterBase.filter(
@@ -1589,6 +1621,7 @@ async function writeLocalToolVmManagedOverlay(options: {
 }
 
 export async function useLocalToolVmMcpPortalPackageTarballs(options: {
+	readonly localAgentPortalSdkWheelPath: string;
 	readonly localAgentPortalSdkTarballPath: string;
 	readonly localConfigContractsTarballPath: string;
 	readonly localMcpPortalTarballPath: string;
@@ -1638,6 +1671,7 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 						`${profileName}-local-mcp-portal-overlay`,
 					);
 					const derivedOverlayPath = await writeLocalToolVmManagedOverlay({
+						localAgentPortalSdkWheelPath: options.localAgentPortalSdkWheelPath,
 						localPackageTarballs,
 						originalOverlayPath: toolVmProfile.source.overlay,
 						overlayDirectory,
@@ -1661,6 +1695,25 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 					dockerContextDirectory,
 					tarballs: localPackageTarballs,
 				});
+				const localAgentPortalSdkWheelFileName = path.basename(
+					options.localAgentPortalSdkWheelPath,
+				);
+				await Promise.all([
+					fs.copyFile(
+						options.localAgentPortalSdkWheelPath,
+						path.join(dockerContextDirectory, localAgentPortalSdkWheelFileName),
+					),
+					fs.writeFile(
+						path.join(dockerContextDirectory, managedToolPortalGuideFileName),
+						managedToolPortalGuide,
+						'utf8',
+					),
+					fs.writeFile(
+						path.join(dockerContextDirectory, managedToolVmLoginProfileFileName),
+						managedToolVmLoginProfile,
+						'utf8',
+					),
+				]);
 				await fs.writeFile(
 					dockerfilePath,
 					[
@@ -1670,7 +1723,15 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 						...localPackageTarballs.map(
 							(tarball) => `COPY ${tarball.archiveName} /tmp/${tarball.archiveName}`,
 						),
+						`COPY ${localAgentPortalSdkWheelFileName} /tmp/${localAgentPortalSdkWheelFileName}`,
+						'RUN install -d -m 0755 /agent-vm',
+						`COPY ${managedToolPortalGuideFileName} /agent-vm/tool-portal.md`,
+						`COPY ${managedToolVmLoginProfileFileName} /etc/profile.d/agent-vm-tools.sh`,
+						'RUN uv venv /opt/agent-vm-tools',
+						'ENV PATH=/opt/agent-vm-tools/bin:${PATH}',
+						`RUN uv pip install --python /opt/agent-vm-tools/bin/python /tmp/${localAgentPortalSdkWheelFileName}`,
 						...renderLocalDockerPackageInstallLines(localPackageTarballs),
+						'RUN ln -sfnT /opt/agent-vm/local-packages/node_modules /node_modules && test -x /opt/agent-vm/local-packages/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js && test "$(head -n 1 /opt/agent-vm/local-packages/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js)" = "#!/usr/bin/env node" && ln -sfn /opt/agent-vm/local-packages/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js /pnpm/tool-portal',
 						'',
 					].join('\n'),
 					'utf8',
@@ -1682,11 +1743,22 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 }
 
 export async function useLocalToolVmMcpPortalPackage(options: {
+	readonly localAgentPortalSdkWheelPath?: string | undefined;
 	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
 	readonly repoRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<void> {
+	const wheelOutputDirectory = path.join(options.projectRoot, 'tmp', 'tool-vm-e2e-wheels');
+	await fs.mkdir(wheelOutputDirectory, { recursive: true });
+	const localAgentPortalSdkWheelPath =
+		options.localAgentPortalSdkWheelPath ??
+		(await buildLocalPythonWheel({
+			distributionFilePrefix: 'agent_vm_agent_portal_sdk-',
+			outputDirectory: wheelOutputDirectory,
+			packageDirectory: path.join(options.repoRoot, 'python', 'agent-vm-agent-portal-sdk'),
+			repoRoot: options.repoRoot,
+		}));
 	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
 		packageName: 'agent-portal-sdk',
 		repoRoot: options.repoRoot,
@@ -1709,6 +1781,7 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 	});
 	try {
 		await useLocalToolVmMcpPortalPackageTarballs({
+			localAgentPortalSdkWheelPath,
 			localAgentPortalSdkTarballPath,
 			localConfigContractsTarballPath,
 			localMcpPortalTarballPath,
