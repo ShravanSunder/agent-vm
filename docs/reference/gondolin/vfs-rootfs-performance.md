@@ -31,7 +31,7 @@ These are all temporary, but they are not interchangeable.
 rootfs.mode = "cow"
   Backing: temporary qcow2 overlay on host disk
   Lifetime: deleted on VM close unless checkpointed
-  Best for: large package trees, build outputs, worker repo files
+  Best for: large package trees, build outputs, large repository trees
   Bad for: state that must survive without an explicit checkpoint or export
 
 rootfs.mode = "memory"
@@ -200,16 +200,6 @@ zoneFilesDir/agents/<agentId>
   Purpose: controller-selected durable agent workspace for Tool VM projection
   Backup: yes
 
-/work/repos/<repo>
-  Backing: rootfs/COW for worker tasks
-  Purpose: hot source edits, node_modules, builds, tests
-
-/gitdirs/<repo>.git
-  Backing: RealFS zoneRuntimeDir outside normal zone backup
-  Purpose: host-visible Git objects, refs, and index; explicit recovery/export
-           only
-  Backup: no normal backup
-
 Hermes Tool VM /workspace
   Backing: filtered RealFS selected from zoneFilesDir/agents/<agentId>
   Purpose: durable agent-owned files
@@ -219,8 +209,9 @@ Hermes Tool VM /work
   Purpose: disposable repos, builds, packages, and hot execution data
 
 Hermes Tool VM /gitdirs/workspace.git
-  Backing: optional selected RealFS runtime Git database
+  Backing: optional selected RealFS runtime Git database in zoneRuntimeDir
   Purpose: Git metadata for the durable agent workspace
+  Backup: explicit recovery/export only, not normal zone backup
 
 /tmp
   Backing: guest tmpfs unless overridden
@@ -250,10 +241,6 @@ Harness files:
 scripts/perf/gondolin-vfs-benchmark.ts
   Measures rootfs modes, guest tmpfs, MemoryProvider, RealFS, and
   ShadowProvider path behavior.
-
-scripts/perf/gondolin-worker-git-benchmark.ts
-  Measures full-rootfs, full-RealFS, and rootfs-work area + RealFS-gitdir worker
-  layouts.
 
 packages/agent-vm/src/perf/gondolin-vfs-benchmark-support.ts
   Shared benchmark helpers for Gondolin checkout metadata, statistics,
@@ -303,12 +290,6 @@ pnpm perf:gondolin-vfs -- \
   --gondolin-repo /path/to/gondolin \
   --require-clean-gondolin \
   --json-out tmp/gondolin-vfs-clean.json
-
-# Measure the worker-specific rootfs work area + RealFS gitdir design.
-pnpm perf:worker-git -- \
-  --gondolin-repo /path/to/gondolin \
-  --image-path /path/to/built/gondolin/assets \
-  --json-out tmp/gondolin-worker-git.json
 ```
 
 The script also reads `GONDOLIN_REPO`:
@@ -368,7 +349,6 @@ rootfs/COW beat RealFS by roughly 60x for 128 MiB writes on the 4 GiB image
 Gondolin MemoryProvider and ShadowProvider still behaved like VFS paths
 guest tmpfs was fast in the latest run but remains memory-pressure storage
 cow vs memory rootfs speed was within noise; cow wins as default because checkpointable
-rootfs work area + RealFS gitdir beat full RealFS for worker file workloads
 ```
 
 Scope limits:
@@ -376,7 +356,6 @@ Scope limits:
 ```text
 The raw VFS benchmark is not a package-manager benchmark yet.
 It does not exercise hardlinks, symlinks, atomic renames, parallel I/O, or stat-heavy installs.
-The worker Git benchmark does exercise Git object/index operations, but pnpm install remains unmeasured.
 ```
 
 `rootfs.mode = "readonly"` did not reach readiness within 30 seconds in the

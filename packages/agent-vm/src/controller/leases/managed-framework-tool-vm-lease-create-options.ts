@@ -62,11 +62,6 @@ export function createManagedFrameworkToolVmLeaseCreateOptionsResolver(
 		if (!zone) {
 			throw new Error(`Unknown zone '${authorityContext.zoneId}'`);
 		}
-		if (zone.gateway.type === 'worker') {
-			throw new Error(
-				`Zone '${authorityContext.zoneId}' does not support managed framework Tool VM leases.`,
-			);
-		}
 		const configuredAgent = (zone.agents ?? []).find(
 			(agent) => agent.id === authorityContext.agentId,
 		);

@@ -194,27 +194,4 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 			}),
 		).rejects.toMatchObject({ kind: 'parent-traversal' });
 	});
-
-	it('rejects gateway types without managed Tool VM directory semantics', async () => {
-		await expect(
-			validateControllerSelectedToolVmDirectory({
-				agentId: 'main',
-				hostDirectory: agentWorkspaceDirectory,
-				kind: 'managed-agent-workspace',
-				zone: {
-					...zone,
-					gateway: {
-						config: path.join(temporaryDirectory, 'worker.json'),
-						cpus: 2,
-						imageProfile: 'worker',
-						memory: '2G',
-						port: 18_792,
-						stateDir: stateDirectory,
-						type: 'worker',
-						zoneRuntimeDir: zoneRuntimeDirectory,
-					},
-				},
-			}),
-		).rejects.toMatchObject({ kind: 'unsupported-gateway' });
-	});
 });

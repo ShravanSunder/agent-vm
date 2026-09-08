@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export type ManagedImageBase = 'tool-vm' | 'worker-gateway';
+export type ManagedImageBase = 'tool-vm';
 
 export type PackageOverrideBucket = 'npm';
 export type PackageOverrideOwner = 'managed-images.json' | 'overlay.jsonc';

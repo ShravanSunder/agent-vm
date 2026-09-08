@@ -10,21 +10,19 @@ import { agentVmRootParser } from './agent-vm-command-parser.js';
 
 describe('Agent VM command dispatcher', () => {
 	it('dispatches one inferred command to exactly one operation family', async () => {
-		const parsed = parseSync(agentVmRootParser, ['resources', 'init']);
-		if (!parsed.success) throw new Error('Expected resources init to parse.');
+		const parsed = parseSync(agentVmRootParser, ['init', 'zone']);
+		if (!parsed.success) throw new Error('Expected init to parse.');
 		const operationCalls = {
 			auth: vi.fn(),
 			backup: vi.fn(),
 			build: vi.fn(),
 			cache: vi.fn(),
-			config: vi.fn(),
 			controller: vi.fn(),
 			doctor: vi.fn(),
 			init: vi.fn(),
 			manual: vi.fn(),
 			migrate: vi.fn(),
 			paths: vi.fn(),
-			resources: vi.fn(),
 			validate: vi.fn(),
 		} satisfies AgentVmCommandOperationSet;
 
@@ -35,7 +33,7 @@ describe('Agent VM command dispatcher', () => {
 			operationCalls,
 		);
 
-		expect(operationCalls.resources).toHaveBeenCalledTimes(1);
+		expect(operationCalls.init).toHaveBeenCalledTimes(1);
 		expect(
 			Object.values(operationCalls).reduce(
 				(count, operation) => count + operation.mock.calls.length,

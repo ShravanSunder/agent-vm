@@ -1,111 +1,67 @@
 # Setup Guide
 
-Use this guide for a local Worker-mode scaffold.
+Use this guide for a Hermes deployment scaffold.
 
 ## Prerequisites
 
-Universal:
-
-- Node.js >= 24
+- Node.js 24 or newer
 - pnpm
 - QEMU
+- Docker for building Gateway OCI images
+- 1Password only when using `--secrets 1password`
+- age only for encrypted backup and local key-generation flows
 
-Needed for common local flows:
+## Initialize
 
-- Docker, when building gateway OCI images or running repo-level providers
-  declared through `.agent-vm/repo-resources.ts`.
-- 1Password setup, only when using `--secrets 1password`.
-- age, only for encrypted backup/local key generation flows.
-
-Run `agent-vm validate` to check files. Run `agent-vm doctor` to check the
-current host.
-
-## Quick Start
-
-### 1. Initialize a local Worker project
+For local macOS development:
 
 ```bash
-agent-vm init coding-agent --type worker --preset macos-local
+agent-vm init coding-agent --preset macos-local
 ```
 
-`macos-local` expands to:
+Omitting `--type` selects Hermes. `--type hermes` is also accepted. The scaffold
+includes the system config, managed Hermes config, MCP and Tool Portal configs,
+the Hermes image recipe, and the default Tool VM image overlay.
 
-- user-home paths with `storageRootDir` at
-  `~/.agent-vm/<projectNamespace>`
-- `aarch64` VM images
-- 1Password-backed secrets
-- `.env.local`
+For a container host:
 
-The scaffold includes:
+```bash
+agent-vm init coding-agent --preset container-x86 --namespace agent-vm
+# arm64:
+agent-vm init coding-agent --preset container-arm64 --namespace agent-vm
+```
 
-- `config/system.jsonc`
-- `config/gateways/coding-agent/worker.jsonc`
-- `config/gateways/coding-agent/prompts/*.md`
-- `vm-images/gateways/worker/build-config.jsonc`
-- `vm-images/gateways/worker/overlay.jsonc`
+Container presets use environment-backed secrets, put storage under
+`/var/agent-vm/<projectNamespace>`, and generate `vm-host-system/`.
 
-The generated local gateway image installs public runtime tooling only. For
-monorepo local task runs, pack `agent-vm-worker` and set
-`AGENT_VM_WORKER_TARBALL_PATH`; the controller copies that tarball into
-`/state/agent-vm-worker.tgz` when a worker task starts.
+## Configure Secrets
 
-### 2. Check the files
+The `macos-local` preset uses `aarch64` images, stores operational state under
+`~/.agent-vm/<projectNamespace>`, and writes `.env.local` for local settings.
+Adjust the secret references for your deployment.
+
+Use `agent-vm auth 1password <op-ref-or-url> --config config/system.jsonc` to
+read a service-account token through `op` and store it in the configured macOS
+Keychain entry. Omit the reference to paste the token interactively. Use
+`OP_SERVICE_ACCOUNT_TOKEN` only when intentionally selecting environment-backed
+service-account storage.
+
+Container presets use environment-backed secrets and do not write `.env.local`.
+Explicit `--arch`, `--paths`, and `--secrets` flags override preset defaults.
+When omitted, the namespace derives deterministically from the canonical
+project path.
+
+## Validate And Run
 
 ```bash
 agent-vm validate --config config/system.jsonc
-```
-
-### 3. Check the current machine
-
-```bash
 agent-vm doctor --config config/system.jsonc
-```
-
-### 4. Configure secrets
-
-For `macos-local`, `.env.local` is written so you can adjust local values.
-
-Optional tweaks:
-
-- adjust any `*_REF` values if your 1Password vault paths differ
-- run `agent-vm auth 1password <op-ref-or-url> --config config/system.jsonc`
-  to read a 1Password service-account token with `op read` and store it in the
-  configured macOS Keychain entry
-- omit the ref/url to paste the service-account token interactively
-- set `OP_SERVICE_ACCOUNT_TOKEN` only if you intentionally switch to an
-  env-backed service-account token instead of Keychain-backed storage
-
-For container-host or CI scaffolds, use:
-
-```bash
-agent-vm init coding-agent --type worker --preset container-x86 --namespace agent-vm
-# or, on an arm64 container host:
-agent-vm init coding-agent --type worker --preset container-arm64 --namespace agent-vm
-```
-
-Container presets use environment-backed secrets and do not write `.env.local`.
-Their generated `storageRootDir` is
-`/var/agent-vm/<projectNamespace>`. `--namespace` sets the namespace explicitly;
-otherwise init derives it deterministically from the canonical project path.
-
-### 5. Build images
-
-```bash
 agent-vm build --config config/system.jsonc
-```
-
-This generates Dockerfiles from managed agent-vm base images plus your overlay,
-builds Docker OCI images, then builds Gondolin VM assets. Later builds reuse
-cached fingerprints.
-
-### 6. Start the controller
-
-```bash
 agent-vm controller start --config config/system.jsonc --zone coding-agent
 ```
 
-## More
+`validate` checks authored configuration. `doctor` checks the current host and
+runtime prerequisites. See [validate and doctor](../reference/validate-and-doctor.md).
 
-- Config fields: [../reference/configuration/README.md](../reference/configuration/README.md)
-- Validate vs doctor: [../reference/validate-and-doctor.md](../reference/validate-and-doctor.md)
-- Agent Worker Gateway: [worker-guide.md](worker-guide.md)
+Configure Hermes agents, Tool Portal policy, secrets, egress, and Tool VM
+profiles in [system.jsonc](../reference/configuration/system-json.md).

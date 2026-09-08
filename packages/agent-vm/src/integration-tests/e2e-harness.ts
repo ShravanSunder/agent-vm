@@ -31,12 +31,10 @@ import {
 import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
 import type { ImageArchitecture } from '../cli/init-command-schemas.js';
-import { scaffoldAgentVmProject } from '../cli/init-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import {
 	deploymentGeneratedDirForStorageRoot,
-	loadSystemConfig,
 	sharedImageCacheDirForSystemConfig,
 	type LoadedSystemConfig,
 } from '../config/system-config.js';
@@ -111,13 +109,6 @@ export async function startE2eGatewayZoneForController(
 	});
 }
 
-interface WorkerE2eZone extends Omit<LoadedSystemConfig['zones'][number], 'gateway'> {
-	readonly gateway: Extract<
-		LoadedSystemConfig['zones'][number]['gateway'],
-		{ readonly type: 'worker' }
-	>;
-}
-
 interface LocalNpmPackageTarball {
 	readonly packageDirectory: string;
 	readonly packageName: string;
@@ -183,7 +174,6 @@ const e2eTempRootPrefixes = [
 	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
 	'hermes-tool-portal-orientation-e2e-',
-	'worker-loop-e2e-',
 ] as const;
 
 export function resolveE2eCacheRoot(): string {
@@ -217,14 +207,6 @@ export interface E2eHarnessCloseOptions {
 
 export interface E2eHarnessImageCleanupOptions extends E2eHarnessCloseOptions {
 	readonly env?: Partial<Record<'AGENT_VM_E2E_CLEAN_IMAGES', string>>;
-}
-
-export interface WorkerE2eProject {
-	readonly controllerPort: number;
-	readonly gatewayPort: number;
-	readonly systemConfig: LoadedSystemConfig;
-	readonly tempRoot: string;
-	readonly zone: WorkerE2eZone;
 }
 
 export interface GatewayE2eImageProject {
@@ -326,31 +308,6 @@ export async function canRunManagedVmE2e(
 		installedZigVersion !== undefined &&
 		isZigVersionAtLeast(installedZigVersion, requiredZigVersion)
 	);
-}
-
-export async function shouldRunWorkerGatewayE2e(options: {
-	readonly architecture: ImageArchitecture;
-	readonly commandExists?: (command: string) => boolean;
-	readonly env?: Partial<Record<'AGENT_VM_WORKER_E2E' | 'AGENT_VM_TEST_OPENAI_API_KEY', string>>;
-	readonly resolveRequiredZigVersion?: () => Promise<string>;
-	readonly resolveZigVersion?: () => Promise<string | undefined>;
-}): Promise<boolean> {
-	const env = options.env ?? process.env;
-	if (
-		env.AGENT_VM_WORKER_E2E !== '1' ||
-		typeof env.AGENT_VM_TEST_OPENAI_API_KEY !== 'string' ||
-		env.AGENT_VM_TEST_OPENAI_API_KEY.length === 0
-	) {
-		return false;
-	}
-	return await canRunManagedVmE2e({
-		architecture: options.architecture,
-		...(options.commandExists ? { commandExists: options.commandExists } : {}),
-		...(options.resolveRequiredZigVersion
-			? { resolveRequiredZigVersion: options.resolveRequiredZigVersion }
-			: {}),
-		...(options.resolveZigVersion ? { resolveZigVersion: options.resolveZigVersion } : {}),
-	});
 }
 
 export async function findAvailablePort(): Promise<number> {
@@ -895,7 +852,7 @@ export async function seedGatewayImageCacheIfAvailable(options: {
 	readonly imageProfileName?: string;
 	readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 }): Promise<void> {
-	const imageProfileName = options.imageProfileName ?? 'worker';
+	const imageProfileName = options.imageProfileName ?? 'hermes';
 	const reusableImageDir = await findReusableGatewayImageDirectory({
 		currentProjectRoot: options.currentProjectRoot,
 		gatewayBuildConfigPath: options.gatewayBuildConfigPath,
@@ -1042,14 +999,6 @@ function applySmokeEnvironment(secrets: E2eHarnessSecretMap): () => void {
 			}
 		}
 	};
-}
-
-function getWorkerE2eZone(systemConfig: LoadedSystemConfig): WorkerE2eProject['zone'] {
-	const zone = systemConfig.zones[0];
-	if (!zone || zone.gateway.type !== 'worker') {
-		throw new Error('Expected smoke system config to contain a Worker Gateway zone.');
-	}
-	return { ...zone, gateway: zone.gateway };
 }
 
 function packageFileEntryIsLiteral(fileEntry: string): boolean {
@@ -1819,79 +1768,6 @@ function throwIfE2eHarnessCleanupFailed(errors: readonly unknown[]): void {
 		throw firstError;
 	}
 	throw new AggregateError(errors, 'Smoke harness cleanup failed.');
-}
-
-export async function prepareLocalWorkerPackageForGatewayImage(repoRoot: string): Promise<string> {
-	return await packLocalPackageTarball({
-		packageDirectory: path.join(repoRoot, 'packages', 'agent-vm-worker'),
-		packageName: 'agent-vm-worker',
-		repoRoot,
-	});
-}
-
-export interface LocalWorkerPackageTarball {
-	readonly packageName: string;
-	readonly sourcePath: string;
-}
-
-export async function prepareLocalWorkerPackageSetForGatewayImage(
-	repoRoot: string,
-): Promise<readonly LocalWorkerPackageTarball[]> {
-	const packageNames = [
-		'agent-vm-worker',
-		'control-protocol-contracts',
-		'gateway-lifecycle',
-		'gondolin-vm-adapter',
-		'managed-vm',
-		'secret-management',
-		'worker-control-contracts',
-	] as const;
-	return await Promise.all(
-		packageNames.map(async (packageName) => ({
-			packageName,
-			sourcePath: await packLocalAgentVmPackageTarball({
-				packageName,
-				repoRoot,
-			}),
-		})),
-	);
-}
-
-export async function scaffoldWorkerE2eProject(options: {
-	readonly architecture: ImageArchitecture;
-	readonly prefix: string;
-	readonly zoneId: string;
-}): Promise<WorkerE2eProject> {
-	const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), options.prefix));
-	const controllerPort = await findAvailablePort();
-	const gatewayPort = await findAvailablePort();
-	await scaffoldAgentVmProject({
-		architecture: options.architecture,
-		gatewayType: 'worker',
-		secretsProvider: '1password',
-		targetDir: tempRoot,
-		zoneId: options.zoneId,
-	});
-	const loadedSystemConfig = await loadSystemConfig(path.join(tempRoot, 'config', 'system.json'));
-	const systemConfig: LoadedSystemConfig = {
-		...loadedSystemConfig,
-		cacheDir: path.join(resolveE2eCacheRoot(), 'worker'),
-	};
-	systemConfig.host.controllerPort = controllerPort;
-	systemConfig.host.projectNamespace = 'agent-vm-tests-worker';
-	systemConfig.host.secretsProvider = {
-		type: '1password',
-		tokenSource: { type: 'env', envVar: 'AGENT_VM_TEST_OPENAI_API_KEY' },
-	};
-	const zone = getWorkerE2eZone(systemConfig);
-	zone.gateway.port = gatewayPort;
-	return {
-		controllerPort,
-		gatewayPort,
-		systemConfig,
-		tempRoot,
-		zone,
-	};
 }
 
 export async function startE2eControllerRuntime(

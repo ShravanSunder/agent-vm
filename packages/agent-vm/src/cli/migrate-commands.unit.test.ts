@@ -24,13 +24,10 @@ async function createTestDirectory(): Promise<string> {
 }
 
 describe('runMigrateImagesCommand', () => {
-	it('rewrites Dockerfile image profiles to managed bases and creates overlays', async () => {
+	it('rewrites Tool VM Dockerfile image profiles to the managed base', async () => {
 		const targetDirectory = await createTestDirectory();
 		const configPath = path.join(targetDirectory, 'config', 'system.jsonc');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'worker'), {
-			recursive: true,
-		});
 		await mkdir(path.join(targetDirectory, 'vm-images', 'tool-vms', 'default'), {
 			recursive: true,
 		});
@@ -38,13 +35,7 @@ describe('runMigrateImagesCommand', () => {
 			configPath,
 			JSON.stringify({
 				imageProfiles: {
-					gateways: {
-						worker: {
-							type: 'worker',
-							buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
-							dockerfile: '../vm-images/gateways/worker/Dockerfile',
-						},
-					},
+					gateways: {},
 					toolVms: {
 						default: {
 							type: 'toolVm',
@@ -60,20 +51,10 @@ describe('runMigrateImagesCommand', () => {
 		const result = await runMigrateImagesCommand({ systemConfigPath: configPath });
 
 		const migratedConfig = await loadJsonConfigFile(configPath);
-		expect(result.migratedProfiles).toEqual(['gateway/worker', 'toolVm/default']);
+		expect(result.migratedProfiles).toEqual(['toolVm/default']);
 		expect(migratedConfig).toMatchObject({
 			imageProfiles: {
-				gateways: {
-					worker: {
-						type: 'worker',
-						buildConfig: '../vm-images/gateways/worker/build-config.jsonc',
-						source: {
-							kind: 'managedBase',
-							base: 'worker-gateway',
-							overlay: '../vm-images/gateways/worker/overlay.jsonc',
-						},
-					},
-				},
+				gateways: {},
 				toolVms: {
 					default: {
 						type: 'toolVm',
@@ -90,12 +71,6 @@ describe('runMigrateImagesCommand', () => {
 		expect(JSON.stringify(migratedConfig)).not.toContain('dockerfile');
 		await expect(
 			readFile(
-				path.join(targetDirectory, 'vm-images', 'gateways', 'worker', 'overlay.jsonc'),
-				'utf8',
-			),
-		).resolves.toContain('"schemaVersion": 1');
-		await expect(
-			readFile(
 				path.join(targetDirectory, 'vm-images', 'tool-vms', 'default', 'overlay.jsonc'),
 				'utf8',
 			),
@@ -106,7 +81,7 @@ describe('runMigrateImagesCommand', () => {
 		const targetDirectory = await createTestDirectory();
 		const configPath = path.join(targetDirectory, 'config', 'system.jsonc');
 		await mkdir(path.dirname(configPath), { recursive: true });
-		await mkdir(path.join(targetDirectory, 'vm-images', 'gateways', 'worker'), {
+		await mkdir(path.join(targetDirectory, 'vm-images', 'tool-vms', 'default'), {
 			recursive: true,
 		});
 		await writeFile(
@@ -115,15 +90,15 @@ describe('runMigrateImagesCommand', () => {
 				'{',
 				'  // deployment-owned comment',
 				'  "imageProfiles": {',
-				'    "gateways": {',
-				'      "worker": {',
-				'        "type": "worker",',
-				'        // keep this near the gateway image',
-				'        "buildConfig": "../vm-images/gateways/worker/build-config.jsonc",',
-				'        "dockerfile": "../vm-images/gateways/worker/Dockerfile"',
+				'    "gateways": {},',
+				'    "toolVms": {',
+				'      "default": {',
+				'        "type": "toolVm",',
+				'        // keep this near the Tool VM image',
+				'        "buildConfig": "../vm-images/tool-vms/default/build-config.jsonc",',
+				'        "dockerfile": "../vm-images/tool-vms/default/Dockerfile"',
 				'      }',
-				'    },',
-				'    "toolVms": {}',
+				'    }',
 				'  }',
 				'}',
 				'',
@@ -135,18 +110,18 @@ describe('runMigrateImagesCommand', () => {
 
 		const migratedConfigText = await readFile(configPath, 'utf8');
 		const migratedConfig = await loadJsonConfigFile(configPath);
-		expect(result.migratedProfiles).toEqual(['gateway/worker']);
+		expect(result.migratedProfiles).toEqual(['toolVm/default']);
 		expect(migratedConfigText).toContain('// deployment-owned comment');
-		expect(migratedConfigText).toContain('// keep this near the gateway image');
+		expect(migratedConfigText).toContain('// keep this near the Tool VM image');
 		expect(migratedConfigText).not.toContain('"dockerfile"');
 		expect(migratedConfig).toMatchObject({
 			imageProfiles: {
-				gateways: {
-					worker: {
+				toolVms: {
+					default: {
 						source: {
+							base: 'tool-vm',
 							kind: 'managedBase',
-							base: 'worker-gateway',
-							overlay: '../vm-images/gateways/worker/overlay.jsonc',
+							overlay: '../vm-images/tool-vms/default/overlay.jsonc',
 						},
 					},
 				},

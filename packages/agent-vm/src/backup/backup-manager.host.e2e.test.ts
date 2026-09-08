@@ -72,7 +72,7 @@ describe('createZoneBackupManager', () => {
 				stateDir,
 				zoneFilesDir,
 				backupDir,
-				zoneRuntimeDir: path.join(stateDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(stateDir, 'runtime-artifacts'),
 			}),
 		).rejects.toThrow(/zoneRuntimeDir.*stateDir/u);
 		await expect(
@@ -125,7 +125,7 @@ describe('createZoneBackupManager', () => {
 				zoneFilesDir,
 				backupDir,
 				cacheDir,
-				zoneRuntimeDir: path.join(cacheDir, 'worker-tasks'),
+				zoneRuntimeDir: path.join(cacheDir, 'runtime-artifacts'),
 			}),
 		).rejects.toThrow(/zoneRuntimeDir.*cacheDir/u);
 		await expect(

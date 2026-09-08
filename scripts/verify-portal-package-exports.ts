@@ -44,7 +44,6 @@ const requiredPortalPackageExports = [
 	'@agent-vm/tool-portal/dispatch-authority',
 	'@agent-vm/tool-portal/standalone-entrypoint',
 	'@agent-vm/tool-portal/testing',
-	'@agent-vm/worker-control-contracts',
 ] as const;
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -244,15 +243,6 @@ const requiredPortalNamedExports = {
 		'directDispatchFingerprint',
 	],
 	'@agent-vm/tool-portal/testing': ['createCliAllowanceFixture', 'createToolPortalConfigFixture'],
-	'@agent-vm/worker-control-contracts': [
-		'WorkerControlDomainSchema',
-		'WorkerControlRpcCommandResultMessageSchema',
-		'WorkerControlRpcMessageSchema',
-		'WorkerControlRpcResponsePayloadSchema',
-		'buildWorkerControlJsonSchemas',
-		'workerControlCommandExecutionTimeoutMsByOperation',
-		'workerControlDeliveryPolicyByOperation',
-	],
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
@@ -287,7 +277,6 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
 	'@agent-vm/tool-portal/testing',
-	'@agent-vm/worker-control-contracts',
 ] as const satisfies readonly (keyof typeof requiredPortalNamedExports)[];
 
 const requiredPortalExportSmokeCalls = {

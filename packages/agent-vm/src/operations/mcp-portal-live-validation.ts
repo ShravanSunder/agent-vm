@@ -214,7 +214,7 @@ async function validateMcpPortalZone(
 	options: RunLiveMcpPortalValidationOptions,
 	zone: LoadedZoneConfig,
 ): Promise<readonly ConfigValidationCheck[]> {
-	if (zone.gateway.type === 'worker' || zone.toolPortal === undefined) {
+	if (zone.toolPortal === undefined) {
 		return [];
 	}
 	let mcpConfig: Awaited<ReturnType<typeof loadMcpConfig>>;

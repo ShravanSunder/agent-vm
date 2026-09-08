@@ -79,7 +79,6 @@
 				"./packages/controller-execution-contracts/src/testing/index.ts"
 			],
 			"@agent-vm/gondolin-vm-adapter": ["./packages/gondolin-vm-adapter/src/index.ts"],
-			"@agent-vm/agent-vm-worker": ["./packages/agent-vm-worker/src/index.ts"],
 			"@agent-vm/gateway-control-contracts": ["./packages/gateway-control-contracts/src/index.ts"],
 			"@agent-vm/gateway-lifecycle": ["./packages/gateway-lifecycle/src/index.ts"],
 			"@agent-vm/gateway-runtime": ["./packages/gateway-runtime/src/index.ts"],
@@ -119,9 +118,7 @@
 			"@agent-vm/tool-portal/dispatch-authority": [
 				"./packages/tool-portal/src/dispatch-authority.ts"
 			],
-			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
-			"@agent-vm/worker-control-contracts": ["./packages/worker-control-contracts/src/index.ts"],
-			"@agent-vm/worker-gateway": ["./packages/worker-gateway/src/index.ts"]
+			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"]
 		}
 	}
 }

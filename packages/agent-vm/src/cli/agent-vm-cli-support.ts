@@ -35,7 +35,6 @@ import {
 import { runBuildCommand } from './build-command.js';
 import { runCacheCommand } from './cache-commands.js';
 import { resolveCliVersion } from './cli-version.js';
-import { resetWorkerInstructions } from './config-commands.js';
 import type {
 	CollectDynamicDoctorChecksOptions,
 	ControllerDoctorEnvironment,
@@ -47,14 +46,6 @@ import {
 } from './init-command.js';
 import { storeServiceAccountToken } from './keychain-credential.js';
 import { updateAgentVmManual, type UpdateAgentVmManualResult } from './manual-commands.js';
-import {
-	initRepoResources,
-	updateRepoResources,
-	validateRepoResources,
-	type InitRepoResourcesResult,
-	type UpdateRepoResourcesResult,
-	type ValidateRepoResourcesResult,
-} from './resources-commands.js';
 
 export interface CliDependencies {
 	readonly buildControllerStatus: typeof buildControllerStatus;
@@ -70,21 +61,12 @@ export interface CliDependencies {
 		options: CollectDynamicDoctorChecksOptions,
 	) => Promise<readonly DoctorCheck[]>;
 	readonly getCurrentWorkingDirectory?: () => string;
-	readonly initRepoResources?: (options: {
-		readonly targetDir: string;
-	}) => Promise<InitRepoResourcesResult>;
-	readonly updateRepoResources?: (options: {
-		readonly targetDir: string;
-	}) => Promise<UpdateRepoResourcesResult>;
 	readonly updateAgentVmManual?: (options: {
 		readonly defaultZoneId: string;
 		readonly systemConfigPath: string;
 		readonly targetDir: string;
 		readonly updateAgentIndex: boolean;
 	}) => Promise<UpdateAgentVmManualResult>;
-	readonly validateRepoResources?: (options: {
-		readonly targetDir: string;
-	}) => Promise<ValidateRepoResourcesResult>;
 	readonly isGatewayImageCached?: (
 		systemConfig: LoadedSystemConfig,
 		zoneId: string,
@@ -115,7 +97,6 @@ export interface CliDependencies {
 		readonly service?: string;
 	}) => Promise<boolean>;
 	readonly probeOnePasswordServiceAccountHeadlessAuth: typeof probeOnePasswordServiceAccountHeadlessAuth;
-	readonly resetWorkerInstructions?: typeof resetWorkerInstructions;
 	readonly resolveCliVersion?: typeof resolveCliVersion;
 	readonly scaffoldAgentVmProject?: (
 		options: ScaffoldAgentVmProjectOptions,
@@ -161,14 +142,10 @@ export const defaultCliDependencies: CliDependencies = {
 		});
 	},
 	runConfigValidation,
-	resetWorkerInstructions,
 	resolveCliVersion,
 	scaffoldAgentVmProject,
 	storeServiceAccountToken,
 	updateAgentVmManual,
-	initRepoResources,
-	updateRepoResources,
-	validateRepoResources,
 	startControllerRuntime: async (runtimeOptions, runtimeDependencies) => {
 		const managedVmRuntime = createManagedVmRuntimeComposition();
 		return await startControllerRuntime(runtimeOptions, {

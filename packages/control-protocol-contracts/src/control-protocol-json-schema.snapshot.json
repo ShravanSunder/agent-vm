@@ -151,7 +151,7 @@
 		"properties": {
 			"audience": {
 				"type": "string",
-				"enum": ["gateway_control", "worker_control"]
+				"enum": ["gateway_control"]
 			},
 			"bootId": {
 				"type": "string",
@@ -217,7 +217,7 @@
 		"properties": {
 			"audience": {
 				"type": "string",
-				"enum": ["gateway_control", "worker_control"]
+				"enum": ["gateway_control"]
 			},
 			"bootId": {
 				"type": "string",
@@ -288,7 +288,7 @@
 		"properties": {
 			"audience": {
 				"type": "string",
-				"enum": ["gateway_control", "worker_control"]
+				"enum": ["gateway_control"]
 			},
 			"bootId": {
 				"type": "string",
@@ -344,7 +344,7 @@
 		"properties": {
 			"audience": {
 				"type": "string",
-				"enum": ["gateway_control", "worker_control"]
+				"enum": ["gateway_control"]
 			},
 			"bootId": {
 				"type": "string",

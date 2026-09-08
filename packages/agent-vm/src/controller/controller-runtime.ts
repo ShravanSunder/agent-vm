@@ -38,7 +38,6 @@ import { reconcileRecordedVmTree as reconcileRecordedVmTreeDefault } from '../op
 import { readProcessIdentity as readManagedVmProcessIdentity } from '../shared/managed-vm-process.js';
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-vm-lifecycle.js';
-import { ActiveTaskRegistry } from './active-task-registry.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
 import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
 import type {
@@ -77,11 +76,8 @@ import {
 } from './durable-state/controller-state-paths.js';
 import {
 	resolveControllerGatewayRecordTargets,
-	resolveControllerWorkerTaskRuntimeRecordTarget,
 	type ControllerGatewayRecordTargets,
 } from './durable-state/controller-state-record-paths.js';
-import type { PullDefaultRequest } from './git-pull-default-operations.js';
-import type { PushBranchRequest } from './git-push-operations.js';
 import { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import { classifyGatewayRecoveryAction } from './health/gateway-recovery-actions.js';
 import {
@@ -110,7 +106,6 @@ import {
 	prepareControllerOAuthRuntime as prepareControllerOAuthRuntimeDefault,
 	type PreparedControllerOAuthRuntime,
 } from './oauth/controller-oauth-runtime.js';
-import { RequestHeartbeatRegistry } from './request-heartbeat-registry.js';
 import {
 	requireCurrentConfiguredCliAuthorization,
 	type ConfiguredCliAuthorizedOperation,
@@ -130,7 +125,6 @@ import {
 	type GatewayVmLifecycleAuthority,
 } from './vm-ownership/gateway-vm-lifecycle-authority.js';
 import { gatewayIdentitiesEqual } from './vm-ownership/vm-ownership-contracts.js';
-import type { PreparedWorkerTask, WorkerTaskInput } from './worker-task-runner.js';
 import { WorkspaceGitOperationLocks } from './workspace-git/workspace-git-operation-locks.js';
 import {
 	materializeWorkspaceGitRepository,
@@ -147,11 +141,9 @@ import {
 	createManagedGatewayZoneRuntime,
 	requireManagedGatewayStartResult,
 } from './zone-runtimes/managed-gateway-zone-runtime.js';
-import { createWorkerZoneRuntime } from './zone-runtimes/worker-zone-runtime.js';
 import {
 	ControllerZoneConfigurationError,
 	ControllerZoneNotFoundError,
-	ControllerZoneOperationUnsupportedError,
 } from './zone-runtimes/zone-runtime-errors.js';
 import { createZoneRuntimeRegistry } from './zone-runtimes/zone-runtime-registry.js';
 import type { ControllerZoneConfig } from './zone-runtimes/zone-runtime-types.js';
@@ -329,13 +321,7 @@ async function shutdownControllerTelemetry(
 function isManagedGatewayZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
 	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'hermes' }>;
 } {
-	return zone.gateway.type !== 'worker';
-}
-
-function isWorkerZone(zone: ControllerZoneConfig): zone is ControllerZoneConfig & {
-	readonly gateway: Extract<ControllerZoneConfig['gateway'], { readonly type: 'worker' }>;
-} {
-	return zone.gateway.type === 'worker';
+	return zone.gateway.type === 'hermes';
 }
 
 function selectConfiguredObservabilityStartupCheck(options: {
@@ -498,13 +484,6 @@ function resolveWorkspaceGitRemoteOperationConfig(options: {
 	} catch {
 		throw new ControllerZoneNotFoundError(options.zoneId);
 	}
-	if (!isManagedGatewayZone(zone)) {
-		throw new ControllerZoneOperationUnsupportedError(
-			options.zoneId,
-			'workspace Git operations',
-			zone.gateway.type,
-		);
-	}
 	const configuredAgent = (zone.agents ?? []).find((agent) => agent.id === options.agentId);
 	if (configuredAgent?.workspaceGit?.mode !== 'remote') {
 		throw new ControllerZoneConfigurationError(
@@ -644,8 +623,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		);
 	};
 	const tcpPool = createTcpPool(options.systemConfig.tcpPool);
-	const activeTaskRegistry = new ActiveTaskRegistry();
-	const requestHeartbeatRegistry = new RequestHeartbeatRegistry();
 	const workspaceGitOperationLocks =
 		dependencies.workspaceGitOperationLocks ?? new WorkspaceGitOperationLocks();
 	const materializeWorkspaceGit =
@@ -721,13 +698,6 @@ async function startControllerRuntimeWithOwnershipLock(
 		ownershipCoordinator,
 		prepareLeasePersistentState: async (leaseOptions): Promise<void> => {
 			const zone = findConfiguredZone(options.systemConfig, leaseOptions.zoneId);
-			if (!isManagedGatewayZone(zone)) {
-				throw new ControllerZoneOperationUnsupportedError(
-					leaseOptions.zoneId,
-					'managed Tool VM persistent-state preparation',
-					zone.gateway.type,
-				);
-			}
 			const configuredAgent = (zone.agents ?? []).find(
 				(agent) => agent.id === leaseOptions.agentId,
 			);
@@ -789,7 +759,7 @@ async function startControllerRuntimeWithOwnershipLock(
 	});
 	const createManagedGatewayVmOwnership = async (ownershipOptions: {
 		readonly controlIdentity?: { readonly bootId: string; readonly generationId: string };
-		readonly kind: 'gateway-epoch' | 'standalone';
+		readonly kind: 'gateway-epoch';
 		readonly sessionLabel: string;
 		readonly zoneId: string;
 	}): Promise<GatewayVmLifecycleAuthority> => {
@@ -1029,243 +999,193 @@ async function startControllerRuntimeWithOwnershipLock(
 	const gatewayServiceHealthMonitorRef: { current?: GatewayServiceHealthMonitor | undefined } = {};
 	const registry = createZoneRuntimeRegistry({
 		createRuntimeForZone: (zone) =>
-			isManagedGatewayZone(zone)
-				? createManagedGatewayZoneRuntime({
-						createFreshSecretResolver,
-						createVmOwnership: createManagedGatewayVmOwnership,
-						...(options.prebuiltGatewayImages?.[zone.id] === undefined
-							? {}
-							: { initialPrebuiltImage: options.prebuiltGatewayImages[zone.id] }),
-						managedVmFactory: dependencies.managedVmFactory,
-						managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
-						managedVmImages: dependencies.managedVmImages,
-						managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
-						recordCurrentControlSessionHealthEvent: (event) => healthEventStore.record(event),
-						recordCurrentControlSessionLiveHealthEvent: (event) =>
-							healthEventStore.recordLiveOnly(event),
-						recordNonCurrentControlSessionEvidence: (event) =>
-							healthEventStore.recordEvidenceOnly(event),
-						...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
-						now,
-						onGatewayRuntimeAttachmentLost: (transition) => {
-							let lifecycleState;
-							try {
-								lifecycleState = registry
-									.getManagedGatewayRuntime(transition.gateway.zoneId)
-									.getLifecycleState();
-							} catch {
-								writeControllerRuntimeLog('warning', {
-									operation: 'resolve-gateway-runtime-for-attachment-loss',
-									zoneId: transition.gateway.zoneId,
-								});
-								return;
-							}
-							if (
-								(lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') ||
-								!gatewayIdentitiesEqual(lifecycleState.gateway.gatewayIdentity, transition.gateway)
-							) {
-								return;
-							}
-							const gatewayIdentity = lifecycleState.gateway.gatewayIdentity;
-							void gatewayServiceHealthMonitorRef.current
-								?.recoverFromTerminalAttachmentLoss({
-									sourceKey: {
-										bootId: gatewayIdentity.bootId,
-										domain: 'gateway_control',
-										gatewayVmId: gatewayIdentity.gatewayVmId,
-										generationId: gatewayIdentity.generationId,
-										zoneId: gatewayIdentity.zoneId,
-									},
-									zoneId: gatewayIdentity.zoneId,
-								})
-								.catch(() => {
-									writeControllerRuntimeLog('warning', {
-										operation: 'recover-gateway-runtime-attachment-loss',
-										zoneId: gatewayIdentity.zoneId,
-									});
-								});
-						},
-						preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
-							const runtimeEnvironment = createGatewayRuntimeEnvironmentForZone({
-								callerRuntimeEnvironment: preflightOptions.runtimeEnvironment,
-								controllerTelemetryRuntimeEnvironment: gatewayTelemetryRuntimeEnvironment,
-								zone,
-							});
-							const runtimePluginConfigs = {
-								...preflightOptions.runtimePluginConfigs,
-							};
-							const effectivePreflightDependencies =
-								dependencies.checkObservabilityStackReadiness === undefined
-									? preflightDependencies
-									: {
-											...preflightDependencies,
-											checkObservabilityStackReadiness:
-												dependencies.checkObservabilityStackReadiness,
-										};
-							return await (
-								dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault
-							)(
-								{
-									...preflightOptions,
-									controlSession: { controllerEpoch },
-									runtimeEnvironment,
-									runtimePluginConfigs,
-									writeLog: writeControllerGatewayLog,
-								},
-								{
-									...effectivePreflightDependencies,
-									managedVmImages: dependencies.managedVmImages,
-								},
-							);
-						},
-						restartGatewayZone: async (zoneId, startOptions) => {
-							const approvalLedger = approvalLedgersByZoneId.get(zoneId);
-							if (approvalLedger === undefined) {
-								throw new Error(
-									`Managed Gateway zone '${zoneId}' does not have an approval ledger.`,
-								);
-							}
-							const startGatewayZoneOptions = {
-								controlSession: { controllerEpoch },
-								createVmOwnership: createManagedGatewayVmOwnership,
-								credentialedRuntimeRegistryPublisher,
-								onCredentialedRuntimeZoneStarted: () => credentialedRuntimeManager.openZone(zoneId),
-								onCredentialedRuntimeZoneStopping: async () =>
-									await credentialedRuntimeManager.closeZone(zoneId),
-								...(startOptions?.onPendingVmCreation
-									? { onPendingVmCreation: startOptions.onPendingVmCreation }
-									: {}),
-								...(startOptions?.onControlSessionReconnectExhausted
-									? {
-											onControlSessionReconnectExhausted:
-												startOptions.onControlSessionReconnectExhausted,
-										}
-									: {}),
-								...(startOptions?.onControlSessionHeartbeat
-									? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
-									: {}),
-								...(startOptions?.onControlSessionHealthEvidence
-									? {
-											onControlSessionHealthEvidence: startOptions.onControlSessionHealthEvidence,
-										}
-									: {}),
-								onControlSessionAttachmentGap: (transition: GatewayControlSessionAttachmentGap) => {
-									leaseManager.markControlSessionDisconnected({
-										gateway: transition.gateway,
-										observedAtMs: transition.observedAtMs,
-										processEpoch: transition.processEpoch,
-										sessionAttachmentGeneration: transition.attachmentGeneration,
-									});
-								},
-								...(startOptions?.onGatewayRuntimeAttachmentLost
-									? {
-											onGatewayRuntimeAttachmentLost: startOptions.onGatewayRuntimeAttachmentLost,
-										}
-									: {}),
-								...(startOptions?.observabilityStartupCheck
-									? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
-									: {}),
-								...(startOptions?.prebuiltImage
-									? { prebuiltImage: startOptions.prebuiltImage }
-									: {}),
-								runTask: runTaskStep,
-								gatewayControlControllerExecutions,
-								gatewayControlApprovalLedger: approvalLedger,
-								gatewayControlBindingPublicationSource: gatewayControlLeaseRpc,
-								gatewayControlLeaseRpc,
-								gatewayControlOAuthAvailability,
-								gatewayControlProcessAdmissionCoordinator,
-								healthEventStore,
-								runtimeEnvironment: createGatewayRuntimeEnvironmentForZone({
-									callerRuntimeEnvironment: startOptions?.runtimeEnvironment,
-									controllerTelemetryRuntimeEnvironment: gatewayTelemetryRuntimeEnvironment,
-									zone,
-								}),
-								runtimePluginConfigs: {
-									...startOptions?.runtimePluginConfigs,
-								},
-								runtimeRecordTarget:
-									controllerGatewayRecordTargetsFor(zoneId).managedGatewayRuntimeRecord,
-								secretResolver: startOptions?.secretResolver ?? secretResolver,
-								systemConfig: options.systemConfig,
-								writeLog: writeControllerGatewayLog,
-								zoneId,
-							};
-							if (dependencies.checkObservabilityStackReadiness === undefined) {
-								return await requireManagedGatewayStartResult(
-									await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
-										startGatewayZoneOptions,
-										{
-											gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
-											managedVmFactory: dependencies.managedVmFactory,
-											managedVmExactProcessTermination:
-												dependencies.managedVmExactProcessTermination,
-											managedVmImages: dependencies.managedVmImages,
-											managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
-										},
-									),
-								);
-							}
-							return await requireManagedGatewayStartResult(
-								await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
-									startGatewayZoneOptions,
-									{
-										checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
-										gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
-										managedVmFactory: dependencies.managedVmFactory,
-										managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
-										managedVmImages: dependencies.managedVmImages,
-										managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
-									},
-								),
-							);
-						},
-						runtimeRecordTarget: controllerGatewayRecordTargetsFor(zone.id)
-							.managedGatewayRuntimeRecord,
-						secretResolver,
-						systemConfig: options.systemConfig,
-						zone,
-					})
-				: isWorkerZone(zone)
-					? createWorkerZoneRuntime({
-							activeTaskRegistry,
-							...(process.env.CALLER_URL ? { callerUrl: process.env.CALLER_URL } : {}),
-							controllerEpoch,
-							controllerGithubToken,
-							...(dependencies.executeWorkerTask
-								? { executeWorkerTask: dependencies.executeWorkerTask }
-								: {}),
-							...(dependencies.onWorkerTaskFinished
-								? { onWorkerTaskFinished: dependencies.onWorkerTaskFinished }
-								: {}),
-							...(dependencies.onWorkerTaskIngress
-								? { onWorkerTaskIngress: dependencies.onWorkerTaskIngress }
-								: {}),
-							...(dependencies.onWorkerTaskPrepared
-								? { onWorkerTaskPrepared: dependencies.onWorkerTaskPrepared }
-								: {}),
-							...(dependencies.prepareWorkerTask
-								? { prepareWorkerTask: dependencies.prepareWorkerTask }
-								: {}),
-							requestHeartbeatRegistry,
-							managedVmFactory: dependencies.managedVmFactory,
-							managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
-							managedVmImages: dependencies.managedVmImages,
-							secretResolver,
-							systemConfig: options.systemConfig,
-							workerRuntimeRecordTargetFor: (taskId) =>
-								resolveControllerWorkerTaskRuntimeRecordTarget({
-									gatewayStateRoot: resolveControllerGatewayStateRoot({
-										controllerStateRoot,
-										zoneId: zone.id,
-									}),
-									taskId,
-								}),
-							zone,
+			createManagedGatewayZoneRuntime({
+				createFreshSecretResolver,
+				createVmOwnership: createManagedGatewayVmOwnership,
+				...(options.prebuiltGatewayImages?.[zone.id] === undefined
+					? {}
+					: { initialPrebuiltImage: options.prebuiltGatewayImages[zone.id] }),
+				managedVmFactory: dependencies.managedVmFactory,
+				managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+				managedVmImages: dependencies.managedVmImages,
+				managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
+				recordCurrentControlSessionHealthEvent: (event) => healthEventStore.record(event),
+				recordCurrentControlSessionLiveHealthEvent: (event) =>
+					healthEventStore.recordLiveOnly(event),
+				recordNonCurrentControlSessionEvidence: (event) =>
+					healthEventStore.recordEvidenceOnly(event),
+				...(dependencies.isProcessAlive ? { isProcessAlive: dependencies.isProcessAlive } : {}),
+				now,
+				onGatewayRuntimeAttachmentLost: (transition) => {
+					let lifecycleState;
+					try {
+						lifecycleState = registry
+							.getManagedGatewayRuntime(transition.gateway.zoneId)
+							.getLifecycleState();
+					} catch {
+						writeControllerRuntimeLog('warning', {
+							operation: 'resolve-gateway-runtime-for-attachment-loss',
+							zoneId: transition.gateway.zoneId,
+						});
+						return;
+					}
+					if (
+						(lifecycleState.kind !== 'running' && lifecycleState.kind !== 'running-degraded') ||
+						!gatewayIdentitiesEqual(lifecycleState.gateway.gatewayIdentity, transition.gateway)
+					) {
+						return;
+					}
+					const gatewayIdentity = lifecycleState.gateway.gatewayIdentity;
+					void gatewayServiceHealthMonitorRef.current
+						?.recoverFromTerminalAttachmentLoss({
+							sourceKey: {
+								bootId: gatewayIdentity.bootId,
+								domain: 'gateway_control',
+								gatewayVmId: gatewayIdentity.gatewayVmId,
+								generationId: gatewayIdentity.generationId,
+								zoneId: gatewayIdentity.zoneId,
+							},
+							zoneId: gatewayIdentity.zoneId,
 						})
-					: (() => {
-							throw new Error(`Unsupported gateway type for zone '${zone.id}'.`);
-						})(),
+						.catch(() => {
+							writeControllerRuntimeLog('warning', {
+								operation: 'recover-gateway-runtime-attachment-loss',
+								zoneId: gatewayIdentity.zoneId,
+							});
+						});
+				},
+				preflightGatewayZoneStart: async (preflightOptions, preflightDependencies) => {
+					const runtimeEnvironment = createGatewayRuntimeEnvironmentForZone({
+						callerRuntimeEnvironment: preflightOptions.runtimeEnvironment,
+						controllerTelemetryRuntimeEnvironment: gatewayTelemetryRuntimeEnvironment,
+						zone,
+					});
+					const runtimePluginConfigs = {
+						...preflightOptions.runtimePluginConfigs,
+					};
+					const effectivePreflightDependencies =
+						dependencies.checkObservabilityStackReadiness === undefined
+							? preflightDependencies
+							: {
+									...preflightDependencies,
+									checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
+								};
+					return await (dependencies.preflightGatewayZoneStart ?? preflightGatewayZoneStartDefault)(
+						{
+							...preflightOptions,
+							controlSession: { controllerEpoch },
+							runtimeEnvironment,
+							runtimePluginConfigs,
+							writeLog: writeControllerGatewayLog,
+						},
+						{
+							...effectivePreflightDependencies,
+							managedVmImages: dependencies.managedVmImages,
+						},
+					);
+				},
+				restartGatewayZone: async (zoneId, startOptions) => {
+					const approvalLedger = approvalLedgersByZoneId.get(zoneId);
+					if (approvalLedger === undefined) {
+						throw new Error(`Managed Gateway zone '${zoneId}' does not have an approval ledger.`);
+					}
+					const startGatewayZoneOptions = {
+						controlSession: { controllerEpoch },
+						createVmOwnership: createManagedGatewayVmOwnership,
+						credentialedRuntimeRegistryPublisher,
+						onCredentialedRuntimeZoneStarted: () => credentialedRuntimeManager.openZone(zoneId),
+						onCredentialedRuntimeZoneStopping: async () =>
+							await credentialedRuntimeManager.closeZone(zoneId),
+						...(startOptions?.onPendingVmCreation
+							? { onPendingVmCreation: startOptions.onPendingVmCreation }
+							: {}),
+						...(startOptions?.onControlSessionReconnectExhausted
+							? {
+									onControlSessionReconnectExhausted:
+										startOptions.onControlSessionReconnectExhausted,
+								}
+							: {}),
+						...(startOptions?.onControlSessionHeartbeat
+							? { onControlSessionHeartbeat: startOptions.onControlSessionHeartbeat }
+							: {}),
+						...(startOptions?.onControlSessionHealthEvidence
+							? {
+									onControlSessionHealthEvidence: startOptions.onControlSessionHealthEvidence,
+								}
+							: {}),
+						onControlSessionAttachmentGap: (transition: GatewayControlSessionAttachmentGap) => {
+							leaseManager.markControlSessionDisconnected({
+								gateway: transition.gateway,
+								observedAtMs: transition.observedAtMs,
+								processEpoch: transition.processEpoch,
+								sessionAttachmentGeneration: transition.attachmentGeneration,
+							});
+						},
+						...(startOptions?.onGatewayRuntimeAttachmentLost
+							? {
+									onGatewayRuntimeAttachmentLost: startOptions.onGatewayRuntimeAttachmentLost,
+								}
+							: {}),
+						...(startOptions?.observabilityStartupCheck
+							? { observabilityStartupCheck: startOptions.observabilityStartupCheck }
+							: {}),
+						...(startOptions?.prebuiltImage ? { prebuiltImage: startOptions.prebuiltImage } : {}),
+						runTask: runTaskStep,
+						gatewayControlControllerExecutions,
+						gatewayControlApprovalLedger: approvalLedger,
+						gatewayControlBindingPublicationSource: gatewayControlLeaseRpc,
+						gatewayControlLeaseRpc,
+						gatewayControlOAuthAvailability,
+						gatewayControlProcessAdmissionCoordinator,
+						healthEventStore,
+						runtimeEnvironment: createGatewayRuntimeEnvironmentForZone({
+							callerRuntimeEnvironment: startOptions?.runtimeEnvironment,
+							controllerTelemetryRuntimeEnvironment: gatewayTelemetryRuntimeEnvironment,
+							zone,
+						}),
+						runtimePluginConfigs: {
+							...startOptions?.runtimePluginConfigs,
+						},
+						runtimeRecordTarget:
+							controllerGatewayRecordTargetsFor(zoneId).managedGatewayRuntimeRecord,
+						secretResolver: startOptions?.secretResolver ?? secretResolver,
+						systemConfig: options.systemConfig,
+						writeLog: writeControllerGatewayLog,
+						zoneId,
+					};
+					if (dependencies.checkObservabilityStackReadiness === undefined) {
+						return await requireManagedGatewayStartResult(
+							await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
+								startGatewayZoneOptions,
+								{
+									gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+									managedVmFactory: dependencies.managedVmFactory,
+									managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+									managedVmImages: dependencies.managedVmImages,
+									managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
+								},
+							),
+						);
+					}
+					return await requireManagedGatewayStartResult(
+						await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
+							startGatewayZoneOptions,
+							{
+								checkObservabilityStackReadiness: dependencies.checkObservabilityStackReadiness,
+								gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+								managedVmFactory: dependencies.managedVmFactory,
+								managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
+								managedVmImages: dependencies.managedVmImages,
+								managedVmOwnedDirectories: dependencies.managedVmOwnedDirectories,
+							},
+						),
+					);
+				},
+				runtimeRecordTarget: controllerGatewayRecordTargetsFor(zone.id).managedGatewayRuntimeRecord,
+				secretResolver,
+				systemConfig: options.systemConfig,
+				zone,
+			}),
 		...(options.startupFailures ? { startupFailures: options.startupFailures } : {}),
 		systemConfig: options.systemConfig,
 		writeLog: writeControllerGatewayLog,
@@ -1398,21 +1318,6 @@ async function startControllerRuntimeWithOwnershipLock(
 			secretResolver,
 			systemConfig: options.systemConfig,
 		}),
-		closeTaskForZone: async (zoneId: string, taskId: string) =>
-			await registry.getWorkerRuntime(zoneId).closeTaskForZone(taskId),
-		executeWorkerTask: async (prepared: PreparedWorkerTask) =>
-			await registry.getWorkerRuntime(prepared.zoneId).executeWorkerTask(prepared),
-		getTaskState: async (zoneId: string, taskId: string) =>
-			await registry.getWorkerRuntime(zoneId).getTaskState(taskId),
-		prepareWorkerTask: async (zoneId: string, input: WorkerTaskInput) =>
-			await registry.getWorkerRuntime(zoneId).prepareWorkerTask(input),
-		pullDefaultForTask: async (zoneId: string, taskId: string, input: PullDefaultRequest) =>
-			await registry.getWorkerRuntime(zoneId).pullDefaultForTask(taskId, input),
-		pushTaskBranches: async (
-			zoneId: string,
-			taskId: string,
-			input: { readonly branches: readonly PushBranchRequest[] },
-		) => await registry.getWorkerRuntime(zoneId).pushTaskBranches(taskId, input),
 		stopController,
 	};
 	const recoverGatewayVm = createGatewayVmRecoveryRunner({
@@ -1657,7 +1562,6 @@ async function startControllerRuntimeWithOwnershipLock(
 			});
 			clearReaperTimer();
 			await gatewayServiceHealthMonitorRef.current?.stop();
-			requestHeartbeatRegistry.stopAll();
 			let oauthCloseError: Error | undefined;
 			let stopError: Error | undefined;
 			let serverCloseError: Error | undefined;

@@ -2,7 +2,7 @@
 	"name": "agent-vm-workspace",
 	"version": "0.0.1",
 	"private": true,
-	"description": "Sandboxed VM controller, worker, and gateway packages for autonomous coding agents",
+	"description": "Sandboxed VM controller and gateway packages for autonomous coding agents",
 	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"type": "module",
 	"scripts": {
@@ -49,15 +49,13 @@
 		"test:e2e:vm-mediation": "AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_GONDOLIN_E2E=1 vitest run --config vitest.config.ts --project e2e-vm-mediation",
 		"test:e2e:hermes": "AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_HERMES_E2E=1 vitest run --config vitest.config.ts --project e2e-hermes",
 		"test:e2e:control-lease-reliability": "AGENT_VM_GONDOLIN_E2E=1 AGENT_VM_HERMES_E2E=1 tsx scripts/run-control-lease-reliability-proof.ts",
-		"test:e2e:worker": "AGENT_VM_E2E_USE_LOCAL_TOOL_VM_PACKAGES=1 AGENT_VM_GONDOLIN_E2E=1 AGENT_VM_WORKER_E2E=1 vitest run --config vitest.config.ts --project e2e-worker",
 		"test:e2e:secrets": "AGENT_VM_1PASSWORD_E2E=1 vitest run --config vitest.config.ts --project e2e-secrets",
 		"test:e2e:llm": "AGENT_VM_LLM_E2E=1 vitest run --config vitest.config.ts --project e2e-llm",
 		"test:e2e": "tsx scripts/run-e2e-proof-lanes.ts",
 		"test:watch": "vitest",
 		"inspect:managed-vm-package-cut": "tsx scripts/inspect-managed-vm-package-cut.ts",
 		"dev:sync-tarballs": "tsx scripts/sync-local-tarballs-to-deployment.ts",
-		"perf:gondolin-vfs": "node scripts/perf/gondolin-vfs-benchmark.ts",
-		"perf:worker-git": "node scripts/perf/gondolin-worker-git-benchmark.ts"
+		"perf:gondolin-vfs": "node scripts/perf/gondolin-vfs-benchmark.ts"
 	},
 	"devDependencies": {
 		"@types/node": "^25.6.2",

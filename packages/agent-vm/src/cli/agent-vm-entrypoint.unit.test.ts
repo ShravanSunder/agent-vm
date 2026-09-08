@@ -71,11 +71,6 @@ function createCliBuildSystemConfig(): LoadedSystemConfig {
 					buildConfig: './vm-images/gateways/hermes/build-config.json',
 					dockerfile: './vm-images/gateways/hermes/Dockerfile',
 				},
-				worker: {
-					type: 'worker',
-					buildConfig: './vm-images/gateways/worker/build-config.json',
-					dockerfile: './vm-images/gateways/worker/Dockerfile',
-				},
 			},
 			toolVms: {
 				default: {
@@ -442,138 +437,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 	});
 
-	it('routes resources init to the repo resource scaffolder', async () => {
-		const outputs: string[] = [];
-		const initRepoResources = vi.fn(async () => ({
-			created: [
-				'.agent-vm/repo-resources.ts',
-				'.agent-vm/repo-resources.d.ts',
-				'.agent-vm/run-setup.sh',
-				'.agent-vm/docker-compose.yml',
-				'.agent-vm/AGENTS.md',
-				'.agent-vm/README.md',
-			],
-			skipped: [],
-			updated: [],
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['resources', 'init'],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				getCurrentWorkingDirectory: () => '/tmp/repo',
-				initRepoResources,
-			},
-		);
-
-		expect(initRepoResources).toHaveBeenCalledWith({
-			targetDir: '/tmp/repo',
-		});
-		expect(outputs.join('')).toContain('Scaffolded .agent-vm resources in /tmp/repo');
-		expect(outputs.join('')).toContain('created .agent-vm/repo-resources.ts');
-		expect(outputs.join('')).toContain('Next: edit .agent-vm/repo-resources.ts');
-		expect(outputs.join('')).not.toContain('"created"');
-	});
-
-	it('prints resources init JSON only when requested', async () => {
-		const outputs: string[] = [];
-		const initRepoResources = vi.fn(async () => ({
-			created: ['.agent-vm/repo-resources.ts'],
-			skipped: [],
-			updated: [],
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['resources', 'init', '--json'],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				getCurrentWorkingDirectory: () => '/tmp/repo',
-				initRepoResources,
-			},
-		);
-
-		expect(outputs.join('')).toContain('"created"');
-		expect(outputs.join('')).toContain('.agent-vm/repo-resources.ts');
-	});
-
-	it('routes resources validate to repo resource validation', async () => {
-		const outputs: string[] = [];
-		const validateRepoResources = vi.fn(async () => ({
-			valid: true as const,
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['resources', 'validate'],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				getCurrentWorkingDirectory: () => '/tmp/repo',
-				validateRepoResources,
-			},
-		);
-
-		expect(validateRepoResources).toHaveBeenCalledWith({
-			targetDir: '/tmp/repo',
-		});
-		expect(outputs.join('')).toContain('Repo resource contract is valid.');
-	});
-
-	it('routes resources update to generated repo resource file updates', async () => {
-		const outputs: string[] = [];
-		const updateRepoResources = vi.fn(async () => ({
-			updated: ['.agent-vm/repo-resources.d.ts', '.agent-vm/AGENTS.md', '.agent-vm/README.md'],
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['resources', 'update'],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						outputs.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				getCurrentWorkingDirectory: () => '/tmp/repo',
-				updateRepoResources,
-			},
-		);
-
-		expect(updateRepoResources).toHaveBeenCalledWith({
-			targetDir: '/tmp/repo',
-		});
-		expect(outputs.join('')).toContain('.agent-vm/repo-resources.d.ts');
-	});
-
 	it('routes manual update to the deployment manual updater', async () => {
 		const outputs: string[] = [];
 		const updateAgentVmManual = vi.fn(async () => ({
@@ -608,39 +471,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		expect(outputs.join('')).toContain('docs/manual/README.md');
 	});
 
-	it('passes gateway type through to init scaffolding', async () => {
-		const scaffoldAgentVmProject = vi.fn(async () => ({
-			created: ['config/system.json', '.env.local'],
-			keychainStored: false,
-			skipped: [],
-		}));
-
-		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'test-zone', '--type', 'worker', '--secrets', 'environment', '--arch', 'x86_64'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
-			{
-				...defaultCliDependencies,
-				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
-				scaffoldAgentVmProject,
-			},
-		);
-
-		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
-			expect.objectContaining({
-				gatewayType: 'worker',
-				architecture: 'x86_64',
-				hostSystemType: 'bare-metal',
-				paths: 'local',
-				targetDir: '/tmp/agent-vm-init',
-				writeLocalEnvironmentFile: false,
-				zoneId: 'test-zone',
-			}),
-		);
-	});
-
 	it('passes init path profile and namespace overrides to scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json', '.env.local'],
@@ -653,7 +483,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'coding-agent',
 				'--type',
-				'worker',
+				'hermes',
 				'--secrets',
 				'environment',
 				'--arch',
@@ -675,7 +505,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
-			gatewayType: 'worker',
+			gatewayType: 'hermes',
 			architecture: 'x86_64',
 			hostSystemType: 'container',
 			overwrite: false,
@@ -700,7 +530,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				'init',
 				'coding-agent',
 				'--type',
-				'worker',
+				'hermes',
 				'--preset',
 				'container-x86',
 				'--arch',
@@ -719,7 +549,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
-			gatewayType: 'worker',
+			gatewayType: 'hermes',
 			hostSystemType: 'container',
 			overwrite: false,
 			paths: 'pod',
@@ -730,6 +560,28 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		});
 	});
 
+	it('defaults init to Hermes when --type is omitted', async () => {
+		const scaffoldAgentVmProject = vi.fn(async () => ({
+			created: ['config/system.jsonc'],
+			keychainStored: false,
+			skipped: [],
+		}));
+
+		await parseAndDispatchAgentVmCommandForTest(
+			['init', 'test-zone', '--secrets', 'environment', '--arch', 'aarch64'],
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
+			{
+				...defaultCliDependencies,
+				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
+				scaffoldAgentVmProject,
+			},
+		);
+
+		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
+			expect.objectContaining({ gatewayType: 'hermes' }),
+		);
+	});
+
 	it('uses macOS local preset for local env-file scaffolding', async () => {
 		const scaffoldAgentVmProject = vi.fn(async () => ({
 			created: ['config/system.json', '.env.local'],
@@ -738,11 +590,8 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		}));
 
 		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'macos-local'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
+			['init', 'coding-agent', '--preset', 'macos-local'],
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
 			{
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
@@ -752,7 +601,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
-			gatewayType: 'worker',
+			gatewayType: 'hermes',
 			hostSystemType: 'bare-metal',
 			overwrite: false,
 			paths: 'user-dir',
@@ -771,11 +620,8 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		}));
 
 		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-arm64'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
+			['init', 'coding-agent', '--preset', 'container-arm64'],
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
 			{
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
@@ -785,7 +631,7 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith({
 			architecture: 'aarch64',
-			gatewayType: 'worker',
+			gatewayType: 'hermes',
 			hostSystemType: 'container',
 			overwrite: false,
 			paths: 'pod',
@@ -804,11 +650,8 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		}));
 
 		await parseAndDispatchAgentVmCommandForTest(
-			['init', 'coding-agent', '--type', 'worker', '--preset', 'container-x86', '--overwrite'],
-			{
-				stderr: { write: () => true },
-				stdout: { write: () => true },
-			},
+			['init', 'coding-agent', '--preset', 'container-x86', '--overwrite'],
+			{ stderr: { write: () => true }, stdout: { write: () => true } },
 			{
 				...defaultCliDependencies,
 				getCurrentWorkingDirectory: () => '/tmp/agent-vm-init',
@@ -817,33 +660,15 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 		);
 
 		expect(scaffoldAgentVmProject).toHaveBeenCalledWith(
-			expect.objectContaining({
-				overwrite: true,
-			}),
+			expect.objectContaining({ overwrite: true }),
 		);
-	});
-
-	it('rejects init when --type is missing', async () => {
-		await expect(
-			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--secrets', '1password'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
-				defaultCliDependencies,
-			),
-		).rejects.toThrow(/type/u);
 	});
 
 	it('rejects init when --secrets is missing', async () => {
 		await expect(
 			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--type', 'worker'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
+				['init', 'test-zone', '--arch', 'aarch64'],
+				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/Secrets provider/u);
@@ -852,11 +677,8 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 	it('rejects init when --secrets is invalid', async () => {
 		await expect(
 			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--type', 'worker', '--secrets', 'bogus'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
+				['init', 'test-zone', '--arch', 'aarch64', '--secrets', 'bogus'],
+				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/expected one of.*1password.*environment/u);
@@ -865,88 +687,26 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 	it('rejects init when --arch is missing', async () => {
 		await expect(
 			parseAndDispatchAgentVmCommandForTest(
-				['init', 'test-zone', '--type', 'worker', '--secrets', 'environment'],
-				{
-					stderr: { write: () => true },
-					stdout: { write: () => true },
-				},
+				['init', 'test-zone', '--secrets', 'environment'],
+				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				defaultCliDependencies,
 			),
 		).rejects.toThrow(/Architecture is required/u);
 	});
 
-	it('routes config reset-instructions through the injected reset helper', async () => {
-		const stdoutChunks: string[] = [];
-		const resetWorkerInstructions = vi.fn(async () => ({
-			changed: ['phases.wrapup.instructions'],
-		}));
-		const systemConfig = createCliBuildSystemConfig();
-		const primaryZone = systemConfig.zones[0];
-		if (!primaryZone) {
-			throw new Error('Expected primary zone in test system config');
-		}
-
-		await parseAndDispatchAgentVmCommandForTest(
-			[
-				'config',
-				'reset-instructions',
-				'--config',
-				'config/system.json',
-				'--zone',
-				'coding-agent',
-				'--phase',
-				'wrapup',
-			],
-			{
-				stderr: { write: () => true },
-				stdout: {
-					write: (chunk: string | Uint8Array) => {
-						stdoutChunks.push(String(chunk));
-						return true;
-					},
-				},
-			},
-			{
-				...defaultCliDependencies,
-				loadSystemConfig: vi.fn(async () => ({
-					...systemConfig,
-					zones: [
-						{
-							...primaryZone,
-							gateway: {
-								...primaryZone.gateway,
-								type: 'worker' as const,
-								imageProfile: 'worker',
-								config: '/tmp/worker.json',
-							},
-							id: 'coding-agent',
-						},
-					],
-				})),
-				resetWorkerInstructions,
-			},
-		);
-
-		expect(resetWorkerInstructions).toHaveBeenCalledWith({
-			workerConfigPath: '/tmp/worker.json',
-			phase: 'wrapup',
-		});
-		expect(stdoutChunks.join('')).toContain('"changed"');
-	});
-
-	it('reports an empty system config instead of claiming multiple zones exist', async () => {
+	it('reports an empty system config before controller start', async () => {
 		const systemConfig = createCliBuildSystemConfig();
 
 		await expect(
 			parseAndDispatchAgentVmCommandForTest(
-				['config', 'reset-instructions', '--config', 'config/system.json', '--phase', 'wrapup'],
+				['controller', 'start', '--config', 'config/system.json'],
 				{ stderr: { write: () => true }, stdout: { write: () => true } },
 				{
 					...defaultCliDependencies,
 					loadSystemConfig: vi.fn(async () => ({ ...systemConfig, zones: [] })),
 				},
 			),
-		).rejects.toThrow('No zones configured in the system config.');
+		).rejects.toThrow('--zone is required. Available zones:\n');
 	});
 
 	it('routes build to the build command handler', async () => {
@@ -1497,10 +1257,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 								type: 'hermes',
 								buildConfig: hermesBuildConfigPath,
 							},
-							worker: {
-								type: 'worker',
-								buildConfig: workerBuildConfigPath,
-							},
 						},
 						toolVms: {
 							default: {
@@ -1613,10 +1369,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 							hermes: {
 								type: 'hermes',
 								buildConfig: hermesBuildConfigPath,
-							},
-							worker: {
-								type: 'worker',
-								buildConfig: workerBuildConfigPath,
 							},
 						},
 						toolVms: {
@@ -1738,10 +1490,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 							hermes: {
 								type: 'hermes',
 								buildConfig: './vm-images/gateways/hermes/build-config.json',
-							},
-							worker: {
-								type: 'worker',
-								buildConfig: './vm-images/gateways/worker/build-config.json',
 							},
 						},
 						toolVms: {
@@ -2061,10 +1809,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 						hermes: {
 							type: 'hermes',
 							buildConfig: './vm-images/gateways/hermes/build-config.json',
-						},
-						worker: {
-							type: 'worker',
-							buildConfig: './vm-images/gateways/worker/build-config.json',
 						},
 					},
 					toolVms: {

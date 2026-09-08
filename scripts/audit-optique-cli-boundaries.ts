@@ -45,14 +45,6 @@ export const DEFAULT_INVENTORY_SEEDS = [
 		valueBearing: true,
 	},
 	{
-		commandTypeAlias: 'WorkerCommand',
-		executableName: 'agent-vm-worker',
-		executableRoot: 'packages/agent-vm-worker/src/main.ts',
-		parserSearchRoots: ['packages/agent-vm-worker/src'],
-		rootParserName: 'workerCommandParser',
-		valueBearing: true,
-	},
-	{
 		commandTypeAlias: 'ToolPortalCommand',
 		executableName: 'tool-portal',
 		executableRoot: 'packages/agent-portal-sdk/src/cli/tool-portal.ts',

@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 
 const managedBaseDockerfiles = [
 	['tool-vm', path.join('docker', 'base-images', 'tool-vm', 'Dockerfile')],
-	['worker-gateway', path.join('docker', 'base-images', 'worker-gateway', 'Dockerfile')],
 ] as const satisfies readonly (readonly [string, string])[];
 
 describe('managed base Dockerfiles', () => {

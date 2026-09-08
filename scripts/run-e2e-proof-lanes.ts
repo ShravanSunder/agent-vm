@@ -8,8 +8,7 @@ export type E2eProofLaneId =
 	| 'e2e-host'
 	| 'e2e-hermes'
 	| 'e2e-vm'
-	| 'e2e-vm-mediation'
-	| 'e2e-worker';
+	| 'e2e-vm-mediation';
 
 export interface E2eProofLane {
 	readonly args: readonly string[];
@@ -86,13 +85,6 @@ export function createE2eProofLanes(): readonly E2eProofLane[] {
 			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
 			id: 'e2e-vm-mediation',
 			label: 'HTTP mediation e2e',
-		},
-		{
-			args: ['run', 'test:e2e:worker'],
-			command: 'pnpm',
-			env: { AGENT_VM_E2E_SKIP_WORKSPACE_BUILD: '1' },
-			id: 'e2e-worker',
-			label: 'Worker Gateway e2e',
 		},
 	];
 }

@@ -1,58 +1,66 @@
 # agent-vm
 
-Sandboxed VM infrastructure for autonomous coding agents. See [agent-vm deepwiki](https://deepwiki.com/ShravanSunder/agent-vm)
+Sandboxed VM infrastructure for autonomous coding agents. See [agent-vm deepwiki](https://deepwiki.com/ShravanSunder/agent-vm).
 
-Agent VM has two intentional Gateway products. Hermes is the long-running
-managed interactive-agent Gateway. Worker is the on-demand task Gateway: a
-caller submits a coding task, the controller boots a fresh Gondolin micro-VM,
-and `agent-vm-worker` plans, edits, validates, reviews, and asks the host-side
-controller to push a branch and open a PR. Agents can execute code inside VMs,
-but secrets and git push credentials stay on the host.
+Agent VM runs long-lived Hermes Gateways and per-agent Tool VMs through the
+Gondolin micro-VM backend. Agents can execute code inside VMs, while secrets,
+approval authority, lifecycle ownership, and Git push credentials stay with the
+host controller.
 
-If you want the underlying micro-VM runtime details, see the upstream Gondolin
-docs on [sandbox setup and secret mediation](https://github.com/earendil-works/gondolin/blob/main/README.md#quick-example)
-and [custom image / VFS features](https://github.com/earendil-works/gondolin/blob/main/README.md#feature-highlights).
+## Upgrading From A Worker Release
+
+Worker was removed in a hard cutover. Before installing this release, use the
+old binary and old configuration to stop the old controller cleanly:
+
+```bash
+agent-vm controller stop --config <old-config>
+```
+
+If the controller is unavailable, use that same old release for scoped offline
+cleanup of every Worker zone:
+
+```bash
+agent-vm controller cleanup --config <old-config> --zone <worker-zone>
+```
+
+Verify that its Worker VMs, runtime records, leases, and ingress ownership are
+absent before replacing the package train or configuration. If exact cleanup
+cannot be proven, stop the upgrade and restore the old release and config to
+finish cleanup. The Hermes-only release rejects Worker configuration and does
+not read, migrate, adopt, or delete old Worker records.
 
 ## Mental Model
 
 ```text
-request / API / CI
-      |
-      v
-controller host process
-  - reads system.json
-  - resolves secrets
-  - creates host gitdirs in runtimeDir
-  - builds/caches VM images
-  - pushes branches
-      |
-      v
-Gondolin VM
-  - runs agent-vm-worker
-  - mounts /state and task /gitdirs
-  - keeps repo files on rootfs/COW at /work/repos
-  - runs agent-generated commands safely
+Hermes client / channel --> Hermes Gateway VM
+                            - Hermes framework service
+                            - Gateway Runtime (Tool Portal)
+                                      |
+                                gateway_control
+                                      |
+                                      v
+                            agent-vm host controller
+                            - secrets and approval authority
+                            - VM lifecycle records and image cache
+                            - managed workspace Git operations
+                                      |
+                                      v
+                            per-agent Tool VM
+                            - durable /workspace
+                            - disposable /work
+                            - optional /gitdirs/workspace.git
 ```
 
-The controller creates host-visible Git metadata under `runtimeDir`, mounts it
-into the VM at `/gitdirs`, and the worker materializes hot repo files on
-rootfs/COW under `/work/repos/<repoId>`. Git push/fetch still happens through
-the host-side controller using `--git-dir` and host credentials. PR creation
-happens from the worker via `gh pr create` after `git-push` succeeds, with
-GitHub HTTP traffic mediated by the controller proxy.
-
 VM orchestration is backend-neutral below the application composition root.
-Gateway implementations produce workload requirements through
-`gateway-lifecycle`; controller, lease, health, recovery, Gateway VM, and Tool
-VM code consume narrow `managed-vm` capabilities. The `agent-vm` application
-has a regular runtime dependency on `gondolin-vm-adapter`, selects it at
-startup, and projects its provider into those capabilities, so backend-native
-handles and filesystem objects do not flow into domain code.
+Hermes produces workload requirements through `gateway-lifecycle`; controller,
+lease, health, recovery, Gateway VM, and Tool VM code consume narrow
+`managed-vm` capabilities. `agent-vm` selects `gondolin-vm-adapter` at startup,
+so backend-native handles and filesystem objects do not flow into domain code.
 
 ## Init Presets
 
-`agent-vm init` can scaffold the repo for two deployment shapes: bare metal and
-generic container host.
+`agent-vm init` scaffolds a Hermes deployment. Omitting `--type` selects Hermes;
+`--type hermes` remains accepted.
 
 | Preset | Use when | Expands to |
 | --- | --- | --- |
@@ -60,22 +68,8 @@ generic container host.
 | `container-x86` | x86_64 Linux container runtime | `/var/agent-vm/<projectNamespace>`, `x86_64`, environment secrets, `vm-host-system/` |
 | `container-arm64` | arm64 Linux container runtime | `/var/agent-vm/<projectNamespace>`, `aarch64`, environment secrets, `vm-host-system/` |
 
-Explicit flags like `--arch`, `--paths`, and `--secrets` override preset
+Explicit flags such as `--arch`, `--paths`, and `--secrets` override preset
 defaults.
-
-## Validate vs Doctor
-
-Use both, but for different questions.
-
-```bash
-agent-vm validate --config config/system.json
-agent-vm doctor --config config/system.json
-```
-
-`validate` checks whether the scaffolded files are coherent. `doctor` checks
-whether the current machine can run the config right now.
-
-See [docs/reference/validate-and-doctor.md](docs/reference/validate-and-doctor.md).
 
 ## Quick Start
 
@@ -84,31 +78,25 @@ pnpm install
 pnpm build
 AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
 
-# Long-running managed interactive agents:
-$AGENT_VM init coding-agent --type hermes --preset macos-local
-# Or on-demand coding tasks:
-$AGENT_VM init coding-agent --type worker --preset macos-local
-$AGENT_VM validate --config config/system.json
-$AGENT_VM doctor --config config/system.json
-$AGENT_VM build --config config/system.json
-$AGENT_VM controller start --config config/system.json --zone coding-agent
+$AGENT_VM init coding-agent --preset macos-local
+$AGENT_VM validate --config config/system.jsonc
+$AGENT_VM doctor --config config/system.jsonc
+$AGENT_VM build --config config/system.jsonc
+$AGENT_VM controller start --config config/system.jsonc --zone coding-agent
 ```
-
-For monorepo local task runs, pack `agent-vm-worker` and set
-`AGENT_VM_WORKER_TARBALL_PATH` before starting worker tasks. The local gateway
-image installs public runtime tooling only; the controller copies the tarball
-into `/state/agent-vm-worker.tgz` when a task starts.
 
 Container-host scaffold:
 
 ```bash
-AGENT_VM="node packages/agent-vm/dist/cli/agent-vm-entrypoint.js"
-
-$AGENT_VM init coding-agent --type worker --preset container-x86 --namespace agent-vm
+$AGENT_VM init coding-agent --preset container-x86 --namespace agent-vm
 # or, on an arm64 container host:
-$AGENT_VM init coding-agent --type worker --preset container-arm64 --namespace agent-vm
-$AGENT_VM validate --config config/system.json
+$AGENT_VM init coding-agent --preset container-arm64 --namespace agent-vm
+$AGENT_VM validate --config config/system.jsonc
 ```
+
+`validate` checks whether authored files are coherent. `doctor` checks whether
+the current machine can run them. See
+[validate and doctor](docs/reference/validate-and-doctor.md).
 
 ## Read Next
 
@@ -118,7 +106,6 @@ $AGENT_VM validate --config config/system.json
 | Understand system architecture | [docs/architecture/overview.md](docs/architecture/overview.md) |
 | Configure a Hermes managed Gateway | [docs/reference/configuration/system-json.md](docs/reference/configuration/system-json.md) |
 | Understand credentialed CLI runtimes | [docs/architecture/credentialed-runtimes.md](docs/architecture/credentialed-runtimes.md) |
-| Configure the Worker gateway | [docs/getting-started/worker-guide.md](docs/getting-started/worker-guide.md) |
 | Look up config fields | [docs/reference/configuration/README.md](docs/reference/configuration/README.md) |
 
 ## Development

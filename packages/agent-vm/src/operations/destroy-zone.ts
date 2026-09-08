@@ -52,9 +52,7 @@ export async function runControllerDestroy(
 			force: true,
 			recursive: true,
 		});
-		if (zone.gateway.type !== 'worker') {
-			await fs.rm(zone.gateway.zoneFilesDir, { force: true, recursive: true });
-		}
+		await fs.rm(zone.gateway.zoneFilesDir, { force: true, recursive: true });
 	}
 
 	return {

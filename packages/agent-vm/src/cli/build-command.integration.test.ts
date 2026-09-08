@@ -326,12 +326,11 @@ async function runBuildCommand(
 }
 
 describe('runBuildCommand', () => {
-	it('selects the fixed sibling boot entry only for managed framework gateways', () => {
+	it('selects the fixed sibling boot entry for Hermes gateways', () => {
 		expect(managedGatewayBootProjectionForGatewayType('hermes')).toEqual({
 			frameworkBootEntry: 'hermes-framework-service',
 			kind: 'managed-gateway-exact-two-role',
 		});
-		expect(managedGatewayBootProjectionForGatewayType('worker')).toBeUndefined();
 	});
 
 	it('builds Docker image when dockerfile is configured', async () => {

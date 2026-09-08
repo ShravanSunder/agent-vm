@@ -10,12 +10,10 @@ import {
 	runBackupCommandOperation,
 	runBuildCommandOperation,
 	runCacheCommandOperation,
-	runConfigCommandOperation,
 	runDoctorCommandOperation,
 	runManualCommandOperation,
 	runMigrateCommandOperation,
 	runPathsCommandOperation,
-	runResourcesCommandOperation,
 	runValidateCommandOperation,
 } from './commands/runtime-command-operations.js';
 
@@ -34,7 +32,6 @@ export interface AgentVmCommandOperationSet {
 	readonly backup: Operation<'backup.create' | 'backup.list' | 'backup.restore'>;
 	readonly build: Operation<'build'>;
 	readonly cache: Operation<'cache.list' | 'cache.clean'>;
-	readonly config: Operation<'config.reset-instructions'>;
 	readonly controller: (
 		io: CliIo,
 		dependencies: CliDependencies,
@@ -46,7 +43,6 @@ export interface AgentVmCommandOperationSet {
 	readonly manual: Operation<'manual.update'>;
 	readonly migrate: Operation<'migrate.images'>;
 	readonly paths: Operation<'paths.show'>;
-	readonly resources: Operation<'resources.init' | 'resources.validate' | 'resources.update'>;
 	readonly validate: Operation<'validate'>;
 }
 
@@ -55,14 +51,12 @@ export const defaultAgentVmCommandOperations = {
 	backup: runBackupCommandOperation,
 	build: runBuildCommandOperation,
 	cache: runCacheCommandOperation,
-	config: runConfigCommandOperation,
 	controller: runControllerCommandOperation,
 	doctor: runDoctorCommandOperation,
 	init: runInitCommandOperation,
 	manual: runManualCommandOperation,
 	migrate: runMigrateCommandOperation,
 	paths: runPathsCommandOperation,
-	resources: runResourcesCommandOperation,
 	validate: runValidateCommandOperation,
 } satisfies AgentVmCommandOperationSet;
 
@@ -85,18 +79,12 @@ export async function dispatchAgentVmCommand(
 		case 'cache.list':
 		case 'cache.clean':
 			return await operations.cache(io, dependencies, command);
-		case 'config.reset-instructions':
-			return await operations.config(io, dependencies, command);
 		case 'manual.update':
 			return await operations.manual(io, dependencies, command);
 		case 'migrate.images':
 			return await operations.migrate(io, dependencies, command);
 		case 'paths.show':
 			return await operations.paths(io, dependencies, command);
-		case 'resources.init':
-		case 'resources.validate':
-		case 'resources.update':
-			return await operations.resources(io, dependencies, command);
 		case 'backup.create':
 		case 'backup.list':
 		case 'backup.restore':

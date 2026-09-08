@@ -76,7 +76,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 				cacheDir: options.systemConfig.cacheDir,
 				zoneRuntimeDir: zone.gateway.zoneRuntimeDir,
 				stateDir: zone.gateway.stateDir,
-				...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
+				zoneFilesDir: zone.gateway.zoneFilesDir,
 				zoneId,
 			}),
 		);
@@ -90,7 +90,7 @@ export async function runBackupCommand(options: RunBackupCommandOptions): Promis
 		await backupManager.restoreBackup({
 			backupPath: options.backupPath,
 			stateDir: zone.gateway.stateDir,
-			...(zone.gateway.type !== 'worker' ? { zoneFilesDir: zone.gateway.zoneFilesDir } : {}),
+			zoneFilesDir: zone.gateway.zoneFilesDir,
 		}),
 	);
 }

@@ -1,20 +1,18 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 export type LegacyControllerRecordFamily =
 	| 'approvals'
 	| 'gateway-runtime'
 	| 'gateway-state-root'
-	| 'tool-leases'
-	| 'worker-task-gateway-runtime';
+	| 'tool-leases';
 
 export type LegacyControllerRecordEvidenceKind =
 	| 'directory'
 	| 'file'
 	| 'missing'
 	| 'other'
-	| 'symbolic-link'
-	| 'unreadable-directory';
+	| 'symbolic-link';
 
 export interface LegacyControllerRecordEvidence {
 	readonly absolutePath: string;
@@ -82,106 +80,6 @@ async function appendEvidenceWhenPresent(options: {
 	);
 }
 
-async function readDirectoryNamesFailClosed(options: {
-	readonly absolutePath: string;
-	readonly evidence: LegacyControllerRecordEvidence[];
-	readonly family: LegacyControllerRecordFamily;
-}): Promise<readonly string[] | null> {
-	try {
-		return (await readdir(options.absolutePath)).toSorted();
-	} catch {
-		options.evidence.push(
-			createEvidence({
-				absolutePath: options.absolutePath,
-				family: options.family,
-				kind: 'unreadable-directory',
-			}),
-		);
-		return null;
-	}
-}
-
-async function appendWorkerTaskLegacyEvidence(options: {
-	readonly evidence: LegacyControllerRecordEvidence[];
-	readonly gatewayStateDirectoryPath: string;
-}): Promise<void> {
-	const family = 'worker-task-gateway-runtime' as const;
-	const tasksDirectoryPath = path.join(options.gatewayStateDirectoryPath, 'tasks');
-	const tasksDirectoryStatus = await lstatIfPresent(tasksDirectoryPath);
-	if (tasksDirectoryStatus === null) {
-		return;
-	}
-	if (!tasksDirectoryStatus.isDirectory() || tasksDirectoryStatus.isSymbolicLink()) {
-		options.evidence.push(
-			createEvidence({
-				absolutePath: tasksDirectoryPath,
-				family,
-				kind: evidenceKindForStatus(tasksDirectoryStatus),
-			}),
-		);
-		return;
-	}
-
-	const taskDirectoryNames = await readDirectoryNamesFailClosed({
-		absolutePath: tasksDirectoryPath,
-		evidence: options.evidence,
-		family,
-	});
-	if (taskDirectoryNames === null) {
-		return;
-	}
-
-	for (const taskDirectoryName of taskDirectoryNames) {
-		const taskDirectoryPath = path.join(tasksDirectoryPath, taskDirectoryName);
-		// oxlint-disable-next-line no-await-in-loop -- bounded one-level forensic inspection is intentionally ordered.
-		const taskDirectoryStatus = await lstatIfPresent(taskDirectoryPath);
-		if (taskDirectoryStatus === null) {
-			options.evidence.push(
-				createEvidence({ absolutePath: taskDirectoryPath, family, kind: 'missing' }),
-			);
-			continue;
-		}
-		if (!taskDirectoryStatus.isDirectory() || taskDirectoryStatus.isSymbolicLink()) {
-			options.evidence.push(
-				createEvidence({
-					absolutePath: taskDirectoryPath,
-					family,
-					kind: evidenceKindForStatus(taskDirectoryStatus),
-				}),
-			);
-			continue;
-		}
-
-		const workerStateDirectoryPath = path.join(taskDirectoryPath, 'state');
-		// oxlint-disable-next-line no-await-in-loop -- bounded one-level forensic inspection is intentionally ordered.
-		const workerStateDirectoryStatus = await lstatIfPresent(workerStateDirectoryPath);
-		if (workerStateDirectoryStatus === null) {
-			options.evidence.push(
-				createEvidence({ absolutePath: workerStateDirectoryPath, family, kind: 'missing' }),
-			);
-			continue;
-		}
-		if (!workerStateDirectoryStatus.isDirectory() || workerStateDirectoryStatus.isSymbolicLink()) {
-			options.evidence.push(
-				createEvidence({
-					absolutePath: workerStateDirectoryPath,
-					family,
-					kind: evidenceKindForStatus(workerStateDirectoryStatus),
-				}),
-			);
-			continue;
-		}
-
-		const workerRuntimeRecordPath = path.join(workerStateDirectoryPath, 'gateway-runtime.json');
-		// oxlint-disable-next-line no-await-in-loop -- bounded one-level forensic inspection is intentionally ordered.
-		await appendEvidenceWhenPresent({
-			absolutePath: workerRuntimeRecordPath,
-			evidence: options.evidence,
-			family,
-		});
-	}
-}
-
 export async function scanLegacyControllerRecordEvidence(options: {
 	readonly gatewayStateDirectoryPath: string;
 }): Promise<readonly LegacyControllerRecordEvidence[]> {
@@ -219,11 +117,6 @@ export async function scanLegacyControllerRecordEvidence(options: {
 		evidence,
 		family: 'tool-leases',
 	});
-	await appendWorkerTaskLegacyEvidence({
-		evidence,
-		gatewayStateDirectoryPath: options.gatewayStateDirectoryPath,
-	});
-
 	return Object.freeze(
 		evidence.toSorted((left, right) =>
 			left.absolutePath === right.absolutePath

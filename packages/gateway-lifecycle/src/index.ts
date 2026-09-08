@@ -16,7 +16,6 @@ export {
 	gatewayVmAllowedHosts,
 	targetsAudience,
 	vmAudienceValues,
-	workerVmAllowedHosts,
 } from './audience.js';
 export {
 	createWebSocketUpgradeRequestGuard,
@@ -53,7 +52,7 @@ export {
 	externalControllerRoutes,
 	genericControllerRequestEventOperations,
 } from './health/controller-request-policy.js';
-export { composeNodeOptions, FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
+export { FORCE_IPV4_EGRESS_NODE_OPTIONS } from './force-ipv4-egress.js';
 export type { EgressHostConfig, RuntimeVmAudience, VmAudience } from './audience.js';
 export type { WebSocketUpgradeConfig } from './websocket-upgrade-policy.js';
 export type { GatewayType } from './gateway-runtime-contract.js';
@@ -90,7 +89,6 @@ export type {
 export type {
 	BuildGatewayVmRequirementsOptions,
 	BuildManagedFrameworkServiceBootInputsOptions,
-	DirectProcessGatewayLifecycle,
 	GatewayAuthConfig,
 	GatewayIngressConfig,
 	GatewayInteractiveSshConfig,
@@ -113,7 +111,7 @@ export type {
 	ManagedFrameworkServiceBootInputs,
 	ManagedGatewayLifecycle,
 } from './gateway-lifecycle.js';
-export type { GatewayHealthCheck, GatewayProcessSpec } from './gateway-process-spec.js';
+export type { GatewayHealthCheck } from './gateway-health-check.js';
 export type { GatewayVmRequirements } from './gateway-vm-spec.js';
 export { parseManagedGatewayBootContract } from './managed-gateway-boot-contract.js';
 export type {

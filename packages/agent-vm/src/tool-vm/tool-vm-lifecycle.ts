@@ -113,14 +113,7 @@ function managedAgentWorkspacePolicy(
 			writablePaths: [''],
 		},
 	} satisfies ManagedVmFilteredWorkspacePolicy;
-	switch (zone.gateway.type) {
-		case 'hermes':
-			return selectedAgentSourceRootPolicy;
-		case 'worker':
-			throw new Error(
-				`Gateway type '${zone.gateway.type}' does not yet define a managed agent workspace policy.`,
-			);
-	}
+	return selectedAgentSourceRootPolicy;
 }
 
 function createManagedAgentGitReadOnlySshEgress(options: {

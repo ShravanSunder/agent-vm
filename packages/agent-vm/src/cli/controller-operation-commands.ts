@@ -2,7 +2,6 @@ import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { loadWorkerConfigDraft } from '@agent-vm/agent-vm-worker';
 import { redactOnePasswordReferences } from '@agent-vm/secret-management';
 import { dim, green, red } from 'ansis';
 import { execa } from 'execa';
@@ -14,7 +13,6 @@ import {
 import { loadJsonConfigFile } from '../config/json-config-file.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import { resolveZoneSecrets } from '../gateway/credential-manager.js';
-import { resolveProjectCheckoutPath } from '../operations/config-validation.js';
 import {
 	collectManagedImagePackageOverrideDoctorChecks,
 	collectVmHostSystemDoctorCheck,
@@ -70,7 +68,7 @@ interface ImageProfileDoctorTarget {
 	readonly checkName: string;
 	readonly dockerfile?: string;
 	readonly source?: ManagedImageSource;
-	readonly type: 'hermes' | 'toolVm' | 'worker';
+	readonly type: 'hermes' | 'toolVm';
 }
 
 interface DoctorCommandResult {
@@ -308,7 +306,6 @@ export async function collectControllerDoctorEnvironment(
 export async function collectDynamicDoctorChecks(
 	options: CollectDynamicDoctorChecksOptions,
 ): Promise<readonly DoctorCheck[]> {
-	const workerGatewayConfigChecks = await collectWorkerGatewayConfigChecks(options.systemConfig);
 	const onePasswordHeadlessChecks = await collectOnePasswordHeadlessDoctorChecks({
 		availableBinaries: options.availableBinaries,
 		dependencies: options.dependencies,
@@ -327,7 +324,6 @@ export async function collectDynamicDoctorChecks(
 		...(vmHostSystemCheck ? [vmHostSystemCheck] : []),
 		...imageProfileDockerfileChecks,
 		...managedImagePackageOverrideChecks,
-		...workerGatewayConfigChecks,
 		...onePasswordHeadlessChecks,
 	] as const;
 }
@@ -391,35 +387,6 @@ async function collectImageProfileDockerfileChecks(
 		});
 	}
 
-	return checks;
-}
-
-async function collectWorkerGatewayConfigChecks(
-	systemConfig: LoadedSystemConfig,
-): Promise<readonly DoctorCheck[]> {
-	const checks: DoctorCheck[] = [];
-	for (const zone of systemConfig.zones) {
-		if (zone.gateway.type !== 'worker') {
-			continue;
-		}
-		const workerConfigPath = resolveProjectCheckoutPath(systemConfig, zone.gateway.config);
-		try {
-			// oxlint-disable-next-line eslint/no-await-in-loop
-			await loadWorkerConfigDraft(workerConfigPath);
-			checks.push({
-				name: `worker-config-${zone.id}`,
-				ok: true,
-				hint: workerConfigPath,
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			checks.push({
-				name: `worker-config-${zone.id}`,
-				ok: false,
-				hint: message,
-			});
-		}
-	}
 	return checks;
 }
 

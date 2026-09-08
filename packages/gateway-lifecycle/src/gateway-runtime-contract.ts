@@ -1,4 +1,4 @@
-export const gatewayTypeValues = ['hermes', 'worker'] as const;
+export const gatewayTypeValues = ['hermes'] as const;
 
 export type GatewayType = (typeof gatewayTypeValues)[number];
 

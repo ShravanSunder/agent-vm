@@ -7,7 +7,6 @@ export const RELIABILITY_EVIDENCE_PROJECTS = [
 	'e2e-vm',
 	'e2e-vm-mediation',
 	'e2e-hermes',
-	'e2e-worker',
 ] as const;
 
 export type ReliabilityEvidenceProject = (typeof RELIABILITY_EVIDENCE_PROJECTS)[number];
@@ -227,7 +226,6 @@ function parseProject(input: unknown, label: string): ReliabilityEvidenceProject
 		case 'e2e-vm':
 		case 'e2e-vm-mediation':
 		case 'e2e-hermes':
-		case 'e2e-worker':
 			return input;
 		default:
 			throw new Error(`${label} is not a reliability evidence project.`);
