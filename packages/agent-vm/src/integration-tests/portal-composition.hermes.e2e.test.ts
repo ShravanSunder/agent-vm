@@ -9,6 +9,7 @@ import {
 	type StartedFakeUpstreamMcpServer,
 } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 import { afterAll, describe, expect, it } from 'vitest';
+import { z } from 'zod/v4';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
@@ -401,9 +402,31 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		expect(executeCodeResult).toContain(resultDerivedValue);
 		expect(executeCodeResult).toContain('hostSentinelVisible');
 		expect(executeCodeResult).toContain('/opt/agent-vm-tools/bin/python');
-		expect(executeCodeResult).toContain('"toolVmConfiguredCli"');
-		expect(executeCodeResult).toContain(`"effect": "${resultDerivedValue}"`);
-		expect(executeCodeResult).toContain(`"stdout": "tool-vm:${resultDerivedValue}"`);
+		const executionEnvelope = z
+			.object({ exit_code: z.literal(0), output: z.string(), status: z.literal('success') })
+			.parse(JSON.parse(executeCodeResult ?? 'null'));
+		const compositionOutput: unknown = JSON.parse(executionEnvelope.output);
+		expect(compositionOutput).toMatchObject({
+			toolVmConfiguredCli: {
+				effect: resultDerivedValue,
+				result: {
+					ok: true,
+					items: [
+						{
+							id: 'python-tool-vm-write',
+							status: 'ok',
+							outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
+							value: {
+								exitCode: 0,
+								stderrTruncated: false,
+								stdout: `tool-vm:${resultDerivedValue}`,
+								stdoutTruncated: false,
+							},
+						},
+					],
+				},
+			},
+		});
 		expect(mcpServer.calls).toEqual([
 			{ argumentsValue: { title: 'python-seed' }, name: 'read_thing' },
 			{ argumentsValue: { title: resultDerivedValue }, name: 'write_thing' },
