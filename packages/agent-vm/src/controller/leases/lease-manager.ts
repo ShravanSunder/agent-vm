@@ -97,6 +97,7 @@ export interface Lease {
 }
 
 interface ToolVmLeaseCleanupContext {
+	readonly cleanupContainedStagingRoot?: () => Promise<void>;
 	readonly membership?: ToolVmMembershipHandle;
 	readonly persistedRuntimeRecord?: {
 		readonly recordId: string;
@@ -477,6 +478,10 @@ async function fenceToolVmAccess(options: {
 		return;
 	}
 	if (cleanupContext.processTarget === undefined) {
+		if (cleanupContext.vm.getHostProcessId() === null) {
+			cleanupContext.membership?.recordAccessFenced();
+			return;
+		}
 		throw new Error(
 			`Tool VM '${cleanupContext.vm.id}' has no recorded process identity for exact access fencing.`,
 		);
@@ -518,6 +523,13 @@ export function createLeaseManager(options: {
 		readonly hostWorkspaceRoot: string;
 		readonly zoneId: string;
 	}) => Promise<ManagedVm | ToolVmProvisioningHandle>;
+	readonly cleanupManagedVmStagingRoot?: (options: {
+		readonly agentId: string;
+		readonly leafGeneration: string;
+		readonly leaseId: string;
+		readonly vmId?: string;
+		readonly zoneId: string;
+	}) => Promise<void>;
 	readonly deleteToolVmRuntimeRecord?: typeof deleteToolVmRuntimeRecord;
 	readonly now: () => number;
 	readonly ownershipCoordinator: GatewayOwnershipCoordinator;
@@ -670,6 +682,7 @@ export function createLeaseManager(options: {
 		}
 		await cleanupContext.sshAccess?.close();
 		await assertToolVmPortReleased(cleanupContext);
+		await cleanupContext.cleanupContainedStagingRoot?.();
 		if (cleanupContext.persistedRuntimeRecord !== undefined) {
 			await deleteRuntimeRecord(
 				cleanupContext.persistedRuntimeRecord.recordsTarget,
@@ -944,10 +957,24 @@ export function createLeaseManager(options: {
 			| undefined;
 		let vm: ManagedVm | undefined;
 		let prepareStartedVm: (() => Promise<void>) | undefined;
+		const cleanupContainedStagingRoot =
+			options.cleanupManagedVmStagingRoot === undefined
+				? undefined
+				: async (): Promise<void> =>
+						await options.cleanupManagedVmStagingRoot?.({
+							agentId: leaseOptions.agentId,
+							leafGeneration: authority.leafGeneration,
+							leaseId: authority.leaseId,
+							...(vm === undefined ? {} : { vmId: vm.id }),
+							zoneId: leaseOptions.zoneId,
+						});
 		try {
 			authorityRuntime.beginProvisioning({
 				authority,
-				cleanupContext: { tcpSlot },
+				cleanupContext: {
+					...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
+					tcpSlot,
+				},
 				compatibility,
 				idleExpiresAtMs: createdAt + effectiveIdleTtlMs,
 			});
@@ -958,6 +985,7 @@ export function createLeaseManager(options: {
 				leafId: authority.leafGeneration,
 			});
 			authorityRuntime.setCleanupContext(authority, {
+				...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
 				membership: toolMembership,
 				tcpSlot,
 			});
@@ -978,6 +1006,7 @@ export function createLeaseManager(options: {
 			}
 			toolMembership.attachToolVm(vm.id);
 			authorityRuntime.setCleanupContext(authority, {
+				...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
 				membership: toolMembership,
 				tcpSlot,
 				vm,
@@ -1000,6 +1029,7 @@ export function createLeaseManager(options: {
 				zoneId: leaseOptions.zoneId,
 			});
 			authorityRuntime.setCleanupContext(authority, {
+				...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
 				membership: toolMembership,
 				processTarget: {
 					hostPid: runtimeRecord.qemuPid,
@@ -1016,6 +1046,7 @@ export function createLeaseManager(options: {
 				recordsTarget,
 			};
 			authorityRuntime.setCleanupContext(authority, {
+				...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
 				membership: toolMembership,
 				persistedRuntimeRecord,
 				processTarget: {
@@ -1035,6 +1066,7 @@ export function createLeaseManager(options: {
 				listenPort: options.tcpPool.portForSlot(tcpSlot),
 			});
 			authorityRuntime.setCleanupContext(authority, {
+				...(cleanupContainedStagingRoot === undefined ? {} : { cleanupContainedStagingRoot }),
 				membership: toolMembership,
 				persistedRuntimeRecord,
 				processTarget: {

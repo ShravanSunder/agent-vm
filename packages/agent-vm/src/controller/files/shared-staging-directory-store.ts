@@ -16,6 +16,7 @@ import {
 } from './shared-staging-file-copy.js';
 import {
 	createSharedStagingLifecycle,
+	type SharedStagingCleanupResult,
 	type SharedStagingLifecycle,
 	type SharedStagingPublication,
 } from './shared-staging-lifecycle.js';
@@ -29,6 +30,12 @@ interface PreparedOperation {
 	publishing: boolean;
 	publicationRetained: boolean;
 	sourceCleaned: boolean;
+}
+
+interface PreparedOwnedRoot {
+	readonly directory: string;
+	preparation: Promise<string>;
+	state: 'active' | 'retiring';
 }
 
 export interface SharedStagingPublishedFile extends OperationFileIdentity {
@@ -65,8 +72,12 @@ export interface SharedStagingDirectoryStore {
 			readonly cleanup: 'complete' | 'pending';
 		}
 	>;
-	retireProducer(producerId: string): Promise<void>;
+	retireProducer(producerId: string): Promise<SharedStagingCleanupResult>;
 	retireReceiver: SharedStagingLifecycle['retireReceiver'];
+	retireReceiverRoot(props: {
+		readonly leafGeneration: string;
+		readonly receiver?: ToolVmWorkFileBinding;
+	}): Promise<SharedStagingCleanupResult>;
 	reapExpired: SharedStagingLifecycle['reapExpired'];
 }
 
@@ -95,32 +106,78 @@ export async function createSharedStagingDirectoryStore(props: {
 		),
 	);
 	const operations = new Map<string, PreparedOperation>();
-	const producers = new Map<string, Promise<string>>();
-	const receivers = new Map<string, Promise<string>>();
+	const producers = new Map<string, PreparedOwnedRoot>();
+	const receivers = new Map<string, PreparedOwnedRoot>();
 	const lifecycle = createSharedStagingLifecycle({ now: props.now });
 	const pendingCleanup = new Map<string, () => Promise<void>>();
-	const attemptCleanup = async (id: string, remove: () => Promise<void>): Promise<boolean> => {
-		try {
-			await remove();
-			pendingCleanup.delete(id);
-			return true;
-		} catch {
-			pendingCleanup.set(id, remove);
-			return false;
-		}
+	const cleanupInFlight = new Map<string, Promise<boolean>>();
+	const attemptCleanup = (id: string, remove: () => Promise<void>): Promise<boolean> => {
+		const existing = cleanupInFlight.get(id);
+		if (existing !== undefined) return existing;
+		const attempt = Promise.resolve()
+			.then(remove)
+			.then(
+				() => {
+					pendingCleanup.delete(id);
+					return true;
+				},
+				() => {
+					pendingCleanup.set(id, remove);
+					return false;
+				},
+			)
+			.finally(() => {
+				cleanupInFlight.delete(id);
+			});
+		cleanupInFlight.set(id, attempt);
+		return attempt;
 	};
 	const prepareChild = (
 		parent: string,
 		id: string,
-		entries: Map<string, Promise<string>>,
+		entries: Map<string, PreparedOwnedRoot>,
 	): Promise<string> => {
 		requireDirectoryId(id);
 		const existing = entries.get(id);
-		if (existing !== undefined) return existing;
+		if (existing !== undefined) {
+			if (existing.state !== 'active')
+				return Promise.reject(new OperationFolderAccessError('unavailable'));
+			return existing.preparation;
+		}
 		const directory = path.join(parent, id);
-		const preparing = mkdir(directory, { mode: 0o700 }).then(() => directory);
-		entries.set(id, preparing);
-		return preparing;
+		const entry: PreparedOwnedRoot = {
+			directory,
+			preparation: Promise.resolve(directory),
+			state: 'active',
+		};
+		entry.preparation = mkdir(directory, { mode: 0o700 }).then(
+			() => directory,
+			(error: unknown) => {
+				entries.delete(id);
+				throw error;
+			},
+		);
+		entries.set(id, entry);
+		return entry.preparation;
+	};
+	const retireOwnedRoot = async (
+		kind: 'producer' | 'receiver',
+		id: string,
+		entries: Map<string, PreparedOwnedRoot>,
+		beforeRemove?: () => Promise<void>,
+	): Promise<SharedStagingCleanupResult> => {
+		requireDirectoryId(id);
+		const entry = entries.get(id);
+		if (entry === undefined) return { removed: 0, pending: 0 };
+		entry.state = 'retiring';
+		const cleanupId = `${kind}-root/${id}`;
+		const removed = await attemptCleanup(cleanupId, async () => {
+			await entry.preparation;
+			await beforeRemove?.();
+			await rm(entry.directory, { recursive: true, force: true });
+			if (entries.get(id) === entry) entries.delete(id);
+		});
+		return removed ? { removed: 1, pending: 0 } : { removed: 0, pending: 1 };
 	};
 	const operationKey = (producerId: string, operationId: string): string =>
 		`${requireDirectoryId(producerId)}/${requireDirectoryId(operationId)}`;
@@ -136,9 +193,10 @@ export async function createSharedStagingDirectoryStore(props: {
 			if (lifecycle.lookup(request.publicationId, request.receiver) === undefined)
 				throw new OperationFolderAccessError('unavailable');
 			const receiving = receivers.get(request.receiver.leafGeneration);
-			if (receiving === undefined) throw new OperationFolderAccessError('unavailable');
+			if (receiving === undefined || receiving.state !== 'active')
+				throw new OperationFolderAccessError('unavailable');
 			yield* readSharedStagingFile({
-				root: path.join(await receiving, request.publicationId),
+				root: path.join(await receiving.preparation, request.publicationId),
 				relativePath: request.relativePath,
 				signal: request.signal,
 			});
@@ -185,7 +243,8 @@ export async function createSharedStagingDirectoryStore(props: {
 				operation.publishing ||
 				operation.publicationRetained ||
 				operation.sourceCleaned ||
-				receiving === undefined
+				receiving === undefined ||
+				receiving.state !== 'active'
 			)
 				throw new OperationFolderAccessError('unavailable');
 			if (
@@ -243,7 +302,7 @@ export async function createSharedStagingDirectoryStore(props: {
 				if (files.length === 0) throw new OperationFolderAccessError('transfer-failed');
 				if (!props.retention.resize(reservationId, totalBytes))
 					throw new OperationFolderAccessError('size-limit');
-				destination = path.join(await receiving, publicationId);
+				destination = path.join(await receiving.preparation, publicationId);
 				const publishedDirectory = destination;
 				await request.withPublicationAuthority(async () => {
 					if (exposeStarted) throw new OperationFolderAccessError('unavailable');
@@ -289,13 +348,36 @@ export async function createSharedStagingDirectoryStore(props: {
 		retireProducer: async (producerId) => {
 			requireDirectoryId(producerId);
 			const selected = [...operations.values()].filter(
-				(operation) => operation.producerId === producerId,
+				(operation) => operation.producerId === producerId && !operation.sourceCleaned,
 			);
 			if (selected.some((operation) => operation.publishing))
 				throw new OperationFolderAccessError('unavailable');
-			await Promise.all(selected.map(removeOperation));
+			return await retireOwnedRoot('producer', producerId, producers, async () => {
+				const operationResults = await Promise.all(
+					selected
+						.filter((operation) => !operation.sourceCleaned)
+						.map(
+							async (operation) =>
+								await attemptCleanup(operation.reservationId, async () =>
+									removeOperation(operation),
+								),
+						),
+				);
+				if (operationResults.some((removed) => !removed))
+					throw new Error('Producer operation cleanup remains pending.');
+			});
 		},
 		retireReceiver: async (receiver) => await lifecycle.retireReceiver(receiver),
+		retireReceiverRoot: async ({ leafGeneration, receiver }) => {
+			if (receiver !== undefined && receiver.leafGeneration !== leafGeneration)
+				throw new OperationFolderAccessError('unavailable');
+			return await retireOwnedRoot('receiver', leafGeneration, receivers, async () => {
+				if (receiver === undefined) return;
+				const publications = await lifecycle.retireReceiver(receiver);
+				if (publications.pending > 0)
+					throw new Error('Receiver publication cleanup remains pending.');
+			});
+		},
 		reapExpired: async () => {
 			const expired = await lifecycle.reapExpired();
 			const retried = await Promise.all(

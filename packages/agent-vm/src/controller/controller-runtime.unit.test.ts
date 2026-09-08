@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -1845,6 +1845,33 @@ describe('startControllerRuntime', () => {
 			preparedMutation: preparedReleaseReplacementLease,
 			semanticOperationId: 'controller-runtime-test-lease-release',
 		});
+		createManagedToolVm.mockRejectedValueOnce(new Error('provider rejected Tool VM creation'));
+		const failedCreateLeasePayload = {
+			callerContext: {
+				callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
+			},
+		};
+		const preparedFailedCreateLease = await gatewayControlLeaseRpc.prepareSemanticMutation({
+			attachmentGeneration: 1,
+			callerContext: refreshedControllerLeaseCallerContext,
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_create',
+			payload: failedCreateLeasePayload,
+			processEpoch: 'controller-runtime-test-process-epoch',
+		});
+		await expect(
+			executePreparedGatewayLeaseMutation({
+				gateway: capturedGatewayIdentity,
+				operation: 'lease_create',
+				preparedMutation: preparedFailedCreateLease,
+				semanticOperationId: 'controller-runtime-test-failed-lease-create',
+			}),
+		).rejects.toThrow('provider rejected Tool VM creation');
+		expect(
+			(await readdir(absoluteLeaseSystemConfig.controllerRuntimeDir, { recursive: true })).filter(
+				(entry) => /(?:^|\/)receiver\/[^/]+$/u.test(entry),
+			),
+		).toEqual([]);
 		recordControllerHealthEvent(capturedHealthEventStore, {
 			channelProviderId: 'primary-channel',
 			health: 'transitioning',

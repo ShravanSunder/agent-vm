@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -9,15 +8,21 @@ import { promisify } from 'node:util';
 
 import type { PortalAttachmentResult } from '@agent-vm/agent-portal-sdk';
 import { GatewayStablePrincipalDigestSchema } from '@agent-vm/agent-portal-sdk/contracts';
-import { GatewayControlRpcCommandResultMessageSchema } from '@agent-vm/gateway-control-contracts';
+import {
+	deriveGatewayControlStablePrincipal,
+	GatewayControlRpcCommandResultMessageSchema,
+} from '@agent-vm/gateway-control-contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { GatewayRuntimeControlCommandClient } from '../../../gateway-runtime/src/control-endpoint/gateway-control-command-client.js';
 import { createGatewayControlNativeAttachmentPort } from '../../../gateway-runtime/src/native-attachment-gateway-control-port.js';
 import { createGatewayRuntimePrivateUdsDispatcher } from '../../../gateway-runtime/src/production/gateway-runtime-private-uds-dispatcher.js';
-import { createNativeAttachmentHostFiles } from '../controller/files/native-attachment-host-files.js';
+import { createControllerSharedStaging } from '../controller/files/controller-shared-staging.js';
+import type { ToolVmWorkFileLeaseManager } from '../controller/files/current-tool-vm-work-files.js';
+import { accessNativeAttachment } from '../controller/files/native-attachment-controller-access.js';
 import { createNativeAttachmentStaging } from '../controller/files/native-attachment-staging.js';
 import { createOperationFileRetentionBudget } from '../controller/files/operation-file-retention-budget.js';
+import { prepareGogRealFsLeaseFixture } from '../controller/oauth/gog-realfs-authority.integration-test-fixture.js';
 
 const executeFile = promisify(execFile);
 const hermesRuntimeImage =
@@ -71,44 +76,135 @@ afterEach(async () => {
 
 describe('native attachment full host-cache journey', () => {
 	it.each([
-		{ expectedKind: 'attached', expectedSettlement: 'sent', senderOutcome: 'sent' },
 		{
+			expectedCallbackActions: ['stage', 'settle'],
+			expectedCleanup: 'complete',
+			expectedKind: 'attached',
+			expectedSenderCount: 1,
+			expectedSettlement: 'sent',
+			senderOutcome: 'sent',
+		},
+		{
+			expectedCallbackActions: ['stage', 'settle'],
+			expectedCleanup: 'complete',
 			expectedKind: 'attachment-unconfirmed',
+			expectedSenderCount: 1,
 			expectedSettlement: 'unconfirmed',
 			senderOutcome: 'failed',
 		},
 		{
+			expectedCallbackActions: ['stage', 'settle'],
+			expectedCleanup: 'complete',
 			expectedKind: 'attachment-unconfirmed',
+			expectedSenderCount: 1,
 			expectedSettlement: 'unconfirmed',
 			senderOutcome: 'missing-message-id',
 		},
+		{
+			expectedCallbackActions: ['stage'],
+			expectedCleanup: 'pending',
+			expectedKind: 'attachment-failed',
+			expectedSenderCount: 0,
+			expectedSettlement: undefined,
+			senderOutcome: 'stale-generation',
+		},
+		{
+			expectedCallbackActions: ['stage', 'settle'],
+			expectedCleanup: 'complete',
+			expectedKind: 'attachment-failed',
+			expectedSenderCount: 0,
+			expectedSettlement: 'failed',
+			senderOutcome: 'route-replaced',
+		},
 	] as const)(
-		'runs the actual plugin through host staging and $senderOutcome settlement deletion',
-		async ({ expectedKind, expectedSettlement, senderOutcome }) => {
-			// Arrange: Google/Gog is an explicit local fake producing selected bytes. The
-			// plugin, typed private request, controller staging, sender and cleanup are real.
+		'runs the actual plugin through the $senderOutcome controller-access boundary',
+		async ({
+			expectedCallbackActions,
+			expectedCleanup,
+			expectedKind,
+			expectedSenderCount,
+			expectedSettlement,
+			senderOutcome,
+		}) => {
+			// Arrange: Google/Gog and the VM provider are explicit local substitutes. The
+			// shared publication, lease owner, controller access, sender and cleanup are real.
 			const root = await mkdtemp(path.join(tmpdir(), 'native-attachment-journey-'));
 			temporaryRoots.push(root);
 			const cacheDirectory = path.join(root, 'gateway-cache');
-			await writeFile(path.join(root, 'fake-google-export.bin'), selectedBytes);
 			await mkdir(cacheDirectory);
 			await writeFile(path.join(cacheDirectory, 'ordinary-cache-sentinel'), 'preserve');
-			const host = await createNativeAttachmentHostFiles({
-				cacheDirectory,
-				controllerEpoch: 'controller-run',
-				gatewayVmId: 'gateway-generation',
-				signal: new AbortController().signal,
+			const retentionBudget = createOperationFileRetentionBudget();
+			const sharedStagingController = createControllerSharedStaging({
+				controllerEpoch: 'controller-realfs',
+				controllerRuntimeDir: path.join(root, 'runtime'),
+				now: () => 1_000,
+				retentionBudget,
 			});
-			const staging = createNativeAttachmentStaging({
-				retentionBudget: createOperationFileRetentionBudget(),
-			});
-			const owner = {
+			const principal = {
 				agentId: 'sun',
-				gatewayVmId: 'gateway-generation',
-				profileName: 'sun',
-				sessionId: 'captured-session',
-				stablePrincipal: 'stable-principal',
+				frameworkIdentity: { kind: 'hermes', profileName: 'sun' },
+				profileAssignmentRevision: 'revision-sun',
+				toolPortalProfileId: 'policy-sun',
+			} as const;
+			const sharedStaging = await sharedStagingController.getStore('zone', principal.agentId);
+			const leaseFixture = await prepareGogRealFsLeaseFixture({
+				principal,
+				root,
+				sharedStaging: sharedStagingController,
 				zoneId: 'zone',
+			});
+			const operationDirectory = await sharedStaging.prepareOperation({
+				maximumBytes: selectedBytes.byteLength,
+				operationId: 'fake-google-operation',
+				producerId: 'fake-google-gog',
+			});
+			await writeFile(path.join(operationDirectory, 'fake-google-export.bin'), selectedBytes);
+			const publication = await sharedStaging.publish({
+				operationId: 'fake-google-operation',
+				producerId: 'fake-google-gog',
+				receiver: leaseFixture.receiver,
+				relativePaths: ['fake-google-export.bin'],
+				signal: new AbortController().signal,
+				withPublicationAuthority: async (expose) => await expose(),
+			});
+			expect(publication.files).toMatchObject([
+				{ byteLength: selectedBytes.byteLength, sha256: selectedDigest },
+			]);
+			const staging = createNativeAttachmentStaging({
+				retentionBudget,
+			});
+			const callerContext = {
+				agentId: 'sun',
+				bootId: leaseFixture.authority.gateway.bootId,
+				callerContextId,
+				connectionId: 'private-control-connection',
+				controllerEpoch: leaseFixture.authority.gateway.controllerEpoch,
+				peerId: 'gateway-peer',
+				principal,
+				purpose: 'tool_portal_controller_execution' as const,
+				sessionId: 'private-control-session',
+				stablePrincipal: deriveGatewayControlStablePrincipal({ principal }),
+				zoneId: 'zone',
+			};
+			const accessLeaseManager: ToolVmWorkFileLeaseManager = {
+				endActiveUse: leaseFixture.leaseManager.endActiveUse.bind(leaseFixture.leaseManager),
+				getCurrentLeaseBinding: (leaseId) => {
+					const binding = leaseFixture.leaseManager.getCurrentLeaseBinding(leaseId);
+					return senderOutcome === 'stale-generation' && binding !== undefined
+						? { ...binding, leafGeneration: 'stale-leaf-generation' }
+						: binding;
+				},
+				getLeaseAuthority: leaseFixture.leaseManager.getLeaseAuthority.bind(
+					leaseFixture.leaseManager,
+				),
+				heartbeatActiveUse: leaseFixture.leaseManager.heartbeatActiveUse.bind(
+					leaseFixture.leaseManager,
+				),
+				listLeases: leaseFixture.leaseManager.listLeases.bind(leaseFixture.leaseManager),
+				startActiveUse: leaseFixture.leaseManager.startActiveUse.bind(leaseFixture.leaseManager),
+				subscribeLeaseRetirement: leaseFixture.leaseManager.subscribeLeaseRetirement.bind(
+					leaseFixture.leaseManager,
+				),
 			};
 			const callbackRequests: GatewayRuntimeCallback[] = [];
 			const registeredTrustedContexts: unknown[] = [];
@@ -120,36 +216,12 @@ describe('native attachment full host-cache journey', () => {
 				expect(request.admissionPrincipal).toBe('a'.repeat(64));
 				const { request: portalRequest, sessionId } = request.message.payload;
 				expect(sessionId).toBe('captured-session');
-				let nativeAttachment: PortalAttachmentResult;
 				if (portalRequest.action === 'stage') {
 					expect(portalRequest.source).toEqual({
 						kind: 'operation-file',
 						path: 'fake-google-export.bin',
-						referenceId: '11111111-1111-4111-8111-111111111111',
+						referenceId: publication.publicationId,
 					});
-					nativeAttachment = await staging.stage({
-						destination: host.destination,
-						destinationRoot: host.guestRoot,
-						destinationWriter: host.writer,
-						destinationAuthorityIsCurrent: () => true,
-						owner,
-						signal: new AbortController().signal,
-						source: {
-							read: (relativePath) => {
-								expect(relativePath).toBe('fake-google-export.bin');
-								return createReadStream(path.join(root, relativePath), { highWaterMark: 7 });
-							},
-						},
-						sourceAuthorityIsCurrent: () => true,
-						sourceRelativePath: 'fake-google-export.bin',
-					});
-					if (nativeAttachment.kind !== 'staged')
-						throw new Error(`Unexpected stage: ${nativeAttachment.reason}`);
-					stagedHostPath = path.join(
-						cacheDirectory,
-						nativeAttachment.path.slice('/home/hermes/.cache/'.length),
-					);
-					expect(await readFile(stagedHostPath)).toEqual(selectedBytes);
 				} else {
 					expect(portalRequest).toMatchObject({
 						action: 'settle',
@@ -157,11 +229,34 @@ describe('native attachment full host-cache journey', () => {
 					});
 					if (stagedHostPath === undefined) throw new Error('Settlement arrived before staging.');
 					expect(await readFile(stagedHostPath)).toEqual(selectedBytes);
-					nativeAttachment = await staging.settle({
-						owner,
-						outcome: portalRequest.outcome,
-						stagingId: portalRequest.stagingId,
-					});
+				}
+				const nativeAttachment: PortalAttachmentResult = await accessNativeAttachment({
+					cacheDirectory,
+					context: {
+						callerContext,
+						executionProof: {
+							operationPayloadDigest: 'native-attachment-payload',
+							processEpoch: 'native-attachment-process',
+							semanticOperationId: `native-attachment-${portalRequest.action}`,
+							sessionAttachmentGeneration: 1,
+						},
+						gateway: leaseFixture.authority.gateway,
+						request: portalRequest,
+						sessionId,
+						signal: new AbortController().signal,
+					},
+					destinationAuthorityIsCurrent: () => true,
+					destinationVm: { id: leaseFixture.authority.gateway.gatewayVmId },
+					leaseManager: accessLeaseManager,
+					sharedStaging,
+					staging,
+				});
+				if (portalRequest.action === 'stage' && nativeAttachment.kind === 'staged') {
+					stagedHostPath = path.join(
+						cacheDirectory,
+						nativeAttachment.path.slice('/home/hermes/.cache/'.length),
+					);
+					expect(await readFile(stagedHostPath)).toEqual(selectedBytes);
 				}
 				const messageId =
 					portalRequest.action === 'stage'
@@ -274,6 +369,8 @@ describe('native attachment full host-cache journey', () => {
 						'--env',
 						`AGENT_VM_NATIVE_ATTACHMENT_CALLBACK_TOKEN=${callbackToken}`,
 						'--env',
+						`AGENT_VM_NATIVE_ATTACHMENT_REFERENCE_ID=${publication.publicationId}`,
+						'--env',
 						`AGENT_VM_NATIVE_ATTACHMENT_SENDER_OUTCOME=${senderOutcome}`,
 						'--env',
 						'AGENT_VM_NATIVE_ATTACHMENT_CACHE_DIR=/home/hermes/.cache',
@@ -299,7 +396,7 @@ describe('native attachment full host-cache journey', () => {
 				// Assert: the recording sender saw the exact selected cache bytes, and its
 				// settled result caused the controller owner to delete only the send child.
 				expect(journey.result).toMatchObject({
-					cleanup: 'complete',
+					cleanup: expectedCleanup,
 					kind: expectedKind,
 				});
 				if (expectedKind === 'attached') {
@@ -308,50 +405,60 @@ describe('native attachment full host-cache journey', () => {
 						messageId: 'recording-native-message',
 						sha256: selectedDigest,
 					});
-				} else {
+				} else if (expectedKind === 'attachment-unconfirmed') {
 					expect(journey.result).toMatchObject({ reason: 'send-error' });
 					expect(journey.result).not.toHaveProperty('byteLength');
 					expect(journey.result).not.toHaveProperty('messageId');
+				} else {
+					expect(journey.result).toMatchObject({
+						reason: senderOutcome === 'stale-generation' ? 'staging-failed' : 'route-unavailable',
+					});
 				}
-				expect(journey.senderCalls).toEqual([
-					{
-						byteLength: selectedBytes.byteLength,
-						caption: 'Fake Google export',
-						fileName: 'fake-google-export.bin',
-						sha256: selectedDigest,
-					},
-				]);
-				expect(callbackRequests.map(({ params }) => params.publicRequest.action)).toEqual([
-					'stage',
-					'settle',
-				]);
-				expect(registeredTrustedContexts).toHaveLength(2);
-				expect(registeredTrustedContexts).toEqual([
-					expect.objectContaining({
-						correlation: { sessionId: 'captured-session' },
-						principal: expect.objectContaining({
-							agentId: 'sun',
-							frameworkIdentity: { kind: 'hermes', profileName: 'sun' },
+				expect(journey.senderCalls).toEqual(
+					expectedSenderCount === 0
+						? []
+						: [
+								{
+									byteLength: selectedBytes.byteLength,
+									caption: 'Fake Google export',
+									fileName: 'fake-google-export.bin',
+									sha256: selectedDigest,
+								},
+							],
+				);
+				expect(callbackRequests.map(({ params }) => params.publicRequest.action)).toEqual(
+					expectedCallbackActions,
+				);
+				expect(registeredTrustedContexts).toHaveLength(expectedCallbackActions.length);
+				for (const context of registeredTrustedContexts) {
+					expect(context).toEqual(
+						expect.objectContaining({
+							correlation: { sessionId: 'captured-session' },
+							principal: expect.objectContaining({
+								agentId: 'sun',
+								frameworkIdentity: { kind: 'hermes', profileName: 'sun' },
+							}),
 						}),
-					}),
-					expect.objectContaining({
-						correlation: { sessionId: 'captured-session' },
-						principal: expect.objectContaining({ agentId: 'sun' }),
-					}),
-				]);
-				expect(dispatchedConnections).toEqual([
-					'private-uds-fixture-connection',
-					'private-uds-fixture-connection',
-				]);
-				if (stagedHostPath === undefined) throw new Error('Journey did not stage a host file.');
-				await expect(readFile(stagedHostPath)).rejects.toMatchObject({ code: 'ENOENT' });
+					);
+				}
+				expect(dispatchedConnections).toEqual(
+					expectedCallbackActions.map(() => 'private-uds-fixture-connection'),
+				);
+				if (stagedHostPath === undefined) {
+					expect(senderOutcome).toBe('stale-generation');
+				} else {
+					await expect(readFile(stagedHostPath)).rejects.toMatchObject({ code: 'ENOENT' });
+				}
 				expect(await readFile(path.join(cacheDirectory, 'ordinary-cache-sentinel'), 'utf8')).toBe(
 					'preserve',
 				);
 			} finally {
-				await new Promise<void>((resolve, reject) =>
-					server.close((error) => (error === undefined ? resolve() : reject(error))),
-				);
+				await Promise.all([
+					new Promise<void>((resolve, reject) =>
+						server.close((error) => (error === undefined ? resolve() : reject(error))),
+					),
+					leaseFixture.close(),
+				]);
 			}
 		},
 	);

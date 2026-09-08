@@ -64,6 +64,7 @@ interface FakeVmState {
 }
 
 interface ManagerFixture {
+	readonly controllerRuntimeDir: string;
 	readonly sharedStaging: ReturnType<typeof createControllerSharedStaging>;
 	readonly createManagedVm: ReturnType<typeof vi.fn>;
 	readonly exactTerminate: ReturnType<typeof vi.fn>;
@@ -220,17 +221,21 @@ function createFixture(
 	options: {
 		readonly afterRecordWrite?: (kind: CredentialedRuntimeRecord['kind']) => Promise<void>;
 		readonly beforeManagedVmCreate?: () => Promise<void>;
+		readonly beforeManagedVmStart?: () => Promise<void>;
 		readonly beforeResolveAll?: () => Promise<void>;
 		readonly failingRecordKinds?: readonly CredentialedRuntimeRecord['kind'][];
 		readonly fileHelperOutput?: (argv: readonly string[]) => string;
 		readonly execExitCode?: (argv: readonly string[]) => number;
 		readonly beforeExecCompletion?: () => Promise<void>;
+		readonly managedVmCloseFailure?: Error;
+		readonly openHostDirectoryFailure?: Error;
 	} = {},
 ): ManagerFixture {
 	const states: FakeVmState[] = [];
 	const retentionBudget = createOperationFileRetentionBudget();
+	const controllerRuntimeDir = path.join(testRoot, crypto.randomUUID());
 	const sharedStaging = createControllerSharedStaging({
-		controllerRuntimeDir: path.join(testRoot, crypto.randomUUID()),
+		controllerRuntimeDir,
 		controllerEpoch: ownerIdentity.controllerEpoch,
 		retentionBudget,
 		now,
@@ -303,6 +308,7 @@ function createFixture(
 		);
 		return {
 			close: async () => {
+				if (options.managedVmCloseFailure !== undefined) throw options.managedVmCloseFailure;
 				producerDirectory?.close();
 				state.closed = true;
 				state.hostProcessId = null;
@@ -320,6 +326,7 @@ function createFixture(
 			getHostProcessId: () => state.hostProcessId,
 			id: state.id,
 			start: async () => {
+				await options.beforeManagedVmStart?.();
 				state.started = true;
 				state.hostProcessId = 20_000 + ordinal;
 			},
@@ -372,6 +379,7 @@ function createFixture(
 		},
 	};
 	return {
+		controllerRuntimeDir,
 		sharedStaging,
 		createManagedVm,
 		exactTerminate,
@@ -380,11 +388,14 @@ function createFixture(
 			sharedStaging: {
 				getStore: async (zoneId, agentId) => await sharedStaging.getStore(zoneId, agentId),
 				ownedDirectories: {
-					openHostDirectory: (hostPath) =>
-						createOwnedHostDirectoryController({
+					openHostDirectory: (hostPath) => {
+						if (options.openHostDirectoryFailure !== undefined)
+							throw options.openHostDirectoryFailure;
+						return createOwnedHostDirectoryController({
 							identity: { canonicalPath: hostPath, device: 1, inode: 1 },
 							onClose: () => {},
-						}),
+						});
+					},
 				},
 			},
 			controllerStateDir: testRoot,
@@ -402,6 +413,12 @@ function createFixture(
 	};
 }
 
+async function listProducerRootEntries(fixture: ManagerFixture): Promise<readonly string[]> {
+	return (await readdir(fixture.controllerRuntimeDir, { recursive: true })).filter((entry) =>
+		/(?:^|\/)producer\/[^/]+$/u.test(entry),
+	);
+}
+
 async function acquire(
 	fixture: ManagerFixture,
 	runtimeResolution = resolution(),
@@ -415,6 +432,76 @@ async function acquire(
 }
 
 describe('credentialed runtime manager', () => {
+	it('removes the producer root when creation fails before the provider returns a VM', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmCreate: async () => {
+				throw new Error('provider rejected creation');
+			},
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root when opening its directory capability fails', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			openHostDirectoryFailure: new Error('directory capability failed'),
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root after containing a VM that fails before start', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmStart: async () => {
+				throw new Error('start failed');
+			},
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.states[0]).toMatchObject({ closed: true, started: false });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root after containing a provisionally started VM', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			failingRecordKinds: ['identity-published'],
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.states[0]).toMatchObject({ closed: true, started: true });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('retains the producer root when provisional VM containment is unproven', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmStart: async () => {
+				throw new Error('start failed');
+			},
+			managedVmCloseFailure: new Error('close failed'),
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'owner-unsafe' });
+		expect(await listProducerRootEntries(fixture)).toHaveLength(1);
+	});
+
 	it('executes prepared file commands in their operation folder without rewriting argv or later cwd', async () => {
 		// Arrange
 		const fixture = createFixture(() => 1_000, { fileHelperOutput: () => '' });

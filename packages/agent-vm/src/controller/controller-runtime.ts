@@ -841,6 +841,26 @@ async function startControllerRuntimeWithOwnershipLock(
 		staleAfterMs: controllerHealthConfig.staleAfterMs,
 	});
 	const leaseManager = createLeaseManager({
+		cleanupManagedVmStagingRoot: async ({
+			agentId,
+			leafGeneration,
+			leaseId,
+			vmId,
+			zoneId,
+		}): Promise<void> => {
+			const cleanup = async (): Promise<void> => {
+				const staging = await sharedStaging.getStore(zoneId, agentId);
+				const result = await staging.retireReceiverRoot({
+					leafGeneration,
+					...(vmId === undefined ? {} : { receiver: { leaseId, leafGeneration, vmId } }),
+				});
+				if (result.pending > 0) throw new Error('Receiver staging root cleanup remains pending.');
+				stagingReceivers.delete(leaseId);
+			};
+			if (preparedOAuthRuntime?.zoneId === zoneId)
+				await preparedOAuthRuntime.withPublicationGuard(cleanup);
+			else await cleanup();
+		},
 		controllerPort: options.systemConfig.host.controllerPort,
 		createManagedVm: async (leaseOptions) => {
 			const staging = await sharedStaging.getStore(leaseOptions.zoneId, leaseOptions.agentId);

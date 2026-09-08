@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -36,6 +36,81 @@ async function fixture(): Promise<{
 }
 
 describe('shared staging owned directories and real cleanup', () => {
+	it('retires exact producer and receiver roots without touching another generation', async () => {
+		// Arrange
+		const { store } = await fixture();
+		const producerRoot = await store.prepareProducerRoot('producer');
+		const receiverRoot = await store.prepareReceiverRoot(receiver.leafGeneration);
+		const otherReceiverRoot = await store.prepareReceiverRoot('other-leaf');
+		await writeFile(path.join(producerRoot, 'producer-sentinel'), 'remove');
+		await writeFile(path.join(receiverRoot, 'receiver-sentinel'), 'remove');
+		await writeFile(path.join(otherReceiverRoot, 'other-sentinel'), 'keep');
+		// Act
+		expect(await store.retireProducer('producer')).toEqual({ removed: 1, pending: 0 });
+		expect(await store.retireReceiverRoot({ leafGeneration: receiver.leafGeneration })).toEqual({
+			removed: 1,
+			pending: 0,
+		});
+		// Assert
+		await expect(readdir(producerRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+		await expect(readdir(receiverRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+		expect(await readFile(path.join(otherReceiverRoot, 'other-sentinel'), 'utf8')).toBe('keep');
+	});
+
+	it('keeps a failed root retirement unavailable until retry succeeds', async () => {
+		// Arrange
+		const { store } = await fixture();
+		const producerRoot = await store.prepareProducerRoot('producer');
+		await writeFile(path.join(producerRoot, 'sentinel'), 'old-generation');
+		await chmod(producerRoot, 0o500);
+		try {
+			// Act / Assert
+			expect(await store.retireProducer('producer')).toEqual({ removed: 0, pending: 1 });
+			await expect(store.prepareProducerRoot('producer')).rejects.toMatchObject({
+				reason: 'unavailable',
+			});
+			await chmod(producerRoot, 0o700);
+			expect(await store.reapExpired()).toEqual({ removed: 1, pending: 0 });
+			const replacementRoot = await store.prepareProducerRoot('producer');
+			expect(replacementRoot).toBe(producerRoot);
+			expect(await readdir(replacementRoot)).toEqual([]);
+		} finally {
+			await chmod(producerRoot, 0o700).catch(() => {});
+		}
+	});
+
+	it('retries child cleanup and then removes its retiring producer root', async () => {
+		// Arrange
+		const { store } = await fixture();
+		const producerRoot = await store.prepareProducerRoot('producer');
+		const operationRoot = await store.prepareOperation({
+			producerId: 'producer',
+			operationId: 'operation',
+			maximumBytes: 16,
+		});
+		await writeFile(path.join(operationRoot, 'file'), 'bytes');
+		await chmod(operationRoot, 0o500);
+		try {
+			// Act / Assert
+			expect(await store.retireProducer('producer')).toMatchObject({ pending: 1 });
+			await expect(store.prepareProducerRoot('producer')).rejects.toMatchObject({
+				reason: 'unavailable',
+			});
+			await chmod(operationRoot, 0o700);
+			expect(await store.reapExpired()).toMatchObject({ pending: 0 });
+			await expect(readdir(producerRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+			await expect(
+				store.prepareOperation({
+					producerId: 'producer',
+					operationId: 'operation',
+					maximumBytes: 16,
+				}),
+			).resolves.toBe(operationRoot);
+		} finally {
+			await chmod(operationRoot, 0o700).catch(() => {});
+		}
+	});
+
 	it('counts published operations toward the retained-operation limit until cleanup', async () => {
 		// Arrange
 		const { store } = await fixture();

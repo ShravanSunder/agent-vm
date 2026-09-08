@@ -44,8 +44,9 @@ _PROJECTION_COHORT_DIGEST = (
 
 
 class _CallbackTransport:
-    def __init__(self, callback_url: str) -> None:
+    def __init__(self, callback_url: str, sender_outcome: str) -> None:
         self._callback_url = callback_url
+        self._sender_outcome = sender_outcome
 
     async def connect(self, socket_path: str) -> None:
         del socket_path
@@ -85,6 +86,8 @@ class _CallbackTransport:
                 if not isinstance(key, str):
                     raise TypeError("Native attachment callback returned a non-string key.")
                 result[key] = item
+            if result.get("kind") == "staged" and self._sender_outcome == "route-replaced":
+                _SOURCE.profile = "ember"
             return result
 
         return await asyncio.to_thread(post)
@@ -231,6 +234,7 @@ _SOURCE = _SessionSource()
 
 
 async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, object]:
+    _SOURCE.profile = "sun"
     telemetry = _RecordingTelemetry()
     client = GatewayRuntimeClient(
         attachment={
@@ -244,7 +248,7 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
             "runtimeEpoch": "runtime-epoch",
             "schemaVersion": 1,
         },
-        transport=_CallbackTransport(callback_url),
+        transport=_CallbackTransport(callback_url, sender_outcome),
     )
     projection = _projection()
     adapter = HermesManagedAdapter(
@@ -292,18 +296,27 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
                 "caption": "Fake Google export",
                 "source": {
                     "kind": "operation-file",
-                    "referenceId": "11111111-1111-4111-8111-111111111111",
+                    "referenceId": os.environ["AGENT_VM_NATIVE_ATTACHMENT_REFERENCE_ID"],
                     "path": "fake-google-export.bin",
                 },
             },
             session_id="captured-session",
         )
         result = json.loads(result_json)
-        expected_kind = "attached" if sender_outcome == "sent" else "attachment-unconfirmed"
+        expected_kind = (
+            "attached"
+            if sender_outcome == "sent"
+            else "attachment-failed"
+            if sender_outcome in {"route-replaced", "stale-generation"}
+            else "attachment-unconfirmed"
+        )
         assert result["kind"] == expected_kind, result
-        assert result["cleanup"] == "complete"
-        assert discord_client.lookups == [int(_SOURCE.chat_id)]
-        assert len(channel.calls) == 1
+        assert result["cleanup"] == (
+            "pending" if sender_outcome == "stale-generation" else "complete"
+        )
+        expected_sender_count = 0 if sender_outcome in {"route-replaced", "stale-generation"} else 1
+        assert discord_client.lookups == [int(_SOURCE.chat_id)] * expected_sender_count
+        assert len(channel.calls) == expected_sender_count
         return {"result": result, "senderCalls": channel.calls}
     finally:
         runtime.approval_routes.close()
@@ -313,7 +326,13 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
 def main() -> None:
     callback_url = os.environ["AGENT_VM_NATIVE_ATTACHMENT_CALLBACK_URL"]
     sender_outcome = os.environ["AGENT_VM_NATIVE_ATTACHMENT_SENDER_OUTCOME"]
-    if sender_outcome not in {"sent", "failed", "missing-message-id"}:
+    if sender_outcome not in {
+        "sent",
+        "failed",
+        "missing-message-id",
+        "route-replaced",
+        "stale-generation",
+    }:
         raise ValueError("Unknown recording native sender outcome.")
     print(json.dumps(asyncio.run(_run_journey(callback_url, sender_outcome))))
 

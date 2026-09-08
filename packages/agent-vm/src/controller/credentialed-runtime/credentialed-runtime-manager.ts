@@ -230,10 +230,14 @@ export function createCredentialedRuntimeManager(props: {
 
 	const containUnstartedCreation = async (propsForContainment: {
 		readonly context: RuntimeRecordContext;
+		readonly staging?: LiveCredentialedRuntime['staging'];
 		readonly vm: ManagedVm;
 	}): Promise<boolean> => {
 		try {
 			await propsForContainment.vm.close();
+			if (propsForContainment.vm.getHostProcessId() !== null) {
+				throw new Error('Credentialed runtime still reports a host process after close.');
+			}
 		} catch {
 			try {
 				await recordWriter.write(propsForContainment.context, ({ common, generation }) => ({
@@ -250,6 +254,11 @@ export function createCredentialedRuntimeManager(props: {
 				// The caller installs the in-memory owner-unsafe fence when durable evidence also fails.
 			}
 			return false;
+		}
+		if (propsForContainment.staging !== undefined) {
+			await propsForContainment.staging.store.retireProducer(
+				propsForContainment.staging.producerId,
+			);
 		}
 		try {
 			await recordWriter.write(propsForContainment.context, ({ common, generation }) => ({
@@ -413,10 +422,10 @@ export function createCredentialedRuntimeManager(props: {
 									resolution.agentId,
 								);
 								const producerId = randomUUID();
+								staging = { store, producerId };
 								const hostRoot = await store.prepareProducerRoot(producerId);
 								producerDirectory =
 									props.sharedStaging.ownedDirectories.openHostDirectory(hostRoot);
-								staging = { store, producerId };
 							}
 							const created = await createUnstartedCredentialedManagedVm({
 								...(producerDirectory === undefined ? {} : { producerDirectory }),
@@ -431,6 +440,10 @@ export function createCredentialedRuntimeManager(props: {
 							vm = created.vm;
 							commandEnvironment = created.commandEnvironment;
 						} catch {
+							if (producerDirectory?.state === 'acquired') producerDirectory.close();
+							if (staging !== undefined) {
+								await staging.store.retireProducer(staging.producerId);
+							}
 							await recordWriter.delete(resolution.zoneId, recordId);
 							return { kind: 'not-dispatched', reason: 'credentialed runtime creation failed' };
 						} finally {
@@ -445,7 +458,7 @@ export function createCredentialedRuntimeManager(props: {
 								vmId: vm.id,
 							}));
 						} catch {
-							const contained = await containUnstartedCreation({ context, vm });
+							const contained = await containUnstartedCreation({ context, staging, vm });
 							if (!contained) ownerUnsafeKeys.add(key);
 							return contained
 								? { kind: 'not-dispatched', reason: 'credentialed runtime record failed' }
@@ -459,7 +472,7 @@ export function createCredentialedRuntimeManager(props: {
 							});
 							await vm.start();
 						} catch {
-							const contained = await containUnstartedCreation({ context, vm });
+							const contained = await containUnstartedCreation({ context, staging, vm });
 							if (!contained) ownerUnsafeKeys.add(key);
 							return contained
 								? { kind: 'not-dispatched', reason: 'credentialed runtime setup failed' }
@@ -475,7 +488,7 @@ export function createCredentialedRuntimeManager(props: {
 							}
 						}
 						if (hostProcessId === null || processIdentity === null) {
-							const contained = await containUnstartedCreation({ context, vm });
+							const contained = await containUnstartedCreation({ context, staging, vm });
 							if (!contained) ownerUnsafeKeys.add(key);
 							return contained
 								? { kind: 'not-dispatched', reason: 'credentialed runtime identity unavailable' }
