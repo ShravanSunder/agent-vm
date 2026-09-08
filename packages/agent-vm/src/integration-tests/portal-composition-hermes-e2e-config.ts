@@ -2,6 +2,7 @@ import {
 	configuredCliPolicySchema,
 	managedToolPortalConfigSchema,
 	mcpConfigSchema,
+	suggestedConfiguredCliPolicySchema,
 	type ManagedToolPortalConfig,
 	type McpConfig,
 } from '@agent-vm/config-contracts';
@@ -29,6 +30,7 @@ export interface BuildPortalCompositionFixtureConfigOptions {
 	readonly mcpUrl: string;
 	readonly toolVmArtifactNamespace: string;
 	readonly toolVmArtifactOperationName: string;
+	readonly toolVmEffectOperationName: string;
 }
 
 export function buildPortalCompositionHostScriptBody(options: {
@@ -179,6 +181,17 @@ export function buildPortalCompositionFixtureConfig(
 		stdin: { kind: 'none' },
 		timeout: { kind: 'open' },
 	});
+	const toolVmEffectCliSuggestions = suggestedConfiguredCliPolicySchema.parse({
+		suggestCalls: {
+			suggestDeny: [],
+			suggestRequiresApproval: [],
+			suggestWithoutApproval: 'remaining_admitted',
+		},
+		suggestCommands: [{ flagRules: [], path: ['write-tool-vm-effect'] }],
+		suggestDeniedPatterns: [],
+		suggestStdin: { kind: 'none' },
+		suggestTimeout: { kind: 'quick' },
+	});
 	const mcpConfig = mcpConfigSchema.parse({
 		providers: {
 			composition: {
@@ -306,6 +319,24 @@ export function buildPortalCompositionFixtureConfig(
 									},
 									safeHelp: 'Invocation-local relay loss uncertainty fixture.',
 								},
+								[options.toolVmEffectOperationName]: {
+									...toolVmEffectCliSuggestions,
+									executablePath: '/bin/sh',
+									executionTarget: { kind: 'tool_vm', workingDirectory: '.' },
+									kind: 'configured_cli',
+									mandatoryArgvPrefix: [
+										'-c',
+										'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "tool-vm:%s" "$2"',
+										'--',
+									],
+									output: {
+										modelVisibleStderr: 'none',
+										overflow: 'fail',
+										stderrMaxBytes: 4096,
+										stdoutMaxBytes: 4096,
+									},
+									safeHelp: 'Write proof inside the current Tool VM through Tool Portal.',
+								},
 							},
 						},
 						calls: {
@@ -316,6 +347,7 @@ export function buildPortalCompositionFixtureConfig(
 									options.credentialedEffectOperationName,
 									options.hiddenHostEffectOperationName,
 									options.lossProbeOperationName,
+									options.toolVmEffectOperationName,
 								],
 							},
 						},
@@ -325,6 +357,7 @@ export function buildPortalCompositionFixtureConfig(
 								options.credentialedEffectOperationName,
 								options.hiddenHostEffectOperationName,
 								options.lossProbeOperationName,
+								options.toolVmEffectOperationName,
 							],
 							deny: [options.hiddenHostEffectOperationName],
 						},

@@ -7,6 +7,7 @@ const configuredCliNamespace = 'portal_composition_execution';
 const hiddenHostEffectOperationName = 'hidden_host_effect';
 const hostOperationName = 'write_host_effect';
 const resultDerivedValue = 'derived-from-read-thing';
+const toolVmEffectOperationName = 'write_tool_vm_effect';
 export const portalCompositionArtifactNamespace = 'portal_composition_sandbox';
 export const portalCompositionArtifactOperationName = 'read_payload';
 export const portalCompositionLossProbeOperationName = 'loss_probe';
@@ -194,6 +195,16 @@ export function buildPortalCompositionProgram(options: {
 		'        if returned_tool_name != "read_thing": raise RuntimeError("Python SDK MCP result payload did not identify read_thing")',
 		'        derived_value = "derived-from-" + returned_tool_name.replace("_", "-")',
 		`        if derived_value != ${JSON.stringify(resultDerivedValue)}: raise RuntimeError("Python SDK derived an unexpected downstream value")`,
+		'        tool_vm_effect_path = pathlib.Path("/work/portal-composition-tool-vm-effect.txt")',
+		'        tool_vm_effect_path.unlink(missing_ok=True)',
+		'        tool_vm_result = await portal.call({"calls": [{"arguments": {"argv": ["write-tool-vm-effect", derived_value], "reason": "Prove same Tool VM configured CLI routing"}, "id": "python-tool-vm-write", ' +
+			`"name": ${JSON.stringify(toolVmEffectOperationName)}, "namespace": ${JSON.stringify(configuredCliNamespace)}}]})`,
+		'        tool_vm_payload = tool_vm_result.model_dump(by_alias=True, mode="json", exclude_none=True)',
+		'        if not tool_vm_payload["ok"] or len(tool_vm_payload["items"]) != 1: raise RuntimeError("Tool VM configured CLI did not return one canonical result")',
+		'        tool_vm_item = tool_vm_payload["items"][0]',
+		'        expected_tool_vm_value = {"exitCode": 0, "stderrTruncated": False, "stdout": "tool-vm:" + derived_value, "stdoutTruncated": False}',
+		'        if tool_vm_item["status"] != "ok" or tool_vm_item["outcome"]["kind"] != "completed" or tool_vm_item["value"] != expected_tool_vm_value: raise RuntimeError("Tool VM configured CLI canonical result was unexpected")',
+		'        if tool_vm_effect_path.read_text(encoding="utf-8") != derived_value: raise RuntimeError("Tool VM configured CLI effect was not visible in the composition Tool VM")',
 		`        hidden_result = await portal.call(json.loads(${JSON.stringify(JSON.stringify({ calls: [{ arguments: { argv: ['write-hidden-effect'], reason: 'Verify hidden capability denial' }, id: 'python-hidden-host', name: hiddenHostEffectOperationName, namespace: configuredCliNamespace }] }))}))`,
 		'        hidden_payload = hidden_result.model_dump(by_alias=True, mode="json", exclude_none=True)',
 		'        if hidden_payload["ok"] or len(hidden_payload["items"]) != 1: raise RuntimeError("hidden host capability did not return one canonical failure")',
@@ -264,7 +275,7 @@ export function buildPortalCompositionProgram(options: {
 		'    else:',
 		'        await reconnect.close()',
 		'        raise RuntimeError("terminated invocation relay automatically reattached on the same endpoint")',
-		'    print(json.dumps({"marker": "portal-composition-program-complete", "artifact": {"python": python_artifact_proof, "node": node_payload["artifact"], "cli": cli_artifact_proof}, "loss": {"pendingOutcome": "transport-uncertain", "reattachRejected": reattach_rejected, "relayPidObserved": relay_pid > 0}, "derivedValue": derived_value, "hostSentinelVisible": False, "hiddenDenial": hidden_payload, "node": node_payload, "origin": json.loads(origin_path.read_text(encoding="utf-8")), "python": first_payload, "postMisuse": post_misuse_payload, "cliRead": json.loads(cli_read_result.stdout), "cliWrite": json.loads(cli_write_result.stdout)}, sort_keys=True))',
+		'    print(json.dumps({"marker": "portal-composition-program-complete", "artifact": {"python": python_artifact_proof, "node": node_payload["artifact"], "cli": cli_artifact_proof}, "loss": {"pendingOutcome": "transport-uncertain", "reattachRejected": reattach_rejected, "relayPidObserved": relay_pid > 0}, "derivedValue": derived_value, "hostSentinelVisible": False, "hiddenDenial": hidden_payload, "node": node_payload, "origin": json.loads(origin_path.read_text(encoding="utf-8")), "python": first_payload, "postMisuse": post_misuse_payload, "toolVmConfiguredCli": {"effect": tool_vm_effect_path.read_text(encoding="utf-8"), "result": tool_vm_payload}, "cliRead": json.loads(cli_read_result.stdout), "cliWrite": json.loads(cli_write_result.stdout)}, sort_keys=True))',
 		'',
 		'asyncio.run(main())',
 	].join('\n');

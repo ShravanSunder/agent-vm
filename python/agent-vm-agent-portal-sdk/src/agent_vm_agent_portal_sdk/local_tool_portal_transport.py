@@ -67,7 +67,7 @@ class LocalToolPortalTransport:
             await self.close()
             if isinstance(error, (OSError, PortalRelayProtocolError)):
                 raise PortalConnectionUnavailableError(
-                    "Managed Tool Portal is unavailable; run inside an active managed execution with a matching relay."
+                    "Managed Tool Portal is unavailable; run inside an active managed execution with a matching relay.",
                 ) from error
             raise
 

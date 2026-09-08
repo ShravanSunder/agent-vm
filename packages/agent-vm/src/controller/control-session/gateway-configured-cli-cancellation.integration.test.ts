@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { controllerConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
+import { controllerEnforcedConfiguredCliOperationSchema } from '@agent-vm/config-contracts';
 import type { GatewayRuntimeTrustedInvocationPrincipal } from '@agent-vm/gateway-control-contracts';
 import {
 	createGatewayControlCallerContextRegistrationClient,
@@ -70,7 +70,7 @@ describe('configured CLI cancellation through the authenticated control connecti
 				}
 			},
 		});
-		const operation = controllerConfiguredCliOperationSchema.parse({
+		const operation = controllerEnforcedConfiguredCliOperationSchema.parse({
 			kind: 'configured_cli',
 			executablePath: '/usr/bin/printf',
 			mandatoryArgvPrefix: [],

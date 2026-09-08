@@ -1,4 +1,8 @@
-import { toolPortalSelectorAllowsOperation } from '@agent-vm/config-contracts';
+import {
+	controllerEnforcedConfiguredCliOperationSchema,
+	controllerToolVmConfiguredCliOperationSchema,
+	toolPortalSelectorAllowsOperation,
+} from '@agent-vm/config-contracts';
 import { resolveCliAllowanceTimeout } from '@agent-vm/tool-portal/cli-allowances';
 import { describe, expect, it } from 'vitest';
 
@@ -48,6 +52,7 @@ describe('portal composition Hermes E2E fixture config', () => {
 			mcpUrl: 'http://portal-composition-mcp.vm.host:31001/mcp',
 			toolVmArtifactNamespace: 'portal_composition_sandbox',
 			toolVmArtifactOperationName: 'read_payload',
+			toolVmEffectOperationName: 'write_tool_vm_effect',
 		});
 		const namespace =
 			config.toolPortalConfig.profiles.main?.namespaces['portal_composition_execution'];
@@ -88,10 +93,9 @@ describe('portal composition Hermes E2E fixture config', () => {
 			discovery: {},
 			tools: { allow: ['read_payload'], deny: [] },
 		});
-		const hostOperation = namespace.backend.operations.write_host_effect;
-		if (hostOperation?.kind !== 'configured_cli') {
-			throw new Error('Expected the fixture host configured CLI operation.');
-		}
+		const hostOperation = controllerEnforcedConfiguredCliOperationSchema.parse(
+			namespace.backend.operations.write_host_effect,
+		);
 		expect(hostOperation.commands.map(({ path }) => path)).toEqual([
 			['write-host-effect'],
 			['prepare-concurrency-barrier'],
@@ -118,6 +122,25 @@ describe('portal composition Hermes E2E fixture config', () => {
 		expect(hostPython).toContain('hidden_effect_path.write_text("policy-leak\\n"');
 		expect(hostPython).toContain('if sys.argv[2] == "forged-overwrite"');
 		expect(hostPython).toContain('forged_effect_path.write_text("forged-dispatch\\n"');
+		const toolVmOperation = controllerToolVmConfiguredCliOperationSchema.parse(
+			namespace.backend.operations.write_tool_vm_effect,
+		);
+		expect(toolVmOperation).toMatchObject({
+			executablePath: '/bin/sh',
+			executionTarget: { kind: 'tool_vm', workingDirectory: '.' },
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: [
+				'-c',
+				'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "tool-vm:%s" "$2"',
+				'--',
+			],
+			suggestCalls: {
+				suggestDeny: [],
+				suggestRequiresApproval: [],
+				suggestWithoutApproval: 'remaining_admitted',
+			},
+			suggestCommands: [{ flagRules: [], path: ['write-tool-vm-effect'] }],
+		});
 		expect(namespace.backend.operations.loss_probe).toMatchObject({
 			commands: [
 				{ path: ['prepare-loss-probe'] },

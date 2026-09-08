@@ -70,6 +70,7 @@ const promptMarker = 'RUN_PORTAL_COMPOSITION_E2E';
 const programResultMarker = 'portal-composition-program-complete';
 const resultDerivedValue = 'derived-from-read-thing';
 const sessionId = 'portal-composition-hermes-session';
+const toolVmEffectOperationName = 'write_tool_vm_effect';
 
 function hostProcessIsAlive(processId: number): boolean {
 	try {
@@ -197,6 +198,7 @@ async function writePortalCompositionConfiguration(options: {
 		mcpUrl: options.mcpUrl,
 		toolVmArtifactNamespace: portalCompositionArtifactNamespace,
 		toolVmArtifactOperationName: portalCompositionArtifactOperationName,
+		toolVmEffectOperationName,
 	});
 	await Promise.all([
 		writeFile(
@@ -399,6 +401,9 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		expect(executeCodeResult).toContain(resultDerivedValue);
 		expect(executeCodeResult).toContain('hostSentinelVisible');
 		expect(executeCodeResult).toContain('/opt/agent-vm-tools/bin/python');
+		expect(executeCodeResult).toContain('"toolVmConfiguredCli"');
+		expect(executeCodeResult).toContain(`"effect": "${resultDerivedValue}"`);
+		expect(executeCodeResult).toContain(`"stdout": "tool-vm:${resultDerivedValue}"`);
 		expect(mcpServer.calls).toEqual([
 			{ argumentsValue: { title: 'python-seed' }, name: 'read_thing' },
 			{ argumentsValue: { title: resultDerivedValue }, name: 'write_thing' },
