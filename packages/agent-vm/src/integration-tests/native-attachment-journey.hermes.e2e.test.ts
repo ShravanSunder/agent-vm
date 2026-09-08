@@ -28,7 +28,11 @@ const executeFile = promisify(execFile);
 const hermesRuntimeImage =
 	'docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79';
 const temporaryRoots: string[] = [];
-const selectedBytes = Buffer.from('fake-google/gog-export\u0000with-binary\u0001bytes', 'utf8');
+// Expected bytes live in this test process; Gateway payload memory is measured independently in Python.
+const selectedBytes = Buffer.alloc(
+	8 * 1024 * 1024,
+	Buffer.from('fake-google/gog-export\u0000with-binary\u0001bytes', 'utf8'),
+);
 const selectedDigest = createHash('sha256').update(selectedBytes).digest('hex');
 
 interface GatewayRuntimeCallback {
@@ -228,7 +232,7 @@ describe('native attachment full host-cache journey', () => {
 						outcome: expectedSettlement,
 					});
 					if (stagedHostPath === undefined) throw new Error('Settlement arrived before staging.');
-					expect(await readFile(stagedHostPath)).toEqual(selectedBytes);
+					expect((await readFile(stagedHostPath)).equals(selectedBytes)).toBe(true);
 				}
 				const nativeAttachment: PortalAttachmentResult = await accessNativeAttachment({
 					cacheDirectory,
@@ -256,7 +260,7 @@ describe('native attachment full host-cache journey', () => {
 						cacheDirectory,
 						nativeAttachment.path.slice('/home/hermes/.cache/'.length),
 					);
-					expect(await readFile(stagedHostPath)).toEqual(selectedBytes);
+					expect((await readFile(stagedHostPath)).equals(selectedBytes)).toBe(true);
 				}
 				const messageId =
 					portalRequest.action === 'stage'
@@ -391,6 +395,10 @@ describe('native attachment full host-cache journey', () => {
 				const journey = JSON.parse(result.stdout) as {
 					readonly result: Record<string, unknown>;
 					readonly senderCalls: readonly Record<string, unknown>[];
+					readonly memory: {
+						readonly peakBytes: number;
+						readonly stalledReadBytes: number;
+					};
 				};
 
 				// Assert: the recording sender saw the exact selected cache bytes, and its
@@ -399,6 +407,10 @@ describe('native attachment full host-cache journey', () => {
 					cleanup: expectedCleanup,
 					kind: expectedKind,
 				});
+				expect(journey).toMatchObject({ memory: { peakBytes: expect.any(Number) } });
+				expect(journey.memory.peakBytes).toBeLessThan(2 * 1024 * 1024);
+				expect(journey.memory.stalledReadBytes).toBe(expectedSenderCount === 0 ? 0 : 64 * 1024);
+				process.stdout.write(`[native-gateway-memory] ${JSON.stringify(journey.memory)}\n`);
 				if (expectedKind === 'attached') {
 					expect(journey.result).toMatchObject({
 						byteLength: selectedBytes.byteLength,

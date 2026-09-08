@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import json
 import os
+import tracemalloc
 import typing as t
 import urllib.request
 from collections.abc import Iterator, Mapping
@@ -155,21 +156,32 @@ class _RecordingChannel:
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
         self.calls: list[dict[str, object]] = []
+        self.read_started = asyncio.Event()
+        self.resume_reads = asyncio.Event()
+        self.stalled_read_bytes = 0
 
-    def _record_files(
+    async def _record_files(
         self,
         *,
         content: str | None,
         files: list[discord.File],
     ) -> None:
         for file in files:
-            selected_bytes = file.fp.read()
+            digest = hashlib.sha256()
+            byte_length = 0
+            while selected_chunk := file.fp.read(64 * 1024):
+                byte_length += len(selected_chunk)
+                digest.update(selected_chunk)
+                if not self.read_started.is_set():
+                    self.stalled_read_bytes = byte_length
+                    self.read_started.set()
+                    await self.resume_reads.wait()
             self.calls.append(
                 {
-                    "byteLength": len(selected_bytes),
+                    "byteLength": byte_length,
                     "caption": content,
                     "fileName": file.filename,
-                    "sha256": hashlib.sha256(selected_bytes).hexdigest(),
+                    "sha256": digest.hexdigest(),
                 }
             )
             file.close()
@@ -180,7 +192,7 @@ class _RecordingChannel:
         content: str | None,
         files: list[discord.File],
     ) -> _RecordedMessage:
-        self._record_files(content=content, files=files)
+        await self._record_files(content=content, files=files)
         return _RecordedMessage(
             attached=self.outcome != "failed",
             include_message_id=True,
@@ -192,7 +204,7 @@ class _RecordingChannel:
         assert content is None or isinstance(content, str)
         assert isinstance(files, list)
         assert all(isinstance(file, discord.File) for file in files)
-        self._record_files(content=content, files=files)
+        await self._record_files(content=content, files=files)
         return _RecordedForumThread(_RecordedMessage(attached=True, include_message_id=False))
 
 
@@ -274,6 +286,9 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
         gateway_epoch="gateway-epoch",
     )
     channel = _RecordingChannel(sender_outcome)
+    expected_sender_count = 0 if sender_outcome in {"route-replaced", "stale-generation"} else 1
+    if expected_sender_count == 0:
+        channel.resume_reads.set()
     channel.type = 15 if sender_outcome == "missing-message-id" else 0
     discord_client = _RecordingDiscordClient(channel)
     sender = DiscordAdapter.__new__(DiscordAdapter)
@@ -289,19 +304,38 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
             )
             is not None
         )
-        result_json = await asyncio.to_thread(
-            _ToolHandler(runtime, "tool_portal_file"),
-            {
-                "action": "attach",
-                "caption": "Fake Google export",
-                "source": {
-                    "kind": "operation-file",
-                    "referenceId": os.environ["AGENT_VM_NATIVE_ATTACHMENT_REFERENCE_ID"],
-                    "path": "fake-google-export.bin",
+        tracemalloc.start()
+        result_task = asyncio.create_task(
+            asyncio.to_thread(
+                _ToolHandler(runtime, "tool_portal_file"),
+                {
+                    "action": "attach",
+                    "caption": "Fake Google export",
+                    "source": {
+                        "kind": "operation-file",
+                        "referenceId": os.environ["AGENT_VM_NATIVE_ATTACHMENT_REFERENCE_ID"],
+                        "path": "fake-google-export.bin",
+                    },
                 },
-            },
-            session_id="captured-session",
+                session_id="captured-session",
+            )
         )
+        stalled_current_bytes = 0
+        if expected_sender_count:
+            started = asyncio.create_task(channel.read_started.wait())
+            try:
+                await asyncio.wait({started, result_task}, return_when=asyncio.FIRST_COMPLETED)
+                if not channel.read_started.is_set():
+                    raise AssertionError(f"Native sender did not start: {await result_task}")
+                # The real plugin/Discord adapter has handed the file to a stalled recipient.
+                # Only its first 64KiB has been consumed; the rest remains on disk.
+                stalled_current_bytes = tracemalloc.get_traced_memory()[0]
+            finally:
+                channel.resume_reads.set()
+                started.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await started
+        result_json = await result_task
         result = json.loads(result_json)
         expected_kind = (
             "attached"
@@ -314,11 +348,21 @@ async def _run_journey(callback_url: str, sender_outcome: str) -> dict[str, obje
         assert result["cleanup"] == (
             "pending" if sender_outcome == "stale-generation" else "complete"
         )
-        expected_sender_count = 0 if sender_outcome in {"route-replaced", "stale-generation"} else 1
         assert discord_client.lookups == [int(_SOURCE.chat_id)] * expected_sender_count
         assert len(channel.calls) == expected_sender_count
-        return {"result": result, "senderCalls": channel.calls}
+        return {
+            "result": result,
+            "senderCalls": channel.calls,
+            "memory": {
+                "peakBytes": tracemalloc.get_traced_memory()[1],
+                "stalledReadBytes": channel.stalled_read_bytes,
+                "stalledCurrentBytes": stalled_current_bytes,
+                "settledCurrentBytes": tracemalloc.get_traced_memory()[0],
+            },
+        }
     finally:
+        channel.resume_reads.set()
+        tracemalloc.stop()
         runtime.approval_routes.close()
         await asyncio.to_thread(adapter.close)
 
