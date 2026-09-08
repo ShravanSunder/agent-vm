@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -12,11 +11,7 @@ import {
 	buildManagedVmImage as buildManagedVmImageDefault,
 	computeFingerprintFromConfigPath,
 } from '../build/gondolin-image-builder.js';
-import {
-	hasManagedVmImageAssets,
-	managedVmImageAssetFileNames,
-	type ManagedGatewayImageBootProjection,
-} from '../build/gondolin-managed-vm-build-tooling.js';
+import type { ManagedGatewayImageBootProjection } from '../build/gondolin-managed-vm-build-tooling.js';
 
 interface ManagedVmBackendImageBuildResult {
 	readonly built: boolean;
@@ -32,27 +27,23 @@ import {
 	type ManagedImageRelease,
 	type ManagedImageSource,
 } from '../build/managed-image-dockerfile.js';
-import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
 import {
-	deleteStaleImageDirectories as deleteStaleImageDirectoriesDefault,
-	findPrunableImageDirectories as findPrunableImageDirectoriesDefault,
-	type CurrentImageFingerprints,
-	type StaleImageEntry,
-} from '../build/stale-image-cleaner.js';
+	configuredImageSelectionRecordPath,
+	writePreparedManagedVmImage,
+} from '../build/prepared-gondolin-image-cache.js';
 import {
 	assertManagedVmZigCompatibility,
 	resolveManagedVmCompatibleZigVersion,
 	resolveHostZigVersion,
 } from '../build/zig-compatibility.js';
 import { loadJsonConfigFile } from '../config/json-config-file.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
-	createControllerStateRoot,
-	resolveControllerGatewayStateRoot,
-} from '../controller/durable-state/controller-state-paths.js';
-import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
+	deploymentCacheDirForSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
-import { listWorkerRuntimeRecordTargets as listWorkerRuntimeRecordTargetsDefault } from '../gateway/worker-runtime-record.js';
 import { createObservabilityRuntimeConfig } from '../observability/observability-config.js';
 import {
 	prepareObservabilityStack as prepareObservabilityStackDefault,
@@ -89,12 +80,6 @@ export interface BuildCommandDependencies {
 		readonly fingerprintInput?: unknown;
 		readonly managedGatewayBoot?: ManagedGatewayImageBootProjection;
 	}) => Promise<string>;
-	readonly deleteStaleImageDirectories?: (entries: readonly StaleImageEntry[]) => Promise<void>;
-	readonly findPrunableImageDirectories?: (options: {
-		readonly cacheDir: string;
-		readonly currentFingerprints: CurrentImageFingerprints;
-		readonly retainStaleGenerationsPerProfile: number;
-	}) => Promise<readonly StaleImageEntry[]>;
 	readonly resolveOciImageTag?: (buildConfigPath: string) => Promise<string>;
 	readonly resolveDockerRootfsIdentity?: (
 		imageTag: string,
@@ -117,7 +102,6 @@ export interface BuildCommandDependencies {
 		options: PrepareObservabilityStackOptions,
 	) => Promise<PrepareObservabilityStackResult>;
 	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
-	readonly listWorkerRuntimeRecordTargets?: typeof listWorkerRuntimeRecordTargetsDefault;
 }
 
 const ociImageTagSchema = z.object({
@@ -126,7 +110,6 @@ const ociImageTagSchema = z.object({
 	}),
 });
 
-const RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE = 2;
 const DOCKER_BUILD_CONCURRENCY = 2;
 const GONDOLIN_BUILD_CONCURRENCY = 2;
 const BUILD_DETAIL_MAX_LENGTH = 512;
@@ -139,6 +122,7 @@ interface ImageTarget {
 	readonly family: 'gateway' | 'toolVm';
 	readonly gatewayType?: ManagedGatewayBootGatewayType;
 	readonly name: string;
+	readonly selectionRecordPath: string;
 	readonly source: ManagedImageSource | undefined;
 }
 
@@ -184,11 +168,8 @@ function imageTargetKey(imageTarget: Pick<ImageTarget, 'family' | 'name'>): stri
 	return `${imageTarget.family}/${imageTarget.name}`;
 }
 
-function imageTargetDedupeKey(options: {
-	readonly buildConfigPath: string;
-	readonly fingerprint: string;
-}): string {
-	return `${path.resolve(options.buildConfigPath)}${imageTargetKeySeparator}${options.fingerprint}`;
+function imageTargetDedupeKey(options: { readonly fingerprint: string }): string {
+	return options.fingerprint;
 }
 
 function imageTargetFingerprintInputKey(options: {
@@ -262,97 +243,6 @@ function firstGondolinTargetPlan(targetPlans: readonly GondolinTargetPlan[]): Go
 	return targetPlan;
 }
 
-function createEmptyCurrentImageFingerprints(): CurrentImageFingerprints {
-	return {
-		gateways: {},
-		toolVms: {},
-	};
-}
-
-function setCurrentImageFingerprint(
-	currentFingerprints: CurrentImageFingerprints,
-	imageTarget: Pick<ImageTarget, 'family' | 'name'>,
-	fingerprint: string,
-): void {
-	if (imageTarget.family === 'gateway') {
-		currentFingerprints.gateways[imageTarget.name] = fingerprint;
-		return;
-	}
-	currentFingerprints.toolVms[imageTarget.name] = fingerprint;
-}
-
-async function linkOrCopyImageAsset(sourcePath: string, targetPath: string): Promise<void> {
-	try {
-		await fs.link(sourcePath, targetPath);
-	} catch (error) {
-		if (
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			(error.code === 'EXDEV' ||
-				error.code === 'EPERM' ||
-				error.code === 'EOPNOTSUPP' ||
-				error.code === 'ENOTSUP' ||
-				error.code === 'EACCES')
-		) {
-			try {
-				await fs.copyFile(sourcePath, targetPath);
-				return;
-			} catch (copyError) {
-				throw new Error(
-					`Failed to copy Gondolin image asset from '${sourcePath}' to '${targetPath}'.`,
-					{ cause: copyError },
-				);
-			}
-		}
-		throw new Error(
-			`Failed to link Gondolin image asset from '${sourcePath}' to '${targetPath}'.`,
-			{ cause: error },
-		);
-	}
-}
-
-async function materializeGondolinImageAlias(options: {
-	readonly fingerprint: string;
-	readonly fullReset: boolean;
-	readonly sourceImagePath: string;
-	readonly targetCacheDirectory: string;
-}): Promise<string> {
-	const targetImagePath = path.join(options.targetCacheDirectory, options.fingerprint);
-	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
-		return targetImagePath;
-	}
-	if (!options.fullReset && (await hasManagedVmImageAssets(targetImagePath))) {
-		return targetImagePath;
-	}
-	await fs.rm(targetImagePath, { recursive: true, force: true });
-	await fs.mkdir(targetImagePath, { recursive: true });
-	for (const fileName of managedVmImageAssetFileNames) {
-		// oxlint-disable-next-line no-await-in-loop -- preserve deterministic asset copy/link ordering
-		await linkOrCopyImageAsset(
-			path.join(options.sourceImagePath, fileName),
-			path.join(targetImagePath, fileName),
-		);
-	}
-	return targetImagePath;
-}
-
-async function materializePreparedTargetImage(options: {
-	readonly fingerprint: string;
-	readonly fullReset: boolean;
-	readonly sourceImagePath: string;
-	readonly targetCacheDirectory: string;
-}): Promise<string> {
-	const targetImagePath = path.join(options.targetCacheDirectory, options.fingerprint);
-	if (path.resolve(options.sourceImagePath) === path.resolve(targetImagePath)) {
-		return targetImagePath;
-	}
-	if (!(await hasManagedVmImageAssets(options.sourceImagePath))) {
-		return options.sourceImagePath;
-	}
-	return await materializeGondolinImageAlias(options);
-}
-
 type GatewayStateAuthorityEvidence = Awaited<
 	ReturnType<typeof scanGatewayStateAuthorityEvidenceDefault>
 >[number];
@@ -389,48 +279,6 @@ async function assertGatewayStateAuthorityIsCurrent(
 			)
 			.join('\n'),
 	);
-}
-
-async function findZoneIdsWithCurrentGatewayRuntimeRecords(
-	systemConfig: LoadedSystemConfig,
-	listWorkerRuntimeRecordTargets: typeof listWorkerRuntimeRecordTargetsDefault,
-): Promise<readonly string[]> {
-	const controllerStateRoot = createControllerStateRoot({
-		controllerStateDirectoryPath: systemConfig.controllerStateDir,
-	});
-	const zoneIds: string[] = [];
-	for (const zone of systemConfig.zones) {
-		const gatewayStateRoot = resolveControllerGatewayStateRoot({
-			controllerStateRoot,
-			zoneId: zone.id,
-		});
-		const recordTargets = resolveControllerGatewayRecordTargets({ gatewayStateRoot });
-		let runtimeRecordExists = false;
-		try {
-			// oxlint-disable-next-line no-await-in-loop -- controller record targets are zone-local and errors should point at one zone.
-			await fs.access(recordTargets.managedGatewayRuntimeRecord.filePath);
-			runtimeRecordExists = true;
-		} catch (error) {
-			if (
-				typeof error !== 'object' ||
-				error === null ||
-				!('code' in error) ||
-				error.code !== 'ENOENT'
-			) {
-				throw error;
-			}
-		}
-		if (runtimeRecordExists) {
-			zoneIds.push(zone.id);
-			continue;
-		}
-		// oxlint-disable-next-line no-await-in-loop -- current Worker collections are zone-local and validated before prune admission.
-		const workerRuntimeRecordTargets = await listWorkerRuntimeRecordTargets({ gatewayStateRoot });
-		if (workerRuntimeRecordTargets.length > 0) {
-			zoneIds.push(zone.id);
-		}
-	}
-	return zoneIds;
 }
 
 interface ElapsedStatusController {
@@ -739,10 +587,6 @@ export async function runBuildCommand(
 					? {}
 					: { managedGatewayBoot: fingerprintOptions.managedGatewayBoot }),
 			}));
-	const deleteStaleImageDirectories =
-		dependencies.deleteStaleImageDirectories ?? deleteStaleImageDirectoriesDefault;
-	const findPrunableImageDirectories =
-		dependencies.findPrunableImageDirectories ?? findPrunableImageDirectoriesDefault;
 	const resolveOciImageTag = dependencies.resolveOciImageTag ?? resolveOciImageTagFromConfig;
 	const resolveRequiredZigVersion =
 		dependencies.resolveRequiredZigVersion ?? resolveManagedVmCompatibleZigVersion;
@@ -757,8 +601,6 @@ export async function runBuildCommand(
 		dependencies.prepareObservabilityStack ?? prepareObservabilityStackDefault;
 	const scanGatewayStateAuthorityEvidence =
 		dependencies.scanGatewayStateAuthorityEvidence ?? scanGatewayStateAuthorityEvidenceDefault;
-	const listWorkerRuntimeRecordTargets =
-		dependencies.listWorkerRuntimeRecordTargets ?? listWorkerRuntimeRecordTargetsDefault;
 
 	await assertGatewayStateAuthorityIsCurrent(
 		options.systemConfig,
@@ -769,25 +611,40 @@ export async function runBuildCommand(
 		await assertZigBuildPrerequisite(resolveRequiredZigVersion, resolveZigVersion);
 	}
 
+	const sharedImageCacheDir = sharedImageCacheDirForSystemConfig(options.systemConfig);
+	const deploymentGeneratedDir = deploymentGeneratedDirForStorageRoot(
+		options.systemConfig.storageRootDir,
+	);
+	const deploymentCacheDir = deploymentCacheDirForSystemConfig(options.systemConfig);
 	const gatewayImageTargets: readonly ImageTarget[] = Object.entries(
 		options.systemConfig.imageProfiles.gateways,
 	).map(([profileName, profile]) => ({
 		buildConfigPath: profile.buildConfig,
-		cacheDirectory: path.join(options.systemConfig.cacheDir, 'gateway-images', profileName),
+		cacheDirectory: sharedImageCacheDir,
 		dockerfile: profile.dockerfile,
 		family: 'gateway' as const,
 		gatewayType: profile.type,
 		name: profileName,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir,
+			family: 'gateway',
+			profileName,
+		}),
 		source: profile.source,
 	}));
 	const toolVmImageTargets: readonly ImageTarget[] = Object.entries(
 		options.systemConfig.imageProfiles.toolVms,
 	).map(([profileName, profile]) => ({
 		buildConfigPath: profile.buildConfig,
-		cacheDirectory: path.join(options.systemConfig.cacheDir, 'tool-vm-images', profileName),
+		cacheDirectory: sharedImageCacheDir,
 		dockerfile: profile.dockerfile,
 		family: 'toolVm' as const,
 		name: profileName,
+		selectionRecordPath: configuredImageSelectionRecordPath({
+			deploymentGeneratedDir,
+			family: 'toolVm',
+			profileName,
+		}),
 		source: profile.source,
 	}));
 	const imageTargets: readonly ImageTarget[] = [...gatewayImageTargets, ...toolVmImageTargets];
@@ -827,8 +684,8 @@ export async function runBuildCommand(
 				imageTargetFamily: imageTarget.family,
 				imageTargetName: imageTarget.name,
 				outputDirectory: path.join(
-					options.systemConfig.cacheDir,
-					'generated-dockerfiles',
+					deploymentCacheDir,
+					'docker-contexts',
 					imageTarget.family,
 					imageTarget.name,
 				),
@@ -887,7 +744,6 @@ export async function runBuildCommand(
 		),
 		{ concurrency: DOCKER_BUILD_CONCURRENCY },
 	);
-	const currentFingerprints = createEmptyCurrentImageFingerprints();
 	const fingerprintByInputKey = new Map<string, string>();
 	const targetPlans: GondolinTargetPlan[] = [];
 	const targetPlansByDedupeKey = new Map<string, GondolinTargetPlan[]>();
@@ -912,7 +768,6 @@ export async function runBuildCommand(
 			fingerprintByInputKey.set(fingerprintInputKey, fingerprint);
 		}
 		const dedupeKey = imageTargetDedupeKey({
-			buildConfigPath: imageTarget.buildConfigPath,
 			fingerprint,
 		});
 		const shouldResetGondolinCache = options.forceRebuild === true;
@@ -1001,71 +856,19 @@ export async function runBuildCommand(
 		if (!existingBuild) {
 			throw new Error(`Missing built image result for image profile '${targetPlan.key}'.`);
 		}
-		// oxlint-disable-next-line no-await-in-loop -- alias materialization is kept deterministic so duplicate-profile errors name the matching profile
-		const imagePath = await materializePreparedTargetImage({
-			fingerprint: existingBuild.result.fingerprint,
-			fullReset: targetPlan.shouldResetGondolinCache,
-			sourceImagePath: existingBuild.result.imagePath,
-			targetCacheDirectory: targetPlan.imageTarget.cacheDirectory,
-		});
 		// oxlint-disable-next-line no-await-in-loop -- prepared records are profile-local and must report the matching profile path on failure
 		await writePreparedManagedVmImage({
 			buildConfigPath: targetPlan.imageTarget.buildConfigPath,
-			cacheDir: targetPlan.imageTarget.cacheDirectory,
 			fingerprint: existingBuild.result.fingerprint,
 			fingerprintInput: targetPlan.fingerprintInput,
-			imagePath,
+			imagePath: existingBuild.result.imagePath,
+			selectionRecordPath: targetPlan.imageTarget.selectionRecordPath,
+			sharedImageCacheDir,
 			...(targetPlan.managedGatewayBoot === undefined
 				? {}
 				: { managedGatewayBoot: targetPlan.managedGatewayBoot }),
 		});
-		setCurrentImageFingerprint(
-			currentFingerprints,
-			targetPlan.imageTarget,
-			existingBuild.result.fingerprint,
-		);
 	}
-
-	await runTaskStep('Cache auto-prune', async (taskContext) => {
-		taskContext?.setStatus('checking old image generations');
-		try {
-			const activeGatewayRuntimeZoneIds = await findZoneIdsWithCurrentGatewayRuntimeRecords(
-				options.systemConfig,
-				listWorkerRuntimeRecordTargets,
-			);
-			if (activeGatewayRuntimeZoneIds.length > 0) {
-				taskContext?.setOutput({
-					message: `Image cache auto-prune skipped because gateway runtime records exist for zone(s): ${activeGatewayRuntimeZoneIds.join(', ')}. Stop the controller before pruning old image generations.`,
-				});
-				taskContext?.setStatus('image cache auto-prune skipped');
-				return;
-			}
-
-			const prunableEntries = await findPrunableImageDirectories({
-				cacheDir: options.systemConfig.cacheDir,
-				currentFingerprints,
-				retainStaleGenerationsPerProfile: RETAIN_STALE_IMAGE_GENERATIONS_PER_PROFILE,
-			});
-
-			if (prunableEntries.length === 0) {
-				taskContext?.setStatus('no old image generations found');
-				return;
-			}
-
-			await deleteStaleImageDirectories(prunableEntries);
-			taskContext?.setStatus(
-				`deleted ${prunableEntries.length} old image generation${
-					prunableEntries.length === 1 ? '' : 's'
-				}`,
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			taskContext?.setOutput({
-				message: `Image cache auto-prune failed after build succeeded: ${message}`,
-			});
-			taskContext?.setStatus('image cache auto-prune failed');
-		}
-	});
 
 	if (options.skipObservability === true) {
 		await runTaskStep('Observability stack', async (taskContext) => {

@@ -52,7 +52,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \\
 
 RUN apt-get update \\
     && apt-get install -y --no-install-recommends \\
-      qemu-system-x86 qemu-utils e2fsprogs curl xz-utils cpio lz4 \\
+      qemu-system-x86 qemu-utils e2fsprogs curl xz-utils cpio lz4 python3 \\
     && apt-get clean \\
     && rm -rf /var/lib/apt/lists/*
 
@@ -112,7 +112,7 @@ if ! timeout 120 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'; 
 fi
 
 echo "[start] Running preflight checks..."
-for cmd in zig mke2fs docker agent-vm cpio lz4 qemu-img qemu-system-x86_64; do
+for cmd in zig mke2fs docker agent-vm cpio lz4 qemu-img qemu-system-x86_64 python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "[FATAL] Required command not found: $cmd" >&2
     exit 1

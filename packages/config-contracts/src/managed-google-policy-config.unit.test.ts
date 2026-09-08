@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	controllerConfiguredCliOperationSchema,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
 	oauthConfiguredCliInputSchema,
 } from './controller-configured-cli.js';
 import { toolPortalConfigSchema } from './tool-portal-config.js';
@@ -82,6 +83,8 @@ describe('managed Google config policy source', () => {
 	it('retains hard command constraints without a second Ask or Allow rule list', () => {
 		// Arrange / Act
 		const parsed = controllerConfiguredCliOperationSchema.parse(googleOperation);
+		if (!isControllerEphemeralManagedVmConfiguredCliOperation(parsed))
+			throw new Error('Expected credentialed Google operation.');
 		// Assert
 		expect(parsed.commands[0]?.path).toEqual(['gmail', 'search']);
 		expect(parsed.output).toEqual(googleOperation.output);

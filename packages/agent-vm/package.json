@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-vm",
-	"version": "0.0.147",
+	"version": "0.0.148",
 	"description": "Controller CLI and HTTP server for sandboxed VM coding agents.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -77,7 +77,7 @@
 		"@optique/zod": "^1.2.0",
 		"ansis": "^4.3.0",
 		"execa": "^9.6.1",
-		"hono": "4.12.24",
+		"hono": "4.12.34",
 		"jsonc-parser": "^3.3.1",
 		"socket.io-client": "4.8.1",
 		"tasuku": "^2.3.0",

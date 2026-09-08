@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import type { ManagedVm } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { imageArtifactFixtureFileContent } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
 	managedVmImageAssetFileNames,
@@ -19,10 +20,15 @@ import {
 	type GenerateManagedDockerfileResult,
 } from '../build/managed-image-dockerfile.js';
 import {
+	configuredImageSelectionRecordPath,
 	readPreparedManagedVmImage,
 	writePreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
-import type { LoadedSystemConfig } from '../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForSystemConfig,
+	type LoadedSystemConfig,
+} from '../config/system-config.js';
 import type { GatewayVmLifecycleAuthority } from '../controller/vm-ownership/gateway-vm-lifecycle-authority.js';
 import type {
 	GatewayZoneDestroyResult,
@@ -57,6 +63,18 @@ import {
 } from './hermes-e2e-harness.js';
 
 const temporaryRoots: string[] = [];
+
+function e2eSelectionRecordPath(
+	systemConfig: LoadedSystemConfig,
+	family: 'gateway' | 'toolVm',
+	profileName: string,
+): string {
+	return configuredImageSelectionRecordPath({
+		deploymentGeneratedDir: deploymentGeneratedDirForStorageRoot(systemConfig.storageRootDir),
+		family,
+		profileName,
+	});
+}
 const execFileAsync = promisify(execFile);
 const testManagedGatewayBootContract = createManagedGatewayBootContract({
 	bootEntry: 'hermes-gateway',
@@ -786,16 +804,15 @@ describe('findReusableGatewayImageDirectory', () => {
 		const fingerprint = await computeFingerprintFromConfigPath(gatewayBuildConfigPath, {
 			managedGatewayBoot,
 		});
-		const reusableImageDirectory = path.join(
-			previousCacheDir,
-			'gateway-images',
-			'hermes',
-			fingerprint,
-		);
+		const reusableImageDirectory = path.join(previousCacheDir, 'vm-images', fingerprint);
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
 			managedVmImageAssetFileNames.map(async (fileName) => {
-				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+				await fs.writeFile(
+					path.join(reusableImageDirectory, fileName),
+					imageArtifactFixtureFileContent(fileName),
+					'utf8',
+				);
 			}),
 		);
 		process.env.AGENT_VM_E2E_CACHE_DIR = smokeCacheRoot;
@@ -815,10 +832,10 @@ describe('findReusableGatewayImageDirectory', () => {
 			}
 		}
 
-		const activeImageDirectory = path.join(activeCacheDir, 'gateway-images', 'hermes', fingerprint);
+		const activeImageDirectory = path.join(activeCacheDir, 'vm-images', fingerprint);
 		await expect(
 			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
-		).resolves.toBe('manifest.json\n');
+		).resolves.toBe(imageArtifactFixtureFileContent('manifest.json'));
 	});
 });
 
@@ -1057,14 +1074,17 @@ describe('prepareGatewayE2eProjectImages', () => {
 			smokeCacheRoot,
 			'previous-run',
 			'cache',
-			'gateway-images',
-			'worker',
+			'vm-images',
 			fingerprint,
 		);
 		await fs.mkdir(reusableImageDirectory, { recursive: true });
 		await Promise.all(
 			managedVmImageAssetFileNames.map(async (fileName) => {
-				await fs.writeFile(path.join(reusableImageDirectory, fileName), `${fileName}\n`, 'utf8');
+				await fs.writeFile(
+					path.join(reusableImageDirectory, fileName),
+					imageArtifactFixtureFileContent(fileName),
+					'utf8',
+				);
 			}),
 		);
 		const buildConfigs: LoadedSystemConfig[] = [];
@@ -1084,16 +1104,11 @@ describe('prepareGatewayE2eProjectImages', () => {
 			}
 		}
 
-		const activeImageDirectory = path.join(
-			project.systemConfig.cacheDir,
-			'gateway-images',
-			'worker',
-			fingerprint,
-		);
+		const activeImageDirectory = path.join(project.systemConfig.cacheDir, 'vm-images', fingerprint);
 		expect(buildConfigs).toEqual([project.systemConfig]);
 		await expect(
 			fs.readFile(path.join(activeImageDirectory, 'manifest.json'), 'utf8'),
-		).resolves.toBe('manifest.json\n');
+		).resolves.toBe(imageArtifactFixtureFileContent('manifest.json'));
 	});
 
 	it('materializes prepared records from the e2e manifest for an equivalent temp deployment', async () => {
@@ -1143,20 +1158,25 @@ describe('prepareGatewayE2eProjectImages', () => {
 						Object.entries(systemConfig.imageProfiles.gateways).map(
 							async ([profileName, profile]) => {
 								const fingerprint = await computeFingerprintFromConfigPath(profile.buildConfig);
-								const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', profileName);
+								const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 								const imagePath = path.join(cacheDir, fingerprint);
 								await fs.mkdir(imagePath, { recursive: true });
 								await Promise.all(
 									managedVmImageAssetFileNames.map(
 										async (fileName) =>
-											await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+											await fs.writeFile(
+												path.join(imagePath, fileName),
+												imageArtifactFixtureFileContent(fileName),
+												'utf8',
+											),
 									),
 								);
 								await writePreparedManagedVmImage({
 									buildConfigPath: profile.buildConfig,
-									cacheDir,
 									fingerprint,
 									imagePath,
+									selectionRecordPath: e2eSelectionRecordPath(systemConfig, 'gateway', profileName),
+									sharedImageCacheDir: cacheDir,
 								});
 							},
 						),
@@ -1188,7 +1208,8 @@ describe('prepareGatewayE2eProjectImages', () => {
 		}
 		const secondPreparedImage = await readPreparedManagedVmImage({
 			buildConfigPath: secondGatewayProfile.buildConfig,
-			cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
+			selectionRecordPath: e2eSelectionRecordPath(secondProject.systemConfig, 'gateway', 'worker'),
+			sharedImageCacheDir: sharedImageCacheDirForSystemConfig(secondProject.systemConfig),
 		});
 
 		expect(buildConfigs).toEqual([firstProject.systemConfig]);
@@ -1292,7 +1313,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 						throw new Error('Expected worker gateway image profile.');
 					}
 					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig);
-					const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'worker');
+					const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 					const imagePath = path.join(cacheDir, fingerprint);
 					await fs.mkdir(imagePath, { recursive: true });
 					await Promise.all(
@@ -1300,16 +1321,17 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
 					);
 					await writePreparedManagedVmImage({
 						buildConfigPath: gatewayProfile.buildConfig,
-						cacheDir,
 						fingerprint,
 						imagePath,
+						selectionRecordPath: e2eSelectionRecordPath(systemConfig, 'gateway', 'worker'),
+						sharedImageCacheDir: cacheDir,
 					});
 				},
 			});
@@ -1342,7 +1364,12 @@ describe('prepareGatewayE2eProjectImages', () => {
 		await expect(
 			readPreparedManagedVmImage({
 				buildConfigPath: secondGatewayProfile.buildConfig,
-				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'worker'),
+				selectionRecordPath: e2eSelectionRecordPath(
+					secondProject.systemConfig,
+					'gateway',
+					'worker',
+				),
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(secondProject.systemConfig),
 			}),
 		).resolves.toMatchObject({ built: false });
 	});
@@ -1388,7 +1415,7 @@ describe('prepareGatewayE2eProjectImages', () => {
 						throw new Error('Expected default Tool VM image profile.');
 					}
 					const fingerprint = await computeFingerprintFromConfigPath(toolVmProfile.buildConfig);
-					const cacheDir = path.join(systemConfig.cacheDir, 'tool-vm-images', 'default');
+					const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 					const imagePath = path.join(cacheDir, fingerprint);
 					await fs.mkdir(imagePath, { recursive: true });
 					await Promise.all(
@@ -1396,16 +1423,17 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
 					);
 					await writePreparedManagedVmImage({
 						buildConfigPath: toolVmProfile.buildConfig,
-						cacheDir,
 						fingerprint,
 						imagePath,
+						selectionRecordPath: e2eSelectionRecordPath(systemConfig, 'toolVm', 'default'),
+						sharedImageCacheDir: cacheDir,
 					});
 				},
 			});
@@ -1418,8 +1446,14 @@ describe('prepareGatewayE2eProjectImages', () => {
 					if (gatewayProfile === undefined) {
 						throw new Error('Expected Hermes Gateway image profile.');
 					}
-					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig);
-					const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'hermes');
+					const managedGatewayBoot = {
+						frameworkBootEntry: 'hermes-framework-service',
+						kind: 'managed-gateway-exact-two-role',
+					} as const;
+					const fingerprint = await computeFingerprintFromConfigPath(gatewayProfile.buildConfig, {
+						managedGatewayBoot,
+					});
+					const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 					const imagePath = path.join(cacheDir, fingerprint);
 					await fs.mkdir(imagePath, { recursive: true });
 					await Promise.all(
@@ -1427,20 +1461,18 @@ describe('prepareGatewayE2eProjectImages', () => {
 							async (fileName) =>
 								await fs.writeFile(
 									path.join(imagePath, fileName),
-									fileName + String.fromCharCode(10),
+									imageArtifactFixtureFileContent(fileName),
 									'utf8',
 								),
 						),
 					);
 					await writePreparedManagedVmImage({
 						buildConfigPath: gatewayProfile.buildConfig,
-						cacheDir,
 						fingerprint,
 						imagePath,
-						managedGatewayBoot: {
-							frameworkBootEntry: 'hermes-framework-service',
-							kind: 'managed-gateway-exact-two-role',
-						},
+						managedGatewayBoot,
+						selectionRecordPath: e2eSelectionRecordPath(systemConfig, 'gateway', 'hermes'),
+						sharedImageCacheDir: cacheDir,
 					});
 				},
 			});
@@ -1473,13 +1505,27 @@ describe('prepareGatewayE2eProjectImages', () => {
 		await expect(
 			readPreparedManagedVmImage({
 				buildConfigPath: secondGatewayProfile.buildConfig,
-				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'gateway-images', 'hermes'),
+				expectedManagedGatewayBoot: {
+					kind: 'managed-gateway-exact-two-role',
+					frameworkBootEntry: 'hermes-framework-service',
+				},
+				selectionRecordPath: e2eSelectionRecordPath(
+					secondProject.systemConfig,
+					'gateway',
+					'hermes',
+				),
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(secondProject.systemConfig),
 			}),
 		).resolves.toMatchObject({ built: false });
 		await expect(
 			readPreparedManagedVmImage({
 				buildConfigPath: secondToolVmProfile.buildConfig,
-				cacheDir: path.join(secondProject.systemConfig.cacheDir, 'tool-vm-images', 'default'),
+				selectionRecordPath: e2eSelectionRecordPath(
+					secondProject.systemConfig,
+					'toolVm',
+					'default',
+				),
+				sharedImageCacheDir: sharedImageCacheDirForSystemConfig(secondProject.systemConfig),
 			}),
 		).resolves.toMatchObject({ built: false });
 	});
@@ -1565,21 +1611,26 @@ describe('prepareGatewayE2eProjectImages', () => {
 				profile.buildConfig,
 				managedGatewayBoot === undefined ? {} : { managedGatewayBoot },
 			);
-			const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', 'shared');
+			const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 			const imagePath = path.join(cacheDir, fingerprint);
 			await fs.mkdir(imagePath, { recursive: true });
 			await Promise.all(
 				managedVmImageAssetFileNames.map(
 					async (fileName) =>
-						await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+						await fs.writeFile(
+							path.join(imagePath, fileName),
+							imageArtifactFixtureFileContent(fileName),
+							'utf8',
+						),
 				),
 			);
 			await writePreparedManagedVmImage({
 				buildConfigPath: profile.buildConfig,
-				cacheDir,
 				fingerprint,
 				imagePath,
 				...(managedGatewayBoot === undefined ? {} : { managedGatewayBoot }),
+				selectionRecordPath: e2eSelectionRecordPath(systemConfig, 'gateway', 'shared'),
+				sharedImageCacheDir: cacheDir,
 			});
 		};
 
@@ -1626,20 +1677,29 @@ describe('prepareGatewayE2eProjectImages', () => {
 							Object.entries(systemConfig.imageProfiles.gateways).map(
 								async ([profileName, profile]) => {
 									const fingerprint = await computeFingerprintFromConfigPath(profile.buildConfig);
-									const cacheDir = path.join(systemConfig.cacheDir, 'gateway-images', profileName);
+									const cacheDir = sharedImageCacheDirForSystemConfig(systemConfig);
 									const imagePath = path.join(cacheDir, fingerprint);
 									await fs.mkdir(imagePath, { recursive: true });
 									await Promise.all(
 										managedVmImageAssetFileNames.map(
 											async (fileName) =>
-												await fs.writeFile(path.join(imagePath, fileName), `${fileName}\n`, 'utf8'),
+												await fs.writeFile(
+													path.join(imagePath, fileName),
+													imageArtifactFixtureFileContent(fileName),
+													'utf8',
+												),
 										),
 									);
 									await writePreparedManagedVmImage({
 										buildConfigPath: profile.buildConfig,
-										cacheDir,
 										fingerprint,
 										imagePath,
+										selectionRecordPath: e2eSelectionRecordPath(
+											systemConfig,
+											'gateway',
+											profileName,
+										),
+										sharedImageCacheDir: cacheDir,
 									});
 								},
 							),

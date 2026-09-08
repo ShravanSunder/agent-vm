@@ -1,6 +1,11 @@
 // oxlint-disable eslint/no-await-in-loop -- path sizing walks the filesystem sequentially
 import fs from 'node:fs/promises';
 
+import {
+	deploymentCacheDirForSystemConfig,
+	deploymentGeneratedDirForStorageRoot,
+	sharedImageCacheDirForStorageRoot,
+} from '../../config/system-config.js';
 import { runConfigValidation } from '../../operations/config-validation.js';
 import {
 	createResolverFromSystemConfig,
@@ -281,6 +286,21 @@ export async function runPathsCommandOperation(
 	const entries = await Promise.all([
 		buildPathEntry('storageRootDir', config.storageRootDir, command.options.sizes),
 		buildPathEntry('cacheDir', config.cacheDir, command.options.sizes),
+		buildPathEntry(
+			'deploymentCacheDir',
+			deploymentCacheDirForSystemConfig(config),
+			command.options.sizes,
+		),
+		buildPathEntry(
+			'generatedDir',
+			deploymentGeneratedDirForStorageRoot(config.storageRootDir),
+			command.options.sizes,
+		),
+		buildPathEntry(
+			'sharedImageCacheDir',
+			sharedImageCacheDirForStorageRoot(config.storageRootDir),
+			command.options.sizes,
+		),
 		buildPathEntry('controllerStateDir', config.controllerStateDir, command.options.sizes),
 		buildPathEntry('controllerRuntimeDir', config.controllerRuntimeDir, command.options.sizes),
 		...zoneEntries,

@@ -4,8 +4,8 @@ import type {
 	PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
 import type {
-	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
+	StandaloneToolPortalConfig,
 	ToolPortalBackendKind,
 	ToolPortalConfig,
 	ToolPortalToolSelector,
@@ -190,7 +190,7 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 export function capabilityDiscoveryMetadata(props: {
 	readonly policy:
 		| GatewayRuntimeManagedToolPortalConfig['profiles'][string]['namespaces'][string]
-		| ToolPortalConfig['profiles'][string]['namespaces'][string];
+		| StandaloneToolPortalConfig['profiles'][string]['namespaces'][string];
 	readonly toolName: string;
 }): CapabilityDiscoveryMetadata | undefined {
 	if (!selectorIncludesTool(props.policy.tools, props.toolName)) return undefined;
@@ -199,8 +199,8 @@ export function capabilityDiscoveryMetadata(props: {
 		const operation = props.policy.backend.operations[props.toolName];
 		if (
 			operation?.kind !== 'configured_cli' ||
+			operation.targetKind !== 'ephemeral_managed_vm' ||
 			operation.authorization?.kind !== 'oauth_account' ||
-			!('compiledGoogle' in operation) ||
 			operation.compiledGoogle === undefined
 		)
 			return undefined;
@@ -265,10 +265,7 @@ export function capabilityDiscoveryMetadata(props: {
 
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
-	readonly config:
-		| EffectiveManagedToolPortalConfig
-		| GatewayRuntimeManagedToolPortalConfig
-		| ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | StandaloneToolPortalConfig;
 	readonly profileId: string;
 	readonly semanticSnapshot: {
 		readonly surfaceEligibilityByProfile: Readonly<
@@ -294,8 +291,8 @@ export function callPolicyDecision(props: {
 		const operation = policy.backend.operations[props.call.name];
 		if (
 			operation?.kind !== 'configured_cli' ||
+			operation.targetKind !== 'ephemeral_managed_vm' ||
 			operation.authorization?.kind !== 'oauth_account' ||
-			!('compiledGoogle' in operation) ||
 			operation.compiledGoogle === undefined
 		)
 			return { kind: 'denied' };
@@ -319,8 +316,10 @@ export function callPolicyDecision(props: {
 	if (policy.backend.kind === 'controller_execution') {
 		const operation = policy.backend.operations[props.call.name];
 		if (operation?.kind === 'configured_cli') {
+			const authorization =
+				operation.targetKind === 'ephemeral_managed_vm' ? operation.authorization : undefined;
 			const inputSchema =
-				operation.authorization?.kind === 'oauth_account'
+				authorization?.kind === 'oauth_account'
 					? operation.timeout.kind === 'quick'
 						? quickOAuthConfiguredCliInputSchema
 						: openOAuthConfiguredCliInputSchema

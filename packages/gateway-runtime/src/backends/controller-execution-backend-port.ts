@@ -138,10 +138,12 @@ function dispatchAuthorityBinding(
 ): ControllerExecutionAuthorityBinding {
 	return authority.kind === 'without-approval'
 		? { fingerprint: authority.fingerprint, operationId: authority.operationId }
-		: {
-				fingerprint: authority.reservation.fingerprint,
-				operationId: authority.reservation.operationId,
-			};
+		: authority.kind === 'controller-approval-reservation'
+			? {
+					fingerprint: authority.reservation.fingerprint,
+					operationId: authority.reservation.operationId,
+				}
+			: { fingerprint: authority.grant.fingerprint, operationId: authority.grant.operationId };
 }
 
 function bindingMatches(

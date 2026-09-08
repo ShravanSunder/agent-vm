@@ -6,7 +6,10 @@ import type {
 	ControllerConfiguredCliInput,
 	EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
-import { resolveCompiledGoogleCommand } from '@agent-vm/config-contracts';
+import {
+	resolveCompiledGoogleCommand,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+} from '@agent-vm/config-contracts';
 import {
 	GatewayControlConfiguredCliControllerExecutionResultSchema,
 	type GatewayControlToolPortalControllerExecutionResult,
@@ -119,7 +122,7 @@ export function createConfiguredCliManagedVmExecutor(
 		const resolution = request.authorization.credentialedRuntime;
 		if (
 			resolution === undefined ||
-			request.operation.executionTarget.kind !== 'ephemeral_managed_vm'
+			!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(request.operation)
 		) {
 			throw new ConfiguredControllerExecutionError(
 				'validation_failed',

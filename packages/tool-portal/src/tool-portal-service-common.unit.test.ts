@@ -3,7 +3,12 @@ import {
 	configuredGoogleOperationKey,
 	createEffectiveManagedToolPortalConfig,
 	createGatewayRuntimeManagedToolPortalConfig,
+	effectiveControllerEphemeralManagedVmConfiguredCliOperationSchema,
+	encodeConfiguredCliPreparedImageIdentity,
 	type GatewayRuntimeManagedToolPortalConfig,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	normalizePreparedControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
@@ -28,8 +33,35 @@ function oauthConfiguredCliPolicy(
 		compiled.commandSetsByConfiguredOperation[
 			configuredGoogleOperationKey('shared', 'google', 'gog')
 		];
-	if (operation?.kind !== 'configured_cli' || commandSet === undefined)
+	if (
+		operation?.kind !== 'configured_cli' ||
+		!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
+		commandSet === undefined
+	)
 		throw new Error('Expected compiled Google operation.');
+	const normalizedOperation = normalizePreparedControllerExecutionOperation({
+		...operation,
+		executionTarget: {
+			...operation.executionTarget,
+			imageReference: encodeConfiguredCliPreparedImageIdentity({
+				fingerprint: 'sha256:gog-image',
+				imageReference: operation.executionTarget.imageReference,
+				schemaVersion: 1,
+			}),
+		},
+	});
+	if (
+		normalizedOperation.kind === 'registered_action' ||
+		!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(normalizedOperation)
+	) {
+		throw new Error('Expected normalized Google operation.');
+	}
+	const compiledOperation = effectiveControllerEphemeralManagedVmConfiguredCliOperationSchema.parse(
+		{
+			...normalizedOperation,
+			compiledGoogle: commandSet,
+		},
+	);
 	const runtime = createGatewayRuntimeManagedToolPortalConfig(
 		createEffectiveManagedToolPortalConfig({
 			...compiled.toolPortalConfig,
@@ -42,7 +74,7 @@ function oauthConfiguredCliPolicy(
 							tools: { allow: ['gog_cli'], deny: [] },
 							backend: {
 								kind: 'controller_execution',
-								operations: { gog_cli: { ...operation, compiledGoogle: commandSet } },
+								operations: { gog_cli: compiledOperation },
 							},
 						},
 					},
@@ -108,7 +140,9 @@ describe('capabilityDiscoveryMetadata', () => {
 		if (policy.backend.kind !== 'controller_execution')
 			throw new Error('Expected controller namespace.');
 		const operation = policy.backend.operations.gog_cli;
-		if (operation?.kind !== 'configured_cli') throw new Error('Expected operation.');
+		if (operation?.kind !== 'configured_cli' || operation.targetKind !== 'ephemeral_managed_vm') {
+			throw new Error('Expected credentialed operation.');
+		}
 		operation.authorization = { kind: 'none' };
 		delete operation.compiledGoogle;
 		operation.calls = { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' };

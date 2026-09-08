@@ -322,7 +322,7 @@ describe('worker-task-runner integration', () => {
 	const systemConfig = {
 		schemaVersion: 2,
 		storageRootDir: '/tmp/agent-vm-worker-storage',
-		cacheDir: '/tmp/agent-vm-worker-storage/cache',
+		cacheDir: '/tmp/agent-vm-worker-cache',
 		controllerRuntimeDir: '/tmp/agent-vm-worker-storage/controller-runtime',
 		controllerStateDir: '/tmp/agent-vm-worker-storage/controller-state',
 		systemConfigPath: '/tmp/config/system.json',

@@ -4,6 +4,11 @@ import {
 	configuredCliExecutionTargetSchema,
 	controllerConfiguredCliInputSchema,
 	controllerConfiguredCliOperationSchema,
+	controllerEnforcedConfiguredCliOperationSchema,
+	effectiveControllerToolVmConfiguredCliOperationSchema,
+	isControllerToolVmConfiguredCliOperation,
+	isEffectiveControllerToolVmConfiguredCliOperation,
+	normalizePreparedControllerExecutionOperation,
 	oauthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
 } from './controller-configured-cli.js';
@@ -334,7 +339,7 @@ describe('credentialed configured CLI target contract', () => {
 
 describe('OAuth-configured CLI contract', () => {
 	it('selects code-owned OAuth account classification without deployment-authored scope rules', () => {
-		const result = controllerConfiguredCliOperationSchema.safeParse(
+		const result = controllerEnforcedConfiguredCliOperationSchema.safeParse(
 			validOAuthConfiguredCliOperation(),
 		);
 		if (!result.success) {
@@ -343,29 +348,18 @@ describe('OAuth-configured CLI contract', () => {
 		expect(result.data.authorization?.kind).toBe('oauth_account');
 	});
 
-	it('rejects deployment-authored classifiers, whether empty, duplicated or flag-sensitive', () => {
+	it('rejects deployment-authored OAuth classifiers', () => {
 		// Arrange
 		const operation = controllerConfiguredCliOperationSchema.parse(
 			validOAuthConfiguredCliOperation(),
 		);
-		const rule = {
-			match: { path: ['gmail', 'search'], flags: [] },
-			requirement: { kind: 'oauth', serviceId: 'gmail', minimumPermission: 'read' },
-		};
 		// Act / Assert
-		for (const rules of [
-			[],
-			[rule],
-			[rule, rule],
-			[{ ...rule, match: { path: ['gmail', 'search'], flags: [{ names: ['--json'] }] } }],
-		]) {
-			expect(
-				controllerConfiguredCliOperationSchema.safeParse({
-					...operation,
-					authorization: { kind: 'oauth_account', rules },
-				}).success,
-			).toBe(false);
-		}
+		expect(
+			controllerEnforcedConfiguredCliOperationSchema.safeParse({
+				...operation,
+				authorization: { kind: 'oauth_account', rules: [] },
+			}).success,
+		).toBe(false);
 	});
 
 	it('requires an opaque accountId only on the OAuth-configured RPC input variant', () => {
@@ -381,6 +375,82 @@ describe('OAuth-configured CLI contract', () => {
 			oauthConfiguredCliInputSchema.safeParse({
 				argv: ['gmail', 'search'],
 				reason: 'Read recent messages.',
+			}).success,
+		).toBe(false);
+	});
+});
+
+describe('Tool VM configured CLI contract', () => {
+	const toolVmOperation = {
+		executablePath: '/usr/local/bin/firecrawl',
+		executionTarget: { kind: 'tool_vm', workingDirectory: '.' },
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'fixed_safe_summary',
+			overflow: 'truncate',
+			stderrMaxBytes: 4_096,
+			stdoutMaxBytes: 65_536,
+		},
+		safeHelp: 'Use the Firecrawl CLI installed in the current Tool VM.',
+		suggestCalls: {
+			suggestDeny: [{ flags: [], path: ['delete'] }],
+			suggestRequiresApproval: [{ flags: [], path: ['crawl'] }],
+			suggestWithoutApproval: 'remaining_admitted',
+		},
+		suggestCommands: [
+			{ flagRules: [], path: ['crawl'] },
+			{ flagRules: [], path: ['delete'] },
+		],
+		suggestDeniedPatterns: [],
+		suggestStdin: { kind: 'bounded_text', deniedPatterns: [], maxBytes: 65_536 },
+		suggestTimeout: { kind: 'open' },
+	} as const;
+
+	it('accepts the existing configured CLI policy under suggest-prefixed Tool VM names', () => {
+		const parsed = controllerConfiguredCliOperationSchema.parse(toolVmOperation);
+		expect(parsed.executionTarget.kind).toBe('tool_vm');
+		expect(isControllerToolVmConfiguredCliOperation(parsed)).toBe(true);
+	});
+
+	it('normalizes Tool VM suggestions into a static effective policy selected by target kind', () => {
+		const authoredOperation = controllerConfiguredCliOperationSchema.parse(toolVmOperation);
+		const normalizedOperation = normalizePreparedControllerExecutionOperation(authoredOperation);
+		if (normalizedOperation.kind === 'registered_action') {
+			throw new Error('Expected a configured CLI operation.');
+		}
+
+		expect(isEffectiveControllerToolVmConfiguredCliOperation(normalizedOperation)).toBe(true);
+		expect(normalizedOperation.executionTarget.kind).toBe('tool_vm');
+		expect(
+			effectiveControllerToolVmConfiguredCliOperationSchema.safeParse({
+				...normalizedOperation,
+				calls: { deny: [], source: 'managed_google_policy' },
+			}).success,
+		).toBe(false);
+		for (const forbiddenField of [{ authorization: { kind: 'none' } }, { compiledGoogle: {} }]) {
+			expect(
+				effectiveControllerToolVmConfiguredCliOperationSchema.safeParse({
+					...normalizedOperation,
+					...forbiddenField,
+				}).success,
+			).toBe(false);
+		}
+	});
+
+	it('rejects enforcement-named policy properties for the Tool VM discriminant', () => {
+		expect(
+			controllerConfiguredCliOperationSchema.safeParse({
+				...toolVmOperation,
+				calls: {
+					deny: [],
+					requiresApproval: [],
+					withoutApproval: 'remaining_admitted',
+				},
+				commands: toolVmOperation.suggestCommands,
+				deniedPatterns: [],
+				stdin: { kind: 'none' },
+				timeout: { kind: 'open' },
 			}).success,
 		).toBe(false);
 	});

@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
 	controllerConfiguredCliInputSchema,
 	configuredGoogleOperationKey,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
 	resolveCompiledGoogleCommand,
 } from '@agent-vm/config-contracts';
 import type { GatewayRuntimeApprovalChallengeIntent } from '@agent-vm/gateway-control-contracts';
@@ -28,7 +29,11 @@ export function validateGoogleApprovalIntent(props: {
 		namespace?.backend.kind === 'controller_execution'
 			? namespace.backend.operations[intent.call.name]
 			: undefined;
-	if (operation?.kind !== 'configured_cli' || operation.authorization?.kind !== 'oauth_account')
+	if (
+		operation?.kind !== 'configured_cli' ||
+		!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
+		operation.authorization?.kind !== 'oauth_account'
+	)
 		return intent.managedGoogle === undefined;
 	const input = controllerConfiguredCliInputSchema.safeParse(intent.call.arguments);
 	if (

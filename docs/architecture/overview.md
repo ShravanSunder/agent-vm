@@ -122,9 +122,12 @@ minutes. File credentials are finalized into read-only memory before boot, HTTP
 credentials remain host-side behind opaque placeholders, and CLI
 config/state/cache stays on disposable COW rootfs.
 
-This is separate from leased Tool VMs: credentialed calls execute direct array
-argv through the controller, while `tool_vm_runner` and framework Sandbox APIs
-continue to use direct strict-pinned SSH to the current Tool VM.
+The credentialed runtime remains separate from leased Tool VMs. A configured
+CLI may instead select `executionTarget.kind: "tool_vm"`; the Gateway then uses
+the same current Tool VM lease and direct strict-pinned SSH path as
+`tool_vm_runner` and framework Sandbox APIs. That target authors its Portal-call
+policy with `suggest*` names because direct terminal, Python, SSH, or other Tool
+VM execution bypasses the Tool Portal route.
 
 → Deep dive: [credentialed-runtimes.md](credentialed-runtimes.md)
 
@@ -711,14 +714,19 @@ VM images are built from Docker OCI base images via Gondolin's build pipeline. I
     v
   buildGatewayImage() / buildGondolinImage()
     |-- 1. Load authored build config JSONC
-    |-- 2. Fingerprint: SHA-256(buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
-    |-- 3. Cache hit?  cacheDir/{fingerprint}/ has all 4 assets -> return cached
-    |-- 4. Cache miss: gondolin.buildAssets() -> Docker pull, extract, build rootfs
+    |-- 2. Fingerprint: SHA-256(content-normalized buildConfig + runtimeBuildVersionTag + fingerprintInput), truncated to 16 hex
+    |-- 3. Cache hit?  cacheDir/vm-images/{fingerprint}/ passes manifest and file-structure validation -> return cached
+    |-- 4. Cache miss: staged Gondolin build -> verify checksums -> native no-replace publication
     |-- 5. Output: { imagePath, fingerprint, built: true|false }
     v
-  cacheDir/{fingerprint}/
+  cacheDir/vm-images/{fingerprint}/
     manifest.json, rootfs.ext4, initramfs.cpio.lz4, vmlinuz-virt
 ```
+
+Referenced local build inputs contribute their content and relevant file modes,
+not their placement on the host, to the effective fingerprint. Python 3 provides
+the standard-library bridge to native no-replace publication on macOS/Linux.
+Reuse avoids rehashing large image assets; new publication verifies full hashes.
 
 The identifier file is shared by all image profiles because it represents
 the system build environment, not an individual gateway or tool VM.

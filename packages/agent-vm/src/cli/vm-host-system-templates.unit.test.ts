@@ -14,6 +14,13 @@ const renderOptions = {
 } as const satisfies Parameters<typeof renderVmHostSystemDockerfile>[0];
 
 describe('vm-host-system templates', () => {
+	it('installs and preflights Python for native image publication', () => {
+		const dockerfile = renderVmHostSystemDockerfile(renderOptions);
+		const startScript = renderVmHostSystemStartScript({ zoneId: 'coding-agent' });
+
+		expect(dockerfile).toMatch(/qemu-system-x86.*python3/u);
+		expect(startScript).toMatch(/for cmd in .*python3/u);
+	});
 	it('substitutes zig version and gondolin package into the Dockerfile', () => {
 		const dockerfile = renderVmHostSystemDockerfile(renderOptions);
 

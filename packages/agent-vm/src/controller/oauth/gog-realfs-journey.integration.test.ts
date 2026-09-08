@@ -54,7 +54,10 @@ import {
 	createRecordingBackendPort,
 	udsOptions,
 } from '../../../../tool-portal/src/tool-portal-service-test-fixture.js';
-import type { LoadedSystemConfig } from '../../config/system-config.js';
+import {
+	deploymentGeneratedDirForStorageRoot,
+	type LoadedSystemConfig,
+} from '../../config/system-config.js';
 import { writeGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { materializeGatewayRuntimePortalAdmission } from '../../gateway/gateway-runtime-portal-admission-material.js';
 import { writeMcpPortalEffectiveConfig } from '../../gateway/mcp-portal-effective-config.js';
@@ -293,17 +296,16 @@ describe('Gog account policy to RealFS file journey', () => {
 			),
 		]);
 		const effectiveHostConfigDir = path.join(
-			root,
-			'cache',
-			'gateways',
+			deploymentGeneratedDirForStorageRoot(root),
+			'gateway-effective',
 			zoneId,
-			'tool-portal-effective',
 		);
 		const effectivePlan = await writeMcpPortalEffectiveConfig({
 			approvalAccessConfigured: true,
 			authoredConfigDir: configDir,
 			declaredAgentIds: [agentId, 'ember'],
 			effectiveHostConfigDir,
+			sharedImageCacheDir: path.join(root, 'shared-image-cache'),
 			managedVmImages: {
 				prepareImage: async () => ({
 					built: false,

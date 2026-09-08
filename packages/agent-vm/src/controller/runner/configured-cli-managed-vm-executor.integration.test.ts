@@ -2,7 +2,8 @@ import {
 	encodeConfiguredCliPreparedImageIdentity,
 	compileOAuthPolicy,
 	configuredGoogleOperationKey,
-	type EffectiveControllerExecutionOperation,
+	type EffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
 } from '@agent-vm/config-contracts';
 import {
 	oauthAccountIdSchema,
@@ -23,10 +24,7 @@ import type { CredentialedRuntimeResolution } from '../credentialed-runtime/cred
 import type { ConfiguredCliAuthorizedOperation } from './configured-cli-authorization.js';
 import { createConfiguredCliManagedVmExecutor } from './configured-cli-managed-vm-executor.js';
 
-type ConfiguredOperation = Extract<
-	EffectiveControllerExecutionOperation,
-	{ readonly kind: 'configured_cli' }
->;
+type ConfiguredOperation = EffectiveControllerEphemeralManagedVmConfiguredCliOperation;
 
 const oauthCredentialId = oauthCredentialIdSchema.parse('11111111-1111-4111-8111-111111111111');
 const accountId = oauthAccountIdSchema.parse('33333333-3333-4333-8333-333333333333');
@@ -284,6 +282,9 @@ describe('configured CLI credentialed Managed VM executor', () => {
 		async (mismatch) => {
 			// Arrange: source lease/hash verification belongs to the injected controller file boundary.
 			const base = oauthAuthorization();
+			if (!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(base.operation)) {
+				throw new Error('Expected credentialed Managed VM operation.');
+			}
 			if (base.operation.compiledGoogle === undefined) throw new Error('Missing command set.');
 			base.operation.compiledGoogle = {
 				...base.operation.compiledGoogle,
@@ -422,6 +423,9 @@ describe('configured CLI credentialed Managed VM executor', () => {
 				},
 			}).commandSetsByConfiguredOperation[configuredGoogleOperationKey('shared', 'google', 'gog')];
 			if (fileCompiled === undefined) throw new Error('Expected compiled file commands.');
+			if (!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(current.operation)) {
+				throw new Error('Expected credentialed Managed VM operation.');
+			}
 			current.operation.compiledGoogle = fileCompiled;
 			current.operation.commands = commands;
 			const fileAuthorization = {

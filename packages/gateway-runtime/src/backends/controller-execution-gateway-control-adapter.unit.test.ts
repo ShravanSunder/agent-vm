@@ -1,15 +1,19 @@
 import {
-	controllerConfiguredCliOperationSchema,
 	compiledGoogleCommandSetSchema,
+	createEffectiveManagedToolPortalConfig,
 	createGatewayRuntimeManagedToolPortalConfig,
+	controllerEphemeralManagedVmConfiguredCliOperationSchema,
+	encodeConfiguredCliPreparedImageIdentity,
+	type EffectiveManagedToolPortalConfig,
 	type GatewayRuntimeManagedToolPortalConfig,
-	type ManagedToolPortalConfig,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	normalizePreparedControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalBackendCallOptions } from '@agent-vm/tool-portal';
+import type { ToolPortalApprovalPort, ToolPortalBackendCallOptions } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';
@@ -18,6 +22,8 @@ import type {
 	GatewayRuntimeControlCommandRequest,
 } from '../control-endpoint/gateway-control-command-client.js';
 import type { GatewayControlAcceptedSession } from '../control-endpoint/gateway-control-endpoint-contracts.js';
+import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
+import type { ConfiguredCliToolVmAcquisitionPort } from './configured-cli-tool-vm-executor.js';
 import { createGatewayControlControllerExecutionBackendPort } from './controller-execution-gateway-control-adapter.js';
 
 const operationId = '11111111-1111-5111-8111-111111111111';
@@ -26,34 +32,318 @@ const callerContextId = '33333333-3333-4333-8333-333333333333';
 const responseMessageId = '44444444-4444-4444-8444-444444444444';
 const expectedHead = '0123456789abcdef0123456789abcdef01234567';
 const namespaceSummaryPayloadCanary = 'SUMMARY_MARKER_MUST_NOT_ENTER_CONTROLLER_RPC';
-const quickOAuthConfiguredCliOperation = controllerConfiguredCliOperationSchema.parse({
-	authorization: { kind: 'oauth_account' },
-	calls: { source: 'managed_google_policy', deny: [] },
-	commands: [{ flagRules: [], path: ['gmail', 'search'] }],
-	deniedPatterns: [],
-	executablePath: '/usr/local/bin/gog',
-	executionTarget: {
-		allowedHosts: ['gmail.googleapis.com'],
-		credentialProjection: {
-			environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
-			kind: 'http_mediation',
+const authoredQuickOAuthConfiguredCliOperation =
+	controllerEphemeralManagedVmConfiguredCliOperationSchema.parse({
+		authorization: { kind: 'oauth_account' },
+		calls: { source: 'managed_google_policy', deny: [] },
+		commands: [{ flagRules: [], path: ['gmail', 'search'] }],
+		deniedPatterns: [],
+		executablePath: '/usr/local/bin/gog',
+		executionTarget: {
+			allowedHosts: ['gmail.googleapis.com'],
+			credentialProjection: {
+				environment: { GOG_ACCESS_TOKEN: { kind: 'oauth_access_token' } },
+				kind: 'http_mediation',
+			},
+			environment: { kind: 'empty' },
+			guestCwd: '/work',
+			imageReference: '/images/gog',
+			kind: 'ephemeral_managed_vm',
 		},
-		environment: { kind: 'empty' },
-		guestCwd: '/work',
-		imageReference: '/images/gog',
-		kind: 'ephemeral_managed_vm',
+		kind: 'configured_cli',
+		mandatoryArgvPrefix: [],
+		output: {
+			modelVisibleStderr: 'none',
+			overflow: 'truncate',
+			stderrMaxBytes: 1024,
+			stdoutMaxBytes: 1024,
+		},
+		safeHelp: 'Search Gmail through this agent’s selected account.',
+		stdin: { kind: 'none' },
+		timeout: { kind: 'quick' },
+	});
+const normalizedQuickOAuthConfiguredCliOperation = normalizePreparedControllerExecutionOperation({
+	...authoredQuickOAuthConfiguredCliOperation,
+	executionTarget: {
+		...authoredQuickOAuthConfiguredCliOperation.executionTarget,
+		imageReference: encodeConfiguredCliPreparedImageIdentity({
+			fingerprint: 'sha256:gog-image',
+			imageReference: authoredQuickOAuthConfiguredCliOperation.executionTarget.imageReference,
+			schemaVersion: 1,
+		}),
 	},
-	kind: 'configured_cli',
-	mandatoryArgvPrefix: [],
-	output: {
-		modelVisibleStderr: 'none',
-		overflow: 'truncate',
-		stderrMaxBytes: 1024,
-		stdoutMaxBytes: 1024,
-	},
-	safeHelp: 'Search Gmail through this agent’s selected account.',
-	stdin: { kind: 'none' },
-	timeout: { kind: 'quick' },
+});
+if (
+	normalizedQuickOAuthConfiguredCliOperation.kind === 'registered_action' ||
+	!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(
+		normalizedQuickOAuthConfiguredCliOperation,
+	)
+) {
+	throw new Error('Expected normalized OAuth configured CLI operation.');
+}
+const quickOAuthFixtureRuntimeConfig = createGatewayRuntimeManagedToolPortalConfig(
+	createEffectiveManagedToolPortalConfig({
+		agents: {},
+		mode: 'managed',
+		profiles: {
+			fixture: {
+				namespaces: {
+					oauth_cli: {
+						backend: {
+							kind: 'controller_execution',
+							operations: { quick: normalizedQuickOAuthConfiguredCliOperation },
+						},
+						calls: { source: 'managed_google_policy' },
+						discovery: {},
+						tools: { allow: ['quick'], deny: [] },
+					},
+				},
+			},
+		},
+		schemaVersion: 1,
+	}),
+);
+const quickOAuthConfiguredCliOperation =
+	quickOAuthFixtureRuntimeConfig.profiles.fixture?.namespaces.oauth_cli?.backend.kind ===
+	'controller_execution'
+		? quickOAuthFixtureRuntimeConfig.profiles.fixture.namespaces.oauth_cli.backend.operations.quick
+		: undefined;
+if (
+	quickOAuthConfiguredCliOperation?.kind !== 'configured_cli' ||
+	quickOAuthConfiguredCliOperation.targetKind !== 'ephemeral_managed_vm'
+) {
+	throw new Error('Expected projected OAuth configured CLI operation.');
+}
+
+function configuredCliToolVmAcquisition(
+	execute: StrictToolVmSshClient['execute'],
+	isCurrent: () => boolean = () => true,
+): {
+	readonly port: ConfiguredCliToolVmAcquisitionPort;
+	readonly retireGroup: ReturnType<typeof vi.fn>;
+} {
+	const retireGroup = vi.fn(async () => undefined);
+	return {
+		port: {
+			acquire: async () => ({
+				isCurrent,
+				kind: 'bound',
+				retireGroup,
+				strictSshClient: {
+					close: () => undefined,
+					connect: async () => undefined,
+					execute,
+					guestListDirectory: async () => [],
+					guestMkdir: async () => undefined,
+					guestReadFile: async () => new Uint8Array(),
+					guestRemove: async () => undefined,
+					guestRename: async () => undefined,
+					guestStat: async () => ({ byteLength: 0, kind: 'file' }),
+					guestWriteFile: async () => undefined,
+					listDirectory: async () => [],
+					mkdir: async () => undefined,
+					observeTransportFailure: () => ({ unsubscribe: () => undefined }),
+					readFile: async () => new Uint8Array(),
+					remove: async () => undefined,
+					rename: async () => undefined,
+					stat: async () => ({ byteLength: 0, kind: 'file' }),
+					writeFile: async () => undefined,
+				},
+			}),
+		},
+		retireGroup,
+	};
+}
+
+describe('Tool VM configured CLI execution target', () => {
+	it('executes the configured executable in the acquired Tool VM without controller dispatch', async () => {
+		const execute = vi.fn(async () => ({
+			exitCode: 0,
+			kind: 'exited' as const,
+			stderr: new Uint8Array(),
+			stdout: new TextEncoder().encode('{"ok":true}'),
+		}));
+		const acquisition = configuredCliToolVmAcquisition(execute);
+		const fixture = createFixture({
+			toolVmAcquisitionPort: acquisition.port,
+		});
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl', 'https://example.com'], reason: 'Research.' },
+						id: 'tool-vm-cli-call',
+						name: 'tool_vm_cli',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(result.ok).toBe(true);
+		expect(execute).toHaveBeenCalledWith(
+			expect.objectContaining({
+				argv: ['/usr/local/bin/firecrawl', '--json', 'crawl', 'https://example.com'],
+				cwd: '.',
+			}),
+		);
+		expect(fixture.sendCommand).not.toHaveBeenCalled();
+		expect(fixture.register).not.toHaveBeenCalled();
+		expect(acquisition.retireGroup).toHaveBeenCalledWith('completed');
+	});
+
+	it('redacts JSON credentials and preserves stdout around invalid UTF-8 bytes', async () => {
+		const execute = vi.fn(async () => ({
+			exitCode: 0,
+			kind: 'exited' as const,
+			stderr: new TextEncoder().encode('{"api_key":"secret-value","ok":false}'),
+			stdout: Uint8Array.from([0x61, 0xff, 0x62]),
+		}));
+		const acquisition = configuredCliToolVmAcquisition(execute);
+		const fixture = createFixture({ toolVmAcquisitionPort: acquisition.port });
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl'], reason: 'Research.' },
+						id: 'tool-vm-cli-safe-output',
+						name: 'tool_vm_cli',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(),
+		);
+
+		expect(result).toMatchObject({
+			items: [
+				{
+					status: 'ok',
+					value: {
+						stderrSummary: expect.stringContaining('[REDACTED]'),
+						stdout: 'a�b',
+					},
+				},
+			],
+			ok: true,
+		});
+		expect(JSON.stringify(result)).not.toContain('secret-value');
+	});
+
+	it('arms controller approval immediately before Tool VM dispatch and rejects an expired reservation', async () => {
+		const execute = vi.fn(async () => ({
+			exitCode: 0,
+			kind: 'exited' as const,
+			stderr: new Uint8Array(),
+			stdout: new Uint8Array(),
+		}));
+		const acquisition = configuredCliToolVmAcquisition(execute);
+		const armDispatch = vi.fn(async () => ({
+			kind: 'not-dispatched' as const,
+			operationId,
+			reason: 'expired' as const,
+		}));
+		const fixture = createFixture({
+			approvalPort: {
+				armDispatch,
+				reserveDispatch: async () => {
+					throw new Error('Reservation already exists for backend dispatch.');
+				},
+			},
+			toolVmAcquisitionPort: acquisition.port,
+		});
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl'], reason: 'Research.' },
+						id: 'tool-vm-approved-call',
+						name: 'tool_vm_cli',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(undefined, approvalReservationDispatchAuthority),
+		);
+
+		expect(result.ok).toBe(false);
+		expect(armDispatch).toHaveBeenCalledWith({
+			reservation: approvalReservationDispatchAuthority.reservation,
+		});
+		expect(execute).not.toHaveBeenCalled();
+		expect(acquisition.retireGroup).toHaveBeenCalledWith('failed');
+	});
+
+	it('does not dispatch when Tool VM authority changes during approval arming', async () => {
+		const execute = vi.fn(async () => ({
+			exitCode: 0,
+			kind: 'exited' as const,
+			stderr: new Uint8Array(),
+			stdout: new Uint8Array(),
+		}));
+		const isCurrent = vi
+			.fn<() => boolean>()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValue(false);
+		const acquisition = configuredCliToolVmAcquisition(execute, isCurrent);
+		const reservation = approvalReservationDispatchAuthority.reservation;
+		const fixture = createFixture({
+			approvalPort: {
+				armDispatch: async () => ({
+					grant: {
+						approvalId: reservation.approvalId,
+						authorityContext: reservation.authorityContext,
+						backendKind: 'controller_execution',
+						bindingRevision: reservation.bindingRevision,
+						expiresAt: reservation.expiresAt,
+						fingerprint: reservation.fingerprint,
+						grantId: '99999999-9999-4999-8999-999999999999',
+						operationId: reservation.operationId,
+						stablePrincipal: reservation.stablePrincipal,
+					},
+					kind: 'dispatch-armed',
+				}),
+				reserveDispatch: async () => {
+					throw new Error('Reservation already exists for backend dispatch.');
+				},
+			},
+			toolVmAcquisitionPort: acquisition.port,
+		});
+
+		const result = await fixture.backend.call(
+			{
+				calls: [
+					{
+						arguments: { argv: ['crawl'], reason: 'Research.' },
+						id: 'tool-vm-stale-after-arm',
+						name: 'tool_vm_cli',
+						namespace: 'controller_execution',
+					},
+				],
+			},
+			callOptions(undefined, approvalReservationDispatchAuthority),
+		);
+
+		expect(result.ok).toBe(false);
+		expect(result).toMatchObject({
+			items: [
+				{
+					outcome: {
+						certainty: 'proven',
+						kind: 'not-dispatched',
+						retryClass: 'safe-before-dispatch',
+					},
+				},
+			],
+		});
+		expect(execute).not.toHaveBeenCalled();
+		expect(acquisition.retireGroup).toHaveBeenCalledWith('failed');
+	});
 });
 const toolPortalConfig = {
 	agents: { 'agent-a': { profile: 'profile-a' } },
@@ -144,6 +434,29 @@ const toolPortalConfig = {
 					backend: {
 						kind: 'controller_execution',
 						operations: {
+							tool_vm_cli: {
+								calls: {
+									deny: [],
+									requiresApproval: [],
+									withoutApproval: 'remaining_admitted',
+								},
+								commands: [{ flagRules: [], path: ['crawl'] }],
+								deniedPatterns: [],
+								executablePath: '/usr/local/bin/firecrawl',
+								kind: 'configured_cli',
+								mandatoryArgvPrefix: ['--json'],
+								output: {
+									modelVisibleStderr: 'fixed_safe_summary',
+									overflow: 'truncate',
+									stderrMaxBytes: 1024,
+									stdoutMaxBytes: 1024,
+								},
+								safeHelp: 'Run Firecrawl in the current Tool VM.',
+								stdin: { kind: 'none' },
+								targetKind: 'tool_vm',
+								timeout: { kind: 'quick' },
+								workingDirectory: '.',
+							},
 							inspect_host: {
 								calls: {
 									deny: [],
@@ -176,10 +489,13 @@ const toolPortalConfig = {
 					},
 					calls: {
 						requiresApproval: { allow: ['workspace_git_push'], deny: [] },
-						withoutApproval: { allow: ['controller_host_probe', 'inspect_host'], deny: [] },
+						withoutApproval: {
+							allow: ['controller_host_probe', 'inspect_host', 'tool_vm_cli'],
+							deny: [],
+						},
 					},
 					tools: {
-						allow: ['controller_host_probe', 'inspect_host', 'workspace_git_push'],
+						allow: ['controller_host_probe', 'inspect_host', 'tool_vm_cli', 'workspace_git_push'],
 						deny: [],
 					},
 				},
@@ -187,7 +503,7 @@ const toolPortalConfig = {
 		},
 	},
 	schemaVersion: 1,
-} satisfies ManagedToolPortalConfig;
+} satisfies EffectiveManagedToolPortalConfig;
 const trustedContext = {
 	correlation: { runId: 'run-a', sessionId: 'session-a', toolCallId: 'tool-call-a' },
 	principal: {
@@ -253,9 +569,11 @@ const approvalReservationDispatchAuthority = {
 
 function createFixture(
 	props: {
+		readonly approvalPort?: ToolPortalApprovalPort;
 		readonly sendCommand?: GatewayRuntimeControlCommandClient['sendCommand'];
 		readonly register?: GatewayControlCallerContextRegistrationClient['register'];
 		readonly config?: GatewayRuntimeManagedToolPortalConfig;
+		readonly toolVmAcquisitionPort?: ConfiguredCliToolVmAcquisitionPort;
 	} = {},
 ): {
 	readonly backend: ReturnType<typeof createGatewayControlControllerExecutionBackendPort>;
@@ -300,6 +618,7 @@ function createFixture(
 	);
 	return {
 		backend: createGatewayControlControllerExecutionBackendPort({
+			...(props.approvalPort === undefined ? {} : { approvalPort: props.approvalPort }),
 			callerContextRegistrationClient: { close: async () => undefined, register },
 			controlCommandClient: { sendCommand },
 			createCommandId: () => commandId,
@@ -307,6 +626,9 @@ function createFixture(
 			owningGeneration: 'runtime-generation-a',
 			toolPortalConfig:
 				props.config ?? createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig),
+			...(props.toolVmAcquisitionPort === undefined
+				? {}
+				: { toolVmAcquisitionPort: props.toolVmAcquisitionPort }),
 		}),
 		register,
 		sendCommand,
@@ -320,7 +642,8 @@ describe('Gateway Control controller-execution adapter', () => {
 		const backend = config.profiles['profile-a']?.namespaces.oauth_cli?.backend;
 		if (backend?.kind !== 'controller_execution') throw new Error('Expected controller backend.');
 		const operation = backend.operations.gog_quick;
-		if (operation?.kind !== 'configured_cli') throw new Error('Expected Gog operation.');
+		if (operation?.kind !== 'configured_cli' || operation.targetKind !== 'ephemeral_managed_vm')
+			throw new Error('Expected credentialed Gog operation.');
 		operation.compiledGoogle = compiledGoogleCommandSetSchema.parse({
 			revision: 'a'.repeat(64),
 			noOAuthPaths: [],

@@ -7,8 +7,12 @@ import { afterEach, describe, expect, test } from 'vitest';
 import {
 	createLoadedSystemConfig,
 	createSystemConfigSchemaArtifact,
+	deploymentCacheDirForSystemConfig,
+	deploymentCacheKeyForStorageRoot,
+	deploymentGeneratedDirForStorageRoot,
 	loadSystemConfig,
 	resolveControllerHealthConfig,
+	sharedImageCacheDirForStorageRoot,
 	type LoadedSystemConfig,
 	type SystemConfigInput,
 } from './system-config.js';
@@ -302,7 +306,21 @@ describe('loadSystemConfig', () => {
 
 		// Assert
 		expect(loadedConfig.storageRootDir).toBe(expectedStorageRoot);
-		expect(loadedConfig.cacheDir).toBe(path.join(expectedStorageRoot, 'cache'));
+		expect(loadedConfig.cacheDir).toBe(path.join(path.dirname(expectedStorageRoot), 'cache'));
+		expect(sharedImageCacheDirForStorageRoot(loadedConfig.storageRootDir)).toBe(
+			path.join(path.dirname(expectedStorageRoot), 'cache', 'vm-images'),
+		);
+		expect(deploymentGeneratedDirForStorageRoot(loadedConfig.storageRootDir)).toBe(
+			path.join(expectedStorageRoot, 'generated'),
+		);
+		expect(deploymentCacheDirForSystemConfig(loadedConfig)).toBe(
+			path.join(
+				path.dirname(expectedStorageRoot),
+				'cache',
+				'deployments',
+				deploymentCacheKeyForStorageRoot(expectedStorageRoot),
+			),
+		);
 		expect(loadedConfig.controllerStateDir).toBe(
 			path.join(expectedStorageRoot, 'controller-state'),
 		);
@@ -1103,7 +1121,7 @@ describe('loadSystemConfig', () => {
 				},
 				projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			},
-			cacheDir: path.join(canonicalWorkingDirectoryPath, 'storage', 'cache'),
+			cacheDir: path.join(canonicalWorkingDirectoryPath, 'cache'),
 			imageProfiles: {
 				gateways: {
 					hermes: {
@@ -1197,7 +1215,7 @@ describe('loadSystemConfig', () => {
 
 		const expectedRoot = path.join(os.homedir(), '.agent-vm', 'custom');
 		expect(config.storageRootDir).toBe(expectedRoot);
-		expect(config.cacheDir).toBe(path.join(expectedRoot, 'cache'));
+		expect(config.cacheDir).toBe(path.join(path.dirname(expectedRoot), 'cache'));
 		expect(config.controllerStateDir).toBe(path.join(expectedRoot, 'controller-state'));
 		expect(config.controllerRuntimeDir).toBe(path.join(expectedRoot, 'controller-runtime'));
 		expect(config.zones[0]?.gateway.stateDir).toBe(path.join(expectedRoot, 'shravan', 'state'));
@@ -3670,7 +3688,7 @@ describe('loadSystemConfig', () => {
 		},
 	);
 
-	test.each(['cache', 'controller-state', 'controller-runtime'])(
+	test.each(['cache', 'controller-state', 'controller-runtime', 'generated'])(
 		'rejects reserved global storage zone id %s',
 		async (reservedZoneId) => {
 			// Arrange
@@ -3683,6 +3701,81 @@ describe('loadSystemConfig', () => {
 
 			// Act / Assert
 			await expect(loadSystemConfig(configPath)).rejects.toThrow(/reserved for global storage/u);
+		},
+	);
+
+	test('rejects cache as a project namespace reserved for host-shared storage', async () => {
+		// Arrange
+		const config = createValidSystemConfigInput();
+		config.host.projectNamespace = 'cache';
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-reserved-cache-project-namespace-',
+			config,
+		);
+
+		// Act / Assert
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(
+			/projectNamespace is reserved for host-shared storage/u,
+		);
+	});
+
+	test('rejects a symlinked host cache that resolves inside the deployment root', async () => {
+		// Arrange
+		const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-shared-cache-overlap-'));
+		createdDirectories.push(fixtureRoot);
+		const hostRoot = path.join(fixtureRoot, 'host');
+		const deploymentRoot = path.join(hostRoot, 'deployment');
+		await mkdir(deploymentRoot, { recursive: true });
+		await symlink(deploymentRoot, path.join(hostRoot, 'cache'));
+		const config = createValidSystemConfigInput();
+		config.storageRootDir = deploymentRoot;
+		const configPath = await writeSystemConfigForTest(
+			'agent-vm-system-symlinked-shared-cache-overlap-',
+			config,
+		);
+
+		// Act / Assert
+		await expect(loadSystemConfig(configPath)).rejects.toThrow(/cacheDir/u);
+	});
+
+	test('derives distinct deployment cache scopes for canonical roots sharing one namespace', () => {
+		const firstConfig = createValidSystemConfigInput();
+		const secondConfig = createValidSystemConfigInput();
+		firstConfig.host.projectNamespace = 'same-namespace';
+		secondConfig.host.projectNamespace = 'same-namespace';
+		firstConfig.storageRootDir = '/var/agent-vm/deployment-a';
+		secondConfig.storageRootDir = '/var/agent-vm/deployment-b';
+
+		const firstLoaded = parseSystemConfigInputForTest(firstConfig);
+		const secondLoaded = parseSystemConfigInputForTest(secondConfig);
+
+		expect(firstLoaded.cacheDir).toBe(secondLoaded.cacheDir);
+		expect(deploymentCacheDirForSystemConfig(firstLoaded)).not.toBe(
+			deploymentCacheDirForSystemConfig(secondLoaded),
+		);
+	});
+
+	test.each(['state', 'zone-files', 'runtime', 'backup', 'gateway-config'])(
+		'rejects a protected %s symlink into the central cache',
+		async (protectedKind) => {
+			const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-cache-protected-'));
+			createdDirectories.push(fixtureRoot);
+			const deploymentRoot = path.join(fixtureRoot, 'deployment');
+			const cacheTarget = path.join(fixtureRoot, 'cache', 'protected-target');
+			const config = createValidSystemConfigInput();
+			config.storageRootDir = deploymentRoot;
+			const zoneId = config.zones[0].id;
+			const protectedPath = path.join(deploymentRoot, zoneId, protectedKind);
+			await mkdir(path.dirname(protectedPath), { recursive: true });
+			await mkdir(cacheTarget, { recursive: true });
+			await symlink(cacheTarget, protectedPath);
+			if (protectedKind === 'backup') config.zones[0].gateway.backupDir = protectedPath;
+			if (protectedKind === 'gateway-config') {
+				config.zones[0].gateway.config = path.join(protectedPath, 'config.yaml');
+			}
+			const configPath = await writeSystemConfigForTest('agent-vm-cache-protected-config-', config);
+
+			await expect(loadSystemConfig(configPath)).rejects.toThrow(/cacheDir must not overlap/u);
 		},
 	);
 
@@ -4190,7 +4283,7 @@ describe('loadSystemConfig', () => {
 	);
 
 	test.each([
-		['cacheDir', '../storage/cache/observability', /dataDir must not overlap cacheDir/u],
+		['cacheDir', '../cache/observability', /dataDir must not overlap cacheDir/u],
 		[
 			'controllerRuntimeDir',
 			'../storage/controller-runtime/observability',

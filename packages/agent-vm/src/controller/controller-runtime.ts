@@ -14,7 +14,11 @@ import {
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
 
 import { resolveCliVersion } from '../cli/cli-version.js';
-import { resolveControllerHealthConfig } from '../config/system-config.js';
+import {
+	deploymentCacheDirForSystemConfig,
+	gatewayFrameworkCacheDirForSystemConfig,
+	resolveControllerHealthConfig,
+} from '../config/system-config.js';
 import {
 	preflightGatewayZoneStart as preflightGatewayZoneStartDefault,
 	startGatewayZoneForController,
@@ -766,7 +770,6 @@ async function startControllerRuntimeWithOwnershipLock(
 				...(toolVmOptions.hostPublishedFilesRoot === undefined
 					? {}
 					: { hostPublishedFilesRoot: toolVmOptions.hostPublishedFilesRoot }),
-				cacheDir: options.systemConfig.cacheDir,
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
@@ -1005,7 +1008,10 @@ async function startControllerRuntimeWithOwnershipLock(
 		readonly entryNames: string[];
 		readonly probeKind: 'controller_cache_dir_listing';
 	}> => {
-		const probeDirectory = path.join(options.systemConfig.cacheDir, 'controller-host-probe');
+		const probeDirectory = path.join(
+			deploymentCacheDirForSystemConfig(options.systemConfig),
+			'controller-host-probe',
+		);
 		await mkdir(probeDirectory, { recursive: true, mode: 0o700 });
 		await writeFile(
 			path.join(probeDirectory, controllerHostProbeMarkerFileName),
@@ -1095,9 +1101,8 @@ async function startControllerRuntimeWithOwnershipLock(
 					signal: AbortSignal.any([context.signal, controllerShutdown.signal]),
 				},
 				destinationVm: current.gateway.vm,
-				cacheDirectory: path.join(
-					options.systemConfig.cacheDir,
-					'gateways',
+				cacheDirectory: gatewayFrameworkCacheDirForSystemConfig(
+					options.systemConfig,
 					context.gateway.zoneId,
 				),
 				sharedStaging: await sharedStaging.getStore(
@@ -1169,6 +1174,9 @@ async function startControllerRuntimeWithOwnershipLock(
 				return requireCurrentConfiguredCliAuthorization(currentAuthorization);
 			};
 			const operation = authorization.operation;
+			if (operation.executionTarget.kind === 'tool_vm') {
+				throw new Error('Tool VM configured CLI execution must not reach the controller.');
+			}
 			return operation.executionTarget.kind === 'controller_host'
 				? await executeConfiguredCliOnControllerHost({
 						authorization,
@@ -2098,7 +2106,7 @@ export async function startControllerRuntime(
 				});
 				// oxlint-disable-next-line no-await-in-loop -- attachment leftovers belong to the same contained Gateway generation.
 				await cleanupNativeAttachmentCacheAfterContainment(
-					path.join(options.systemConfig.cacheDir, 'gateways', zoneId),
+					gatewayFrameworkCacheDirForSystemConfig(options.systemConfig, zoneId),
 				);
 			} catch (error) {
 				if (containsGatewayOwnershipCoordinatorErrorCode(error, 'owner-unsafe')) {

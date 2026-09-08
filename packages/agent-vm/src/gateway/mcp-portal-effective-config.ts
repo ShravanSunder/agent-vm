@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -6,6 +6,8 @@ import {
 	loadMcpConfig,
 	loadToolPortalConfig,
 	loadOAuthConfig,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	isControllerToolVmConfiguredCliOperation,
 	compileOAuthPolicy,
 	configuredGoogleOperationKey,
 	compileToolPortalNamespaceDiscoveryByProfile,
@@ -13,6 +15,7 @@ import {
 	encodeConfiguredCliPreparedImageIdentity,
 	managedToolPortalConfigSchema,
 	mcpPortalConfigSchema,
+	normalizePreparedControllerExecutionOperation,
 	preparedManagedToolPortalConfigSchema,
 	toolPortalNamespaceAllowsOperation,
 	type FormattedSecretValue,
@@ -39,6 +42,7 @@ export interface McpPortalEffectiveConfigProps {
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages?: ManagedVmImageCapability;
+	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
@@ -52,6 +56,7 @@ export interface McpPortalEffectiveConfigFromConfigProps {
 	readonly effectiveHostConfigDir: string;
 	readonly mcpConfig: McpConfig;
 	readonly managedVmImages?: ManagedVmImageCapability;
+	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
 	readonly toolPortalConfig: ToolPortalConfig;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
@@ -126,6 +131,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages: ManagedVmImageCapability | undefined;
 	readonly mcpConfig: McpConfig;
+	readonly sharedImageCacheDir: string | undefined;
 	readonly toolPortalConfig: ToolPortalConfig;
 }): Promise<PreparedManagedToolPortalConfig> {
 	const effectiveConfig = structuredClone(props.toolPortalConfig);
@@ -139,6 +145,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 				Object.values(namespace.backend.operations).some(
 					(operation) =>
 						operation.kind === 'configured_cli' &&
+						isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
 						operation.authorization?.kind === 'oauth_account',
 				),
 		),
@@ -193,7 +200,9 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	const managedVmImages = props.managedVmImages;
 	if (
 		ephemeralTargets.length > 0 &&
-		(authoredConfigDir === undefined || managedVmImages === undefined)
+		(authoredConfigDir === undefined ||
+			managedVmImages === undefined ||
+			props.sharedImageCacheDir === undefined)
 	) {
 		throw new Error(
 			'tool-portal: ephemeral managed VM operations require the existing Managed VM image preparation capability.',
@@ -211,13 +220,11 @@ async function prepareConfiguredCliManagedVmImages(props: {
 			const recipePath = path.resolve(authoredConfigDir, target.imageReference);
 			let preparedImage = preparedImagesByRecipePath.get(recipePath);
 			if (preparedImage === undefined) {
-				const recipePathDigest = createHash('sha256').update(recipePath).digest('hex');
+				if (props.sharedImageCacheDir === undefined) {
+					throw new Error('Tool Portal shared Managed VM image cache is unavailable.');
+				}
 				preparedImage = managedVmImages.prepareImage({
-					cacheDirectory: path.join(
-						props.effectiveHostConfigDir,
-						'controller-execution-images',
-						recipePathDigest,
-					),
+					artifactCacheDirectory: props.sharedImageCacheDir,
 					recipePath,
 				});
 				preparedImagesByRecipePath.set(recipePath, preparedImage);
@@ -267,8 +274,11 @@ async function prepareConfiguredCliManagedVmImages(props: {
 																return [
 																	operationName,
 																	operation.kind === 'configured_cli' && commandSet !== undefined
-																		? { ...operation, compiledGoogle: commandSet }
-																		: operation,
+																		? {
+																				...normalizePreparedControllerExecutionOperation(operation),
+																				compiledGoogle: commandSet,
+																			}
+																		: normalizePreparedControllerExecutionOperation(operation),
 																];
 															},
 														),
@@ -469,7 +479,11 @@ function assertManagedControllerExecutionPolicy(props: {
 			throw new Error('Managed Google policy requires controller execution.');
 		for (const toolName of props.namespacePolicy.tools.allow) {
 			const operation = props.namespacePolicy.backend.operations[toolName];
-			if (operation?.kind !== 'configured_cli' || operation.authorization?.kind !== 'oauth_account')
+			if (
+				operation?.kind !== 'configured_cli' ||
+				!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
+				operation.authorization?.kind !== 'oauth_account'
+			)
 				throw new Error(
 					'Managed Google policy can expose only registered Google command operations.',
 				);
@@ -534,7 +548,10 @@ function assertEffectiveConfiguredCliCommandsDoNotOverlap(props: {
 		for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
 			if (operation.kind !== 'configured_cli') continue;
 			const commands = commandsByExecutable.get(operation.executablePath) ?? [];
-			for (const command of operation.commands) {
+			const configuredCommands = isControllerToolVmConfiguredCliOperation(operation)
+				? operation.suggestCommands
+				: operation.commands;
+			for (const command of configuredCommands) {
 				commands.push({
 					identity: `${namespaceId}.${operationName}`,
 					tokens: [...operation.mandatoryArgvPrefix, ...command.path],
@@ -658,8 +675,9 @@ export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig
 			return Object.entries(namespacePolicy.backend.operations).some(
 				([operationName, operation]) =>
 					operation.kind === 'configured_cli' &&
-					!('source' in operation.calls) &&
-					operation.calls.requiresApproval.length > 0 &&
+					(isControllerToolVmConfiguredCliOperation(operation)
+						? operation.suggestCalls.suggestRequiresApproval.length > 0
+						: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
 					selectorAllowsTool(namespacePolicy.tools, operationName) &&
 					selectorAllowsTool(calls.withoutApproval, operationName),
 			);
@@ -854,6 +872,7 @@ async function buildEffectivePlanFromConfig(
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,
 		mcpConfig: props.mcpConfig,
+		sharedImageCacheDir: props.sharedImageCacheDir,
 		toolPortalConfig: props.toolPortalConfig,
 	});
 	const compiledCredentialedRuntimeConfig = compileCredentialedRuntimeConfig({
@@ -890,6 +909,9 @@ async function buildEffectivePlan(
 		approvalAccessConfigured: props.approvalAccessConfigured,
 		authoredConfigDir: props.authoredConfigDir,
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
+		...(props.sharedImageCacheDir === undefined
+			? {}
+			: { sharedImageCacheDir: props.sharedImageCacheDir }),
 		...(props.managedVmImages === undefined ? {} : { managedVmImages: props.managedVmImages }),
 		mcpConfig,
 		secretResolver: props.secretResolver,

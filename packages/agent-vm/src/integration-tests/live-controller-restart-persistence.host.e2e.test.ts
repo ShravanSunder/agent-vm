@@ -109,7 +109,7 @@ function createSystemConfig(
 	return {
 		schemaVersion: 2,
 		storageRootDir,
-		cacheDir: path.join(storageRootDir, 'cache'),
+		cacheDir: path.join(path.dirname(storageRootDir), 'cache'),
 		controllerRuntimeDir: path.join(storageRootDir, 'controller-runtime'),
 		controllerStateDir: path.join(storageRootDir, 'controller-state'),
 		systemConfigPath: path.join(storageRootDir, 'config', 'system.json'),

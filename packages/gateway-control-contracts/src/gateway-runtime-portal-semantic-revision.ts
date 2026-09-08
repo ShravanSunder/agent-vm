@@ -5,10 +5,10 @@ import {
 	type EffectiveNamespaceDiscovery,
 } from '@agent-vm/agent-portal-sdk';
 import type {
+	ConfiguredCliInvocationMatcher,
 	EffectiveManagedToolPortalConfig,
 	FormattedSecretValue,
 	GatewayRuntimeManagedToolPortalConfig,
-	ManagedToolPortalConfig,
 	McpConfig,
 } from '@agent-vm/config-contracts';
 
@@ -200,9 +200,7 @@ function recordEntries<TValue>(
 	return Object.entries(record);
 }
 
-type BindingConfigProfile =
-	| EffectiveManagedToolPortalConfig['profiles'][string]
-	| ManagedToolPortalConfig['profiles'][string];
+type BindingConfigProfile = EffectiveManagedToolPortalConfig['profiles'][string];
 type BindingConfigNamespacePolicy = BindingConfigProfile['namespaces'][string];
 type BindingControllerExecutionBackend = Extract<
 	BindingConfigNamespacePolicy['backend'],
@@ -386,7 +384,7 @@ function normalizedProfilePolicyInputs(props: {
 }
 
 function normalizedBindingInputs(
-	config: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig,
 ): NormalizedBindingInputs {
 	const profiles = Object.fromEntries(
 		recordEntries<BindingConfigProfile>(config.profiles).map(([profileId, profile]) => [
@@ -471,10 +469,7 @@ function normalizedControllerExecutionOperation(
 }
 
 function normalizedInvocationMatchers(
-	matchers: Extract<
-		BindingControllerExecutionOperation,
-		{ kind: 'configured_cli' }
-	>['calls']['deny'],
+	matchers: readonly ConfiguredCliInvocationMatcher[],
 ): readonly object[] {
 	return matchers
 		.map((matcher) => ({
@@ -517,7 +512,7 @@ function revision(domain: string, material: object): string {
 }
 
 export function deriveGatewayRuntimePortalBindingRevision(
-	toolPortalConfig: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
+	toolPortalConfig: EffectiveManagedToolPortalConfig,
 ): string {
 	return revision('binding', normalizedBindingInputs(toolPortalConfig));
 }

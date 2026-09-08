@@ -43,7 +43,7 @@ describe('workerLifecycle', () => {
 	it('builds a worker VM spec with /state mounted and /work on rootfs', () => {
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
@@ -92,7 +92,7 @@ describe('workerLifecycle', () => {
 
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
@@ -111,7 +111,7 @@ describe('workerLifecycle', () => {
 
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
@@ -138,7 +138,7 @@ describe('workerLifecycle', () => {
 
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: { OPENAI_API_KEY: 'openai-token' },
 			zoneRuntimeDir: '/host/runtime',
@@ -181,7 +181,7 @@ describe('workerLifecycle', () => {
 
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: {
 				OPENAI_API_KEY: 'openai-token',
@@ -230,7 +230,7 @@ describe('workerLifecycle', () => {
 
 		const vmRequirements = workerLifecycle.buildVmRequirements({
 			controllerPort: 18800,
-			gatewayCacheDir: '/host/cache/gateways/shravan',
+			gatewayCacheDir: '/host/cache/deployments/digest/zones/shravan/framework-cache',
 			projectNamespace: 'agent-vm-tests-a1b2c3d4',
 			resolvedSecrets: {
 				OPENAI_API_KEY: 'openai-token',

@@ -19,7 +19,10 @@ import {
 	compiledGoogleCommandSetSchema,
 	type CompiledGoogleCommandSet,
 } from './compiled-google-command-set.js';
-import { type ControllerExecutionOperation } from './controller-configured-cli.js';
+import {
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	type ControllerEphemeralManagedVmConfiguredCliOperation,
+} from './controller-configured-cli.js';
 import {
 	googleOAuthApplicationIdSchema,
 	oauthConfigSchema,
@@ -105,7 +108,7 @@ function validateCatalog(catalog: GooglePolicyCatalog): void {
 	}
 }
 function compileCommandSet(props: {
-	readonly operation: Extract<ControllerExecutionOperation, { kind: 'configured_cli' }>;
+	readonly operation: ControllerEphemeralManagedVmConfiguredCliOperation;
 	readonly catalog: GooglePolicyCatalog;
 	readonly applicationIdsByFamily: CompiledGoogleCommandSet['applicationIdsByFamily'];
 }): CompiledGoogleCommandSet {
@@ -121,8 +124,6 @@ function compileCommandSet(props: {
 		);
 	if (operation.stdin.kind !== 'none')
 		compilationError('Google file inputs use the qualified file path, not process stdin.');
-	if (operation.executionTarget.kind !== 'ephemeral_managed_vm')
-		compilationError('Google calls require a credentialed Managed VM.');
 	if (
 		operation.executionTarget.environment.kind === 'inherit_allowlist' &&
 		operation.executionTarget.environment.names.some((name) =>
@@ -307,6 +308,7 @@ export function compileOAuthPolicy(input: {
 			for (const [operationName, operation] of Object.entries(namespace.backend.operations)) {
 				if (
 					operation.kind !== 'configured_cli' ||
+					!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
 					operation.authorization?.kind !== 'oauth_account' ||
 					!toolPortalNamespaceAllowsOperation(namespace, operationName)
 				)

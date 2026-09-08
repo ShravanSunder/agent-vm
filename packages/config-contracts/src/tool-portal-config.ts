@@ -7,12 +7,15 @@ import {
 	configuredCliInvocationCallPolicySchema,
 	configuredCliCredentialLogicalNameSchema,
 	configuredCliPatternRuleSchema,
+	configuredCliStaticInvocationCallPolicySchema,
 	configuredCliStdinPolicySchema,
 	configuredCliTimeoutPolicySchema,
 	controllerExecutionOperationSchema,
 	controllerRegisteredOperationSchema,
-	effectiveControllerConfiguredCliOperationSchema,
+	effectiveControllerHostConfiguredCliOperationSchema,
 	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	isEffectiveControllerToolVmConfiguredCliOperation,
 } from './controller-configured-cli.js';
 import {
 	googlePolicyDefaultsConfigSchema,
@@ -305,6 +308,12 @@ export const toolPortalProfileDefinitionSchema = z
 	})
 	.strict();
 
+const standaloneToolPortalProfileDefinitionSchema = z
+	.object({
+		namespaces: z.record(z.string().min(1), toolPortalMcpNamespacePolicySchema).default({}),
+	})
+	.strict();
+
 export type ToolPortalProfileDefinition = z.infer<typeof toolPortalProfileDefinitionSchema>;
 
 export const toolPortalAgentConfigSchema = z
@@ -501,20 +510,57 @@ export const preparedManagedToolPortalConfigSchema = z
 
 export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedToolPortalConfigSchema>;
 
-export const gatewayRuntimeConfiguredCliOperationSchema = z
+const gatewayRuntimeConfiguredCliCommonShape = {
+	calls: configuredCliInvocationCallPolicySchema,
+	commands: z.array(configuredCliAllowedCommandSchema).min(1),
+	deniedPatterns: z.array(configuredCliPatternRuleSchema),
+	kind: z.literal('configured_cli'),
+	safeHelp: z.string().min(1).max(4_000),
+	stdin: configuredCliStdinPolicySchema,
+	timeout: configuredCliTimeoutPolicySchema,
+} as const;
+
+export const gatewayRuntimeControllerHostConfiguredCliOperationSchema = z
 	.object({
-		compiledGoogle: compiledGoogleCommandSetSchema.optional(),
+		...gatewayRuntimeConfiguredCliCommonShape,
 		authorization: configuredCliAuthorizationSchema.optional(),
-		calls: configuredCliInvocationCallPolicySchema,
-		commands: z.array(configuredCliAllowedCommandSchema).min(1),
-		deniedPatterns: z.array(configuredCliPatternRuleSchema),
-		kind: z.literal('configured_cli'),
-		safeHelp: z.string().min(1).max(4_000),
-		stdin: configuredCliStdinPolicySchema,
-		targetKind: z.enum(['controller_host', 'ephemeral_managed_vm']),
-		timeout: configuredCliTimeoutPolicySchema,
+		targetKind: z.literal('controller_host'),
 	})
 	.strict();
+
+export const gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema = z
+	.object({
+		...gatewayRuntimeConfiguredCliCommonShape,
+		authorization: configuredCliAuthorizationSchema.optional(),
+		compiledGoogle: compiledGoogleCommandSetSchema.optional(),
+		targetKind: z.literal('ephemeral_managed_vm'),
+	})
+	.strict();
+
+export const gatewayRuntimeToolVmConfiguredCliOperationSchema = z
+	.object({
+		...gatewayRuntimeConfiguredCliCommonShape,
+		calls: configuredCliStaticInvocationCallPolicySchema,
+		executablePath: z.string().min(1),
+		mandatoryArgvPrefix: z.array(z.string().max(4_096)).max(64),
+		output: z
+			.object({
+				modelVisibleStderr: z.enum(['none', 'fixed_safe_summary']),
+				overflow: z.enum(['fail', 'truncate']),
+				stderrMaxBytes: z.number().int().positive().max(16_777_216),
+				stdoutMaxBytes: z.number().int().positive().max(16_777_216),
+			})
+			.strict(),
+		targetKind: z.literal('tool_vm'),
+		workingDirectory: z.string().min(1),
+	})
+	.strict();
+
+export const gatewayRuntimeConfiguredCliOperationSchema = z.discriminatedUnion('targetKind', [
+	gatewayRuntimeControllerHostConfiguredCliOperationSchema,
+	gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema,
+	gatewayRuntimeToolVmConfiguredCliOperationSchema,
+]);
 
 export const gatewayRuntimeControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
 	controllerRegisteredOperationSchema,
@@ -525,22 +571,11 @@ export type GatewayRuntimeControllerExecutionOperation = z.infer<
 	typeof gatewayRuntimeControllerExecutionOperationSchema
 >;
 
-const effectiveControllerHostConfiguredCliOperationSchema =
-	effectiveControllerConfiguredCliOperationSchema.refine(
-		(operation) => operation.executionTarget.kind === 'controller_host',
-		{ message: 'Persisted effective configured CLI operations may retain only host targets.' },
-	);
-
-const effectiveCredentialedConfiguredCliOperationSchema =
-	gatewayRuntimeConfiguredCliOperationSchema.refine(
-		(operation) => operation.targetKind === 'ephemeral_managed_vm',
-		{ message: 'Credentialed effective operations must project the Managed VM target kind.' },
-	);
-
 const effectiveControllerExecutionOperationSchema = z.union([
 	controllerRegisteredOperationSchema,
 	effectiveControllerHostConfiguredCliOperationSchema,
-	effectiveCredentialedConfiguredCliOperationSchema,
+	gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema,
+	gatewayRuntimeToolVmConfiguredCliOperationSchema,
 ]);
 
 const effectiveControllerExecutionBackendBindingSchema = z
@@ -627,9 +662,40 @@ function projectedConfiguredCliOperation(
 	>['operations'][string],
 ): GatewayRuntimeControllerExecutionOperation {
 	if (operation.kind === 'registered_action') return operation;
-	return {
+	if (isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(operation)) {
+		return gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema.parse({
+			...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
+			...(operation.compiledGoogle === undefined
+				? {}
+				: { compiledGoogle: operation.compiledGoogle }),
+			calls: operation.calls,
+			commands: operation.commands,
+			deniedPatterns: operation.deniedPatterns,
+			kind: 'configured_cli',
+			safeHelp: operation.safeHelp,
+			stdin: operation.stdin,
+			targetKind: operation.executionTarget.kind,
+			timeout: operation.timeout,
+		});
+	}
+	if (isEffectiveControllerToolVmConfiguredCliOperation(operation)) {
+		return gatewayRuntimeToolVmConfiguredCliOperationSchema.parse({
+			calls: operation.calls,
+			commands: operation.commands,
+			deniedPatterns: operation.deniedPatterns,
+			executablePath: operation.executablePath,
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+			output: operation.output,
+			safeHelp: operation.safeHelp,
+			stdin: operation.stdin,
+			targetKind: operation.executionTarget.kind,
+			timeout: operation.timeout,
+			workingDirectory: operation.executionTarget.workingDirectory,
+		});
+	}
+	return gatewayRuntimeControllerHostConfiguredCliOperationSchema.parse({
 		...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
-		...(operation.compiledGoogle === undefined ? {} : { compiledGoogle: operation.compiledGoogle }),
 		calls: operation.calls,
 		commands: operation.commands,
 		deniedPatterns: operation.deniedPatterns,
@@ -638,7 +704,7 @@ function projectedConfiguredCliOperation(
 		stdin: operation.stdin,
 		targetKind: operation.executionTarget.kind,
 		timeout: operation.timeout,
-	};
+	});
 }
 
 export function createEffectiveManagedToolPortalConfig(
@@ -750,7 +816,7 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 
 export const standaloneToolPortalConfigSchema = z
 	.object({
-		...toolPortalCommonConfigShape,
+		$schema: z.string().min(1).optional(),
 		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
 		authentication: toolPortalStandaloneAuthenticationSchema,
 		drain: z
@@ -760,6 +826,8 @@ export const standaloneToolPortalConfigSchema = z
 			.strict(),
 		entrypoints: toolPortalStandaloneEntrypointsSchema,
 		mode: z.literal('standalone'),
+		profiles: z.record(z.string().min(1), standaloneToolPortalProfileDefinitionSchema),
+		schemaVersion: z.literal(1),
 	})
 	.strict();
 
@@ -878,19 +946,6 @@ export const toolPortalConfigSchema = z
 
 		if (config.mode !== 'standalone') {
 			return;
-		}
-
-		for (const [profileId, profile] of Object.entries(config.profiles)) {
-			for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
-				if (namespacePolicy.backend.kind === 'mcp_provider') {
-					continue;
-				}
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Standalone Tool Portal version 1 does not admit the privileged "${namespacePolicy.backend.kind}" backend.`,
-					path: ['profiles', profileId, 'namespaces', namespaceId, 'backend', 'kind'],
-				});
-			}
 		}
 
 		const configuredAgentIds = Object.keys(config.agents);

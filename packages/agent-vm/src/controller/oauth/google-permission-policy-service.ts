@@ -4,6 +4,7 @@ import {
 	googleOAuthApplicationIdSchema,
 	controllerConfiguredCliInputSchema,
 	configuredGoogleOperationKey,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
 	resolveCompiledGoogleCommand,
 	toolPortalNamespaceAllowsOperation,
 	type ControllerConfiguredCliInput,
@@ -285,6 +286,7 @@ export function createGooglePermissionPolicyService(
 			const input = controllerConfiguredCliInputSchema.safeParse(request.input);
 			if (
 				operation?.kind !== 'configured_cli' ||
+				!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
 				operation.authorization?.kind !== 'oauth_account' ||
 				commandSet === undefined ||
 				!input.success

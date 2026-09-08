@@ -453,6 +453,8 @@ function approvalGrantDispatchAuthority(
 	grant: GatewayRuntimeApprovalDispatchGrant,
 ): GatewayRuntimeToolPortalDispatchAuthority {
 	switch (grant.backendKind) {
+		case 'controller_execution':
+			return { backendKind: 'controller_execution', grant, kind: 'approval-grant' };
 		case 'mcp_provider':
 			return { backendKind: 'mcp_provider', grant, kind: 'approval-grant' };
 		case 'tool_vm_runner':
@@ -675,7 +677,11 @@ export function createManagedToolPortalCapabilityCore(
 					namespace?.backend.kind === 'controller_execution'
 						? namespace.backend.operations[propsForCall.call.name]
 						: undefined;
-				if (operation?.kind !== 'configured_cli' || operation.compiledGoogle === undefined)
+				if (
+					operation?.kind !== 'configured_cli' ||
+					operation.targetKind !== 'ephemeral_managed_vm' ||
+					operation.compiledGoogle === undefined
+				)
 					throw new Error('Google command table unavailable.');
 				const local = resolveCompiledGoogleCommand(operation.compiledGoogle, input.argv);
 				const result = managedGooglePreflightResultSchema.parse(

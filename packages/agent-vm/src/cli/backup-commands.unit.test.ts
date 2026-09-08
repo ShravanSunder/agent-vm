@@ -258,7 +258,7 @@ describe('runBackupCommand', () => {
 		await expect(identityPromise).resolves.toBe('test-environment-backup-identity');
 		expect(createBackup).toHaveBeenCalledWith({
 			backupDir: 'storage/shravan/state/backups',
-			cacheDir: 'storage/cache',
+			cacheDir: 'cache',
 			stateDir: 'storage/shravan/state',
 			zoneFilesDir: 'storage/shravan/zone-files',
 			zoneId: 'shravan',

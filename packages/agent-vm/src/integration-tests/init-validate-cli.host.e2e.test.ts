@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -25,6 +25,30 @@ afterEach(async () => {
 });
 
 describe('smoke: generated agent-vm config validation', () => {
+	it('rejects the generated zone namespace before writing a scaffold', async () => {
+		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-reserved-'));
+		createdDirectories.push(targetDirectory);
+
+		const result = await execa(
+			'node',
+			[
+				agentVmCliPath,
+				'init',
+				'generated',
+				'--type',
+				'worker',
+				'--secrets',
+				'environment',
+				'--paths',
+				'local',
+			],
+			{ cwd: targetDirectory, reject: false, timeout: 30_000 },
+		);
+
+		expect(result.exitCode).not.toBe(0);
+		expect(result.stderr).toContain('reserved for global storage');
+		await expect(readdir(targetDirectory)).resolves.toEqual([]);
+	});
 	it('initializes and validates a config with root-derived controller storage', async () => {
 		// Arrange
 		const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-validate-cli-'));
