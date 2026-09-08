@@ -319,6 +319,12 @@ describe('createGatewayZoneVmOperations', () => {
 			user: 'sandbox',
 		}));
 		const managedVm = {
+			fileTransfer: {
+				createDirectory: vi.fn(async () => {}),
+				writeFileStream: vi.fn<NonNullable<ManagedVm['fileTransfer']>['writeFileStream']>(
+					async () => {},
+				),
+			},
 			close: vi.fn(async () => {}),
 			configureIngressRoutes: vi.fn(),
 			enableIngress: vi.fn(async () => ({
@@ -342,6 +348,14 @@ describe('createGatewayZoneVmOperations', () => {
 		expect(gatewayVm.getHostProcessId()).toBe(12_345);
 		expect(sshAccess.port).toBe(2200);
 		expect(enableSsh).toHaveBeenCalledWith({ user: 'sandbox' });
+		const write = {
+			guestPath: '/work/owned-staging/file',
+			contents: (async function* () {
+				yield new Uint8Array([1]);
+			})(),
+		};
+		await gatewayVm.fileTransfer?.writeFileStream(write);
+		expect(managedVm.fileTransfer.writeFileStream).toHaveBeenCalledExactlyOnceWith(write);
 		expect(gatewayVm).not.toHaveProperty('close');
 		expect(gatewayVm).not.toHaveProperty('configureIngressRoutes');
 		expect(gatewayVm).not.toHaveProperty('enableIngress');

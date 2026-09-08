@@ -99,6 +99,8 @@ describe('manual templates', () => {
 		expect(layout).toContain('config/gateways/<zone>/mcp.config.jsonc');
 		expect(layout).toContain('config/gateways/<zone>/tool-portal.config.jsonc');
 		expect(layout).toContain('config/gateways/<zone>/oauth.config.jsonc');
+		expect(layout).toContain('separate agent/account/application authorizations');
+		expect(layout).toContain('writes are not universally forced to Ask');
 		expect(layout).toContain('Hermes gateway VMs mount zoneFilesDir at /zone');
 		expect(layout).toContain(
 			"Managed Hermes Tool VMs expose only the selected agent's filtered durable workspace at /workspace",
@@ -230,6 +232,14 @@ describe('manual templates', () => {
 		expect(portal).toContain('targets do not declare runtime ids');
 		expect(portal).toContain('file_binding or http_mediation credentialProjection');
 		expect(portal).toContain('tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH');
+		expect(portal).toContain('Command outcome and file availability are independent');
+		expect(portal).toContain('successful transfer proves byte delivery, not producer success');
+		expect(portal).toContain('Do not rerun a remote mutation automatically to recover a file');
+		expect(portal).toContain('there is no separate list/materialize copy action');
+		expect(portal).toContain('Producer retirement and later Google disconnect do not recall');
+		expect(portal).toContain('tool_portal_file is the only native attachment action');
+		expect(portal).toContain('settled-but-unconfirmed delivery clean the owned cache child');
+		expect(portal).toContain('No outcome triggers automatic resend');
 		expect(portal).toContain('Prefer http-mediation for MCP provider API keys');
 		expect(portal).toContain(
 			'Live validate follows only active Tool Portal namespaces whose backend.kind is mcp_provider',
@@ -240,6 +250,10 @@ describe('manual templates', () => {
 			"/workspace is the current agent's filtered durable RealFS workspace",
 		);
 		expect(runtimePaths).toContain('/gitdirs/workspace.git');
+		expect(runtimePaths).toContain('/agent-vm/files is the exact Tool VM generation');
+		expect(runtimePaths).toContain('/agent-vm/gog-work RealFS mount');
+		expect(runtimePaths).toContain('Gog file inputs always resolve relative to /work');
+		expect(runtimePaths).toContain('Cleanup uses normal unlink semantics');
 		expect(runtimePaths).toContain('persistent zone files live at /zone');
 		expect(runtimePaths).toContain('stateDir/profiles/<profileName>');
 		expect(runtimePaths).toContain('Controller restart adopts no VM');

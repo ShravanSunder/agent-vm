@@ -1,53 +1,80 @@
-CREATE TABLE `oauth_account_profiles` (
-	`profile_record_id` text PRIMARY KEY NOT NULL,
-	`zone_id` text NOT NULL,
-	`agent_id` text NOT NULL,
-	`account_profile_id` text NOT NULL,
-	`provider_id` text NOT NULL,
-	`provider_subject` text,
-	`account_label` text,
-	`status` text NOT NULL,
-	`record_revision` integer NOT NULL,
-	`created_at_ms` integer NOT NULL,
-	`updated_at_ms` integer NOT NULL
+-- Fresh version-2 initialization only. Legacy catalogs are refused before migration.
+CREATE TABLE oauth_accounts (
+ account_id TEXT PRIMARY KEY NOT NULL,
+ display_label TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL,
+ owner_issuer TEXT NOT NULL,
+ owner_user_id TEXT NOT NULL,
+ provider_id TEXT NOT NULL,
+ provider_subject TEXT NOT NULL,
+ record_revision INTEGER NOT NULL,
+ updated_at_ms INTEGER NOT NULL,
+ zone_id TEXT NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `oauth_account_profiles_zone_agent_profile_unique`
-	ON `oauth_account_profiles` (`zone_id`, `agent_id`, `account_profile_id`);
+CREATE UNIQUE INDEX oauth_accounts_subject_unique ON oauth_accounts(zone_id, provider_id, provider_subject);
 --> statement-breakpoint
-CREATE TABLE `oauth_grants` (
-	`credential_id` text PRIMARY KEY NOT NULL,
-	`profile_record_id` text NOT NULL,
-	`application_id` text NOT NULL,
-	`granted_scopes` text NOT NULL,
-	`lifecycle_kind` text NOT NULL,
-	`material_revision` text NOT NULL,
-	`provider_credential_version` integer NOT NULL,
-	`record_revision` integer NOT NULL,
-	`last_refresh_attempt_at_ms` integer,
-	`last_refresh_succeeded_at_ms` integer,
-	`next_refresh_eligible_at_ms` integer,
-	`failure_class` text,
-	`reauthorization_reason` text,
-	`envelope_version` integer NOT NULL,
-	`payload_algorithm` text NOT NULL,
-	`payload_nonce` text NOT NULL,
-	`payload_ciphertext` text NOT NULL,
-	`dek_wrap_algorithm` text NOT NULL,
-	`dek_wrap_nonce` text NOT NULL,
-	`dek_ciphertext` text NOT NULL,
-	`key_encryption_key_version` integer NOT NULL,
-	`updated_at_ms` integer NOT NULL,
-	FOREIGN KEY (`profile_record_id`) REFERENCES `oauth_account_profiles`(`profile_record_id`)
-		ON UPDATE no action ON DELETE cascade
+CREATE TABLE oauth_agent_authorizations (
+ account_id TEXT NOT NULL REFERENCES oauth_accounts(account_id),
+ account_alias TEXT NOT NULL,
+ access_state TEXT NOT NULL,
+ agent_id TEXT NOT NULL,
+ application_id TEXT NOT NULL,
+ authorization_id TEXT PRIMARY KEY NOT NULL,
+ authorization_metadata_revision INTEGER NOT NULL,
+ catalog_version TEXT NOT NULL,
+ client_binding_revision TEXT NOT NULL,
+ client_id TEXT NOT NULL,
+ credential_id TEXT,
+ encrypted_envelope TEXT,
+ failure_class TEXT,
+ generation INTEGER NOT NULL,
+ actual_scopes_json TEXT NOT NULL,
+ last_refresh_attempt_at_ms INTEGER,
+ last_refresh_succeeded_at_ms INTEGER,
+ lifecycle_kind TEXT NOT NULL,
+ material_revision TEXT,
+ next_refresh_eligible_at_ms INTEGER,
+ provider_credential_version INTEGER NOT NULL,
+ reauthorization_reason TEXT,
+ record_revision INTEGER NOT NULL,
+ requested_scopes_json TEXT NOT NULL,
+ selected_activities_json TEXT NOT NULL,
+ transition_id TEXT NOT NULL,
+ updated_at_ms INTEGER NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `oauth_grants_profile_application_unique`
-	ON `oauth_grants` (`profile_record_id`, `application_id`);
+CREATE UNIQUE INDEX oauth_agent_authorizations_tuple_unique ON oauth_agent_authorizations(account_id, agent_id, application_id);
 --> statement-breakpoint
-CREATE TABLE `oauth_schema_metadata` (
-	`key` text PRIMARY KEY NOT NULL,
-	`value` text NOT NULL
+CREATE UNIQUE INDEX oauth_agent_authorizations_credential_unique ON oauth_agent_authorizations(credential_id);
+--> statement-breakpoint
+CREATE TABLE google_account_policies (
+ authorization_id TEXT PRIMARY KEY NOT NULL REFERENCES oauth_agent_authorizations(authorization_id),
+ encrypted_override_snapshot TEXT NOT NULL,
+ override_revision INTEGER NOT NULL,
+ state TEXT NOT NULL,
+ transition_id TEXT NOT NULL,
+ updated_at_ms INTEGER NOT NULL
 );
 --> statement-breakpoint
-INSERT INTO `oauth_schema_metadata` (`key`, `value`) VALUES ('envelope_format_version', '1');
+CREATE TABLE permission_change_events (
+ authorization_id TEXT REFERENCES oauth_agent_authorizations(authorization_id),
+ zone_id TEXT NOT NULL,
+ event_id TEXT PRIMARY KEY NOT NULL,
+ event_json TEXT NOT NULL,
+ timestamp_ms INTEGER NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE google_policy_defaults_activation (
+ zone_id TEXT PRIMARY KEY NOT NULL,
+ active_defaults_digest TEXT NOT NULL,
+ defaults_snapshot TEXT NOT NULL,
+ updated_at_ms INTEGER NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE oauth_schema_metadata (
+ key TEXT PRIMARY KEY NOT NULL,
+ value TEXT NOT NULL
+);
+--> statement-breakpoint
+INSERT INTO oauth_schema_metadata(key, value) VALUES ('schema_version', '2'), ('envelope_format_version', '2');

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from typing import override
 
@@ -285,9 +286,15 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
                                 "name": "probe",
                                 "namespace": "alpha",
                                 "oauthRequirement": {
-                                    "accountProfileArgument": "accountProfile",
+                                    "accountArgument": "accountId",
                                     "describeBeforeCall": True,
-                                    "kind": "invocation-dependent-oauth-account-profile",
+                                    "kind": "google-account",
+                                    "operations": [
+                                        {
+                                            "applicationId": "gmail-app",
+                                            "operationId": "gmail.search",
+                                        }
+                                    ],
                                 },
                                 "safety": {
                                     "destructiveHint": False,
@@ -314,6 +321,11 @@ class ManagedToolPortalInventoryTests(unittest.IsolatedAsyncioTestCase):
         value = _require_item_value(result.items[0])
         self.assertEqual(value.tools[0].namespace, "alpha")
         self.assertEqual(value.tools[0].name, "probe")
+        legacy_result: object = json.loads(
+            json.dumps(raw_result).replace('"google-account"', '"oauth-account-profile"')
+        )
+        with self.assertRaises(ValidationError):
+            validate_inventory_portal_list_result(legacy_result)
         with self.assertRaises(ValidationError):
             validate_inventory_portal_list_result(
                 {"items": [{"id": "probe-1-0", "status": "ok"}], "ok": True},

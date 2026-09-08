@@ -131,14 +131,33 @@ continue to use direct strict-pinned SSH to the current Tool VM.
 ### Controller-Owned OAuth Broker
 
 An optional `oauth.config.jsonc` beside a managed Hermes zone's Tool Portal config
-enables human Google authorization without exposing refresh tokens to Hermes or a VM.
-The controller owns direct tailnet HTTPS on port `18900`, resolves the browser socket
-peer through tailscaled LocalAPI, and stores envelope-encrypted grants in controller
-state. Gog receives only a short-lived access-token placeholder through the
-authenticated agent's singleton credentialed Managed runtime. OAuth consent never
-changes Tool Portal visibility or per-call approval policy.
+enables human-owned Google accounts with separate agent/account/application
+authorizations. Clerk authenticates the person using Google identity sign-in only;
+it never supplies Google resource credentials. Tailscale admits the browser's
+network connection but does not establish account ownership. The controller owns
+direct tailnet HTTPS on port `18900`, stores envelope-encrypted credentials and
+account policy in controller state, and gives Gog only a short-lived access-token
+placeholder through the authenticated agent's singleton credentialed Managed
+runtime.
 
-→ Design: [Agent-guided OAuth broker](../specs/2026-08-29-agent-oauth-broker/program-design.md)
+Google callbacks retain `no-referrer` and redirect to clean, browser-bound
+confirmation or retry pages. Those pages use `same-origin` so native forms send
+the Origin required by the controller without retaining the callback query in
+the form URL. Reauthorization confirmation compares verified previous permission
+groups with the proposed groups before the owner confirms the change.
+
+Tool Portal resolves each admitted Gog call against the exact account, application,
+service effects, current grant, and account-specific Read/Write policy. Explicit
+website overrides win independently over live config defaults; `Deny`, `Ask`, and
+`Allow` are all supported, so writes are not universally forced to Ask. The
+account owner must also be a configured editor for lasting policy changes.
+Invocation approval still authorizes only one exact call and cannot expand OAuth
+consent or standing policy. Local `disconnect` replaces provider `revoke`: it
+stops future use of one authorization without calling Google or affecting another
+agent's authorization.
+
+→ Design: [Agent account authorization and Gog execution](../specs/2026-09-04-agent-account-and-tool-permissions/program-design.md)
+→ File path: [Shared staging for Gog files](../specs/2026-09-04-agent-account-and-tool-permissions/file-delivery.md)
 
 ### Secrets Flow
 

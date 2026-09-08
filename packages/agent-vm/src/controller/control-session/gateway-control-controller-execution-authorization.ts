@@ -16,7 +16,7 @@ import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
-	gatewayControlRegisteredControllerExecutionActionIds,
+	type gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 import {
@@ -28,6 +28,7 @@ import type { SystemConfig } from '../../config/system-config.js';
 import { loadGatewayRuntimePortalAdmissionFile } from '../../gateway/gateway-runtime-portal-admission-file.js';
 import { loadMcpPortalEffectiveToolPortalConfigSnapshot } from '../../gateway/mcp-portal-effective-config.js';
 import type { ControllerCredentialedRuntimeRegistryPublisher } from '../credentialed-runtime/credentialed-runtime-registry.js';
+import type { GooglePermissionPolicyService } from '../oauth/google-permission-policy-service.js';
 import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import type {
 	GatewayControlAcceptedSessionRef,
@@ -44,6 +45,11 @@ const workspaceGitPushToolName =
 const controllerHostProbeEnvGate = 'AGENT_VM_E2E_CONTROLLER_HOST_PROBE';
 
 export interface GatewayControlControllerExecutionAuthorizationRequest {
+	readonly resolveManagedGoogleInvocation?: (
+		request: Parameters<GooglePermissionPolicyService['resolveManagedGoogleInvocation']>[0],
+	) =>
+		| ReturnType<GooglePermissionPolicyService['resolveManagedGoogleInvocation']>
+		| Promise<ReturnType<GooglePermissionPolicyService['resolveManagedGoogleInvocation']>>;
 	readonly callerContext: GatewayControlTrustedCallerContext;
 	readonly credentialedRuntimeRegistryPublisher?: ControllerCredentialedRuntimeRegistryPublisher;
 	readonly createdAtMs?: number;
@@ -91,7 +97,7 @@ function isSupportedControllerExecutionName(
 		case 'oauth_authorization.cancel':
 		case 'oauth_authorization.list':
 		case 'oauth_authorization.reauthorize':
-		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.disconnect':
 		case 'oauth_authorization.status':
 		case workspaceGitPushToolName:
 			return true;
@@ -133,7 +139,7 @@ function registeredActionApprovalReservation(
 		case 'oauth_authorization.cancel':
 		case 'oauth_authorization.list':
 		case 'oauth_authorization.reauthorize':
-		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.disconnect':
 		case 'oauth_authorization.status':
 			return payload.action.authority.kind === 'controller_approval_reservation'
 				? payload.action.authority.reservation
@@ -142,6 +148,7 @@ function registeredActionApprovalReservation(
 		case 'workspace_git_push':
 			return payload.action.approvalReservation;
 	}
+	return undefined;
 }
 
 export async function authorizeGatewayControlControllerExecution(
@@ -344,29 +351,61 @@ export async function authorizeGatewayControlControllerExecution(
 				);
 			}
 		}
-		const baseline = selectorIncludesTool(
-			namespaceProjection.calls.withoutApproval,
-			capability.name,
-		)
-			? 'without_approval'
-			: selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
-				? 'requires_approval'
-				: 'deny';
-		const evaluation = evaluateCliAllowanceInvocation({
-			allowance: configuredOperation,
-			baseline,
-			input: request.payload.input,
-		});
+		let managedGoogle: ConfiguredCliAuthorizedOperation['managedGoogle'];
+		let disposition: 'requires_approval' | 'without_approval';
+		if ('source' in namespaceProjection.calls) {
+			if (request.resolveManagedGoogleInvocation === undefined)
+				return rejectAuthorization(
+					'controller_execution_policy_denied',
+					'Google account policy is unavailable',
+				);
+			const current = await request.resolveManagedGoogleInvocation({
+				agentId: request.callerContext.agentId,
+				profileId: agentConfig?.profile ?? '',
+				namespaceId: capability.namespace,
+				operationName: capability.name,
+				input: request.payload.input,
+			});
+			if (current.kind !== 'ready' && current.kind !== 'no-oauth')
+				return rejectAuthorization(
+					'controller_execution_policy_denied',
+					'Google account access is not currently authorized',
+				);
+			if (current.kind === 'ready') managedGoogle = current;
+			disposition =
+				current.kind === 'ready' && current.disposition === 'ask'
+					? 'requires_approval'
+					: 'without_approval';
+		} else {
+			const baseline = selectorIncludesTool(
+				namespaceProjection.calls.withoutApproval,
+				capability.name,
+			)
+				? 'without_approval'
+				: selectorIncludesTool(namespaceProjection.calls.requiresApproval, capability.name)
+					? 'requires_approval'
+					: 'deny';
+			const evaluation = evaluateCliAllowanceInvocation({
+				allowance: configuredOperation,
+				baseline,
+				input: request.payload.input,
+			});
+			if (!evaluation.ok || evaluation.disposition === 'deny')
+				return rejectAuthorization(
+					'controller_execution_policy_denied',
+					'controller execution policy denied the requested capability',
+				);
+			disposition = evaluation.disposition;
+		}
 		const expectedDisposition =
 			request.payload.authority.kind === 'without_approval'
 				? 'without_approval'
 				: 'requires_approval';
-		if (evaluation.kind === 'denied' || evaluation.disposition !== expectedDisposition) {
+		if (disposition !== expectedDisposition)
 			return rejectAuthorization(
 				'controller_execution_policy_denied',
-				'controller execution policy denied the requested capability',
+				'controller execution policy disposition changed',
 			);
-		}
 		if (
 			deriveGatewayControlStablePrincipal({
 				principal: request.payload.invocation.trustedContext.principal,
@@ -396,6 +435,7 @@ export async function authorizeGatewayControlControllerExecution(
 		const expectedFingerprint =
 			request.payload.authority.kind === 'without_approval'
 				? directDispatchFingerprint({
+						managedGoogle,
 						backendKind: 'controller_execution',
 						call: exactCall,
 						principal: request.callerContext.principal,
@@ -405,6 +445,7 @@ export async function authorizeGatewayControlControllerExecution(
 				: deriveGatewayRuntimeApprovalFingerprint({
 						authorityContext: request.payload.authority.reservation.authorityContext,
 						intent: {
+							...(managedGoogle === undefined ? {} : { managedGoogle }),
 							backendKind: 'controller_execution',
 							call: exactCall,
 							operationId: expectedOperationId,
@@ -437,11 +478,12 @@ export async function authorizeGatewayControlControllerExecution(
 		return {
 			authorized: true,
 			configuredCli: {
+				...(managedGoogle === undefined ? {} : { managedGoogle }),
 				...(credentialedRuntime === undefined ? {} : { credentialedRuntime }),
 				evaluation: {
 					authorityKind: request.payload.authority.kind,
 					bindingRevision: currentBindingRevision,
-					disposition: evaluation.disposition,
+					disposition,
 					fingerprint: authorityBinding.fingerprint,
 					operationId: authorityBinding.operationId,
 					operationName: request.payload.operationName,
@@ -520,6 +562,11 @@ export async function authorizeGatewayControlControllerExecution(
 			);
 		}
 	}
+	if ('source' in namespaceProjection.calls)
+		return rejectAuthorization(
+			'controller_execution_policy_denied',
+			'Managed Google policy cannot authorize registered non-Google actions',
+		);
 	if (
 		approvalReservation === undefined
 			? !selectorIncludesTool(namespaceProjection.calls.withoutApproval, capability.name) ||

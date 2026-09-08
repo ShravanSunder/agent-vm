@@ -5,6 +5,7 @@ export type PortableRefinementKind =
 	| 'structural-validation';
 
 export type PortableRefinementOperation =
+	| { readonly kind: 'google-discovery-policy' }
 	| {
 			readonly kind: 'aggregate-status';
 			readonly itemsField: string;
@@ -70,6 +71,14 @@ export interface PortableRefinementDescriptor {
 }
 
 export const PORTABLE_REFINEMENT_DESCRIPTORS = [
+	{
+		identity: 'portal.google.discovery-policy',
+		description:
+			'Google discovery has unique operation identities and never advertises ready access with unauthenticated account metadata.',
+		errorCode: 'portal.google.discovery-policy',
+		kind: 'cross-field-validation',
+		operation: { kind: 'google-discovery-policy' },
+	},
 	{
 		description: 'Artifact reads default omitted truncation state to false.',
 		identity: 'portal.artifact-read.default-truncated',

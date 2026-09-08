@@ -4,14 +4,19 @@ import {
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
 } from '@agent-vm/agent-portal-sdk';
-import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
+import {
+	gatewayRuntimeManagedToolPortalConfigSchema,
+	compileOAuthPolicy,
+	configuredGoogleOperationKey,
+} from '@agent-vm/config-contracts';
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
 import {
-	oauthAccountProfileToolRequirementSchema,
+	oauthOperationToolRequirementSchema,
 	oauthToolAvailabilityBatchResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createOAuthPolicyCompilerTestInput } from '../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import {
 	createRecordingApprovalPort,
 	createRecordingBackendPort,
@@ -24,8 +29,8 @@ import { createManagedToolPortalCapabilityCore } from './tool-portal-service.js'
 
 describe('ToolPortalCapabilityCore catalog routing', () => {
 	it.each([
-		['ready', false],
-		['authorization-status-unavailable', true],
+		['accounts', false],
+		['unavailable', true],
 	] as const)(
 		'attaches %s OAuth availability to a visible static requirement',
 		async (expectedAvailabilityKind, failStatusLookup) => {
@@ -41,25 +46,12 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 									kind: 'controller_execution',
 									operations: {
 										gog_cli: {
-											authorization: {
-												kind: 'oauth_account_profile',
-												rules: [
-													{
-														match: { flags: [], path: ['gmail', 'search'] },
-														requirement: {
-															applicationId: 'gmail-app',
-															kind: 'oauth',
-															minimumPermission: 'read',
-															serviceId: 'gmail',
-														},
-													},
-												],
-											},
-											calls: {
-												deny: [],
-												requiresApproval: [],
-												withoutApproval: 'remaining_admitted',
-											},
+											authorization: { kind: 'oauth_account' },
+											compiledGoogle: compileOAuthPolicy(createOAuthPolicyCompilerTestInput())
+												.commandSetsByConfiguredOperation[
+												configuredGoogleOperationKey('shared', 'google', 'gog')
+											],
+											calls: { source: 'managed_google_policy', deny: [] },
 											commands: [{ flagRules: [], path: ['gmail', 'search'] }],
 											deniedPatterns: [],
 											kind: 'configured_cli',
@@ -70,10 +62,7 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 										},
 									},
 								},
-								calls: {
-									requiresApproval: { allow: [] },
-									withoutApproval: { allow: ['gog_cli'] },
-								},
+								calls: { source: 'managed_google_policy' },
 								discovery: { summary: 'Use Gog with assigned Google accounts.' },
 								tools: { allow: ['gog_cli'] },
 							},
@@ -95,11 +84,9 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 			const controllerExecution = createRecordingBackendPort('controller_execution', 'gog', {
 				toolName: 'gog_cli',
 			});
-			const requirement = oauthAccountProfileToolRequirementSchema.parse({
+			const requirement = oauthOperationToolRequirementSchema.parse({
 				applicationId: 'gmail-app',
-				kind: 'oauth-account-profile',
-				minimumPermission: 'read',
-				serviceId: 'gmail',
+				operationId: 'gmail.search',
 			});
 			const resolve = vi.fn(async () => {
 				if (failStatusLookup) throw new Error('controller unavailable');
@@ -107,13 +94,19 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 					items: [
 						{
 							availability: {
-								accountProfiles: [
+								kind: 'accounts',
+								accounts: [
 									{
-										accountLabel: 'Personal Google',
-										accountProfileId: 'personal-google',
+										accountId: '33333333-3333-4333-8333-333333333333',
+										metadata: { kind: 'verified', accountAlias: 'Personal Google' },
+										availability: {
+											kind: 'ready',
+											disposition: 'ask',
+											overrideRevision: 1,
+											defaultsRevision: 'defaults-current',
+										},
 									},
 								],
-								kind: 'ready' as const,
 							},
 							requirement,
 						},
@@ -144,12 +137,15 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 			const item = result.items[0];
 			if (item?.status !== 'ok') throw new Error('Expected successful OAuth search result.');
 			expect(item.value.tools[0]).toMatchObject({
-				oauthAvailability: { kind: expectedAvailabilityKind },
+				oauthAvailability: {
+					kind: 'operation-options',
+					items: [{ requirement, availability: { kind: expectedAvailabilityKind } }],
+				},
 				oauthRequirement: {
-					applicationId: 'gmail-app',
-					kind: 'oauth-account-profile',
-					minimumPermission: 'read',
-					serviceId: 'gmail',
+					kind: 'google-account',
+					accountArgument: 'accountId',
+					describeBeforeCall: true,
+					operations: [requirement],
 				},
 			});
 			expect(resolve).toHaveBeenCalledTimes(1);

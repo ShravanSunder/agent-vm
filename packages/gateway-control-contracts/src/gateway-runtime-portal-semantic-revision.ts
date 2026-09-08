@@ -114,10 +114,12 @@ interface NormalizedProfilePolicyInputs {
 				Record<
 					string,
 					{
-						readonly calls: {
-							readonly requiresApproval: NormalizedToolSelector;
-							readonly withoutApproval: NormalizedToolSelector;
-						};
+						readonly calls:
+							| {
+									readonly requiresApproval: NormalizedToolSelector;
+									readonly withoutApproval: NormalizedToolSelector;
+							  }
+							| { readonly source: 'managed_google_policy' };
 						readonly tools: NormalizedToolSelector;
 					}
 				>
@@ -362,10 +364,17 @@ function normalizedProfilePolicyInputs(props: {
 					Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 						namespaceId,
 						{
-							calls: {
-								requiresApproval: normalizedToolSelector(namespacePolicy.calls.requiresApproval),
-								withoutApproval: normalizedToolSelector(namespacePolicy.calls.withoutApproval),
-							},
+							calls:
+								'source' in namespacePolicy.calls
+									? { source: namespacePolicy.calls.source }
+									: {
+											requiresApproval: normalizedToolSelector(
+												namespacePolicy.calls.requiresApproval,
+											),
+											withoutApproval: normalizedToolSelector(
+												namespacePolicy.calls.withoutApproval,
+											),
+										},
 							tools: normalizedToolSelector(namespacePolicy.tools),
 						},
 					]),
@@ -451,8 +460,12 @@ function normalizedControllerExecutionOperation(
 		...operation,
 		calls: {
 			deny: normalizedInvocationMatchers(operation.calls.deny),
-			requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
-			withoutApproval: operation.calls.withoutApproval,
+			...('source' in operation.calls
+				? { source: operation.calls.source }
+				: {
+						requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
+						withoutApproval: operation.calls.withoutApproval,
+					}),
 		},
 	};
 }

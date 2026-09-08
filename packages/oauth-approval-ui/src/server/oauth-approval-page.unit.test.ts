@@ -9,7 +9,101 @@ const assets = {
 	stylesheetAssetName: 'oauth.0123456789abcdef.css',
 } as const;
 
+const gmailApplication = {
+	applicationId: 'gmail-app',
+	description: 'Gmail account access.',
+	label: 'Gmail',
+	recommendedGroupIds: ['gmail.read'],
+	selectedGroupIds: ['gmail.read'],
+	suggestedGroupIds: ['gmail.write'],
+	groups: [
+		{
+			groupId: 'gmail.read',
+			serviceId: 'gmail',
+			effect: 'read',
+			label: 'Read Gmail',
+			warning: 'Read your email.',
+			offered: true,
+		},
+		{
+			groupId: 'gmail.write',
+			serviceId: 'gmail',
+			effect: 'write',
+			label: 'Write Gmail',
+			warning: 'Includes reading, drafting and sending email.',
+			offered: true,
+		},
+	],
+};
+
 describe('server-rendered OAuth approval page', () => {
+	it.each([
+		{
+			label: 'initial Off',
+			selectedGroupIds: [],
+			selectionMode: undefined,
+			checkedRead: true,
+			checkedWrite: false,
+			summary: 'No Google access selected.',
+		},
+		{
+			label: 'explicitly cleared Custom',
+			selectedGroupIds: [],
+			selectionMode: 'custom',
+			checkedRead: false,
+			checkedWrite: false,
+			summary: 'No Google access selected.',
+		},
+		{
+			label: 'edits retained while Off',
+			selectedGroupIds: ['gmail.write'],
+			selectionMode: 'off',
+			checkedRead: false,
+			checkedWrite: true,
+			summary: 'No Google access selected.',
+		},
+		{
+			label: 'Recommended with retained Custom edits',
+			selectedGroupIds: ['gmail.write'],
+			selectionMode: 'recommended',
+			checkedRead: false,
+			checkedWrite: true,
+			summary: '1 permission group selected across 1 application.',
+		},
+	])(
+		'renders $label without relying on JavaScript for default selections or the summary',
+		(scenario) => {
+			// Arrange
+			const model = oauthApprovalPageModelSchema.parse({
+				agentId: 'sun',
+				ownerLabel: 'Personal Google',
+				kind: 'permission-selection',
+				applications: [
+					{
+						...gmailApplication,
+						selectedGroupIds: scenario.selectedGroupIds,
+						selectionMode: scenario.selectionMode,
+					},
+				],
+			});
+			// Act
+			const html = renderOAuthApprovalPage({
+				...assets,
+				csrfToken: 'c'.repeat(43),
+				formAction: '/oauth/permissions',
+				model,
+			});
+			const readInput = html.match(/<input[^>]*value="gmail.read"[^>]*>/u)?.[0];
+			const writeInput = html.match(/<input[^>]*value="gmail.write"[^>]*>/u)?.[0];
+			// Assert
+			expect(readInput).toBeDefined();
+			expect(writeInput).toBeDefined();
+			expect(readInput?.includes('checked')).toBe(scenario.checkedRead);
+			expect(writeInput?.includes('checked')).toBe(scenario.checkedWrite);
+			expect(html).toContain(scenario.summary);
+		},
+	);
+
 	it('renders semantic native permission controls and labels Hermes suggestions as advisory', () => {
 		const html = renderOAuthApprovalPage({
 			...assets,
@@ -17,30 +111,20 @@ describe('server-rendered OAuth approval page', () => {
 			csrfToken: 'c'.repeat(43),
 			formAction: '/oauth/transactions/transaction/permissions',
 			model: oauthApprovalPageModelSchema.parse({
-				accountProfileLabel: 'Personal Google',
-				applications: [
-					{
-						applicationId: 'gmail-app',
-						description: 'Gmail account access.',
-						label: 'Gmail',
-						services: [
-							{
-								allowedChoices: ['none', 'read', 'write'],
-								label: 'Gmail messages',
-								selectedChoice: 'read',
-								serviceId: 'gmail',
-								suggestedChoice: 'read',
-							},
-						],
-					},
-				],
+				agentId: 'sun',
+				ownerLabel: 'Personal Google',
+				applications: [gmailApplication],
 				kind: 'permission-selection',
 			}),
 		});
 
 		expect(html).toContain('<fieldset');
-		expect(html).toContain('<legend>Gmail messages</legend>');
-		expect(html).toContain('Hermes suggested read. You decide.');
+		expect(html).toContain('<legend>gmail</legend>');
+		expect(html).toContain('Agent suggestions are advisory. You decide.');
+		expect(html).toContain('Includes reading, drafting and sending email.');
+		expect(html).toContain('Recommended');
+		expect(html).toContain('Custom');
+		expect(html).toContain('type="checkbox"');
 		expect(html).toContain('type="radio"');
 		expect(html).toContain('class="peer"');
 		expect(html).toContain('name="csrfToken"');
@@ -55,22 +139,9 @@ describe('server-rendered OAuth approval page', () => {
 			csrfToken: 'c'.repeat(43),
 			formAction: '/oauth/transactions/transaction/permissions',
 			model: oauthApprovalPageModelSchema.parse({
-				accountProfileLabel: '<script>alert(1)</script>',
-				applications: [
-					{
-						applicationId: 'gmail-app',
-						description: 'Gmail account access.',
-						label: 'Gmail',
-						services: [
-							{
-								allowedChoices: ['none', 'read'],
-								label: 'Gmail messages',
-								selectedChoice: 'none',
-								serviceId: 'gmail',
-							},
-						],
-					},
-				],
+				agentId: 'sun',
+				ownerLabel: '<script>alert(1)</script>',
+				applications: [gmailApplication],
 				errors: [
 					{
 						applicationId: 'gmail-app',
@@ -142,8 +213,32 @@ describe('server-rendered OAuth approval page', () => {
 		expect(html).toContain('/oauth/completions/completion-id/confirm');
 		expect(html).toContain('/oauth/completions/completion-id/cancel');
 		expect(html).toContain('Confirm this account');
+		expect(html).toContain('name="accountAlias"');
 		expect(html).toContain('Cancel');
 		expect(html).toContain('method="post"');
+	});
+
+	it('renders an explicit before and after permission diff for reauthorization', () => {
+		const html = renderOAuthApprovalPage({
+			...assets,
+			csrfToken: 'c'.repeat(43),
+			formAction: '/oauth/completions/completion-id/confirm',
+			model: oauthApprovalPageModelSchema.parse({
+				accountLabel: 'human@example.test',
+				applicationLabel: 'Gmail',
+				previousPermissionLabels: ['Read Gmail', 'Read calendars'],
+				grantedPermissionLabels: ['Read Gmail', 'Write Gmail'],
+				kind: 'account-confirmation',
+			}),
+		});
+
+		expect(html).toContain('Permission changes');
+		expect(html).toContain('Before');
+		expect(html).toContain('After');
+		expect(html).toContain('Added');
+		expect(html).toContain('Write Gmail');
+		expect(html).toContain('Removed');
+		expect(html).toContain('Read calendars');
 	});
 
 	it.each([

@@ -234,7 +234,12 @@ const requiredPortalNamedExports = {
 		'createFakeUpstreamTools',
 		'startFakeUpstreamMcpServer',
 	],
-	'@agent-vm/tool-portal': ['createToolPortalMcpProviderBackendPort', 'createToolPortalService'],
+	'@agent-vm/tool-portal': [
+		'createToolPortalMcpProviderBackendPort',
+		'createToolPortalService',
+		'resolveGoogleAccountInvocationPolicy',
+		'validateCliAllowanceInvocation',
+	],
 	'@agent-vm/tool-portal/cli-allowances': [
 		'evaluateCliAllowanceInvocation',
 		'resolveCliAllowanceTimeout',

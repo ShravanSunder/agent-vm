@@ -1,16 +1,20 @@
 import {
 	encodeConfiguredCliPreparedImageIdentity,
+	compileOAuthPolicy,
+	configuredGoogleOperationKey,
 	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
+	oauthAccountIdSchema,
+	oauthAuthorizationIdSchema,
+	managedGoogleReadyPreflightSchema,
 	oauthCredentialIdSchema,
 	oauthMaterialRevisionSchema,
-	oauthServiceIdSchema,
 } from '@agent-vm/oauth-broker-contracts';
+import { getGooglePolicyCatalog } from '@agent-vm/oauth-broker/google';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import type {
 	CredentialedRuntimeCommandHandle,
 	CredentialedRuntimeManager,
@@ -25,6 +29,44 @@ type ConfiguredOperation = Extract<
 >;
 
 const oauthCredentialId = oauthCredentialIdSchema.parse('11111111-1111-4111-8111-111111111111');
+const accountId = oauthAccountIdSchema.parse('33333333-3333-4333-8333-333333333333');
+const authorizationId = oauthAuthorizationIdSchema.parse('44444444-4444-4444-8444-444444444444');
+const compiledGoogle = compileOAuthPolicy(createOAuthPolicyCompilerTestInput())
+	.commandSetsByConfiguredOperation[configuredGoogleOperationKey('shared', 'google', 'gog')];
+if (compiledGoogle === undefined) throw new Error('Expected compiled Google fixture.');
+const googlePreflight = managedGoogleReadyPreflightSchema.parse({
+	kind: 'ready',
+	disposition: 'allow',
+	binding: {
+		accountId,
+		authorizationId,
+		applicationId: 'gmail-app',
+		generation: 1,
+		authorizationMetadataRevision: 1,
+		overrideRevision: 1,
+		defaultsRevision: 'a'.repeat(64),
+		configRevision: 'config-current',
+		clientBindingRevision: 'client-current',
+		catalogVersion: 'google-gog-v0.38.1-v1',
+		commandTableRevision: compiledGoogle.revision,
+		operationId: 'gmail.search',
+		gmailWriteAllowed: false,
+	},
+	display: {
+		accountId,
+		authorizationId,
+		authorizationMetadataRevision: 1,
+		accountAlias: 'Personal Google',
+		applicationLabel: 'Gmail',
+	},
+});
+const credentialBinding = {
+	accountId,
+	authorizationId,
+	generation: 1,
+	authorizationMetadataRevision: 1,
+	gmailNoSend: true,
+};
 
 function operation(): ConfiguredOperation {
 	return {
@@ -65,20 +107,9 @@ function operation(): ConfiguredOperation {
 
 function oauthOperation(): ConfiguredOperation {
 	const configuredOperation = structuredClone(operation());
-	configuredOperation.authorization = {
-		kind: 'oauth_account_profile',
-		rules: [
-			{
-				match: { flags: [], path: ['gmail', 'search'] },
-				requirement: {
-					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-					kind: 'oauth',
-					minimumPermission: 'read',
-					serviceId: oauthServiceIdSchema.parse('gmail'),
-				},
-			},
-		],
-	};
+	configuredOperation.authorization = { kind: 'oauth_account' };
+	configuredOperation.calls = { source: 'managed_google_policy', deny: [] };
+	configuredOperation.compiledGoogle = compiledGoogle;
 	configuredOperation.commands = [{ flagRules: [], path: ['gmail', 'search'] }];
 	if (configuredOperation.executionTarget.kind !== 'ephemeral_managed_vm') {
 		throw new Error('Expected Managed VM target.');
@@ -121,6 +152,7 @@ function oauthAuthorization(): ConfiguredCliAuthorizedOperation {
 	const configuredOperation = oauthOperation();
 	const resolution = runtimeResolution(configuredOperation);
 	return {
+		managedGoogle: googlePreflight,
 		credentialedRuntime: {
 			...resolution,
 			projection: {
@@ -176,8 +208,8 @@ function commandHandle(
 		readonly execError?: Error;
 	} = {},
 ): CredentialedRuntimeCommandHandle & {
-	readonly complete: ReturnType<typeof vi.fn>;
-	readonly exec: ReturnType<typeof vi.fn>;
+	readonly complete: ReturnType<typeof vi.fn<CredentialedRuntimeCommandHandle['complete']>>;
+	readonly exec: ReturnType<typeof vi.fn<CredentialedRuntimeCommandHandle['exec']>>;
 } {
 	return {
 		complete: vi.fn(async () => {}),
@@ -211,7 +243,8 @@ function executorWithManager(
 		>[0]['validateOAuthRuntimeCredentialSnapshot']
 	>,
 ): ReturnType<typeof createConfiguredCliManagedVmExecutor> {
-	return createConfiguredCliManagedVmExecutor({
+	const execute = createConfiguredCliManagedVmExecutor({
+		validateGooglePolicySnapshot: () => true,
 		...(resolveOAuthRuntimeCredential === undefined ? {} : { resolveOAuthRuntimeCredential }),
 		...(validateOAuthRuntimeCredentialSnapshot === undefined
 			? {}
@@ -219,6 +252,16 @@ function executorWithManager(
 		resolveGatewayIdentity: vi.fn(async () => gatewayIdentity),
 		runtimeManager,
 	});
+	return async (request) =>
+		await execute({
+			// This suite substitutes controller publication authority; its real boundary has separate tests.
+			publishFileResults: async ({ folder }) =>
+				await folder.publish({
+					receiver: { leaseId: 'lease', leafGeneration: 'leaf', vmId: 'vm' },
+					withPublicationAuthority: async (expose) => await expose(),
+				}),
+			...request,
+		});
 }
 
 function managerWithAcquire(
@@ -230,12 +273,241 @@ function managerWithAcquire(
 		invalidateMaterial: vi.fn(async () => ({ kind: 'absent' as const })),
 		openZone: vi.fn(),
 		reapExpired: vi.fn(async () => {}),
-		recoverZone: vi.fn(async () => {}),
+		recoverZone: vi.fn(async () => ({ kind: 'contained' as const })),
 		retire: vi.fn(async () => ({ kind: 'absent' as const })),
 	};
 }
 
 describe('configured CLI credentialed Managed VM executor', () => {
+	it.each([false, true])(
+		'stages approval-bound inputs before dispatch (source mismatch: %s)',
+		async (mismatch) => {
+			// Arrange: source lease/hash verification belongs to the injected controller file boundary.
+			const base = oauthAuthorization();
+			if (base.operation.compiledGoogle === undefined) throw new Error('Missing command set.');
+			base.operation.compiledGoogle = {
+				...base.operation.compiledGoogle,
+				descriptors: base.operation.compiledGoogle.descriptors.map((descriptor) =>
+					descriptor.operationId === 'gmail.search'
+						? { ...descriptor, positionals: { minimum: 1, maximum: 1, fileInputs: [0] } }
+						: descriptor,
+				),
+			};
+			const fileInputs = {
+				leaseId: 'lease',
+				leafGeneration: 'leaf',
+				vmId: 'vm',
+				files: [{ relativePath: 'input.pdf', byteLength: 4, sha256: 'a'.repeat(64) }],
+			};
+			const current = {
+				...base,
+				managedGoogle: managedGoogleReadyPreflightSchema.parse({ ...googlePreflight, fileInputs }),
+			};
+			const command = commandHandle();
+			const order: string[] = [];
+			command.exec.mockImplementation(async () => {
+				order.push('exec');
+				return { exitCode: 0, stdout: '{}', stdoutTruncated: false, stderrTruncated: false };
+			});
+			const folder = {
+				root: `/agent-vm/gog-work/operation-${current.evaluation.operationId}`,
+				stageInput: vi.fn(async () => {}),
+				publish: vi.fn(async () => ({
+					publicationId: '55555555-5555-4555-8555-555555555555',
+					expiresAtMs: 6000,
+					files: [],
+					failedFiles: [],
+					cleanup: 'complete' as const,
+				})),
+			};
+			const execute = executorWithManager(
+				managerWithAcquire(async (request) => {
+					if (!('materializeResolution' in request))
+						throw new Error('Expected OAuth materialization.');
+					await request.materializeResolution();
+					return {
+						kind: 'acquired',
+						command: { ...command, prepareSharedStagingOperation: async () => folder },
+					};
+				}),
+				async () => ({
+					...credentialBinding,
+					accessToken: new Uint8Array([1]),
+					allowedHosts: ['gmail.googleapis.com'],
+					credentialId: oauthCredentialId,
+					kind: 'ready',
+					materialRevision: oauthMaterialRevisionSchema.parse(
+						`sha256:${Buffer.alloc(32, 7).toString('base64url')}`,
+					),
+				}),
+				() => ({ kind: 'current' }),
+			);
+			const stageFileInputs = vi.fn(async () => {
+				order.push('stage');
+				if (mismatch) throw new Error('Input changed after approval');
+			});
+			// Act
+			const result = execute({
+				authorization: current,
+				operation: current.operation,
+				operationName: 'gog_cli',
+				input: { accountId, argv: ['gmail', 'search', './input.pdf'], reason: 'Input fixture' },
+				reloadAuthorization: async () => current,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+				stageFileInputs,
+			});
+			// Assert
+			if (mismatch) {
+				await expect(result).rejects.toThrow('Input changed after approval');
+				expect(order).toEqual(['stage']);
+				expect(command.complete).toHaveBeenCalledWith(expect.objectContaining({ kind: 'retire' }));
+			} else {
+				expect(await result).toMatchObject({ exitCode: 0 });
+				expect(order).toEqual(['stage', 'exec']);
+			}
+			expect(stageFileInputs).toHaveBeenCalledExactlyOnceWith({ folder, expected: fileInputs });
+		},
+	);
+
+	it.each([
+		{ sealFails: false, exitCode: 0 },
+		{ sealFails: true, exitCode: 0 },
+		{ sealFails: false, exitCode: 1 },
+		{ sealFails: true, exitCode: 1 },
+	])(
+		'returns file availability separately from known command completion $sealFails/$exitCode',
+		async ({ sealFails, exitCode }) => {
+			// Arrange
+			const current = oauthAuthorization();
+			const compilerInput = createOAuthPolicyCompilerTestInput();
+			const catalog = getGooglePolicyCatalog();
+			const commands = [{ path: ['docs', 'export'], flagRules: [] }];
+			compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend.operations.gog.commands =
+				commands;
+			compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend.operations.gog.executionTarget.allowedHosts =
+				[...catalog.families.documents.allowedHosts];
+			const fileCompiled = compileOAuthPolicy({
+				...compilerInput,
+				catalog,
+				toolPortalConfig: {
+					...compilerInput.toolPortalConfig,
+					agents: Object.fromEntries(
+						['sun', 'ember'].map((agentId) => [
+							agentId,
+							{
+								profile: 'shared',
+								googlePolicyDefaults: {
+									kind: 'explicit',
+									applications: { 'workspace-app': { docs: { read: 'allow', write: 'deny' } } },
+								},
+							},
+						]),
+					),
+				},
+				oauthConfig: {
+					...compilerInput.oauthConfig,
+					agents: Object.fromEntries(
+						['sun', 'ember'].map((agentId) => [
+							agentId,
+							{
+								applications: {
+									'workspace-app': {
+										ceiling: { kind: 'explicit', groupIds: ['docs.all-files.read'] },
+									},
+								},
+							},
+						]),
+					),
+				},
+			}).commandSetsByConfiguredOperation[configuredGoogleOperationKey('shared', 'google', 'gog')];
+			if (fileCompiled === undefined) throw new Error('Expected compiled file commands.');
+			current.operation.compiledGoogle = fileCompiled;
+			current.operation.commands = commands;
+			const fileAuthorization = {
+				...current,
+				managedGoogle: managedGoogleReadyPreflightSchema.parse({
+					...googlePreflight,
+					binding: {
+						...googlePreflight.binding,
+						applicationId: 'workspace-app',
+						operationId: 'docs.export',
+						commandTableRevision: fileCompiled.revision,
+					},
+				}),
+			};
+			const command = commandHandle();
+			command.exec.mockResolvedValue({
+				exitCode,
+				stdout: '{"path":"report.pdf","size":4}',
+				stdoutTruncated: false,
+				stderrTruncated: false,
+			});
+			const reference = { referenceId: '55555555-5555-4555-8555-555555555555', expiresAtMs: 6000 };
+			const seal = vi.fn(async () => {
+				if (sealFails) throw new Error('Folder read failed');
+				return {
+					publicationId: reference.referenceId,
+					expiresAtMs: reference.expiresAtMs,
+					files: [],
+					failedFiles: [],
+					cleanup: 'complete' as const,
+				};
+			});
+			const prepareOperationFolder = vi.fn(async () => ({
+				root: `/agent-vm/gog-work/operation-${current.evaluation.operationId}`,
+				stageInput: vi.fn(async () => {}),
+				publish: seal,
+			}));
+			const execute = executorWithManager(
+				managerWithAcquire(async () => ({
+					kind: 'acquired',
+					command: { ...command, prepareSharedStagingOperation: prepareOperationFolder },
+				})),
+			);
+			const input = {
+				accountId,
+				argv: [
+					'docs',
+					'export',
+					'document-id',
+					'--out',
+					'./report.input',
+					'--format',
+					'pdf',
+					'--json',
+				],
+				reason: 'File output fixture.',
+			};
+			// Act
+			const result = await execute({
+				authorization: fileAuthorization,
+				input,
+				operation: current.operation,
+				operationName: 'gog_cli',
+				reloadAuthorization: async () => fileAuthorization,
+				stablePrincipal: 'a'.repeat(64),
+				zoneId: 'zone-a',
+			});
+			// Assert
+			expect(result).toMatchObject({
+				exitCode,
+				stdout: '{"path":"report.pdf","size":4}',
+				operationFiles: sealFails
+					? { kind: 'unavailable', reason: 'file-result-failed' }
+					: { kind: 'available', ...reference },
+			});
+			expect(prepareOperationFolder).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ maximumBytes: 16 * 1024 * 1024 }),
+			);
+			expect(command.exec).toHaveBeenCalledExactlyOnceWith(input, {});
+			expect(seal).toHaveBeenCalledTimes(1);
+			expect(command.complete).toHaveBeenCalledWith(
+				sealFails ? expect.objectContaining({ kind: 'retire' }) : { kind: 'completed' },
+			);
+		},
+	);
+
 	it('materializes the selected OAuth account only through the reserved runtime callback', async () => {
 		const command = commandHandle();
 		const acquireCommand = vi.fn(
@@ -255,6 +527,7 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			},
 		);
 		const resolveOAuthRuntimeCredential = vi.fn(async () => ({
+			...credentialBinding,
 			accessToken: new TextEncoder().encode('oauth-access-token-marker'),
 			allowedHosts: ['gmail.googleapis.com'],
 			credentialId: oauthCredentialId,
@@ -273,8 +546,8 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			execute({
 				authorization: currentAuthorization,
 				input: {
-					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
-					argv: ['gmail', 'search'],
+					accountId,
+					argv: ['gmail', 'search', 'unread'],
 					reason: 'read messages',
 				},
 				operation: currentAuthorization.operation,
@@ -285,15 +558,15 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			}),
 		).resolves.toMatchObject({ exitCode: 0 });
 		expect(resolveOAuthRuntimeCredential).toHaveBeenCalledWith({
-			accountProfileId: 'personal-google',
+			accountId,
 			agentId: 'sun',
 			applicationId: 'gmail-app',
-			minimumPermission: 'read',
-			serviceId: 'gmail',
+			operationId: 'gmail.search',
+			gmailWriteAllowed: false,
 			zoneId: 'zone-a',
 		});
 		expect(command.exec).toHaveBeenCalledWith(
-			expect.objectContaining({ argv: ['gmail', 'search'] }),
+			expect.objectContaining({ argv: ['gmail', 'search', 'unread'] }),
 			{},
 		);
 	});
@@ -327,8 +600,8 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			execute({
 				authorization: currentAuthorization,
 				input: {
-					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
-					argv: ['gmail', 'search'],
+					accountId,
+					argv: ['gmail', 'search', 'unread'],
 					reason: 'read messages',
 				},
 				operation: currentAuthorization.operation,
@@ -360,6 +633,7 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			},
 		);
 		const resolveOAuthRuntimeCredential = vi.fn(async () => ({
+			...credentialBinding,
 			accessToken: new TextEncoder().encode('oauth-access-token-marker'),
 			allowedHosts: ['gmail.googleapis.com'],
 			credentialId: oauthCredentialId,
@@ -380,8 +654,8 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			execute({
 				authorization: currentAuthorization,
 				input: {
-					accountProfile: oauthAccountProfileIdSchema.parse('personal-google'),
-					argv: ['gmail', 'search'],
+					accountId,
+					argv: ['gmail', 'search', 'unread'],
 					reason: 'read messages',
 				},
 				operation: currentAuthorization.operation,
@@ -392,13 +666,16 @@ describe('configured CLI credentialed Managed VM executor', () => {
 			}),
 		).rejects.toMatchObject({ code: 'not_dispatched' });
 		expect(validateOAuthRuntimeCredentialSnapshot).toHaveBeenCalledWith({
-			accountProfileId: 'personal-google',
+			accountId,
 			agentId: 'sun',
 			applicationId: 'gmail-app',
 			credentialId: oauthCredentialId,
+			authorizationId,
+			generation: 1,
+			authorizationMetadataRevision: 1,
 			materialRevision,
-			minimumPermission: 'read',
-			serviceId: 'gmail',
+			operationId: 'gmail.search',
+			gmailWriteAllowed: false,
 			zoneId: 'zone-a',
 		});
 		expect(command.exec).not.toHaveBeenCalled();

@@ -12,6 +12,8 @@ export default defineConfig({
 	},
 	format: 'esm',
 	hash: false,
+	// Preserve stable names while keeping shared declarations out of entry paths.
+	outputOptions: { chunkFileNames: 'chunks/[name].js' },
 	outExtensions: () => ({
 		dts: '.d.ts',
 		js: '.js',

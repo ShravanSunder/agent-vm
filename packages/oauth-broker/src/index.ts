@@ -1,5 +1,10 @@
 export * from './envelope-codec.js';
 export * from './catalog-schema.js';
 export * from './oauth-credential-catalog-contracts.js';
+export * from './oauth-policy-defaults-contracts.js';
+export * from './oauth-account-policy-contracts.js';
 export * from './oauth-credential-catalog.js';
+export { OAuthCatalogCutoverRequiredError } from './oauth-catalog-preflight.js';
 export * from './oauth-transaction-store.js';
+export * from './oauth-login-continuation-store.js';
+export * from './oauth-browser-navigation-store.js';

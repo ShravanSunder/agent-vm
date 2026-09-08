@@ -4,30 +4,38 @@ import { createServer } from 'node:https';
 import { isIP } from 'node:net';
 import { createSecureContext } from 'node:tls';
 
+import type { OAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApprovalPageModelSchema,
 	renderOAuthApprovalPage,
 	type OAuthApprovalAssetManifest,
 	type OAuthApprovalPageModel,
-	type OAuthPermissionFieldError,
 } from '@agent-vm/oauth-approval-ui';
+import type {
+	OAuthBrowserNavigationStore,
+	OAuthLoginContinuationStore,
+} from '@agent-vm/oauth-broker';
 import {
-	oauthPermissionChoiceSchema,
-	oauthPermissionSelectionsSchema,
+	oauthCompletionSessionIdSchema,
 	oauthTransactionIdSchema,
-	type OAuthPermissionChoice,
-	type OAuthPermissionSelections,
+	type OAuthBrowserSessionIdentity,
 } from '@agent-vm/oauth-broker-contracts';
 import type {
 	GoogleOAuthBrokerService,
 	GoogleOAuthConfirmationPageData,
-	GoogleOAuthPermissionPageData,
 } from '@agent-vm/oauth-broker/google';
 import { serve } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { closeNodeServer, waitForNodeServerListening } from '../http/node-server-lifecycle.js';
+import type { ClerkBrowserIdentityVerifier } from './clerk-browser-identity-verifier.js';
+import { beginClerkLogin } from './clerk-login-routes.js';
+import type { GooglePermissionPolicyService } from './google-permission-policy-service.js';
+import { createOAuthAccountPolicyRoutes } from './oauth-account-policy-routes.js';
+import { createOAuthBrowserSessionRoutes } from './oauth-browser-session-routes.js';
+import { parsePermissionForm, permissionPageModel } from './oauth-permission-form.js';
 
 const transactionIdCookieName = 'agent_vm_oauth_transaction';
 const transactionBindingCookieName = 'agent_vm_oauth_transaction_binding';
@@ -129,61 +137,13 @@ function securityHeaders(context: { header(name: string, value: string): void })
 	context.header('Cache-Control', 'no-store');
 }
 
-function permissionPageModel(page: GoogleOAuthPermissionPageData): OAuthApprovalPageModel {
-	return oauthApprovalPageModelSchema.parse({
-		accountProfileLabel: page.accountProfileLabel,
-		applications: page.applications,
-		kind: 'permission-selection' as const,
-	});
-}
-
-type PermissionSelectionPageModel = Extract<
-	OAuthApprovalPageModel,
-	{ readonly kind: 'permission-selection' }
->;
-
-type PermissionFormResult =
-	| { readonly kind: 'invalid'; readonly model: PermissionSelectionPageModel }
-	| { readonly kind: 'valid'; readonly selections: OAuthPermissionSelections };
-
-function parsePermissionForm(
-	page: GoogleOAuthPermissionPageData,
-	form: FormData,
-): PermissionFormResult {
-	const fieldErrors: OAuthPermissionFieldError[] = [];
-	const selections: Record<string, Record<string, OAuthPermissionChoice>> = {};
-	const model = permissionPageModel(page);
-	if (model.kind !== 'permission-selection') {
-		throw new Error('OAuth permission page model changed its kind.');
-	}
-	const applications = model.applications.map((application) => ({
-		...application,
-		services: application.services.map((service) => {
-			const rawChoice = form.get(`permission.${application.applicationId}.${service.serviceId}`);
-			const parsedChoice = oauthPermissionChoiceSchema.safeParse(rawChoice);
-			if (!parsedChoice.success || !service.allowedChoices.includes(parsedChoice.data)) {
-				fieldErrors.push({
-					applicationId: application.applicationId,
-					message: `Select an allowed permission for ${service.label}.`,
-					serviceId: service.serviceId,
-				});
-				return service;
-			}
-			const applicationSelections = selections[application.applicationId] ?? {};
-			applicationSelections[service.serviceId] = parsedChoice.data;
-			selections[application.applicationId] = applicationSelections;
-			return { ...service, selectedChoice: parsedChoice.data };
-		}),
-	}));
-	return fieldErrors.length > 0
-		? { kind: 'invalid', model: { ...model, applications, errors: fieldErrors } }
-		: { kind: 'valid', selections: oauthPermissionSelectionsSchema.parse(selections) };
-}
-
 function confirmationPageModel(page: GoogleOAuthConfirmationPageData): OAuthApprovalPageModel {
 	return oauthApprovalPageModelSchema.parse({
 		accountLabel: page.accountLabel,
 		applicationLabel: page.applicationLabel,
+		...(page.previousPermissionLabels === undefined
+			? {}
+			: { previousPermissionLabels: page.previousPermissionLabels }),
 		grantedPermissionLabels: page.grantedPermissionLabels,
 		kind: 'account-confirmation' as const,
 	});
@@ -218,6 +178,12 @@ function isTailscaleAddress(address: string): boolean {
 export function createOAuthHttpsApp(props: {
 	readonly assets: OAuthApprovalAssets;
 	readonly brokerService: GoogleOAuthBrokerService;
+	readonly config: OAuthConfig;
+	readonly browserIdentityVerifier: ClerkBrowserIdentityVerifier;
+	readonly navigation: OAuthBrowserNavigationStore;
+	readonly loginContinuations: OAuthLoginContinuationStore;
+	readonly policyService: GooglePermissionPolicyService;
+	readonly isAdmissionOpen: () => boolean;
 	readonly now?: () => number;
 	readonly publicBaseUrl: string;
 	readonly tailnetIdentityResolver: TailnetIdentityResolver;
@@ -228,8 +194,47 @@ export function createOAuthHttpsApp(props: {
 
 	app.use('*', async (context, next) => {
 		securityHeaders(context);
+		if (!props.isAdmissionOpen()) return context.text('Authorization service is not ready.', 503);
+		try {
+			const login = await resolveTailnetLogin(context);
+			if (!props.config.browser.network.admittedTailnetLogins.includes(login))
+				return context.text('Network access denied.', 403);
+		} catch {
+			return context.text('Network identity could not be verified.', 403);
+		}
 		await next();
+		return;
 	});
+	app.use('*', bodyLimit({ maxSize: 16_384 }));
+	const browser = createOAuthBrowserSessionRoutes({
+		broker: props.brokerService,
+		config: props.config,
+		verifier: props.browserIdentityVerifier,
+		navigation: props.navigation,
+		continuations: props.loginContinuations,
+		cancelPolicyContexts: (identity) => props.policyService.cancelBrowserPolicyContexts(identity),
+	});
+	app.route('/', browser.routes);
+	app.route(
+		'/',
+		createOAuthAccountPolicyRoutes({
+			config: props.config,
+			broker: props.brokerService,
+			policy: props.policyService,
+			browser,
+			navigation: props.navigation,
+			continuations: props.loginContinuations,
+			stylesheet: props.assets.manifest.css,
+		}),
+	);
+	const requireBrowserIdentity = async (
+		context: Context<{ Bindings: OAuthHttpsBindings }>,
+		target: { readonly kind: 'transaction' | 'completion'; readonly id: string },
+	): Promise<OAuthBrowserSessionIdentity> => {
+		const verified = await browser.readIdentity(context.req.raw, target);
+		if (verified.kind !== 'verified') throw new Error('The bound browser session is unavailable.');
+		return verified.identity;
+	};
 
 	const resolveTailnetLogin = async (context: {
 		readonly env: OAuthHttpsBindings;
@@ -262,8 +267,21 @@ export function createOAuthHttpsApp(props: {
 	app.get('/oauth/transactions/:transactionId', async (context) => {
 		try {
 			const transactionId = oauthTransactionIdSchema.parse(context.req.param('transactionId'));
-			const tailnetLogin = await resolveTailnetLogin(context);
-			const page = props.brokerService.getPermissionPage({ tailnetLogin, transactionId });
+			const verified = await browser.readIdentity(context.req.raw, {
+				kind: 'transaction',
+				id: transactionId,
+			});
+			if (verified.kind === 'login-required')
+				return beginClerkLogin({
+					context,
+					target: { kind: 'authorization', transactionId },
+					continuations: props.loginContinuations,
+				});
+			if (verified.kind !== 'verified') throw new Error('Browser identity is unavailable.');
+			const page = props.brokerService.getPermissionPage({
+				identity: verified.identity,
+				transactionId,
+			});
 			setOpaqueCookie({
 				context,
 				expiresAtMs: page.expiresAtMs,
@@ -283,7 +301,7 @@ export function createOAuthHttpsApp(props: {
 					assets: props.assets,
 					cancelAction: `/oauth/transactions/${page.transactionId}/cancel`,
 					csrfToken: page.csrfToken,
-					formAction: `/oauth/transactions/${page.transactionId}/permissions`,
+					formAction: `/oauth/transactions/${page.transactionId}/${page.intent === 'disconnect' ? 'disconnect' : 'permissions'}`,
 					model: permissionPageModel(page),
 				}),
 			);
@@ -307,8 +325,11 @@ export function createOAuthHttpsApp(props: {
 			}
 			const browserBindingSecret = getCookie(context, transactionBindingCookieName);
 			if (browserBindingSecret === undefined) throw new Error('OAuth browser binding is missing.');
-			const tailnetLogin = await resolveTailnetLogin(context);
-			const page = props.brokerService.getPermissionPage({ tailnetLogin, transactionId });
+			const identity = await requireBrowserIdentity(context, {
+				kind: 'transaction',
+				id: transactionId,
+			});
+			const page = props.brokerService.getPermissionPage({ identity, transactionId });
 			const form = await context.req.formData();
 			requireMatchingOpaqueSecret(
 				browserBindingSecret,
@@ -334,7 +355,7 @@ export function createOAuthHttpsApp(props: {
 				browserBindingSecret,
 				csrfToken: submittedCsrfToken,
 				selections: permissionForm.selections,
-				tailnetLogin,
+				identity,
 				transactionId,
 			});
 			if (result.kind === 'redirect') {
@@ -361,7 +382,10 @@ export function createOAuthHttpsApp(props: {
 			return context.html(
 				renderPage({
 					assets: props.assets,
-					model: { accountLabel: page.accountProfileLabel, kind: 'completed' },
+					model: {
+						kind: 'cancelled',
+						message: 'No Google access was requested. No new account was connected.',
+					},
 				}),
 			);
 		} catch {
@@ -369,6 +393,60 @@ export function createOAuthHttpsApp(props: {
 				renderPage({
 					assets: props.assets,
 					model: { kind: 'failed', message: 'The permission submission was rejected.' },
+				}),
+				403,
+			);
+		}
+	});
+
+	app.post('/oauth/transactions/:transactionId/disconnect', async (context) => {
+		try {
+			requireSameOrigin(context.req.header('origin'));
+			const transactionId = oauthTransactionIdSchema.parse(context.req.param('transactionId'));
+			if (getCookie(context, transactionIdCookieName) !== transactionId)
+				throw new Error('Mismatched disconnect context.');
+			const browserBindingSecret = getCookie(context, transactionBindingCookieName);
+			if (browserBindingSecret === undefined) throw new Error('Missing browser binding.');
+			const form = await context.req.formData();
+			const result = await props.brokerService.confirmDisconnect({
+				transactionId,
+				browserBindingSecret,
+				csrfToken: requireFormString(form, 'csrfToken'),
+				identity: await requireBrowserIdentity(context, { kind: 'transaction', id: transactionId }),
+			});
+			clearCeremonyCookies(context);
+			if (result.kind === 'authorization-disconnected')
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						model: {
+							kind: 'disconnected',
+							message:
+								'This agent’s authorization is disconnected locally. Other agents and Google consent are unchanged.',
+						},
+					}),
+				);
+			if (result.kind === 'authorization-disconnecting')
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						model: {
+							kind: 'pending',
+							message: 'Access is blocked while runtime containment finishes.',
+						},
+					}),
+					202,
+				);
+			throw new Error('Disconnect was not completed.');
+		} catch {
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					model: {
+						kind: 'failed',
+						message:
+							'Disconnect could not be completed. Reload the account to check its current status.',
+					},
 				}),
 				403,
 			);
@@ -388,7 +466,7 @@ export function createOAuthHttpsApp(props: {
 			const cancelled = props.brokerService.cancelBrowserTransaction({
 				browserBindingSecret,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				tailnetLogin: await resolveTailnetLogin(context),
+				identity: await requireBrowserIdentity(context, { kind: 'transaction', id: transactionId }),
 				transactionId,
 			});
 			if (!cancelled) throw new Error('OAuth transaction cancellation was rejected.');
@@ -423,7 +501,7 @@ export function createOAuthHttpsApp(props: {
 			const retry = props.brokerService.retryApplication({
 				browserBindingSecret,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				tailnetLogin: await resolveTailnetLogin(context),
+				identity: await requireBrowserIdentity(context, { kind: 'transaction', id: transactionId }),
 				transactionId,
 			});
 			return context.html(
@@ -455,7 +533,47 @@ export function createOAuthHttpsApp(props: {
 		}
 	});
 
+	app.get('/oauth/completions/:retryId/retry', async (context) => {
+		try {
+			const transactionId = oauthTransactionIdSchema.parse(context.req.param('retryId'));
+			if (getCookie(context, transactionIdCookieName) !== transactionId)
+				throw new Error('OAuth retry cookie does not match the route.');
+			const browserBindingSecret = getCookie(context, transactionBindingCookieName);
+			if (browserBindingSecret === undefined) throw new Error('OAuth retry binding is missing.');
+			const page = props.brokerService.getRetryPage({
+				browserBindingSecret,
+				identity: await requireBrowserIdentity(context, {
+					kind: 'transaction',
+					id: transactionId,
+				}),
+				transactionId,
+			});
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					cancelAction: `/oauth/transactions/${transactionId}/cancel`,
+					csrfToken: page.csrfToken,
+					formAction: `/oauth/completions/${transactionId}/retry`,
+					model: {
+						completed: page.completed,
+						kind: 'partial-completion',
+						retryable: page.retryable,
+					},
+				}),
+			);
+		} catch {
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					model: { kind: 'failed', message: 'Google authorization retry is unavailable.' },
+				}),
+				403,
+			);
+		}
+	});
+
 	app.get('/oauth/google/callback', async (context) => {
+		context.header('Referrer-Policy', 'no-referrer');
 		try {
 			const transactionId = oauthTransactionIdSchema.parse(
 				getCookie(context, transactionIdCookieName),
@@ -467,7 +585,7 @@ export function createOAuthHttpsApp(props: {
 				browserBindingSecret,
 				oauthState: context.req.query('state') ?? '',
 				redirectUri: new URL('/oauth/google/callback', props.publicBaseUrl).toString(),
-				tailnetLogin: await resolveTailnetLogin(context),
+				identity: await requireBrowserIdentity(context, { kind: 'transaction', id: transactionId }),
 				transactionId,
 			});
 			if (result.kind === 'failed') {
@@ -499,19 +617,7 @@ export function createOAuthHttpsApp(props: {
 					nowMs: now(),
 					value: result.retry.browserBindingSecret,
 				});
-				return context.html(
-					renderPage({
-						assets: props.assets,
-						cancelAction: `/oauth/transactions/${result.retry.transactionId}/cancel`,
-						csrfToken: result.retryCsrfToken,
-						formAction: `/oauth/completions/${result.retry.transactionId}/retry`,
-						model: {
-							completed: result.completed,
-							kind: 'partial-completion',
-							retryable: result.retryable,
-						},
-					}),
-				);
+				return context.redirect(`/oauth/completions/${result.retry.transactionId}/retry`, 303);
 			}
 			setOpaqueCookie({
 				context,
@@ -527,20 +633,50 @@ export function createOAuthHttpsApp(props: {
 				nowMs: now(),
 				value: result.confirmation.browserBindingSecret,
 			});
+			return context.redirect(`/oauth/completions/${result.confirmation.completionSessionId}`, 303);
+		} catch {
 			return context.html(
 				renderPage({
 					assets: props.assets,
-					cancelAction: `/oauth/completions/${result.confirmation.completionSessionId}/cancel`,
-					csrfToken: result.confirmation.csrfToken,
-					formAction: `/oauth/completions/${result.confirmation.completionSessionId}/confirm`,
-					model: confirmationPageModel(result.confirmation),
+					model: { kind: 'failed', message: 'Google authorization could not be verified.' },
+				}),
+				403,
+			);
+		}
+	});
+
+	app.get('/oauth/completions/:completionId', async (context) => {
+		try {
+			const completionSessionId = oauthCompletionSessionIdSchema.parse(
+				context.req.param('completionId'),
+			);
+			if (getCookie(context, completionIdCookieName) !== completionSessionId)
+				throw new Error('OAuth completion cookie does not match the route.');
+			const browserBindingSecret = getCookie(context, completionBindingCookieName);
+			if (browserBindingSecret === undefined)
+				throw new Error('OAuth completion binding is missing.');
+			const page = props.brokerService.getConfirmationPage({
+				browserBindingSecret,
+				completionSessionId,
+				identity: await requireBrowserIdentity(context, {
+					kind: 'completion',
+					id: completionSessionId,
+				}),
+			});
+			return context.html(
+				renderPage({
+					assets: props.assets,
+					cancelAction: `/oauth/completions/${completionSessionId}/cancel`,
+					csrfToken: page.csrfToken,
+					formAction: `/oauth/completions/${completionSessionId}/confirm`,
+					model: confirmationPageModel(page),
 				}),
 			);
 		} catch {
 			return context.html(
 				renderPage({
 					assets: props.assets,
-					model: { kind: 'failed', message: 'Google authorization could not be verified.' },
+					model: { kind: 'failed', message: 'Google account confirmation is unavailable.' },
 				}),
 				403,
 			);
@@ -563,7 +699,7 @@ export function createOAuthHttpsApp(props: {
 				browserBindingSecret,
 				completionSessionId: completionId,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				tailnetLogin: await resolveTailnetLogin(context),
+				identity: await requireBrowserIdentity(context, { kind: 'completion', id: completionId }),
 			});
 			if (!cancelled) throw new Error('OAuth completion cancellation was rejected.');
 			clearCeremonyCookies(context);
@@ -596,10 +732,11 @@ export function createOAuthHttpsApp(props: {
 				throw new Error('OAuth completion binding is missing.');
 			const form = await context.req.formData();
 			const result = await props.brokerService.confirmAccount({
+				accountAlias: requireFormString(form, 'accountAlias'),
 				browserBindingSecret,
 				completionSessionId: completionId,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				tailnetLogin: await resolveTailnetLogin(context),
+				identity: await requireBrowserIdentity(context, { kind: 'completion', id: completionId }),
 			});
 			clearCeremonyCookies(context);
 			if (result.kind === 'redirect') {
@@ -627,14 +764,24 @@ export function createOAuthHttpsApp(props: {
 					}),
 				);
 			}
-			if (result.kind === 'subject-mismatch') throw new Error('Google subject mismatch.');
-			if (result.kind === 'authorization-denied') {
-				throw new Error('OAuth grant replacement was not authorized.');
-			}
+			if (result.kind === 'replacement-pending' || result.kind === 'containment-failed')
+				return context.html(
+					renderPage({
+						assets: props.assets,
+						model: {
+							kind: 'pending',
+							message:
+								'Authorization was saved, but old runtime access is not yet confirmed contained. This account remains paused.',
+						},
+					}),
+					202,
+				);
+			if (result.kind !== 'completed')
+				throw new Error('OAuth account confirmation was not completed.');
 			return context.html(
 				renderPage({
 					assets: props.assets,
-					model: { accountLabel: result.accountLabel, kind: 'completed' },
+					model: { accountLabel: result.accountAlias, kind: 'completed' },
 				}),
 			);
 		} catch {

@@ -6,6 +6,7 @@ import type { UpstreamMcpClientRuntime } from '@agent-vm/mcp-portal';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createOAuthConfigTestInput } from '../../../config-contracts/src/oauth-config-test-fixture.js';
 import { createLoadedSystemConfig, loadSystemConfig } from '../config/system-config.js';
 import { resolveProjectCheckoutPath, runConfigValidation } from './config-validation.js';
 import { runLiveMcpPortalValidation } from './mcp-portal-live-validation.js';
@@ -389,24 +390,6 @@ async function writeManagedToolPortalConfigWithAgents(
 	);
 }
 
-function createOAuthApplicationConfig(serviceId: string): Record<string, unknown> {
-	return {
-		clientCredentials: {
-			ref: `op://agent-vm-testing/${serviceId}-oauth-client/client-json`,
-			source: '1password',
-		},
-		clientKind: 'web',
-		description: `${serviceId} OAuth application.`,
-		label: serviceId,
-		services: {
-			[serviceId]: {
-				label: serviceId,
-				read: [`scope.${serviceId}.read`],
-			},
-		},
-	};
-}
-
 async function writeManagedOAuthConfigFiles(rootPath: string): Promise<void> {
 	const configDirectoryPath = path.join(rootPath, 'config', 'tool-portal', 'shravan');
 	await writeJson(path.join(configDirectoryPath, 'tool-portal.config.jsonc'), {
@@ -419,61 +402,30 @@ async function writeManagedOAuthConfigFiles(rootPath: string): Promise<void> {
 						backend: {
 							kind: 'controller_execution',
 							operations: Object.fromEntries(
-								['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'].map(
+								['begin', 'cancel', 'list', 'reauthorize', 'disconnect', 'status'].map(
 									(operationName) => [operationName, { kind: 'registered_action' }],
 								),
 							),
 						},
 						calls: {
-							requiresApproval: { allow: ['reauthorize', 'revoke'] },
+							requiresApproval: { allow: ['reauthorize', 'disconnect'] },
 							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
 						},
-						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
+						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'disconnect', 'status'] },
 					},
 				},
 			},
 		},
 		schemaVersion: 1,
 	});
+	const oauthConfig = createOAuthConfigTestInput();
 	await writeJson(path.join(configDirectoryPath, 'oauth.config.jsonc'), {
-		agents: {
-			shravan: {
-				accountProfiles: {
-					'personal-google': {
-						applications: {
-							'gmail-app': { maximumPermissions: { gmail: 'read' } },
-						},
-						authorizedTailnetLogins: ['human@example.test'],
-						provider: 'google',
-					},
-				},
-			},
-		},
-		browser: {
-			listener: {
-				certificatePath: path.join(rootPath, 'oauth.crt'),
-				kind: 'tailscale_https',
-				port: 18_900,
-				privateKeyPath: path.join(rootPath, 'oauth.key'),
-			},
-			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
-		},
-		providers: {
-			google: {
-				applications: {
-					'gmail-app': createOAuthApplicationConfig('gmail'),
-					'workspace-app': createOAuthApplicationConfig('calendar'),
-					'youtube-app': createOAuthApplicationConfig('youtube'),
-				},
-				kind: 'google',
-			},
-		},
-		schemaVersion: 1,
-		storage: {
-			keyEncryptionKey: {
-				ref: 'op://agent-vm-testing/oauth-kek/password',
-				source: '1password',
-			},
+		...oauthConfig,
+		zoneId: 'shravan',
+		agents: { shravan: oauthConfig.agents.sun },
+		owners: { owner: { ...oauthConfig.owners.owner, allowedAgentIds: ['shravan'] } },
+		policyEditors: {
+			editor: { ...oauthConfig.policyEditors.editor, editableAgentIds: ['shravan'] },
 		},
 	});
 }

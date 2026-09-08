@@ -1,4 +1,6 @@
+export * from './clerk-browser-config.js';
 export * from './controller-configured-cli.js';
+export * from './google-policy-defaults-config.js';
 export * from './json-config-file.js';
 export * from './json-value.js';
 export * from './mcp-config.js';
@@ -7,6 +9,7 @@ export * from './mcp-portal-config.js';
 export * from './namespace-discovery-compiler.js';
 export * from './oauth-config.js';
 export * from './oauth-tool-portal-config.js';
+export * from './compiled-google-command-set.js';
 export * from './schema-artifacts.js';
 export * from './secret-value.js';
 export * from './tool-portal-config.js';

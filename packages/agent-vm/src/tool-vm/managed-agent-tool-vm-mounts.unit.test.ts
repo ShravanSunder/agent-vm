@@ -50,7 +50,7 @@ function identityForPath(hostPath: string): ManagedVmCanonicalDirectoryIdentity 
 	return {
 		canonicalPath: hostPath,
 		device: 1,
-		inode: hostPath.includes('gitdirs') ? 12 : 11,
+		inode: hostPath.includes('gitdirs') ? 12 : hostPath.includes('staging') ? 13 : 11,
 	};
 }
 
@@ -84,6 +84,40 @@ function createOwnedDirectoryHarness(options?: { readonly stalePath?: string }):
 }
 
 describe('managed agent Tool VM workspace mount', () => {
+	it('adds only the typed read-only published-files mount without changing /work', async () => {
+		// Arrange
+		const ownedDirectories = createOwnedDirectoryHarness();
+		let capturedRequest: ManagedVmCreateRequest | undefined;
+		const factory: ManagedVmFactory = {
+			createManagedVm: async (request) => {
+				capturedRequest = request;
+				for (const mount of Object.values(request.mounts)) {
+					if (mount.kind === 'owned-host-directory' || mount.kind === 'owned-filtered-workspace')
+						mount.directory.consume();
+				}
+				return createManagedVm();
+			},
+		};
+		// Act
+		await createManagedVmWithFilteredAgentWorkspace(
+			{
+				factory,
+				hostWorkspaceRoot: '/host/zone/agents/alpha',
+				hostPublishedFilesRoot: '/host/staging/leaf',
+				ownedDirectories: ownedDirectories.capability,
+				request: createRequest(),
+				workspacePolicy: WORKSPACE_POLICY,
+			},
+			{ readDirectoryIdentity: ownedDirectories.readDirectoryIdentity },
+		);
+		// Assert
+		expect(capturedRequest?.mounts['/agent-vm/files']).toMatchObject({
+			kind: 'owned-host-directory',
+			access: 'read-only',
+			directory: { state: 'adapter-owned' },
+		});
+		expect(capturedRequest?.mounts).not.toHaveProperty('/work');
+	});
 	it('omits Git authority and /gitdirs when the selected agent has no workspace Git', async () => {
 		const ownedDirectories = createOwnedDirectoryHarness();
 		let capturedRequest: ManagedVmCreateRequest | undefined;

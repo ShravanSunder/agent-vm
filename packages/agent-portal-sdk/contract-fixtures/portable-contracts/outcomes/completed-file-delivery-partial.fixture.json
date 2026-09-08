@@ -1,0 +1,84 @@
+{
+	"caseId": "completed-file-delivery-partial",
+	"schemaId": "portal.call.result",
+	"tags": ["accepted", "outcome", "aggregate-status"],
+	"input": {
+		"items": [
+			{
+				"artifacts": [
+					{
+						"byteLength": 3,
+						"expiresAt": "2099-01-01T00:00:00.000Z",
+						"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+						"id": "complete-file"
+					}
+				],
+				"error": {
+					"code": "execution_failed",
+					"message": "One output could not be delivered."
+				},
+				"id": "call-1",
+				"operationId": "operation-1",
+				"outcome": {
+					"certainty": "proven",
+					"completion": "failed",
+					"kind": "completed",
+					"retryClass": "forbidden"
+				},
+				"owningGeneration": "generation-1",
+				"status": "error",
+				"value": {
+					"delivery": "partial",
+					"remoteExecution": {
+						"exitCode": 0
+					}
+				}
+			}
+		],
+		"ok": false
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"items": [
+				{
+					"artifacts": [
+						{
+							"byteLength": 3,
+							"expiresAt": "2099-01-01T00:00:00.000Z",
+							"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+							"id": "complete-file"
+						}
+					],
+					"error": {
+						"code": "execution_failed",
+						"message": "One output could not be delivered."
+					},
+					"id": "call-1",
+					"operationId": "operation-1",
+					"outcome": {
+						"certainty": "proven",
+						"completion": "failed",
+						"kind": "completed",
+						"retryClass": "forbidden"
+					},
+					"owningGeneration": "generation-1",
+					"status": "error",
+					"value": {
+						"delivery": "partial",
+						"remoteExecution": {
+							"exitCode": 0
+						}
+					}
+				}
+			],
+			"ok": false
+		},
+		"canonicalJson": "{\"items\":[{\"artifacts\":[{\"byteLength\":3,\"expiresAt\":\"2099-01-01T00:00:00.000Z\",\"fingerprint\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"id\":\"complete-file\"}],\"error\":{\"code\":\"execution_failed\",\"message\":\"One output could not be delivered.\"},\"id\":\"call-1\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven\",\"completion\":\"failed\",\"kind\":\"completed\",\"retryClass\":\"forbidden\"},\"owningGeneration\":\"generation-1\",\"status\":\"error\",\"value\":{\"delivery\":\"partial\",\"remoteExecution\":{\"exitCode\":0}}}],\"ok\":false}",
+		"refinementIdentities": [
+			"portal.request-id.not-reserved",
+			"portal.result.aggregate-status",
+			"portal.result.outcome-algebra"
+		]
+	}
+}

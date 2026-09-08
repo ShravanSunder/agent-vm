@@ -4,6 +4,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import * as ts from 'typescript';
 
+import {
+	APPROVED_GONDOLIN_PATCH_PATH,
+	APPROVED_GONDOLIN_PATCH_HASH,
+	APPROVED_INSTALLED_GONDOLIN_PATH,
+	isApprovedGondolinPatchPresent,
+	withoutApprovedGondolinPatchRegistration,
+} from './approved-gondolin-patch-audit.js';
+
 export interface VmOwnershipBoundaryAuditSource {
 	readonly content: string;
 	readonly filePath: string;
@@ -189,7 +197,11 @@ function installedGondolinVersion(source: VmOwnershipBoundaryAuditSource): strin
 function exactGondolinLockPackageStanza(content: string): string | undefined {
 	const lines = content.split('\n');
 	const packageKey = `  '${STOCK_GONDOLIN_PACKAGE_NAME}@${STOCK_GONDOLIN_VERSION}':`;
-	const packageLineIndex = lines.findIndex((line) => line === packageKey);
+	// patchedDependencies uses the same key; integrity belongs to packages only.
+	const packagesStart = lines.indexOf('packages:');
+	const packageLineIndex = lines.findIndex(
+		(line, index) => index > packagesStart && line === packageKey,
+	);
 	if (packageLineIndex === -1) {
 		return undefined;
 	}
@@ -214,6 +226,7 @@ export function auditStockGondolinDependencyBoundary(
 	options: { readonly requireCompleteGraph?: boolean } = {},
 ): readonly VmOwnershipBoundaryAuditFinding[] {
 	const findings: VmOwnershipBoundaryAuditFinding[] = [];
+	const approvedPatchFound = isApprovedGondolinPatchPresent(sources);
 	let exactRepositoryVersionFound = false;
 	let exactLockIdentityFound = false;
 	let exactInstalledVersionFound = false;
@@ -222,17 +235,26 @@ export function auditStockGondolinDependencyBoundary(
 		if (
 			normalizedPath.startsWith('patches/') &&
 			normalizedPath.endsWith('.patch') &&
-			normalizedPath.toLowerCase().includes('gondolin')
+			normalizedPath.toLowerCase().includes('gondolin') &&
+			!(approvedPatchFound && normalizedPath === APPROVED_GONDOLIN_PATCH_PATH)
 		) {
 			insertDependencyFinding(findings, source, 'Gondolin dependency patch artifact is present');
 		}
-		if (source.content.includes('patchedDependencies')) {
+		const checkedContent = approvedPatchFound
+			? withoutApprovedGondolinPatchRegistration({ ...source, filePath: normalizedPath })
+			: source.content;
+		if (checkedContent.includes('patchedDependencies')) {
 			insertDependencyFinding(findings, source, 'pnpm patchedDependencies is forbidden');
 		}
 		if (
 			(source.content.includes(`${STOCK_GONDOLIN_PACKAGE_NAME}@patch:`) ||
 				normalizedPath.includes('@patch:') ||
-				normalizedPath.includes('_patch_hash=')) &&
+				(normalizedPath.includes('_patch_hash=') &&
+					!(approvedPatchFound && normalizedPath === APPROVED_INSTALLED_GONDOLIN_PATH)) ||
+				(approvedPatchFound
+					? source.content.replaceAll(`(patch_hash=${APPROVED_GONDOLIN_PATCH_HASH})`, '')
+					: source.content
+				).includes('patch_hash=')) &&
 			(source.content.includes(STOCK_GONDOLIN_PACKAGE_NAME) ||
 				normalizedPath.includes('@earendil-works+gondolin'))
 		) {
@@ -344,15 +366,21 @@ export async function readStockGondolinDependencyAuditSources(
 		const patchEntries = await readdir(path.join(repositoryRoot, 'patches'), {
 			withFileTypes: true,
 		});
-		for (const entry of patchEntries) {
-			if (
-				entry.isFile() &&
-				entry.name.endsWith('.patch') &&
-				entry.name.toLowerCase().includes('gondolin')
-			) {
-				patchSources.push({ content: '', filePath: `patches/${entry.name}` });
-			}
-		}
+		patchSources.push(
+			...(await Promise.all(
+				patchEntries
+					.filter(
+						(entry) =>
+							entry.isFile() &&
+							entry.name.endsWith('.patch') &&
+							entry.name.toLowerCase().includes('gondolin'),
+					)
+					.map(async (entry) => ({
+						content: await readFile(path.join(repositoryRoot, 'patches', entry.name), 'utf8'),
+						filePath: `patches/${entry.name}`,
+					})),
+			)),
+		);
 	} catch (error) {
 		if (!isErrnoException(error) || error.code !== 'ENOENT') {
 			throw error;

@@ -1,0 +1,123 @@
+{
+	// Illustrative only: replace every example.test identity and example-agent-vm
+	// 1Password reference with deployment-owned values before use.
+	"schemaVersion": 2,
+	"zoneId": "example-zone",
+	"browser": {
+		"publicBaseUrl": "https://auth.claw.askluna.xyz:18900",
+		"listener": {
+			"kind": "tailscale_https",
+			"port": 18900,
+			"certificatePath": "/var/lib/agent-vm/example-oauth/tls.crt",
+			"privateKeyPath": "/var/lib/agent-vm/example-oauth/tls.key",
+		},
+		"network": {
+			// Network admission is not account ownership.
+			"admittedTailnetLogins": ["person@example.test"],
+		},
+		"identity": {
+			"kind": "clerk",
+			"issuer": "https://identity.example.test",
+			"fixedLoginReturnOrigin": "https://auth.claw.askluna.xyz:18900",
+			"hostedSignInUrl": "https://identity.example.test/sign-in",
+			"publishableKey": "pk_test_aWRlbnRpdHkuZXhhbXBsZS50ZXN0JA==",
+			"secretKey": {
+				"source": "1password",
+				"ref": "op://example-agent-vm/clerk/secret-key",
+			},
+		},
+	},
+	"owners": {
+		"example-owner": {
+			"label": "Example owner",
+			"clerkUserId": "user_example_owner",
+			"allowedAgentIds": ["sun", "ember"],
+		},
+	},
+	"policyEditors": {
+		"example-editor": {
+			"clerkUserId": "user_example_owner",
+			"editableAgentIds": ["sun", "ember"],
+		},
+	},
+	// Accounts are enrolled dynamically by their verified owners. No Google
+	// account address, provider subject, credential, or agent account slot belongs here.
+	"agents": {
+		"sun": {
+			"applications": {
+				"gmail-app": {
+					"ceiling": {
+						"kind": "explicit",
+						"groupIds": ["gmail.read", "gmail.write"],
+					},
+				},
+			},
+		},
+		"ember": {
+			"applications": {
+				"gmail-app": {
+					"ceiling": {
+						"kind": "explicit",
+						"groupIds": ["gmail.read", "gmail.write"],
+					},
+				},
+			},
+		},
+	},
+	"providers": {
+		"google": {
+			"kind": "google",
+			"catalogVersion": "google-gog-v0.38.1-v1",
+			"gogBuildIdentity": {
+				"version": "0.38.1",
+				"commit": "324f656a4949c3adbf8e1f18066d3965757ed9db",
+			},
+			"projects": {
+				"example-project": {
+					"publishingStatus": "testing",
+				},
+			},
+			"applications": {
+				"gmail-app": {
+					"catalogFamilyId": "communications",
+					"clientKind": "web",
+					"label": "Gmail, Calendar, and Contacts",
+					"description": "Example communication-family OAuth application.",
+					"projectId": "example-project",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "op://example-agent-vm/google-communications/client-json",
+					},
+				},
+				"workspace-app": {
+					"catalogFamilyId": "documents",
+					"clientKind": "web",
+					"label": "Drive and documents",
+					"description": "Example document-family OAuth application.",
+					"projectId": "example-project",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "op://example-agent-vm/google-documents/client-json",
+					},
+				},
+				"youtube-app": {
+					"catalogFamilyId": "youtube",
+					"clientKind": "web",
+					"label": "YouTube",
+					"description": "Example YouTube-family OAuth application.",
+					"projectId": "example-project",
+					"clientCredentials": {
+						"source": "1password",
+						"ref": "op://example-agent-vm/google-youtube/client-json",
+					},
+				},
+			},
+		},
+	},
+	"storage": {
+		"keyEncryptionKey": {
+			"source": "1password",
+			"ref": "op://example-agent-vm/oauth/wrapping-key",
+		},
+	},
+}

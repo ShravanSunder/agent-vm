@@ -116,6 +116,8 @@ function managedAgentWorkspacePolicy(
 			throw new Error(
 				`Gateway type '${zone.gateway.type}' does not yet define a managed agent workspace policy.`,
 			);
+		default:
+			throw new Error('Unsupported managed agent workspace Gateway type.');
 	}
 }
 
@@ -326,6 +328,7 @@ async function writeToolVmMediatedEnvBootstrap(
 export async function createUnstartedToolVm(
 	options: {
 		readonly agentId: string;
+		readonly hostPublishedFilesRoot?: string;
 		readonly cacheDir: string;
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
@@ -461,6 +464,9 @@ export async function createUnstartedToolVm(
 					? {}
 					: { hostGitDirectoryRoot: managedAgentWorkspaceRoot.hostGitDirectoryRoot }),
 				hostWorkspaceRoot: managedAgentWorkspaceRoot.hostWorkspaceRoot,
+				...(options.hostPublishedFilesRoot === undefined
+					? {}
+					: { hostPublishedFilesRoot: options.hostPublishedFilesRoot }),
 				ownedDirectories: dependencies.managedVmOwnedDirectories,
 				request: managedVmRequest,
 				workspacePolicy: managedAgentWorkspacePolicy(options.agentId, zone),

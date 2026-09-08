@@ -311,6 +311,7 @@ describe('MCP Portal effective config materialization', () => {
 			throw new Error('Expected controller execution namespace.');
 		}
 		namespacePolicy.tools.allow = [];
+		if ('source' in namespacePolicy.calls) throw new Error('Expected static fixture calls.');
 		namespacePolicy.calls.withoutApproval.allow = [];
 
 		const result = await resolveMcpPortalEffectiveConfigFromConfig({
@@ -503,6 +504,7 @@ describe('MCP Portal effective config materialization', () => {
 			mandatoryArgvPrefix: [],
 			safeHelp: 'Delete one Drive item.',
 		});
+		if ('source' in configuredOperation.calls) throw new Error('Expected static fixture calls.');
 		configuredOperation.calls.requiresApproval = [
 			{ flags: [{ names: ['--permanent'] }], path: ['drive', 'delete'] },
 		];
@@ -1119,9 +1121,9 @@ describe('MCP Portal effective config materialization', () => {
 			}),
 		);
 
-		expect(
-			plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki?.calls.requiresApproval,
-		).toEqual({ allow: '*', deny: [] });
+		const calls = plan.effectiveToolPortalConfig.profiles.default?.namespaces.deepwiki?.calls;
+		if (calls === undefined || 'source' in calls) throw new Error('Expected static MCP policy.');
+		expect(calls.requiresApproval).toEqual({ allow: '*', deny: [] });
 	});
 
 	it('materializes effective discovery from the sole backend-specific summary source', async () => {

@@ -197,6 +197,34 @@ afterEach(async () => {
 });
 
 describe('controller approval ledger durability and authority', () => {
+	it('awaits asynchronous input-authority validation before persisting a challenge', async () => {
+		// Arrange: streaming file preflight may finish after the synchronous policy check.
+		const harness = await createTestLedgerHarness();
+		const validation = Promise.withResolvers<boolean>();
+		const started = Promise.withResolvers<void>();
+		const ledger = createControllerApprovalLedger({
+			challengeTtlMs: CHALLENGE_TTL_MS,
+			currentControllerEpoch: authorityContext.controllerEpoch,
+			now: harness.clock.now,
+			recordsTarget: {
+				kind: 'controller-approval-records',
+				zoneId: authorityContext.zoneId,
+				directoryPath: harness.recordsDirectoryPath,
+			},
+			validateInputAuthority: async () => {
+				started.resolve();
+				return await validation.promise;
+			},
+		});
+		// Act
+		const requested = ledger.requestApproval({ authorityContext, intent: baseIntent });
+		await started.promise;
+		validation.resolve(false);
+		// Assert: a Promise is not a successful validation result.
+		expect(await requested).toMatchObject({ kind: 'not-dispatched', reason: 'stale-fingerprint' });
+		expect(await ledger.list()).toEqual([]);
+	});
+
 	it('writes directly to the typed approval collection without appending a legacy suffix', async () => {
 		// Arrange
 		const { ledger, recordsDirectoryPath } = await createTestLedgerHarness();

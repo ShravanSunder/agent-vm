@@ -1,0 +1,19 @@
+{
+	"caseId": "attachment-recipient-rejected",
+	"schemaId": "portal.attachment.request",
+	"tags": ["native-attachment", "rejected"],
+	"input": {
+		"action": "stage",
+		"source": {
+			"kind": "operation-file",
+			"referenceId": "55555555-5555-4555-8555-555555555555",
+			"path": "./report.bin"
+		},
+		"recipient": "caller-selected"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.schema.invalid-union"],
+		"refinementIdentities": []
+	}
+}

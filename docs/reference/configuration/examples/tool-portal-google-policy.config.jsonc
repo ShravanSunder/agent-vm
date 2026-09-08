@@ -1,0 +1,129 @@
+{
+	// Pair this illustrative document with oauth-v2.config.jsonc. The two agents
+	// share an executable profile but retain independent policy defaults and accounts.
+	"schemaVersion": 1,
+	"mode": "managed",
+	"agents": {
+		"sun": {
+			"profile": "google-enabled",
+			"googlePolicyDefaults": {
+				"kind": "collection",
+				"collectionId": "read-only-assistant",
+				"version": "1",
+			},
+		},
+		"ember": {
+			"profile": "google-enabled",
+			"googlePolicyDefaults": {
+				"kind": "explicit",
+				"applications": {
+					"gmail-app": {
+						"gmail": {
+							"read": "ask",
+							"write": "deny",
+						},
+					},
+				},
+			},
+		},
+	},
+	"profiles": {
+		"google-enabled": {
+			"namespaces": {
+				"google": {
+					"tools": {
+						"allow": ["gog"],
+					},
+					// The selected account override or live agent default decides
+					// Deny, Ask, or Allow. This namespace does not duplicate that policy.
+					"calls": {
+						"source": "managed_google_policy",
+					},
+					"backend": {
+						"kind": "controller_execution",
+						"operations": {
+							"gog": {
+								"kind": "configured_cli",
+								"authorization": {
+									"kind": "oauth_account",
+								},
+								"executablePath": "/usr/local/bin/gog",
+								"mandatoryArgvPrefix": [],
+								"safeHelp": "Search the selected authorized Gmail account.",
+								"commands": [
+									{
+										"path": ["gmail", "search"],
+										"flagRules": [],
+									},
+								],
+								"calls": {
+									"source": "managed_google_policy",
+									"deny": [],
+								},
+								"stdin": {
+									"kind": "none",
+								},
+								"timeout": {
+									"kind": "quick",
+								},
+								"output": {
+									"modelVisibleStderr": "fixed_safe_summary",
+									"overflow": "truncate",
+									"stdoutMaxBytes": 4096,
+									"stderrMaxBytes": 1024,
+								},
+								"executionTarget": {
+									"kind": "ephemeral_managed_vm",
+									"imageReference": "vm-images/google",
+									"guestCwd": "/work",
+									"environment": {
+										"kind": "empty",
+									},
+									"allowedHosts": [
+										"gmail.googleapis.com",
+										"people.googleapis.com",
+										"www.googleapis.com",
+									],
+									"credentialProjection": {
+										"kind": "http_mediation",
+										"environment": {
+											"GOG_ACCESS_TOKEN": {
+												"kind": "oauth_access_token",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"oauth_authorization": {
+					"tools": {
+						"allow": ["list", "begin", "status", "cancel", "reauthorize", "disconnect"],
+					},
+					// This example admits lifecycle requests directly. Browser-owner
+					// confirmation is still mandatory for lasting authorization changes.
+					"calls": {
+						"requiresApproval": {
+							"allow": [],
+						},
+						"withoutApproval": {
+							"allow": ["list", "begin", "status", "cancel", "reauthorize", "disconnect"],
+						},
+					},
+					"backend": {
+						"kind": "controller_execution",
+						"operations": {
+							"list": { "kind": "registered_action" },
+							"begin": { "kind": "registered_action" },
+							"status": { "kind": "registered_action" },
+							"cancel": { "kind": "registered_action" },
+							"reauthorize": { "kind": "registered_action" },
+							"disconnect": { "kind": "registered_action" },
+						},
+					},
+				},
+			},
+		},
+	},
+}

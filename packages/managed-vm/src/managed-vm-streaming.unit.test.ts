@@ -27,9 +27,8 @@ export type MissingStderrMode = AssertAssignable<
 	}
 >;
 
-export type MissingOutputWindow = AssertAssignable<
+export type StockOutputWindow = AssertAssignable<
 	ManagedVmExecStreamingOptions,
-	// @ts-expect-error Streaming output requires one bounded global output window.
 	{
 		readonly stderr: { readonly kind: 'discard' };
 		readonly stdout: { readonly kind: 'pipe' };
@@ -46,6 +45,15 @@ export type NativeIgnoreMode = AssertAssignable<
 >;
 
 describe('ManagedVm streaming exec contract', () => {
+	it('permits the stock output window while requiring both stream dispositions', () => {
+		const output = {
+			stderr: { kind: 'discard' },
+			stdout: { kind: 'pipe' },
+		} satisfies ManagedVmExecStreamingOptions;
+
+		expect(output).not.toHaveProperty('windowBytes');
+	});
+
 	it('groups required structural stream modes with one bounded output window', () => {
 		const streamingOutput = {
 			stderr: { kind: 'discard' },

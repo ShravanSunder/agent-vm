@@ -221,6 +221,16 @@ export interface ControllerApprovalLedger {
 }
 
 interface CreateControllerApprovalLedgerProps {
+	readonly validateIntent?:
+		| ((
+				intent: GatewayRuntimeApprovalChallengeIntent,
+				authorityContext: GatewayRuntimeApprovalAuthorityContext,
+		  ) => boolean)
+		| undefined;
+	readonly validateInputAuthority?: (
+		intent: GatewayRuntimeApprovalChallengeIntent,
+		authorityContext: GatewayRuntimeApprovalAuthorityContext,
+	) => Promise<boolean>;
 	readonly challengeTtlMs: number;
 	readonly currentControllerEpoch: string;
 	readonly generateUuid?: () => string;
@@ -360,6 +370,30 @@ function notDispatched(
 export function createControllerApprovalLedger(
 	props: CreateControllerApprovalLedgerProps,
 ): ControllerApprovalLedger {
+	const intentIsCurrent = (
+		intent: GatewayRuntimeApprovalChallengeIntent,
+		authorityContext: GatewayRuntimeApprovalAuthorityContext,
+	): boolean => {
+		try {
+			return props.validateIntent === undefined
+				? intent.managedGoogle === undefined
+				: props.validateIntent(intent, authorityContext);
+		} catch {
+			return false;
+		}
+	};
+	const inputAuthorityIsCurrent = async (
+		intent: GatewayRuntimeApprovalChallengeIntent,
+		authorityContext: GatewayRuntimeApprovalAuthorityContext,
+	): Promise<boolean> => {
+		try {
+			return props.validateInputAuthority === undefined
+				? intent.managedGoogle?.fileInputs === undefined
+				: await props.validateInputAuthority(intent, authorityContext);
+		} catch {
+			return false;
+		}
+	};
 	if (!Number.isSafeInteger(props.challengeTtlMs) || props.challengeTtlMs <= 0) {
 		throw new TypeError('Approval challenge TTL must be a positive safe integer.');
 	}
@@ -399,9 +433,22 @@ export function createControllerApprovalLedger(
 		}
 		const fingerprint = deriveGatewayRuntimeApprovalFingerprint({ authorityContext, intent });
 		const approvalId = deriveGatewayRuntimeApprovalId(fingerprint);
-		return await store.mutateRecord<GatewayRuntimeApprovalAdmissionResult>(
+		const admission = await store.mutateRecord<GatewayRuntimeApprovalAdmissionResult>(
 			approvalId,
-			(currentRecord) => {
+			async (currentRecord) => {
+				if (
+					currentRecord?.kind !== 'dispatch-armed' &&
+					(!(await inputAuthorityIsCurrent(intent, authorityContext)) ||
+						!intentIsCurrent(intent, authorityContext))
+				)
+					return {
+						nextRecord: currentRecord,
+						result: {
+							kind: 'not-dispatched',
+							operationId: intent.operationId,
+							reason: 'stale-fingerprint',
+						} as const,
+					};
 				const currentTime = now();
 				if (currentRecord === null) {
 					const challenge = GatewayRuntimeApprovalChallengeSchema.parse({
@@ -507,6 +554,16 @@ export function createControllerApprovalLedger(
 				}
 			},
 		);
+		if (
+			(admission.kind === 'approval-required' || admission.kind === 'dispatch-reserved') &&
+			!intentIsCurrent(intent, authorityContext)
+		)
+			return {
+				kind: 'not-dispatched',
+				operationId: intent.operationId,
+				reason: 'stale-fingerprint',
+			};
+		return admission;
 	}
 
 	async function armDispatch(request: {
@@ -522,9 +579,10 @@ export function createControllerApprovalLedger(
 				reason: 'stale-authority',
 			};
 		}
-		return await store.mutateRecord<ControllerApprovalArmDispatchResult>(
+		let armedIntent: GatewayRuntimeApprovalChallengeIntent | undefined;
+		const armResult = await store.mutateRecord<ControllerApprovalArmDispatchResult>(
 			reservation.approvalId,
-			(currentRecord) => {
+			async (currentRecord) => {
 				if (currentRecord === null) {
 					return {
 						nextRecord: null,
@@ -558,6 +616,7 @@ export function createControllerApprovalLedger(
 					};
 				}
 				if (isExpired(currentRecord.challenge, now())) {
+					// Expiry is independent of the current account-policy binding.
 					return {
 						nextRecord: currentRecord,
 						result: notDispatched(currentRecord, 'expired'),
@@ -572,7 +631,17 @@ export function createControllerApprovalLedger(
 						result: notDispatched(currentRecord, 'stale-fingerprint'),
 					};
 				}
+				if (
+					!(await inputAuthorityIsCurrent(currentRecord.challenge.intent, authorityContext)) ||
+					!intentIsCurrent(currentRecord.challenge.intent, authorityContext) ||
+					isExpired(currentRecord.challenge, now())
+				)
+					return {
+						nextRecord: currentRecord,
+						result: notDispatched(currentRecord, 'stale-fingerprint'),
+					};
 				const armedAt = new Date(now()).toISOString();
+				armedIntent = currentRecord.challenge.intent;
 				const grant = ControllerApprovalDispatchGrantSchema.parse({
 					approvalId: reservation.approvalId,
 					authorityContext,
@@ -601,6 +670,18 @@ export function createControllerApprovalLedger(
 				};
 			},
 		);
+		// Durable I/O yields to policy saves. Withhold a newly armed grant if its
+		// authority changed, but retain the armed record so retries stay ambiguous.
+		if (
+			armResult.kind === 'dispatch-armed' &&
+			(armedIntent === undefined || !intentIsCurrent(armedIntent, authorityContext))
+		)
+			return {
+				kind: 'not-dispatched',
+				operationId: reservation.operationId,
+				reason: 'stale-fingerprint',
+			};
+		return armResult;
 	}
 
 	async function decide(request: {
@@ -614,9 +695,9 @@ export function createControllerApprovalLedger(
 		if (authorityContext.controllerEpoch !== currentControllerEpoch) {
 			return { kind: 'rejected', reason: 'stale-authority' };
 		}
-		return await store.mutateRecord<ControllerApprovalDecisionResult>(
+		const decisionResult = await store.mutateRecord<ControllerApprovalDecisionResult>(
 			request.approvalId,
-			(currentRecord) => {
+			async (currentRecord) => {
 				if (currentRecord === null) {
 					return { nextRecord: null, result: { kind: 'rejected', reason: 'not-found' } as const };
 				}
@@ -638,6 +719,15 @@ export function createControllerApprovalLedger(
 						result: { kind: 'rejected', reason: 'already-decided' } as const,
 					};
 				}
+				if (
+					!(await inputAuthorityIsCurrent(currentRecord.challenge.intent, authorityContext)) ||
+					!intentIsCurrent(currentRecord.challenge.intent, authorityContext) ||
+					isExpired(currentRecord.challenge, now())
+				)
+					return {
+						nextRecord: currentRecord,
+						result: { kind: 'rejected', reason: 'stale-authority' } as const,
+					};
 				if (
 					deriveGatewayControlStablePrincipal({
 						principal: currentRecord.challenge.intent.trustedContext.principal,
@@ -703,6 +793,12 @@ export function createControllerApprovalLedger(
 				};
 			},
 		);
+		if (
+			decisionResult.kind === 'recorded' &&
+			!intentIsCurrent(decisionResult.view.challenge.intent, authorityContext)
+		)
+			return { kind: 'rejected', reason: 'stale-authority' };
+		return decisionResult;
 	}
 
 	async function revoke(request: {

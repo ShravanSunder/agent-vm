@@ -78,8 +78,12 @@ function profileToolNamesForNamespace(
 	return Array.from(
 		new Set([
 			...selectorToolNames(namespacePolicy.tools),
-			...selectorToolNames(namespacePolicy.calls.requiresApproval),
-			...selectorToolNames(namespacePolicy.calls.withoutApproval),
+			...('source' in namespacePolicy.calls
+				? []
+				: [
+						...selectorToolNames(namespacePolicy.calls.requiresApproval),
+						...selectorToolNames(namespacePolicy.calls.withoutApproval),
+					]),
 		]),
 	).toSorted();
 }

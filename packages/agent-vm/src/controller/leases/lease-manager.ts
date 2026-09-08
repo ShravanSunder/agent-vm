@@ -506,6 +506,8 @@ export function createLeaseManager(options: {
 	readonly createLeafGeneration?: () => string;
 	readonly createRuntimeRecordId?: () => string;
 	readonly createManagedVm: (leaseOptions: {
+		readonly leaseId: string;
+		readonly leafGeneration: string;
 		readonly effectiveIdleTtlMs?: number;
 		readonly agentId: string;
 		readonly profile: ToolVmProfile;
@@ -964,6 +966,8 @@ export function createLeaseManager(options: {
 			}
 			const createdToolVm = await options.createManagedVm({
 				...leaseOptions,
+				leaseId: authority.leaseId,
+				leafGeneration: authority.leafGeneration,
 				tcpSlot,
 			});
 			if ('vm' in createdToolVm) {

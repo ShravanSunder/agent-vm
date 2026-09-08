@@ -1,0 +1,66 @@
+{
+	"caseId": "managed-google-challenge",
+	"schemaId": "portal.call.item-result",
+	"tags": ["accepted", "approval", "google"],
+	"input": {
+		"approvalChallenge": {
+			"challengeId": "22222222-2222-4222-8222-222222222222",
+			"expiresAt": "2026-09-06T20:00:00.000Z",
+			"kind": "managed_google",
+			"managedGoogleDisplay": {
+				"accountId": "11111111-1111-4111-8111-111111111111",
+				"authorizationId": "33333333-3333-4333-8333-333333333333",
+				"accountAlias": "Personal mailbox",
+				"applicationLabel": "Gmail, Calendar & Contacts",
+				"authorizationMetadataRevision": 1
+			}
+		},
+		"error": {
+			"code": "approval_required",
+			"message": "Approval required",
+			"retryable": false
+		},
+		"id": "google-call",
+		"operationId": "operation-1",
+		"outcome": {
+			"kind": "not-dispatched",
+			"certainty": "proven",
+			"retryClass": "safe-before-dispatch"
+		},
+		"owningGeneration": "epoch-1",
+		"status": "approval_required"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"approvalChallenge": {
+				"challengeId": "22222222-2222-4222-8222-222222222222",
+				"expiresAt": "2026-09-06T20:00:00.000Z",
+				"kind": "managed_google",
+				"managedGoogleDisplay": {
+					"accountId": "11111111-1111-4111-8111-111111111111",
+					"authorizationId": "33333333-3333-4333-8333-333333333333",
+					"accountAlias": "Personal mailbox",
+					"applicationLabel": "Gmail, Calendar & Contacts",
+					"authorizationMetadataRevision": 1
+				}
+			},
+			"error": {
+				"code": "approval_required",
+				"message": "Approval required",
+				"retryable": false
+			},
+			"id": "google-call",
+			"operationId": "operation-1",
+			"outcome": {
+				"kind": "not-dispatched",
+				"certainty": "proven",
+				"retryClass": "safe-before-dispatch"
+			},
+			"owningGeneration": "epoch-1",
+			"status": "approval_required"
+		},
+		"canonicalJson": "{\"approvalChallenge\":{\"challengeId\":\"22222222-2222-4222-8222-222222222222\",\"expiresAt\":\"2026-09-06T20:00:00.000Z\",\"kind\":\"managed_google\",\"managedGoogleDisplay\":{\"accountAlias\":\"Personal mailbox\",\"accountId\":\"11111111-1111-4111-8111-111111111111\",\"applicationLabel\":\"Gmail, Calendar & Contacts\",\"authorizationId\":\"33333333-3333-4333-8333-333333333333\",\"authorizationMetadataRevision\":1}},\"error\":{\"code\":\"approval_required\",\"message\":\"Approval required\",\"retryable\":false},\"id\":\"google-call\",\"operationId\":\"operation-1\",\"outcome\":{\"certainty\":\"proven\",\"kind\":\"not-dispatched\",\"retryClass\":\"safe-before-dispatch\"},\"owningGeneration\":\"epoch-1\",\"status\":\"approval_required\"}",
+		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.outcome-algebra"]
+	}
+}

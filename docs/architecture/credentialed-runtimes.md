@@ -29,6 +29,7 @@ Credentialed runtime
 Managed VM
   ├── immutable prepared image containing the CLI
   ├── disposable writable COW rootfs for CLI config/state/cache
+  ├── fixed writable /agent-vm/gog-work producer mount when Gog file staging is enabled
   └── exactly one credential projection
       ├── file_binding: finalized read-only memory mount
       └── http_mediation: opaque environment placeholder, no credential mount
@@ -125,6 +126,50 @@ Credential references and bytes never enter Gateway-safe effective config,
 runtime records, model-visible results, or Tool VM artifacts. Mutable CLI
 state belongs on the disposable COW rootfs, not in credential memory and not in
 controller durable state.
+
+## File Results
+
+Qualified Gog file commands use a fresh private operation child under the fixed
+writable `/agent-vm/gog-work` RealFS mount. Explicit relative output paths resolve
+there. Inputs are selected relative to `/work` in the requesting agent's current
+Tool VM, hashed before approval, then streamed into that private producer folder
+and revalidated before dispatch. Neither VM receives the other's filesystem.
+
+After a known terminal command outcome, the controller inspects bounded regular
+files and streams them into independently allocated receiver-side inodes on host
+disk. It publishes the assembled directory atomically beneath the exact receiving
+Tool VM's fixed read-only `/agent-vm/files` mount. The returned paths and absolute
+expiry are immediately usable by ordinary file tools; there is no list/materialize
+copy RPC or in-VM copy helper. The controller uses fixed-size awaited buffers and
+never collects a whole payload in application memory.
+
+Terminal-based Tool VM tools can use the returned absolute path directly. The
+structured Sandbox filesystem API remains `/work`-relative; when using that API,
+first copy the selected file into `/work` with an ordinary Tool VM command. This
+does not broaden the filesystem API to arbitrary VM roots.
+
+A nonzero exit code does not by itself hide eligible files: command outcome and
+file availability are independent. Publication does not assert semantic
+completeness, and a remote mutation is never rerun automatically to repair file
+delivery. Published files expire one hour after publication or when the receiving
+Tool VM closes, whichever occurs first. Producer retirement does not remove them,
+reads do not extend their lifetime, and Google disconnect does not recall already
+published data. Cleanup uses normal filesystem unlink semantics; an already-open
+descriptor or cached bytes may remain usable until closed.
+
+`tool_portal_file` is the only model-facing attachment action. It deliberately
+selects one published operation file (or another already authorized Tool VM
+source) and preserves the captured Hermes profile, session, and recipient; callers
+cannot supply a replacement recipient. The controller streams only those selected
+bytes into an exclusive child of the existing host-backed Gateway cache. Successful,
+failed, and delivery-unconfirmed outcomes clean that child after the native sender
+settles. A sender that may still be reading retains it until settlement or proven
+Gateway containment. Cleanup failure remains pending and recovery removes only the
+owned `agent-vm-native/<controller-run>/<gateway-generation>/<send-id>` subtree,
+never unrelated cache contents. There is no automatic resend.
+
+See [file delivery](../specs/2026-09-04-agent-account-and-tool-permissions/file-delivery.md)
+for the transfer, quota and failure contracts.
 
 ## Idle And Retirement
 

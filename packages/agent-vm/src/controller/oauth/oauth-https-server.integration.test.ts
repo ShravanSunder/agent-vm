@@ -1,6 +1,11 @@
 import {
+	createOAuthBrowserNavigationStore,
+	createOAuthLoginContinuationStore,
+} from '@agent-vm/oauth-broker';
+import {
 	oauthApplicationIdSchema,
-	oauthServiceIdSchema,
+	oauthAccountIdSchema,
+	oauthCompletionSessionIdSchema,
 	oauthTransactionIdSchema,
 	type OAuthAuthorizationActionResult,
 } from '@agent-vm/oauth-broker-contracts';
@@ -10,6 +15,7 @@ import type {
 } from '@agent-vm/oauth-broker/google';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createOAuthConfigTestInput } from '../../../../config-contracts/src/oauth-config-test-fixture.js';
 import {
 	createOAuthHttpsApp,
 	type OAuthApprovalAssets,
@@ -19,9 +25,70 @@ import {
 } from './oauth-https-server.js';
 
 const transactionId = oauthTransactionIdSchema.parse('transaction_identifier_1234567890abcdef');
+const completionSessionId = oauthCompletionSessionIdSchema.parse(
+	'completion_session_1234567890abcdef',
+);
 const browserBindingSecret = 'browser_binding_secret_1234567890abcdefghi';
 const csrfToken = 'csrf_token_1234567890abcdefghijklmnop';
 const publicBaseUrl = 'https://auth.claw.askluna.xyz:18900';
+const browserIdentity = {
+	issuer: 'https://identity.example.test',
+	userId: 'user_test_owner',
+	sessionId: 'test-browser-session',
+};
+const accountId = oauthAccountIdSchema.parse('11111111-1111-4111-8111-111111111111');
+let navigationCookie = '';
+function createTestOAuthApp(
+	props: Pick<
+		Parameters<typeof createOAuthHttpsApp>[0],
+		'assets' | 'brokerService' | 'now' | 'publicBaseUrl' | 'tailnetIdentityResolver'
+	> & { readonly verifiedSessionIdentity?: typeof browserIdentity },
+): ReturnType<typeof createOAuthHttpsApp> {
+	const config = createOAuthConfigTestInput();
+	config.browser.network.admittedTailnetLogins = ['authorized-human@example.test'];
+	const navigation = createOAuthBrowserNavigationStore({ now: props.now ?? (() => 10_000) });
+	const created = navigation.create({
+		identity: browserIdentity,
+		target: { kind: 'authorization', transactionId },
+	});
+	if (created.kind !== 'created') throw new Error('Expected authenticated navigation.');
+	navigationCookie = `agent_vm_oauth_navigation=${created.contextId}; agent_vm_oauth_navigation_binding=${created.browserBindingSecret}`;
+	return createOAuthHttpsApp({
+		...props,
+		config,
+		navigation,
+		loginContinuations: createOAuthLoginContinuationStore(),
+		isAdmissionOpen: () => true,
+		policyService: {
+			resolveOperationAvailability: () => ({ kind: 'unavailable' }),
+			resolveManagedGoogleInvocation: () => ({ kind: 'unavailable' }),
+			readCurrentPolicyForDispatch: () => false,
+			cancelBrowserPolicyContexts: () => undefined,
+			clear: () => undefined,
+			drain: async () => undefined,
+			listOwnerAccounts: () => [],
+			readAccountPolicyView: () => ({ kind: 'unavailable' }),
+			resolveActivityAvailability: () => ({ kind: 'unavailable' }),
+			openPolicyEditor: async () => ({ kind: 'unavailable' }),
+			previewPolicyChange: async () => ({ kind: 'unavailable' }),
+			confirmPolicyChange: async () => ({ kind: 'unavailable' }),
+		},
+		browserIdentityVerifier: {
+			verifyBootstrap: async () => ({
+				kind: 'verified',
+				identity: browserIdentity,
+				setCookies: [],
+			}),
+			verifyCurrentCookie: async () => ({ kind: 'not-current' }),
+			verifySession: async (identity) => ({
+				kind: 'verified',
+				identity: props.verifiedSessionIdentity ?? identity,
+			}),
+			revokeSession: async () => ({ kind: 'revoked' }),
+			signInUrl: () => 'https://identity.example.test/sign-in',
+		},
+	});
+}
 const certificatePath = fileURLToPath(
 	new URL('./test-fixtures/oauth-listener-test.crt', import.meta.url),
 );
@@ -84,10 +151,16 @@ function approvalAssets(): OAuthApprovalAssets {
 }
 
 function cookieHeader(response: Response): string {
-	return response.headers
-		.getSetCookie()
-		.map((cookie) => cookie.slice(0, cookie.indexOf(';')))
-		.join('; ');
+	const cookies = new Map<string, string>();
+	for (const setCookie of response.headers.getSetCookie()) {
+		const cookie = setCookie.slice(0, setCookie.indexOf(';'));
+		const separatorIndex = cookie.indexOf('=');
+		const name = cookie.slice(0, separatorIndex);
+		const value = cookie.slice(separatorIndex + 1);
+		if (value.length === 0) cookies.delete(name);
+		else cookies.set(name, cookie);
+	}
+	return [...cookies.values()].join('; ');
 }
 
 function createBrokerHarness(): {
@@ -111,28 +184,61 @@ function createBrokerHarness(): {
 	);
 	return {
 		brokerService: {
+			getBrowserSession: (_target, binding) =>
+				binding === browserBindingSecret ? browserIdentity : undefined,
+			getConfirmationPage: () => ({
+				accountLabel: 'Personal Google',
+				applicationLabel: 'Gmail',
+				browserBindingSecret,
+				completionSessionId,
+				csrfToken,
+				expiresAtMs: 310_000,
+				previousPermissionLabels: ['Gmail read'],
+				grantedPermissionLabels: ['Gmail read'],
+			}),
+			getRetryPage: () => ({ completed: ['Gmail'], csrfToken, retryable: ['Workspace'] }),
+			cancelBrowserCeremonies: () => 0,
+			beginWebsiteAuthorization: () => {
+				throw new Error('Unused owner initiation fixture');
+			},
+			confirmDisconnect: async () => ({
+				kind: 'authorization-disconnected',
+				accountId,
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+			}),
 			cancelBrowserCompletion,
 			cancelBrowserTransaction,
 			close: async () => undefined,
 			drain: async () => undefined,
-			confirmAccount: async () => ({ accountLabel: 'Personal Google', kind: 'completed' }),
+			confirmAccount: async () => ({
+				accountAlias: 'Personal Google',
+				accountId,
+				kind: 'completed',
+			}),
 			executeAuthorizationAction: async (): Promise<OAuthAuthorizationActionResult> => ({
 				kind: 'authorization-list',
-				profiles: [],
+				accounts: [],
+				authorizationOptions: [],
 			}),
 			getPermissionPage: () => ({
-				accountProfileLabel: 'Personal Google',
+				agentId: 'sun',
+				ownerLabel: 'Personal Google',
+				intent: 'enroll',
 				applications: [
 					{
 						applicationId: 'gmail-app',
 						description: 'Gmail authorization.',
 						label: 'Gmail',
-						services: [
+						recommendedGroupIds: ['gmail.read'],
+						selectedGroupIds: ['gmail.read'],
+						groups: [
 							{
-								allowedChoices: ['none', 'read', 'write'],
-								label: 'Gmail messages',
-								selectedChoice: 'read',
+								groupId: 'gmail.read',
 								serviceId: 'gmail',
+								effect: 'read',
+								label: 'Read Gmail',
+								warning: 'Read your email.',
+								offered: true,
 							},
 						],
 					},
@@ -151,7 +257,6 @@ function createBrokerHarness(): {
 				kind: 'stale',
 				reason: 'credential-unavailable',
 			}),
-			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
 			retryApplication: () => ({
 				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
@@ -172,10 +277,70 @@ function createBrokerHarness(): {
 }
 
 describe('OAuth HTTPS application', () => {
+	it('requires safe login before revealing an unbound ceremony', async () => {
+		// Arrange
+		const harness = createBrokerHarness();
+		const app = createTestOAuthApp({
+			assets: approvalAssets(),
+			brokerService: harness.brokerService,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+		// Act
+		const first = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
+			undefined,
+			requestEnvironment(),
+		);
+		const login = await app.request(
+			`${publicBaseUrl}${first.headers.get('location')}`,
+			{ headers: { cookie: cookieHeader(first) } },
+			requestEnvironment(),
+		);
+		const page = await app.request(
+			`${publicBaseUrl}${login.headers.get('location')}`,
+			{ headers: { cookie: cookieHeader(login) } },
+			requestEnvironment(),
+		);
+		// Assert
+		expect(first.status).toBe(303);
+		expect(first.headers.get('location')).toBe('/oauth/auth/start');
+		expect(login.status).toBe(303);
+		expect(page.status).toBe(200);
+		expect(await page.text()).toContain('Choose Google access for sun');
+	});
+	it('does not reveal the real browser secret when only a transaction ID and forged binding are supplied', async () => {
+		// Arrange
+		const harness = createBrokerHarness();
+		const app = createTestOAuthApp({
+			assets: approvalAssets(),
+			brokerService: harness.brokerService,
+			publicBaseUrl,
+			tailnetIdentityResolver: {
+				resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+			},
+		});
+		// Act
+		const response = await app.request(
+			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
+			{
+				headers: {
+					cookie: `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=forged`,
+				},
+			},
+			requestEnvironment(),
+		);
+		// Assert
+		expect(response.status).toBe(403);
+		expect(response.headers.getSetCookie()).toEqual([]);
+		expect(await response.text()).not.toContain(csrfToken);
+	});
 	it('binds the browser transaction to the socket peer and renders bounded approval context', async () => {
 		const resolvedPeers: { readonly remoteAddress: string; readonly remotePort: number }[] = [];
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
 			now: () => 10_500,
@@ -190,7 +355,7 @@ describe('OAuth HTTPS application', () => {
 
 		const response = await app.request(
 			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
-			{ headers: { 'tailscale-user-login': 'forged@example.test' } },
+			{ headers: { 'tailscale-user-login': 'forged@example.test', cookie: navigationCookie } },
 			requestEnvironment(),
 		);
 
@@ -203,14 +368,14 @@ describe('OAuth HTTPS application', () => {
 			expect.stringMatching(/agent_vm_oauth_transaction_binding=.*Max-Age=4/u),
 		]);
 		const body = await response.text();
-		expect(body).toContain('Choose access for Personal Google');
-		expect(body).toContain('Tool Portal approval remains separate for every action.');
+		expect(body).toContain('Choose Google access for sun');
+		expect(body).toContain('They do not change your per-call Deny, Ask or Allow policy.');
 		expect(body).not.toContain('forged@example.test');
 	});
 
 	it('rejects cross-origin permission submission before invoking the broker', async () => {
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
 			publicBaseUrl,
@@ -220,7 +385,7 @@ describe('OAuth HTTPS application', () => {
 		});
 		const initial = await app.request(
 			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
-			undefined,
+			{ headers: { cookie: navigationCookie } },
 			requestEnvironment(),
 		);
 
@@ -229,8 +394,7 @@ describe('OAuth HTTPS application', () => {
 			{
 				body: new URLSearchParams({
 					csrfToken,
-					[`permission.${oauthApplicationIdSchema.parse('gmail-app')}.${oauthServiceIdSchema.parse('gmail')}`]:
-						'read',
+					'mode.gmail-app': 'recommended',
 				}),
 				headers: {
 					'content-type': 'application/x-www-form-urlencoded',
@@ -248,7 +412,7 @@ describe('OAuth HTTPS application', () => {
 
 	it('re-renders invalid native-form permissions with associated editable errors', async () => {
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
 			publicBaseUrl,
@@ -258,7 +422,7 @@ describe('OAuth HTTPS application', () => {
 		});
 		const initial = await app.request(
 			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
-			undefined,
+			{ headers: { cookie: navigationCookie } },
 			requestEnvironment(),
 		);
 		const headers = {
@@ -279,7 +443,9 @@ describe('OAuth HTTPS application', () => {
 		expect(missingPermission.status).toBe(400);
 		const missingPermissionBody = await missingPermission.text();
 		expect(missingPermissionBody).toContain('Review these problems');
-		expect(missingPermissionBody).toContain('Select an allowed permission for Gmail messages.');
+		expect(missingPermissionBody).toContain(
+			'Choose Off, Recommended, or offered Custom access for Gmail.',
+		);
 		expect(missingPermissionBody).toContain('autofocus');
 		expect(missingPermissionBody).toContain('aria-describedby="permission-error-gmail-app-gmail"');
 		expect(missingPermissionBody).toContain(
@@ -291,7 +457,7 @@ describe('OAuth HTTPS application', () => {
 			{
 				body: new URLSearchParams({
 					csrfToken,
-					'permission.gmail-app.gmail': 'owner',
+					'mode.gmail-app': 'owner',
 				}),
 				headers,
 				method: 'POST',
@@ -300,7 +466,7 @@ describe('OAuth HTTPS application', () => {
 		);
 		expect(invalidPermission.status).toBe(400);
 		expect(await invalidPermission.text()).toContain(
-			'Select an allowed permission for Gmail messages.',
+			'Choose Off, Recommended, or offered Custom access for Gmail.',
 		);
 		expect(harness.submitPermissions).not.toHaveBeenCalled();
 
@@ -309,7 +475,7 @@ describe('OAuth HTTPS application', () => {
 			{
 				body: new URLSearchParams({
 					csrfToken,
-					'permission.gmail-app.gmail': 'read',
+					'mode.gmail-app': 'recommended',
 				}),
 				headers,
 				method: 'POST',
@@ -322,7 +488,7 @@ describe('OAuth HTTPS application', () => {
 
 	it('submits native-form permissions and supports bound cancellation', async () => {
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
 			publicBaseUrl,
@@ -332,7 +498,7 @@ describe('OAuth HTTPS application', () => {
 		});
 		const initial = await app.request(
 			`${publicBaseUrl}/oauth/transactions/${transactionId}`,
-			undefined,
+			{ headers: { cookie: navigationCookie } },
 			requestEnvironment(),
 		);
 		const cookies = cookieHeader(initial);
@@ -347,7 +513,7 @@ describe('OAuth HTTPS application', () => {
 			{
 				body: new URLSearchParams({
 					csrfToken,
-					'permission.gmail-app.gmail': 'read',
+					'mode.gmail-app': 'recommended',
 				}),
 				headers: formHeaders,
 				method: 'POST',
@@ -362,8 +528,8 @@ describe('OAuth HTTPS application', () => {
 		expect(permissionBody).toContain(`/oauth/transactions/${transactionId}/cancel`);
 		expect(harness.submitPermissions).toHaveBeenCalledWith(
 			expect.objectContaining({
-				selections: { 'gmail-app': { gmail: 'read' } },
-				tailnetLogin: 'authorized-human@example.test',
+				selections: { 'gmail-app': ['gmail.read'] },
+				identity: browserIdentity,
 				transactionId,
 			}),
 		);
@@ -381,7 +547,7 @@ describe('OAuth HTTPS application', () => {
 		expect(harness.cancelBrowserTransaction).toHaveBeenCalledWith({
 			browserBindingSecret,
 			csrfToken,
-			tailnetLogin: 'authorized-human@example.test',
+			identity: browserIdentity,
 			transactionId,
 		});
 	});
@@ -390,11 +556,13 @@ describe('OAuth HTTPS application', () => {
 		// Arrange
 		const harness = createBrokerHarness();
 		const completionId = 'completion_session_1234567890abcdef';
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: {
 				...harness.brokerService,
 				confirmAccount: async () => ({
+					applicationId: oauthApplicationIdSchema.parse('workspace-app'),
+					applicationLabel: 'Workspace',
 					applications: [
 						{
 							applicationId: oauthApplicationIdSchema.parse('gmail-app'),
@@ -425,7 +593,7 @@ describe('OAuth HTTPS application', () => {
 		const response = await app.request(
 			`${publicBaseUrl}/oauth/completions/${completionId}/confirm`,
 			{
-				body: new URLSearchParams({ csrfToken }),
+				body: new URLSearchParams({ csrfToken, accountAlias: 'Personal Google' }),
 				headers: {
 					'content-type': 'application/x-www-form-urlencoded',
 					cookie: `agent_vm_oauth_completion=${completionId}; agent_vm_oauth_completion_binding=${browserBindingSecret}`,
@@ -463,7 +631,7 @@ describe('OAuth HTTPS application', () => {
 	it('cancels account confirmation through the bound native form route', async () => {
 		const harness = createBrokerHarness();
 		const completionId = 'completion_session_1234567890abcdef';
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: harness.brokerService,
 			publicBaseUrl,
@@ -492,14 +660,13 @@ describe('OAuth HTTPS application', () => {
 			browserBindingSecret,
 			completionSessionId: completionId,
 			csrfToken,
-			tailnetLogin: 'authorized-human@example.test',
+			identity: browserIdentity,
 		});
 	});
 
 	it('bounds completion cookies by the remaining server-side session lifetime', async () => {
 		const harness = createBrokerHarness();
-		const completionSessionId = 'completion_session_1234567890abcdef';
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: {
 				...harness.brokerService,
@@ -511,6 +678,7 @@ describe('OAuth HTTPS application', () => {
 						completionSessionId,
 						csrfToken,
 						expiresAtMs: 310_000,
+						previousPermissionLabels: ['Gmail read'],
 						grantedPermissionLabels: ['Gmail read'],
 					},
 					kind: 'confirmation',
@@ -533,19 +701,73 @@ describe('OAuth HTTPS application', () => {
 			requestEnvironment(),
 		);
 
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(303);
+		expect(response.headers.get('location')).toBe(`/oauth/completions/${completionSessionId}`);
+		expect(response.headers.get('referrer-policy')).toBe('no-referrer');
 		expect(response.headers.getSetCookie()).toEqual([
 			expect.stringMatching(/agent_vm_oauth_transaction=;/u),
 			expect.stringMatching(/agent_vm_oauth_transaction_binding=;/u),
 			expect.stringMatching(/agent_vm_oauth_completion=.*Max-Age=300/u),
 			expect.stringMatching(/agent_vm_oauth_completion_binding=.*Max-Age=300/u),
 		]);
+		const completionCookies = cookieHeader(response);
+		const confirmation = await app.request(
+			`${publicBaseUrl}/oauth/completions/${completionSessionId}`,
+			{ headers: { cookie: completionCookies } },
+			requestEnvironment(),
+		);
+		expect(confirmation.status).toBe(200);
+		expect(confirmation.headers.get('referrer-policy')).toBe('same-origin');
+		expect(await confirmation.text()).toContain('Permission changes');
+		const committed = await app.request(
+			`${publicBaseUrl}/oauth/completions/${completionSessionId}/confirm`,
+			{
+				body: new URLSearchParams({ accountAlias: 'Personal Google', csrfToken }),
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					cookie: completionCookies,
+					origin: publicBaseUrl,
+				},
+				method: 'POST',
+			},
+			requestEnvironment(),
+		);
+		expect(committed.status).toBe(200);
 	});
+
+	it.each(['wrong-binding', 'wrong-session'] as const)(
+		'rejects a completion GET with a %s',
+		async (failure) => {
+			const harness = createBrokerHarness();
+			const app = createTestOAuthApp({
+				assets: approvalAssets(),
+				brokerService: harness.brokerService,
+				publicBaseUrl,
+				tailnetIdentityResolver: {
+					resolvePeerIdentity: async () => ({ loginName: 'authorized-human@example.test' }),
+				},
+				...(failure === 'wrong-session'
+					? { verifiedSessionIdentity: { ...browserIdentity, sessionId: 'other-session' } }
+					: {}),
+			});
+			const response = await app.request(
+				`${publicBaseUrl}/oauth/completions/${completionSessionId}`,
+				{
+					headers: {
+						cookie: `agent_vm_oauth_completion=${completionSessionId}; agent_vm_oauth_completion_binding=${failure === 'wrong-binding' ? 'wrong-binding' : browserBindingSecret}`,
+					},
+				},
+				requestEnvironment(),
+			);
+			expect(response.status).toBe(403);
+			expect(await response.text()).not.toContain('Confirm this account');
+		},
+	);
 
 	it('renders a partial completion with a native retry link', async () => {
 		// Arrange
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: {
 				...harness.brokerService,
@@ -592,8 +814,17 @@ describe('OAuth HTTPS application', () => {
 		);
 
 		// Assert
-		expect(response.status).toBe(200);
-		const body = await response.text();
+		expect(response.status).toBe(303);
+		expect(response.headers.get('location')).toBe(`/oauth/completions/${transactionId}/retry`);
+		expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+		const retryPage = await app.request(
+			`${publicBaseUrl}/oauth/completions/${transactionId}/retry`,
+			{ headers: { cookie: cookieHeader(response) } },
+			requestEnvironment(),
+		);
+		expect(retryPage.status).toBe(200);
+		expect(retryPage.headers.get('referrer-policy')).toBe('same-origin');
+		const body = await retryPage.text();
 		expect(body).toContain('Some applications need attention');
 		expect(body).toContain('Retry Google authorization');
 		expect(body).toContain(`/oauth/completions/${transactionId}/retry`);
@@ -637,7 +868,7 @@ describe('OAuth HTTPS application', () => {
 
 	it('renders an expired callback explicitly', async () => {
 		const harness = createBrokerHarness();
-		const app = createOAuthHttpsApp({
+		const app = createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: {
 				...harness.brokerService,
@@ -666,7 +897,7 @@ describe('OAuth HTTPS application', () => {
 
 describe('OAuth HTTPS listener', () => {
 	function createTestApp(): ReturnType<typeof createOAuthHttpsApp> {
-		return createOAuthHttpsApp({
+		return createTestOAuthApp({
 			assets: approvalAssets(),
 			brokerService: createBrokerHarness().brokerService,
 			publicBaseUrl,

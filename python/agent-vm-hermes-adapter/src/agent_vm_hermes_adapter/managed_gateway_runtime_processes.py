@@ -221,7 +221,6 @@ class HermesManagedProcessRuntime:
         self._reserve_process_record_capacity()
         started_process: t.Mapping[str, object] | None = None
         local_session_id: str | None = None
-        registered_session_id: str | None = None
         try:
             started = env.start_managed_process(
                 command=command,
@@ -284,17 +283,15 @@ class HermesManagedProcessRuntime:
                     raise RuntimeError("Managed Hermes process session identifier collided.")
                 self._records_by_session_id[session.id] = record
             self._process_registry.register(session)
-            registered_session_id = session.id
         except BaseException:
-            if registered_session_id is None:
-                with self._records_lock:
-                    if local_session_id is not None:
-                        _ = self._records_by_session_id.pop(local_session_id, None)
-                if started_process is not None:
-                    try:
-                        _ = env.cancel_managed_process(started_process)
-                    except Exception:
-                        pass
+            with self._records_lock:
+                if local_session_id is not None:
+                    _ = self._records_by_session_id.pop(local_session_id, None)
+            if started_process is not None:
+                try:
+                    _ = env.cancel_managed_process(started_process)
+                except Exception:
+                    pass
             raise
         finally:
             self._release_process_start_reservation()

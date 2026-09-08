@@ -1,4 +1,5 @@
 import type { EffectiveControllerExecutionOperation } from '@agent-vm/config-contracts';
+import type { ManagedGoogleReadyPreflight } from '@agent-vm/oauth-broker-contracts';
 
 import type { CredentialedRuntimeResolution } from '../credentialed-runtime/credentialed-runtime-registry.js';
 import { ConfiguredControllerExecutionError } from './configured-controller-execution-error.js';
@@ -19,6 +20,7 @@ export interface ConfiguredCliAuthorizedEvaluation {
 }
 
 export interface ConfiguredCliAuthorizedOperation {
+	readonly managedGoogle?: ManagedGoogleReadyPreflight;
 	readonly credentialedRuntime?: CredentialedRuntimeResolution;
 	readonly evaluation: ConfiguredCliAuthorizedEvaluation;
 	readonly operation: ConfiguredCliOperation;

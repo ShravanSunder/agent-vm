@@ -1,21 +1,36 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
-import type { ControllerConfiguredCliInput } from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
 	ManagedVmExactProcessTerminationCapability,
 	ManagedVmFactory,
+	ManagedVmOwnedDirectoryCapability,
+	OwnedHostDirectory,
 } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import { terminateLiveManagedVm } from '../../shared/controller-managed-vm-termination.js';
 import type { ProcessIdentity } from '../../shared/managed-vm-process.js';
+import type { OperationFileRetentionBudget } from '../files/operation-file-retention-budget.js';
+import { OperationFolderAccessError } from '../files/operation-folder-guest-access.js';
+import type { SharedStagingDirectoryStore } from '../files/shared-staging-directory-store.js';
+import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import {
 	createUnstartedCredentialedManagedVm,
 	executeCredentialedManagedVmCommand,
 	finalizeCredentialedManagedVm,
-	type CredentialedManagedVmCommandResult,
 } from './credentialed-managed-vm.js';
+import type {
+	CredentialedRuntimeOwnerIdentity,
+	CredentialedRuntimeMaterialization,
+	InvalidateCredentialedRuntimeMaterialResult,
+	CredentialedRuntimeManager,
+} from './credentialed-runtime-manager-contracts.js';
+import {
+	runtimeMaterialMatchesInvalidation,
+	type CredentialedRuntimeOAuthAuthorization,
+} from './credentialed-runtime-material-scope.js';
 import {
 	createCredentialedRuntimeRecordWriter,
 	type CredentialedRuntimeRecordWriter,
@@ -27,60 +42,20 @@ import {
 } from './credentialed-runtime-record.js';
 import type { CredentialedRuntimeResolution } from './credentialed-runtime-registry.js';
 import { createKeyedAsyncLock } from './keyed-async-lock.js';
+import { createSharedStagingOperationSession } from './shared-staging-operation-session.js';
+export type {
+	CredentialedRuntimeOwnerIdentity,
+	CredentialedRuntimeDynamicHttpMediation,
+	CredentialedRuntimeMaterialization,
+	AcquireCredentialedRuntimeCommandResult,
+	CredentialedRuntimeCommandOutcome,
+	CredentialedRuntimeCommandHandle,
+	RetireCredentialedRuntimeResult,
+	InvalidateCredentialedRuntimeMaterialResult,
+	CredentialedRuntimeManager,
+} from './credentialed-runtime-manager-contracts.js';
 
 export const CredentialedRuntimeIdleTtlMs = 15 * 60 * 1000;
-
-export interface CredentialedRuntimeOwnerIdentity {
-	readonly controllerEpoch: string;
-	readonly gatewayEpoch: string;
-	readonly parentGatewayVmId: string;
-	readonly runtimeEpoch: string;
-	readonly stablePrincipal: string;
-}
-
-export interface CredentialedRuntimeDynamicHttpMediation {
-	readonly allowedHosts: readonly string[];
-	readonly credentialId: string;
-	readonly environmentName: string;
-	readonly kind: 'dynamic_http_mediation';
-	readonly materialRevision: string;
-	readonly placeholderValue: string;
-	readonly secretValue: Uint8Array;
-}
-
-export interface CredentialedRuntimeMaterialization {
-	readonly dynamicHttpMediation?: CredentialedRuntimeDynamicHttpMediation | undefined;
-	readonly resolution: CredentialedRuntimeResolution;
-}
-
-export type AcquireCredentialedRuntimeCommandResult =
-	| { readonly command: CredentialedRuntimeCommandHandle; readonly kind: 'acquired' }
-	| { readonly kind: 'busy'; readonly retryable: true }
-	| { readonly kind: 'not-dispatched'; readonly reason: string }
-	| { readonly kind: 'owner-unsafe'; readonly reason: string };
-
-export type CredentialedRuntimeCommandOutcome =
-	| { readonly kind: 'completed' }
-	| { readonly kind: 'retire'; readonly reason: string };
-
-export interface CredentialedRuntimeCommandHandle {
-	complete(outcome: CredentialedRuntimeCommandOutcome): Promise<void>;
-	exec(
-		input: ControllerConfiguredCliInput,
-		options?: { readonly signal?: AbortSignal },
-	): Promise<CredentialedManagedVmCommandResult>;
-}
-
-export type RetireCredentialedRuntimeResult =
-	| { readonly kind: 'retired' }
-	| { readonly kind: 'absent' }
-	| { readonly kind: 'active'; readonly retryable: true }
-	| { readonly kind: 'owner-unsafe'; readonly retryable: false };
-
-export type InvalidateCredentialedRuntimeMaterialResult =
-	| { readonly kind: 'retired' }
-	| { readonly kind: 'absent' }
-	| { readonly kind: 'owner-unsafe' };
 
 interface ActiveCommand {
 	readonly abortController: AbortController;
@@ -91,6 +66,10 @@ interface ActiveCommand {
 }
 
 interface LiveCredentialedRuntime {
+	readonly staging:
+		| { readonly store: SharedStagingDirectoryStore; readonly producerId: string }
+		| undefined;
+	readonly oauthAuthorization: CredentialedRuntimeOAuthAuthorization | undefined;
 	activeCommand?: ActiveCommand;
 	readonly commandEnvironment: Readonly<Record<string, string>>;
 	readonly createdAtMs: number;
@@ -131,40 +110,12 @@ function processIdentitiesEqual(
 	return left.command === right.command && left.lstart === right.processStartIdentity;
 }
 
-export interface CredentialedRuntimeManager {
-	acquireCommand(
-		request: {
-			readonly admissionSignal?: AbortSignal;
-			readonly finalAuthorization: () => Promise<boolean>;
-			readonly finalMaterialAuthorization?: (() => boolean) | undefined;
-			readonly operationId: string;
-			readonly ownerIdentity: CredentialedRuntimeOwnerIdentity;
-		} & (
-			| { readonly resolution: CredentialedRuntimeResolution }
-			| {
-					readonly materializationFailureReason?: ((error: unknown) => string) | undefined;
-					readonly materializeResolution: () => Promise<CredentialedRuntimeMaterialization>;
-					readonly runtimeIdentity: { readonly agentId: string; readonly zoneId: string };
-			  }
-		),
-	): Promise<AcquireCredentialedRuntimeCommandResult>;
-	closeZone(zoneId: string): Promise<void>;
-	invalidateMaterial(request: {
-		readonly agentId: string;
-		readonly reason: string;
-		readonly zoneId: string;
-	}): Promise<InvalidateCredentialedRuntimeMaterialResult>;
-	openZone(zoneId: string): void;
-	reapExpired(): Promise<void>;
-	recoverZone(zoneId: string): Promise<void>;
-	retire(request: {
-		readonly agentId: string;
-		readonly force: boolean;
-		readonly zoneId: string;
-	}): Promise<RetireCredentialedRuntimeResult>;
-}
-
 export function createCredentialedRuntimeManager(props: {
+	readonly sharedStaging?: {
+		readonly getStore: (zoneId: string, agentId: string) => Promise<SharedStagingDirectoryStore>;
+		readonly ownedDirectories: ManagedVmOwnedDirectoryCapability;
+	};
+	readonly retentionBudget: OperationFileRetentionBudget;
 	readonly controllerStateDir: string;
 	readonly exactProcessTermination: ManagedVmExactProcessTerminationCapability;
 	readonly managedVmFactory: ManagedVmFactory;
@@ -238,6 +189,8 @@ export function createCredentialedRuntimeManager(props: {
 				vm: live.vm,
 			});
 			liveByKey.delete(key);
+			if (live.staging !== undefined)
+				await live.staging.store.retireProducer(live.staging.producerId);
 			try {
 				await recordWriter.write(context, ({ common, generation }) => ({
 					...common,
@@ -412,6 +365,10 @@ export function createCredentialedRuntimeManager(props: {
 					if (
 						live !== undefined &&
 						(live.resolution.agentRuntimeRevision !== resolution.agentRuntimeRevision ||
+							!isDeepStrictEqual(
+								live.oauthAuthorization,
+								materialization.dynamicHttpMediation?.authorization,
+							) ||
 							!ownerIdentitiesEqual(live.ownerIdentity, request.ownerIdentity) ||
 							now() - live.lastUsedAtMs >= CredentialedRuntimeIdleTtlMs)
 					) {
@@ -447,8 +404,22 @@ export function createCredentialedRuntimeManager(props: {
 						}));
 						let vm: ManagedVm;
 						let commandEnvironment: Readonly<Record<string, string>>;
+						let staging: LiveCredentialedRuntime['staging'];
+						let producerDirectory: OwnedHostDirectory | undefined;
 						try {
+							if (props.sharedStaging !== undefined) {
+								const store = await props.sharedStaging.getStore(
+									resolution.zoneId,
+									resolution.agentId,
+								);
+								const producerId = randomUUID();
+								const hostRoot = await store.prepareProducerRoot(producerId);
+								producerDirectory =
+									props.sharedStaging.ownedDirectories.openHostDirectory(hostRoot);
+								staging = { store, producerId };
+							}
 							const created = await createUnstartedCredentialedManagedVm({
+								...(producerDirectory === undefined ? {} : { producerDirectory }),
 								...(materialization.dynamicHttpMediation === undefined
 									? {}
 									: { dynamicHttpMediation: materialization.dynamicHttpMediation }),
@@ -462,6 +433,8 @@ export function createCredentialedRuntimeManager(props: {
 						} catch {
 							await recordWriter.delete(resolution.zoneId, recordId);
 							return { kind: 'not-dispatched', reason: 'credentialed runtime creation failed' };
+						} finally {
+							if (producerDirectory?.state === 'acquired') producerDirectory.close();
 						}
 						try {
 							await recordWriter.write(context, ({ common, generation }) => ({
@@ -515,6 +488,11 @@ export function createCredentialedRuntimeManager(props: {
 							vmId: vm.id,
 						};
 						const createdLive: LiveCredentialedRuntime = {
+							staging,
+							oauthAuthorization:
+								materialization.dynamicHttpMediation?.authorization === undefined
+									? undefined
+									: structuredClone(materialization.dynamicHttpMediation.authorization),
 							commandEnvironment,
 							createdAtMs: now(),
 							identity,
@@ -644,9 +622,52 @@ export function createCredentialedRuntimeManager(props: {
 					}
 
 					let completed = false;
+					let folderPrepared = false;
+					let folderFailed = false;
+					let folderReady = false;
+					let operationCwd: string | undefined;
+					let folderStaging = false;
+					let commandStarted = false;
+					let commandFinished = false;
 					const commandResolution = resolution;
 					return {
 						command: {
+							prepareSharedStagingOperation: async ({ maximumBytes, authorityIsCurrent }) => {
+								if (completed || commandStarted || folderPrepared || live.staging === undefined)
+									throw new OperationFolderAccessError('unavailable');
+								folderPrepared = true;
+								const folder = await createSharedStagingOperationSession({
+									store: live.staging.store,
+									producerId: live.staging.producerId,
+									operationId: request.operationId,
+									maximumBytes,
+									authorityIsCurrent,
+									signal: activeCommand.abortController.signal,
+								});
+								folderReady = true;
+								operationCwd = folder.root;
+								return {
+									root: folder.root,
+									stageInput: async (relativePath, contents, expected) => {
+										if (commandStarted || completed || folderFailed || folderStaging)
+											throw new OperationFolderAccessError('unavailable');
+										folderStaging = true;
+										try {
+											await folder.stageInput(relativePath, contents, expected);
+										} catch (error) {
+											folderFailed = true;
+											throw error;
+										} finally {
+											folderStaging = false;
+										}
+									},
+									publish: async (publication) => {
+										if (!commandFinished || completed)
+											throw new OperationFolderAccessError('unavailable');
+										return await folder.publish(publication);
+									},
+								};
+							},
 							complete: async (outcome): Promise<void> => {
 								if (completed) return;
 								completed = true;
@@ -690,9 +711,25 @@ export function createCredentialedRuntimeManager(props: {
 									activeCommand.resolveFinished();
 								}
 							},
-							exec: async (input, options = {}) =>
-								await executeCredentialedManagedVmCommand({
+							exec: async (input, options = {}) => {
+								if (
+									completed ||
+									commandStarted ||
+									folderFailed ||
+									folderStaging ||
+									(folderPrepared && !folderReady) ||
+									admissionInvalidated() ||
+									live.retireAfterActiveReason !== undefined ||
+									request.finalMaterialAuthorization?.() === false
+								)
+									throw new ConfiguredControllerExecutionError(
+										'not_dispatched',
+										'Credentialed command authority is no longer current.',
+									);
+								commandStarted = true;
+								const result = await executeCredentialedManagedVmCommand({
 									commandEnvironment: live.commandEnvironment,
+									...(operationCwd === undefined ? {} : { operationCwd }),
 									input,
 									resolution: commandResolution,
 									signal:
@@ -700,7 +737,10 @@ export function createCredentialedRuntimeManager(props: {
 											? activeCommand.abortController.signal
 											: AbortSignal.any([activeCommand.abortController.signal, options.signal]),
 									vm: live.vm,
-								}),
+								});
+								commandFinished = true;
+								return result;
+							},
 						},
 						kind: 'acquired',
 					};
@@ -787,11 +827,18 @@ export function createCredentialedRuntimeManager(props: {
 		},
 		invalidateMaterial: async (request): Promise<InvalidateCredentialedRuntimeMaterialResult> => {
 			const key = runtimeKey(request);
+			const matches = (live: LiveCredentialedRuntime): boolean =>
+				runtimeMaterialMatchesInvalidation({
+					scope: request.scope,
+					authorization: live.oauthAuthorization,
+					isOAuthRuntime: live.resolution.projection.kind === 'oauth_http_mediation',
+				});
 			let active: ActiveCommand | undefined;
 			const first = await locks.runExclusive(key, async () => {
 				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' as const };
 				const live = liveByKey.get(key);
 				if (live === undefined) return { kind: 'absent' as const };
+				if (!matches(live)) return { kind: 'absent' as const };
 				if (live.activeCommand !== undefined) {
 					active = live.activeCommand;
 					live.retireAfterActiveReason = request.reason;
@@ -810,6 +857,7 @@ export function createCredentialedRuntimeManager(props: {
 				if (ownerUnsafeKeys.has(key)) return { kind: 'owner-unsafe' };
 				const live = liveByKey.get(key);
 				if (live === undefined) return { kind: 'retired' };
+				if (!matches(live)) return { kind: 'absent' };
 				return (await retireLiveUnderLock(key, live, request.reason))
 					? { kind: 'retired' }
 					: { kind: 'owner-unsafe' };
@@ -834,7 +882,7 @@ export function createCredentialedRuntimeManager(props: {
 				});
 			}
 		},
-		recoverZone: async (zoneId): Promise<void> => {
+		recoverZone: async (zoneId): Promise<{ readonly kind: 'contained' | 'owner-unsafe' }> => {
 			for (const unsafeIdentity of await containCredentialedRuntimeRecords({
 				exactProcessTermination: props.exactProcessTermination,
 				now,
@@ -844,6 +892,11 @@ export function createCredentialedRuntimeManager(props: {
 				ownerUnsafeKeys.add(key);
 				registerRuntimeKeyForZone(zoneId, key);
 			}
+			return {
+				kind: [...(runtimeKeysByZoneId.get(zoneId) ?? [])].some((key) => ownerUnsafeKeys.has(key))
+					? 'owner-unsafe'
+					: 'contained',
+			};
 		},
 		retire,
 	};

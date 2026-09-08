@@ -67,9 +67,12 @@ Deep dive into the controller runtime: startup lifecycle, HTTP API surface, leas
 ```
 
 When one selected Hermes zone has `oauth.config.jsonc`, startup also opens and
-migrates that zone's controller-only OAuth catalog, resolves its 1Password KEK and
-Google Web clients, verifies tailscaled LocalAPI, binds the controller API, and then
-binds direct tailnet HTTPS on `18900` before admitting the Gateway. Failure closes
+validates that zone's version-2 controller-only OAuth catalog, resolves its
+1Password KEK and Google Web clients, prepares Clerk human-session verification
+and the account-specific Google policy defaults, verifies tailscaled LocalAPI,
+binds the controller API, and then binds direct tailnet HTTPS on `18900` before
+admitting the Gateway. Known legacy or unknown nonempty catalogs fail with an
+explicit offline-cutover requirement before any write migration. Failure closes
 both listeners and the catalog before the ownership lock is released.
 
 ### Shutdown Sequence
@@ -155,6 +158,13 @@ uses existing zone `adminAccess` and returns `retired`, `absent`, `active`, or
 
 See [Credentialed Managed Runtimes](../architecture/credentialed-runtimes.md)
 for the full ownership, admission, credential-memory, COW, and retirement model.
+
+For managed Google calls, the controller resolves the trusted agent, opaque
+account, application, finite Gog command effects, authenticated account override,
+active config defaults, current authorization, scopes, and exact approval binding
+again before dispatch. The browser uses Clerk only for verified human identity;
+Google credentials remain controller-owned. `oauth_authorization.disconnect` is a
+local, owner-confirmed fence and containment flow, not provider revocation.
 
 `agent-vm controller ssh` intentionally exposes only an interactive SSH session.
 It must reject `-- <remote command>` and `--print` so the CLI does not become an
@@ -315,6 +325,7 @@ not by VM-facing public HTTP lease routes.
     |-- 3. Derive and realpath controller-owned capabilities:
     |      workspace  = <zoneFilesDir>/agents/<agentId>
     |      Git root  = <zoneRuntimeDir>/gitdirs/agents/<agentId>
+    |      file receiver = exact shared-staging Tool VM generation
     |-- 4. Set the Tool VM default cwd to rootfs/COW /work
     |-- 5. Validate the optional requested idle TTL hint
     |
@@ -331,6 +342,7 @@ not by VM-facing public HTTP lease routes.
     |       |-- /workspace  filtered owned workspace capability
     |       |-- /gitdirs    owned agent Git-directory root
     |       |-- /work       rootfs/COW, never a host mount
+    |       |-- /agent-vm/files  fixed read-only Gog publication root
     |-- 6. Attach vm.id, start it, capture pid + process-start identity
     |-- 7. Persist <controllerStateDir>/zones/<zoneId>/tool-leases/<recordId>.json (schema v2)
     |-- 8. For replacement, wait until predecessor access is fenced
@@ -395,7 +407,12 @@ fail closed.
 
 Inside the Tool VM, `/workspace` is the selected filtered durable agent
 workspace, `/gitdirs/workspace.git` is present only when workspace Git is
-enabled, and `/work` is disposable rootfs/COW execution data. The Gateway keeps
+enabled, `/work` is disposable rootfs/COW execution data and the input root for
+Gog file commands, and `/agent-vm/files` is the fixed read-only temporary
+publication root for this exact Tool VM generation. Published files expire one
+hour after publication or when this Tool VM closes, whichever occurs first; reads
+do not extend the deadline. Producer retirement and later Google disconnect do not
+recall them. The Gateway keeps
 its own independently authored mount view; it never lends `/zone`, framework
 state, controller state, sibling workspaces, or sibling Git databases to the
 Tool VM. See [Storage Model](../architecture/storage-model.md) for the canonical

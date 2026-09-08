@@ -512,16 +512,28 @@ sibling authored config files in `config/gateways/<zone>/`:
   cross-backend namespace policies, explicit backend bindings, and call/tool
   selectors.
 - `oauth.config.jsonc` is optional. When present, it configures the controller-owned
-  Google OAuth broker, three Web applications, account-profile slots, authorized
-  tailnet logins, the fixed direct HTTPS listener on `18900`, and a 1Password KEK.
+  Google OAuth broker, three fixed application-family bindings, human owners,
+  per-agent activity ceilings, website policy editors, authorized tailnet logins,
+  Clerk browser identity, the fixed direct HTTPS listener on `18900`, and a
+  1Password KEK. Accounts and agent authorizations are enrolled dynamically and
+  never appear as static config slots.
 
 OAuth configuration is valid only for a managed Hermes zone with a matching Tool
 Portal agent/profile policy. The `oauth_authorization` namespace uses registered
 controller actions named `list`, `begin`, `status`, `cancel`, `reauthorize`, and
-`revoke`; reauthorization and revocation must remain approval-required. Gog uses an
-`oauth_account_profile` authorization rule and the fixed
-`GOG_ACCESS_TOKEN: { kind: "oauth_access_token" }` mediation source. Account profile
-is RPC input and never becomes Gog argv.
+`disconnect`. Their configured disposition may be direct or Ask; every lasting
+authorization or disconnect still requires the verified account owner's browser
+confirmation. There is no provider-revoke action. Local disconnect denies future
+use of only the selected agent/account/application authorization and does not call
+Google.
+
+Managed Gog calls carry an opaque `accountId` beside exact admitted argv. The
+`managed_google_policy` source resolves that account's explicit independent
+Read/Write overrides first and the active `googlePolicyDefaults` fallback second,
+then intersects the result with current consent, scopes, activity ceiling, and the
+finite command catalog. `Deny`, `Ask`, and `Allow` are all valid for reads and
+writes; write is not hard-coded to Ask. Clerk authenticates the website human only
+and is never a source of Gog tokens.
 
 Namespace discovery uses one optional bounded field: `discovery.summary`.
 MCP-backed namespaces author it only at
@@ -571,6 +583,10 @@ Managed Gateway policy is authored in `tool-portal.config.jsonc`. Its important
 fields are:
 
 - `agents.<agentId>.profile` selects one complete profile.
+- `agents.<agentId>.googlePolicyDefaults` selects a pinned collection or a
+  complete explicit application/service Read/Write default map. Explicit
+  account overrides live in controller SQLite and win cell-by-cell; an omitted
+  default is Deny.
 - `agents.<agentId>.credentialBindings` optionally declares that agent's
   controller-only named 1Password file sets for credentialed Managed runtimes.
   Bindings select credentials but do not grant capabilities beyond the profile.
@@ -643,6 +659,13 @@ conjunctive, and matchers within one bucket are alternatives. The old
 namespace direct baseline still requires `zones[].approvalAccess` when its
 operation-level `calls.requiresApproval` array is non-empty. Hermes is the sole
 native presenter for those matched invocations in this release.
+
+The Google/Gog namespace instead uses `calls.source: "managed_google_policy"`
+plus hard executable denials. Current account-specific policy supplies the call
+disposition, so it does not duplicate static Ask/Allow selectors. Every reachable
+Gog shape must have one finite catalog descriptor; unknown commands, generic API
+escapes, auth/client/account overrides, and ambiguous aliases fail validation or
+runtime classification.
 
 The credentialed `ephemeral_managed_vm` target is a controller-created reusable
 Managed runtime, not a leased Tool VM and not one VM per call. There is exactly one

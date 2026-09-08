@@ -12,6 +12,10 @@ import {
 	type OAuthApplicationChoiceModel,
 	type OAuthPermissionFieldError,
 } from '../contracts.js';
+import {
+	permissionSelectionSummary,
+	resolvePermissionSelectionMode,
+} from '../permission-selection-summary.js';
 
 const renderPropsSchema = z
 	.object({
@@ -71,6 +75,12 @@ function pageTitle(model: OAuthApprovalPageModel): string {
 			return 'Choose Google access';
 		case 'account-confirmation':
 			return 'Confirm Google account';
+		case 'disconnect-confirmation':
+			return 'Disconnect account authorization';
+		case 'disconnected':
+			return 'Account authorization disconnected';
+		case 'pending':
+			return 'Change saved; access is paused';
 		case 'application-progress':
 			return 'Connecting Google applications';
 		case 'partial-completion':
@@ -90,51 +100,97 @@ function PermissionChoice(props: {
 	readonly application: OAuthApplicationChoiceModel;
 	readonly errors: readonly OAuthPermissionFieldError[];
 }): JSX.Element {
+	const application = props.application;
+	const recommended = new Set(application.recommendedGroupIds);
+	const selectionMode = resolvePermissionSelectionMode(application);
+	// An untouched Off application offers the safe Custom baseline even without
+	// JavaScript. An explicit submitted mode preserves its edits, including empty.
+	const selected = new Set(
+		application.selectionMode === undefined && selectionMode === 'off'
+			? application.recommendedGroupIds
+			: application.selectedGroupIds,
+	);
+	const serviceIds = [...new Set(application.groups.map((group) => group.serviceId))];
 	return (
 		<section
 			class="application-section"
-			aria-labelledby={`application-${props.application.applicationId}`}
+			data-permission-application
+			aria-labelledby={`application-${application.applicationId}`}
 		>
 			<div class="application-heading">
-				<h2 id={`application-${props.application.applicationId}`}>{props.application.label}</h2>
-				<p>{props.application.description}</p>
+				<h2 id={`application-${application.applicationId}`}>{application.label}</h2>
+				<p>{application.description}</p>
+				<fieldset class="permission-fieldset">
+					<legend>Access selection</legend>
+					{(['off', 'recommended', 'custom'] as const).map((mode) => (
+						<label class="permission-option" key={mode}>
+							<input
+								class="peer"
+								type="radio"
+								name={`mode.${application.applicationId}`}
+								value={mode}
+								checked={selectionMode === mode}
+								required
+							/>
+							<span>
+								{mode === 'off' ? 'Off' : mode === 'recommended' ? 'Recommended' : 'Custom'}
+							</span>
+						</label>
+					))}
+				</fieldset>
+				<p>
+					Recommended:{' '}
+					{application.groups
+						.filter((group) => recommended.has(group.groupId))
+						.map((group) => group.label)
+						.join(', ') || 'No access'}
+					.
+				</p>
+				<p>Custom starts with the selections below. Choose Custom to use your edits.</p>
+				{application.suggestedGroupIds === undefined ? null : (
+					<p class="suggestion-note">
+						Agent suggestions are advisory. You decide. Suggested:{' '}
+						{application.groups
+							.filter((group) => application.suggestedGroupIds?.includes(group.groupId))
+							.map((group) => group.label)
+							.join(', ') || 'No offered groups'}
+						.
+					</p>
+				)}
 			</div>
-			{props.application.services.map((service) => {
+			{serviceIds.map((serviceId) => {
 				const fieldError = props.errors.find(
 					(error) =>
-						error.applicationId === props.application.applicationId &&
-						error.serviceId === service.serviceId,
+						error.applicationId === application.applicationId && error.serviceId === serviceId,
 				);
-				const fieldErrorId = `permission-error-${props.application.applicationId}-${service.serviceId}`;
+				const fieldErrorId = `permission-error-${application.applicationId}-${serviceId}`;
 				return (
 					<fieldset
-						aria-describedby={fieldError === undefined ? undefined : fieldErrorId}
+						key={serviceId}
 						class="permission-fieldset"
-						key={service.serviceId}
+						aria-describedby={fieldError === undefined ? undefined : fieldErrorId}
 					>
-						<legend>{service.label}</legend>
-						{service.suggestedChoice === undefined ? null : (
-							<p class="suggestion-note">Hermes suggested {service.suggestedChoice}. You decide.</p>
-						)}
-						<div class="permission-options">
-							{service.allowedChoices.map((choice) => {
-								const inputId = `${props.application.applicationId}-${service.serviceId}-${choice}`;
-								return (
-									<label class="permission-option" for={inputId} key={choice}>
-										<input
-											class="peer"
-											checked={service.selectedChoice === choice}
-											id={inputId}
-											name={`permission.${props.application.applicationId}.${service.serviceId}`}
-											required
-											type="radio"
-											value={choice}
-										/>
-										<span>{choice}</span>
-									</label>
-								);
-							})}
-						</div>
+						<legend>{serviceId}</legend>
+						{application.groups
+							.filter((group) => group.serviceId === serviceId)
+							.map((group) => (
+								<label class="permission-option" key={group.groupId}>
+									<input
+										class="peer"
+										type="checkbox"
+										name={`groups.${application.applicationId}`}
+										value={group.groupId}
+										data-recommended={recommended.has(group.groupId) ? 'true' : 'false'}
+										checked={selected.has(group.groupId)}
+										disabled={!group.offered}
+									/>
+									<span>
+										{group.label}
+										{group.offered ? '' : ' — Blocked by current limit'}
+									</span>
+									<small>{group.warning}</small>
+								</label>
+							))}
 						{fieldError === undefined ? null : (
 							<p class="field-error" id={fieldErrorId}>
 								{fieldError.message}
@@ -157,10 +213,14 @@ function PermissionSelectionPage(props: {
 		<>
 			<header class="page-header">
 				<p class="eyebrow">Google authorization</p>
-				<h1>Choose access for {props.model.accountProfileLabel}</h1>
+				<h1>Choose Google access for {props.model.agentId}</h1>
 				<p>
-					These choices control Google consent. Tool Portal approval remains separate for every
-					action.
+					Account owner: {props.model.ownerLabel}
+					{props.model.accountAlias === undefined ? '' : ` · ${props.model.accountAlias}`}
+				</p>
+				<p>
+					These choices control Google consent. They do not change your per-call Deny, Ask or Allow
+					policy.
 				</p>
 			</header>
 			{props.model.errors === undefined || props.model.errors.length === 0 ? null : (
@@ -192,7 +252,21 @@ function PermissionSelectionPage(props: {
 					/>
 				))}
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
-				<div aria-live="polite" class="permission-summary" data-permission-summary />
+				<div aria-live="polite" class="permission-summary" data-permission-summary>
+					{permissionSelectionSummary(
+						props.model.applications.map((application) => {
+							const mode = resolvePermissionSelectionMode(application);
+							return mode === 'off'
+								? 0
+								: mode === 'recommended'
+									? application.recommendedGroupIds.length
+									: application.groups.filter(
+											(group) =>
+												group.offered && application.selectedGroupIds.includes(group.groupId),
+										).length;
+						}),
+					)}
+				</div>
 				<div class="form-actions">
 					<button class="primary-button" type="submit">
 						Continue to Google
@@ -219,6 +293,15 @@ function AccountConfirmationPage(props: {
 	readonly formAction: string;
 	readonly model: Extract<OAuthApprovalPageModel, { readonly kind: 'account-confirmation' }>;
 }): JSX.Element {
+	const previousPermissionLabels = props.model.previousPermissionLabels;
+	const previousPermissions = new Set(previousPermissionLabels ?? []);
+	const grantedPermissions = new Set(props.model.grantedPermissionLabels);
+	const addedPermissions = props.model.grantedPermissionLabels.filter(
+		(label) => !previousPermissions.has(label),
+	);
+	const removedPermissions = (previousPermissionLabels ?? []).filter(
+		(label) => !grantedPermissions.has(label),
+	);
 	return (
 		<>
 			<header class="page-header">
@@ -226,16 +309,55 @@ function AccountConfirmationPage(props: {
 				<h1>{props.model.accountLabel}</h1>
 				<p>Google returned this account for {props.model.applicationLabel}.</p>
 			</header>
-			<section class="confirmation-panel">
-				<h2>Granted access</h2>
-				<ul>
-					{props.model.grantedPermissionLabels.map((label, labelIndex) => (
-						<li key={`${String(labelIndex)}:${label}`}>{label}</li>
-					))}
-				</ul>
-			</section>
+			{previousPermissionLabels === undefined ? (
+				<section class="confirmation-panel">
+					<h2>Granted access</h2>
+					<ul>
+						{props.model.grantedPermissionLabels.map((label, labelIndex) => (
+							<li key={`${String(labelIndex)}:${label}`}>{label}</li>
+						))}
+					</ul>
+				</section>
+			) : (
+				<section class="confirmation-panel">
+					<h2>Permission changes</h2>
+					<h3>Before</h3>
+					<ul>
+						{previousPermissionLabels.length === 0 ? (
+							<li>No access</li>
+						) : (
+							previousPermissionLabels.map((label, labelIndex) => (
+								<li key={`before:${String(labelIndex)}:${label}`}>{label}</li>
+							))
+						)}
+					</ul>
+					<h3>After</h3>
+					<ul>
+						{props.model.grantedPermissionLabels.length === 0 ? (
+							<li>No access</li>
+						) : (
+							props.model.grantedPermissionLabels.map((label, labelIndex) => (
+								<li key={`after:${String(labelIndex)}:${label}`}>{label}</li>
+							))
+						)}
+					</ul>
+					<h3>Added</h3>
+					<p>{addedPermissions.join(', ') || 'None'}</p>
+					<h3>Removed</h3>
+					<p>{removedPermissions.join(', ') || 'None'}</p>
+				</section>
+			)}
 			<form action={props.formAction} method="post">
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
+				<label for="accountAlias">Name this account for the agent</label>
+				<input
+					id="accountAlias"
+					name="accountAlias"
+					type="text"
+					required
+					maxlength={320}
+					value={props.model.accountLabel}
+				/>
 				<div class="form-actions">
 					<button class="primary-button" type="submit">
 						Confirm this account
@@ -263,7 +385,7 @@ function StatusPage(props: {
 	readonly formAction?: string | undefined;
 	readonly model: Exclude<
 		OAuthApprovalPageModel,
-		{ kind: 'permission-selection' | 'account-confirmation' }
+		{ kind: 'permission-selection' | 'account-confirmation' | 'disconnect-confirmation' }
 	>;
 }): JSX.Element {
 	const model = props.model;
@@ -370,6 +492,39 @@ export function renderOAuthApprovalPage(unparsedProps: OAuthApprovalRenderProps)
 		stylesheetAssetName: unparsedProps.stylesheetAssetName,
 	});
 	const body = (() => {
+		if (model.kind === 'disconnect-confirmation') {
+			if (renderProps.csrfToken === undefined || renderProps.formAction === undefined)
+				throw new Error('Disconnect confirmation requires a CSRF token and form action.');
+			return (
+				<>
+					<header class="page-header">
+						<h1>
+							Disconnect {model.accountAlias} from {model.agentId}?
+						</h1>
+						<p>
+							{model.applicationLabel}: this stops local access for this agent. Other agents stay
+							connected. Google consent is not revoked.
+						</p>
+					</header>
+					<form action={renderProps.formAction} method="post">
+						<input name="csrfToken" type="hidden" value={renderProps.csrfToken} />
+						<button class="primary-button" type="submit">
+							Disconnect this authorization
+						</button>
+						{renderProps.cancelAction === undefined ? null : (
+							<button
+								class="secondary-button"
+								formAction={renderProps.cancelAction}
+								formMethod="post"
+								type="submit"
+							>
+								Cancel
+							</button>
+						)}
+					</form>
+				</>
+			);
+		}
 		if (model.kind === 'permission-selection') {
 			if (renderProps.csrfToken === undefined || renderProps.formAction === undefined) {
 				throw new Error('Permission selection requires a CSRF token and form action.');

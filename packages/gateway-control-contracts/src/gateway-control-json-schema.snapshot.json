@@ -2345,9 +2345,14 @@
 																"type": "string",
 																"const": "oauth_authorization.begin"
 															},
-															"accountProfileId": {
+															"applicationId": {
 																"type": "string",
 																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"suggestedAlias": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 320
 															},
 															"suggestedSelections": {
 																"readOnly": true,
@@ -2357,14 +2362,14 @@
 																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																},
 																"additionalProperties": {
-																	"type": "object",
-																	"propertyNames": {
+																	"readOnly": true,
+																	"maxItems": 64,
+																	"type": "array",
+																	"items": {
 																		"type": "string",
-																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
-																	},
-																	"additionalProperties": {
-																		"type": "string",
-																		"enum": ["none", "read", "write"]
+																		"minLength": 1,
+																		"maxLength": 128,
+																		"pattern": "^[a-z][a-z0-9.-]*$"
 																	}
 																}
 															},
@@ -2667,7 +2672,7 @@
 														},
 														"required": [
 															"actionId",
-															"accountProfileId",
+															"applicationId",
 															"authority",
 															"callerContext",
 															"correlation",
@@ -3318,9 +3323,10 @@
 																"type": "string",
 																"const": "oauth_authorization.reauthorize"
 															},
-															"accountProfileId": {
+															"accountId": {
 																"type": "string",
-																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 															},
 															"applicationId": {
 																"type": "string",
@@ -3334,14 +3340,14 @@
 																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																},
 																"additionalProperties": {
-																	"type": "object",
-																	"propertyNames": {
+																	"readOnly": true,
+																	"maxItems": 64,
+																	"type": "array",
+																	"items": {
 																		"type": "string",
-																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
-																	},
-																	"additionalProperties": {
-																		"type": "string",
-																		"enum": ["none", "read", "write"]
+																		"minLength": 1,
+																		"maxLength": 128,
+																		"pattern": "^[a-z][a-z0-9.-]*$"
 																	}
 																}
 															},
@@ -3644,7 +3650,7 @@
 														},
 														"required": [
 															"actionId",
-															"accountProfileId",
+															"accountId",
 															"applicationId",
 															"authority",
 															"callerContext",
@@ -3658,11 +3664,12 @@
 														"properties": {
 															"actionId": {
 																"type": "string",
-																"const": "oauth_authorization.revoke"
+																"const": "oauth_authorization.disconnect"
 															},
-															"accountProfileId": {
+															"accountId": {
 																"type": "string",
-																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 															},
 															"applicationId": {
 																"type": "string",
@@ -3967,7 +3974,7 @@
 														},
 														"required": [
 															"actionId",
-															"accountProfileId",
+															"accountId",
 															"applicationId",
 															"authority",
 															"callerContext",
@@ -4278,12 +4285,13 @@
 																		"type": "string",
 																		"maxLength": 1048576
 																	},
-																	"accountProfile": {
+																	"accountId": {
 																		"type": "string",
-																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																	}
 																},
-																"required": ["argv", "reason", "accountProfile"],
+																"required": ["argv", "reason", "accountId"],
 																"additionalProperties": false
 															},
 															{
@@ -4308,9 +4316,10 @@
 																		"type": "string",
 																		"maxLength": 1048576
 																	},
-																	"accountProfile": {
+																	"accountId": {
 																		"type": "string",
-																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																	},
 																	"timeoutMs": {
 																		"type": "integer",
@@ -4318,7 +4327,7 @@
 																		"maximum": 28800000
 																	}
 																},
-																"required": ["argv", "reason", "accountProfile"],
+																"required": ["argv", "reason", "accountId"],
 																"additionalProperties": false
 															}
 														]
@@ -4526,20 +4535,13 @@
 															"type": "string",
 															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 														},
-														"kind": {
+														"operationId": {
 															"type": "string",
-															"const": "oauth-account-profile"
-														},
-														"minimumPermission": {
-															"type": "string",
-															"enum": ["read", "write"]
-														},
-														"serviceId": {
-															"type": "string",
-															"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															"minLength": 1,
+															"maxLength": 128
 														}
 													},
-													"required": ["applicationId", "kind", "minimumPermission", "serviceId"],
+													"required": ["applicationId", "operationId"],
 													"additionalProperties": false
 												}
 											}
@@ -4549,6 +4551,373 @@
 									}
 								},
 								"required": ["callerContext", "request"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_google_preflight"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"request": {
+										"type": "object",
+										"properties": {
+											"capability": {
+												"type": "object",
+												"properties": {
+													"namespace": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 128
+													}
+												},
+												"required": ["namespace", "name"],
+												"additionalProperties": false
+											},
+											"input": {
+												"anyOf": [
+													{
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	}
+																},
+																"required": ["argv", "reason"],
+																"additionalProperties": false
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"timeoutMs": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 28800000
+																	}
+																},
+																"required": ["argv", "reason"],
+																"additionalProperties": false
+															}
+														]
+													},
+													{
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"accountId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	}
+																},
+																"required": ["argv", "reason", "accountId"],
+																"additionalProperties": false
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"argv": {
+																		"minItems": 1,
+																		"maxItems": 100,
+																		"type": "array",
+																		"items": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 4096
+																		}
+																	},
+																	"reason": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 2000
+																	},
+																	"stdin": {
+																		"type": "string",
+																		"maxLength": 1048576
+																	},
+																	"accountId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"timeoutMs": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 28800000
+																	}
+																},
+																"required": ["argv", "reason", "accountId"],
+																"additionalProperties": false
+															}
+														]
+													}
+												]
+											}
+										},
+										"required": ["capability", "input"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["callerContext", "request"],
+								"additionalProperties": false
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_attachment"
+							},
+							"payload": {
+								"type": "object",
+								"properties": {
+									"callerContext": {
+										"type": "object",
+										"properties": {
+											"callerContextId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											}
+										},
+										"required": ["callerContextId"],
+										"additionalProperties": false
+									},
+									"sessionId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 256
+									},
+									"request": {
+										"oneOf": [
+											{
+												"type": "object",
+												"properties": {
+													"action": {
+														"type": "string",
+														"const": "stage"
+													},
+													"source": {
+														"oneOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"kind": {
+																		"type": "string",
+																		"const": "operation-file"
+																	},
+																	"referenceId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"path": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 8192
+																	}
+																},
+																"required": ["kind", "referenceId", "path"],
+																"additionalProperties": false
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"kind": {
+																		"type": "string",
+																		"const": "tool-vm-file"
+																	},
+																	"path": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 8192
+																	}
+																},
+																"required": ["kind", "path"],
+																"additionalProperties": false
+															}
+														]
+													}
+												},
+												"required": ["action", "source"],
+												"additionalProperties": false
+											},
+											{
+												"type": "object",
+												"properties": {
+													"action": {
+														"type": "string",
+														"const": "settle"
+													},
+													"stagingId": {
+														"type": "string",
+														"format": "uuid",
+														"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+													},
+													"outcome": {
+														"type": "string",
+														"enum": ["sent", "failed", "unconfirmed", "sender-pending"]
+													}
+												},
+												"required": ["action", "stagingId", "outcome"],
+												"additionalProperties": false
+											}
+										]
+									}
+								},
+								"required": ["callerContext", "sessionId", "request"],
 								"additionalProperties": false
 							}
 						},
@@ -4680,6 +5049,189 @@
 									"intent": {
 										"type": "object",
 										"properties": {
+											"managedGoogle": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"const": "ready"
+													},
+													"disposition": {
+														"type": "string",
+														"enum": ["ask", "allow"]
+													},
+													"binding": {
+														"type": "object",
+														"properties": {
+															"accountId": {
+																"type": "string",
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+															},
+															"applicationId": {
+																"type": "string",
+																"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+															},
+															"authorizationId": {
+																"type": "string",
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+															},
+															"generation": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"authorizationMetadataRevision": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"overrideRevision": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"defaultsRevision": {
+																"type": "string",
+																"pattern": "^[a-f0-9]{64}$"
+															},
+															"configRevision": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"clientBindingRevision": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"catalogVersion": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"commandTableRevision": {
+																"type": "string",
+																"pattern": "^[a-f0-9]{64}$"
+															},
+															"operationId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 128
+															},
+															"gmailWriteAllowed": {
+																"type": "boolean"
+															}
+														},
+														"required": [
+															"accountId",
+															"applicationId",
+															"authorizationId",
+															"generation",
+															"authorizationMetadataRevision",
+															"overrideRevision",
+															"defaultsRevision",
+															"configRevision",
+															"clientBindingRevision",
+															"catalogVersion",
+															"commandTableRevision",
+															"operationId",
+															"gmailWriteAllowed"
+														],
+														"additionalProperties": false
+													},
+													"display": {
+														"type": "object",
+														"properties": {
+															"accountId": {
+																"type": "string",
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+															},
+															"authorizationId": {
+																"type": "string",
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+															},
+															"accountAlias": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 320
+															},
+															"applicationLabel": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 160
+															},
+															"authorizationMetadataRevision": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															}
+														},
+														"required": [
+															"accountId",
+															"authorizationId",
+															"accountAlias",
+															"applicationLabel",
+															"authorizationMetadataRevision"
+														],
+														"additionalProperties": false
+													},
+													"fileInputs": {
+														"type": "object",
+														"properties": {
+															"leaseId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"leafGeneration": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"vmId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"files": {
+																"readOnly": true,
+																"minItems": 1,
+																"maxItems": 128,
+																"type": "array",
+																"items": {
+																	"type": "object",
+																	"properties": {
+																		"relativePath": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 8192
+																		},
+																		"byteLength": {
+																			"type": "integer",
+																			"minimum": 0,
+																			"maximum": 16777216
+																		},
+																		"sha256": {
+																			"type": "string",
+																			"pattern": "^[a-f0-9]{64}$"
+																		}
+																	},
+																	"required": ["relativePath", "byteLength", "sha256"],
+																	"additionalProperties": false
+																}
+															}
+														},
+														"required": ["leaseId", "leafGeneration", "vmId", "files"],
+														"additionalProperties": false
+													}
+												},
+												"required": ["kind", "disposition", "binding", "display"],
+												"additionalProperties": false
+											},
 											"backendKind": {
 												"type": "string",
 												"enum": ["mcp_provider", "controller_execution", "tool_vm_runner"]
@@ -6230,6 +6782,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6283,6 +6841,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -6424,6 +6988,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -6477,6 +7047,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -6603,6 +7179,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -6756,6 +7338,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -6839,6 +7427,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -6981,6 +7575,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7113,6 +7713,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"type": "object",
 												"properties": {
@@ -7196,6 +7802,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -7338,6 +7950,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -7418,6 +8036,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -7503,6 +8127,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -7738,7 +8368,7 @@
 																					"oauth_authorization.cancel",
 																					"oauth_authorization.list",
 																					"oauth_authorization.reauthorize",
-																					"oauth_authorization.revoke",
+																					"oauth_authorization.disconnect",
 																					"oauth_authorization.status"
 																				]
 																			},
@@ -7751,23 +8381,20 @@
 																								"type": "string",
 																								"const": "authorization-list"
 																							},
-																							"profiles": {
+																							"accounts": {
 																								"readOnly": true,
 																								"type": "array",
 																								"items": {
 																									"type": "object",
 																									"properties": {
-																										"accountLabel": {
+																										"accountId": {
 																											"type": "string",
-																											"minLength": 1,
-																											"maxLength": 320
-																										},
-																										"accountProfileId": {
-																											"type": "string",
-																											"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																											"format": "uuid",
+																											"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																										},
 																										"applications": {
 																											"readOnly": true,
+																											"minItems": 1,
 																											"type": "array",
 																											"items": {
 																												"type": "object",
@@ -7776,13 +8403,19 @@
 																														"type": "string",
 																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																													},
-																													"grantedScopes": {
-																														"readOnly": true,
-																														"type": "array",
-																														"items": {
-																															"type": "string",
-																															"pattern": "^[\\u0021-\\u007e]{1,512}$"
-																														}
+																													"applicationLabel": {
+																														"type": "string",
+																														"minLength": 1,
+																														"maxLength": 320
+																													},
+																													"accessState": {
+																														"type": "string",
+																														"enum": [
+																															"connected",
+																															"replacing",
+																															"disconnecting",
+																															"disconnected"
+																														]
 																													},
 																													"lifecycle": {
 																														"oneOf": [
@@ -7843,57 +8476,154 @@
 																																"additionalProperties": false
 																															}
 																														]
-																													}
-																												},
-																												"required": [
-																													"applicationId",
-																													"grantedScopes",
-																													"lifecycle"
-																												],
-																												"additionalProperties": false
-																											}
-																										},
-																										"authorizationOptions": {
-																											"readOnly": true,
-																											"minItems": 1,
-																											"type": "array",
-																											"items": {
-																												"type": "object",
-																												"properties": {
-																													"applicationId": {
-																														"type": "string",
-																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																													},
-																													"applicationLabel": {
-																														"type": "string",
-																														"minLength": 1,
-																														"maxLength": 320
+																													"metadata": {
+																														"oneOf": [
+																															{
+																																"type": "object",
+																																"properties": {
+																																	"kind": {
+																																		"type": "string",
+																																		"const": "verified"
+																																	},
+																																	"accountAlias": {
+																																		"type": "string",
+																																		"minLength": 1,
+																																		"maxLength": 320
+																																	},
+																																	"confirmedGroupIds": {
+																																		"readOnly": true,
+																																		"maxItems": 64,
+																																		"type": "array",
+																																		"items": {
+																																			"type": "string",
+																																			"minLength": 1,
+																																			"maxLength": 128
+																																		}
+																																	},
+																																	"grantedScopes": {
+																																		"readOnly": true,
+																																		"maxItems": 128,
+																																		"type": "array",
+																																		"items": {
+																																			"type": "string",
+																																			"pattern": "^[\\u0021-\\u007e]{1,512}$"
+																																		}
+																																	},
+																																	"scopeDescriptions": {
+																																		"readOnly": true,
+																																		"type": "array",
+																																		"items": {
+																																			"type": "string",
+																																			"minLength": 1,
+																																			"maxLength": 1024
+																																		}
+																																	}
+																																},
+																																"required": [
+																																	"kind",
+																																	"accountAlias",
+																																	"confirmedGroupIds",
+																																	"grantedScopes",
+																																	"scopeDescriptions"
+																																],
+																																"additionalProperties": false
+																															},
+																															{
+																																"type": "object",
+																																"properties": {
+																																	"kind": {
+																																		"type": "string",
+																																		"const": "unavailable"
+																																	}
+																																},
+																																"required": ["kind"],
+																																"additionalProperties": false
+																															}
+																														]
 																													},
-																													"services": {
+																													"activities": {
 																														"readOnly": true,
-																														"minItems": 1,
 																														"type": "array",
 																														"items": {
 																															"type": "object",
 																															"properties": {
-																																"maximumPermission": {
-																																	"type": "string",
-																																	"enum": ["read", "write"]
-																																},
-																																"serviceId": {
-																																	"type": "string",
-																																	"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
-																																},
-																																"serviceLabel": {
+																																"operationId": {
 																																	"type": "string",
 																																	"minLength": 1,
-																																	"maxLength": 320
+																																	"maxLength": 128
+																																},
+																																"availability": {
+																																	"oneOf": [
+																																		{
+																																			"type": "object",
+																																			"properties": {
+																																				"kind": {
+																																					"type": "string",
+																																					"const": "ready"
+																																				},
+																																				"disposition": {
+																																					"type": "string",
+																																					"enum": ["ask", "allow"]
+																																				},
+																																				"overrideRevision": {
+																																					"type": "integer",
+																																					"exclusiveMinimum": 0,
+																																					"maximum": 9007199254740991
+																																				},
+																																				"defaultsRevision": {
+																																					"type": "string",
+																																					"minLength": 1,
+																																					"maxLength": 256
+																																				}
+																																			},
+																																			"required": [
+																																				"kind",
+																																				"disposition",
+																																				"overrideRevision",
+																																				"defaultsRevision"
+																																			],
+																																			"additionalProperties": false
+																																		},
+																																		{
+																																			"type": "object",
+																																			"properties": {
+																																				"kind": {
+																																					"type": "string",
+																																					"const": "consent-required"
+																																				}
+																																			},
+																																			"required": ["kind"],
+																																			"additionalProperties": false
+																																		},
+																																		{
+																																			"type": "object",
+																																			"properties": {
+																																				"kind": {
+																																					"type": "string",
+																																					"const": "denied"
+																																				}
+																																			},
+																																			"required": ["kind"],
+																																			"additionalProperties": false
+																																		},
+																																		{
+																																			"type": "object",
+																																			"properties": {
+																																				"kind": {
+																																					"type": "string",
+																																					"const": "unavailable"
+																																				}
+																																			},
+																																			"required": ["kind"],
+																																			"additionalProperties": false
+																																		}
+																																	]
 																																}
 																															},
 																															"required": [
-																																"maximumPermission",
-																																"serviceId",
-																																"serviceLabel"
+																																"operationId",
+																																"availability"
 																															],
 																															"additionalProperties": false
 																														}
@@ -7902,31 +8632,114 @@
 																												"required": [
 																													"applicationId",
 																													"applicationLabel",
-																													"services"
+																													"accessState",
+																													"lifecycle",
+																													"metadata",
+																													"activities"
 																												],
 																												"additionalProperties": false
 																											}
-																										},
-																										"kind": {
+																										}
+																									},
+																									"required": ["accountId", "applications"],
+																									"additionalProperties": false
+																								}
+																							},
+																							"authorizationOptions": {
+																								"readOnly": true,
+																								"type": "array",
+																								"items": {
+																									"type": "object",
+																									"properties": {
+																										"applicationId": {
 																											"type": "string",
-																											"enum": [
-																												"unbound",
-																												"partially-enrolled",
-																												"enrolled"
-																											]
+																											"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																										},
+																										"applicationLabel": {
+																											"type": "string",
+																											"minLength": 1,
+																											"maxLength": 320
+																										},
+																										"services": {
+																											"readOnly": true,
+																											"minItems": 1,
+																											"type": "array",
+																											"items": {
+																												"type": "object",
+																												"properties": {
+																													"serviceId": {
+																														"type": "string",
+																														"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																													},
+																													"serviceLabel": {
+																														"type": "string",
+																														"minLength": 1,
+																														"maxLength": 320
+																													},
+																													"groups": {
+																														"readOnly": true,
+																														"minItems": 1,
+																														"type": "array",
+																														"items": {
+																															"type": "object",
+																															"properties": {
+																																"groupId": {
+																																	"type": "string",
+																																	"minLength": 1,
+																																	"maxLength": 128
+																																},
+																																"label": {
+																																	"type": "string",
+																																	"minLength": 1,
+																																	"maxLength": 320
+																																},
+																																"effect": {
+																																	"type": "string",
+																																	"enum": ["read", "write"]
+																																},
+																																"scopeDescriptions": {
+																																	"readOnly": true,
+																																	"type": "array",
+																																	"items": {
+																																		"type": "string",
+																																		"minLength": 1,
+																																		"maxLength": 1024
+																																	}
+																																}
+																															},
+																															"required": [
+																																"groupId",
+																																"label",
+																																"effect",
+																																"scopeDescriptions"
+																															],
+																															"additionalProperties": false
+																														}
+																													}
+																												},
+																												"required": [
+																													"serviceId",
+																													"serviceLabel",
+																													"groups"
+																												],
+																												"additionalProperties": false
+																											}
 																										}
 																									},
 																									"required": [
-																										"accountProfileId",
-																										"applications",
-																										"authorizationOptions",
-																										"kind"
+																										"applicationId",
+																										"applicationLabel",
+																										"services"
 																									],
 																									"additionalProperties": false
 																								}
 																							}
 																						},
-																						"required": ["kind", "profiles"],
+																						"required": [
+																							"kind",
+																							"accounts",
+																							"authorizationOptions"
+																						],
 																						"additionalProperties": false
 																					},
 																					{
@@ -7976,14 +8789,15 @@
 																					{
 																						"type": "object",
 																						"properties": {
-																							"accountLabel": {
+																							"accountAlias": {
 																								"type": "string",
 																								"minLength": 1,
 																								"maxLength": 320
 																							},
-																							"accountProfileId": {
+																							"accountId": {
 																								"type": "string",
-																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 																							},
 																							"applicationId": {
 																								"type": "string",
@@ -8003,8 +8817,8 @@
 																							}
 																						},
 																						"required": [
-																							"accountLabel",
-																							"accountProfileId",
+																							"accountAlias",
+																							"accountId",
 																							"applicationId",
 																							"grantedScopes",
 																							"kind"
@@ -8021,51 +8835,20 @@
 																										"properties": {
 																											"kind": {
 																												"type": "string",
-																												"const": "authorization-denied"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "cancelled"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "consumed"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "expired"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "identity-mismatch"
+																												"enum": [
+																													"authorization-denied",
+																													"cancelled",
+																													"consumed",
+																													"expired",
+																													"identity-mismatch",
+																													"scope-insufficient",
+																													"scope-mismatch",
+																													"subject-mismatch",
+																													"unavailable",
+																													"configuration-change-required",
+																													"duplicate-authorization",
+																													"stale-authorization"
+																												]
 																											}
 																										},
 																										"required": ["kind"],
@@ -8083,39 +8866,6 @@
 																											}
 																										},
 																										"required": ["kind", "retryable"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "scope-insufficient"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "subject-mismatch"
-																											}
-																										},
-																										"required": ["kind"],
-																										"additionalProperties": false
-																									},
-																									{
-																										"type": "object",
-																										"properties": {
-																											"kind": {
-																												"type": "string",
-																												"const": "unavailable"
-																											}
-																										},
-																										"required": ["kind"],
 																										"additionalProperties": false
 																									}
 																								]
@@ -8144,10 +8894,24 @@
 																						"properties": {
 																							"kind": {
 																								"type": "string",
-																								"const": "authorization-revoked"
+																								"enum": [
+																									"authorization-disconnected",
+																									"authorization-disconnecting",
+																									"authorization-replacement-pending",
+																									"authorization-containment-failed"
+																								]
+																							},
+																							"accountId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"applicationId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																							}
 																						},
-																						"required": ["kind"],
+																						"required": ["kind", "accountId", "applicationId"],
 																						"additionalProperties": false
 																					}
 																				]
@@ -8196,6 +8960,126 @@
 																	},
 																	"stdoutTruncated": {
 																		"type": "boolean"
+																	},
+																	"operationFiles": {
+																		"oneOf": [
+																			{
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string",
+																						"const": "available"
+																					},
+																					"referenceId": {
+																						"type": "string",
+																						"format": "uuid",
+																						"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																					},
+																					"expiresAtMs": {
+																						"type": "integer",
+																						"minimum": -9007199254740991,
+																						"maximum": 9007199254740991
+																					},
+																					"directoryPath": {
+																						"type": "string",
+																						"maxLength": 8192,
+																						"pattern": "^\\/agent-vm\\/files\\/.*"
+																					},
+																					"files": {
+																						"maxItems": 256,
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"relativePath": {
+																									"type": "string",
+																									"minLength": 1,
+																									"maxLength": 8192
+																								},
+																								"path": {
+																									"type": "string",
+																									"maxLength": 8192,
+																									"pattern": "^\\/agent-vm\\/files\\/.*"
+																								},
+																								"byteLength": {
+																									"type": "integer",
+																									"minimum": 0,
+																									"maximum": 16777216
+																								},
+																								"sha256": {
+																									"type": "string",
+																									"pattern": "^[a-f0-9]{64}$"
+																								}
+																							},
+																							"required": [
+																								"relativePath",
+																								"path",
+																								"byteLength",
+																								"sha256"
+																							],
+																							"additionalProperties": false
+																						}
+																					},
+																					"failedFiles": {
+																						"maxItems": 256,
+																						"type": "array",
+																						"items": {
+																							"type": "object",
+																							"properties": {
+																								"relativePath": {
+																									"type": "string",
+																									"maxLength": 8192
+																								},
+																								"reason": {
+																									"type": "string",
+																									"minLength": 1,
+																									"maxLength": 128
+																								}
+																							},
+																							"required": ["relativePath", "reason"],
+																							"additionalProperties": false
+																						}
+																					},
+																					"limitReached": {
+																						"type": "boolean"
+																					},
+																					"cleanup": {
+																						"type": "string",
+																						"enum": ["complete", "pending"]
+																					}
+																				},
+																				"required": [
+																					"kind",
+																					"referenceId",
+																					"expiresAtMs",
+																					"directoryPath",
+																					"files",
+																					"failedFiles",
+																					"limitReached",
+																					"cleanup"
+																				],
+																				"additionalProperties": false
+																			},
+																			{
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string",
+																						"const": "unavailable"
+																					},
+																					"reason": {
+																						"type": "string",
+																						"enum": [
+																							"size-limit",
+																							"stale-authority",
+																							"file-result-failed"
+																						]
+																					}
+																				},
+																				"required": ["kind", "reason"],
+																				"additionalProperties": false
+																			}
+																		]
 																	}
 																},
 																"required": [
@@ -8213,6 +9097,12 @@
 												]
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -8268,6 +9158,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -8403,86 +9299,6 @@
 														"items": {
 															"type": "object",
 															"properties": {
-																"availability": {
-																	"oneOf": [
-																		{
-																			"type": "object",
-																			"properties": {
-																				"accountProfiles": {
-																					"readOnly": true,
-																					"minItems": 1,
-																					"type": "array",
-																					"items": {
-																						"type": "object",
-																						"properties": {
-																							"accountLabel": {
-																								"type": "string",
-																								"minLength": 1,
-																								"maxLength": 320
-																							},
-																							"accountProfileId": {
-																								"type": "string",
-																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
-																							}
-																						},
-																						"required": ["accountLabel", "accountProfileId"],
-																						"additionalProperties": false
-																					}
-																				},
-																				"kind": {
-																					"type": "string",
-																					"const": "ready"
-																				}
-																			},
-																			"required": ["accountProfiles", "kind"],
-																			"additionalProperties": false
-																		},
-																		{
-																			"type": "object",
-																			"properties": {
-																				"kind": {
-																					"type": "string",
-																					"const": "authorization-required"
-																				}
-																			},
-																			"required": ["kind"],
-																			"additionalProperties": false
-																		},
-																		{
-																			"type": "object",
-																			"properties": {
-																				"kind": {
-																					"type": "string",
-																					"const": "reauthorization-required"
-																				}
-																			},
-																			"required": ["kind"],
-																			"additionalProperties": false
-																		},
-																		{
-																			"type": "object",
-																			"properties": {
-																				"kind": {
-																					"type": "string",
-																					"const": "scope-insufficient"
-																				}
-																			},
-																			"required": ["kind"],
-																			"additionalProperties": false
-																		},
-																		{
-																			"type": "object",
-																			"properties": {
-																				"kind": {
-																					"type": "string",
-																					"const": "authorization-status-unavailable"
-																				}
-																			},
-																			"required": ["kind"],
-																			"additionalProperties": false
-																		}
-																	]
-																},
 																"requirement": {
 																	"type": "object",
 																	"properties": {
@@ -8490,35 +9306,170 @@
 																			"type": "string",
 																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
 																		},
-																		"kind": {
+																		"operationId": {
 																			"type": "string",
-																			"const": "oauth-account-profile"
-																		},
-																		"minimumPermission": {
-																			"type": "string",
-																			"enum": ["read", "write"]
-																		},
-																		"serviceId": {
-																			"type": "string",
-																			"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																			"minLength": 1,
+																			"maxLength": 128
 																		}
 																	},
-																	"required": [
-																		"applicationId",
-																		"kind",
-																		"minimumPermission",
-																		"serviceId"
-																	],
+																	"required": ["applicationId", "operationId"],
 																	"additionalProperties": false
+																},
+																"availability": {
+																	"oneOf": [
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "accounts"
+																				},
+																				"accounts": {
+																					"readOnly": true,
+																					"maxItems": 256,
+																					"type": "array",
+																					"items": {
+																						"type": "object",
+																						"properties": {
+																							"accountId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"metadata": {
+																								"oneOf": [
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "verified"
+																											},
+																											"accountAlias": {
+																												"type": "string",
+																												"minLength": 1,
+																												"maxLength": 320
+																											}
+																										},
+																										"required": ["kind", "accountAlias"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "unavailable"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									}
+																								]
+																							},
+																							"availability": {
+																								"oneOf": [
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "ready"
+																											},
+																											"disposition": {
+																												"type": "string",
+																												"enum": ["ask", "allow"]
+																											},
+																											"overrideRevision": {
+																												"type": "integer",
+																												"exclusiveMinimum": 0,
+																												"maximum": 9007199254740991
+																											},
+																											"defaultsRevision": {
+																												"type": "string",
+																												"minLength": 1,
+																												"maxLength": 256
+																											}
+																										},
+																										"required": [
+																											"kind",
+																											"disposition",
+																											"overrideRevision",
+																											"defaultsRevision"
+																										],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "consent-required"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "denied"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									},
+																									{
+																										"type": "object",
+																										"properties": {
+																											"kind": {
+																												"type": "string",
+																												"const": "unavailable"
+																											}
+																										},
+																										"required": ["kind"],
+																										"additionalProperties": false
+																									}
+																								]
+																							}
+																						},
+																						"required": ["accountId", "metadata", "availability"],
+																						"additionalProperties": false
+																					}
+																				}
+																			},
+																			"required": ["kind", "accounts"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"kind": {
+																					"type": "string",
+																					"const": "unavailable"
+																				}
+																			},
+																			"required": ["kind"],
+																			"additionalProperties": false
+																		}
+																	]
 																}
 															},
-															"required": ["availability", "requirement"],
+															"required": ["requirement", "availability"],
 															"additionalProperties": false
 														}
 													}
 												},
 												"required": ["items"],
 												"additionalProperties": false
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
 											},
 											"error": {
 												"not": {}
@@ -8573,6 +9524,713 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_google_preflight"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "ready"
+															},
+															"disposition": {
+																"type": "string",
+																"enum": ["ask", "allow"]
+															},
+															"binding": {
+																"type": "object",
+																"properties": {
+																	"accountId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"applicationId": {
+																		"type": "string",
+																		"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																	},
+																	"authorizationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"generation": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"authorizationMetadataRevision": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"overrideRevision": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"defaultsRevision": {
+																		"type": "string",
+																		"pattern": "^[a-f0-9]{64}$"
+																	},
+																	"configRevision": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"clientBindingRevision": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"catalogVersion": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"commandTableRevision": {
+																		"type": "string",
+																		"pattern": "^[a-f0-9]{64}$"
+																	},
+																	"operationId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 128
+																	},
+																	"gmailWriteAllowed": {
+																		"type": "boolean"
+																	}
+																},
+																"required": [
+																	"accountId",
+																	"applicationId",
+																	"authorizationId",
+																	"generation",
+																	"authorizationMetadataRevision",
+																	"overrideRevision",
+																	"defaultsRevision",
+																	"configRevision",
+																	"clientBindingRevision",
+																	"catalogVersion",
+																	"commandTableRevision",
+																	"operationId",
+																	"gmailWriteAllowed"
+																],
+																"additionalProperties": false
+															},
+															"display": {
+																"type": "object",
+																"properties": {
+																	"accountId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"authorizationId": {
+																		"type": "string",
+																		"format": "uuid",
+																		"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																	},
+																	"accountAlias": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 320
+																	},
+																	"applicationLabel": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 160
+																	},
+																	"authorizationMetadataRevision": {
+																		"type": "integer",
+																		"exclusiveMinimum": 0,
+																		"maximum": 9007199254740991
+																	}
+																},
+																"required": [
+																	"accountId",
+																	"authorizationId",
+																	"accountAlias",
+																	"applicationLabel",
+																	"authorizationMetadataRevision"
+																],
+																"additionalProperties": false
+															},
+															"fileInputs": {
+																"type": "object",
+																"properties": {
+																	"leaseId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"leafGeneration": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"vmId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"files": {
+																		"readOnly": true,
+																		"minItems": 1,
+																		"maxItems": 128,
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"relativePath": {
+																					"type": "string",
+																					"minLength": 1,
+																					"maxLength": 8192
+																				},
+																				"byteLength": {
+																					"type": "integer",
+																					"minimum": 0,
+																					"maximum": 16777216
+																				},
+																				"sha256": {
+																					"type": "string",
+																					"pattern": "^[a-f0-9]{64}$"
+																				}
+																			},
+																			"required": ["relativePath", "byteLength", "sha256"],
+																			"additionalProperties": false
+																		}
+																	}
+																},
+																"required": ["leaseId", "leafGeneration", "vmId", "files"],
+																"additionalProperties": false
+															}
+														},
+														"required": ["kind", "disposition", "binding", "display"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "no-oauth"
+															},
+															"commandTableRevision": {
+																"type": "string",
+																"pattern": "^[a-f0-9]{64}$"
+															}
+														},
+														"required": ["kind", "commandTableRevision"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "denied"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "consent-required"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "unavailable"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "googlePreflight", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
+											"error": {
+												"type": "object",
+												"properties": {
+													"errorClass": {
+														"type": "string",
+														"minLength": 1
+													},
+													"retryable": {
+														"type": "boolean"
+													},
+													"safeMessage": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["errorClass"],
+												"additionalProperties": false
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"enum": [
+													"failed",
+													"timeout",
+													"rejected",
+													"cancelled",
+													"stale_generation",
+													"approval_required",
+													"approval_stale"
+												]
+											}
+										},
+										"required": ["responseToMessageId", "error", "result"],
+										"additionalProperties": false
+									}
+								]
+							}
+						},
+						"required": ["kind", "operation", "payload"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"causationId": {
+								"type": "string",
+								"format": "uuid",
+								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+							},
+							"correlationId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"requestId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"runId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"sessionKeyDigest": {
+								"type": "string",
+								"minLength": 32
+							},
+							"toolCallId": {
+								"type": "string",
+								"minLength": 1
+							},
+							"traceId": {
+								"type": "string",
+								"pattern": "^[0-9a-f]{32}$"
+							},
+							"kind": {
+								"type": "string",
+								"const": "command_result"
+							},
+							"operation": {
+								"type": "string",
+								"const": "tool_portal_attachment"
+							},
+							"payload": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"oneOf": [
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "staged"
+															},
+															"stagingId": {
+																"type": "string",
+																"format": "uuid",
+																"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+															},
+															"path": {
+																"type": "string",
+																"pattern": "^\\/home\\/hermes\\/\\.cache\\/agent-vm-native\\/[a-f0-9]{64}\\/[a-f0-9]{64}\\/portal-native-[a-z0-9][a-z0-9_-]{0,63}-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\/(?!\\.{1,2}$)[^/\\\\\\u0000-\\u001f\\u007f]{1,255}$"
+															},
+															"byteLength": {
+																"type": "integer",
+																"minimum": 0,
+																"maximum": 16777216
+															},
+															"sha256": {
+																"type": "string",
+																"pattern": "^[a-f0-9]{64}$"
+															}
+														},
+														"required": ["kind", "stagingId", "path", "byteLength", "sha256"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "failed"
+															},
+															"reason": {
+																"type": "string",
+																"enum": [
+																	"unavailable",
+																	"capacity",
+																	"transfer-failed",
+																	"cleanup-pending"
+																]
+															}
+														},
+														"required": ["kind", "reason"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "cleaned"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "retained"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													},
+													{
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"const": "unavailable"
+															}
+														},
+														"required": ["kind"],
+														"additionalProperties": false
+													}
+												]
+											},
+											"error": {
+												"not": {}
+											},
+											"lease": {
+												"not": {}
+											},
+											"leaseRejectionReason": {
+												"not": {}
+											},
+											"leaseUse": {
+												"not": {}
+											},
+											"result": {
+												"type": "string",
+												"const": "ok"
+											}
+										},
+										"required": ["responseToMessageId", "nativeAttachment", "result"],
+										"additionalProperties": false
+									},
+									{
+										"type": "object",
+										"properties": {
+											"responseToMessageId": {
+												"type": "string",
+												"format": "uuid",
+												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+											},
+											"activeOperationId": {
+												"not": {}
+											},
+											"approvalAdmission": {
+												"not": {}
+											},
+											"approvalDecision": {
+												"not": {}
+											},
+											"approvalDispatch": {
+												"not": {}
+											},
+											"approvalRequired": {
+												"not": {}
+											},
+											"callerContext": {
+												"not": {}
+											},
+											"bindingRequest": {
+												"not": {}
+											},
+											"controllerExecution": {
+												"not": {}
+											},
+											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -8703,6 +10361,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -8758,6 +10422,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -8886,6 +10556,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -8939,6 +10615,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -9073,6 +10755,198 @@
 																	"intent": {
 																		"type": "object",
 																		"properties": {
+																			"managedGoogle": {
+																				"type": "object",
+																				"properties": {
+																					"kind": {
+																						"type": "string",
+																						"const": "ready"
+																					},
+																					"disposition": {
+																						"type": "string",
+																						"enum": ["ask", "allow"]
+																					},
+																					"binding": {
+																						"type": "object",
+																						"properties": {
+																							"accountId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"applicationId": {
+																								"type": "string",
+																								"pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+																							},
+																							"authorizationId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"generation": {
+																								"type": "integer",
+																								"exclusiveMinimum": 0,
+																								"maximum": 9007199254740991
+																							},
+																							"authorizationMetadataRevision": {
+																								"type": "integer",
+																								"exclusiveMinimum": 0,
+																								"maximum": 9007199254740991
+																							},
+																							"overrideRevision": {
+																								"type": "integer",
+																								"exclusiveMinimum": 0,
+																								"maximum": 9007199254740991
+																							},
+																							"defaultsRevision": {
+																								"type": "string",
+																								"pattern": "^[a-f0-9]{64}$"
+																							},
+																							"configRevision": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"clientBindingRevision": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"catalogVersion": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"commandTableRevision": {
+																								"type": "string",
+																								"pattern": "^[a-f0-9]{64}$"
+																							},
+																							"operationId": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 128
+																							},
+																							"gmailWriteAllowed": {
+																								"type": "boolean"
+																							}
+																						},
+																						"required": [
+																							"accountId",
+																							"applicationId",
+																							"authorizationId",
+																							"generation",
+																							"authorizationMetadataRevision",
+																							"overrideRevision",
+																							"defaultsRevision",
+																							"configRevision",
+																							"clientBindingRevision",
+																							"catalogVersion",
+																							"commandTableRevision",
+																							"operationId",
+																							"gmailWriteAllowed"
+																						],
+																						"additionalProperties": false
+																					},
+																					"display": {
+																						"type": "object",
+																						"properties": {
+																							"accountId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"authorizationId": {
+																								"type": "string",
+																								"format": "uuid",
+																								"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+																							},
+																							"accountAlias": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 320
+																							},
+																							"applicationLabel": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 160
+																							},
+																							"authorizationMetadataRevision": {
+																								"type": "integer",
+																								"exclusiveMinimum": 0,
+																								"maximum": 9007199254740991
+																							}
+																						},
+																						"required": [
+																							"accountId",
+																							"authorizationId",
+																							"accountAlias",
+																							"applicationLabel",
+																							"authorizationMetadataRevision"
+																						],
+																						"additionalProperties": false
+																					},
+																					"fileInputs": {
+																						"type": "object",
+																						"properties": {
+																							"leaseId": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"leafGeneration": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"vmId": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"files": {
+																								"readOnly": true,
+																								"minItems": 1,
+																								"maxItems": 128,
+																								"type": "array",
+																								"items": {
+																									"type": "object",
+																									"properties": {
+																										"relativePath": {
+																											"type": "string",
+																											"minLength": 1,
+																											"maxLength": 8192
+																										},
+																										"byteLength": {
+																											"type": "integer",
+																											"minimum": 0,
+																											"maximum": 16777216
+																										},
+																										"sha256": {
+																											"type": "string",
+																											"pattern": "^[a-f0-9]{64}$"
+																										}
+																									},
+																									"required": [
+																										"relativePath",
+																										"byteLength",
+																										"sha256"
+																									],
+																									"additionalProperties": false
+																								}
+																							}
+																						},
+																						"required": [
+																							"leaseId",
+																							"leafGeneration",
+																							"vmId",
+																							"files"
+																						],
+																						"additionalProperties": false
+																					}
+																				},
+																				"required": ["kind", "disposition", "binding", "display"],
+																				"additionalProperties": false
+																			},
 																			"backendKind": {
 																				"type": "string",
 																				"enum": [
@@ -9601,6 +11475,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -9654,6 +11534,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -9820,6 +11706,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -9873,6 +11765,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -10226,6 +12124,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -10279,6 +12183,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -10423,6 +12333,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -10476,6 +12392,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -10604,6 +12526,12 @@
 											"oauthAvailabilityBatch": {
 												"not": {}
 											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
+												"not": {}
+											},
 											"error": {
 												"not": {}
 											},
@@ -10657,6 +12585,12 @@
 												"not": {}
 											},
 											"oauthAvailabilityBatch": {
+												"not": {}
+											},
+											"googlePreflight": {
+												"not": {}
+											},
+											"nativeAttachment": {
 												"not": {}
 											},
 											"error": {
@@ -10769,6 +12703,8 @@
 			"tool_vm_binding_request",
 			"tool_portal_controller_execution",
 			"tool_portal_oauth_availability",
+			"tool_portal_google_preflight",
+			"tool_portal_attachment",
 			"tool_portal_approval_decide",
 			"tool_portal_admission_reserve",
 			"tool_portal_dispatch_arm",

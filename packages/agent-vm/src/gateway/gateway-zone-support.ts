@@ -147,6 +147,7 @@ export type GatewayZonePreflightOptions = Omit<
 >;
 
 export type GatewayZoneCleanupFailureStage =
+	| 'native-attachment-cleanup'
 	| 'control-session-disposal'
 	| 'control-session-material-deletion'
 	| 'ingress-withdrawal'
@@ -170,11 +171,12 @@ export type GatewayZoneDestroyResult =
 
 export interface GatewayZoneVmOperations extends Pick<
 	ManagedVm,
-	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id' | 'fileTransfer'
 > {}
 
 export function createGatewayZoneVmOperations(managedVm: ManagedVm): GatewayZoneVmOperations {
 	return {
+		...(managedVm.fileTransfer === undefined ? {} : { fileTransfer: managedVm.fileTransfer }),
 		enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess> {
 			return managedVm.enableSsh(options);
 		},

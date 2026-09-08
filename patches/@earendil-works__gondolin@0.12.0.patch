@@ -1,0 +1,20 @@
+diff --git a/dist/src/sandbox/server-ops.js b/dist/src/sandbox/server-ops.js
+index 8f1f5a314bba1a0c198453359df4090e8eaa1f2b..ad890dd20f35567046bda26aaa76439c8ffb4164 100644
+--- a/dist/src/sandbox/server-ops.js
++++ b/dist/src/sandbox/server-ops.js
+@@ -159,6 +159,7 @@ export class SandboxServerOps {
+             resolveDone = resolve;
+             rejectDone = reject;
+         });
++        void done.catch(() => {});
+         this.fileOps.set(id, {
+             kind: "write",
+             resolve: resolveDone,
+@@ -213,6 +214,7 @@ export class SandboxServerOps {
+             resolveDone = resolve;
+             rejectDone = reject;
+         });
++        void done.catch(() => {});
+         this.fileOps.set(id, {
+             kind: "delete",
+             resolve: resolveDone,

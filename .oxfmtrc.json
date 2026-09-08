@@ -13,6 +13,8 @@
 		"enabled": true
 	},
 	"ignorePatterns": [
+		"**/*.mindle.json",
+		"**/.mindle/**",
 		"dist",
 		"build",
 		"coverage",

@@ -1,0 +1,21 @@
+{
+	"caseId": "file-listed-result",
+	"schemaId": "portal.file.result",
+	"tags": ["operation-file", "rejected", "obsolete-rpc"],
+	"input": {
+		"kind": "listed",
+		"entries": [
+			{
+				"name": "report.pdf",
+				"kind": "file",
+				"byteLength": 5
+			}
+		],
+		"limitReached": false
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.schema.invalid-union"],
+		"refinementIdentities": []
+	}
+}

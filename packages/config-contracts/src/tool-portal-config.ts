@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
 import {
 	configuredCliAuthorizationSchema,
 	configuredCliAllowedCommandSchema,
@@ -13,6 +14,10 @@ import {
 	effectiveControllerConfiguredCliOperationSchema,
 	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
 } from './controller-configured-cli.js';
+import {
+	googlePolicyDefaultsConfigSchema,
+	managedGoogleNamespaceCallPolicySchema,
+} from './google-policy-defaults-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { namespaceDiscoverySchema } from './mcp-config.js';
 import { secretValueSchema } from './secret-value.js';
@@ -43,6 +48,54 @@ export const toolPortalCallPolicySchema = z
 	});
 
 export type ToolPortalCallPolicy = z.infer<typeof toolPortalCallPolicySchema>;
+
+export const toolPortalNamespaceCallPolicySchema = z.union([
+	toolPortalCallPolicySchema,
+	managedGoogleNamespaceCallPolicySchema,
+]);
+export type ToolPortalNamespaceCallPolicy = z.infer<typeof toolPortalNamespaceCallPolicySchema>;
+
+function validateManagedGoogleNamespace(
+	policy: {
+		readonly calls: ToolPortalNamespaceCallPolicy;
+		readonly backend: {
+			readonly kind: string;
+			readonly operations?:
+				| Readonly<
+						Record<
+							string,
+							{
+								readonly kind: string;
+								readonly authorization?: { readonly kind: string } | undefined;
+							}
+						>
+				  >
+				| undefined;
+		};
+	},
+	context: z.RefinementCtx,
+): void {
+	const managed = 'source' in policy.calls;
+	if (managed && policy.backend.kind !== 'controller_execution') {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Managed Google policy requires controller execution.',
+			path: ['calls'],
+		});
+		return;
+	}
+	for (const [name, operation] of Object.entries(policy.backend.operations ?? {})) {
+		const google =
+			operation.kind === 'configured_cli' && operation.authorization?.kind === 'oauth_account';
+		if (google !== managed)
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					'Managed Google namespaces contain only account-authorized Google CLI operations; other namespaces retain static call policy.',
+				path: ['backend', 'operations', name],
+			});
+	}
+}
 
 export const toolPortalBackendKindSchema = z.enum([
 	'mcp_provider',
@@ -196,10 +249,12 @@ const toolPortalMcpNamespacePolicySchema = z
 const toolPortalControllerExecutionNamespacePolicySchema = z
 	.object({
 		...toolPortalNamespacePolicyCommonShape,
+		calls: toolPortalNamespaceCallPolicySchema,
 		backend: toolPortalControllerExecutionBackendBindingSchema,
 		discovery: namespaceDiscoverySchema.default({}),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const toolPortalSandboxSshNamespacePolicySchema = z
 	.object({
@@ -228,7 +283,7 @@ export function toolPortalSelectorAllowsOperation(
 }
 
 export interface ToolPortalOperationReachabilityPolicy {
-	readonly calls: ToolPortalCallPolicy;
+	readonly calls: ToolPortalNamespaceCallPolicy;
 	readonly tools: ToolPortalToolSelector;
 }
 
@@ -238,7 +293,8 @@ export function toolPortalNamespaceAllowsOperation(
 ): boolean {
 	return (
 		toolPortalSelectorAllowsOperation(namespacePolicy.tools, operationName) &&
-		(toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
+		('source' in namespacePolicy.calls ||
+			toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
 			toolPortalSelectorAllowsOperation(namespacePolicy.calls.withoutApproval, operationName))
 	);
 }
@@ -281,6 +337,7 @@ export const toolPortalCredentialBindingSchema = z
 
 export const managedToolPortalAgentConfigSchema = z
 	.object({
+		googlePolicyDefaults: googlePolicyDefaultsConfigSchema.optional(),
 		credentialBindings: z
 			.record(configuredCliCredentialLogicalNameSchema, toolPortalCredentialBindingSchema)
 			.optional(),
@@ -419,11 +476,12 @@ const preparedToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 const preparedToolPortalNamespacePolicySchema = z
 	.object({
 		backend: preparedToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const preparedToolPortalProfileDefinitionSchema = z
 	.object({
@@ -445,6 +503,7 @@ export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedTool
 
 export const gatewayRuntimeConfiguredCliOperationSchema = z
 	.object({
+		compiledGoogle: compiledGoogleCommandSetSchema.optional(),
 		authorization: configuredCliAuthorizationSchema.optional(),
 		calls: configuredCliInvocationCallPolicySchema,
 		commands: z.array(configuredCliAllowedCommandSchema).min(1),
@@ -502,11 +561,12 @@ const effectiveToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 const effectiveToolPortalNamespacePolicySchema = z
 	.object({
 		backend: effectiveToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const effectiveToolPortalProfileDefinitionSchema = z
 	.object({
@@ -532,11 +592,12 @@ const gatewayRuntimeToolPortalBackendBindingSchema = z.discriminatedUnion('kind'
 const gatewayRuntimeToolPortalNamespacePolicySchema = z
 	.object({
 		backend: gatewayRuntimeToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const gatewayRuntimeToolPortalProfileDefinitionSchema = z
 	.object({
@@ -568,6 +629,7 @@ function projectedConfiguredCliOperation(
 	if (operation.kind === 'registered_action') return operation;
 	return {
 		...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
+		...(operation.compiledGoogle === undefined ? {} : { compiledGoogle: operation.compiledGoogle }),
 		calls: operation.calls,
 		commands: operation.commands,
 		deniedPatterns: operation.deniedPatterns,
@@ -787,11 +849,16 @@ export const toolPortalConfigSchema = z
 					continue;
 				}
 				const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
-				for (const [selectorPath, selector] of [
-					[['tools'], namespacePolicy.tools],
-					[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval],
-					[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval],
-				] as const) {
+				const selectors = [
+					[['tools'], namespacePolicy.tools] as const,
+					...('source' in namespacePolicy.calls
+						? []
+						: [
+								[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval] as const,
+								[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval] as const,
+							]),
+				];
+				for (const [selectorPath, selector] of selectors) {
 					const explicitNames = [
 						...(selector.allow === '*' ? [] : selector.allow),
 						...selector.deny,
@@ -900,8 +967,12 @@ export const ToolPortalMcpProjectionSchema = z
 
 export type ToolPortalMcpProjection = z.infer<typeof ToolPortalMcpProjectionSchema>;
 
-export const ToolPortalControllerExecutionProjectionNamespaceSchema =
-	ToolPortalMcpProjectionNamespaceSchema;
+export const ToolPortalControllerExecutionProjectionNamespaceSchema = z
+	.object({
+		calls: toolPortalNamespaceCallPolicySchema,
+		tools: toolPortalToolSelectorSchema,
+	})
+	.strict();
 
 export type ToolPortalControllerExecutionProjectionNamespace = z.infer<
 	typeof ToolPortalControllerExecutionProjectionNamespaceSchema

@@ -555,6 +555,8 @@ describe('Gateway Runtime portal semantic revision', () => {
 					predicate.values = ['yaml'];
 					break;
 				case 'bucket':
+					if (!('requiresApproval' in operation.calls))
+						throw new Error('Expected static policy fixture.');
 					operation.calls.requiresApproval.push(matcher);
 					operation.calls.deny = [];
 					break;

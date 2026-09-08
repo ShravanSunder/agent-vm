@@ -127,8 +127,10 @@ describe('gateway control contract', () => {
 			'recovery_command',
 			'tool_portal_admission_reserve',
 			'tool_portal_approval_decide',
+			'tool_portal_attachment',
 			'tool_portal_controller_execution',
 			'tool_portal_dispatch_arm',
+			'tool_portal_google_preflight',
 			'tool_portal_oauth_availability',
 			'tool_vm_binding_publish',
 			'tool_vm_binding_request',
@@ -783,20 +785,20 @@ describe('gateway control contract', () => {
 			operationName: 'inspect_host',
 		};
 		const oauthInvocation = {
-			callId: 'oauth-revoke-call',
+			callId: 'oauth-disconnect-call',
 			surfaceClass: 'protected_uds',
 			trustedContext: configuredPayload.invocation.trustedContext,
 		};
 		const approvedOAuthPayload = {
 			action: {
-				actionId: 'oauth_authorization.revoke',
-				accountProfileId: 'personal-google',
+				actionId: 'oauth_authorization.disconnect',
+				accountId: '55555555-5555-4555-8555-555555555555',
 				applicationId: 'gmail-app',
 				authority: { kind: 'controller_approval_reservation', reservation: approvalReservation },
 				callerContext: validHostProbeAction.callerContext,
 				correlation: {
-					capability: { name: 'revoke', namespace: 'oauth_authorization' },
-					toolCallId: 'oauth-revoke-call',
+					capability: { name: 'disconnect', namespace: 'oauth_authorization' },
+					toolCallId: 'oauth-disconnect-call',
 				},
 				invocation: oauthInvocation,
 			},

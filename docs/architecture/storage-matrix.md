@@ -225,6 +225,10 @@ selected durable agent workspace      zoneFilesDir child
 /work                                  rootfs/COW              no
 repos, builds, packages, temp work     deleted with Tool VM
 
+/agent-vm/files                       read-only RealFS         no
+temporary Gog publications            controller receiver root;
+                                      one hour or Tool VM close
+
 /gitdirs/workspace.git                 selected RealFS         no
 optional workspace Git database       controller runtime
 
@@ -234,3 +238,12 @@ runtime instructions and metadata     narrow inputs only
 /tmp, /run, /var/log                   guest tmpfs            no
 tiny scratch only                      memory-pressure
 ```
+
+`/agent-vm/files` is a fixed, narrow exception to the generic generated
+`/agent-vm` inventory. It contains only publications bound to this exact Tool VM
+generation. Gog writes instead to its isolated fixed producer mount at
+`/agent-vm/gog-work`; the controller publishes bounded independent-inode copies.
+Input paths still resolve from disposable `/work`, and agents copy wanted output
+to durable `/workspace` before expiry. Producer closure or Google disconnect does
+not recall a published file. Cleanup uses normal unlink semantics, so already-open
+or cached bytes are not forcibly revoked.

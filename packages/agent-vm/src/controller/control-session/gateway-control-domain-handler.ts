@@ -1,4 +1,10 @@
-import type { GatewayApprovalDecisionResult } from '@agent-vm/agent-portal-sdk';
+import { createHash } from 'node:crypto';
+
+import type {
+	GatewayApprovalDecisionResult,
+	PortalAttachmentRequest,
+	PortalAttachmentResult,
+} from '@agent-vm/agent-portal-sdk';
 import type { ControlEnvelope } from '@agent-vm/control-protocol-contracts';
 import {
 	type GatewayControlLeaseCreateIntentPayload,
@@ -19,6 +25,7 @@ import {
 	type GatewayControlToolVmBindingRequestResult,
 	type GatewayControlRpcMessage,
 	type GatewayControlWorkspaceGitPushResult,
+	type GatewayControlGooglePreflightRequest,
 	type GatewayRuntimeApprovalAdmissionResult,
 	type GatewayRuntimeApprovalArmDispatchResult,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -45,6 +52,7 @@ import type {
 	OAuthAuthorizationActionResult,
 	OAuthToolAvailabilityBatchRequest,
 	OAuthToolAvailabilityBatchResult,
+	ManagedGooglePreflightResult,
 } from '@agent-vm/oauth-broker-contracts';
 
 import type {
@@ -165,6 +173,19 @@ export interface GatewayControlLeaseRpcRejection {
 }
 
 export interface GatewayControlControllerExecutionOperations {
+	accessNativeAttachment?(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly request: PortalAttachmentRequest;
+		readonly sessionId: string;
+		readonly gateway: GatewayEpochIdentity;
+		readonly executionProof: {
+			readonly operationPayloadDigest: string;
+			readonly processEpoch: string;
+			readonly semanticOperationId: string;
+			readonly sessionAttachmentGeneration: number;
+		};
+		readonly signal: AbortSignal;
+	}): Promise<PortalAttachmentResult>;
 	authorizeControllerExecution(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly createdAtMs: number;
@@ -235,6 +256,11 @@ export interface GatewayControlControllerExecutionOperations {
 }
 
 export interface GatewayControlOAuthAvailabilityOperations {
+	preflight?(options: {
+		readonly callerContext: GatewayControlTrustedCallerContext;
+		readonly request: GatewayControlGooglePreflightRequest;
+		readonly session: GatewayControlAcceptedSessionRef;
+	}): Promise<ManagedGooglePreflightResult>;
 	resolve(options: {
 		readonly callerContext: GatewayControlTrustedCallerContext;
 		readonly request: OAuthToolAvailabilityBatchRequest;
@@ -383,6 +409,8 @@ export type GatewayControlInboundPrincipalResolution =
 				| 'tool_portal_approval_decide'
 				| 'tool_portal_controller_execution'
 				| 'tool_portal_oauth_availability'
+				| 'tool_portal_google_preflight'
+				| 'tool_portal_attachment'
 				| 'tool_vm_binding_request';
 			readonly reason:
 				| 'caller_context_absent'
@@ -442,6 +470,8 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 			).callerContextId;
 			break;
 		case 'tool_portal_oauth_availability':
+		case 'tool_portal_google_preflight':
+		case 'tool_portal_attachment':
 			callerContextId = options.message.payload.callerContext.callerContextId;
 			break;
 		case 'tool_portal_approval_decide':
@@ -512,6 +542,8 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 		case 'tool_portal_approval_decide':
 		case 'tool_portal_controller_execution':
 		case 'tool_portal_oauth_availability':
+		case 'tool_portal_google_preflight':
+		case 'tool_portal_attachment':
 			return {
 				operation,
 				reason:
@@ -795,10 +827,16 @@ function commandResultPayload(options: {
 	readonly leaseRejectionReason?: GatewayControlLeaseRejectionReason;
 	readonly leaseUse?: GatewayControlLeaseUseSnapshot;
 	readonly oauthAvailabilityBatch?: OAuthToolAvailabilityBatchResult;
+	readonly googlePreflight?: ManagedGooglePreflightResult;
+	readonly nativeAttachment?: PortalAttachmentResult;
 	readonly responseToMessageId: string;
 	readonly result: CommandResultKind;
 }): GatewayControlCommandResultPayload {
 	return GatewayControlRpcResponsePayloadSchema.parse({
+		...(options.nativeAttachment === undefined
+			? {}
+			: { nativeAttachment: options.nativeAttachment }),
+		...(options.googlePreflight === undefined ? {} : { googlePreflight: options.googlePreflight }),
 		...(options.activeOperationId === undefined
 			? {}
 			: { activeOperationId: options.activeOperationId }),
@@ -888,7 +926,7 @@ function controllerExecutionApprovalReservation(
 		case 'oauth_authorization.cancel':
 		case 'oauth_authorization.list':
 		case 'oauth_authorization.reauthorize':
-		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.disconnect':
 		case 'oauth_authorization.status':
 			return payload.action.authority.kind === 'controller_approval_reservation'
 				? payload.action.authority.reservation
@@ -1169,7 +1207,7 @@ async function executeToolPortalControllerExecution(options: {
 			case 'oauth_authorization.cancel':
 			case 'oauth_authorization.list':
 			case 'oauth_authorization.reauthorize':
-			case 'oauth_authorization.revoke':
+			case 'oauth_authorization.disconnect':
 			case 'oauth_authorization.status': {
 				const actionId = options.payload.action.actionId;
 				if (options.actions.executeOAuthAuthorization === undefined) {
@@ -2082,6 +2120,87 @@ export function createGatewayControlDomainHandler(
 						});
 					}
 					throw new Error('lease_use_end must execute through semantic preparation');
+				}
+				case 'tool_portal_attachment': {
+					const caller = options.callerContexts.resolveForSession({
+						callerContextId: message.payload.callerContext.callerContextId,
+						session: callerContextSession,
+					});
+					let nativeAttachment: PortalAttachmentResult = { kind: 'unavailable' };
+					const remaining = Math.max(
+						0,
+						Math.min(120_000, (envelope.expiresAtMs ?? now() + 120_000) - now()),
+					);
+					if (
+						caller.status === 'ok' &&
+						caller.callerContext.purpose === 'tool_portal_controller_execution' &&
+						options.controllerExecutions?.accessNativeAttachment !== undefined &&
+						attachmentGeneration !== undefined &&
+						remaining > 0
+					) {
+						nativeAttachment = await options.controllerExecutions.accessNativeAttachment({
+							callerContext: caller.callerContext,
+							request: message.payload.request,
+							sessionId: message.payload.sessionId,
+							gateway: options.gateway,
+							executionProof: {
+								processEpoch: envelope.bootId,
+								sessionAttachmentGeneration: attachmentGeneration,
+								semanticOperationId: envelope.commandId ?? envelope.messageId,
+								operationPayloadDigest: createHash('sha256')
+									.update(JSON.stringify(message.payload))
+									.digest('hex'),
+							},
+							signal: AbortSignal.timeout(remaining),
+						});
+					}
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: message.operation,
+						payload: commandResultPayload({
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+							nativeAttachment,
+						}),
+					});
+				}
+				case 'tool_portal_google_preflight': {
+					const caller = options.callerContexts.resolveForSession({
+						callerContextId: message.payload.callerContext.callerContextId,
+						session: callerContextSession,
+					});
+					if (
+						caller.status !== 'ok' ||
+						caller.callerContext.purpose !== 'tool_portal_controller_execution' ||
+						options.oauthAvailability?.preflight === undefined
+					)
+						return GatewayControlRpcCommandResultMessageSchema.parse({
+							kind: 'command_result',
+							operation: message.operation,
+							payload: commandResultPayload({
+								error: {
+									errorClass: 'google_preflight_not_authorized',
+									retryable: false,
+									safeMessage: 'Google call policy is unavailable.',
+								},
+								responseToMessageId: envelope.messageId,
+								result: 'rejected',
+							}),
+						});
+					const googlePreflight = await options.oauthAvailability.preflight({
+						callerContext: caller.callerContext,
+						request: message.payload.request,
+						session: callerContextSession,
+					});
+					return GatewayControlRpcCommandResultMessageSchema.parse({
+						kind: 'command_result',
+						operation: message.operation,
+						payload: commandResultPayload({
+							googlePreflight,
+							responseToMessageId: envelope.messageId,
+							result: 'ok',
+						}),
+					});
 				}
 				case 'tool_portal_oauth_availability': {
 					const callerContextResolution = options.callerContexts.resolveForSession({

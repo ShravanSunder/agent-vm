@@ -12,6 +12,14 @@ system.jsonc / system.json
   Host/controller config.
   Defines zones, secrets, image profiles, cache, ports, and resource policy.
 
+config/gateways/<zone>/oauth.config.jsonc
+  Optional managed-Hermes Google OAuth config.
+  Defines Clerk human identity, owners/editors, application bindings and ceilings.
+
+config/gateways/<zone>/tool-portal.config.jsonc
+  Managed Tool Portal policy.
+  Defines per-agent Google policy defaults and the finite executable Gog surface.
+
 worker.jsonc / worker.json
   Zone-level Worker behavior.
   Defines prompts, phases, verification, MCP servers, and skills.
@@ -66,6 +74,8 @@ Prompt file references are resolved before the worker starts.
 | Need | Read |
 | --- | --- |
 | Host/controller fields | [system-json.md](system-json.md) |
+| Google account authorization and managed Gog policy | [system-json.md#managed-gateway-tool-portal-defaults](system-json.md#managed-gateway-tool-portal-defaults) |
+| Start from a validated synthetic OAuth v2 and Tool Portal pair | [examples/oauth-v2.config.jsonc](examples/oauth-v2.config.jsonc) and [examples/tool-portal-google-policy.config.jsonc](examples/tool-portal-google-policy.config.jsonc) |
 | Worker phase behavior | [worker-json.md](worker-json.md) |
 | Repo-level overrides | [project-config-json.md](project-config-json.md) |
 | Repo/external resources | [resource-contracts.md](resource-contracts.md) |

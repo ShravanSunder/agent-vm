@@ -31,10 +31,15 @@ from .managed_tool_portal.hermes_hooks import (
 )
 from .managed_tool_portal.inventory import InventoryCoordinator
 from .managed_tool_portal.models import InjectionCacheKey, InjectionMarker
+from .managed_tool_portal.native_attachment_delivery import (
+    NativeAttachmentInvocation,
+    execute_native_attachment,
+)
 from .managed_tool_portal_observability import HermesToolPortalTelemetry
 
 MANAGED_TOOL_PORTAL_PLUGIN_NAME = "agent-vm-tool-portal"
 type ManagedToolName = t.Literal[
+    "tool_portal_file",
     "tool_portal_list",
     "tool_portal_search",
     "tool_portal_describe",
@@ -45,9 +50,11 @@ MANAGED_TOOL_PORTAL_TOOL_NAMES: tuple[ManagedToolName, ...] = (
     "tool_portal_search",
     "tool_portal_describe",
     "tool_portal_call",
+    "tool_portal_file",
 )
 _MANAGED_TOOL_PORTAL_TOOLSET = "tool-portal"
 _REQUEST_SCHEMA_ID_BY_TOOL_NAME: dict[ManagedToolName, str] = {
+    "tool_portal_file": "portal.file.request",
     "tool_portal_list": "portal.list.request",
     "tool_portal_search": "portal.search.request",
     "tool_portal_describe": "portal.describe.request",
@@ -104,6 +111,8 @@ def _safe_model_dump(model: BaseModel) -> dict[str, object]:
 
 
 def _validate_tool_name(value: str) -> ManagedToolName:
+    if value == "tool_portal_file":
+        return value
     if value == "tool_portal_list":
         return value
     if value == "tool_portal_search":
@@ -128,6 +137,14 @@ def _validated_tool_request(
 
 
 def _description_for_tool(tool_name: ManagedToolName) -> str:
+    if tool_name == "tool_portal_file":
+        return (
+            "Attach explicitly sends a selected file to this captured Discord conversation. "
+            "Published files already have read-only /agent-vm/files paths for ordinary file tools; "
+            "use the operation reference and relative filename when attaching one. "
+            "Tool VM source paths are relative to /work. No recipient can be supplied. "
+            "No file bytes are returned in JSON."
+        )
     if tool_name == "tool_portal_list":
         return "List authorized Tool Portal capabilities and compact tool summaries."
     if tool_name == "tool_portal_search":
@@ -172,7 +189,19 @@ def _invoke(
         trusted_context = _safe_model_dump(
             build_managed_trusted_context(projection, session_id=session_id)
         )
-        if tool_name == "tool_portal_list":
+        if tool_name == "tool_portal_file":
+            operation = execute_native_attachment(
+                NativeAttachmentInvocation(
+                    profile_name=profile_name,
+                    session_id=session_id or "",
+                    request=validated_request,
+                    routes=runtime.approval_routes,
+                    portal=lambda attachment_request: client.portal.attachment(
+                        attachment_request, trusted_context=trusted_context
+                    ),
+                )
+            )
+        elif tool_name == "tool_portal_list":
             operation = client.portal.list(
                 validated_request,
                 trusted_context=trusted_context,

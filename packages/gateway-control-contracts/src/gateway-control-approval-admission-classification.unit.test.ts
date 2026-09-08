@@ -9,6 +9,46 @@ const RESERVATION_ID = '33333333-3333-4333-8333-333333333333';
 const APPROVAL_FINGERPRINT = `sha256:${'a'.repeat(64)}`;
 const STABLE_GATEWAY_PRINCIPAL = 'b'.repeat(64);
 
+it.each(['tool_portal_attachment'] as const)(
+	'requires authenticated agent admission for %s and forbids the reverse direction',
+	(operation) => {
+		// Arrange
+		const message = GatewayControlRpcCommandMessageSchema.parse({
+			kind: 'command',
+			operation,
+			payload: {
+				callerContext: { callerContextId: OPERATION_ID },
+				sessionId: 'native-session',
+				request: {
+					action: 'stage',
+					source: { kind: 'operation-file', referenceId: APPROVAL_ID, path: 'report.pdf' },
+				},
+			},
+		});
+		// Act / Assert
+		expect(
+			classifyGatewayControlAdmission({ direction: 'gateway_to_controller', message }),
+		).toEqual({
+			reason: 'stable_principal_required',
+			status: 'refused',
+		});
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'gateway_to_controller',
+				message,
+				stablePrincipal: STABLE_GATEWAY_PRINCIPAL,
+			}),
+		).toMatchObject({ status: 'classified', messageClass: 'authority' });
+		expect(
+			classifyGatewayControlAdmission({
+				direction: 'controller_to_gateway',
+				message,
+				stablePrincipal: STABLE_GATEWAY_PRINCIPAL,
+			}),
+		).toEqual({ reason: 'direction_violation', status: 'fence' });
+	},
+);
+
 const approvalAuthorityContext = {
 	controllerEpoch: 'controller-epoch-7',
 	frameworkEpoch: 'framework-epoch-5',

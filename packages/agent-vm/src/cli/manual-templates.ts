@@ -38,7 +38,7 @@ Use docs/manual/observability.md before changing host observability, Victoria st
 Use docs/manual/mcp-portal.md before changing MCP providers, managed Tool Portal profiles, standalone MCP Portal profiles, MCP package pins, or live MCP validation.
 Use docs/manual/tool-access.md before answering whether a tool binary, auth profile, or tool VM image should be agent-specific.
 Use docs/manual/channels.md before helping a human configure Discord or another Hermes channel.
-Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how managed Tool VMs separate durable /workspace, disposable /work, and optional /gitdirs.
+Use docs/manual/runtime-paths.md before answering where files appear inside VMs or how managed Tool VMs separate durable /workspace, disposable /work, temporary read-only /agent-vm/files, and optional /gitdirs.
 Use docs/manual/per-agent-setup.md before changing Hermes profile assignments or per-agent tool/auth isolation.
 
 Do not assume Discord is enabled by the framework. Channels and channel secrets are deployment-owned.
@@ -87,7 +87,8 @@ ${options.systemConfigPath} is the controller config. Agent-vm-authored config i
 config/gateways/<zone>/hermes-managed/config.yaml is the deployment-owned managed Hermes policy input. The generated directory contains only config.yaml.
 config/gateways/<zone>/mcp.config.jsonc is the upstream MCP provider catalog for a managed Hermes zone.
 config/gateways/<zone>/tool-portal.config.jsonc is the managed Tool Portal agent/profile and backend policy.
-config/gateways/<zone>/oauth.config.jsonc optionally enables controller-owned Google OAuth for that managed Hermes zone. It uses direct tailnet HTTPS on port 18900, a 1Password-held KEK, encrypted controller-state SQLite, and account-profile-scoped Gog access. OAuth consent never bypasses Tool Portal visibility or approval policy.
+config/gateways/<zone>/oauth.config.jsonc optionally enables controller-owned Google OAuth for that managed Hermes zone. It defines Clerk human identity, human owners, per-agent activity ceilings, policy editors, and fixed Google application-family bindings. Accounts and separate agent/account/application authorizations are enrolled dynamically. Google credentials use a 1Password-held KEK and encrypted controller-state SQLite; Clerk is human login only and never supplies Gog tokens.
+tool-portal.config.jsonc owns each agent's live Google Read/Write policy defaults and finite Gog executable surface. Explicit website account overrides win independently over those defaults. Deny, Ask, and Allow are valid for both reads and writes; writes are not universally forced to Ask. OAuth consent and exact-call approval remain separate gates.
 config/gateways/<zone>/worker.jsonc is Agent Worker gateway config when the zone type is worker.
 vm-images/ contains deployment-owned Gondolin build-config.jsonc files and small managed image overlays.
 agent-vm owns the gateway/tool base image recipes and pins the managed GHCR base layer version.
@@ -106,7 +107,7 @@ When zones[].agents[].workspaceGit is enabled, its isolated Git database lives a
 Author JSONC for human-owned agent-vm config. Runtime files such as /state/effective-worker.json, task event JSONL, runtime records, and API bodies stay strict JSON.
 Hermes gateway VMs mount zoneFilesDir at /zone.
 Managed Hermes Tool VMs expose only the selected agent's filtered durable workspace at /workspace. They do not mount the whole /zone tree.
-Managed Tool VMs use rootfs/COW /work for disposable execution and optionally expose only the selected workspace Git database at /gitdirs/workspace.git. No generic /agent-vm surface is mounted unless a future contract names its exact generated inventory and owner.
+Managed Tool VMs use rootfs/COW /work for disposable execution and Gog file inputs, optionally expose only the selected workspace Git database at /gitdirs/workspace.git, and mount the exact temporary Gog publication root read-only at /agent-vm/files. The credentialed Gog VM has a separate private writable /agent-vm/gog-work mount; neither VM receives the other's filesystem.
 Worker task VMs keep repo files on rootfs/COW at /work/repos.
 Hermes gateway VMs use /work/tmp and /work/cache for disposable runtime work.
 `,
@@ -325,6 +326,10 @@ Managed Gateway boot starts one common Tool Portal service process beside the He
 
 		Configured CLI binds controller_host or a reusable credentialed ephemeral_managed_vm, never the leased Tool VM. Here ephemeral means controller-created, non-durable, and idle-retired; it does not mean one VM per RPC. The controller enforces one current credentialed VM per zone and authenticated agent; targets do not declare runtime ids. Each target declares exactly one file_binding or http_mediation credentialProjection. File bindings map agent-owned 1Password files into read-only memory paths. HTTP mediation gives the VM opaque placeholders while raw values remain host-side for exact hosts. Ordinary CLI config/state/cache remains on disposable COW. One agent runtime runs one command; concurrent calls return retryable busy and are never queued. Compatible calls reuse the VM until 15 idle minutes, but every call gets current policy and approval. imageReference remains a recipe path prepared at Gateway startup. Prepared image details, credential refs, file paths, and VM authority stay out of Gateway-safe projection. quick operations run for at most 5 seconds. open operations default to 120 seconds and accept a caller timeout up to 8 hours. tool_vm_runner remains direct Gateway-to-leased-Tool-VM strict SSH and does not send a per-command controller execution RPC.
 
+		For qualified Gog file commands, use explicit relative output paths in the command's private /agent-vm/gog-work operation folder. Inputs resolve from /work in the requesting agent's current Tool VM, not the terminal's current directory. Successful publication returns an ordinary read-only /agent-vm/files path and expiresAtMs; there is no separate list/materialize copy action. Files expire after one hour or when the receiving Tool VM closes, whichever occurs first, and reads do not extend that deadline. Copy wanted files into /workspace before expiry. Producer retirement and later Google disconnect do not recall published files. Command outcome and file availability are independent: a nonzero exit may still leave inspectable files. A published file may be a partial export or staged input; successful transfer proves byte delivery, not producer success. Do not rerun a remote mutation automatically to recover a file. See the repository's credentialed-runtime and file-delivery documentation for the folder and streaming boundaries.
+
+		tool_portal_file is the only native attachment action. It sends one deliberately selected file to the captured Hermes Discord conversation; callers cannot provide another recipient. The controller copies only those bytes into the existing host-backed Gateway cache. Success, failure, and settled-but-unconfirmed delivery clean the owned cache child after sender settlement. A sender that may still be reading retains the child until it settles or the Gateway is proven contained. No outcome triggers automatic resend.
+
 		For immediate replacement of a value behind an unchanged secret ref, run agent-vm controller credential-runtime retire --zone <zone> --agent <agentId>. Without --force, an active runtime remains active. --force cancels its current command before exact cleanup. The command uses existing zone adminAccess and exposes no credential, VM, or lease identity.
 
 		For standalone or external MCP Portal, mcp.config.jsonc owns upstream MCP providers and mcp-portal.config.jsonc owns agent assignments, complete MCP profiles, call policy, and optional external proxy authentication. Bearer credentials, HMAC approval tokens, credentialVersion, and externalAuth belong only to this standalone surface.
@@ -448,7 +453,11 @@ Managed Hermes profile secrets:
 Managed Hermes Tool VMs run commands in rootfs/COW /work by default. /work is disposable execution space and is deleted with the Tool VM.
 /workspace is the current agent's filtered durable RealFS workspace selected by the controller from stable agent identity. It is the only durable agent workspace exposed to that Tool VM.
 /gitdirs/workspace.git is present only when the current agent enables zones[].agents[].workspaceGit. No parent Git directory or sibling agent Git database is exposed.
-Managed Tool VMs do not currently expose a generic /agent-vm path. Worker task VMs retain their separately owned generated /agent-vm inputs.
+/agent-vm/files is the exact Tool VM generation's read-only RealFS view of published Gog files. Each result includes its absolute expiry. Files disappear after one hour or when this Tool VM closes, whichever is first; reading does not extend retention. Copy files that must outlive the publication into /workspace.
+Terminal-based tools can read the returned absolute path directly. Structured Sandbox filesystem requests remain /work-relative; copy the selected file into /work first when using that API.
+Credentialed Gog runtimes use a separate private writable /agent-vm/gog-work RealFS mount. The controller publishes bounded independent-inode copies into the receiver view, so closing the Gog producer or later disconnecting Google does not recall already delivered files. Cleanup uses normal unlink semantics; already-open descriptors or cached bytes are not forcibly revoked.
+Gog file inputs always resolve relative to /work, not the terminal cwd. /workspace remains the retained agent-owned destination; /agent-vm/files is temporary and read-only.
+Worker task VMs retain their separately owned generated /agent-vm inputs.
 /state is controller/gateway plumbing, not the primary place for agent docs.
 worker repo edits live under /work/repos inside Worker gateway task VMs.
 Worker gateway task VMs use /work/tmp for temporary files and /work/cache for disposable package-manager cache.

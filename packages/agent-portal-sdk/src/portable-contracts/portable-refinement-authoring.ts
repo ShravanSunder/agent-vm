@@ -42,3 +42,19 @@ export function withPortableSuperRefinement<TSchema extends z.ZodType>(
 export function portableRefinementIdentityForCheck(check: object): string | undefined {
 	return portableRefinementIdentityByCheck.get(check);
 }
+
+/** Register one explicitly reviewed lower-layer check without introducing an SDK dependency cycle. */
+export function registerPortableExternalRefinement(props: {
+	readonly schema: z.ZodType;
+	readonly refinementIdentity: string;
+}): void {
+	if (!portableRefinementIdentities.has(props.refinementIdentity))
+		throw new Error('External portable refinement is not registered.');
+	// oxlint-disable-next-line no-underscore-dangle -- The same Zod core check identity used by the normal authoring helper.
+	const checks = (props.schema._zod.def.checks ?? []).filter(
+		(check) => check._zod.def.check === 'custom',
+	);
+	if (checks.length !== 1 || checks[0] === undefined)
+		throw new Error('External portable refinement must identify exactly one custom check.');
+	portableRefinementIdentityByCheck.set(checks[0], props.refinementIdentity);
+}

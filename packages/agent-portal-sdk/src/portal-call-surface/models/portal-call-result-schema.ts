@@ -1,3 +1,4 @@
+import { managedGoogleDisplaySchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import { ArtifactReferenceSchema } from '../../artifact-surface/models/artifact-reference-schema.js';
@@ -110,12 +111,19 @@ const TerminalErrorOutcomeSchema = z.union([
 	AmbiguousOutcomeSchema,
 ]);
 
-export const PortalApprovalChallengeSchema = z
+const ordinaryPortalApprovalChallengeSchema = z
 	.object({
 		challengeId: z.string().uuid(),
 		expiresAt: z.string().datetime(),
 	})
 	.strict();
+
+export const PortalApprovalChallengeSchema = z.union([
+	ordinaryPortalApprovalChallengeSchema,
+	ordinaryPortalApprovalChallengeSchema
+		.extend({ kind: z.literal('managed_google'), managedGoogleDisplay: managedGoogleDisplaySchema })
+		.strict(),
+]);
 
 export const PortalApprovalRequiredCallItemResultSchema = z
 	.object({
@@ -129,7 +137,7 @@ export const PortalApprovalRequiredCallItemResultSchema = z
 	})
 	.strict();
 
-export const PortalCallItemResultSchema = z.discriminatedUnion('status', [
+export const PortalCallItemResultSchema = z.union([
 	z
 		.object({
 			artifacts: z.array(ArtifactReferenceSchema).optional(),
@@ -140,6 +148,19 @@ export const PortalCallItemResultSchema = z.discriminatedUnion('status', [
 			owningGeneration: z.string().min(1),
 			status: z.literal('ok'),
 			truncation: TruncationMetadataSchema.optional(),
+			value: JsonValueSchema,
+		})
+		.strict(),
+	z
+		.object({
+			artifacts: z.array(ArtifactReferenceSchema).max(32).optional(),
+			diagnostics: z.array(SafeDiagnosticSchema).optional(),
+			error: PortalErrorSchema,
+			id: ItemIdSchema,
+			operationId: z.string().min(1),
+			outcome: CompletedFailedOutcomeSchema.extend({ retryClass: z.literal('forbidden') }),
+			owningGeneration: z.string().min(1),
+			status: z.literal('error'),
 			value: JsonValueSchema,
 		})
 		.strict(),

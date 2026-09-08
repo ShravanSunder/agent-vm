@@ -3,7 +3,15 @@
 import typing as t
 
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from agent_vm_hermes_adapter.managed_tool_portal.models import InventoryCacheKey, NamespaceDiscovery
 
@@ -178,61 +186,6 @@ _ValidatedToolCallDisposition = t.Annotated[
 ]
 
 
-class _ValidatedStaticOAuthRequirement(_ValidatedPortableModel):
-    application_id: str = Field(alias="applicationId", min_length=1)
-    kind: t.Literal["oauth-account-profile"]
-    minimum_permission: t.Literal["read", "write"] = Field(alias="minimumPermission")
-    service_id: str = Field(alias="serviceId", min_length=1)
-
-
-class _ValidatedInvocationOAuthRequirement(_ValidatedPortableModel):
-    account_profile_argument: t.Literal["accountProfile"] = Field(alias="accountProfileArgument")
-    describe_before_call: t.Literal[True] = Field(alias="describeBeforeCall")
-    kind: t.Literal["invocation-dependent-oauth-account-profile"]
-
-
-_ValidatedOAuthRequirement = t.Annotated[
-    _ValidatedStaticOAuthRequirement | _ValidatedInvocationOAuthRequirement,
-    Field(discriminator="kind"),
-]
-
-
-class _ValidatedEligibleAccountProfile(_ValidatedPortableModel):
-    account_label: str = Field(alias="accountLabel", min_length=1, max_length=320)
-    account_profile_id: str = Field(alias="accountProfileId", min_length=1)
-
-
-class _ValidatedReadyOAuthAvailability(_ValidatedPortableModel):
-    account_profiles: list[_ValidatedEligibleAccountProfile] = Field(alias="accountProfiles")
-    kind: t.Literal["ready"]
-
-
-class _ValidatedAuthorizationRequiredAvailability(_ValidatedPortableModel):
-    kind: t.Literal["authorization-required"]
-
-
-class _ValidatedReauthorizationRequiredAvailability(_ValidatedPortableModel):
-    kind: t.Literal["reauthorization-required"]
-
-
-class _ValidatedScopeInsufficientAvailability(_ValidatedPortableModel):
-    kind: t.Literal["scope-insufficient"]
-
-
-class _ValidatedAuthorizationStatusUnavailableAvailability(_ValidatedPortableModel):
-    kind: t.Literal["authorization-status-unavailable"]
-
-
-_ValidatedOAuthAvailability = t.Annotated[
-    _ValidatedReadyOAuthAvailability
-    | _ValidatedAuthorizationRequiredAvailability
-    | _ValidatedReauthorizationRequiredAvailability
-    | _ValidatedScopeInsufficientAvailability
-    | _ValidatedAuthorizationStatusUnavailableAvailability,
-    Field(discriminator="kind"),
-]
-
-
 class _ValidatedCapabilitySummary(_ValidatedPortableModel):
     call_disposition: _ValidatedToolCallDisposition | None = Field(
         default=None,
@@ -247,11 +200,13 @@ class _ValidatedCapabilitySummary(_ValidatedPortableModel):
     schema_hint: _ValidatedToolSchemaHint | None = Field(default=None, alias="schemaHint")
     title: str | None = Field(default=None, min_length=1)
     name: str = Field(min_length=1)
-    oauth_availability: _ValidatedOAuthAvailability | None = Field(
+    # The generated Portal adapter validates these completely before projection.
+    # Inventory uses only name/description; it must not own a second OAuth schema.
+    oauth_availability: JsonValue | None = Field(
         default=None,
         alias="oauthAvailability",
     )
-    oauth_requirement: _ValidatedOAuthRequirement | None = Field(
+    oauth_requirement: JsonValue | None = Field(
         default=None,
         alias="oauthRequirement",
     )

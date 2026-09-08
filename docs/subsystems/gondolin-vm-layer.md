@@ -56,10 +56,31 @@ handle, or native filesystem object.
 
 `exec()` provides a backend-neutral awaitable and streaming contract. The
 adapter translates commands, environment, PTY, signal, and stdin options to
-Gondolin and translates results and output chunks back. Controller domains
-cannot reach the SDK process or filesystem handles; file operations needed by
-current workloads run through controlled guest commands or the Tool VM SSH
-protocol.
+Gondolin and translates results and output chunks back. Explicit streaming output
+sets native `buffer: false`; omitting `windowBytes` selects Gondolin's stock
+flow-control window. Existing callers that omit the output group retain their
+buffered-result behavior. Payload size limits must not select the transport window.
+
+Neutral owned-host-directory mounts translate to Gondolin `RealFSProvider`; their
+`access: "read-only"` form adds the hardened read-only provider wrapper. Controller
+domains receive typed directory capabilities rather than native provider handles or
+raw caller-selected host paths.
+
+OAuth-enabled Gog runtimes mount one controller-owned producer root read/write at
+`/agent-vm/gog-work`. Managed Tool VMs mount only their exact generation's
+receiver root read-only at `/agent-vm/files`. Both mounts are fixed before VM boot;
+publications appear later as children, so the design needs no dynamic mount or
+custom filesystem. The controller copies bounded bytes on host disk into
+independent receiver inodes and publishes by directory rename. It does not relay a
+payload through VM rootfs writers or collect it in application memory.
+
+The permanent two-VM proof is
+`packages/agent-vm/src/integration-tests/shared-staging-realfs.vm.e2e.test.ts`.
+It covers the production-shaped RealFS mount translation, independent publication
+bytes, and the read-only receiver. Portal/account/expiry/cleanup tests own the
+higher-level authorization and lifecycle contract. The approved host error-handling
+patch and its separate distribution/removal gate remain documented in
+[Gondolin patches](../architecture/gondolin-patches.md).
 
 `ManagedVmSshAccess` includes `host`, `port`, `user`, `command`,
 `identityFile`, and an exact Ed25519 `serverHostKey`. `ManagedVmIngressRoute`

@@ -72,25 +72,8 @@ function validOAuthMediatedTarget(): unknown {
 
 function validOAuthConfiguredCliOperation(): unknown {
 	return {
-		authorization: {
-			kind: 'oauth_account_profile',
-			rules: [
-				{
-					match: { flags: [], path: ['gmail', 'search'] },
-					requirement: {
-						applicationId: 'gmail-app',
-						kind: 'oauth',
-						minimumPermission: 'read',
-						serviceId: 'gmail',
-					},
-				},
-				{
-					match: { flags: [], path: ['help'] },
-					requirement: { kind: 'no_oauth' },
-				},
-			],
-		},
-		calls: { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' },
+		authorization: { kind: 'oauth_account' },
+		calls: { source: 'managed_google_policy', deny: [] },
 		commands: [{ path: ['gmail', 'search'] }, { path: ['help'] }],
 		deniedPatterns: [],
 		executablePath: '/usr/bin/gog',
@@ -350,58 +333,44 @@ describe('credentialed configured CLI target contract', () => {
 });
 
 describe('OAuth-configured CLI contract', () => {
-	it('classifies every admitted command path with one typed authorization rule', () => {
+	it('selects code-owned OAuth account classification without deployment-authored scope rules', () => {
 		const result = controllerConfiguredCliOperationSchema.safeParse(
 			validOAuthConfiguredCliOperation(),
 		);
 		if (!result.success) {
 			throw new Error(`Expected valid OAuth-configured CLI operation: ${result.error.message}`);
 		}
-		expect(result.data.authorization?.kind).toBe('oauth_account_profile');
+		expect(result.data.authorization?.kind).toBe('oauth_account');
 	});
 
-	it('rejects missing, duplicate, unadmitted, and flag-sensitive authorization rules', () => {
-		const operation = validOAuthConfiguredCliOperation() as Record<string, unknown>;
-		const authorization = operation.authorization as Record<string, unknown>;
-		const rules = authorization.rules as readonly Record<string, unknown>[];
-		const firstRule = rules[0];
-		if (firstRule === undefined) throw new Error('Missing OAuth authorization rule.');
-
-		for (const invalidRules of [
-			[rules[0]],
-			[...rules, firstRule],
-			[
-				...rules,
-				{
-					match: { flags: [], path: ['drive', 'list'] },
-					requirement: {
-						applicationId: 'workspace-app',
-						kind: 'oauth',
-						minimumPermission: 'read',
-						serviceId: 'drive',
-					},
-				},
-			],
-			[
-				{
-					...firstRule,
-					match: { flags: [{ kind: 'present', names: ['--json'] }], path: ['gmail', 'search'] },
-				},
-				rules[1],
-			],
+	it('rejects deployment-authored classifiers, whether empty, duplicated or flag-sensitive', () => {
+		// Arrange
+		const operation = controllerConfiguredCliOperationSchema.parse(
+			validOAuthConfiguredCliOperation(),
+		);
+		const rule = {
+			match: { path: ['gmail', 'search'], flags: [] },
+			requirement: { kind: 'oauth', serviceId: 'gmail', minimumPermission: 'read' },
+		};
+		// Act / Assert
+		for (const rules of [
+			[],
+			[rule],
+			[rule, rule],
+			[{ ...rule, match: { path: ['gmail', 'search'], flags: [{ names: ['--json'] }] } }],
 		]) {
 			expect(
 				controllerConfiguredCliOperationSchema.safeParse({
 					...operation,
-					authorization: { ...authorization, rules: invalidRules },
+					authorization: { kind: 'oauth_account', rules },
 				}).success,
 			).toBe(false);
 		}
 	});
 
-	it('requires accountProfile only on the OAuth-configured RPC input variant', () => {
+	it('requires an opaque accountId only on the OAuth-configured RPC input variant', () => {
 		const oauthInput = {
-			accountProfile: 'personal-google',
+			accountId: '11111111-1111-4111-8111-111111111111',
 			argv: ['gmail', 'search'],
 			reason: 'Read recent messages.',
 		};
