@@ -220,7 +220,7 @@ export async function preparePinnedGogRuntimeArtifact(
 		);
 		try {
 			await downloadFile(
-				`https://github.com/openclaw/gogcli/releases/download/v${gogRelease.version}/${asset.archive}`,
+				`https://github.com/openclaw/gogcli/releases/download/v0.38.1/${asset.archive}`,
 				temporaryArchivePath,
 			);
 			const actualArchiveSha256 = await sha256(temporaryArchivePath);
