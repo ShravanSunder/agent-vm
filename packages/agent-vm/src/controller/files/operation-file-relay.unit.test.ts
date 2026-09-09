@@ -63,13 +63,15 @@ describe('direct controller operation-file relay', () => {
 		const input = fixture();
 		const paused = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<void>();
-		input.destinationWriter.writeFileStream = async ({ contents }) => {
-			for await (const chunk of contents) {
-				void chunk;
-				paused.resolve();
-				await release.promise;
-			}
-		};
+		vi.spyOn(input.destinationWriter, 'writeFileStream').mockImplementation(
+			async ({ contents }) => {
+				for await (const chunk of contents) {
+					void chunk;
+					paused.resolve();
+					await release.promise;
+				}
+			},
+		);
 		// Act
 		const transfer = relayOperationFile(input);
 		await paused.promise;
@@ -135,7 +137,7 @@ describe('direct controller operation-file relay', () => {
 	it('does not call a source successful if the writer returns without draining it', async () => {
 		// Arrange
 		const input = fixture();
-		input.destinationWriter.writeFileStream = async () => {};
+		vi.spyOn(input.destinationWriter, 'writeFileStream').mockImplementation(async () => {});
 		// Act / Assert
 		expect(await relayOperationFile(input)).toMatchObject({
 			kind: 'failed',
@@ -172,10 +174,12 @@ describe('direct controller operation-file relay', () => {
 		// Arrange
 		const input = fixture();
 		let current = true;
-		input.destinationWriter.writeFileStream = async ({ contents }) => {
-			for await (const chunk of contents) void chunk;
-			current = false;
-		};
+		vi.spyOn(input.destinationWriter, 'writeFileStream').mockImplementation(
+			async ({ contents }) => {
+				for await (const chunk of contents) void chunk;
+				current = false;
+			},
+		);
 		// Act / Assert
 		expect(await relayOperationFile({ ...input, authorityIsCurrent: () => current })).toMatchObject(
 			{ kind: 'failed', reason: 'unavailable' },
