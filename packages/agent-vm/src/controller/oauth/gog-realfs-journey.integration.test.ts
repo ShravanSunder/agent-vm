@@ -499,7 +499,6 @@ describe('Gog account policy to RealFS file journey', () => {
 						hostProcessId = null;
 					},
 					exec,
-					fileTransfer: { createDirectory: async () => {}, writeFileStream: async () => {} },
 					finalizeMemoryMount: async () => {},
 					getHostProcessId: () => hostProcessId,
 					id: 'credentialed-gog-vm',

@@ -4,13 +4,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 
-import {
-	APPROVED_GONDOLIN_PATCH_PATH,
-	APPROVED_GONDOLIN_PATCH_HASH,
-	isApprovedGondolinPatchPresent,
-	withoutApprovedGondolinPatchRegistration,
-} from './approved-gondolin-patch-audit.js';
-
 export interface ManagedVmBoundaryAuditSource {
 	readonly content: string;
 	readonly filePath: string;
@@ -44,7 +37,6 @@ const ALLOWED_ADAPTER_IMPORTERS = new Set([
 	'packages/agent-vm/src/composition/gondolin-managed-vm-provider.ts',
 ]);
 const ROOT_METADATA_PATHS = [
-	APPROVED_GONDOLIN_PATCH_PATH,
 	'package.json',
 	'pnpm-lock.yaml',
 	'pnpm-workspace.yaml',
@@ -504,21 +496,9 @@ export function auditManagedVmBoundaries(
 	const findings: ManagedVmBoundaryAuditFinding[] = [];
 	const adapterAliases = pathAliasesToAdapter(normalizedSources);
 	const observedAdapterImporters = new Set<string>();
-	const approvedPatchFound = isApprovedGondolinPatchPresent(normalizedSources);
 	for (const source of normalizedSources) {
 		auditManifest(source, findings);
-		auditGondolinProvenance(
-			approvedPatchFound
-				? {
-						...source,
-						content: withoutApprovedGondolinPatchRegistration(source).replaceAll(
-							`(patch_hash=${APPROVED_GONDOLIN_PATCH_HASH})`,
-							'',
-						),
-					}
-				: source,
-			findings,
-		);
+		auditGondolinProvenance(source, findings);
 		auditRejectedManagedGatewayIdentity(source, findings);
 		const activeSurface =
 			isProductionTypeScriptFile(source.filePath) ||

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	auditManagedVmBoundaries,
-	readManagedVmBoundaryAuditSources,
 	type ManagedVmBoundaryAuditSource,
 } from './audit-managed-vm-boundaries.js';
 
@@ -324,26 +323,6 @@ describe('auditManagedVmBoundaries', () => {
 				'Gondolin SDK local replacement is forbidden',
 			]),
 		);
-	});
-
-	it('accepts only the byte-exact approved patch registration in the current source graph', async () => {
-		// Arrange
-		const sources = await readManagedVmBoundaryAuditSources(process.cwd());
-		const withoutPatch = sources.filter(
-			(source) => source.filePath !== 'patches/@earendil-works__gondolin@0.12.0.patch',
-		);
-		const changedPatch = sources.map((source) =>
-			source.filePath === 'patches/@earendil-works__gondolin@0.12.0.patch'
-				? { ...source, content: `${source.content}\n+ extra();` }
-				: source,
-		);
-		// Act / Assert
-		expect(auditManagedVmBoundaries(sources)).toEqual([]);
-		for (const invalid of [withoutPatch, changedPatch]) {
-			expect(auditManagedVmBoundaries(invalid).map((finding) => finding.reason)).toContain(
-				'Gondolin SDK patch or override configuration is forbidden',
-			);
-		}
 	});
 
 	it('rejects managed Gateway identity projection across contracts, adapters, tests, and images', () => {

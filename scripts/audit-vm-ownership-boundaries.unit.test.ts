@@ -124,44 +124,6 @@ describe('auditStockGondolinDependencyBoundary', () => {
 			[],
 		);
 	});
-
-	it.each([
-		'modified-patch',
-		'missing-patch',
-		'changed-hash',
-		'extra-patch',
-		'extra-registration',
-	] as const)('rejects %s even alongside the approved PR136 exception', async (mutation) => {
-		// Arrange
-		const sources = [...(await readStockGondolinDependencyAuditSources(process.cwd()))];
-		const patchPath = 'patches/@earendil-works__gondolin@0.12.0.patch';
-		const mutated = sources.flatMap((source) => {
-			if (source.filePath === patchPath && mutation === 'missing-patch') return [];
-			if (source.filePath === patchPath && mutation === 'modified-patch')
-				return [{ ...source, content: `${source.content}\n+ unapproved();\n` }];
-			if (source.filePath === 'pnpm-lock.yaml' && mutation === 'changed-hash')
-				return [
-					{
-						...source,
-						content: source.content.replaceAll(
-							'c563880418a951c6b251f8ffef47c3b2f4784a3c3257b27901bd8d9ee1856473',
-							'a'.repeat(64),
-						),
-					},
-				];
-			if (source.filePath === 'pnpm-workspace.yaml' && mutation === 'extra-registration')
-				return [
-					{ ...source, content: `${source.content}  'other-package@1.0.0': patches/other.patch\n` },
-				];
-			return [source];
-		});
-		if (mutation === 'extra-patch')
-			mutated.push({ filePath: 'patches/gondolin-duplex.patch', content: 'unapproved' });
-		// Act
-		const findings = auditStockGondolinDependencyBoundary(mutated, { requireCompleteGraph: true });
-		// Assert
-		expect(findings.length).toBeGreaterThan(0);
-	});
 });
 
 describe('auditVmOwnershipBoundaries', () => {

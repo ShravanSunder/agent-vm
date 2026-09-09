@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-import type { ManagedVmFileTransferCapability } from '@agent-vm/managed-vm';
-
 import {
 	assertOperationRelativePath,
 	OperationFolderAccessError,
@@ -12,6 +10,15 @@ import {
 export interface OperationFileIdentity {
 	readonly byteLength: number;
 	readonly sha256: string;
+}
+
+/** Host-staging writer; not a VM filesystem capability. */
+export interface OperationFileStagingWriter {
+	writeFileStream(request: {
+		readonly contents: AsyncIterable<Uint8Array>;
+		readonly guestPath: string;
+		readonly signal?: AbortSignal;
+	}): Promise<void>;
 }
 
 export type OperationFileRelayResult =
@@ -50,7 +57,7 @@ export async function relayOperationFile(props: {
 		OperationFolderGuestAccess,
 		'createDirectory' | 'publish' | 'removeOwned'
 	>;
-	readonly destinationWriter: Pick<ManagedVmFileTransferCapability, 'writeFileStream'>;
+	readonly destinationWriter: OperationFileStagingWriter;
 	readonly destinationRoot: string;
 	readonly destinationDirectory: string;
 	readonly finalName: string;

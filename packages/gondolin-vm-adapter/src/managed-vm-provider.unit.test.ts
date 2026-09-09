@@ -356,6 +356,7 @@ describe('createGondolinManagedVmProvider', () => {
 		});
 
 		// Assert: no window override, bulk stdin or final-result payload capture.
+		expect(vm).not.toHaveProperty('fileTransfer');
 		expect(nativeVm.exec).toHaveBeenCalledWith(['/bin/cat', '/work/transfers/output.bin'], {
 			buffer: false,
 			stderr: 'pipe',

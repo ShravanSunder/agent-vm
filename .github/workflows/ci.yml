@@ -220,9 +220,6 @@ jobs:
             if: matrix.lane == 'hermes'
             env:
               AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'
-              # This lane uses synthetic credentials/providers. Capture guest boot
-              # diagnostics so readiness failures retain their original cause.
-              GONDOLIN_DEBUG: protocol
             run: mise exec -- pnpm run test:e2e:hermes
 
   check:

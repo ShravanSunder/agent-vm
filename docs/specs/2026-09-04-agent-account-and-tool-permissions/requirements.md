@@ -268,9 +268,9 @@ credential handling, and the Hono rendering foundation are relevant evidence and
 reuse candidates. Their detailed realization is not fixed by this requirements
 draft. Existing repository security constraints remain applicable.
 
-Use the published Gondolin dependency with only the explicitly approved two-line
-PR #136 completion-promise patch; no maintained fork or guest-code change is
-selected. Every further Gondolin patch/change requires Shravan's explicit approval;
+Use the published stock Gondolin dependency. The owner approved retiring the
+obsolete rootfs-transfer path and PR #136 patch on 2026-09-09; no maintained fork
+or guest-code change is selected. Every Gondolin patch/change requires explicit approval;
 see [Gondolin patches](../../architecture/gondolin-patches.md). The owner's
 file-transfer direction uses the supported vm.fs API and
 vm.exec output streaming, without bulk process-stdin duplex. Files must not be

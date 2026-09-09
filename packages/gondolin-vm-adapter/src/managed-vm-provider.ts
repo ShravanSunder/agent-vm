@@ -425,22 +425,6 @@ function wrapManagedVm(
 		async finalizeMemoryMount(request): Promise<void> {
 			await nativeVm.finalizeMemoryMount(request);
 		},
-		fileTransfer: {
-			async createDirectory(request): Promise<void> {
-				await nativeVm.fs.mkdir(request.guestPath, {
-					mode: 0o700,
-					recursive: false,
-					...(request.signal === undefined ? {} : { signal: request.signal }),
-				});
-			},
-			async writeFileStream(request): Promise<void> {
-				await nativeVm.fs.writeFile(
-					request.guestPath,
-					request.contents,
-					request.signal === undefined ? {} : { signal: request.signal },
-				);
-			},
-		},
 		exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess {
 			const normalizedCommand = typeof command === 'string' ? command : [...command];
 			const nativeProcess = nativeVm.exec(

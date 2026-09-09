@@ -314,12 +314,6 @@ function createFixture(
 				state.hostProcessId = null;
 			},
 			exec,
-			fileTransfer: {
-				createDirectory: async () => {},
-				writeFileStream: async ({ contents }: { contents: AsyncIterable<Uint8Array> }) => {
-					for await (const chunk of contents) void chunk;
-				},
-			},
 			finalizeMemoryMount: async () => {
 				state.finalized = true;
 			},

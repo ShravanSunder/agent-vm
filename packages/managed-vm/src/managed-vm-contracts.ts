@@ -1,5 +1,3 @@
-import type { ManagedVmFileTransferCapability } from './managed-vm-file-transfer.js';
-
 /** A command executed in the guest. */
 export type ManagedVmExecCommand = string | readonly string[];
 
@@ -338,8 +336,7 @@ export interface ManagedVm {
 	enableIngress(options?: ManagedVmIngressOptions): Promise<ManagedVmAccessHandle>;
 	enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess>;
 	exec(command: ManagedVmExecCommand, options?: ManagedVmExecOptions): ManagedVmExecProcess;
-	/** Callers must reject unsupported file transfer before starting an operation. */
-	readonly fileTransfer?: ManagedVmFileTransferCapability;
+	/** Finalizes protected in-memory credentials; never writes payload files into rootfs. */
 	readonly finalizeMemoryMount?: ManagedVmFinalizableMemoryMountCapability['finalizeMemoryMount'];
 	/** Null before start succeeds or after the owned host process exits. */
 	getHostProcessId(): number | null;

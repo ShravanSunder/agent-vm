@@ -60,7 +60,6 @@ function arrange(): {
 					exec: () => {
 						throw new Error('Unexpected byte operation in lease unit test.');
 					},
-					fileTransfer: { createDirectory: async () => {}, writeFileStream: async () => {} },
 				},
 			},
 		],
@@ -144,7 +143,8 @@ describe('current Tool VM file-use lifetime', () => {
 		expect(result).toBe('completed');
 		expect(savedAccess?.signal.aborted).toBe(true);
 		expect(savedAccess?.authorityIsCurrent()).toBe(false);
-		await expect(savedAccess?.writer.createDirectory({ guestPath: '/work/late' })).rejects.toThrow(
+		expect(savedAccess).not.toHaveProperty('writer');
+		await expect(savedAccess?.files.read('late')[Symbol.asyncIterator]().next()).rejects.toThrow(
 			'unavailable',
 		);
 		expect(fixture.end).toHaveBeenCalledWith(

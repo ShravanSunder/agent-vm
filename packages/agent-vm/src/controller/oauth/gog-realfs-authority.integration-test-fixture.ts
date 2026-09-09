@@ -65,7 +65,6 @@ export async function prepareGogRealFsLeaseFixture(props: {
 				exec: () => {
 					throw new Error('The fake receiving VM does not execute guest file helpers.');
 				},
-				fileTransfer: { createDirectory: async () => {}, writeFileStream: async () => {} },
 				getHostProcessId: () => hostProcessId,
 				id: 'tool-vm-sun',
 				start: async () => {},

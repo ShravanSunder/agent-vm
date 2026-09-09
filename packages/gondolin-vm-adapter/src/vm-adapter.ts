@@ -1,9 +1,5 @@
 import type { Stats } from 'node:fs';
 import net from 'node:net';
-// Gondolin 0.12.0 carries the explicitly approved PR #136 promise-handler patch
-// in this workspace. See docs/architecture/gondolin-patches.md for its exact
-// scope, consumer-distribution limit, and fork-evaluation TODO. Further patches
-// require Shravan's approval; do not add runtime monkeypatches here.
 
 import {
 	validateManagedVmFinalizeMemoryMountRequest,

@@ -1,19 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import type { ManagedVm, ManagedVmFileTransferCapability } from '@agent-vm/managed-vm';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 
 export const fileRelayPythonExecutable = '/opt/hermes/.venv/bin/python';
-export const fileRelayOperationDirectory = '/var/tmp/agent-vm-file-relay-proof';
 export const fileRelayBytePattern = Uint8Array.from({ length: 65_536 }, (_, index) => index % 256);
-
-export function requireManagedFileTransfer(vm: ManagedVm): ManagedVmFileTransferCapability {
-	if (vm.fileTransfer === undefined) {
-		throw new Error('The selected VM backend does not support streaming file writes.');
-	}
-	return vm.fileTransfer;
-}
 
 export function expectedFileRelayDigest(size: number): string {
 	const hash = createHash('sha256');
@@ -25,16 +17,24 @@ export function expectedFileRelayDigest(size: number): string {
 	return hash.digest('hex');
 }
 
-/** Reuse an already-prepared managed image; never add a host data mount. */
+/** Match production attachment delivery through the existing Gateway cache mount. */
 export async function createManagedFileRelayDestinationVm(
 	imageReference: string,
+	cacheDirectory: string,
 ): Promise<ManagedVm> {
-	const vm = await createManagedVmRuntimeComposition().managedVmFactory.createManagedVm({
+	const composition = createManagedVmRuntimeComposition();
+	const vm = await composition.managedVmFactory.createManagedVm({
 		allowedHosts: [],
 		environment: {},
 		imageReference,
 		mediatedSecrets: [],
-		mounts: {},
+		mounts: {
+			'/home/hermes/.cache': {
+				kind: 'owned-host-directory',
+				access: 'read-write',
+				directory: composition.managedVmOwnedDirectories.openHostDirectory(cacheDirectory),
+			},
+		},
 		resources: { cpuCount: 1, memory: '512M' },
 		rootfsMode: 'cow',
 		sessionLabel: 'managed-file-relay-destination',
@@ -42,9 +42,6 @@ export async function createManagedFileRelayDestinationVm(
 	});
 	try {
 		await vm.start();
-		await requireManagedFileTransfer(vm).createDirectory({
-			guestPath: fileRelayOperationDirectory,
-		});
 		return vm;
 	} catch (error) {
 		await vm.close();

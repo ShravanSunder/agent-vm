@@ -3,5 +3,3 @@ packages:
 onlyBuiltDependencies:
   - 'better-sqlite3'
   - 'esbuild'
-patchedDependencies:
-  '@earendil-works/gondolin@0.12.0': patches/@earendil-works__gondolin@0.12.0.patch

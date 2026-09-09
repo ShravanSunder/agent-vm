@@ -78,8 +78,8 @@ The permanent two-VM proof is
 `packages/agent-vm/src/integration-tests/shared-staging-realfs.vm.e2e.test.ts`.
 It covers the production-shaped RealFS mount translation, independent publication
 bytes, and the read-only receiver. Portal/account/expiry/cleanup tests own the
-higher-level authorization and lifecycle contract. The approved host error-handling
-patch and its separate distribution/removal gate remain documented in
+higher-level authorization and lifecycle contract. The obsolete guest-file writer
+and its patch were retired with owner approval; historical scope is documented in
 [Gondolin patches](../architecture/gondolin-patches.md).
 
 `ManagedVmSshAccess` includes `host`, `port`, `user`, `command`,

@@ -18,9 +18,10 @@ Keep that document's upstream tracker current for every carried patch: PR URL,
 pinned revision, last verified status/date, fixed release and removal gate.
 Track a missing PR as not submitted; never equate merged with released or deployed.
 
-The currently approved exception is only the two internal completion-promise
-rejection handlers from upstream PR #136 for `@earendil-works/gondolin@0.12.0`.
-The separate experimental duplex guest patch is not approved for adoption.
+No Gondolin patches are currently carried. Shravan approved retiring the two
+PR #136 completion-promise handlers with the obsolete rootfs-transfer path on
+2026-09-09. Reintroduction or any new patch requires fresh approval. The separate
+experimental duplex guest patch is not approved for adoption.
 
 ## Agent Orientation
 

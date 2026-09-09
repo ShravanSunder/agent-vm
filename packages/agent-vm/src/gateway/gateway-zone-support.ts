@@ -167,12 +167,11 @@ export type GatewayZoneDestroyResult =
 
 export interface GatewayZoneVmOperations extends Pick<
 	ManagedVm,
-	'enableSsh' | 'exec' | 'getHostProcessId' | 'id' | 'fileTransfer'
+	'enableSsh' | 'exec' | 'getHostProcessId' | 'id'
 > {}
 
 export function createGatewayZoneVmOperations(managedVm: ManagedVm): GatewayZoneVmOperations {
 	return {
-		...(managedVm.fileTransfer === undefined ? {} : { fileTransfer: managedVm.fileTransfer }),
 		enableSsh(options?: ManagedVmEnableSshOptions): Promise<ManagedVmSshAccess> {
 			return managedVm.enableSsh(options);
 		},

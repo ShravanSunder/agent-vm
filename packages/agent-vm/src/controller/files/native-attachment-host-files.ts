@@ -2,8 +2,7 @@ import { createHash } from 'node:crypto';
 import { link, lstat, mkdir, opendir, realpath, rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ManagedVmFileTransferCapability } from '@agent-vm/managed-vm';
-
+import type { OperationFileStagingWriter } from './operation-file-relay.js';
 import {
 	assertOperationRelativePath,
 	OperationFolderAccessError,
@@ -40,7 +39,7 @@ export async function createNativeAttachmentHostFiles(props: {
 		OperationFolderGuestAccess,
 		'createDirectory' | 'publish' | 'removeOwned'
 	>;
-	readonly writer: Pick<ManagedVmFileTransferCapability, 'writeFileStream'>;
+	readonly writer: OperationFileStagingWriter;
 }> {
 	const cache = await realpath(props.cacheDirectory);
 	const owned = await privateChild(cache, 'agent-vm-native');

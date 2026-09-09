@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { ManagedVmFileTransferCapability } from '@agent-vm/managed-vm';
 import { normalizeGogFileArgument } from '@agent-vm/oauth-broker-contracts';
 
+import type { OperationFileStagingWriter } from './operation-file-relay.js';
 import { relayOperationFile } from './operation-file-relay.js';
 import type {
 	OperationFileRetentionBudget,
@@ -52,7 +52,7 @@ interface NativeAttachmentStageRequest {
 		OperationFolderGuestAccess,
 		'createDirectory' | 'publish' | 'removeOwned'
 	>;
-	readonly destinationWriter: Pick<ManagedVmFileTransferCapability, 'writeFileStream'>;
+	readonly destinationWriter: OperationFileStagingWriter;
 	readonly sourceAuthorityIsCurrent: () => boolean;
 	readonly destinationAuthorityIsCurrent: () => boolean;
 	readonly signal: AbortSignal;

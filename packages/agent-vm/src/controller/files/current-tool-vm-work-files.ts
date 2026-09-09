@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { createToolVmActiveUseHandle } from '@agent-vm/gateway-lifecycle';
-import type { ManagedVm, ManagedVmFileTransferCapability } from '@agent-vm/managed-vm';
+import type { ManagedVm } from '@agent-vm/managed-vm';
 
 import type {
 	Lease,
@@ -25,13 +25,12 @@ export interface ToolVmWorkFileBinding {
 export interface ToolVmWorkFileAccess {
 	readonly binding: ToolVmWorkFileBinding;
 	readonly files: OperationFolderGuestAccess;
-	readonly writer: ManagedVmFileTransferCapability;
 	readonly signal: AbortSignal;
 	readonly authorityIsCurrent: () => boolean;
 }
 
 type WorkFileLease = Pick<Lease, 'agentId' | 'zoneId' | 'id'> & {
-	readonly vm: Pick<ManagedVm, 'id' | 'exec' | 'fileTransfer'>;
+	readonly vm: Pick<ManagedVm, 'id' | 'exec'>;
 };
 
 export type ToolVmWorkFileLeaseManager = Pick<
@@ -68,7 +67,7 @@ export async function withCurrentToolVmWorkFiles<TResult>(props: {
 		);
 	});
 	const lease = matches[0];
-	if (matches.length !== 1 || lease === undefined || lease.vm.fileTransfer === undefined)
+	if (matches.length !== 1 || lease === undefined)
 		throw new OperationFolderAccessError('unavailable');
 	const leaf = props.leaseManager.getCurrentLeaseBinding(lease.id);
 	if (leaf === undefined || leaf.runtimeBinding.vmId !== lease.vm.id)
@@ -146,7 +145,6 @@ export async function withCurrentToolVmWorkFiles<TResult>(props: {
 			lifetime.signal,
 			handle.signal,
 		]);
-		const fileTransfer = lease.vm.fileTransfer;
 		const result = await props.use({
 			binding: { ...binding },
 			files: createOperationFolderGuestAccess({
@@ -156,24 +154,6 @@ export async function withCurrentToolVmWorkFiles<TResult>(props: {
 				pythonExecutable: operationFolderPythonExecutable,
 				signal,
 			}),
-			writer: {
-				createDirectory: async (request) => {
-					requireCurrent();
-					await fileTransfer.createDirectory({
-						...request,
-						signal:
-							request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]),
-					});
-				},
-				writeFileStream: async (request) => {
-					requireCurrent();
-					await fileTransfer.writeFileStream({
-						...request,
-						signal:
-							request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]),
-					});
-				},
-			},
 			signal,
 			authorityIsCurrent,
 		});

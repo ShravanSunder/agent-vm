@@ -314,7 +314,7 @@ or OAuth SQLite cleanup log is needed, and restart does not adopt pending sends.
 | Gog retirement drops every result | Receiver retirement/expiry cleans published results | Existing exact VM containment and no restart adoption |
 
 Current anchors are controller/runner/configured-cli-managed-vm-executor.ts,
-controller/credentialed-runtime/credentialed-operation-folder-session.ts,
+controller/credentialed-runtime/shared-staging-operation-session.ts,
 controller/files/current-tool-vm-work-files.ts, controller/files/operation-file-relay.ts,
 controller/files/native-attachment-staging.ts and controller/leases/lease-manager.ts.
 The neutral mount types and existing owned/read-only translations are in
@@ -323,9 +323,9 @@ managed-vm/src/managed-vm-contracts.ts and gondolin-vm-adapter/src/managed-vm-pr
 Gondolin's [VFS providers](https://earendil-works.github.io/gondolin/vfs/) describe
 RealFS, read-only and shadow behavior. Host-side mounted-file access and guest
 FUSE operations are distinct from the rootfs writeGuestFile protocol.
-The [approved patch](../../architecture/gondolin-patches.md) remains until every
-affected production path is removed or requalified against an unpatched package
-and its removal is approved. This design does not declare the upstream bug fixed.
+The [historical patch](../../architecture/gondolin-patches.md) was retired with
+owner approval after removal of the obsolete guest-file writer. Qualification
+must use the stock dependency. This does not declare the upstream bug fixed.
 
 ## Proof boundaries and cutover
 

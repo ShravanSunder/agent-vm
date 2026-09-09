@@ -16,9 +16,14 @@ import { startManagedGatewayImageBootFixture } from './managed-gateway-image-boo
 const describeRealStaging = shouldRunLiveVmE2e() ? describe : describe.skip;
 
 describeRealStaging('RealFS shared staging with real producer and Tool VMs', () => {
-	it.each(['expiry', 'receiver-closure'] as const)(
-		'publishes byte-exact read-only files, survives producer closure, and cleans on %s',
-		async (cleanupTrigger) => {
+	it.each([
+		{ cleanupTrigger: 'expiry', payloadBytes: 4 * 1024 * 1024 },
+		{ cleanupTrigger: 'receiver-closure', payloadBytes: 4 * 1024 * 1024 },
+		{ cleanupTrigger: 'receiver-closure', payloadBytes: 0 },
+		{ cleanupTrigger: 'receiver-closure', payloadBytes: 16 * 1024 * 1024 },
+	] as const)(
+		'publishes $payloadBytes byte read-only files, survives producer closure, and cleans on $cleanupTrigger',
+		async ({ cleanupTrigger, payloadBytes }) => {
 			// Arrange: real provider/mounts/store; Google and call authorization are deliberately not exercised.
 			const fixture = await startManagedGatewayImageBootFixture({
 				sessionLabel: 'shared-staging-image',
@@ -87,7 +92,8 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 					[
 						pythonExecutable,
 						'-c',
-						'import pathlib; pathlib.Path("/agent-vm/gog-work/operation/report.bin").write_bytes(bytes(range(256))*16384)',
+						'import pathlib,sys; pathlib.Path("/agent-vm/gog-work/operation/report.bin").write_bytes(bytes(range(256))*(int(sys.argv[1])//256))',
+						String(payloadBytes),
 					],
 					{ signal },
 				);
@@ -117,6 +123,7 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 				});
 				const file = publication.files[0];
 				if (file === undefined) throw new Error('Expected publication.');
+				expect(file.byteLength).toBe(payloadBytes);
 				const savedCopy = await destination.exec(
 					[
 						pythonExecutable,
@@ -169,8 +176,12 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 								'barrier=socket.socket(socket.AF_UNIX); barrier.bind("/tmp/expiry-proof.sock"); barrier.listen(1)',
 								'print("descriptor-open",flush=True)',
 								'connection,_=barrier.accept(); connection.recv(1); connection.close(); barrier.close()',
-								'while chunk:=file.read(65536): digest.update(chunk)',
-								'file.close(); print(digest.hexdigest(),flush=True)',
+								'try:',
+								' while chunk:=file.read(65536): digest.update(chunk)',
+								' print(digest.hexdigest(),flush=True)',
+								'except FileNotFoundError:',
+								' print("expired-handle-unavailable",flush=True)',
+								'finally: file.close()',
 							].join('\n'),
 							file.path,
 						],
@@ -224,7 +235,13 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 					if (completed.kind === 'failed') throw completed.error;
 					await outputDrained;
 					expect(completed.result.exitCode, heldStderr).toBe(0);
-					expect(heldStdout.trim().split('\n')).toEqual(['descriptor-open', file.sha256]);
+					// Expiry removes availability, not bytes already delivered. Stock FUSE
+					// may retain an open read or reject it after pathname removal. Only
+					// ENOENT is accepted; successful reads still require the exact digest.
+					const heldLines = heldStdout.trim().split('\n');
+					expect(heldLines).toHaveLength(2);
+					expect(heldLines[0]).toBe('descriptor-open');
+					expect([file.sha256, 'expired-handle-unavailable']).toContain(heldLines[1]);
 				}
 				expect(await readdir(receiverRoot)).toEqual([]);
 				expect(
