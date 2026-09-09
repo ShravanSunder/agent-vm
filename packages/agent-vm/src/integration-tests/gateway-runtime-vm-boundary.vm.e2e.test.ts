@@ -97,6 +97,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const evidencePrefix = ${JSON.stringify(gatewayRuntimeEvidencePrefix)};
+function reportProbeStage(stage) {
+	process.stderr.write('gateway-runtime-probe-stage:' + stage + '\n');
+}
+reportProbeStage('imports-start');
 const serviceProcessWaitMilliseconds = 30_000;
 const packageEntrypointUrl = import.meta.resolve('@agent-vm/gateway-runtime');
 const packageEntrypoint = fileURLToPath(packageEntrypointUrl);
@@ -104,6 +108,7 @@ const gatewayRuntime = await import(packageEntrypointUrl);
 const gatewayRuntimeClient = await import('@agent-vm/agent-portal-sdk/gateway-runtime-client');
 const configContracts = await import('@agent-vm/config-contracts');
 const gatewayControlContracts = await import('@agent-vm/gateway-control-contracts');
+reportProbeStage('imports-complete');
 assert.equal(
 	'createManagedFrameworkChildSupervisor' in gatewayRuntime,
 	false,
@@ -266,6 +271,7 @@ await Promise.all([chmod(mcpConfigPath, 0o600), chmod(serviceConfigPath, 0o600)]
 const serviceProcess = spawn(packageBinPath, ['--config', serviceConfigPath], {
 	stdio: ['ignore', 'pipe', 'pipe'],
 });
+reportProbeStage('service-spawned');
 serviceProcess.stdout.setEncoding('utf8');
 serviceProcess.stderr.setEncoding('utf8');
 let serviceStdout = '';
@@ -317,6 +323,7 @@ let readiness;
 let retirement;
 try {
 	readiness = await waitForServiceLine('tool-portal-role-readiness');
+	reportProbeStage('service-ready');
 	assert.equal(readiness.uds.publication.status, 'published');
 	assert.equal(readiness.uds.attachment.status, 'awaiting-attachment');
 	activeClient = new gatewayRuntimeClient.GatewayRuntimeClient({
@@ -335,6 +342,7 @@ try {
 		startupRetryPolicy: { maxAttempts: 1 },
 	});
 	await activeClient.connect();
+	reportProbeStage('client-connected');
 	try {
 		await duplicateClient.connect();
 	} catch (error) {
@@ -356,6 +364,7 @@ try {
 		},
 	);
 	assert.equal(listResult.ok, true);
+	reportProbeStage('portal-list-complete');
 	assert.equal(duplicateDecision, 'duplicate-active-connection');
 	const socketStatus = await lstat(socketAddress);
 	assert.equal(socketStatus.isSocket(), true);
@@ -378,6 +387,7 @@ try {
 	assert.equal(postLossDecision, 'retired-attachment');
 	serviceProcess.kill('SIGTERM');
 	retirement = await waitForServiceLine('retired');
+	reportProbeStage('service-retired');
 	if (serviceProcess.exitCode === null) {
 		await once(serviceProcess, 'exit', {
 			signal: AbortSignal.timeout(serviceProcessWaitMilliseconds),
