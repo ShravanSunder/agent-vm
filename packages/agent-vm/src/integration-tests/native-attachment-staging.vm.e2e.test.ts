@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { lstat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -139,9 +139,14 @@ describeLiveNativeStaging(
 						await staging.settle({ owner, stagingId: staged.stagingId, outcome: 'sent' }),
 					).toEqual({ kind: 'cleaned' });
 					// Assert: the native copy is removed; the source's VM-local file remains.
-					await expect(destinationFiles.list(relativePath.split('/')[0] ?? '')).rejects.toThrow(
-						'unavailable',
-					);
+					// FUSE may cache an empty directory after host unlink. Prove removal
+					// of the actual host payload and deny a new guest read instead.
+					await expect(
+						lstat(path.join(cacheDirectory, staged.path.slice('/home/hermes/.cache/'.length))),
+					).rejects.toMatchObject({ code: 'ENOENT' });
+					await expect(
+						destinationFiles.read(relativePath)[Symbol.asyncIterator]().next(),
+					).rejects.toThrow('unavailable');
 					const sourceStillExists = await sourceFixture.vm.exec([
 						'/usr/bin/test',
 						'-f',

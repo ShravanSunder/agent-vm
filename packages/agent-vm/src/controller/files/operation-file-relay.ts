@@ -14,11 +14,11 @@ export interface OperationFileIdentity {
 
 /** Host-staging writer; not a VM filesystem capability. */
 export interface OperationFileStagingWriter {
-	writeFileStream(request: {
+	readonly writeFileStream: (request: {
 		readonly contents: AsyncIterable<Uint8Array>;
 		readonly guestPath: string;
 		readonly signal?: AbortSignal;
-	}): Promise<void>;
+	}) => Promise<void>;
 }
 
 export type OperationFileRelayResult =
