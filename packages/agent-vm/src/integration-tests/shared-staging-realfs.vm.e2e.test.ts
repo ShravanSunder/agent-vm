@@ -180,8 +180,25 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 						(result) => ({ kind: 'completed' as const, result }),
 						(error: unknown) => ({ kind: 'failed' as const, error }),
 					);
-					const lines = heldReader.lines()[Symbol.asyncIterator]();
-					expect((await lines.next()).value).toBe('descriptor-open');
+					const descriptorOpened = Promise.withResolvers<void>();
+					let heldStdout = '';
+					let heldStderr = '';
+					const outputDrained = (async (): Promise<void> => {
+						for await (const chunk of heldReader.output()) {
+							// Diagnostic text only: never collect the file payload.
+							if (chunk.stream === 'stdout') heldStdout += chunk.text;
+							else heldStderr += chunk.text;
+							if (heldStdout.length + heldStderr.length > 4096)
+								throw new Error('Held-reader diagnostics exceeded their fixed bound.');
+							if (heldStdout.includes('descriptor-open\n')) descriptorOpened.resolve();
+						}
+					})();
+					await Promise.race([
+						descriptorOpened.promise,
+						outputDrained.then(() => {
+							throw new Error(`Held reader ended before opening the descriptor: ${heldStderr}`);
+						}),
+					]);
 					nowMs = publication.expiresAtMs;
 					expect(await store.reapExpired()).toEqual({ removed: 1, pending: 0 });
 					const expired = await destination.exec(
@@ -203,10 +220,11 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 						{ signal },
 					);
 					expect(resumed.exitCode).toBe(0);
-					expect((await lines.next()).value).toBe(file.sha256);
 					const completed = await heldOutcome;
 					if (completed.kind === 'failed') throw completed.error;
-					expect(completed.result.exitCode).toBe(0);
+					await outputDrained;
+					expect(completed.result.exitCode, heldStderr).toBe(0);
+					expect(heldStdout.trim().split('\n')).toEqual(['descriptor-open', file.sha256]);
 				}
 				expect(await readdir(receiverRoot)).toEqual([]);
 				expect(
