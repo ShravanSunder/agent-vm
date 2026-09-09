@@ -221,7 +221,8 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 			},
 			safeHelp: 'Pinned Gog runtime proof.',
 			stdin: { kind: 'none' },
-			timeout: { kind: 'quick' },
+			// Network CLI journey, not a five-second quick-command deadline test.
+			timeout: { kind: 'open' },
 		};
 
 		const composition = createManagedVmRuntimeComposition();
@@ -503,7 +504,7 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 										safeHelp: 'Pinned Gog runtime proof.',
 										stdin: { kind: 'none' },
 										targetKind: 'ephemeral_managed_vm',
-										timeout: { kind: 'quick' },
+										timeout: { kind: 'open' },
 									},
 								},
 							},
@@ -595,7 +596,7 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 		const mutationResult = await portal.call(mutationCall, invocationOptions);
 		expect(
 			mutationResult,
-			`Pinned Gog mutation result: ${JSON.stringify(mutationResult)}; requests: ${JSON.stringify(observedRequests)}`,
+			`Pinned Gog mutation result: ${JSON.stringify(mutationResult)}; requests: ${JSON.stringify(observedRequests)}; runtime: ${JSON.stringify(runtimeDiagnostics)}`,
 		).toMatchObject({
 			items: [{ status: 'ok', value: { exitCode: 0 } }],
 		});
