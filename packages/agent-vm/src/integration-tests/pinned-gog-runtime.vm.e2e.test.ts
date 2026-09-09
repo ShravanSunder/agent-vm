@@ -19,7 +19,7 @@ import {
 	GatewayControlConfiguredCliControllerExecutionResultSchema,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 } from '@agent-vm/gateway-control-contracts';
-import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import type { ManagedVm, ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import {
 	managedGoogleReadyPreflightSchema,
 	oauthAccountIdSchema,
@@ -52,6 +52,7 @@ import {
 	createPinnedGogPortalCall,
 	createPinnedGogPortalSuccess,
 	createPinnedGogSyntheticGoogleMediation,
+	formatPinnedGogSyntheticDiagnostic,
 	pinnedGogControllerDispatchIdentity,
 	pinnedGogPublishedFileContents,
 	pinnedGogRuntimeIdentity,
@@ -225,26 +226,63 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 
 		const composition = createManagedVmRuntimeComposition();
 		const observedRequests: string[] = [];
+		const runtimeDiagnostics: string[] = [];
+		const recordRuntimeDiagnostic = (stage: string, error: unknown): void => {
+			if (runtimeDiagnostics.length >= 8) return;
+			runtimeDiagnostics.push(
+				`${stage}: ${formatPinnedGogSyntheticDiagnostic(error, syntheticAccessToken)}`,
+			);
+		};
 		const onRequest = createPinnedGogSyntheticGoogleMediation({
 			accessToken: syntheticAccessToken,
 			observedRequests,
 		});
 		const managedVmFactory = {
-			createManagedVm: async (request: ManagedVmCreateRequest) =>
-				await composition.managedVmFactory.createManagedVm({
-					...request,
-					mediation: { onRequest },
-					mounts: {
-						...request.mounts,
-						'/opt/pinned-gog': {
-							access: 'read-only',
-							directory: composition.managedVmOwnedDirectories.openHostDirectory(
-								artifact.directoryPath,
-							),
-							kind: 'owned-host-directory',
+			createManagedVm: async (request: ManagedVmCreateRequest): Promise<ManagedVm> => {
+				let managedVm: ManagedVm;
+				try {
+					managedVm = await composition.managedVmFactory.createManagedVm({
+						...request,
+						mediation: { onRequest },
+						mounts: {
+							...request.mounts,
+							'/opt/pinned-gog': {
+								access: 'read-only',
+								directory: composition.managedVmOwnedDirectories.openHostDirectory(
+									artifact.directoryPath,
+								),
+								kind: 'owned-host-directory',
+							},
 						},
+					});
+				} catch (error: unknown) {
+					recordRuntimeDiagnostic('create', error);
+					throw error;
+				}
+				return {
+					close: async () => await managedVm.close(),
+					configureIngressRoutes: (routes) => managedVm.configureIngressRoutes(routes),
+					enableIngress: async (options) => await managedVm.enableIngress(options),
+					enableSsh: async (options) => await managedVm.enableSsh(options),
+					exec: (command, options) => managedVm.exec(command, options),
+					...(managedVm.finalizeMemoryMount === undefined
+						? {}
+						: {
+								finalizeMemoryMount: async (finalizeRequest) =>
+									await managedVm.finalizeMemoryMount?.(finalizeRequest),
+							}),
+					getHostProcessId: () => managedVm.getHostProcessId(),
+					id: managedVm.id,
+					start: async () => {
+						try {
+							await managedVm.start();
+						} catch (error: unknown) {
+							recordRuntimeDiagnostic('start', error);
+							throw error;
+						}
 					},
-				}),
+				};
+			},
 		};
 		const sharedStaging = createControllerSharedStaging({
 			controllerEpoch: authorityContext.controllerEpoch,
@@ -410,27 +448,33 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 					managedGoogle,
 					operationId,
 				});
-				const result = await executor({
-					authorization,
-					input,
-					operation,
-					operationName: 'gog',
-					publishFileResults: async ({ folder, assertCurrent }) =>
-						await folder.publish({
-							receiver: {
-								leafGeneration: 'receiver-leaf',
-								leaseId: 'receiver-lease',
-								vmId: 'receiver-vm',
-							},
-							withPublicationAuthority: async (expose) => {
-								assertCurrent();
-								await expose();
-							},
-						}),
-					reloadAuthorization: async () => authorization,
-					stablePrincipal: deriveGatewayControlStablePrincipal({ principal }),
-					zoneId,
-				});
+				let result: Awaited<ReturnType<typeof executor>>;
+				try {
+					result = await executor({
+						authorization,
+						input,
+						operation,
+						operationName: 'gog',
+						publishFileResults: async ({ folder, assertCurrent }) =>
+							await folder.publish({
+								receiver: {
+									leafGeneration: 'receiver-leaf',
+									leaseId: 'receiver-lease',
+									vmId: 'receiver-vm',
+								},
+								withPublicationAuthority: async (expose) => {
+									assertCurrent();
+									await expose();
+								},
+							}),
+						reloadAuthorization: async () => authorization,
+						stablePrincipal: deriveGatewayControlStablePrincipal({ principal }),
+						zoneId,
+					});
+				} catch (error: unknown) {
+					recordRuntimeDiagnostic('executor', error);
+					throw error;
+				}
 				return createPinnedGogPortalSuccess({
 					call: item,
 					operationId,
@@ -515,7 +559,7 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 		);
 		expect(
 			read.items[0],
-			`Pinned Gog read result: ${JSON.stringify(read.items[0])}; requests: ${JSON.stringify(observedRequests)}`,
+			`Pinned Gog read result: ${JSON.stringify(read.items[0])}; requests: ${JSON.stringify(observedRequests)}; runtime: ${JSON.stringify(runtimeDiagnostics)}`,
 		).toMatchObject({ status: 'ok', value: { exitCode: 0 } });
 		const readItem = read.items[0];
 		if (readItem?.status !== 'ok') throw new Error('Pinned Gog read did not complete.');

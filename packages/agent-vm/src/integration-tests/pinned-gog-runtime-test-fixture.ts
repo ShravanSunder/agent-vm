@@ -40,6 +40,27 @@ export const pinnedGogRuntimeIdentity = {
 } as const;
 export const pinnedGogPublishedFileContents = 'synthetic-pdf-bytes';
 
+function describePinnedGogSyntheticError(value: unknown, depth: number, seen: Set<Error>): string {
+	if (!(value instanceof Error)) return String(value);
+	if (seen.has(value)) return '[cyclic-error-cause]';
+	seen.add(value);
+	const cause =
+		value.cause === undefined
+			? ''
+			: depth >= 3
+				? '; cause: [depth-limit]'
+				: `; cause: ${describePinnedGogSyntheticError(value.cause, depth + 1, seen)}`;
+	return `${value.name}: ${value.message}${cause}`;
+}
+
+export function formatPinnedGogSyntheticDiagnostic(error: unknown, accessToken: string): string {
+	const redacted = describePinnedGogSyntheticError(error, 0, new Set()).replaceAll(
+		accessToken,
+		'[redacted-synthetic-token]',
+	);
+	return redacted.length <= 2048 ? redacted : `${redacted.slice(0, 2048)}[truncated]`;
+}
+
 const gogRelease = {
 	version: '0.38.1',
 	assets: {

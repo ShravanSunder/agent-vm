@@ -290,7 +290,7 @@ async function waitForServiceLine(kind) {
 		};
 		const onAbort = () => {
 			cleanup();
-			reject(new Error('Timed out waiting for Gateway runtime ' + kind + '. stderr: ' + serviceStderr));
+			reject(new Error('Timed out waiting for Gateway runtime ' + kind + '. exitCode: ' + serviceProcess.exitCode + ', signal: ' + serviceProcess.signalCode + '. stdout: ' + serviceStdout.slice(-4096) + '. stderr: ' + serviceStderr.slice(-4096)));
 		};
 		const onData = () => {
 			const value = parse();
