@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -116,6 +117,16 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 				});
 				const file = publication.files[0];
 				if (file === undefined) throw new Error('Expected publication.');
+				const savedCopy = await destination.exec(
+					[
+						pythonExecutable,
+						'-c',
+						'import shutil,sys; shutil.copyfile(sys.argv[1],"/workspace/saved-report.bin")',
+						file.path,
+					],
+					{ signal },
+				);
+				expect(savedCopy.exitCode).toBe(0);
 				await source.close();
 				source = undefined;
 				await store.retireProducer('producer');
@@ -146,6 +157,31 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 					destination = undefined;
 					expect(await store.retireReceiver(receiver)).toEqual({ removed: 1, pending: 0 });
 				} else {
+					// Keep a genuine guest descriptor open while host expiry unlinks its pathname.
+					// A guest-local socket is only a test barrier, not a new product transport.
+					const heldReader = destination.exec(
+						[
+							pythonExecutable,
+							'-c',
+							[
+								'import hashlib,socket,sys',
+								'file=open(sys.argv[1],"rb"); digest=hashlib.sha256(file.read(1))',
+								'barrier=socket.socket(socket.AF_UNIX); barrier.bind("/tmp/expiry-proof.sock"); barrier.listen(1)',
+								'print("descriptor-open",flush=True)',
+								'connection,_=barrier.accept(); connection.recv(1); connection.close(); barrier.close()',
+								'while chunk:=file.read(65536): digest.update(chunk)',
+								'file.close(); print(digest.hexdigest(),flush=True)',
+							].join('\n'),
+							file.path,
+						],
+						{ signal, output: { stdout: { kind: 'pipe' }, stderr: { kind: 'pipe' } } },
+					);
+					const heldOutcome = heldReader.result.then(
+						(result) => ({ kind: 'completed' as const, result }),
+						(error: unknown) => ({ kind: 'failed' as const, error }),
+					);
+					const lines = heldReader.lines()[Symbol.asyncIterator]();
+					expect((await lines.next()).value).toBe('descriptor-open');
 					nowMs = publication.expiresAtMs;
 					expect(await store.reapExpired()).toEqual({ removed: 1, pending: 0 });
 					const expired = await destination.exec(
@@ -158,8 +194,26 @@ describeRealStaging('RealFS shared staging with real producer and Tool VMs', () 
 						{ signal },
 					);
 					expect(expired.exitCode).toBe(0);
+					const resumed = await destination.exec(
+						[
+							pythonExecutable,
+							'-c',
+							'import socket; connection=socket.socket(socket.AF_UNIX); connection.connect("/tmp/expiry-proof.sock"); connection.sendall(b"1"); connection.close()',
+						],
+						{ signal },
+					);
+					expect(resumed.exitCode).toBe(0);
+					expect((await lines.next()).value).toBe(file.sha256);
+					const completed = await heldOutcome;
+					if (completed.kind === 'failed') throw completed.error;
+					expect(completed.result.exitCode).toBe(0);
 				}
 				expect(await readdir(receiverRoot)).toEqual([]);
+				expect(
+					createHash('sha256')
+						.update(await readFile(path.join(workspaceRoot, 'saved-report.bin')))
+						.digest('hex'),
+				).toBe(file.sha256);
 				expect(await readFile(path.join(workspaceRoot, 'sentinel'), 'utf8')).toBe('keep');
 			} finally {
 				await Promise.all([source?.close(), destination?.close()]);

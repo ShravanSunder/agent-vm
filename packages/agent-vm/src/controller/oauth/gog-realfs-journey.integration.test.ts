@@ -44,6 +44,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import {
 	createBrokerFacadeFixture,
+	facadeIdentity,
 	prepareBrokerConsent,
 } from '../../../../oauth-broker/src/google/google-broker-facade-test-fixture.js';
 import {
@@ -270,11 +271,12 @@ describe('Gog account policy to RealFS file journey', () => {
 			];
 		if (commandSet === undefined) throw new Error('Expected compiled Gog command set.');
 		const retentionBudget = createOperationFileRetentionBudget();
+		let stagingNowMs = 1_000;
 		const sharedStaging = createControllerSharedStaging({
 			controllerRuntimeDir: path.join(root, 'runtime'),
 			controllerEpoch: 'controller-realfs',
 			retentionBudget,
-			now: () => 1_000,
+			now: () => stagingNowMs,
 		});
 		const configDir = path.join(root, 'gateway-config');
 		await mkdir(configDir, { recursive: true });
@@ -546,6 +548,7 @@ describe('Gog account policy to RealFS file journey', () => {
 		let controllerAuthorizationRejectionCount = 0;
 		let forgeControllerAuthority = false;
 		let useStaleLeaseBinding = false;
+		let beforePublication: (() => Promise<void>) | undefined;
 		const execute = createConfiguredCliManagedVmExecutor({
 			resolveGatewayIdentity: async () => ({
 				controllerEpoch: 'controller-realfs',
@@ -674,6 +677,7 @@ describe('Gog account policy to RealFS file journey', () => {
 								await folder.publish({
 									receiver: destination.binding,
 									withPublicationAuthority: async (expose) => {
+										await beforePublication?.();
 										assertCurrent();
 										if (!destination.authorityIsCurrent())
 											throw new Error('Lease authority changed before publication.');
@@ -818,5 +822,57 @@ describe('Gog account policy to RealFS file journey', () => {
 		expect(endActiveUse).toHaveBeenCalledTimes(1);
 		expect(commandCount).toBe(2);
 		expect(await readdir(leaseFixture.receiverHostRoot)).toHaveLength(1);
+
+		// Disconnect after the first delivery, but before a later operation's publication.
+		// Use the actual owner ceremony, broker and SQLite fence, not a synthetic deny callback.
+		forgeControllerAuthority = false;
+		beforePublication = async () => {
+			const begun = await brokerFixture.broker.executeAuthorizationAction({
+				agentId,
+				request: {
+					actionId: 'oauth_authorization.disconnect',
+					accountId: enrolled.accountId,
+					applicationId: oauthApplicationIdSchema.parse('workspace-app'),
+				},
+			});
+			if (begun.kind !== 'authorization-begun') throw new Error('Expected disconnect ceremony.');
+			const page = brokerFixture.broker.getPermissionPage({
+				identity: facadeIdentity,
+				transactionId: begun.transactionId,
+			});
+			expect(
+				await brokerFixture.broker.confirmDisconnect({
+					identity: facadeIdentity,
+					transactionId: page.transactionId,
+					browserBindingSecret: page.browserBindingSecret,
+					csrfToken: page.csrfToken,
+				}),
+			).toMatchObject({ kind: 'authorization-disconnected' });
+		};
+		const disconnectedPublication = await portal.call(
+			call('disconnect-before-publication'),
+			udsOptions({ principal: invocationPrincipal }),
+		);
+		const disconnectedItem = disconnectedPublication.items[0];
+		if (disconnectedItem?.status !== 'ok') throw new Error(JSON.stringify(disconnectedPublication));
+		expect(disconnectedItem.value).toMatchObject({
+			operationFiles: { kind: 'unavailable', reason: 'file-result-failed' },
+		});
+		beforePublication = undefined;
+		const deniedAfterDisconnect = await portal.call(
+			call('denied-after-disconnect'),
+			udsOptions({ principal: invocationPrincipal }),
+		);
+		expect(deniedAfterDisconnect.items[0]?.status).toBe('error');
+		expect(commandCount).toBe(3); // no replay and no new remote execution after disconnect.
+		expect(await readdir(leaseFixture.receiverHostRoot)).toHaveLength(1);
+		const deliveredHostPath = path.join(leaseFixture.receiverHostRoot, receiverRelativePath);
+		await expect(readFile(deliveredHostPath, 'utf8')).resolves.toBe('ordinary-file-bytes-from-gog');
+		stagingNowMs = firstValue.operationFiles.expiresAtMs - 1;
+		await sharedStaging.reapExpired();
+		await expect(readFile(deliveredHostPath, 'utf8')).resolves.toBe('ordinary-file-bytes-from-gog');
+		stagingNowMs += 1;
+		await sharedStaging.reapExpired();
+		await expect(readFile(deliveredHostPath)).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 });

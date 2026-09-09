@@ -898,6 +898,11 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				callId: 'hold-call',
 				input: holdInput,
 			});
+			// Observe rejection immediately even if the record probe fails before retirement.
+			const heldOutcome = holdPromise.then(
+				() => ({ kind: 'completed' as const }),
+				(error: unknown) => ({ kind: 'failed' as const, error }),
+			);
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,
 				'controller-state',
@@ -912,10 +917,12 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 						const recordNames = await readdir(recordsDirectory).catch(() => []);
 						// oxlint-disable-next-line no-await-in-loop -- each poll reads the current bounded record set together
 						const recordContents = await Promise.all(
-							recordNames.map(
-								async (recordName) =>
-									await readFile(path.join(recordsDirectory, recordName), 'utf8'),
-							),
+							recordNames
+								.filter((recordName) => recordName.endsWith('.json'))
+								.map(
+									async (recordName) =>
+										await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+								),
 						);
 						if (recordContents.some((record) => record.includes('"kind":"current-active"'))) {
 							return;
@@ -950,7 +957,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				force: true,
 				zoneId: acceptedSession.zoneId,
 			});
-			await expect(holdPromise).rejects.toBeDefined();
+			await expect(heldOutcome).resolves.toMatchObject({ kind: 'failed' });
 			await expect(retirement).resolves.toEqual({ kind: 'retired' });
 
 			expect(
@@ -1124,10 +1131,12 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			);
 			const recordNames = await readdir(recordsDirectory).catch(() => []);
 			const recordContents = await Promise.all(
-				recordNames.map(async (recordName) => ({
-					record: await readFile(path.join(recordsDirectory, recordName), 'utf8'),
-					recordName,
-				})),
+				recordNames
+					.filter((recordName) => recordName.endsWith('.json'))
+					.map(async (recordName) => ({
+						record: await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+						recordName,
+					})),
 			);
 			throw new Error(
 				`Configured runner failed with operation records: ${JSON.stringify(recordContents)}`,
