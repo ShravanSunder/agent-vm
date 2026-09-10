@@ -471,9 +471,6 @@ importers:
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
-      '@clerk/clerk-js':
-        specifier: 6.31.1
-        version: 6.31.1(@solana/web3.js@1.99.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))(bs58@6.0.0)(bufferutil@4.1.0)(react-native@0.87.1(@babel/core@7.29.7)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@6.0.3)(utf-8-validate@6.0.6)(zod@4.4.3)
       hono:
         specifier: 4.12.34
         version: 4.12.34
@@ -481,6 +478,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@clerk/clerk-js':
+        specifier: 6.31.1
+        version: 6.31.1(@solana/web3.js@1.99.0(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6))(bs58@6.0.0)(bufferutil@4.1.0)(react-native@0.87.1(@babel/core@7.29.7)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)(typescript@6.0.3)(utf-8-validate@6.0.6)(zod@4.4.3)
       '@tailwindcss/cli':
         specifier: ^4.3.3
         version: 4.3.3
