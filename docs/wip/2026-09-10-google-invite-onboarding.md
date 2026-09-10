@@ -46,3 +46,26 @@ No automatic Gmail/Drive permission grants, broad registration, or auth bypass.
 
 Implementation mechanism is not yet selected. Validate SDK support and write the
 smallest source-grounded design/plan before adding browser auth code.
+
+## Source check: invitation and Google are separate SDK transitions
+
+Clerk JavaScript upstream `packages/clerk-js/src/core/resources/SignUp.ts`
+implements ticket acceptance as create(strategy=ticket); the response can carry
+a created session. The research summary's blanket claim that a ticket cannot
+create a session is not reliable. Do not use it as an implementation assumption.
+Its OAuth redirect method supports continuing an existing incomplete signup;
+that is different from an already-created invitation user.
+
+`packages/clerk-js/src/core/resources/User.ts:createExternalAccount` supports
+the existing-user Google connection directly and returns the external-account
+resource. That avoids requiring the user to navigate Account Portal settings.
+Only basic identity scopes belong in this flow; no additional resource scopes.
+
+The application must retain server-side admission checks while a ticket-created
+user completes Google linking. A frontend success flag is not an identity proof.
+Current `verifySession` checks active session identity but does not inspect linked
+provider verification; that boundary needs an explicit test in this correction.
+
+These are upstream main source pointers, not a chosen pinned frontend SDK API.
+Select and inspect an exact SDK version before implementation; do not mix legacy
+authenticateWithRedirect and newer sso/ticket APIs by guesswork.
