@@ -28,6 +28,27 @@
 }
 
 @layer components {
+	.page-shell.onboarding-shell {
+		@apply max-w-lg justify-center gap-9;
+	}
+	.onboarding-action {
+		@apply space-y-4;
+	}
+	.google-button {
+		@apply flex w-full items-center justify-center gap-3 rounded-xl border border-stone-300 bg-white px-5 py-4 font-semibold shadow-sm hover:bg-stone-50 disabled:cursor-wait disabled:opacity-60;
+	}
+	.google-mark {
+		@apply text-xl font-bold text-sky-700;
+	}
+	.onboarding-hint {
+		@apply text-sm leading-6 text-stone-600;
+	}
+	.onboarding-footer {
+		@apply space-y-3 border-t border-stone-200 pt-6 text-sm leading-6 text-stone-500;
+	}
+	.onboarding-footer a {
+		@apply underline underline-offset-4;
+	}
 	.page-shell {
 		@apply mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-16;
 		overflow-wrap: anywhere;

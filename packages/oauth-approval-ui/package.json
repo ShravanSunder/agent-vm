@@ -36,6 +36,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
+		"@clerk/clerk-js": "6.31.1",
 		"hono": "4.12.34",
 		"zod": "^4.4.3"
 	},

@@ -36,9 +36,7 @@ describe('host Clerk composition', () => {
 		// Assert
 		expect(secretResolver.resolve).toHaveBeenCalledExactlyOnceWith(config.secretKey);
 		expect(secretResolver.resolveAll).not.toHaveBeenCalled();
-		expect(verifier.signInUrl()).toBe(
-			'https://accounts.example.test/sign-in?redirect_url=https%3A%2F%2Fauth.example.test%3A18900%2Foauth%2Fauth%2Freturn',
-		);
+		expect(Object.keys(verifier)).toContain('verifyGoogleIdentity');
 		expect(JSON.stringify(verifier)).not.toContain('sk_test_fixture_secret');
 	});
 

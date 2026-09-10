@@ -1,3 +1,7 @@
+import {
+	renderGoogleOnboardingPage,
+	type OAuthApprovalAssetManifest,
+} from '@agent-vm/oauth-approval-ui';
 import type {
 	OAuthLoginContinuationStore,
 	OAuthLoginContinuationTarget,
@@ -56,6 +60,10 @@ function continuationDestination(target: OAuthLoginContinuationTarget): string {
 
 // Mount beneath the OAuth website's socket-peer network gate, never on admin ingress.
 export function createClerkLoginRoutes(props: {
+	readonly websiteOrigin: string;
+	readonly issuer: string;
+	readonly publishableKey: string;
+	readonly assets: OAuthApprovalAssetManifest;
 	readonly verifier: ClerkBrowserIdentityVerifier;
 	readonly continuations: OAuthLoginContinuationStore;
 	readonly bindVerifiedContinuation: (value: {
@@ -64,6 +72,30 @@ export function createClerkLoginRoutes(props: {
 	}) => Promise<readonly string[] | undefined>;
 }): Hono {
 	const app = new Hono();
+	const renderPage = (
+		context: Context,
+		mode: 'sign-in' | 'invitation' | 'setup' | 'callback',
+	): Response => {
+		context.header(
+			'Content-Security-Policy',
+			`default-src 'none'; script-src 'self'; connect-src 'self' ${new URL(props.issuer).origin}; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
+		);
+		return context.html(
+			renderGoogleOnboardingPage({
+				mode,
+				publishableKey: props.publishableKey,
+				stylesheet: props.assets.css,
+				javascript: props.assets.onboarding,
+				...(context.req.query('issue') === 'incomplete' ? { issue: 'incomplete' as const } : {}),
+			}),
+		);
+	};
+	const readBinding = (
+		context: Context,
+	): { readonly continuationId: string; readonly browserBindingSecret: string } => ({
+		continuationId: getCookie(context, loginCookieName) ?? '',
+		browserBindingSecret: getCookie(context, bindingCookieName) ?? '',
+	});
 	app.use('/oauth/auth/*', async (context, next) => {
 		context.header('Cache-Control', 'no-store');
 		context.header('Referrer-Policy', 'no-referrer');
@@ -77,7 +109,8 @@ export function createClerkLoginRoutes(props: {
 	const bootstrap = async (context: Context): Promise<Response> => {
 		let continuationId = getCookie(context, loginCookieName);
 		let browserBindingSecret = getCookie(context, bindingCookieName);
-		const isStart = context.req.path === '/oauth/auth/start';
+		const isInvitation = context.req.path === '/oauth/auth/invite';
+		const isStart = context.req.path === '/oauth/auth/start' || isInvitation;
 		if (continuationId === undefined || browserBindingSecret === undefined) {
 			if (!isStart) return context.text('Login context missing. Start again.', 409);
 			const created = props.continuations.create({ kind: 'agents' });
@@ -100,8 +133,18 @@ export function createClerkLoginRoutes(props: {
 				});
 			}
 		}
+		if (!props.continuations.isActive({ continuationId, browserBindingSecret })) {
+			clearLoginCookies(context);
+			return context.text('Login context expired. Start again.', 409);
+		}
+		if (isInvitation) return renderPage(context, 'invitation');
 		try {
-			const verified = await props.verifier.verifyBootstrap(context.req.raw);
+			const requestUrl = new URL(context.req.url);
+			if (requestUrl.searchParams.get('issue') === 'incomplete')
+				requestUrl.searchParams.delete('issue');
+			const verified = await props.verifier.verifyBootstrap(
+				new Request(requestUrl, context.req.raw),
+			);
 			if (verified.kind === 'redirect' || (verified.kind === 'signed-out' && isStart)) {
 				if (!props.continuations.acceptRedirect({ continuationId, browserBindingSecret })) {
 					clearLoginCookies(context);
@@ -112,7 +155,7 @@ export function createClerkLoginRoutes(props: {
 						context.header('Set-Cookie', cookie, { append: true });
 					return context.redirect(verified.location, 307);
 				}
-				return context.redirect(props.verifier.signInUrl(), 303);
+				return renderPage(context, 'sign-in');
 			}
 			if (verified.kind !== 'verified') {
 				clearLoginCookies(context);
@@ -129,6 +172,15 @@ export function createClerkLoginRoutes(props: {
 					active.kind === 'verification-unavailable' ? 503 : 403,
 				);
 			}
+			for (const cookie of verified.setCookies)
+				context.header('Set-Cookie', cookie, { append: true });
+			const google = await props.verifier.verifyGoogleIdentity(active.identity);
+			if (google.kind === 'setup-required') return renderPage(context, 'setup');
+			if (google.kind !== 'verified')
+				return context.text(
+					'Google sign-in could not be verified. Start again.',
+					google.kind === 'verification-unavailable' ? 503 : 403,
+				);
 			const consumed = props.continuations.consume({
 				continuationId,
 				browserBindingSecret,
@@ -143,8 +195,7 @@ export function createClerkLoginRoutes(props: {
 			});
 			if (cookies === undefined)
 				return context.text('This account or agent is not available.', 403);
-			for (const cookie of [...verified.setCookies, ...cookies])
-				context.header('Set-Cookie', cookie, { append: true });
+			for (const cookie of cookies) context.header('Set-Cookie', cookie, { append: true });
 			return context.redirect(continuationDestination(consumed.target), 303);
 		} catch {
 			clearLoginCookies(context);
@@ -152,6 +203,34 @@ export function createClerkLoginRoutes(props: {
 		}
 	};
 	app.get('/oauth/auth/start', bootstrap);
+	app.get('/oauth/auth/invite', bootstrap);
 	app.get('/oauth/auth/return', bootstrap);
+	app.get('/oauth/auth/callback', (context) => {
+		if (!props.continuations.isActive(readBinding(context)))
+			return context.text('Login context expired. Start again.', 409);
+		return renderPage(context, 'callback');
+	});
+	app.post('/oauth/auth/prepare-google', async (context) => {
+		if (context.req.header('origin') !== props.websiteOrigin)
+			return context.text('Invalid browser origin.', 403);
+		const binding = readBinding(context);
+		if (!props.continuations.isActive(binding))
+			return context.text('Login context expired. Start again.', 409);
+		const current = await props.verifier.verifyCurrentCookie(context.req.raw);
+		if (current.kind !== 'verified')
+			return context.text(
+				'Current sign-in is unavailable.',
+				current.kind === 'verification-unavailable' ? 503 : 403,
+			);
+		const active = await props.verifier.verifySession(current.identity);
+		if (active.kind !== 'verified')
+			return context.text(
+				'Current sign-in is unavailable.',
+				active.kind === 'verification-unavailable' ? 503 : 403,
+			);
+		if (!props.continuations.bindExpectedIdentity({ ...binding, identity: active.identity }))
+			return context.text('Login person changed. Start again.', 403);
+		return context.body(null, 204);
+	});
 	return app;
 }

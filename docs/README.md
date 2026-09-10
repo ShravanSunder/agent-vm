@@ -8,6 +8,7 @@ directory is the deeper map for the Hermes-only controller and runtime.
 | If you want to... | Read |
 | --- | --- |
 | Set up a local or container Hermes deployment | [getting-started/setup.md](getting-started/setup.md) |
+| Invite family to Google-first website login | [getting-started/google-onboarding.md](getting-started/google-onboarding.md) |
 | Configure a Hermes managed Gateway | [reference/configuration/system-json.md](reference/configuration/system-json.md) |
 | Understand state, cache, and backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand reusable credentialed CLI runtimes | [architecture/credentialed-runtimes.md](architecture/credentialed-runtimes.md) |

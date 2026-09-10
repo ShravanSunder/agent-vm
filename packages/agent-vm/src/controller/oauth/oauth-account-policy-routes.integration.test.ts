@@ -63,7 +63,11 @@ describe('website account-policy journey with real broker, SQLite and native for
 		const app = createOAuthHttpsApp({
 			assets: {
 				files: {},
-				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
+				manifest: {
+					css: 'oauth.1111111111111111.css',
+					javascript: 'oauth.2222222222222222.js',
+					onboarding: 'onboarding.3333333333333333.js',
+				},
 			},
 			config: compiled.oauthConfig,
 			brokerService: fixture.broker,
@@ -84,7 +88,7 @@ describe('website account-policy journey with real broker, SQLite and native for
 				verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 				verifySession: async (identity) => ({ kind: 'verified', identity }),
 				revokeSession: async () => ({ kind: 'revoked' }),
-				signInUrl: () => 'https://identity.example.test/sign-in',
+				verifyGoogleIdentity: async (identity) => ({ kind: 'verified', identity }),
 			},
 		});
 		const cookies = new Map<string, string>();

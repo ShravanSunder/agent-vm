@@ -56,14 +56,16 @@ export async function loadOAuthApprovalAssetBundle(): Promise<OAuthApprovalAsset
 		await readFile(new URL('manifest.json', assetsDirectoryUrl), 'utf8'),
 	);
 	const manifest = oauthApprovalAssetManifestSchema.parse(parsedManifest);
-	const [css, javascript] = await Promise.all([
+	const [css, javascript, onboarding] = await Promise.all([
 		readFile(new URL(manifest.css, assetsDirectoryUrl)),
 		readFile(new URL(manifest.javascript, assetsDirectoryUrl)),
+		readFile(new URL(manifest.onboarding, assetsDirectoryUrl)),
 	]);
 	return {
 		files: {
 			[manifest.css]: new Uint8Array(css),
 			[manifest.javascript]: new Uint8Array(javascript),
+			[manifest.onboarding]: new Uint8Array(onboarding),
 		},
 		manifest,
 	};

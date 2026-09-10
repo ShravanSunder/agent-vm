@@ -20,6 +20,11 @@ describe('browser ceremony identity across real broker states', () => {
 		fixture = await createBrokerFacadeFixture();
 		const prepared = await prepareBrokerConsent(fixture);
 		const browser = createOAuthBrowserSessionRoutes({
+			assets: {
+				css: 'oauth.1111111111111111.css',
+				javascript: 'oauth.2222222222222222.js',
+				onboarding: 'onboarding.3333333333333333.js',
+			},
 			broker: fixture.broker,
 			config: fixture.config,
 			navigation: createOAuthBrowserNavigationStore(),
@@ -34,7 +39,7 @@ describe('browser ceremony identity across real broker states', () => {
 				verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 				verifySession: async (identity) => ({ kind: 'verified', identity }),
 				revokeSession: async () => ({ kind: 'revoked' }),
-				signInUrl: () => 'https://identity.example.test/sign-in',
+				verifyGoogleIdentity: async (identity) => ({ kind: 'verified', identity }),
 			},
 		});
 		const request = (kind: 'transaction' | 'completion', id: string, secret: string): Request =>

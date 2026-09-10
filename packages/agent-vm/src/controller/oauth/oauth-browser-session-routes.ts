@@ -1,4 +1,5 @@
 import type { OAuthConfig } from '@agent-vm/config-contracts';
+import type { OAuthApprovalAssetManifest } from '@agent-vm/oauth-approval-ui';
 import type {
 	OAuthBrowserNavigationStore,
 	OAuthLoginContinuationStore,
@@ -29,6 +30,7 @@ export interface OAuthBrowserSessionRoutes {
 
 /** Network admission is supplied by the outer website. Only safe GET bootstrap may redirect to Clerk. */
 export function createOAuthBrowserSessionRoutes(props: {
+	readonly assets: OAuthApprovalAssetManifest;
 	readonly broker: GoogleOAuthBrokerService;
 	readonly config: OAuthConfig;
 	readonly verifier: ClerkBrowserIdentityVerifier;
@@ -110,6 +112,10 @@ export function createOAuthBrowserSessionRoutes(props: {
 	routes.route(
 		'/',
 		createClerkLoginRoutes({
+			websiteOrigin: props.config.browser.publicBaseUrl,
+			issuer: props.config.browser.identity.issuer,
+			publishableKey: props.config.browser.identity.publishableKey,
+			assets: props.assets,
 			verifier: props.verifier,
 			continuations: props.continuations,
 			bindVerifiedContinuation: async ({ identity, target }) => {

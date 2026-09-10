@@ -397,14 +397,24 @@ describe('Clerk browser bootstrap through the real SDK', () => {
 		expect(sanitized?.headers.has('host')).toBe(false);
 	});
 
-	it('builds a fixed login return without carrying caller data', () => {
-		// Arrange
+	it('never obtains Google resource tokens while checking onboarding', async () => {
 		const { verifier } = fixture();
-		// Act
-		const url = new URL(verifier.signInUrl());
-		// Assert
-		expect(url.origin).toBe('https://accounts.example.test');
-		expect([...url.searchParams]).toEqual([['redirect_url', `${websiteOrigin}/oauth/auth/return`]]);
+		const requested: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: string | URL | Request) => {
+				requested.push(input instanceof Request ? input.url : String(input));
+				return Response.json({
+					id: identity.userId,
+					object: 'user',
+					primary_email_address_id: null,
+					email_addresses: [],
+					external_accounts: [],
+				});
+			}),
+		);
+		expect(await verifier.verifyGoogleIdentity(identity)).toEqual({ kind: 'setup-required' });
+		expect(requested).toEqual([`https://api.clerk.com/v1/users/${identity.userId}`]);
 	});
 });
 

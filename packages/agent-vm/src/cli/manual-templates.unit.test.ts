@@ -108,6 +108,8 @@ describe('manual templates', () => {
 		expect(layout).toContain('config/gateways/<zone>/mcp.config.jsonc');
 		expect(layout).toContain('config/gateways/<zone>/tool-portal.config.jsonc');
 		expect(layout).toContain('config/gateways/<zone>/oauth.config.jsonc');
+		expect(layout).toContain('<website-origin>/oauth/auth/invite');
+		expect(layout).toContain('invitation email must match the verified Google sign-in email');
 		expect(layout).toContain('separate agent/account/application authorizations');
 		expect(layout).toContain('writes are not universally forced to Ask');
 		expect(layout).toContain('Hermes gateway VMs mount zoneFilesDir at /zone');
