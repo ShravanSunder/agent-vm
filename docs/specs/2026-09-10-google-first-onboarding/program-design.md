@@ -50,7 +50,7 @@ There is no verified supported provider-selector query parameter to rely on.
   configured publishable key and fingerprinted local asset names. No ticket,
   secret key, account policy or resource credential is embedded in the model.
 - **Browser Clerk adapter in the same package** owns user-triggered invitation,
-  sign-in and external-account connection operations. It reads SDK state rather
+  sign-in operations. It reads SDK state rather
   than maintaining a second user/session record. Its local pending/error state
   has page lifetime. The renderer never treats its success as server admission.
 - **Existing `ClerkBrowserIdentityVerifier`** owns trusted issuer/user/session
@@ -88,7 +88,7 @@ Proposed signed-out path:
 
 Existing signed-in email-only person:
   start/return -> backend setup-required -> immediate Connect Google    ADDED
-  click -> user.createExternalAccount(oauth_google) -> Google           ADDED
+  click -> bind expected person -> signOut -> Google sign-in           ADDED
   -> app callback -> server return and the same admission checks        ADDED
 
 Invocation/Google-resource authorization paths are unchanged.
@@ -101,6 +101,10 @@ and callback fallback destinations are fixed app routes; the original agent or
 account destination stays only in the server continuation.
 
 An invitation uses an operator-configured redirect to `/oauth/auth/invite`.
+That GET establishes the same bounded default `agents` continuation and Secure
+HttpOnly binding cookies before rendering, just as the existing start GET does.
+An existing valid continuation is reused; capacity exhaustion returns unavailable
+and an expired/stale cookie returns restart-required rather than provider work.
 Clerk's `__clerk_ticket` is read once and removed from the address bar before
 starting SDK work. It stays only in page memory until accepted; refresh before
 acceptance requires reopening the invitation. Clicking Continue with Google
@@ -112,7 +116,7 @@ Invitation action -> signUp.create(strategy=ticket)
   +-- incomplete -> signUp.authenticateWithRedirect(
   |                   strategy=oauth_google, continueSignUp=true)
   |
-  +-- complete with created session -> setActive -> createExternalAccount
+  +-- complete -> setActive -> bind expected person -> signOut -> Google sign-in
   |
   +-- invalid/expired/used -> actionable invitation error; no app access
 ```
@@ -121,6 +125,26 @@ An already active browser session must not silently accept an invitation for a
 different person. It receives an explicit switch/restart action before ticket
 acceptance. Session switching uses Clerk sign-out and existing live session
 fencing; it never changes the identity attached to an existing app ceremony.
+
+The invitation must use the person's Google login email. Clerk's verified-email
+automatic linking associates ordinary Google sign-in with the invitation-created
+user. The browser signs out an email-only session before initiating that sign-in;
+it never calls `createExternalAccount` or implements Clerk reverification UI.
+Ticket-completed sessions are activated only to end them through the public SDK
+before Google sign-in; this transient session never binds app navigation.
+An explicit invitation opened while already signed in shows a switch action,
+which signs out before consuming the ticket. Before either email-only or
+completed-ticket sign-out, the browser POSTs `/oauth/auth/prepare-google` with no
+identity payload. The controller requires the exact Origin, existing login-binding
+cookies, a currently verified Clerk cookie and live session, then binds its
+issuer/user ID to that same bounded continuation. Binding is idempotent only for
+the same person and never overwrites another one; expired, missing or mismatched
+contexts fail before browser sign-out. `consume` rejects a different returned
+issuer/user ID, even if it is another configured owner. Session ID is deliberately
+not pinned because Google sign-in replaces the session. No new store or
+request-body identity authority is introduced. The server requires a verified Google
+external account matching the user's verified primary email before completion.
+This is an onboarding eligibility check, not an email-based owner lookup.
 
 ## State, failure and recovery
 
@@ -178,7 +202,7 @@ back code would restore the old entry experience, not undo Clerk enrollment.
 ```text
 R1 / U-ONB-01 -> invitation browser adapter + fixed callback
   real SDK contract checks; hosted invitation -> Google -> our website
-R2 / U-ONB-02 -> setup-required renderer + direct external-account connection
+R2 / U-ONB-02 -> setup-required renderer + same-email Google sign-in
   existing-email-user integration; visible immediate action and cancellation
 R3 / U-ONB-03 -> Clerk restricted registration + server session/owner checks
   denied/expired/wrong-user/outage fixtures; hosted invitation restrictions

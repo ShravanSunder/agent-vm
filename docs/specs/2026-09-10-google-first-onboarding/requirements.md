@@ -37,6 +37,11 @@ Gondolin. A separate PR starts from origin/master; unrelated work stays untouche
 
 ## User journey
 
+For U-ONB-01–03, invitations use the Google email the person will sign in with.
+The owner explicitly chose this same-verified-email restriction to avoid a
+separate account-linking/reverification journey. Different-email login linking
+is excluded; this does not restrict subsequent agent Google resource accounts.
+
 ```text
 Invited family member (U-ONB-01,03)
   Today: invitation -> email enrollment -> Clerk welcome -> account menu -> Google

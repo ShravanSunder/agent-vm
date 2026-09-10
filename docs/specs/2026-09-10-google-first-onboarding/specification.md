@@ -16,6 +16,12 @@ linking through Google's normal account/consent flow, not by synthesizing a
 connection or accepting a browser-supplied verified flag. Canceling leaves setup
 incomplete with a retry action on the same app-owned surface.
 
+R1–R3 require the invitation email to match the verified Google login email.
+The page explains that choice. Existing email-only users complete Google sign-in
+for that same email through Clerk's automatic linking; no different-email
+account-management flow is provided. This restriction does not apply to Google
+resource accounts later connected for an agent.
+
 **R3 / U-ONB-03:** Invalid, expired, already-consumed or wrong-user invitation
 attempts must not create app access. Google sign-in does not override invite-only
 admission or the configured owner/editor rules. Partial ticket enrollment is not
