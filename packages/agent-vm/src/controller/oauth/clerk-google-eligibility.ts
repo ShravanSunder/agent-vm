@@ -27,7 +27,8 @@ export function hasVerifiedGoogleIdentity(value: unknown, expectedUserId: string
 	if (primary?.verification?.status !== 'verified') return false;
 	return parsed.data.externalAccounts.some(
 		(account) =>
-			account.provider === 'google' &&
+			// Backend API preserves oauth_; ClerkJS alone strips that prefix.
+			account.provider === 'oauth_google' &&
 			account.providerUserId.length > 0 &&
 			account.verification?.status === 'verified' &&
 			account.emailAddress.toLowerCase() === primary.emailAddress.toLowerCase(),

@@ -1,5 +1,39 @@
 # Google-first invitation onboarding
 
+## Current delivery checkpoint
+
+The owner confirmed same invitation/Google verified email. Implementation is on
+`fix/google-invite-onboarding`, based on `origin/master` at `21765292`; initial
+implementation checkpoint is `2be21e88`. Earlier research notes below are history,
+not unresolved product decisions. Canonical implementation plan:
+`tmp/plan-workflows/2026-09-10-google-first-onboarding.md`.
+
+- Three-artifact review completed and parent-verified: direct invite continuation
+  creation and expected-person binding in the existing store are included.
+- Initial full proof: 16/16 quality gates, 4,609 unit tests, 916 integration tests.
+- Independent implementation review found one real provider-representation defect:
+  Clerk backend preserves `oauth_google`; ClerkJS normalizes it to `google`.
+  Live metadata from the sole approved test account confirmed that distinction.
+  Corrected fixtures first reproduced failure; corrected eligibility then passed.
+- Actual browser proof: built desktop and 390px setup screens loaded the real
+  Clerk SDK and showed the immediate Google action. Google sign-in used only the
+  approved account and identity scopes; backend metadata confirms its verified
+  Google connection and matching verified primary email.
+- The localhost callback was blocked by browser protections. This is not proof
+  of the private HTTPS return. No browser protections were disabled.
+- The private HTTPS test listener was rejected by the approval system because it
+  would use the shared host's TLS key and open a listener. No listener started,
+  no workaround was attempted, and its unrun scaffold was removed.
+- Built CLI `manual update` generated 15 manuals in an owned OS-temp directory;
+  the output contains the invitation URL and same-email rule.
+
+Still required: final remediation checks/review and PR/CI; actual private HTTPS
+callback and fresh-invitation completion remain unproved. The approved account
+is already enrolled, so do not delete/recreate it to manufacture a fresh-invite
+test. No other live account is authorized. No beta config migration, VM image,
+Gondolin change, or resource grant was performed. Screenshots are in the session;
+the loopback preview is explicitly not an authenticated application deployment.
+
 ## Requested outcome
 
 Invitation → Continue with Google → our app. No email-code detour, generic Clerk

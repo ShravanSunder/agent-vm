@@ -15,7 +15,7 @@ function user(): unknown {
 		],
 		externalAccounts: [
 			{
-				provider: 'google',
+				provider: 'oauth_google',
 				providerUserId: 'google_owner',
 				emailAddress: 'member@example.test',
 				verification: { status: 'verified' },
@@ -37,7 +37,7 @@ describe('same-email Google onboarding eligibility', () => {
 		{
 			externalAccounts: [
 				{
-					provider: 'google',
+					provider: 'oauth_google',
 					providerUserId: 'g',
 					emailAddress: 'other@example.test',
 					verification: { status: 'verified' },
@@ -47,7 +47,7 @@ describe('same-email Google onboarding eligibility', () => {
 		{
 			externalAccounts: [
 				{
-					provider: 'github',
+					provider: 'oauth_github',
 					providerUserId: 'g',
 					emailAddress: 'member@example.test',
 					verification: { status: 'verified' },
@@ -57,7 +57,7 @@ describe('same-email Google onboarding eligibility', () => {
 		{
 			externalAccounts: [
 				{
-					provider: 'google',
+					provider: 'oauth_google',
 					providerUserId: 'g',
 					emailAddress: 'member@example.test',
 					verification: { status: 'unverified' },

@@ -4,7 +4,9 @@ const sdk = vi.hoisted(() => ({
 	load: vi.fn(async () => {}),
 	setActive: vi.fn(async () => {}),
 	signOut: vi.fn(async () => {}),
-	handleRedirectCallback: vi.fn(async () => {}),
+	handleRedirectCallback: vi.fn<
+		(params: unknown, navigate: (destination: string) => Promise<unknown>) => Promise<void>
+	>(async () => {}),
 	session: { getToken: vi.fn(async () => 'fixture-token') },
 	user: { externalAccounts: [{ provider: 'google', verification: { status: 'verified' } }] },
 	client: {
@@ -37,6 +39,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('pinned public Clerk adapter contract', () => {
+	it('executes the callback navigation guard and rejects an external destination', async () => {
+		const navigation = { origin: 'https://site.example.test', replace: vi.fn() };
+		const { completeCallback } = await loadClerkOnboarding('pk_test_fixture', navigation);
+		await completeCallback();
+		const navigate = sdk.handleRedirectCallback.mock.calls[0]?.[1];
+		if (navigate === undefined) throw new Error('Missing callback navigator');
+		await expect(navigate('https://hostile.example/oauth/auth/return')).rejects.toThrow(
+			'Unexpected login destination',
+		);
+		await expect(navigate('/oauth/admin')).rejects.toThrow('Unexpected login destination');
+		expect(navigation.replace).not.toHaveBeenCalled();
+		await navigate('/oauth/auth/return');
+		expect(navigation.replace).toHaveBeenCalledWith('https://site.example.test/oauth/auth/return');
+	});
 	it('requests only Google sign-in with fixed owned callbacks and no additional scopes', async () => {
 		const { runtime } = await loadClerkOnboarding('pk_test_fixture', {
 			origin: 'https://site.example.test',

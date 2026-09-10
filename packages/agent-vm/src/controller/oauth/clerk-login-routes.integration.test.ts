@@ -150,7 +150,7 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 					body: JSON.stringify(identity),
 				})
 			).status,
-		).toBe(403);
+		).toBe(400);
 	});
 	it('requires a live continuation before callback SDK work', async () => {
 		const { app, continuations } = fixture();
@@ -218,7 +218,7 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 							{
 								object: 'google_account',
 								id: 'external_google',
-								provider: 'google',
+								provider: 'oauth_google',
 								provider_user_id: 'google_member',
 								email_address: 'member@example.test',
 								verification: { status: 'verified', strategy: 'oauth_google' },

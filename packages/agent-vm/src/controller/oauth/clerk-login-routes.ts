@@ -213,6 +213,8 @@ export function createClerkLoginRoutes(props: {
 	app.post('/oauth/auth/prepare-google', async (context) => {
 		if (context.req.header('origin') !== props.websiteOrigin)
 			return context.text('Invalid browser origin.', 403);
+		if (new URL(context.req.url).search !== '' || (await context.req.text()) !== '')
+			return context.text('Unexpected login preparation input.', 400);
 		const binding = readBinding(context);
 		if (!props.continuations.isActive(binding))
 			return context.text('Login context expired. Start again.', 409);
