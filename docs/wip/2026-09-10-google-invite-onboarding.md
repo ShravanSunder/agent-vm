@@ -69,3 +69,30 @@ provider verification; that boundary needs an explicit test in this correction.
 These are upstream main source pointers, not a chosen pinned frontend SDK API.
 Select and inspect an exact SDK version before implementation; do not mix legacy
 authenticateWithRedirect and newer sso/ticket APIs by guesswork.
+
+## Pinned API findings and simplification question
+
+Clerk JS 6.31.1 tag resolves to `bb049dd8f8e4dc9f2425a09bca12a54ad8421155`.
+Its own SignUpStart accepts the ticket first, then supplies
+`continueSignUp: true` to Google authentication when signup remains incomplete.
+The high-level redirect API PATCHes that signup; it does not read a ticket from
+the URL. A combined ticket plus OAuth request is not a documented contract.
+
+Signed-in `User.createExternalAccount` returns the provider redirect URL but does
+not navigate. The browser follows it and reloads user state on return. Clerk's
+own ConnectedAccountsMenu wraps this action in reverification, which can add
+another step for an older session. Copying private reverification UI is not an
+acceptable shortcut.
+
+Clerk's official account-linking guide provides a simpler alternative: Google
+sign-in automatically links an existing Clerk account when both have the same
+verified email. This could remove custom external-account connection handling.
+Whether invitation email must equal the Google login email is an owner-controlled
+onboarding constraint not established by the existing issuer/user-ID ownership
+model. Do not silently select that restriction, or add different-email account
+management, before resolving it. Website ownership remains issuer plus user ID.
+
+Source: https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking
+and pinned `packages/ui/src/components/UserProfile/ConnectedAccountsMenu.tsx`,
+`packages/shared/src/react/hooks/useReverification.ts`, and
+`packages/clerk-js/src/core/resources/User.ts`.
