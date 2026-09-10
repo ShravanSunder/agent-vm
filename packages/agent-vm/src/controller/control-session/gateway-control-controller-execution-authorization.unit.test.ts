@@ -11,10 +11,7 @@ import {
 	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
-import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
-} from '@agent-vm/oauth-broker-contracts';
+import { oauthAccountIdSchema, oauthApplicationIdSchema } from '@agent-vm/oauth-broker-contracts';
 import {
 	deterministicOperationId,
 	directDispatchFingerprint,
@@ -208,15 +205,15 @@ async function writeToolPortalAuthoredConfig(
 								cancel: { kind: 'registered_action' },
 								list: { kind: 'registered_action' },
 								reauthorize: { kind: 'registered_action' },
-								revoke: { kind: 'registered_action' },
+								disconnect: { kind: 'registered_action' },
 								status: { kind: 'registered_action' },
 							},
 						},
 						calls: {
-							requiresApproval: { allow: ['reauthorize', 'revoke'] },
+							requiresApproval: { allow: ['reauthorize', 'disconnect'] },
 							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
 						},
-						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
+						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'disconnect', 'status'] },
 					},
 				}
 			: {}),
@@ -541,7 +538,7 @@ const oauthInvocationPrincipal = trustedPrincipal;
 async function oauthApprovalReservation(props: {
 	readonly arguments: Readonly<Record<string, string>>;
 	readonly callId: string;
-	readonly capabilityName: 'reauthorize' | 'revoke';
+	readonly capabilityName: 'reauthorize' | 'disconnect';
 	readonly systemConfig: LoadedSystemConfig;
 }): Promise<GatewayRuntimeControllerExecutionDispatchReservation> {
 	const admission = await loadGatewayRuntimePortalAdmissionFile(
@@ -588,16 +585,16 @@ async function oauthApprovalReservation(props: {
 }
 
 function createOAuthApprovedPayload(props: {
-	readonly accountProfileId: string;
+	readonly accountId: string;
 	readonly applicationId: string;
 	readonly callId: string;
-	readonly capabilityName: 'reauthorize' | 'revoke';
+	readonly capabilityName: 'reauthorize' | 'disconnect';
 	readonly reservation: GatewayRuntimeControllerExecutionDispatchReservation;
 }): Extract<GatewayControlToolPortalControllerExecutionPayload, { kind: 'registered_action' }> {
 	return {
 		action: {
 			actionId: `oauth_authorization.${props.capabilityName}`,
-			accountProfileId: oauthAccountProfileIdSchema.parse(props.accountProfileId),
+			accountId: oauthAccountIdSchema.parse(props.accountId),
 			applicationId: oauthApplicationIdSchema.parse(props.applicationId),
 			authority: { kind: 'controller_approval_reservation', reservation: props.reservation },
 			callerContext: { callerContextId: trustedCallerContext.callerContextId },
@@ -694,7 +691,7 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		await writeEffectiveToolPortalSnapshot(systemConfig, { approvalAccessConfigured: true });
 		const callId = 'oauth-reauthorize-call-a';
 		const approvedArguments = {
-			accountProfileId: 'personal-google',
+			accountId: '33333333-3333-4333-8333-333333333333',
 			applicationId: 'gmail-app',
 		};
 		const reservation = await oauthApprovalReservation({
@@ -720,17 +717,17 @@ describe('authorizeGatewayControlControllerExecution', () => {
 		).resolves.toEqual({ authorized: true });
 		for (const substitutedPayload of [
 			createOAuthApprovedPayload({
-				accountProfileId: 'work-google',
+				accountId: '44444444-4444-4444-8444-444444444444',
 				applicationId: 'youtube-app',
 				callId,
 				capabilityName: 'reauthorize',
 				reservation,
 			}),
 			createOAuthApprovedPayload({
-				accountProfileId: 'work-google',
+				accountId: '44444444-4444-4444-8444-444444444444',
 				applicationId: 'youtube-app',
 				callId,
-				capabilityName: 'revoke',
+				capabilityName: 'disconnect',
 				reservation,
 			}),
 		]) {

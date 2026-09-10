@@ -342,6 +342,7 @@ describe('createGatewayZoneVmOperations', () => {
 		expect(gatewayVm.getHostProcessId()).toBe(12_345);
 		expect(sshAccess.port).toBe(2200);
 		expect(enableSsh).toHaveBeenCalledWith({ user: 'sandbox' });
+		expect(gatewayVm).not.toHaveProperty('fileTransfer');
 		expect(gatewayVm).not.toHaveProperty('close');
 		expect(gatewayVm).not.toHaveProperty('configureIngressRoutes');
 		expect(gatewayVm).not.toHaveProperty('enableIngress');

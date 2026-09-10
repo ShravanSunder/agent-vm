@@ -10,6 +10,7 @@ describe('OAuth approval UI package entrypoint', () => {
 		expect(sourceLines).toEqual([
 			"export * from '../contracts.js';",
 			"export * from './oauth-approval-renderer.js';",
+			"export * from './oauth-account-policy-renderer.js';",
 		]);
 	});
 });

@@ -5,6 +5,11 @@ import path from 'node:path';
 import {
 	loadMcpConfig,
 	loadToolPortalConfig,
+	loadOAuthConfig,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	isControllerToolVmConfiguredCliOperation,
+	compileOAuthPolicy,
+	configuredGoogleOperationKey,
 	compileToolPortalNamespaceDiscoveryByProfile,
 	effectiveManagedToolPortalConfigSchema,
 	encodeConfiguredCliPreparedImageIdentity,
@@ -22,6 +27,7 @@ import {
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type { ManagedVmImageCapability } from '@agent-vm/managed-vm';
+import { getGooglePolicyCatalog } from '@agent-vm/oauth-broker/google';
 import type { MediatedSecretSpec, SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import {
@@ -84,7 +90,14 @@ const effectiveConfigManifestFileName = 'tool-portal-effective-manifest.json';
 const managedControllerExecutionToolsByNamespace: Readonly<Record<string, ReadonlySet<string>>> =
 	Object.freeze({
 		controller_execution: new Set(['controller_host_probe', 'workspace_git_push']),
-		oauth_authorization: new Set(['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status']),
+		oauth_authorization: new Set([
+			'begin',
+			'cancel',
+			'list',
+			'reauthorize',
+			'disconnect',
+			'status',
+		]),
 	});
 
 interface EffectiveConfigManifest {
@@ -113,6 +126,7 @@ export interface McpPortalEffectiveToolPortalConfigSnapshot {
 }
 
 async function prepareConfiguredCliManagedVmImages(props: {
+	readonly zoneId: string;
 	readonly authoredConfigDir: string | undefined;
 	readonly effectiveHostConfigDir: string;
 	readonly managedVmImages: ManagedVmImageCapability | undefined;
@@ -123,6 +137,35 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	const effectiveConfig = structuredClone(props.toolPortalConfig);
 	if (effectiveConfig.mode !== 'managed') {
 		throw new Error('tool-portal: effective Managed VM image preparation requires managed mode.');
+	}
+	const hasGoogle = Object.values(effectiveConfig.profiles).some((profile) =>
+		Object.values(profile.namespaces).some(
+			(namespace) =>
+				namespace.backend.kind === 'controller_execution' &&
+				Object.values(namespace.backend.operations).some(
+					(operation) =>
+						operation.kind === 'configured_cli' &&
+						isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
+						operation.authorization?.kind === 'oauth_account',
+				),
+		),
+	);
+	let googleCompilation: ReturnType<typeof compileOAuthPolicy> | undefined;
+	if (hasGoogle) {
+		if (props.authoredConfigDir === undefined)
+			throw new Error(
+				'Managed Google command preparation requires its authored OAuth config pair.',
+			);
+		const oauthConfig = await loadOAuthConfig(
+			path.join(props.authoredConfigDir, 'oauth.config.jsonc'),
+		);
+		if (oauthConfig.zoneId !== props.zoneId)
+			throw new Error('OAuth configuration belongs to another zone.');
+		googleCompilation = compileOAuthPolicy({
+			oauthConfig,
+			toolPortalConfig: props.toolPortalConfig,
+			catalog: getGooglePolicyCatalog(),
+		});
 	}
 	for (const profile of Object.values(effectiveConfig.profiles)) {
 		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
@@ -212,20 +255,36 @@ async function prepareConfiguredCliManagedVmImages(props: {
 								namespace,
 								{
 									...namespacePolicy,
-									backend:
-										namespacePolicy.backend.kind !== 'controller_execution'
-											? namespacePolicy.backend
-											: {
+									...(namespacePolicy.backend.kind !== 'controller_execution'
+										? {}
+										: {
+												backend: {
 													...namespacePolicy.backend,
 													operations: Object.fromEntries(
 														Object.entries(namespacePolicy.backend.operations).map(
-															([operationName, operation]) => [
-																operationName,
-																normalizePreparedControllerExecutionOperation(operation),
-															],
+															([operationName, operation]) => {
+																const commandSet =
+																	googleCompilation?.commandSetsByConfiguredOperation[
+																		configuredGoogleOperationKey(
+																			profileId,
+																			namespace,
+																			operationName,
+																		)
+																	];
+																return [
+																	operationName,
+																	operation.kind === 'configured_cli' && commandSet !== undefined
+																		? {
+																				...normalizePreparedControllerExecutionOperation(operation),
+																				compiledGoogle: commandSet,
+																			}
+																		: normalizePreparedControllerExecutionOperation(operation),
+																];
+															},
 														),
 													),
 												},
+											}),
 									discovery: discoveryByNamespace.get(namespace) ?? {},
 								},
 							]),
@@ -348,15 +407,15 @@ function buildManagedEffectivePortalConfig(
 					profileId,
 					{
 						namespaces: Object.fromEntries(
-							recordEntries<EffectivePortalSourceNamespacePolicy>(profile.namespaces).map(
-								([namespaceId, namespacePolicy]) => [
+							recordEntries<EffectivePortalSourceNamespacePolicy>(profile.namespaces)
+								.filter(([, policy]) => !('source' in policy.calls))
+								.map(([namespaceId, namespacePolicy]) => [
 									namespaceId,
 									{
 										calls: namespacePolicy.calls,
 										tools: namespacePolicy.tools,
 									},
-								],
-							),
+								]),
 						),
 					},
 				],
@@ -414,6 +473,22 @@ function assertManagedControllerExecutionPolicy(props: {
 		throw new Error(
 			`tool-portal: managed profile "${props.profileId}" namespace "${props.namespaceId}" tools must explicitly allow controller execution operations.`,
 		);
+	}
+	if ('source' in props.namespacePolicy.calls) {
+		if (props.namespacePolicy.backend.kind !== 'controller_execution')
+			throw new Error('Managed Google policy requires controller execution.');
+		for (const toolName of props.namespacePolicy.tools.allow) {
+			const operation = props.namespacePolicy.backend.operations[toolName];
+			if (
+				operation?.kind !== 'configured_cli' ||
+				!isControllerEphemeralManagedVmConfiguredCliOperation(operation) ||
+				operation.authorization?.kind !== 'oauth_account'
+			)
+				throw new Error(
+					'Managed Google policy can expose only registered Google command operations.',
+				);
+		}
+		return;
 	}
 	if (
 		props.namespacePolicy.calls.requiresApproval.allow === '*' ||
@@ -473,8 +548,9 @@ function assertEffectiveConfiguredCliCommandsDoNotOverlap(props: {
 		for (const [operationName, operation] of Object.entries(namespacePolicy.backend.operations)) {
 			if (operation.kind !== 'configured_cli') continue;
 			const commands = commandsByExecutable.get(operation.executablePath) ?? [];
-			const configuredCommands =
-				'suggestCommands' in operation ? operation.suggestCommands : operation.commands;
+			const configuredCommands = isControllerToolVmConfiguredCliOperation(operation)
+				? operation.suggestCommands
+				: operation.commands;
 			for (const command of configuredCommands) {
 				commands.push({
 					identity: `${namespaceId}.${operationName}`,
@@ -510,6 +586,7 @@ function profileAllowsWorkspaceGitPush(profile: ToolPortalConfig['profiles'][str
 	return Object.values(profile.namespaces).some(
 		(namespacePolicy) =>
 			namespacePolicy.backend.kind === 'controller_execution' &&
+			!('source' in namespacePolicy.calls) &&
 			selectorAllowsTool(namespacePolicy.tools, 'workspace_git_push') &&
 			(selectorAllowsTool(namespacePolicy.calls.requiresApproval, 'workspace_git_push') ||
 				selectorAllowsTool(namespacePolicy.calls.withoutApproval, 'workspace_git_push')),
@@ -581,9 +658,7 @@ function assertManagedToolPortalConfig(props: {
 	});
 }
 
-function selectorEffectivelyAllowsAnyTool(
-	selector: ToolPortalNamespacePolicy['calls']['requiresApproval'],
-): boolean {
+function selectorEffectivelyAllowsAnyTool(selector: ToolPortalNamespacePolicy['tools']): boolean {
 	return (
 		selector.allow === '*' || selector.allow.some((toolName) => !selector.deny.includes(toolName))
 	);
@@ -592,16 +667,19 @@ function selectorEffectivelyAllowsAnyTool(
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
 	return Object.values(config.profiles).some((profile) =>
 		Object.values(profile.namespaces).some((namespacePolicy) => {
+			if ('source' in namespacePolicy.calls)
+				return selectorEffectivelyAllowsAnyTool(namespacePolicy.tools);
 			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
 			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
+			const calls = namespacePolicy.calls;
 			return Object.entries(namespacePolicy.backend.operations).some(
 				([operationName, operation]) =>
 					operation.kind === 'configured_cli' &&
-					('suggestCalls' in operation
+					(isControllerToolVmConfiguredCliOperation(operation)
 						? operation.suggestCalls.suggestRequiresApproval.length > 0
-						: operation.calls.requiresApproval.length > 0) &&
+						: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
 					selectorAllowsTool(namespacePolicy.tools, operationName) &&
-					selectorAllowsTool(namespacePolicy.calls.withoutApproval, operationName),
+					selectorAllowsTool(calls.withoutApproval, operationName),
 			);
 		}),
 	);
@@ -789,6 +867,7 @@ async function buildEffectivePlanFromConfig(
 		};
 	}
 	const preparedToolPortalConfig = await prepareConfiguredCliManagedVmImages({
+		zoneId: props.zoneId,
 		authoredConfigDir: props.authoredConfigDir,
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
 		managedVmImages: props.managedVmImages,

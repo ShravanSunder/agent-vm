@@ -1,10 +1,14 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
+import { controllerConfiguredCliInputSchema } from '@agent-vm/config-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import {
 	oauthAuthorizationActionRequestSchema,
+	type GogFileInputSnapshot,
+	type ManagedGooglePreflightResult,
 	type OAuthAuthorizationActionRequest,
 } from '@agent-vm/oauth-broker-contracts';
 import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-vm/secret-management';
@@ -12,6 +16,7 @@ import { createSecretResolver as createOnePasswordSecretResolver } from '@agent-
 import { resolveCliVersion } from '../cli/cli-version.js';
 import {
 	deploymentCacheDirForSystemConfig,
+	gatewayFrameworkCacheDirForSystemConfig,
 	resolveControllerHealthConfig,
 } from '../config/system-config.js';
 import {
@@ -39,6 +44,7 @@ import { readProcessIdentity as readManagedVmProcessIdentity } from '../shared/m
 import { runTaskWithResult } from '../shared/run-task.js';
 import { createUnstartedToolVm, type ToolVmRootBinding } from '../tool-vm/tool-vm-lifecycle.js';
 import { createControllerApprovalLedger } from './approval/controller-approval-ledger.js';
+import type { GatewayControlTrustedCallerContext } from './control-session/gateway-control-caller-context.js';
 import { authorizeGatewayControlControllerExecution } from './control-session/gateway-control-controller-execution-authorization.js';
 import type {
 	GatewayControlControllerExecutionOperations,
@@ -78,6 +84,25 @@ import {
 	resolveControllerGatewayRecordTargets,
 	type ControllerGatewayRecordTargets,
 } from './durable-state/controller-state-record-paths.js';
+import {
+	cleanupSharedStagingZoneAfterContainment,
+	createControllerSharedStaging,
+} from './files/controller-shared-staging.js';
+import {
+	withCurrentToolVmWorkFiles,
+	type ToolVmWorkFileAccess,
+	type ToolVmWorkFileBinding,
+} from './files/current-tool-vm-work-files.js';
+import { inspectGogFileInputs } from './files/gog-file-input-preflight.js';
+import { accessNativeAttachment } from './files/native-attachment-controller-access.js';
+import { createNativeAttachmentGatewayDestroy } from './files/native-attachment-gateway-cleanup.js';
+import { cleanupNativeAttachmentCacheAfterContainment } from './files/native-attachment-host-files.js';
+import { createNativeAttachmentStaging } from './files/native-attachment-staging.js';
+import { createOperationFileRetentionBudget } from './files/operation-file-retention-budget.js';
+import {
+	loadOperationFolderGuestProgram,
+	OperationFolderAccessError,
+} from './files/operation-folder-guest-access.js';
 import { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import { classifyGatewayRecoveryAction } from './health/gateway-recovery-actions.js';
 import {
@@ -106,6 +131,9 @@ import {
 	prepareControllerOAuthRuntime as prepareControllerOAuthRuntimeDefault,
 	type PreparedControllerOAuthRuntime,
 } from './oauth/controller-oauth-runtime.js';
+import { validateGoogleApprovalIntent } from './oauth/google-approval-intent-validation.js';
+import type { ManagedGoogleInvocationRequest } from './oauth/google-permission-policy-service.js';
+import { resolveManagedGoogleFilePreflight } from './oauth/managed-google-file-preflight.js';
 import {
 	requireCurrentConfiguredCliAuthorization,
 	type ConfiguredCliAuthorizedOperation,
@@ -233,7 +261,8 @@ function oauthAuthorizationRequestFromControlPayload(
 			return oauthAuthorizationActionRequestSchema.parse({ actionId: payload.actionId });
 		case 'oauth_authorization.begin':
 			return oauthAuthorizationActionRequestSchema.parse({
-				accountProfileId: payload.accountProfileId,
+				applicationId: payload.applicationId,
+				...(payload.suggestedAlias === undefined ? {} : { suggestedAlias: payload.suggestedAlias }),
 				actionId: payload.actionId,
 				...(payload.suggestedSelections === undefined
 					? {}
@@ -247,19 +276,21 @@ function oauthAuthorizationRequestFromControlPayload(
 			});
 		case 'oauth_authorization.reauthorize':
 			return oauthAuthorizationActionRequestSchema.parse({
-				accountProfileId: payload.accountProfileId,
+				accountId: payload.accountId,
 				actionId: payload.actionId,
 				applicationId: payload.applicationId,
 				...(payload.suggestedSelections === undefined
 					? {}
 					: { suggestedSelections: payload.suggestedSelections }),
 			});
-		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.disconnect':
 			return oauthAuthorizationActionRequestSchema.parse({
-				accountProfileId: payload.accountProfileId,
+				accountId: payload.accountId,
 				actionId: payload.actionId,
 				applicationId: payload.applicationId,
 			});
+		default:
+			throw new Error('Unsupported OAuth authorization action.');
 	}
 }
 
@@ -579,12 +610,108 @@ async function startControllerRuntimeWithOwnershipLock(
 		...new Set(options.zoneIds ?? options.systemConfig.zones.map((zone) => zone.id)),
 	];
 	let preparedOAuthRuntime: PreparedControllerOAuthRuntime | undefined;
+	async function withGoogleInputFiles<TResult>(props: {
+		readonly caller: Pick<
+			GatewayControlTrustedCallerContext,
+			'principal' | 'bootId' | 'controllerEpoch' | 'zoneId'
+		>;
+		readonly request: ManagedGoogleInvocationRequest;
+		readonly expectedBinding?: ToolVmWorkFileBinding;
+		readonly signal?: AbortSignal;
+		readonly use: (access: ToolVmWorkFileAccess) => Promise<TResult>;
+	}): Promise<TResult> {
+		const lifecycle = registry.getManagedGatewayRuntime(props.caller.zoneId).getLifecycleState();
+		if (lifecycle.kind !== 'running' && lifecycle.kind !== 'running-degraded')
+			throw new OperationFolderAccessError('unavailable');
+		const gateway = lifecycle.gateway.gatewayIdentity;
+		const diagnostics = lifecycle.gateway.controlSession?.getDiagnostics();
+		if (
+			gateway.controllerEpoch !== props.caller.controllerEpoch ||
+			!diagnostics?.accepted ||
+			diagnostics.attachmentGeneration === undefined
+		)
+			throw new OperationFolderAccessError('unavailable');
+		const digest = createHash('sha256').update(JSON.stringify(props.request)).digest('hex');
+		const signal = AbortSignal.any([
+			controllerShutdown.signal,
+			AbortSignal.timeout(120_000),
+			...(props.signal === undefined ? [] : [props.signal]),
+		]);
+		return await withCurrentToolVmWorkFiles({
+			agentId: props.caller.principal.agentId,
+			authority: { gateway, principal: props.caller.principal },
+			executionProof: {
+				processEpoch: props.caller.bootId,
+				sessionAttachmentGeneration: diagnostics.attachmentGeneration,
+				semanticOperationId: digest,
+				operationPayloadDigest: digest,
+			},
+			...(props.expectedBinding === undefined ? {} : { expectedBinding: props.expectedBinding }),
+			leaseManager,
+			program: await loadOperationFolderGuestProgram(),
+			signal,
+			use: props.use,
+		});
+	}
+	async function resolveGoogleInvocationWithFiles(
+		caller: Pick<
+			GatewayControlTrustedCallerContext,
+			'principal' | 'bootId' | 'controllerEpoch' | 'zoneId'
+		>,
+		request: ManagedGoogleInvocationRequest,
+	): Promise<ManagedGooglePreflightResult> {
+		const runtime = preparedOAuthRuntime;
+		if (runtime === undefined || runtime.zoneId !== caller.zoneId) return { kind: 'unavailable' };
+		return await resolveManagedGoogleFilePreflight({
+			compiled: runtime.compiledOAuthPolicy,
+			request,
+			resolvePolicy: (policyRequest) =>
+				runtime.policyService.resolveManagedGoogleInvocation(policyRequest),
+			readFileInputs: async (paths): Promise<GogFileInputSnapshot> =>
+				await withGoogleInputFiles({
+					caller,
+					request,
+					use: async (access) =>
+						await inspectGogFileInputs({
+							binding: access.binding,
+							paths,
+							files: access.files,
+							signal: access.signal,
+						}),
+				}),
+		});
+	}
 	const approvalLedgersByZoneId = new Map(
 		options.systemConfig.zones.filter(isManagedGatewayZone).map(
 			(zone) =>
 				[
 					zone.id,
 					createControllerApprovalLedger({
+						validateInputAuthority: async (intent, authority) => {
+							if (intent.managedGoogle?.fileInputs === undefined) return true;
+							const current = await resolveGoogleInvocationWithFiles(
+								{
+									principal: intent.trustedContext.principal,
+									bootId: authority.frameworkEpoch,
+									controllerEpoch: authority.controllerEpoch,
+									zoneId: authority.zoneId,
+								},
+								{
+									agentId: intent.trustedContext.principal.agentId,
+									profileId: intent.trustedContext.principal.toolPortalProfileId,
+									namespaceId: intent.call.namespace,
+									operationName: intent.call.name,
+									input: controllerConfiguredCliInputSchema.parse(intent.call.arguments),
+								},
+							);
+							return isDeepStrictEqual(current, intent.managedGoogle);
+						},
+						validateIntent: (intent): boolean =>
+							validateGoogleApprovalIntent({
+								intent,
+								runtime: preparedOAuthRuntime,
+								zoneId: zone.id,
+							}),
 						challengeTtlMs: defaultApprovalChallengeTtlMs,
 						currentControllerEpoch: controllerEpoch,
 						now,
@@ -597,6 +724,17 @@ async function startControllerRuntimeWithOwnershipLock(
 		options.systemConfig,
 		secretResolver,
 	);
+	const fileRetentionBudget = createOperationFileRetentionBudget();
+	const sharedStaging = createControllerSharedStaging({
+		controllerRuntimeDir: options.systemConfig.controllerRuntimeDir,
+		controllerEpoch,
+		retentionBudget: fileRetentionBudget,
+		now,
+	});
+	const stagingReceivers = new Map<
+		string,
+		{ zoneId: string; agentId: string; binding: ToolVmWorkFileBinding }
+	>();
 	const createManagedToolVm = async (
 		toolVmOptions: ControllerManagedToolVmOptions,
 	): Promise<
@@ -608,6 +746,9 @@ async function startControllerRuntimeWithOwnershipLock(
 		return await createUnstartedToolVm(
 			{
 				agentId: toolVmOptions.agentId,
+				...(toolVmOptions.hostPublishedFilesRoot === undefined
+					? {}
+					: { hostPublishedFilesRoot: toolVmOptions.hostPublishedFilesRoot }),
 				profile: toolVmOptions.profile,
 				systemConfig: options.systemConfig,
 				tcpSlot: toolVmOptions.tcpSlot,
@@ -680,9 +821,32 @@ async function startControllerRuntimeWithOwnershipLock(
 		staleAfterMs: controllerHealthConfig.staleAfterMs,
 	});
 	const leaseManager = createLeaseManager({
+		cleanupManagedVmStagingRoot: async ({
+			agentId,
+			leafGeneration,
+			leaseId,
+			vmId,
+			zoneId,
+		}): Promise<void> => {
+			const cleanup = async (): Promise<void> => {
+				const staging = await sharedStaging.getStore(zoneId, agentId);
+				const result = await staging.retireReceiverRoot({
+					leafGeneration,
+					...(vmId === undefined ? {} : { receiver: { leaseId, leafGeneration, vmId } }),
+				});
+				if (result.pending > 0) throw new Error('Receiver staging root cleanup remains pending.');
+				stagingReceivers.delete(leaseId);
+			};
+			if (preparedOAuthRuntime?.zoneId === zoneId)
+				await preparedOAuthRuntime.withPublicationGuard(cleanup);
+			else await cleanup();
+		},
 		controllerPort: options.systemConfig.host.controllerPort,
-		createManagedVm: async (leaseOptions) =>
-			await createManagedToolVm({
+		createManagedVm: async (leaseOptions) => {
+			const staging = await sharedStaging.getStore(leaseOptions.zoneId, leaseOptions.agentId);
+			const hostPublishedFilesRoot = await staging.prepareReceiverRoot(leaseOptions.leafGeneration);
+			const created = await createManagedToolVm({
+				hostPublishedFilesRoot,
 				agentId: leaseOptions.agentId,
 				...(leaseOptions.hostGitDirectoryRoot === undefined
 					? {}
@@ -692,7 +856,18 @@ async function startControllerRuntimeWithOwnershipLock(
 				hostWorkspaceRoot: leaseOptions.hostWorkspaceRoot,
 				zoneId: leaseOptions.zoneId,
 				secretResolver,
-			}),
+			});
+			stagingReceivers.set(leaseOptions.leaseId, {
+				zoneId: leaseOptions.zoneId,
+				agentId: leaseOptions.agentId,
+				binding: {
+					leaseId: leaseOptions.leaseId,
+					leafGeneration: leaseOptions.leafGeneration,
+					vmId: 'vm' in created ? created.vm.id : created.id,
+				},
+			});
+			return created;
+		},
 		now,
 		managedVmExactProcessTermination: dependencies.managedVmExactProcessTermination,
 		ownershipCoordinator,
@@ -821,7 +996,15 @@ async function startControllerRuntimeWithOwnershipLock(
 	};
 	const credentialedRuntimeRegistryPublisher =
 		createControllerCredentialedRuntimeRegistryPublisher();
+	const nativeAttachmentStaging = createNativeAttachmentStaging({
+		retentionBudget: fileRetentionBudget,
+	});
 	const credentialedRuntimeManager = createCredentialedRuntimeManager({
+		sharedStaging: {
+			getStore: async (zoneId, agentId) => await sharedStaging.getStore(zoneId, agentId),
+			ownedDirectories: dependencies.managedVmOwnedDirectories,
+		},
+		retentionBudget: fileRetentionBudget,
 		controllerStateDir: options.systemConfig.controllerStateDir,
 		exactProcessTermination: dependencies.managedVmExactProcessTermination,
 		managedVmFactory: dependencies.managedVmFactory,
@@ -829,7 +1012,24 @@ async function startControllerRuntimeWithOwnershipLock(
 		readProcessIdentity: dependencies.readProcessIdentity ?? readManagedVmProcessIdentity,
 		secretResolver,
 	});
+	leaseManager.subscribeLeaseRetirement(async ({ leaseId }) => {
+		const receiver = stagingReceivers.get(leaseId);
+		if (receiver === undefined) return;
+		const cleanup = async (): Promise<void> => {
+			const staging = await sharedStaging.getStore(receiver.zoneId, receiver.agentId);
+			const result = await staging.retireReceiver(receiver.binding);
+			if (result.pending > 0) throw new Error('Receiver staging cleanup remains pending.');
+			stagingReceivers.delete(leaseId);
+		};
+		if (preparedOAuthRuntime?.zoneId === receiver.zoneId)
+			await preparedOAuthRuntime.withPublicationGuard(cleanup);
+		else await cleanup();
+	});
 	const executeConfiguredCliInManagedVm = createConfiguredCliManagedVmExecutor({
+		validateGooglePolicySnapshot: ({ request, expected, zoneId }) =>
+			preparedOAuthRuntime !== undefined &&
+			preparedOAuthRuntime.zoneId === zoneId &&
+			preparedOAuthRuntime.policyService.readCurrentPolicyForDispatch({ request, expected }),
 		validateOAuthRuntimeCredentialSnapshot: (request) => {
 			if (preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== request.zoneId) {
 				return { kind: 'stale', reason: 'credential-unavailable' };
@@ -858,6 +1058,41 @@ async function startControllerRuntimeWithOwnershipLock(
 		runtimeManager: credentialedRuntimeManager,
 	});
 	const gatewayControlControllerExecutions: GatewayControlControllerExecutionOperations = {
+		accessNativeAttachment: async (context) => {
+			const current = registry.getManagedGatewayRuntime(context.gateway.zoneId).getLifecycleState();
+			if (
+				(current.kind !== 'running' && current.kind !== 'running-degraded') ||
+				!gatewayIdentitiesEqual(current.gateway.gatewayIdentity, context.gateway)
+			)
+				return { kind: 'unavailable' };
+			return await accessNativeAttachment({
+				context: {
+					...context,
+					signal: AbortSignal.any([context.signal, controllerShutdown.signal]),
+				},
+				destinationVm: current.gateway.vm,
+				cacheDirectory: gatewayFrameworkCacheDirForSystemConfig(
+					options.systemConfig,
+					context.gateway.zoneId,
+				),
+				sharedStaging: await sharedStaging.getStore(
+					context.callerContext.zoneId,
+					context.callerContext.agentId,
+				),
+				leaseManager,
+				staging: nativeAttachmentStaging,
+				destinationAuthorityIsCurrent: () => {
+					const latest = registry
+						.getManagedGatewayRuntime(context.gateway.zoneId)
+						.getLifecycleState();
+					return (
+						!controllerShutdown.signal.aborted &&
+						(latest.kind === 'running' || latest.kind === 'running-degraded') &&
+						gatewayIdentitiesEqual(latest.gateway.gatewayIdentity, context.gateway)
+					);
+				},
+			});
+		},
 		authorizeControllerExecution: async ({
 			callerContext,
 			createdAtMs,
@@ -866,6 +1101,12 @@ async function startControllerRuntimeWithOwnershipLock(
 			session,
 		}) =>
 			await authorizeGatewayControlControllerExecution({
+				...(preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId
+					? {}
+					: {
+							resolveManagedGoogleInvocation: (request) =>
+								resolveGoogleInvocationWithFiles(callerContext, request),
+						}),
 				callerContext,
 				credentialedRuntimeRegistryPublisher,
 				createdAtMs,
@@ -886,6 +1127,12 @@ async function startControllerRuntimeWithOwnershipLock(
 			const executionSignal = AbortSignal.any([signal, controllerShutdown.signal]);
 			const reloadAuthorization = async (): Promise<ConfiguredCliAuthorizedOperation> => {
 				const currentAuthorization = await authorizeGatewayControlControllerExecution({
+					...(preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId
+						? {}
+						: {
+								resolveManagedGoogleInvocation: (request) =>
+									resolveGoogleInvocationWithFiles(callerContext, request),
+							}),
 					callerContext,
 					credentialedRuntimeRegistryPublisher,
 					createdAtMs,
@@ -909,6 +1156,61 @@ async function startControllerRuntimeWithOwnershipLock(
 						signal: executionSignal,
 					})
 				: await executeConfiguredCliInManagedVm({
+						publishFileResults: async ({ folder, assertCurrent }) => {
+							const runtime = preparedOAuthRuntime;
+							if (runtime === undefined || runtime.zoneId !== session.zoneId)
+								throw new OperationFolderAccessError('unavailable');
+							return await withGoogleInputFiles({
+								caller: callerContext,
+								request: {
+									agentId: callerContext.agentId,
+									profileId: callerContext.principal.toolPortalProfileId,
+									namespaceId: payload.capability.namespace,
+									operationName: payload.capability.name,
+									input: payload.input,
+								},
+								signal: executionSignal,
+								use: async (destination) =>
+									await folder.publish({
+										receiver: destination.binding,
+										withPublicationAuthority: async (expose) =>
+											await runtime.withPublicationGuard(async () => {
+												assertCurrent();
+												if (!destination.authorityIsCurrent())
+													throw new OperationFolderAccessError('unavailable');
+												await expose();
+											}),
+									}),
+							});
+						},
+						stageFileInputs: async ({ folder, expected }) => {
+							await withGoogleInputFiles({
+								caller: callerContext,
+								request: {
+									agentId: callerContext.agentId,
+									profileId: callerContext.principal.toolPortalProfileId,
+									namespaceId: payload.capability.namespace,
+									operationName: payload.capability.name,
+									input: payload.input,
+								},
+								expectedBinding: {
+									leaseId: expected.leaseId,
+									leafGeneration: expected.leafGeneration,
+									vmId: expected.vmId,
+								},
+								signal: executionSignal,
+								use: async (access) => {
+									for (const file of expected.files) {
+										// oxlint-disable-next-line no-await-in-loop -- stage bounded inputs serially under the same source lease.
+										await folder.stageInput(
+											file.relativePath,
+											access.files.read(file.relativePath),
+											file,
+										);
+									}
+								},
+							});
+						},
 						authorization,
 						input: payload.input,
 						operation,
@@ -948,12 +1250,22 @@ async function startControllerRuntimeWithOwnershipLock(
 		runControllerHostProbe: async () => await runControllerHostProbe(),
 	};
 	const gatewayControlOAuthAvailability = {
+		preflight: async ({ callerContext, request, session }) =>
+			preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId
+				? { kind: 'unavailable' }
+				: resolveGoogleInvocationWithFiles(callerContext, {
+						agentId: callerContext.agentId,
+						profileId: callerContext.principal.toolPortalProfileId,
+						namespaceId: request.capability.namespace,
+						operationName: request.capability.name,
+						input: request.input,
+					}),
 		resolve: async ({ callerContext, request, session }) => ({
 			items: request.requirements.map((requirement) => ({
 				availability:
 					preparedOAuthRuntime === undefined || preparedOAuthRuntime.zoneId !== session.zoneId
-						? { kind: 'authorization-status-unavailable' as const }
-						: preparedOAuthRuntime.brokerService.resolveToolAvailability({
+						? { kind: 'unavailable' as const }
+						: preparedOAuthRuntime.policyService.resolveOperationAvailability({
 								agentId: callerContext.agentId,
 								requirement,
 							}),
@@ -983,6 +1295,8 @@ async function startControllerRuntimeWithOwnershipLock(
 		await leaseManager.reapDeadIdleLeases();
 		await idleReaper.reapExpiredLeases();
 		await credentialedRuntimeManager.reapExpired();
+		await sharedStaging.reapExpired();
+		await nativeAttachmentStaging.reapPendingCleanup();
 		preparedOAuthRuntime?.brokerService.reapExpiredTransactions();
 	};
 	const reaperTimer = (dependencies.setIntervalImpl ?? setInterval)(
@@ -1154,7 +1468,7 @@ async function startControllerRuntimeWithOwnershipLock(
 						zoneId,
 					};
 					if (dependencies.checkObservabilityStackReadiness === undefined) {
-						return await requireManagedGatewayStartResult(
+						const startedGateway = await requireManagedGatewayStartResult(
 							await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
 								startGatewayZoneOptions,
 								{
@@ -1166,8 +1480,15 @@ async function startControllerRuntimeWithOwnershipLock(
 								},
 							),
 						);
+						return {
+							...startedGateway,
+							destroyGateway: createNativeAttachmentGatewayDestroy({
+								gateway: startedGateway,
+								staging: nativeAttachmentStaging,
+							}),
+						};
 					}
-					return await requireManagedGatewayStartResult(
+					const startedGateway = await requireManagedGatewayStartResult(
 						await (dependencies.startGatewayZone ?? startGatewayZoneForController)(
 							startGatewayZoneOptions,
 							{
@@ -1180,6 +1501,13 @@ async function startControllerRuntimeWithOwnershipLock(
 							},
 						),
 					);
+					return {
+						...startedGateway,
+						destroyGateway: createNativeAttachmentGatewayDestroy({
+							gateway: startedGateway,
+							staging: nativeAttachmentStaging,
+						}),
+					};
 				},
 				runtimeRecordTarget: controllerGatewayRecordTargetsFor(zone.id).managedGatewayRuntimeRecord,
 				secretResolver,
@@ -1377,15 +1705,38 @@ async function startControllerRuntimeWithOwnershipLock(
 					systemConfig: options.systemConfig,
 				}),
 		);
-		preparedOAuthRuntime?.setCredentialInvalidationHandler(async ({ agentId, zoneId }) => {
-			const retirement = await credentialedRuntimeManager.invalidateMaterial({
-				agentId,
-				reason: 'OAuth credential material changed',
-				zoneId,
-			});
-			if (retirement.kind === 'owner-unsafe') {
-				throw new Error('OAuth credential invalidation could not prove runtime containment.');
-			}
+		preparedOAuthRuntime?.setContainmentHandlers({
+			authorization: async (target) => {
+				const result = await credentialedRuntimeManager.invalidateMaterial({
+					agentId: target.agentId,
+					zoneId: target.zoneId,
+					reason: 'OAuth authorization changed',
+					scope: {
+						kind: 'oauth-authorization',
+						accountId: target.accountId,
+						applicationId: target.applicationId,
+						authorizationId: target.authorizationId,
+						throughGeneration: target.throughGeneration,
+					},
+				});
+				return result.kind === 'owner-unsafe' ? 'failed' : 'contained';
+			},
+			policy: async (target) => {
+				const result = await credentialedRuntimeManager.invalidateMaterial({
+					agentId: target.agentId,
+					zoneId: target.zoneId,
+					reason: 'Account policy changed',
+					scope: {
+						kind: 'oauth-authorization',
+						accountId: target.accountId,
+						applicationId: target.applicationId,
+						authorizationId: target.authorizationId,
+						throughGeneration: target.throughGeneration,
+						throughOverrideRevision: target.throughOverrideRevision,
+					},
+				});
+				return result.kind === 'owner-unsafe' ? 'failed' : 'contained';
+			},
 		});
 		await runTaskStep(
 			`Controller API on :${options.systemConfig.host.controllerPort}`,
@@ -1454,7 +1805,14 @@ async function startControllerRuntimeWithOwnershipLock(
 		await runTaskStep('Starting selected gateway zones', async () => {
 			for (const zoneId of registry.selectedZoneIds) {
 				// oxlint-disable-next-line no-await-in-loop -- exact recovery is intentionally per-zone
-				await credentialedRuntimeManager.recoverZone(zoneId);
+				const recovered = await credentialedRuntimeManager.recoverZone(zoneId);
+				if (preparedOAuthRuntime?.zoneId === zoneId) {
+					if (recovered.kind !== 'contained')
+						throw new Error(
+							'OAuth defaults cannot activate before old credentialed runtimes are contained.',
+						);
+					preparedOAuthRuntime.activateAfterRuntimeCleanup();
+				}
 			}
 			await registry.startSelectedZones();
 		});
@@ -1644,6 +2002,16 @@ export async function startControllerRuntime(
 					systemConfig: options.systemConfig,
 					zoneId,
 				});
+				// Existing recovery proved this selected zone's old VM tree stopped.
+				// oxlint-disable-next-line no-await-in-loop -- keep cleanup after each zone's containment proof.
+				await cleanupSharedStagingZoneAfterContainment({
+					controllerRuntimeDir: options.systemConfig.controllerRuntimeDir,
+					zoneId,
+				});
+				// oxlint-disable-next-line no-await-in-loop -- attachment leftovers belong to the same contained Gateway generation.
+				await cleanupNativeAttachmentCacheAfterContainment(
+					gatewayFrameworkCacheDirForSystemConfig(options.systemConfig, zoneId),
+				);
 			} catch (error) {
 				if (containsGatewayOwnershipCoordinatorErrorCode(error, 'owner-unsafe')) {
 					throw error;

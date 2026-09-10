@@ -1,6 +1,8 @@
 import {
 	GatewayApprovalDecisionRequestSchema,
 	GatewayApprovalDecisionResultSchema,
+	PortalAttachmentRequestSchema,
+	PortalAttachmentResultSchema,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
@@ -32,10 +34,11 @@ import {
 	oauthAuthorizationCancelRequestSchema,
 	oauthAuthorizationListRequestSchema,
 	oauthAuthorizationReauthorizeRequestSchema,
-	oauthAuthorizationRevokeRequestSchema,
+	oauthAuthorizationDisconnectRequestSchema,
 	oauthAuthorizationStatusRequestSchema,
 	oauthToolAvailabilityBatchRequestSchema,
 	oauthToolAvailabilityBatchResultSchema,
+	managedGooglePreflightResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 
@@ -104,6 +107,8 @@ export const GatewayControlRpcOperationSchema = z.enum([
 	'tool_vm_binding_request',
 	'tool_portal_controller_execution',
 	'tool_portal_oauth_availability',
+	'tool_portal_google_preflight',
+	'tool_portal_attachment',
 	'tool_portal_approval_decide',
 	'tool_portal_admission_reserve',
 	'tool_portal_dispatch_arm',
@@ -256,6 +261,31 @@ export const GatewayControlToolPortalOAuthAvailabilityPayloadSchema = z
 	.object({
 		callerContext: GatewayControlCallerContextRefSchema,
 		request: oauthToolAvailabilityBatchRequestSchema,
+	})
+	.strict();
+
+export const GatewayControlToolPortalGooglePreflightPayloadSchema = z
+	.object({
+		callerContext: GatewayControlCallerContextRefSchema,
+		request: z
+			.object({
+				capability: z
+					.object({ namespace: z.string().min(1).max(128), name: z.string().min(1).max(128) })
+					.strict(),
+				input: controllerConfiguredCliInputSchema,
+			})
+			.strict(),
+	})
+	.strict();
+export type GatewayControlGooglePreflightRequest = z.infer<
+	typeof GatewayControlToolPortalGooglePreflightPayloadSchema
+>['request'];
+
+export const GatewayControlToolPortalAttachmentPayloadSchema = z
+	.object({
+		callerContext: GatewayControlCallerContextRefSchema,
+		sessionId: z.string().min(1).max(256),
+		request: PortalAttachmentRequestSchema,
 	})
 	.strict();
 
@@ -506,7 +536,7 @@ export const gatewayControlRegisteredControllerExecutionActionIds = [
 	'oauth_authorization.cancel',
 	'oauth_authorization.list',
 	'oauth_authorization.reauthorize',
-	'oauth_authorization.revoke',
+	'oauth_authorization.disconnect',
 	'oauth_authorization.status',
 	'workspace_git_push',
 ] as const;
@@ -576,7 +606,9 @@ export const GatewayControlOAuthAuthorizationActionPayloadSchema = z.discriminat
 		oauthAuthorizationReauthorizeRequestSchema.safeExtend(
 			gatewayControlOAuthAuthorizationCommonShape,
 		),
-		oauthAuthorizationRevokeRequestSchema.safeExtend(gatewayControlOAuthAuthorizationCommonShape),
+		oauthAuthorizationDisconnectRequestSchema.safeExtend(
+			gatewayControlOAuthAuthorizationCommonShape,
+		),
 	],
 );
 
@@ -656,7 +688,7 @@ export const GatewayControlOAuthAuthorizationActionResultSchema = z
 			'oauth_authorization.cancel',
 			'oauth_authorization.list',
 			'oauth_authorization.reauthorize',
-			'oauth_authorization.revoke',
+			'oauth_authorization.disconnect',
 			'oauth_authorization.status',
 		]),
 		result: oauthAuthorizationActionResultSchema,
@@ -674,6 +706,52 @@ export const GatewayControlConfiguredCliControllerExecutionResultSchema = z
 				stderrTruncated: z.boolean(),
 				stdout: z.string(),
 				stdoutTruncated: z.boolean(),
+				operationFiles: z
+					.discriminatedUnion('kind', [
+						z
+							.object({
+								kind: z.literal('available'),
+								referenceId: z.string().uuid(),
+								expiresAtMs: z.number().int().nonnegative().safe(),
+								directoryPath: z.string().startsWith('/agent-vm/files/').max(8192),
+								files: z
+									.array(
+										z
+											.object({
+												relativePath: z.string().min(1).max(8192),
+												path: z.string().startsWith('/agent-vm/files/').max(8192),
+												byteLength: z
+													.number()
+													.int()
+													.nonnegative()
+													.max(16 * 1024 * 1024),
+												sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+											})
+											.strict(),
+									)
+									.max(256),
+								failedFiles: z
+									.array(
+										z
+											.object({
+												relativePath: z.string().max(8192),
+												reason: z.string().min(1).max(128),
+											})
+											.strict(),
+									)
+									.max(256),
+								limitReached: z.boolean(),
+								cleanup: z.enum(['complete', 'pending']),
+							})
+							.strict(),
+						z
+							.object({
+								kind: z.literal('unavailable'),
+								reason: z.enum(['size-limit', 'stale-authority', 'file-result-failed']),
+							})
+							.strict(),
+					])
+					.optional(),
 			})
 			.strict(),
 	})
@@ -897,6 +975,8 @@ const GatewayControlRpcForbiddenResponseFieldsSchema = {
 	bindingRequest: z.never().optional(),
 	controllerExecution: z.never().optional(),
 	oauthAvailabilityBatch: z.never().optional(),
+	googlePreflight: z.never().optional(),
+	nativeAttachment: z.never().optional(),
 	error: z.never().optional(),
 	lease: z.never().optional(),
 	leaseRejectionReason: z.never().optional(),
@@ -1073,6 +1153,35 @@ export const GatewayControlRpcOAuthAvailabilityResponsePayloadSchema = z.discrim
 	],
 );
 
+export const GatewayControlRpcGooglePreflightResponsePayloadSchema = z.discriminatedUnion(
+	'result',
+	[
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			googlePreflight: managedGooglePreflightResultSchema,
+			result: z.literal('ok'),
+		}).strict(),
+		GatewayControlRpcResponseCorrelationSchema.extend({
+			...GatewayControlRpcForbiddenResponseFieldsSchema,
+			error: GatewayControlRpcErrorSchema,
+			result: GatewayControlRpcErrorResponseResultSchema,
+		}).strict(),
+	],
+);
+
+export const GatewayControlRpcAttachmentResponsePayloadSchema = z.discriminatedUnion('result', [
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		nativeAttachment: PortalAttachmentResultSchema,
+		result: z.literal('ok'),
+	}).strict(),
+	GatewayControlRpcResponseCorrelationSchema.extend({
+		...GatewayControlRpcForbiddenResponseFieldsSchema,
+		error: GatewayControlRpcErrorSchema,
+		result: GatewayControlRpcErrorResponseResultSchema,
+	}).strict(),
+]);
+
 export const GatewayControlRpcOperationCancelResponsePayloadSchema = z.discriminatedUnion(
 	'result',
 	[
@@ -1146,6 +1255,8 @@ export const GatewayControlRpcResponsePayloadSchema = z.union([
 	GatewayControlRpcLeaseUseResponsePayloadSchema,
 	GatewayControlRpcControllerExecutionResponsePayloadSchema,
 	GatewayControlRpcOAuthAvailabilityResponsePayloadSchema,
+	GatewayControlRpcGooglePreflightResponsePayloadSchema,
+	GatewayControlRpcAttachmentResponsePayloadSchema,
 	GatewayControlRpcOperationCancelResponsePayloadSchema,
 	GatewayControlRpcApprovalAdmissionResponsePayloadSchema,
 	GatewayControlRpcApprovalDecisionResponsePayloadSchema,
@@ -1199,6 +1310,20 @@ const GatewayControlRpcOAuthAvailabilityCommandResultMessageSchema =
 		kind: z.literal('command_result'),
 		operation: z.literal('tool_portal_oauth_availability'),
 		payload: GatewayControlRpcOAuthAvailabilityResponsePayloadSchema,
+	}).strict();
+
+const GatewayControlRpcGooglePreflightCommandResultMessageSchema =
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command_result'),
+		operation: z.literal('tool_portal_google_preflight'),
+		payload: GatewayControlRpcGooglePreflightResponsePayloadSchema,
+	}).strict();
+
+const GatewayControlRpcAttachmentCommandResultMessageSchema =
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command_result'),
+		operation: z.literal('tool_portal_attachment'),
+		payload: GatewayControlRpcAttachmentResponsePayloadSchema,
 	}).strict();
 
 const GatewayControlRpcOperationCancelCommandResultMessageSchema =
@@ -1266,6 +1391,8 @@ export const GatewayControlRpcCommandResultMessageSchema = z.discriminatedUnion(
 	GatewayControlRpcLeaseUseCommandResultMessageSchema,
 	GatewayControlRpcControllerExecutionCommandResultMessageSchema,
 	GatewayControlRpcOAuthAvailabilityCommandResultMessageSchema,
+	GatewayControlRpcGooglePreflightCommandResultMessageSchema,
+	GatewayControlRpcAttachmentCommandResultMessageSchema,
 	GatewayControlRpcOperationCancelCommandResultMessageSchema,
 	GatewayControlRpcRecoveryCommandResultMessageSchema,
 	GatewayControlRpcApprovalAdmissionCommandResultMessageSchema,
@@ -1353,6 +1480,16 @@ export const GatewayControlRpcCommandMessageSchema = z.discriminatedUnion('opera
 	}).strict(),
 	GatewayControlRpcDomainCorrelationSchema.extend({
 		kind: z.literal('command'),
+		operation: z.literal('tool_portal_google_preflight'),
+		payload: GatewayControlToolPortalGooglePreflightPayloadSchema,
+	}).strict(),
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command'),
+		operation: z.literal('tool_portal_attachment'),
+		payload: GatewayControlToolPortalAttachmentPayloadSchema,
+	}).strict(),
+	GatewayControlRpcDomainCorrelationSchema.extend({
+		kind: z.literal('command'),
 		operation: z.literal('tool_portal_approval_decide'),
 		payload: GatewayControlToolPortalApprovalDecisionPayloadSchema,
 	}).strict(),
@@ -1430,6 +1567,8 @@ export const gatewayControlDeliveryPolicyByOperation = {
 	tool_vm_binding_request: 'critical_idempotent',
 	tool_portal_controller_execution: 'single_use_critical',
 	tool_portal_oauth_availability: 'acked_idempotent',
+	tool_portal_google_preflight: 'acked_idempotent',
+	tool_portal_attachment: 'single_use_critical',
 	tool_portal_approval_decide: 'single_use_critical',
 	tool_portal_admission_reserve: 'single_use_critical',
 	tool_portal_dispatch_arm: 'single_use_critical',
@@ -1487,6 +1626,8 @@ export const gatewayControlCommandExecutionTimeoutMsByOperation = {
 	tool_vm_binding_request: 180_000,
 	tool_portal_controller_execution: 120_000,
 	tool_portal_oauth_availability: 5_000,
+	tool_portal_google_preflight: 5_000,
+	tool_portal_attachment: 120_000,
 	tool_portal_approval_decide: 10_000,
 	tool_portal_admission_reserve: 10_000,
 	tool_portal_dispatch_arm: 10_000,

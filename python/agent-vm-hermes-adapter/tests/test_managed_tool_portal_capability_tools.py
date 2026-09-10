@@ -60,6 +60,9 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     InjectionMarker,
     NamespaceDiscovery,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.native_attachment_delivery import (
+    NativeAttachmentInvocation,
+)
 from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
     MANAGED_TOOL_PORTAL_PLUGIN_NAME,
     MANAGED_TOOL_PORTAL_TOOL_NAMES,
@@ -76,6 +79,7 @@ PROJECTION_COHORT_DIGEST = (
 )
 GATEWAY_EPOCH = "gateway-epoch-1"
 REQUEST_SCHEMA_ID_BY_TOOL_NAME = {
+    "tool_portal_file": "portal.file.request",
     "tool_portal_list": "portal.list.request",
     "tool_portal_search": "portal.search.request",
     "tool_portal_describe": "portal.describe.request",
@@ -84,6 +88,8 @@ REQUEST_SCHEMA_ID_BY_TOOL_NAME = {
 
 
 def valid_request_for(tool_name: str) -> dict[str, object]:
+    if tool_name == "tool_portal_file":
+        return {"action": "attach", "source": {"kind": "tool-vm-file", "path": "report.pdf"}}
     if tool_name == "tool_portal_list":
         return {"requests": [{"id": "list-1"}]}
     if tool_name == "tool_portal_search":
@@ -181,6 +187,14 @@ class FakePortalOperations:
     ) -> BaseModel:
         return await self._record("list", request, trusted_context=trusted_context)
 
+    async def attachment(
+        self,
+        request: dict[str, object],
+        *,
+        trusted_context: dict[str, object],
+    ) -> BaseModel:
+        return await self._record("attachment", request, trusted_context=trusted_context)
+
     async def search(
         self,
         request: dict[str, object],
@@ -204,6 +218,13 @@ class FakePortalOperations:
         trusted_context: dict[str, object],
     ) -> BaseModel:
         return await self._record("call", request, trusted_context=trusted_context)
+
+
+async def forward_recording_attachment(invocation: NativeAttachmentInvocation) -> BaseModel:
+    """Handler identity proof; native send and file lifecycle have separate journey tests."""
+    result = await invocation.portal({"action": "stage", "source": invocation.request["source"]})
+    assert result.model_dump()["agent_id"] == invocation.profile_name
+    return result
 
 
 class FakeGatewayRuntimeClient(GatewayRuntimeClient):
@@ -689,6 +710,10 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
                     get_portable_contract_json_schema(schema_id),
                 )
 
+    @patch(
+        "agent_vm_hermes_adapter.managed_tool_portal_capability_tools.execute_native_attachment",
+        new=forward_recording_attachment,
+    )
     def test_registered_handlers_accept_normal_hermes_model_dispatch_keywords(self) -> None:
         adapter, client = build_adapter()
         projection = adapter.projection_for_profile("researcher")
@@ -1152,6 +1177,10 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         self.assertEqual(manager._plugin_tool_names, set(MANAGED_TOOL_PORTAL_TOOL_NAMES))
         self.assertIn("tool-portal", enabled_toolsets)
 
+    @patch(
+        "agent_vm_hermes_adapter.managed_tool_portal_capability_tools.execute_native_attachment",
+        new=forward_recording_attachment,
+    )
     def test_routes_every_operation_with_the_current_profiles_agent_identity(self) -> None:
         adapter, client = build_adapter()
         current_projection = [adapter.projection_for_profile("researcher")]
@@ -1170,7 +1199,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
         finally:
             adapter.close(disconnect_gateway_runtime=False)
 
-        self.assertEqual(len(client.portal.calls), 8)
+        self.assertEqual(len(client.portal.calls), 2 * len(MANAGED_TOOL_PORTAL_TOOL_NAMES))
         self.assertTrue(
             all(
                 portal_call.client_identity is client.identity
@@ -1183,7 +1212,10 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
             self.assertIsInstance(principal, dict)
             assert isinstance(principal, dict)
             observed_agent_ids.append(principal["agentId"])
-        self.assertEqual(observed_agent_ids, ["researcher"] * 4 + ["reviewer"] * 4)
+        tool_count = len(MANAGED_TOOL_PORTAL_TOOL_NAMES)
+        self.assertEqual(
+            observed_agent_ids, ["researcher"] * tool_count + ["reviewer"] * tool_count
+        )
 
     def test_has_no_unconfigured_default_or_unknown_profile_fallback(self) -> None:
         context = FakeHermesPluginContext()

@@ -21,6 +21,10 @@ import {
 } from '../contracts/index.js';
 import {
 	PortalCallRequestSchema,
+	PortalAttachmentRequestSchema,
+	PortalAttachmentResultSchema,
+	type PortalAttachmentRequest,
+	type PortalAttachmentResult,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
 	PortalDescribeResultSchema,
@@ -234,6 +238,23 @@ class GatewayRuntimePortalOperations {
 
 	constructor(client: GatewayRuntimeClient) {
 		this.#client = client;
+	}
+
+	/** Private native delivery orchestration; not a caller-selected recipient API. */
+	async attachment(
+		request: PortalAttachmentRequest,
+		options: GatewayRuntimePortalRequestOptions,
+	): Promise<PortalAttachmentResult> {
+		return PortalAttachmentResultSchema.parse(
+			await this.#client.request(
+				'portal.attachment',
+				createGatewayRuntimeRequestParams({
+					publicRequest: PortalAttachmentRequestSchema.parse(request),
+					trustedContext: options.trustedContext,
+				}),
+				gatewayRuntimeRequestOptions(options),
+			),
+		);
 	}
 
 	async list(

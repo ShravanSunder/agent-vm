@@ -323,6 +323,7 @@ async function writeToolVmMediatedEnvBootstrap(
 export async function createUnstartedToolVm(
 	options: {
 		readonly agentId: string;
+		readonly hostPublishedFilesRoot?: string;
 		readonly profile: ToolVmProfile;
 		readonly systemConfig: LoadedSystemConfig;
 		readonly tcpSlot: number;
@@ -459,6 +460,9 @@ export async function createUnstartedToolVm(
 					? {}
 					: { hostGitDirectoryRoot: managedAgentWorkspaceRoot.hostGitDirectoryRoot }),
 				hostWorkspaceRoot: managedAgentWorkspaceRoot.hostWorkspaceRoot,
+				...(options.hostPublishedFilesRoot === undefined
+					? {}
+					: { hostPublishedFilesRoot: options.hostPublishedFilesRoot }),
 				ownedDirectories: dependencies.managedVmOwnedDirectories,
 				request: managedVmRequest,
 				workspacePolicy: managedAgentWorkspacePolicy(options.agentId, zone),

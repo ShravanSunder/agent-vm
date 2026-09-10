@@ -1,0 +1,26 @@
+{
+	"caseId": "attachment-stage-request",
+	"schemaId": "portal.attachment.request",
+	"tags": ["native-attachment", "accepted"],
+	"input": {
+		"action": "stage",
+		"source": {
+			"kind": "operation-file",
+			"referenceId": "55555555-5555-4555-8555-555555555555",
+			"path": "./report.bin"
+		}
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"action": "stage",
+			"source": {
+				"kind": "operation-file",
+				"referenceId": "55555555-5555-4555-8555-555555555555",
+				"path": "./report.bin"
+			}
+		},
+		"canonicalJson": "{\"action\":\"stage\",\"source\":{\"kind\":\"operation-file\",\"path\":\"./report.bin\",\"referenceId\":\"55555555-5555-4555-8555-555555555555\"}}",
+		"refinementIdentities": []
+	}
+}

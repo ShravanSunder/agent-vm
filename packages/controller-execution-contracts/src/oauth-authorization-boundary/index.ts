@@ -3,7 +3,7 @@ export {
 	oauthAuthorizationCancelRequestSchema,
 	oauthAuthorizationListRequestSchema,
 	oauthAuthorizationReauthorizeRequestSchema,
-	oauthAuthorizationRevokeRequestSchema,
+	oauthAuthorizationDisconnectRequestSchema,
 	oauthAuthorizationStatusRequestSchema,
 	oauthAuthorizationActionIdSchema as OAuthAuthorizationControllerActionIdSchema,
 	oauthAuthorizationActionRequestSchema as OAuthAuthorizationControllerActionRequestSchema,
@@ -18,7 +18,7 @@ import {
 	oauthAuthorizationCancelRequestSchema,
 	oauthAuthorizationListRequestSchema,
 	oauthAuthorizationReauthorizeRequestSchema,
-	oauthAuthorizationRevokeRequestSchema,
+	oauthAuthorizationDisconnectRequestSchema,
 	oauthAuthorizationStatusRequestSchema,
 } from '@agent-vm/oauth-broker-contracts';
 
@@ -36,6 +36,7 @@ export const OAuthAuthorizationCancelArgumentsSchema = oauthAuthorizationCancelR
 });
 export const OAuthAuthorizationReauthorizeArgumentsSchema =
 	oauthAuthorizationReauthorizeRequestSchema.omit({ actionId: true });
-export const OAuthAuthorizationRevokeArgumentsSchema = oauthAuthorizationRevokeRequestSchema.omit({
-	actionId: true,
-});
+export const OAuthAuthorizationDisconnectArgumentsSchema =
+	oauthAuthorizationDisconnectRequestSchema.omit({
+		actionId: true,
+	});

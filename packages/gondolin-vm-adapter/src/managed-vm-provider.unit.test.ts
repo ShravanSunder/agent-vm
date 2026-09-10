@@ -334,10 +334,33 @@ describe('createGondolinManagedVmProvider', () => {
 		});
 
 		expect(nativeVm.exec).toHaveBeenCalledWith(['/usr/local/bin/runner', 'status'], {
+			buffer: false,
 			stderr: 'ignore',
 			stdin: 'fixed input',
 			stdout: 'pipe',
 			windowBytes: 256 * 1024,
+		});
+	});
+
+	it('uses the stock window and disables final buffering when no streaming window is selected', async () => {
+		// Arrange: the file size is not a flow-control window setting.
+		const nativeVm = createLifecycleNativeVm(async () => {});
+		createNativeManagedVmMock.mockResolvedValue(nativeVm);
+		const vm = await createGondolinManagedVmProvider().factory.createManagedVm(
+			createBasicManagedVmRequest(),
+		);
+
+		// Act: select pipes without overriding the backend window.
+		vm.exec(['/bin/cat', '/work/transfers/output.bin'], {
+			output: { stderr: { kind: 'pipe' }, stdout: { kind: 'pipe' } },
+		});
+
+		// Assert: no window override, bulk stdin or final-result payload capture.
+		expect(vm).not.toHaveProperty('fileTransfer');
+		expect(nativeVm.exec).toHaveBeenCalledWith(['/bin/cat', '/work/transfers/output.bin'], {
+			buffer: false,
+			stderr: 'pipe',
+			stdout: 'pipe',
 		});
 	});
 
@@ -378,6 +401,7 @@ describe('createGondolinManagedVmProvider', () => {
 			vm.exec('/usr/local/bin/runner', { output });
 
 			expect(nativeVm.exec).toHaveBeenCalledWith('/usr/local/bin/runner', {
+				buffer: false,
 				stderr: 'ignore',
 				stdout: 'pipe',
 				windowBytes,

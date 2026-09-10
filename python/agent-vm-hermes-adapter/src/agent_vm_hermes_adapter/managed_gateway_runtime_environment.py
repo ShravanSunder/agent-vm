@@ -125,8 +125,7 @@ class HermesGatewayRuntimeProcessHandle:
             try:
                 self._returncode = future.result()
             except concurrent.futures.CancelledError:
-                if self._returncode is None:
-                    self._returncode = 130
+                self._returncode = 130
             except HermesGatewayRuntimeOutcomeError as error:
                 self._outcome_error = error
                 self._returncode = 125

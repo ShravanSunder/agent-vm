@@ -5,10 +5,12 @@ import {
 	loadMcpConfig,
 	loadOAuthConfig,
 	loadToolPortalConfig,
-	validateOAuthToolPortalConfigPair,
+	compileOAuthPolicy,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
+import { getGooglePolicyCatalog } from '@agent-vm/oauth-broker/google';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
 import { validateManagedImageOverlay } from '../build/managed-image-dockerfile.js';
@@ -283,9 +285,12 @@ async function collectToolPortalConfigChecks(
 		if (loadedToolPortalConfig === undefined) {
 			throw new Error('OAuth config requires a valid sibling Tool Portal config.');
 		}
-		validateOAuthToolPortalConfigPair({
+		if (oauthConfig.zoneId !== zone.id)
+			throw new Error('OAuth configuration belongs to another zone.');
+		compileOAuthPolicy({
 			oauthConfig,
 			toolPortalConfig: loadedToolPortalConfig,
+			catalog: getGooglePolicyCatalog(),
 		});
 		assertOAuthListenerPortAvailable({
 			oauthPort: oauthConfig.browser.listener.port,
@@ -293,7 +298,21 @@ async function collectToolPortalConfigChecks(
 		});
 		checks.push({ name: `oauth-config-${zone.id}`, ok: true, hint: oauthConfigPath });
 	} catch (error) {
-		if (!isMissingFileError(error)) {
+		const requiresOAuth =
+			loadedToolPortalConfig !== undefined &&
+			Object.values(loadedToolPortalConfig.profiles).some((profile) =>
+				Object.values(profile.namespaces).some(
+					(namespace) =>
+						namespace.backend.kind === 'controller_execution' &&
+						Object.values(namespace.backend.operations).some(
+							(operation) =>
+								operation.kind === 'configured_cli' &&
+								isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
+								operation.authorization?.kind === 'oauth_account',
+						),
+				),
+			);
+		if (!isMissingFileError(error) || requiresOAuth) {
 			checks.push({
 				name: `oauth-config-${zone.id}`,
 				ok: false,

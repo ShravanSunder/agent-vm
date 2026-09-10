@@ -31,6 +31,63 @@ const unsampledTraceContext = {
 } as const;
 
 describe('Gateway runtime private UDS dispatcher', () => {
+	it('routes private native staging with trusted context and rejects a caller-selected recipient', async () => {
+		// Arrange
+		const attachmentOperations = vi.fn(async () => ({ kind: 'unavailable' as const }));
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
+			artifactOperations: { read: vi.fn() },
+			portalOperations: { call: vi.fn(), describe: vi.fn(), list: vi.fn(), search: vi.fn() },
+			sandboxDispatch: vi.fn(),
+			attachmentOperations,
+		});
+		const publicRequest = {
+			action: 'stage',
+			source: { kind: 'tool-vm-file', path: './report.pdf' },
+		};
+		const request = {
+			connectionId: 'connection',
+			method: 'portal.attachment',
+			params: { publicRequest, trustedContext },
+			signal: new AbortController().signal,
+		};
+		// Act / Assert
+		await expect(dispatcher.dispatch(request)).resolves.toEqual({ kind: 'unavailable' });
+		expect(attachmentOperations).toHaveBeenCalledExactlyOnceWith({
+			publicRequest,
+			trustedContext,
+			signal: request.signal,
+		});
+		await expect(
+			dispatcher.dispatch({
+				...request,
+				params: { publicRequest: { ...publicRequest, recipient: 'other-chat' }, trustedContext },
+			}),
+		).rejects.toMatchObject({ code: 'invalid-request' });
+		expect(attachmentOperations).toHaveBeenCalledOnce();
+	});
+
+	it('rejects the retired file-copy RPC without dispatching any operation', async () => {
+		// Arrange
+		const sandboxDispatch = vi.fn();
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: vi.fn() },
+			artifactOperations: { read: vi.fn() },
+			portalOperations: { call: vi.fn(), describe: vi.fn(), list: vi.fn(), search: vi.fn() },
+			sandboxDispatch,
+		});
+		// Act / Assert
+		await expect(
+			dispatcher.dispatch({
+				connectionId: 'connection',
+				method: 'portal.file',
+				params: { publicRequest: { action: 'list' }, trustedContext },
+				signal: new AbortController().signal,
+			}),
+		).rejects.toMatchObject({ code: 'method-not-found' });
+		expect(sandboxDispatch).not.toHaveBeenCalled();
+	});
+
 	it('maps every frozen method family to one server-authorized operation group', () => {
 		// Arrange
 		const expectedGroups = new Map([

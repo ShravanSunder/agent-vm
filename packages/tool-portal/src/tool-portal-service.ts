@@ -21,6 +21,8 @@ import {
 } from '@agent-vm/agent-portal-sdk';
 import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
+	controllerConfiguredCliInputSchema,
+	resolveCompiledGoogleCommand,
 	type GatewayRuntimeManagedToolPortalConfig,
 	type McpConfig,
 	type StandaloneToolPortalConfig,
@@ -47,7 +49,11 @@ import {
 import {
 	oauthToolAvailabilityBatchRequestSchema,
 	oauthToolAvailabilityBatchResultSchema,
-	type OAuthAccountProfileToolRequirement,
+	type OAuthOperationToolRequirement,
+	type OAuthOperationAvailability,
+	oauthOperationRequirementIdentity,
+	managedGooglePreflightResultSchema,
+	type ManagedGoogleReadyPreflight,
 	type OAuthToolAvailability,
 	type OAuthToolAvailabilityBatchRequest,
 	type OAuthToolAvailabilityBatchResult,
@@ -181,6 +187,11 @@ export interface ToolPortalApprovalPort {
 }
 
 export interface ToolPortalOAuthAvailabilityPort {
+	readonly preflight?: (props: {
+		readonly request: import('@agent-vm/gateway-control-contracts').GatewayControlGooglePreflightRequest;
+		readonly signal?: AbortSignal | undefined;
+		readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
+	}) => Promise<import('@agent-vm/oauth-broker-contracts').ManagedGooglePreflightResult>;
 	readonly resolve: (props: {
 		readonly request: OAuthToolAvailabilityBatchRequest;
 		readonly signal?: AbortSignal | undefined;
@@ -230,22 +241,17 @@ interface OAuthDiscoveryCapability {
 	readonly oauthRequirement?: OAuthToolRequirement | undefined;
 }
 
-function oauthRequirementIdentity(requirement: OAuthAccountProfileToolRequirement): string {
-	return [requirement.applicationId, requirement.serviceId, requirement.minimumPermission].join(
-		'\u0000',
-	);
-}
-
 async function resolveOAuthAvailabilityByRequirement(props: {
 	readonly capabilities: readonly OAuthDiscoveryCapability[];
 	readonly operationOptions: ToolPortalInvocationOptions;
 	readonly port: ToolPortalOAuthAvailabilityPort | undefined;
-}): Promise<ReadonlyMap<string, OAuthToolAvailability>> {
-	const requirementsByIdentity = new Map<string, OAuthAccountProfileToolRequirement>();
+}): Promise<ReadonlyMap<string, OAuthOperationAvailability>> {
+	const requirementsByIdentity = new Map<string, OAuthOperationToolRequirement>();
 	for (const capability of props.capabilities) {
 		const requirement = capability.oauthRequirement;
-		if (requirement?.kind !== 'oauth-account-profile') continue;
-		requirementsByIdentity.set(oauthRequirementIdentity(requirement), requirement);
+		if (requirement?.kind !== 'google-account') continue;
+		for (const operation of requirement.operations)
+			requirementsByIdentity.set(oauthOperationRequirementIdentity(operation), operation);
 	}
 	if (requirementsByIdentity.size === 0) return new Map();
 	if (props.port === undefined) return new Map();
@@ -263,7 +269,10 @@ async function resolveOAuthAvailabilityByRequirement(props: {
 			}),
 		);
 		return new Map(
-			result.items.map((item) => [oauthRequirementIdentity(item.requirement), item.availability]),
+			result.items.map((item) => [
+				oauthOperationRequirementIdentity(item.requirement),
+				item.availability,
+			]),
 		);
 	} catch {
 		return new Map();
@@ -272,14 +281,20 @@ async function resolveOAuthAvailabilityByRequirement(props: {
 
 function capabilityWithOAuthAvailability<TCapability extends OAuthDiscoveryCapability>(
 	capability: TCapability,
-	availabilityByRequirement: ReadonlyMap<string, OAuthToolAvailability>,
+	availabilityByRequirement: ReadonlyMap<string, OAuthOperationAvailability>,
 ): TCapability | (TCapability & { readonly oauthAvailability: OAuthToolAvailability }) {
 	const requirement = capability.oauthRequirement;
-	if (requirement?.kind !== 'oauth-account-profile') return capability;
+	if (requirement?.kind !== 'google-account') return capability;
 	return {
 		...capability,
-		oauthAvailability: availabilityByRequirement.get(oauthRequirementIdentity(requirement)) ?? {
-			kind: 'authorization-status-unavailable',
+		oauthAvailability: {
+			kind: 'operation-options',
+			items: requirement.operations.map((operation) => ({
+				requirement: operation,
+				availability: availabilityByRequirement.get(
+					oauthOperationRequirementIdentity(operation),
+				) ?? { kind: 'unavailable' },
+			})),
 		},
 	};
 }
@@ -409,6 +424,7 @@ function managedBackendEntriesForInvocation(props: {
 }
 
 function approvalChallengeIntent(props: {
+	readonly managedGoogle?: ManagedGoogleReadyPreflight | undefined;
 	readonly backendKind: ToolPortalBackendKind;
 	readonly call: PortalCallRequest['calls'][number];
 	readonly operationId: string;
@@ -417,6 +433,7 @@ function approvalChallengeIntent(props: {
 }): GatewayRuntimeApprovalChallengeIntent {
 	return {
 		backendKind: props.backendKind,
+		...(props.managedGoogle === undefined ? {} : { managedGoogle: props.managedGoogle }),
 		call: props.call,
 		operationId: props.operationId,
 		semanticRevisions: {
@@ -518,6 +535,7 @@ function controllerAdmissionItem(props: {
 	switch (props.admission.kind) {
 		case 'approval-required':
 			return approvalRequiredItem({
+				managedGoogleDisplay: props.admission.challenge.intent.managedGoogle?.display,
 				challengeId: props.admission.challenge.approvalId,
 				expiresAt: props.admission.challenge.expiresAt,
 				id: props.callId,
@@ -633,7 +651,7 @@ export function createManagedToolPortalCapabilityCore(
 			stablePrincipal: propsForCall.stablePrincipal,
 			surfaceClass: propsForCall.operationOptions.surfaceClass,
 		});
-		const policyDecision = callPolicyDecision({
+		let policyDecision = callPolicyDecision({
 			call: propsForCall.call,
 			config,
 			profileId: propsForCall.profileId,
@@ -647,11 +665,96 @@ export function createManagedToolPortalCapabilityCore(
 				owningGeneration: semanticSnapshot.activeRevision,
 			});
 		}
+		let managedGoogle: ManagedGoogleReadyPreflight | undefined;
+		if (policyDecision.kind === 'managed-google') {
+			try {
+				if (props.oauthAvailabilityPort?.preflight === undefined)
+					throw new Error('Google preflight unavailable.');
+				const input = controllerConfiguredCliInputSchema.parse(propsForCall.call.arguments);
+				const namespace =
+					config.profiles[propsForCall.profileId]?.namespaces[propsForCall.call.namespace];
+				const operation =
+					namespace?.backend.kind === 'controller_execution'
+						? namespace.backend.operations[propsForCall.call.name]
+						: undefined;
+				if (
+					operation?.kind !== 'configured_cli' ||
+					operation.targetKind !== 'ephemeral_managed_vm' ||
+					operation.compiledGoogle === undefined
+				)
+					throw new Error('Google command table unavailable.');
+				const local = resolveCompiledGoogleCommand(operation.compiledGoogle, input.argv);
+				const result = managedGooglePreflightResultSchema.parse(
+					await props.oauthAvailabilityPort.preflight({
+						request: {
+							capability: { name: propsForCall.call.name, namespace: propsForCall.call.namespace },
+							input,
+						},
+						trustedContext: propsForCall.operationOptions.trustedContext,
+						...(propsForCall.operationOptions.signal === undefined
+							? {}
+							: { signal: propsForCall.operationOptions.signal }),
+					}),
+				);
+				if (result.kind === 'denied')
+					return capabilityDeniedItem({
+						id: propsForCall.call.id,
+						operationId,
+						owningGeneration: semanticSnapshot.activeRevision,
+					});
+				if (result.kind === 'consent-required' || result.kind === 'unavailable')
+					return notDispatchedItem({
+						id: propsForCall.call.id,
+						operationId,
+						owningGeneration: semanticSnapshot.activeRevision,
+						reason:
+							result.kind === 'consent-required'
+								? 'Google account-owner consent is required'
+								: 'Google account policy is unavailable',
+					});
+				if (result.kind === 'no-oauth') {
+					if (
+						local.kind !== 'no-oauth' ||
+						result.commandTableRevision !== operation.compiledGoogle.revision
+					)
+						throw new Error('Google preflight classification mismatch.');
+					policyDecision = { ...policyDecision, kind: 'without-approval' };
+				} else {
+					if (
+						local.kind !== 'oauth' ||
+						!('accountId' in input) ||
+						result.binding.accountId !== input.accountId ||
+						result.display.accountId !== input.accountId ||
+						result.display.authorizationId !== result.binding.authorizationId ||
+						result.display.authorizationMetadataRevision !==
+							result.binding.authorizationMetadataRevision ||
+						result.binding.operationId !== local.operationId ||
+						result.binding.applicationId !==
+							operation.compiledGoogle.applicationIdsByFamily[local.familyId] ||
+						result.binding.commandTableRevision !== operation.compiledGoogle.revision
+					)
+						throw new Error('Google preflight account binding mismatch.');
+					managedGoogle = result;
+					policyDecision = {
+						...policyDecision,
+						kind: result.disposition === 'allow' ? 'without-approval' : 'requires-approval',
+					};
+				}
+			} catch {
+				return notDispatchedItem({
+					id: propsForCall.call.id,
+					operationId,
+					owningGeneration: semanticSnapshot.activeRevision,
+					reason: 'Google account policy could not be verified',
+				});
+			}
+		}
 		if (policyDecision.kind === 'without-approval') {
 			return await dispatchCall({
 				authority: directDispatchAuthority({
 					backendKind: policyDecision.backendKind,
 					fingerprint: directDispatchFingerprint({
+						managedGoogle,
 						backendKind: policyDecision.backendKind,
 						call: propsForCall.call,
 						principal: propsForCall.operationOptions.trustedContext.principal,
@@ -667,6 +770,7 @@ export function createManagedToolPortalCapabilityCore(
 			});
 		}
 		const approvalIntent = approvalChallengeIntent({
+			managedGoogle,
 			backendKind: policyDecision.backendKind,
 			call: propsForCall.call,
 			operationId,
@@ -674,6 +778,17 @@ export function createManagedToolPortalCapabilityCore(
 			semanticSnapshot,
 		});
 		const admission = await props.approvalPort.reserveDispatch({ intent: approvalIntent });
+		if (
+			managedGoogle !== undefined &&
+			admission.kind === 'approval-required' &&
+			canonicalJson(admission.challenge.intent) !== canonicalJson(approvalIntent)
+		)
+			return notDispatchedItem({
+				id: propsForCall.call.id,
+				operationId,
+				owningGeneration: semanticSnapshot.activeRevision,
+				reason: 'Google approval display did not match the current account binding',
+			});
 		if (admission.kind !== 'dispatch-reserved') {
 			return controllerAdmissionItem({
 				admission,

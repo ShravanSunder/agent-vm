@@ -276,10 +276,18 @@ class _GatewayRuntimePortalOperations:
     def __init__(self, client: "GatewayRuntimeClient") -> None:
         self._client = client
 
+    async def attachment(
+        self,
+        request: Mapping[str, object],
+        *,
+        trusted_context: Mapping[str, object],
+    ) -> BaseModel:
+        return await self._execute_portal_operation(operation_name="attachment", request=request, trusted_context=trusted_context)
+
     async def _execute_portal_operation(
         self,
         *,
-        operation_name: t.Literal["list", "search", "describe", "call"],
+        operation_name: t.Literal["list", "search", "describe", "call", "attachment"],
         request: Mapping[str, object],
         trusted_context: Mapping[str, object],
     ) -> BaseModel:

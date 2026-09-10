@@ -1,10 +1,12 @@
 import asyncio
+import json
 import typing as t
 from collections.abc import Mapping
 
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from agent_vm_agent_portal_sdk.gateway_approval_bridge import (
     execute_portal_call_with_approval,
+    format_gateway_approval_preview,
     sanitize_gateway_approval_arguments,
 )
 from pydantic import BaseModel
@@ -60,6 +62,35 @@ def _model(schema_id: str, value: Mapping[str, object]) -> BaseModel:
     model = PORTABLE_CONTRACT_ADAPTERS[schema_id].validate_python(value)
     assert isinstance(model, BaseModel)
     return model
+
+
+def test_managed_google_preview_uses_only_bound_display_and_preserves_its_byte_budget() -> None:
+    account_id = "11111111-1111-4111-8111-111111111111"
+    challenge = {
+        "kind": "managed_google",
+        "managedGoogleDisplay": {
+            "accountId": account_id,
+            "authorizationId": "22222222-2222-4222-8222-222222222222",
+            "authorizationMetadataRevision": 1,
+            "accountAlias": "Own mailbox " + "界" * 300,
+            "applicationLabel": "Gmail",
+        },
+    }
+    arguments = {"accountId": account_id, "accountAlias": "untrusted suggestion", "argv": ["x" * 1000] * 32}
+    preview = format_gateway_approval_preview(arguments, challenge)
+    assert isinstance(preview, str)
+    assert len(preview.encode()) <= 4096
+    assert json.loads(preview)["account"]["accountAlias"] == challenge["managedGoogleDisplay"]["accountAlias"]
+    assert format_gateway_approval_preview({**arguments, "accountId": "another-account"}, challenge) is None
+    assert format_gateway_approval_preview(arguments, {"kind": "managed_google"}) is None
+    compact_id = account_id.replace("-", "")
+    assert (
+        format_gateway_approval_preview(
+            {**arguments, "accountId": compact_id},
+            {**challenge, "managedGoogleDisplay": {**challenge["managedGoogleDisplay"], "accountId": compact_id}},
+        )
+        is None
+    )
 
 
 def test_bridge_preserves_free_item_and_retries_only_the_exact_approved_item() -> None:

@@ -12,15 +12,26 @@ MAX_ORIENTATION_UTF8_BYTES = 2_000
 MAX_DISPLAYED_NAMESPACE_COUNT = 20
 
 _ORIENTATION_INTRODUCTION = (
-    "Tool Portal exposes profile-authorized capabilities through four operations:"
+    "Tool Portal exposes profile-authorized capabilities and operation files:"
 )
 _OPERATION_LINES = (
     "- tool_portal_list: List authorized capabilities and compact summaries.",
     "- tool_portal_search: Search authorized capabilities by intent.",
     "- tool_portal_describe: Retrieve exact schemas for selected capabilities.",
     "- tool_portal_call: Validate and call an authorized capability.",
+    "- tool_portal_file: Explicitly attach a selected file to the current conversation.",
 )
-_WORKFLOW_LINE = "Workflow: list or search, describe the exact capability schema, then call it."
+_WORKFLOW_LINE = (
+    "Workflow: list or search, describe the exact capability schema, then call it.\n"
+    "For admitted file-producing Gog commands, specify a relative --out or --out-dir; "
+    "The command runs inside its operation folder. "
+    "Use the actual reported filename or list that folder. "
+    "File inputs are relative to /work in your Tool VM, not a terminal's changed cwd. "
+    "Published /agent-vm/files paths are read-only and open with ordinary file tools. "
+    "They expire at expiresAtMs or when this Tool VM closes, whichever comes first. "
+    "Reads do not extend the one-hour lifetime; copy wanted files into /workspace before expiry. "
+    "Check exitCode separately: file availability does not prove Gog succeeded."
+)
 
 
 def _orientation_child_text(value: str) -> str:

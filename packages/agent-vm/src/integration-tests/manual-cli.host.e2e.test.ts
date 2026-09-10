@@ -67,6 +67,19 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(runtimePaths).toContain('controller-owned workspace_git_push Tool Portal action');
 		expect(runtimePaths).not.toContain('gateway.zoneGit');
 		expect(runtimePaths).not.toContain('/scratch');
+		expect(runtimePaths).toContain('/agent-vm/files');
+		expect(runtimePaths).toContain('/agent-vm/gog-work');
+		expect(runtimePaths).toContain('one hour or when this Tool VM closes');
+		expect(runtimePaths).toContain(
+			'already-open descriptors or cached bytes are not forcibly revoked',
+		);
+		const layout = await readText(targetDir, 'docs/manual/layout.md');
+		expect(layout).toContain('Clerk is human login only and never supplies Gog tokens');
+		expect(layout).toContain('Explicit website account overrides win independently');
+		expect(layout).not.toContain('account-profile-scoped');
+		const portal = await readText(targetDir, 'docs/manual/mcp-portal.md');
+		expect(portal).toContain('no separate list/materialize copy action');
+		expect(portal).toContain('No outcome triggers automatic resend');
 		const toolVmLeases = await readText(targetDir, 'docs/manual/tool-vm-leases.md');
 		expect(toolVmLeases).toContain(
 			'sends typed requests to the common Tool Portal service over the private UDS',

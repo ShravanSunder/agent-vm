@@ -18,6 +18,7 @@ const managedAgentToolVmOptionKeys = new Set([
 	'factory',
 	'hostGitDirectoryRoot',
 	'hostWorkspaceRoot',
+	'hostPublishedFilesRoot',
 	'ownedDirectories',
 	'request',
 	'workspacePolicy',
@@ -75,6 +76,7 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 		readonly factory: ManagedVmFactory;
 		readonly hostGitDirectoryRoot?: string | undefined;
 		readonly hostWorkspaceRoot: string;
+		readonly hostPublishedFilesRoot?: string;
 		readonly ownedDirectories: ManagedVmOwnedDirectoryCapability;
 		readonly request: Omit<ManagedVmCreateRequest, 'mounts'>;
 		readonly workspacePolicy: ManagedVmFilteredWorkspacePolicy;
@@ -123,6 +125,38 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 	let retainAcquiredDirectoriesOnFailure = false;
 	let toolVm: ManagedVm | undefined;
 	try {
+		let publishedFilesDirectory: OwnedHostDirectory | undefined;
+		if (options.hostPublishedFilesRoot !== undefined) {
+			if (!path.isAbsolute(options.hostPublishedFilesRoot))
+				throw new Error('Published files root must be absolute.');
+			const expected = await readDirectoryIdentity(options.hostPublishedFilesRoot);
+			for (const other of [expectedWorkspaceIdentity, expectedGitDirectoryIdentity]) {
+				if (other === undefined) continue;
+				const relative = path.relative(other.canonicalPath, expected.canonicalPath);
+				const reverse = path.relative(expected.canonicalPath, other.canonicalPath);
+				const overlaps = (value: string): boolean =>
+					value === '' ||
+					(!value.startsWith(`..${path.sep}`) && value !== '..' && !path.isAbsolute(value));
+				if (
+					(expected.device === other.device && expected.inode === other.inode) ||
+					overlaps(relative) ||
+					overlaps(reverse)
+				)
+					throw new Error(
+						'Published files root must be disjoint from writable workspace and Git roots.',
+					);
+			}
+			publishedFilesDirectory = options.ownedDirectories.openHostDirectory(expected.canonicalPath);
+			openedDirectories.push(publishedFilesDirectory);
+			if (
+				!identitiesEqual(publishedFilesDirectory.identity, expected) ||
+				!identitiesEqual(
+					publishedFilesDirectory.identity,
+					await readDirectoryIdentity(options.hostPublishedFilesRoot),
+				)
+			)
+				throw new Error('Published files root has a stale directory identity.');
+		}
 		const workspaceDirectory = options.ownedDirectories.openHostDirectory(
 			expectedWorkspaceIdentity.canonicalPath,
 		);
@@ -163,6 +197,15 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 		toolVm = await options.factory.createManagedVm({
 			...options.request,
 			mounts: {
+				...(publishedFilesDirectory === undefined
+					? {}
+					: {
+							'/agent-vm/files': {
+								directory: publishedFilesDirectory,
+								kind: 'owned-host-directory' as const,
+								access: 'read-only' as const,
+							},
+						}),
 				[MANAGED_AGENT_WORKSPACE_GUEST_ROOT]: {
 					directory: workspaceDirectory,
 					kind: 'owned-filtered-workspace',
@@ -181,6 +224,8 @@ export async function createManagedVmWithFilteredAgentWorkspace(
 		});
 		if (
 			workspaceDirectory.state !== 'adapter-owned' ||
+			(publishedFilesDirectory !== undefined &&
+				publishedFilesDirectory.state !== 'adapter-owned') ||
 			(gitDirectory !== undefined && gitDirectory.state !== 'adapter-owned')
 		) {
 			const unexpectedHostProcessId = toolVm.getHostProcessId();

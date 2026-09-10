@@ -19,11 +19,7 @@ import {
 	gatewayControlDeliveryPolicyByOperation,
 } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
-import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
-	oauthServiceIdSchema,
-} from '@agent-vm/oauth-broker-contracts';
+import { oauthAccountIdSchema, oauthApplicationIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TEST_SSH_SERVER_HOST_KEY } from '../../testing/managed-vm-test-helpers.js';
@@ -284,7 +280,7 @@ function oauthAuthorizationReauthorizeControlPayload(): Extract<
 	return {
 		action: {
 			actionId: 'oauth_authorization.reauthorize',
-			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			accountId: oauthAccountIdSchema.parse('33333333-3333-4333-8333-333333333333'),
 			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 			authority: {
 				kind: 'controller_approval_reservation',
@@ -568,6 +564,71 @@ function createCallerContexts(
 }
 
 describe('gateway control domain handler', () => {
+	it.each(['tool_portal_controller_execution', 'tool_portal_oauth_availability'] as const)(
+		'binds native attachment access to the authenticated execution caller (%s)',
+		async (purpose) => {
+			// Arrange
+			const callerContexts = createRegisteredCallerContexts({ purpose });
+			const accessNativeAttachment = vi.fn(async () => ({
+				kind: 'failed' as const,
+				reason: 'capacity' as const,
+			}));
+			const dispatcher = createGatewayControlTestDispatcher();
+			dispatcher.register(
+				'gateway_control',
+				createTestGatewayControlDomainHandler({
+					callerContexts,
+					session: acceptedSession,
+					controllerExecutions: createAuthorizedControllerExecutions(vi.fn(), {
+						accessNativeAttachment,
+					}),
+				}),
+			);
+			const request = {
+				action: 'stage',
+				source: { kind: 'tool-vm-file', path: 'report.pdf' },
+			};
+			// Act
+			const response = await dispatcher.dispatch({
+				envelope: createEnvelope('tool_portal_attachment'),
+				payload: GatewayControlRpcMessageSchema.parse({
+					kind: 'command',
+					operation: 'tool_portal_attachment',
+					payload: {
+						callerContext: callerContextPayload.callerContext,
+						request,
+						sessionId: 'captured-session',
+					},
+				}),
+			});
+			// Assert
+			expect(response).not.toHaveProperty('payload.error');
+			expect(response).toMatchObject({
+				operation: 'tool_portal_attachment',
+				payload: {
+					result: 'ok',
+					nativeAttachment:
+						purpose === 'tool_portal_controller_execution'
+							? { kind: 'failed', reason: 'capacity' }
+							: { kind: 'unavailable' },
+				},
+			});
+			if (purpose === 'tool_portal_controller_execution')
+				expect(accessNativeAttachment).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({
+						callerContext: expect.objectContaining({ agentId: 'main' }),
+						request,
+						gateway,
+						executionProof: expect.objectContaining({
+							processEpoch: acceptedSession.bootId,
+							sessionAttachmentGeneration: 1,
+						}),
+					}),
+				);
+			else expect(accessNativeAttachment).not.toHaveBeenCalled();
+		},
+	);
+
 	it('resolves OAuth availability only for an exact authenticated caller context', async () => {
 		// Arrange
 		const callerContexts = createRegisteredCallerContexts({
@@ -575,12 +636,10 @@ describe('gateway control domain handler', () => {
 		});
 		const requirement = {
 			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-			kind: 'oauth-account-profile' as const,
-			minimumPermission: 'read' as const,
-			serviceId: oauthServiceIdSchema.parse('gmail'),
+			operationId: 'gmail.search',
 		};
 		const resolve = vi.fn(async () => ({
-			items: [{ availability: { kind: 'authorization-required' as const }, requirement }],
+			items: [{ availability: { kind: 'accounts' as const, accounts: [] }, requirement }],
 		}));
 		const dispatcher = createGatewayControlTestDispatcher();
 		dispatcher.register(
@@ -615,7 +674,7 @@ describe('gateway control domain handler', () => {
 			operation: 'tool_portal_oauth_availability',
 			payload: {
 				oauthAvailabilityBatch: {
-					items: [{ availability: { kind: 'authorization-required' }, requirement }],
+					items: [{ availability: { kind: 'accounts', accounts: [] }, requirement }],
 				},
 				result: 'ok',
 			},
@@ -2197,7 +2256,8 @@ describe('gateway control domain handler', () => {
 		}));
 		const executeOAuthAuthorization = vi.fn(async () => ({
 			kind: 'authorization-list' as const,
-			profiles: [],
+			accounts: [],
+			authorizationOptions: [],
 		}));
 		const callerContexts = createRegisteredCallerContexts({
 			purpose: 'tool_portal_controller_execution',
@@ -2235,7 +2295,7 @@ describe('gateway control domain handler', () => {
 				controllerExecution: {
 					action: {
 						actionId: 'oauth_authorization.list',
-						result: { kind: 'authorization-list', profiles: [] },
+						result: { kind: 'authorization-list', accounts: [], authorizationOptions: [] },
 					},
 					kind: 'registered_action',
 				},
@@ -2256,7 +2316,8 @@ describe('gateway control domain handler', () => {
 		});
 		const executeOAuthAuthorization = vi.fn(async () => ({
 			kind: 'authorization-list' as const,
-			profiles: [],
+			accounts: [],
+			authorizationOptions: [],
 		}));
 		const authorizeControllerExecution = vi.fn(async () =>
 			policyIsCurrent

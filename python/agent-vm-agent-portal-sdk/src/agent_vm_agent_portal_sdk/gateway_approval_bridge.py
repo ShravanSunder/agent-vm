@@ -4,6 +4,7 @@ import json
 import re
 import typing as t
 from collections.abc import Awaitable, Callable, Mapping
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -18,6 +19,8 @@ _MAXIMUM_DISPLAY_DEPTH = 6
 _MAXIMUM_DISPLAY_ENTRIES = 32
 _MAXIMUM_DISPLAY_STRING_SCALARS = 256
 _MAXIMUM_DISPLAY_BYTES = 4_096
+_MAXIMUM_ACCOUNT_ALIAS_SCALARS = 320
+_MAXIMUM_APPLICATION_LABEL_SCALARS = 160
 _REDACTED_VALUE = "[REDACTED]"
 _TRUNCATED_VALUE = "[TRUNCATED]"
 _CREDENTIAL_KEY_PATTERN = re.compile(r"token|password|secret|authorization|cookie|api[ _-]?key|private[ _-]?key", re.IGNORECASE)
@@ -75,6 +78,47 @@ def sanitize_gateway_approval_arguments(arguments: object) -> str:
     )
 
 
+def format_gateway_approval_preview(arguments: object, challenge: Mapping[str, object]) -> str | None:
+    """Keep the controller-bound account identity visible; never take an alias from call arguments."""
+    if challenge.get("kind") != "managed_google":
+        return None if "managedGoogleDisplay" in challenge else sanitize_gateway_approval_arguments(arguments)
+    display = challenge.get("managedGoogleDisplay")
+    if not isinstance(display, Mapping) or not isinstance(arguments, Mapping):
+        return None
+    account_id = display.get("accountId")
+    authorization_id = display.get("authorizationId")
+    alias = display.get("accountAlias")
+    application = display.get("applicationLabel")
+    revision = display.get("authorizationMetadataRevision")
+    if (
+        not isinstance(account_id, str)
+        or arguments.get("accountId") != account_id
+        or not isinstance(authorization_id, str)
+        or not isinstance(alias, str)
+        or not 1 <= len(alias) <= _MAXIMUM_ACCOUNT_ALIAS_SCALARS
+        or not isinstance(application, str)
+        or not 1 <= len(application) <= _MAXIMUM_APPLICATION_LABEL_SCALARS
+        or not isinstance(revision, int)
+        or isinstance(revision, bool)
+        or revision < 1
+    ):
+        return None
+    try:
+        if str(UUID(account_id)) != account_id.lower() or str(UUID(authorization_id)) != authorization_id.lower():
+            return None
+    except ValueError:
+        return None
+    value: JsonObject = {
+        "account": {"accountAlias": alias, "application": application},
+        "arguments": json.loads(sanitize_gateway_approval_arguments(arguments)),
+    }
+    rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    if len(rendered.encode()) > _MAXIMUM_DISPLAY_BYTES:
+        value["arguments"] = _truncation_marker(len(rendered.encode()) - _MAXIMUM_DISPLAY_BYTES)
+        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return rendered if len(rendered.encode()) <= _MAXIMUM_DISPLAY_BYTES else None
+
+
 def _model_mapping(model: BaseModel) -> JsonObject:
     return t.cast("JsonObject", model.model_dump(by_alias=True, exclude_none=True, mode="json"))
 
@@ -123,11 +167,28 @@ def _decision_rejection_code(reason: object) -> str:
     return "not_authorized"
 
 
-def _validate_portal_call_request(request: Mapping[str, object]) -> JsonObject:
-    validated_request = PORTABLE_CONTRACT_ADAPTERS["portal.call.request"].validate_python(request)
-    if not isinstance(validated_request, BaseModel):
+def _build_approval_presentation(original_call: JsonObject, challenge: JsonObject, item_id: str) -> BaseModel | None:
+    arguments_preview = format_gateway_approval_preview(original_call["arguments"], challenge)
+    if arguments_preview is None:
+        return None
+    value: JsonObject = {
+        "allowedDecisions": ["approve", "deny"],
+        "challengeId": challenge["challengeId"],
+        "display": {"argumentsPreview": arguments_preview},
+        "expiresAt": challenge["expiresAt"],
+        "itemId": item_id,
+        "name": original_call["name"],
+        "namespace": original_call["namespace"],
+    }
+    model = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.presentation-request"].validate_python(value)
+    return model if isinstance(model, BaseModel) else None
+
+
+def _validated_portal_call_request(request: Mapping[str, object]) -> JsonObject:
+    validated = PORTABLE_CONTRACT_ADAPTERS["portal.call.request"].validate_python(request)
+    if not isinstance(validated, BaseModel):
         raise TypeError("Portal call request did not produce a typed model.")
-    return _model_mapping(validated_request)
+    return _model_mapping(validated)
 
 
 async def execute_portal_call_with_approval(
@@ -139,7 +200,7 @@ async def execute_portal_call_with_approval(
     present_approval: PresentApproval,
 ) -> BaseModel:
     """Run one Portal call, present protected items, and retry only approved items."""
-    request_mapping = _validate_portal_call_request(request)
+    request_mapping = _validated_portal_call_request(request)
     original_calls = t.cast("list[JsonObject]", request_mapping["calls"])
     call_by_id = {t.cast("str", call["id"]): call for call in original_calls}
     initial_result = await call_portal(request_mapping) if initial_result is None else initial_result
@@ -154,20 +215,10 @@ async def execute_portal_call_with_approval(
         item_id = t.cast("str", item["id"])
         original_call = call_by_id[item_id]
         challenge = t.cast("JsonObject", item["approvalChallenge"])
-        presentation_request_value: JsonObject = {
-            "allowedDecisions": ["approve", "deny"],
-            "challengeId": challenge["challengeId"],
-            "display": {"argumentsPreview": sanitize_gateway_approval_arguments(original_call["arguments"])},
-            "expiresAt": challenge["expiresAt"],
-            "itemId": item_id,
-            "name": original_call["name"],
-            "namespace": original_call["namespace"],
-        }
-        presentation_request = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.presentation-request"].validate_python(
-            presentation_request_value,
-        )
-        if not isinstance(presentation_request, BaseModel):
-            raise TypeError("Approval presentation request did not produce a typed model.")
+        presentation_request = _build_approval_presentation(original_call, challenge, item_id)
+        if presentation_request is None:
+            final_items.append(_project_non_dispatch_result(item, code="not_authorized"))
+            continue
         try:
             presentation_outcome = await present_approval(presentation_request)
         except Exception:

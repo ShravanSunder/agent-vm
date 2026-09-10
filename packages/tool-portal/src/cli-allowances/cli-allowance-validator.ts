@@ -44,9 +44,19 @@ interface CliFlagOccurrence {
 	readonly separatedValue?: string;
 }
 
-export function evaluateCliAllowanceInvocation(
-	props: EvaluateCliAllowanceInvocationProps,
-): CliAllowanceEvaluationResult {
+export type CliAllowanceInvocationValidation =
+	| Extract<CliAllowanceEvaluationResult, { ok: false }>
+	| {
+			readonly ok: true;
+			readonly kind: 'admitted';
+			readonly argv: readonly string[];
+			readonly matchedCommandPath: readonly string[];
+			readonly matchedDenyRule: boolean;
+	  };
+
+export function validateCliAllowanceInvocation(
+	props: Pick<EvaluateCliAllowanceInvocationProps, 'allowance' | 'input'>,
+): CliAllowanceInvocationValidation {
 	const command = findMatchingCommand(props.allowance.commands, props.input.argv);
 	if (command === undefined) {
 		return deniedCliAllowance('CLI argv does not match an allowed command path.');
@@ -73,6 +83,28 @@ export function evaluateCliAllowanceInvocation(
 	const matchedDenyRule = props.allowance.calls.deny.some((matcher) =>
 		invocationMatcherApplies({ command, flagOccurrences, matcher }),
 	);
+	return {
+		ok: true,
+		kind: 'admitted',
+		argv: props.input.argv,
+		matchedCommandPath: command.path,
+		matchedDenyRule,
+	};
+}
+
+export function evaluateCliAllowanceInvocation(
+	props: EvaluateCliAllowanceInvocationProps,
+): CliAllowanceEvaluationResult {
+	const validation = validateCliAllowanceInvocation(props);
+	if (!validation.ok) return validation;
+	if ('source' in props.allowance.calls)
+		return deniedCliAllowance(
+			'Managed Google calls require current account policy from the controller.',
+		);
+	const command = findMatchingCommand(props.allowance.commands, props.input.argv);
+	if (command === undefined) return deniedCliAllowance('CLI command is no longer admitted.');
+	const flagOccurrences = deriveFlagOccurrences(props.input.argv.slice(command.path.length));
+	const matchedDenyRule = validation.matchedDenyRule;
 	const matchedRequiresApprovalRule = props.allowance.calls.requiresApproval.some((matcher) =>
 		invocationMatcherApplies({ command, flagOccurrences, matcher }),
 	);
@@ -93,7 +125,7 @@ export function evaluateCliAllowanceInvocation(
 	};
 }
 
-function deniedCliAllowance(message: string): CliAllowanceEvaluationResult {
+function deniedCliAllowance(message: string): Extract<CliAllowanceEvaluationResult, { ok: false }> {
 	return {
 		disposition: 'deny',
 		error: { code: 'cli_allowance_denied', message },
@@ -145,7 +177,7 @@ function deriveFlagOccurrences(argvTail: readonly string[]): readonly CliFlagOcc
 function validateFlagRules(props: {
 	readonly flagOccurrences: readonly CliFlagOccurrence[];
 	readonly flagRules: readonly CliFlagRule[];
-}): CliAllowanceEvaluationResult | undefined {
+}): Extract<CliAllowanceEvaluationResult, { ok: false }> | undefined {
 	for (const occurrence of props.flagOccurrences) {
 		const matchingRule = props.flagRules.find((rule) => rule.names.includes(occurrence.name));
 		if (matchingRule === undefined) continue;
@@ -213,7 +245,7 @@ function parseFlagToken(token: string): {
 function validateStdin(
 	allowance: CliAllowance,
 	stdin: string | undefined,
-): CliAllowanceEvaluationResult | undefined {
+): Extract<CliAllowanceEvaluationResult, { ok: false }> | undefined {
 	if (allowance.stdin.kind === 'none') {
 		return stdin === undefined
 			? undefined

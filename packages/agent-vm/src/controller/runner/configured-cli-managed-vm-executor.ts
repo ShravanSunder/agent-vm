@@ -1,26 +1,38 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
 import type {
 	ControllerConfiguredCliInput,
 	EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
-import { GatewayControlConfiguredCliControllerExecutionResultSchema } from '@agent-vm/gateway-control-contracts';
+import {
+	resolveCompiledGoogleCommand,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+} from '@agent-vm/config-contracts';
+import {
+	GatewayControlConfiguredCliControllerExecutionResultSchema,
+	type GatewayControlToolPortalControllerExecutionResult,
+} from '@agent-vm/gateway-control-contracts';
 import type {
-	OAuthAccountProfileId,
-	OAuthApplicationId,
-	OAuthServiceId,
+	GogFileInputSnapshot,
+	ManagedGoogleInvocationBinding,
 } from '@agent-vm/oauth-broker-contracts';
 import type {
+	GoogleOAuthRuntimeCredentialRequest,
+	GoogleOAuthRuntimeCredentialBinding,
 	GoogleOAuthRuntimeCredentialResolution,
 	GoogleOAuthRuntimeCredentialSnapshotValidation,
 } from '@agent-vm/oauth-broker/google';
-import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
+import { validateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type {
 	CredentialedRuntimeManager,
 	CredentialedRuntimeOwnerIdentity,
 } from '../credentialed-runtime/credentialed-runtime-manager.js';
+import type { SharedStagingOperationSession } from '../credentialed-runtime/shared-staging-operation-session.js';
+import { OperationFolderAccessError } from '../files/operation-folder-guest-access.js';
+import type { ManagedGoogleInvocationRequest } from '../oauth/google-permission-policy-service.js';
 import {
 	configuredCliAuthorizedEvaluationsEqual,
 	type ConfiguredCliAuthorizedOperation,
@@ -31,6 +43,10 @@ type ConfiguredCliOperation = Extract<
 	EffectiveControllerExecutionOperation,
 	{ kind: 'configured_cli' }
 >;
+type ConfiguredCliResult = Extract<
+	GatewayControlToolPortalControllerExecutionResult,
+	{ kind: 'configured_cli' }
+>['result'];
 
 export interface ConfiguredCliManagedVmGatewayIdentity {
 	readonly controllerEpoch: string;
@@ -40,30 +56,18 @@ export interface ConfiguredCliManagedVmGatewayIdentity {
 }
 
 export interface CreateConfiguredCliManagedVmExecutorProps {
-	readonly validateOAuthRuntimeCredentialSnapshot?: (request: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly credentialId: Extract<
-			GoogleOAuthRuntimeCredentialResolution,
-			{ kind: 'ready' }
-		>['credentialId'];
-		readonly materialRevision: Extract<
-			GoogleOAuthRuntimeCredentialResolution,
-			{ kind: 'ready' }
-		>['materialRevision'];
-		readonly minimumPermission: 'read' | 'write';
-		readonly serviceId: OAuthServiceId;
+	readonly validateGooglePolicySnapshot?: (props: {
+		readonly request: ManagedGoogleInvocationRequest;
+		readonly expected: ManagedGoogleInvocationBinding;
 		readonly zoneId: string;
-	}) => GoogleOAuthRuntimeCredentialSnapshotValidation;
-	readonly resolveOAuthRuntimeCredential?: (request: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly applicationId: OAuthApplicationId;
-		readonly minimumPermission: 'read' | 'write';
-		readonly serviceId: OAuthServiceId;
-		readonly zoneId: string;
-	}) => Promise<GoogleOAuthRuntimeCredentialResolution>;
+	}) => boolean;
+	readonly validateOAuthRuntimeCredentialSnapshot?: (
+		request: GoogleOAuthRuntimeCredentialRequest &
+			GoogleOAuthRuntimeCredentialBinding & { readonly zoneId: string },
+	) => GoogleOAuthRuntimeCredentialSnapshotValidation;
+	readonly resolveOAuthRuntimeCredential?: (
+		request: GoogleOAuthRuntimeCredentialRequest & { readonly zoneId: string },
+	) => Promise<GoogleOAuthRuntimeCredentialResolution>;
 	readonly resolveGatewayIdentity: (
 		zoneId: string,
 	) => Promise<ConfiguredCliManagedVmGatewayIdentity>;
@@ -71,21 +75,19 @@ export interface CreateConfiguredCliManagedVmExecutorProps {
 }
 
 function runtimeRevisionWithOAuthMaterial(props: {
-	readonly accountProfileId: string;
 	readonly baseRevision: string;
-	readonly credentialId: string;
-	readonly materialRevision: string;
+	readonly credential: GoogleOAuthRuntimeCredentialBinding;
+	readonly policy: ManagedGoogleInvocationBinding;
 }): string {
 	return `sha256:${createHash('sha256')
-		.update('credentialed-oauth-runtime')
-		.update('\0')
-		.update(props.baseRevision)
-		.update('\0')
-		.update(props.accountProfileId)
-		.update('\0')
-		.update(props.credentialId)
-		.update('\0')
-		.update(props.materialRevision)
+		.update(
+			JSON.stringify([
+				'credentialed-oauth-runtime',
+				props.baseRevision,
+				props.credential,
+				props.policy,
+			]),
+		)
 		.digest('hex')}`;
 }
 
@@ -105,50 +107,85 @@ export function createConfiguredCliManagedVmExecutor(
 	readonly operationName: string;
 	readonly reloadAuthorization: () => Promise<ConfiguredCliAuthorizedOperation>;
 	readonly signal?: AbortSignal;
+	readonly stageFileInputs?: (props: {
+		readonly folder: SharedStagingOperationSession;
+		readonly expected: GogFileInputSnapshot;
+	}) => Promise<void>;
+	readonly publishFileResults?: (props: {
+		readonly folder: SharedStagingOperationSession;
+		readonly assertCurrent: () => void;
+	}) => ReturnType<SharedStagingOperationSession['publish']>;
 	readonly stablePrincipal: GatewayStablePrincipalDigest;
 	readonly zoneId: string;
-}) => Promise<{
-	readonly exitCode: number;
-	readonly stderrSummary?: string;
-	readonly stderrTruncated: boolean;
-	readonly stdout: string;
-	readonly stdoutTruncated: boolean;
-}> {
+}) => Promise<ConfiguredCliResult> {
 	return async (request) => {
 		const resolution = request.authorization.credentialedRuntime;
 		if (
 			resolution === undefined ||
-			request.operation.executionTarget.kind !== 'ephemeral_managed_vm'
+			!isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(request.operation)
 		) {
 			throw new ConfiguredControllerExecutionError(
 				'validation_failed',
 				'Configured CLI operation has no current credentialed runtime authority.',
 			);
 		}
-		const validation = evaluateCliAllowanceInvocation({
+		const validation = validateCliAllowanceInvocation({
 			allowance: request.operation,
-			baseline: 'without_approval',
 			input: request.input,
 		});
-		if (!validation.ok) {
-			throw new ConfiguredControllerExecutionError('validation_failed', validation.error.message);
-		}
-		const oauthRule =
-			request.operation.authorization?.kind === 'oauth_account_profile'
-				? request.operation.authorization.rules.find(
-						(rule) =>
-							JSON.stringify(rule.match.path) === JSON.stringify(validation.matchedCommandPath),
-					)
-				: undefined;
-		if (
-			request.operation.authorization?.kind === 'oauth_account_profile' &&
-			oauthRule === undefined
-		) {
+		if (!validation.ok || validation.matchedDenyRule)
 			throw new ConfiguredControllerExecutionError(
 				'validation_failed',
-				'Configured CLI command has no current OAuth authorization classification.',
+				'Configured command shape is not admitted.',
 			);
-		}
+		const isGoogle = request.operation.authorization?.kind === 'oauth_account';
+		const classification =
+			isGoogle && request.operation.compiledGoogle !== undefined
+				? resolveCompiledGoogleCommand(request.operation.compiledGoogle, request.input.argv)
+				: undefined;
+		const managedGoogle = request.authorization.managedGoogle;
+		if (isGoogle && (classification === undefined || classification.kind === 'denied'))
+			throw new ConfiguredControllerExecutionError(
+				'validation_failed',
+				'Google command classification is unavailable.',
+			);
+		if (
+			classification?.kind === 'oauth' &&
+			(managedGoogle === undefined ||
+				!('accountId' in request.input) ||
+				managedGoogle.binding.accountId !== request.input.accountId ||
+				managedGoogle.binding.operationId !== classification.operationId ||
+				managedGoogle.binding.commandTableRevision !== request.operation.compiledGoogle?.revision)
+		)
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Google account authority does not match this command.',
+			);
+		if ((!isGoogle || classification?.kind === 'no-oauth') && managedGoogle !== undefined)
+			throw new ConfiguredControllerExecutionError(
+				'validation_failed',
+				'Unexpected Google account authority.',
+			);
+		const inputPaths = classification?.kind === 'oauth' ? (classification.files?.inputs ?? []) : [];
+		const approvedInputs = managedGoogle?.fileInputs;
+		if (
+			inputPaths.length > 0 &&
+			(request.stageFileInputs === undefined ||
+				approvedInputs === undefined ||
+				!isDeepStrictEqual(
+					inputPaths,
+					approvedInputs.files.map((file) => file.relativePath),
+				))
+		)
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Approved file input staging is unavailable.',
+			);
+		if (inputPaths.length === 0 && approvedInputs !== undefined)
+			throw new ConfiguredControllerExecutionError(
+				'not_dispatched',
+				'Unexpected file input authority.',
+			);
 		if (request.signal?.aborted === true) {
 			throw new ConfiguredControllerExecutionError(
 				'not_dispatched',
@@ -157,14 +194,25 @@ export function createConfiguredCliManagedVmExecutor(
 		}
 		const gatewayIdentity = await props.resolveGatewayIdentity(request.zoneId);
 		const admissionSignalIsActive = (): boolean => request.signal?.aborted !== true;
-		const oauthRequirement =
-			oauthRule?.requirement.kind === 'oauth' ? oauthRule.requirement : undefined;
-		let materializedOAuthCredential:
-			| Pick<
-					Extract<GoogleOAuthRuntimeCredentialResolution, { kind: 'ready' }>,
-					'credentialId' | 'materialRevision'
-			  >
-			| undefined;
+		const credentialRequest =
+			managedGoogle === undefined
+				? undefined
+				: {
+						accountId: managedGoogle.binding.accountId,
+						agentId: resolution.agentId,
+						applicationId: managedGoogle.binding.applicationId,
+						operationId: managedGoogle.binding.operationId,
+						gmailWriteAllowed: managedGoogle.binding.gmailWriteAllowed,
+						zoneId: resolution.zoneId,
+					};
+		const policyRequest: ManagedGoogleInvocationRequest = {
+			agentId: resolution.agentId,
+			profileId: resolution.profileId,
+			namespaceId: resolution.namespaceId,
+			operationName: resolution.operationName,
+			input: request.input,
+		};
+		let materializedOAuthCredential: GoogleOAuthRuntimeCredentialBinding | undefined;
 		const commonAcquisition = {
 			...(request.signal === undefined ? {} : { admissionSignal: request.signal }),
 			finalAuthorization: async (): Promise<boolean> => {
@@ -181,25 +229,24 @@ export function createConfiguredCliManagedVmExecutor(
 				return policyIsCurrent;
 			},
 			finalMaterialAuthorization: (): boolean => {
-				if (oauthRequirement === undefined) return true;
+				if (managedGoogle === undefined) return true;
 				if (
-					!('accountProfile' in request.input) ||
+					credentialRequest === undefined ||
 					materializedOAuthCredential === undefined ||
-					props.validateOAuthRuntimeCredentialSnapshot === undefined
-				) {
+					props.validateOAuthRuntimeCredentialSnapshot === undefined ||
+					props.validateGooglePolicySnapshot === undefined
+				)
 					return false;
-				}
 				return (
 					props.validateOAuthRuntimeCredentialSnapshot({
-						accountProfileId: request.input.accountProfile,
-						agentId: resolution.agentId,
-						applicationId: oauthRequirement.applicationId,
-						credentialId: materializedOAuthCredential.credentialId,
-						materialRevision: materializedOAuthCredential.materialRevision,
-						minimumPermission: oauthRequirement.minimumPermission,
-						serviceId: oauthRequirement.serviceId,
+						...credentialRequest,
+						...materializedOAuthCredential,
+					}).kind === 'current' &&
+					props.validateGooglePolicySnapshot({
+						request: policyRequest,
+						expected: managedGoogle.binding,
 						zoneId: resolution.zoneId,
-					}).kind === 'current'
+					})
 				);
 			},
 			operationId: request.authorization.evaluation.operationId,
@@ -209,7 +256,7 @@ export function createConfiguredCliManagedVmExecutor(
 			}),
 		};
 		const acquired =
-			oauthRequirement !== undefined
+			credentialRequest !== undefined && managedGoogle !== undefined
 				? await props.runtimeManager.acquireCommand({
 						...commonAcquisition,
 						materializationFailureReason: (error): string =>
@@ -217,38 +264,50 @@ export function createConfiguredCliManagedVmExecutor(
 								? error.message
 								: 'credentialed runtime materialization failed',
 						materializeResolution: async () => {
-							if (!('accountProfile' in request.input)) {
-								throw new ConfiguredControllerExecutionError(
-									'validation_failed',
-									'OAuth-configured CLI input requires an account profile.',
-								);
-							}
 							if (props.resolveOAuthRuntimeCredential === undefined) {
 								throw new ConfiguredControllerExecutionError(
 									'not_dispatched',
 									'OAuth credential resolution is unavailable.',
 								);
 							}
-							const credential = await props.resolveOAuthRuntimeCredential({
-								accountProfileId: request.input.accountProfile,
-								agentId: resolution.agentId,
-								applicationId: oauthRequirement.applicationId,
-								minimumPermission: oauthRequirement.minimumPermission,
-								serviceId: oauthRequirement.serviceId,
-								zoneId: resolution.zoneId,
-							});
+							const credential = await props.resolveOAuthRuntimeCredential(credentialRequest);
 							if (credential.kind !== 'ready') {
 								throw new ConfiguredControllerExecutionError(
 									'not_dispatched',
 									`OAuth authorization is unavailable: ${credential.reason}.`,
 								);
 							}
+							if (
+								credential.accountId !== managedGoogle.binding.accountId ||
+								credential.authorizationId !== managedGoogle.binding.authorizationId ||
+								credential.generation !== managedGoogle.binding.generation ||
+								credential.authorizationMetadataRevision !==
+									managedGoogle.binding.authorizationMetadataRevision
+							) {
+								credential.accessToken.fill(0);
+								throw new ConfiguredControllerExecutionError(
+									'not_dispatched',
+									'Google credential binding changed during materialization.',
+								);
+							}
 							materializedOAuthCredential = {
+								accountId: credential.accountId,
+								authorizationId: credential.authorizationId,
+								generation: credential.generation,
+								authorizationMetadataRevision: credential.authorizationMetadataRevision,
 								credentialId: credential.credentialId,
 								materialRevision: credential.materialRevision,
 							};
 							return {
 								dynamicHttpMediation: {
+									authorization: {
+										accountId: credential.accountId,
+										applicationId: credentialRequest.applicationId,
+										authorizationId: credential.authorizationId,
+										generation: credential.generation,
+										overrideRevision: managedGoogle.binding.overrideRevision,
+									},
+									gmailNoSend: credential.gmailNoSend,
 									allowedHosts: credential.allowedHosts,
 									credentialId: credential.credentialId,
 									environmentName: 'GOG_ACCESS_TOKEN',
@@ -260,10 +319,9 @@ export function createConfiguredCliManagedVmExecutor(
 								resolution: {
 									...resolution,
 									agentRuntimeRevision: runtimeRevisionWithOAuthMaterial({
-										accountProfileId: request.input.accountProfile,
 										baseRevision: resolution.agentRuntimeRevision,
-										credentialId: credential.credentialId,
-										materialRevision: credential.materialRevision,
+										credential: materializedOAuthCredential,
+										policy: managedGoogle.binding,
 									}),
 								},
 							};
@@ -288,24 +346,114 @@ export function createConfiguredCliManagedVmExecutor(
 			| { readonly kind: 'completed' }
 			| { readonly kind: 'retire'; readonly reason: string } = { kind: 'completed' };
 		try {
+			const fileArguments = classification?.kind === 'oauth' ? classification.files : undefined;
+			let folder:
+				| Awaited<ReturnType<NonNullable<typeof acquired.command.prepareSharedStagingOperation>>>
+				| undefined;
+			if (fileArguments !== undefined) {
+				if (
+					acquired.command.prepareSharedStagingOperation === undefined ||
+					request.publishFileResults === undefined
+				)
+					throw new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Operation file access is unavailable.',
+					);
+				try {
+					folder = await acquired.command.prepareSharedStagingOperation({
+						maximumBytes: fileArguments.outputs.some((output) => output.kind === 'directory')
+							? 64 * 1024 * 1024
+							: Math.min(
+									64 * 1024 * 1024,
+									fileArguments.outputs.length * 16 * 1024 * 1024 +
+										(approvedInputs?.files.reduce((total, file) => total + file.byteLength, 0) ??
+											0),
+								),
+						authorityIsCurrent: commonAcquisition.finalMaterialAuthorization,
+					});
+				} catch {
+					throw new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Operation folder preparation failed.',
+					);
+				}
+				const expectedRoot = `/agent-vm/gog-work/operation-${request.authorization.evaluation.operationId}`;
+				if (folder.root !== expectedRoot || !(await commonAcquisition.finalAuthorization()))
+					throw new ConfiguredControllerExecutionError(
+						'not_dispatched',
+						'Operation folder authorization changed.',
+					);
+				if (approvedInputs !== undefined && request.stageFileInputs !== undefined) {
+					await request.stageFileInputs({ folder, expected: approvedInputs });
+					if (
+						!(await commonAcquisition.finalAuthorization()) ||
+						!commonAcquisition.finalMaterialAuthorization()
+					)
+						throw new ConfiguredControllerExecutionError(
+							'not_dispatched',
+							'File input authority changed before command dispatch.',
+						);
+				}
+			}
 			const result = await acquired.command.exec(
 				request.input,
 				request.signal === undefined ? {} : { signal: request.signal },
 			);
+			let operationFiles: ConfiguredCliResult['operationFiles'];
+			if (folder !== undefined) {
+				try {
+					// A known terminal outcome permits inspecting retained files even when
+					// Gog failed. Availability describes bytes, not producer success;
+					// preserve exitCode independently so the agent can decide what to use.
+					if (request.publishFileResults === undefined)
+						throw new OperationFolderAccessError('unavailable');
+					if (!(await commonAcquisition.finalAuthorization()))
+						throw new OperationFolderAccessError('unavailable');
+					const published = await request.publishFileResults({
+						folder,
+						assertCurrent: () => {
+							if (!admissionSignalIsActive() || !commonAcquisition.finalMaterialAuthorization())
+								throw new OperationFolderAccessError('unavailable');
+						},
+					});
+					const files = published.files.slice(0, 256);
+					const failedFiles = published.failedFiles.slice(0, 256);
+					while (Buffer.byteLength(JSON.stringify({ files, failedFiles })) > 30 * 1024) {
+						if (failedFiles.length > 0) failedFiles.pop();
+						else if (files.length > 0) files.pop();
+						else break;
+					}
+					operationFiles = {
+						kind: 'available',
+						referenceId: published.publicationId,
+						expiresAtMs: published.expiresAtMs,
+						directoryPath: `/agent-vm/files/${published.publicationId}`,
+						files,
+						failedFiles,
+						limitReached:
+							files.length !== published.files.length ||
+							failedFiles.length !== published.failedFiles.length,
+						cleanup: published.cleanup,
+					};
+				} catch (error) {
+					// The remote command already completed. Preserve that result even if
+					// its folder cannot be retained or delivered; never replay the command.
+					outcome = { kind: 'retire', reason: 'configured command file result is unavailable' };
+					operationFiles = {
+						kind: 'unavailable',
+						reason:
+							error instanceof OperationFolderAccessError && error.reason === 'size-limit'
+								? 'size-limit'
+								: 'file-result-failed',
+					};
+				}
+			}
 			const parsedResult = GatewayControlConfiguredCliControllerExecutionResultSchema.parse({
 				kind: 'configured_cli',
 				operationName: request.operationName,
-				result,
+				result: { ...result, ...(operationFiles === undefined ? {} : { operationFiles }) },
 			}).result;
-			return {
-				exitCode: parsedResult.exitCode,
-				...(parsedResult.stderrSummary === undefined
-					? {}
-					: { stderrSummary: parsedResult.stderrSummary }),
-				stderrTruncated: parsedResult.stderrTruncated,
-				stdout: parsedResult.stdout,
-				stdoutTruncated: parsedResult.stdoutTruncated,
-			};
+			return parsedResult;
 		} catch (error) {
 			outcome = { kind: 'retire', reason: 'configured command termination is unsafe' };
 			throw error;

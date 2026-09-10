@@ -1,217 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
+import { createOAuthConfigTestInput } from './oauth-config-test-fixture.js';
 import { googleOAuthCallbackUrl, oauthConfigSchema } from './oauth-config.js';
-import { oauthToolPortalConfigPairSchema } from './oauth-tool-portal-config.js';
-
-function validOAuthConfigInput(): unknown {
-	return {
-		agents: {
-			hermes: {
-				accountProfiles: {
-					'personal-google': {
-						applications: {
-							'gmail-app': { maximumPermissions: { gmail: 'write' } },
-							'workspace-app': {
-								maximumPermissions: { calendar: 'write', drive: 'read' },
-							},
-							'youtube-app': { maximumPermissions: { youtube: 'read' } },
-						},
-						authorizedTailnetLogins: ['human@example.test'],
-						provider: 'google',
-					},
-				},
-			},
-		},
-		browser: {
-			listener: {
-				certificatePath: '/var/lib/agent-vm/oauth/tls.crt',
-				kind: 'tailscale_https',
-				port: 18_900,
-				privateKeyPath: '/var/lib/agent-vm/oauth/tls.key',
-			},
-			publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
-		},
-		providers: {
-			google: {
-				applications: {
-					'gmail-app': {
-						clientCredentials: {
-							ref: 'op://agent-vm-testing/google-gmail-web/client-json',
-							source: '1password',
-						},
-						clientKind: 'web',
-						description: 'Gmail account access.',
-						label: 'Gmail',
-						services: {
-							gmail: {
-								label: 'Gmail messages',
-								read: ['gmail.readonly'],
-								write: ['gmail.modify'],
-							},
-						},
-					},
-					'workspace-app': {
-						clientCredentials: {
-							ref: 'op://agent-vm-testing/google-workspace-web/client-json',
-							source: '1password',
-						},
-						clientKind: 'web',
-						description: 'Google Workspace application access.',
-						label: 'Google Workspace',
-						services: {
-							calendar: {
-								label: 'Google Calendar',
-								read: ['calendar.readonly'],
-								write: ['calendar'],
-							},
-							drive: {
-								label: 'Google Drive',
-								read: ['drive.readonly'],
-								write: ['drive'],
-							},
-						},
-					},
-					'youtube-app': {
-						clientCredentials: {
-							ref: 'op://agent-vm-testing/google-youtube-web/client-json',
-							source: '1password',
-						},
-						clientKind: 'web',
-						description: 'YouTube account and channel access.',
-						label: 'YouTube',
-						services: {
-							youtube: { label: 'YouTube channel', read: ['youtube.readonly'] },
-						},
-					},
-				},
-				kind: 'google',
-			},
-		},
-		schemaVersion: 1,
-		storage: {
-			keyEncryptionKey: {
-				ref: 'op://agent-vm-testing/oauth-kek/password',
-				source: '1password',
-			},
-		},
-	};
-}
-
-function validOAuthToolPortalConfigInput(): unknown {
-	return {
-		agents: { hermes: { profile: 'google-enabled' } },
-		mode: 'managed',
-		profiles: {
-			'google-enabled': {
-				namespaces: {
-					oauth_authorization: {
-						backend: {
-							kind: 'controller_execution',
-							operations: {
-								begin: { kind: 'registered_action' },
-								cancel: { kind: 'registered_action' },
-								list: { kind: 'registered_action' },
-								reauthorize: { kind: 'registered_action' },
-								revoke: { kind: 'registered_action' },
-								status: { kind: 'registered_action' },
-							},
-						},
-						calls: {
-							requiresApproval: { allow: ['reauthorize', 'revoke'] },
-							withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
-						},
-						discovery: { summary: 'Set up and inspect account authorization.' },
-						tools: { allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'] },
-					},
-					gog: {
-						backend: {
-							kind: 'controller_execution',
-							operations: {
-								gog_cli: {
-									authorization: {
-										kind: 'oauth_account_profile',
-										rules: [
-											{
-												match: { flags: [], path: ['gmail', 'search'] },
-												requirement: {
-													applicationId: 'gmail-app',
-													kind: 'oauth',
-													minimumPermission: 'read',
-													serviceId: 'gmail',
-												},
-											},
-											{
-												match: { flags: [], path: ['gmail', 'send'] },
-												requirement: {
-													applicationId: 'gmail-app',
-													kind: 'oauth',
-													minimumPermission: 'write',
-													serviceId: 'gmail',
-												},
-											},
-											{
-												match: { flags: [], path: ['help'] },
-												requirement: { kind: 'no_oauth' },
-											},
-										],
-									},
-									calls: {
-										deny: [],
-										requiresApproval: [{ flags: [], path: ['gmail', 'send'] }],
-										withoutApproval: 'remaining_admitted',
-									},
-									commands: [
-										{ path: ['gmail', 'search'] },
-										{ path: ['gmail', 'send'] },
-										{ path: ['help'] },
-									],
-									deniedPatterns: [],
-									executablePath: '/usr/bin/gog',
-									executionTarget: {
-										allowedHosts: ['gmail.googleapis.com'],
-										credentialProjection: {
-											environment: {
-												GOG_ACCESS_TOKEN: {
-													kind: 'oauth_access_token',
-												},
-											},
-											kind: 'http_mediation',
-										},
-										environment: { kind: 'empty' },
-										guestCwd: '/work',
-										imageReference: '../../vm-images/controller-runners/gog/build-config.json',
-										kind: 'ephemeral_managed_vm',
-									},
-									kind: 'configured_cli',
-									mandatoryArgvPrefix: [],
-									output: {
-										modelVisibleStderr: 'none',
-										overflow: 'truncate',
-										stderrMaxBytes: 1_024,
-										stdoutMaxBytes: 1_024,
-									},
-									safeHelp: 'Run one admitted Gog command.',
-									stdin: { kind: 'none' },
-									timeout: { kind: 'quick' },
-								},
-							},
-						},
-						calls: {
-							requiresApproval: { allow: [] },
-							withoutApproval: { allow: ['gog_cli'] },
-						},
-						tools: { allow: ['gog_cli'] },
-					},
-				},
-			},
-		},
-		schemaVersion: 1,
-	};
-}
+import { createOAuthPolicyCompilerTestInput } from './oauth-policy-compiler-test-fixture.js';
+import { compileOAuthPolicy } from './oauth-tool-portal-config.js';
 
 describe('OAuth config contract', () => {
 	it('parses the strict three-application Google config and derives one callback', () => {
-		const config = oauthConfigSchema.parse(validOAuthConfigInput());
+		// Arrange / Act
+		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
+		// Assert
 		expect(Object.keys(config.providers.google.applications).toSorted()).toEqual([
 			'gmail-app',
 			'workspace-app',
@@ -221,70 +19,51 @@ describe('OAuth config contract', () => {
 			'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
 		);
 	});
-
-	it('rejects authored Google account identity and arbitrary providers or applications', () => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const agents = input.agents as Record<string, unknown>;
-		const hermes = agents.hermes as Record<string, unknown>;
-		expect(
-			oauthConfigSchema.safeParse({ ...input, agents: { hermes: { ...hermes, email: 'x@y.z' } } })
-				.success,
-		).toBe(false);
-
-		const providers = input.providers as Record<string, unknown>;
+	it('rejects authored Google account identities and arbitrary providers or applications', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		// Act / Assert
 		expect(
 			oauthConfigSchema.safeParse({
 				...input,
-				providers: { ...providers, notion: { kind: 'notion' } },
+				agents: { ...input.agents, sun: { ...input.agents.sun, email: 'synthetic@example.test' } },
+			}).success,
+		).toBe(false);
+		expect(
+			oauthConfigSchema.safeParse({
+				...input,
+				providers: { ...input.providers, notion: { kind: 'notion' } },
+			}).success,
+		).toBe(false);
+		expect(
+			oauthConfigSchema.safeParse({
+				...input,
+				providers: {
+					google: {
+						...input.providers.google,
+						applications: {
+							...input.providers.google.applications,
+							arbitrary: input.providers.google.applications['gmail-app'],
+						},
+					},
+				},
 			}).success,
 		).toBe(false);
 	});
-
-	it('rejects account-profile service maxima missing from the selected application', () => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const agents = structuredClone(input.agents) as Record<string, Record<string, unknown>>;
-		const hermes = agents.hermes;
-		if (hermes === undefined) throw new Error('Missing Hermes OAuth test agent.');
-		const accountProfiles = hermes.accountProfiles as Record<string, Record<string, unknown>>;
-		const profile = accountProfiles['personal-google'];
-		if (profile === undefined) throw new Error('Missing personal OAuth profile.');
-		const applications = profile.applications as Record<string, Record<string, unknown>>;
-		applications['gmail-app'] = { maximumPermissions: { calendar: 'read' } };
-
-		const result = oauthConfigSchema.safeParse({ ...input, agents });
-		expect(result.success).toBe(false);
-		if (result.success) throw new Error('Expected invalid OAuth service maximum.');
-		expect(result.error.issues).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					path: [
-						'agents',
-						'hermes',
-						'accountProfiles',
-						'personal-google',
-						'applications',
-						'gmail-app',
-						'maximumPermissions',
-						'calendar',
-					],
-				}),
-			]),
-		);
+	it('rejects ceiling groups missing from the selected application family', () => {
+		// Arrange
+		const input = createOAuthPolicyCompilerTestInput();
+		input.oauthConfig.agents.sun.applications['gmail-app'].ceiling.groupIds = ['forms.body.read'];
+		// Act / Assert
+		expect(() => compileOAuthPolicy(input)).toThrow('ceiling');
 	});
-
-	it('rejects write maxima when the service has no authored write scopes', () => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const agents = structuredClone(input.agents) as Record<string, Record<string, unknown>>;
-		const hermes = agents.hermes;
-		if (hermes === undefined) throw new Error('Missing Hermes OAuth test agent.');
-		const accountProfiles = hermes.accountProfiles as Record<string, Record<string, unknown>>;
-		const profile = accountProfiles['personal-google'];
-		if (profile === undefined) throw new Error('Missing personal OAuth profile.');
-		const applications = profile.applications as Record<string, Record<string, unknown>>;
-		applications['youtube-app'] = { maximumPermissions: { youtube: 'write' } };
-		expect(oauthConfigSchema.safeParse({ ...input, agents }).success).toBe(false);
+	it('rejects write maxima that have no supported catalog group', () => {
+		// Arrange
+		const input = createOAuthPolicyCompilerTestInput();
+		input.catalog.groups = input.catalog.groups.filter((group) => group.effect !== 'write');
+		// Act / Assert
+		expect(() => compileOAuthPolicy(input)).toThrow('ceiling');
 	});
-
 	it.each([
 		'https://auth.claw.askluna.xyz/path',
 		'https://auth.claw.askluna.xyz',
@@ -293,89 +72,83 @@ describe('OAuth config contract', () => {
 		'https://oauth.example.test:18900',
 		'http://auth.claw.askluna.xyz',
 	])('rejects non-origin OAuth public URL %s', (publicBaseUrl) => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const browser = input.browser as Record<string, unknown>;
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		// Act / Assert
 		expect(
-			oauthConfigSchema.safeParse({ ...input, browser: { ...browser, publicBaseUrl } }).success,
+			oauthConfigSchema.safeParse({ ...input, browser: { ...input.browser, publicBaseUrl } })
+				.success,
 		).toBe(false);
 	});
-
-	it('requires 1Password for the KEK and Web client credentials', () => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const storage = input.storage as Record<string, unknown>;
+	it('requires 1Password references for the KEK and Web client credentials', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		// Act / Assert
 		expect(
 			oauthConfigSchema.safeParse({
 				...input,
-				storage: {
-					...storage,
-					keyEncryptionKey: { name: 'OAUTH_KEK', source: 'environment' },
+				storage: { keyEncryptionKey: { name: 'TEST_ONLY_KEY', source: 'environment' } },
+			}).success,
+		).toBe(false);
+		expect(
+			oauthConfigSchema.safeParse({
+				...input,
+				providers: {
+					google: {
+						...input.providers.google,
+						applications: {
+							...input.providers.google.applications,
+							'gmail-app': {
+								...input.providers.google.applications['gmail-app'],
+								clientCredentials: { name: 'TEST_ONLY_CLIENT', source: 'environment' },
+							},
+						},
+					},
 				},
 			}).success,
 		).toBe(false);
 	});
-
-	it('requires a distinct 1Password client reference for every Google application', () => {
-		const input = validOAuthConfigInput() as Record<string, unknown>;
-		const providers = structuredClone(input.providers) as Record<string, Record<string, unknown>>;
-		const google = providers.google;
-		if (google === undefined) throw new Error('Missing Google OAuth provider fixture.');
-		const applications = google.applications as Record<string, Record<string, unknown>>;
-		const gmailApplication = applications['gmail-app'];
-		const workspaceApplication = applications['workspace-app'];
-		if (gmailApplication === undefined || workspaceApplication === undefined) {
-			throw new Error('Missing Google OAuth application fixture.');
-		}
-		workspaceApplication.clientCredentials = gmailApplication.clientCredentials;
-
-		expect(oauthConfigSchema.safeParse({ ...input, providers }).success).toBe(false);
+	it('requires a distinct client reference for every Google application', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		input.providers.google.applications['workspace-app'].clientCredentials =
+			input.providers.google.applications['gmail-app'].clientCredentials;
+		// Act / Assert
+		expect(oauthConfigSchema.safeParse(input).success).toBe(false);
 	});
 });
 
 describe('OAuth and Tool Portal cross-reference contract', () => {
-	it('accepts one reachable Gog operation whose rules fit an assigned account profile', () => {
-		expect(
-			oauthToolPortalConfigPairSchema.safeParse({
-				oauthConfig: validOAuthConfigInput(),
-				toolPortalConfig: validOAuthToolPortalConfigInput(),
-			}).success,
-		).toBe(true);
+	it('accepts reachable Gog operations qualified by the code catalog and explicit agent ceilings', () => {
+		// Arrange / Act
+		const compiled = compileOAuthPolicy(createOAuthPolicyCompilerTestInput());
+		// Assert
+		expect(compiled.operationIdsByAgent.sun).toEqual(['gmail.search']);
 	});
-
-	it('rejects a reachable OAuth operation for an agent with no OAuth account profiles', () => {
-		const oauthConfig = validOAuthConfigInput() as Record<string, unknown>;
-		expect(
-			oauthToolPortalConfigPairSchema.safeParse({
-				oauthConfig: {
-					...oauthConfig,
-					agents: { other: (oauthConfig.agents as Record<string, unknown>).hermes },
-				},
-				toolPortalConfig: validOAuthToolPortalConfigInput(),
-			}).success,
-		).toBe(false);
+	it('rejects a reachable Google operation for an agent with no OAuth admission', () => {
+		// Arrange
+		const input = createOAuthPolicyCompilerTestInput();
+		const config = oauthConfigSchema.parse(input.oauthConfig);
+		delete config.agents.sun;
+		for (const owner of Object.values(config.owners)) owner.allowedAgentIds = ['ember'];
+		for (const editor of Object.values(config.policyEditors)) editor.editableAgentIds = ['ember'];
+		// Act / Assert
+		expect(() => compileOAuthPolicy({ ...input, oauthConfig: config })).toThrow(
+			'without OAuth ceilings',
+		);
 	});
-
-	it('rejects OAuth write classification without invocation approval', () => {
-		const toolPortalConfig = structuredClone(validOAuthToolPortalConfigInput()) as Record<
-			string,
-			unknown
-		>;
-		const profiles = toolPortalConfig.profiles as Record<string, Record<string, unknown>>;
-		const profile = profiles['google-enabled'];
-		if (profile === undefined) throw new Error('Missing Tool Portal OAuth test profile.');
-		const namespaces = profile.namespaces as Record<string, Record<string, unknown>>;
-		const namespace = namespaces.gog;
-		if (namespace === undefined) throw new Error('Missing Gog OAuth test namespace.');
-		const backend = namespace.backend as Record<string, unknown>;
-		const operations = backend.operations as Record<string, Record<string, unknown>>;
-		const operation = operations.gog_cli;
-		if (operation === undefined) throw new Error('Missing Gog OAuth test operation.');
-		operation.calls = { deny: [], requiresApproval: [], withoutApproval: 'remaining_admitted' };
-
-		expect(
-			oauthToolPortalConfigPairSchema.safeParse({
-				oauthConfig: validOAuthConfigInput(),
-				toolPortalConfig,
-			}).success,
-		).toBe(false);
+	it('accepts configured Write Allow without adding a second OAuth must-ask policy', () => {
+		// Arrange
+		const input = createOAuthPolicyCompilerTestInput();
+		input.toolPortalConfig.profiles.shared.namespaces.google.backend.operations.gog.commands.push({
+			path: ['gmail', 'send'],
+			flagRules: [],
+		});
+		input.toolPortalConfig.agents.ember.googlePolicyDefaults.applications['gmail-app'].gmail.write =
+			'allow';
+		// Act / Assert
+		expect(compileOAuthPolicy(input).defaultsByAgentApplication.ember).toEqual({
+			'gmail-app': { gmail: { read: 'ask', write: 'allow' } },
+		});
 	});
 });

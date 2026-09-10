@@ -1,0 +1,26 @@
+{
+	"caseId": "attachment-public-result",
+	"schemaId": "portal.file.result",
+	"tags": ["native-attachment", "accepted"],
+	"input": {
+		"kind": "attached",
+		"messageId": "native-message",
+		"fileName": "report.bin",
+		"byteLength": 4,
+		"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"cleanup": "complete"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "attached",
+			"messageId": "native-message",
+			"fileName": "report.bin",
+			"byteLength": 4,
+			"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"cleanup": "complete"
+		},
+		"canonicalJson": "{\"byteLength\":4,\"cleanup\":\"complete\",\"fileName\":\"report.bin\",\"kind\":\"attached\",\"messageId\":\"native-message\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+		"refinementIdentities": []
+	}
+}

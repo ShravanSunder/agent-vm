@@ -1,0 +1,18 @@
+{
+	"caseId": "file-result-payload-rejected",
+	"schemaId": "portal.file.result",
+	"tags": ["operation-file", "rejected", "obsolete-rpc"],
+	"input": {
+		"kind": "materialized",
+		"path": "/work/result",
+		"byteLength": 0,
+		"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"cleanup": "complete",
+		"contentBase64": "AA=="
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.schema.invalid-union"],
+		"refinementIdentities": []
+	}
+}

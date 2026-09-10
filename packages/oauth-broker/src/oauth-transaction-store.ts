@@ -1,165 +1,114 @@
 import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
+	oauthBrowserSessionIdentitySchema,
 	oauthCompletionSessionIdSchema,
-	oauthPermissionSelectionsSchema,
-	oauthScopeSchema,
 	oauthTransactionIdSchema,
-	type OAuthAccountProfileId,
 	type OAuthApplicationId,
+	type OAuthBrowserSessionIdentity,
 	type OAuthCompletionSessionId,
 	type OAuthPermissionSelections,
 	type OAuthScope,
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
-import { z } from 'zod';
+import type { z } from 'zod';
 
 import {
 	createOAuthOpaqueIdentifier,
 	createOAuthPkcePair,
 	oauthBrowserSecretsEqual,
 } from './oauth-browser-security.js';
+import {
+	oauthAuthorizingTransactionSchema,
+	oauthCeremonyCommonSchema,
+	oauthCeremonyContextSchema,
+	type oauthCeremonyInitiatorSchema,
+	type oauthCeremonyTargetSchema,
+	oauthCommittingDisconnectSchema,
+	oauthCompletionCommonSchema,
+	oauthConsumingTransactionSchema,
+	oauthSelectingTransactionSchema,
+	type OAuthCallbackCompletionResult,
+	type OAuthCallbackConsumptionResult,
+	type OAuthCeremonyContext,
+	type OAuthCeremonyTransaction,
+	type OAuthCompletionCommitResult,
+	type OAuthCompletionSession,
+} from './oauth-ceremony-contracts.js';
 
-const oauthOpaqueBrowserSecretSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
-const oauthAgentIdSchema = z.string().min(1).max(128);
-const tailnetLoginSchema = z.string().min(1).max(320);
-const oauthRedirectUriSchema = z.url().refine((value) => value.startsWith('https://'), {
-	message: 'OAuth redirect URIs must use HTTPS.',
-});
+export type {
+	OAuthCallbackCompletionResult,
+	OAuthCallbackConsumptionResult,
+	OAuthCeremonyContext,
+	OAuthCeremonyTransaction,
+	OAuthCompletionCommitResult,
+	OAuthCompletionSession,
+} from './oauth-ceremony-contracts.js';
 
-interface OAuthTransactionCommon {
-	readonly accountProfileId: OAuthAccountProfileId;
-	readonly agentId: string;
-	readonly applicationIds: readonly OAuthApplicationId[];
-	readonly authorizationMode: OAuthAuthorizationMode;
+interface BrowserDecisionInput {
 	readonly browserBindingSecret: string;
-	readonly createdAtMs: number;
-	readonly csrfSecret: string;
-	readonly expiresAtMs: number;
-	readonly suggestedSelections?: OAuthPermissionSelections | undefined;
-	readonly transactionId: OAuthTransactionId;
+	readonly csrfToken: string;
+	readonly identity: OAuthBrowserSessionIdentity;
 }
-
-export type OAuthAuthorizationMode = 'enroll-missing' | 'reauthorize-existing';
-
-export type OAuthCeremonyTransaction =
-	| (OAuthTransactionCommon & {
-			readonly kind: 'selecting-permissions';
-			readonly tailnetLogin?: string | undefined;
-	  })
-	| (OAuthTransactionCommon & {
-			readonly applicationId: OAuthApplicationId;
-			readonly completedApplications: readonly OAuthApplicationId[];
-			readonly confirmedSelections: OAuthPermissionSelections;
-			readonly confirmedScopes: readonly OAuthScope[];
-			readonly kind: 'authorizing-application';
-			readonly oauthState: string;
-			readonly pkceChallenge: string;
-			readonly pkceVerifier: string;
-			readonly redirectUri: string;
-			readonly remainingApplications: readonly OAuthApplicationId[];
-			readonly tailnetLogin: string;
-	  })
-	| (OAuthTransactionCommon & {
-			readonly applicationId: OAuthApplicationId;
-			readonly completedApplications: readonly OAuthApplicationId[];
-			readonly confirmedSelections: OAuthPermissionSelections;
-			readonly confirmedScopes: readonly OAuthScope[];
-			readonly kind: 'consuming-callback';
-			readonly oauthState: string;
-			readonly pkceChallenge: string;
-			readonly pkceVerifier: string;
-			readonly redirectUri: string;
-			readonly remainingApplications: readonly OAuthApplicationId[];
-			readonly tailnetLogin: string;
-	  });
-
-interface OAuthCompletionSessionCommon {
-	readonly accountProfileId: OAuthAccountProfileId;
-	readonly agentId: string;
-	readonly applicationId: OAuthApplicationId;
-	readonly authorizationMode: OAuthAuthorizationMode;
-	readonly browserBindingSecret: string;
-	readonly completedApplications: readonly OAuthApplicationId[];
-	readonly confirmedSelections: OAuthPermissionSelections;
-	readonly completionSessionId: OAuthCompletionSessionId;
-	readonly createdAtMs: number;
-	readonly csrfSecret: string;
-	readonly expiresAtMs: number;
-	readonly remainingApplications: readonly OAuthApplicationId[];
-	readonly tailnetLogin: string;
-	readonly transactionId: OAuthTransactionId;
-}
-
-export interface OAuthCeremonyOwner {
-	readonly accountProfileId: OAuthAccountProfileId;
-	readonly agentId: string;
-	readonly transactionId: OAuthTransactionId;
-}
-
-export type OAuthCompletionSession<TProviderGrant> =
-	| (OAuthCompletionSessionCommon & {
-			readonly kind: 'awaiting-account-confirmation';
-			readonly providerGrant: TProviderGrant;
-	  })
-	| (OAuthCompletionSessionCommon & {
-			readonly kind: 'committing';
-			readonly providerGrant: TProviderGrant;
-	  });
-
-export type OAuthCallbackConsumptionResult =
+type SelectingTransaction = Extract<
+	OAuthCeremonyTransaction,
+	{ readonly kind: 'selecting-permissions' }
+>;
+type AuthorizingTransaction = Extract<
+	OAuthCeremonyTransaction,
+	{ readonly kind: 'authorizing-application' }
+>;
+const createTransactionInputSchema = oauthCeremonyCommonSchema
+	.omit({
+		browserBindingSecret: true,
+		createdAtMs: true,
+		csrfSecret: true,
+		expiresAtMs: true,
+		publicCeremonyId: true,
+		transactionId: true,
+	})
+	.extend({ publicCeremonyId: oauthTransactionIdSchema.optional() })
+	.strict();
+const beginApplicationInputSchema = oauthAuthorizingTransactionSchema
+	.pick({
+		applicationId: true,
+		completedApplications: true,
+		confirmedScopes: true,
+		confirmedSelections: true,
+		redirectUri: true,
+		remainingApplications: true,
+		transactionId: true,
+	})
+	.strict();
+type DisconnectCommitResult =
 	| {
 			readonly kind: 'accepted';
-			readonly transaction: Extract<
-				OAuthCeremonyTransaction,
-				{ readonly kind: 'consuming-callback' }
-			>;
+			readonly transaction: z.infer<typeof oauthCommittingDisconnectSchema>;
 	  }
 	| {
 			readonly kind: 'rejected';
 			readonly reason:
-				| 'consumed-or-missing'
 				| 'expired'
 				| 'identity-mismatch'
-				| 'invalid-state'
-				| 'invalid-redirect'
-				| 'wrong-state';
-	  };
-
-export type OAuthCompletionCommitResult<TProviderGrant> =
-	| {
-			readonly kind: 'accepted';
-			readonly session: Extract<
-				OAuthCompletionSession<TProviderGrant>,
-				{ readonly kind: 'committing' }
-			>;
-	  }
-	| {
-			readonly kind: 'rejected';
-			readonly reason:
 				| 'browser-binding-mismatch'
-				| 'consumed-or-missing'
 				| 'csrf-mismatch'
-				| 'expired'
-				| 'identity-mismatch'
 				| 'wrong-state';
 	  };
-
-export type OAuthCallbackCompletionResult<TProviderGrant> =
-	| {
-			readonly kind: 'created';
-			readonly session: Extract<
-				OAuthCompletionSession<TProviderGrant>,
-				{ readonly kind: 'awaiting-account-confirmation' }
-			>;
-	  }
-	| { readonly kind: 'capacity-exhausted' };
 
 export interface OAuthTransactionStore<TProviderGrant> {
-	bindTailnetIdentity(props: {
-		readonly tailnetLogin: string;
+	/** The host verifies Clerk authentication; this store binds that verified session. */
+	createTransaction(props: {
+		readonly agentId: string;
+		readonly applicationIds: readonly OAuthApplicationId[];
+		readonly configRevision: string;
+		readonly initiator: z.input<typeof oauthCeremonyInitiatorSchema>;
+		readonly publicCeremonyId?: OAuthTransactionId;
+		readonly suggestedAlias?: string;
+		readonly suggestedSelections?: OAuthPermissionSelections;
+		readonly target: z.input<typeof oauthCeremonyTargetSchema>;
+	}): SelectingTransaction;
+	bindBrowserIdentity(props: {
+		readonly identity: OAuthBrowserSessionIdentity;
 		readonly transactionId: OAuthTransactionId;
-	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'selecting-permissions' }>;
+	}): SelectingTransaction;
 	beginApplicationAuthorization(props: {
 		readonly applicationId: OAuthApplicationId;
 		readonly completedApplications: readonly OAuthApplicationId[];
@@ -168,60 +117,74 @@ export interface OAuthTransactionStore<TProviderGrant> {
 		readonly redirectUri: string;
 		readonly remainingApplications: readonly OAuthApplicationId[];
 		readonly transactionId: OAuthTransactionId;
-	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'authorizing-application' }>;
+	}): AuthorizingTransaction;
 	beginCallbackConsumption(props: {
+		readonly browserBindingSecret: string;
+		readonly identity: OAuthBrowserSessionIdentity;
 		readonly oauthState: string;
 		readonly redirectUri: string;
-		readonly tailnetLogin: string;
 		readonly transactionId: OAuthTransactionId;
 	}): OAuthCallbackConsumptionResult;
-	beginCompletionCommit(props: {
-		readonly browserBindingSecret: string;
-		readonly completionSessionId: OAuthCompletionSessionId;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-	}): OAuthCompletionCommitResult<TProviderGrant>;
-	cancelTransaction(props: {
-		readonly agentId: string;
-		readonly transactionId: OAuthTransactionId;
-	}): boolean;
-	cancelPendingTransaction(props: {
-		readonly agentId: string;
-		readonly transactionId: OAuthTransactionId;
-	}): boolean;
-	cancelCompletion(props: {
-		readonly browserBindingSecret: string;
-		readonly completionSessionId: OAuthCompletionSessionId;
-		readonly csrfToken: string;
-		readonly tailnetLogin: string;
-	}): OAuthCeremonyOwner | undefined;
 	completeCallback(props: {
 		readonly providerGrant: TProviderGrant;
 		readonly transactionId: OAuthTransactionId;
 	}): OAuthCallbackCompletionResult<TProviderGrant>;
-	createTransaction(props: {
-		readonly accountProfileId: OAuthAccountProfileId;
+	beginCompletionCommit(
+		props: BrowserDecisionInput & { readonly completionSessionId: OAuthCompletionSessionId },
+	): OAuthCompletionCommitResult<TProviderGrant>;
+	beginDisconnectCommit(
+		props: BrowserDecisionInput & { readonly transactionId: OAuthTransactionId },
+	): DisconnectCommitResult;
+	cancelPendingTransaction(props: {
 		readonly agentId: string;
-		readonly applicationIds: readonly OAuthApplicationId[];
-		readonly authorizationMode: OAuthAuthorizationMode;
-		readonly suggestedSelections?: OAuthPermissionSelections | undefined;
-	}): Extract<OAuthCeremonyTransaction, { readonly kind: 'selecting-permissions' }>;
-	finishCompletion(completionSessionId: OAuthCompletionSessionId): boolean;
-	getCeremonyOwner(transactionId: OAuthTransactionId): OAuthCeremonyOwner | undefined;
+		readonly transactionId: OAuthTransactionId;
+	}): boolean;
+	/** Broker-owned cleanup, never the agent-facing cancellation path. */
+	cancelTransaction(props: {
+		readonly agentId: string;
+		readonly transactionId: OAuthTransactionId;
+	}): boolean;
+	cancelCompletion(
+		props: BrowserDecisionInput & { readonly completionSessionId: OAuthCompletionSessionId },
+	): OAuthCeremonyContext | undefined;
+	cancelBrowserCeremonies(identity: OAuthBrowserSessionIdentity): number;
+	getCeremonyContext(transactionId: OAuthTransactionId): OAuthCeremonyContext | undefined;
 	getTransaction(transactionId: OAuthTransactionId): OAuthCeremonyTransaction | undefined;
+	getCompletionSession(
+		completionSessionId: OAuthCompletionSessionId,
+	): OAuthCompletionSession<TProviderGrant> | undefined;
+	finishCompletion(completionSessionId: OAuthCompletionSessionId): boolean;
+	finishDisconnect(transactionId: OAuthTransactionId): boolean;
 	invalidateAll(): void;
 	reapExpired(): { readonly completionSessionCount: number; readonly transactionCount: number };
 }
 
-function validateUniqueApplications(
-	applications: readonly OAuthApplicationId[],
-	fieldName: string,
-): readonly OAuthApplicationId[] {
-	const parsed = z.array(oauthApplicationIdSchema).readonly().parse(applications);
-	if (new Set(parsed).size !== parsed.length) {
-		throw new Error(`${fieldName} must contain unique OAuth application IDs.`);
-	}
-	return parsed;
+export function sameOAuthBrowserSession(
+	left: OAuthBrowserSessionIdentity,
+	right: OAuthBrowserSessionIdentity,
+): boolean {
+	return (
+		left.issuer === right.issuer &&
+		left.userId === right.userId &&
+		left.sessionId === right.sessionId
+	);
+}
+
+function browserDecisionFailure(
+	current: {
+		readonly identity?: OAuthBrowserSessionIdentity | undefined;
+		readonly browserBindingSecret: string;
+		readonly csrfSecret: string;
+	},
+	input: BrowserDecisionInput,
+): 'identity-mismatch' | 'browser-binding-mismatch' | 'csrf-mismatch' | undefined {
+	const identity = oauthBrowserSessionIdentitySchema.parse(input.identity);
+	if (current.identity === undefined || !sameOAuthBrowserSession(current.identity, identity))
+		return 'identity-mismatch';
+	if (!oauthBrowserSecretsEqual(current.browserBindingSecret, input.browserBindingSecret))
+		return 'browser-binding-mismatch';
+	if (!oauthBrowserSecretsEqual(current.csrfSecret, input.csrfToken)) return 'csrf-mismatch';
+	return undefined;
 }
 
 export function createOAuthTransactionStore<TProviderGrant>(props: {
@@ -238,332 +201,327 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 	const completionSessionTtlMs = props.completionSessionTtlMs ?? 5 * 60_000;
 	const maxTransactions = props.maxTransactions ?? 128;
 	const maxCompletionSessions = props.maxCompletionSessions ?? 128;
-	for (const [fieldName, value] of [
-		['transactionTtlMs', transactionTtlMs],
-		['completionSessionTtlMs', completionSessionTtlMs],
-		['maxTransactions', maxTransactions],
-		['maxCompletionSessions', maxCompletionSessions],
-	] as const) {
-		if (!Number.isSafeInteger(value) || value <= 0) {
-			throw new Error(`${fieldName} must be a positive safe integer.`);
-		}
+	for (const value of [
+		transactionTtlMs,
+		completionSessionTtlMs,
+		maxTransactions,
+		maxCompletionSessions,
+	]) {
+		if (!Number.isSafeInteger(value) || value <= 0)
+			throw new Error('OAuth ceremony limits must be positive safe integers.');
 	}
 	const transactions = new Map<OAuthTransactionId, OAuthCeremonyTransaction>();
 	const completionSessions = new Map<
 		OAuthCompletionSessionId,
 		OAuthCompletionSession<TProviderGrant>
 	>();
-	const completionSessionIdsByTransactionId = new Map<
-		OAuthTransactionId,
-		OAuthCompletionSessionId
-	>();
+	const completionIdsByTransaction = new Map<OAuthTransactionId, OAuthCompletionSessionId>();
 
-	const discardCompletionSession = (completionSessionId: OAuthCompletionSessionId): boolean => {
-		const session = completionSessions.get(completionSessionId);
+	const discardCompletion = (id: OAuthCompletionSessionId): boolean => {
+		const session = completionSessions.get(id);
 		if (session === undefined) return false;
-		completionSessions.delete(completionSessionId);
-		completionSessionIdsByTransactionId.delete(session.transactionId);
+		completionSessions.delete(id);
+		completionIdsByTransaction.delete(session.transactionId);
 		props.onDiscardProviderGrant?.(session.providerGrant);
 		return true;
 	};
-
-	const cancelOwnedCeremony = (
-		cancelProps: { readonly agentId: string; readonly transactionId: OAuthTransactionId },
-		mode: 'including-callback-consumption' | 'pending-only',
-	): boolean => {
-		const parsedTransactionId = oauthTransactionIdSchema.parse(cancelProps.transactionId);
-		const current = transactions.get(parsedTransactionId);
-		const parsedAgentId = oauthAgentIdSchema.parse(cancelProps.agentId);
-		if (current !== undefined) {
-			if (mode === 'pending-only' && current.kind === 'consuming-callback') return false;
-			return current.agentId === parsedAgentId && transactions.delete(parsedTransactionId);
-		}
-		const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
-		if (completionSessionId === undefined) return false;
-		const completion = completionSessions.get(completionSessionId);
-		return (
-			completion?.kind === 'awaiting-account-confirmation' &&
-			completion.agentId === parsedAgentId &&
-			discardCompletionSession(completionSessionId)
-		);
-	};
-
 	const reapExpired = (): {
 		readonly completionSessionCount: number;
 		readonly transactionCount: number;
 	} => {
-		const currentTimeMs = now();
 		let transactionCount = 0;
 		let completionSessionCount = 0;
-		for (const [transactionId, transaction] of transactions) {
-			if (transaction.expiresAtMs > currentTimeMs) continue;
-			transactions.delete(transactionId);
-			transactionCount += 1;
+		for (const [id, transaction] of transactions) {
+			if (transaction.expiresAtMs <= now()) {
+				transactions.delete(id);
+				transactionCount++;
+			}
 		}
-		for (const [completionSessionId, completionSession] of completionSessions) {
-			if (completionSession.expiresAtMs > currentTimeMs) continue;
-			discardCompletionSession(completionSessionId);
-			completionSessionCount += 1;
+		for (const [id, session] of completionSessions) {
+			if (session.expiresAtMs <= now()) {
+				discardCompletion(id);
+				completionSessionCount++;
+			}
 		}
 		return { completionSessionCount, transactionCount };
 	};
+	const cancel = (
+		input: { readonly agentId: string; readonly transactionId: OAuthTransactionId },
+		agentRequest: boolean,
+	): boolean => {
+		const id = oauthTransactionIdSchema.parse(input.transactionId);
+		const transaction = transactions.get(id);
+		if (transaction !== undefined) {
+			if (transaction.agentId !== input.agentId || transaction.kind === 'committing-disconnect')
+				return false;
+			if (
+				agentRequest &&
+				(transaction.initiator.kind !== 'agent' || transaction.kind === 'consuming-callback')
+			)
+				return false;
+			return transactions.delete(id);
+		}
+		const completionId = completionIdsByTransaction.get(id);
+		const completion =
+			completionId === undefined ? undefined : completionSessions.get(completionId);
+		if (
+			completion?.kind !== 'awaiting-account-confirmation' ||
+			completion.agentId !== input.agentId
+		)
+			return false;
+		if (agentRequest && completion.initiator.kind !== 'agent') return false;
+		return discardCompletion(completion.completionSessionId);
+	};
 
 	return {
-		bindTailnetIdentity: ({ tailnetLogin, transactionId }) => {
-			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
-			const current = transactions.get(parsedTransactionId);
-			if (current?.kind !== 'selecting-permissions') {
-				throw new Error('OAuth transaction is not available for browser identity binding.');
-			}
-			if (current.expiresAtMs <= now()) {
-				transactions.delete(parsedTransactionId);
-				throw new Error('OAuth transaction expired.');
-			}
-			const parsedTailnetLogin = tailnetLoginSchema.parse(tailnetLogin);
-			if (current.tailnetLogin !== undefined && current.tailnetLogin !== parsedTailnetLogin) {
-				throw new Error('OAuth transaction is already bound to another tailnet identity.');
-			}
-			const bound = { ...current, tailnetLogin: parsedTailnetLogin };
-			transactions.set(parsedTransactionId, bound);
-			return bound;
-		},
-		beginApplicationAuthorization: (applicationProps) => {
-			const transactionId = oauthTransactionIdSchema.parse(applicationProps.transactionId);
-			const current = transactions.get(transactionId);
-			if (current?.kind !== 'selecting-permissions') {
-				throw new Error('OAuth transaction is not selecting permissions.');
-			}
-			if (current.expiresAtMs <= now()) {
-				transactions.delete(transactionId);
-				throw new Error('OAuth transaction expired.');
-			}
-			if (current.tailnetLogin === undefined) {
-				throw new Error('OAuth transaction has no bound tailnet identity.');
-			}
-			const tailnetLogin = current.tailnetLogin;
-			const pkce = createOAuthPkcePair();
-			const next = {
-				...current,
-				applicationId: oauthApplicationIdSchema.parse(applicationProps.applicationId),
-				completedApplications: validateUniqueApplications(
-					applicationProps.completedApplications,
-					'completedApplications',
-				),
-				confirmedSelections: oauthPermissionSelectionsSchema.parse(
-					applicationProps.confirmedSelections,
-				),
-				confirmedScopes: z
-					.array(oauthScopeSchema)
-					.readonly()
-					.parse(applicationProps.confirmedScopes),
-				kind: 'authorizing-application' as const,
-				oauthState: createOAuthOpaqueIdentifier(),
-				pkceChallenge: pkce.challenge,
-				pkceVerifier: pkce.verifier,
-				redirectUri: oauthRedirectUriSchema.parse(applicationProps.redirectUri),
-				remainingApplications: validateUniqueApplications(
-					applicationProps.remainingApplications,
-					'remainingApplications',
-				),
-				tailnetLogin,
-			};
-			transactions.set(transactionId, next);
-			return next;
-		},
-		beginCallbackConsumption: (callbackProps) => {
-			const transactionId = oauthTransactionIdSchema.parse(callbackProps.transactionId);
-			const current = transactions.get(transactionId);
-			if (current === undefined) return { kind: 'rejected', reason: 'consumed-or-missing' };
-			if (current.expiresAtMs <= now()) {
-				transactions.delete(transactionId);
-				return { kind: 'rejected', reason: 'expired' };
-			}
-			if (current.kind !== 'authorizing-application') {
-				return { kind: 'rejected', reason: 'wrong-state' };
-			}
-			if (current.tailnetLogin !== tailnetLoginSchema.parse(callbackProps.tailnetLogin)) {
-				return { kind: 'rejected', reason: 'identity-mismatch' };
-			}
-			if (current.redirectUri !== oauthRedirectUriSchema.parse(callbackProps.redirectUri)) {
-				return { kind: 'rejected', reason: 'invalid-redirect' };
-			}
-			if (
-				!oauthBrowserSecretsEqual(
-					current.oauthState,
-					oauthOpaqueBrowserSecretSchema.parse(callbackProps.oauthState),
-				)
-			) {
-				return { kind: 'rejected', reason: 'invalid-state' };
-			}
-			const consuming = { ...current, kind: 'consuming-callback' as const };
-			transactions.set(transactionId, consuming);
-			return { kind: 'accepted', transaction: consuming };
-		},
-		beginCompletionCommit: (completionProps) => {
-			const completionSessionId = oauthCompletionSessionIdSchema.parse(
-				completionProps.completionSessionId,
-			);
-			const current = completionSessions.get(completionSessionId);
-			if (current === undefined) return { kind: 'rejected', reason: 'consumed-or-missing' };
-			if (current.expiresAtMs <= now()) {
-				discardCompletionSession(completionSessionId);
-				return { kind: 'rejected', reason: 'expired' };
-			}
-			if (current.kind !== 'awaiting-account-confirmation') {
-				return { kind: 'rejected', reason: 'wrong-state' };
-			}
-			if (current.tailnetLogin !== tailnetLoginSchema.parse(completionProps.tailnetLogin)) {
-				return { kind: 'rejected', reason: 'identity-mismatch' };
-			}
-			if (
-				!oauthBrowserSecretsEqual(
-					current.browserBindingSecret,
-					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
-				)
-			) {
-				return { kind: 'rejected', reason: 'browser-binding-mismatch' };
-			}
-			if (
-				!oauthBrowserSecretsEqual(
-					current.csrfSecret,
-					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
-				)
-			) {
-				return { kind: 'rejected', reason: 'csrf-mismatch' };
-			}
-			const committing = { ...current, kind: 'committing' as const };
-			completionSessions.set(completionSessionId, committing);
-			return { kind: 'accepted', session: committing };
-		},
-		cancelPendingTransaction: (cancelProps) => cancelOwnedCeremony(cancelProps, 'pending-only'),
-		cancelTransaction: (cancelProps) =>
-			cancelOwnedCeremony(cancelProps, 'including-callback-consumption'),
-		cancelCompletion: (completionProps) => {
-			const completionSessionId = oauthCompletionSessionIdSchema.parse(
-				completionProps.completionSessionId,
-			);
-			const current = completionSessions.get(completionSessionId);
-			if (current === undefined) return undefined;
-			if (current.expiresAtMs <= now()) {
-				discardCompletionSession(completionSessionId);
-				return undefined;
-			}
-			if (
-				current.kind !== 'awaiting-account-confirmation' ||
-				current.tailnetLogin !== tailnetLoginSchema.parse(completionProps.tailnetLogin) ||
-				!oauthBrowserSecretsEqual(
-					current.browserBindingSecret,
-					oauthOpaqueBrowserSecretSchema.parse(completionProps.browserBindingSecret),
-				) ||
-				!oauthBrowserSecretsEqual(
-					current.csrfSecret,
-					oauthOpaqueBrowserSecretSchema.parse(completionProps.csrfToken),
-				)
-			) {
-				return undefined;
-			}
-			const owner = {
-				accountProfileId: current.accountProfileId,
-				agentId: current.agentId,
-				transactionId: current.transactionId,
-			};
-			discardCompletionSession(completionSessionId);
-			return owner;
-		},
-		completeCallback: ({ providerGrant, transactionId }) => {
-			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
-			const current = transactions.get(parsedTransactionId);
-			if (current?.kind !== 'consuming-callback') {
-				throw new Error('OAuth callback transaction is not consuming.');
-			}
-			if (completionSessions.size >= maxCompletionSessions) {
-				return { kind: 'capacity-exhausted' };
-			}
-			transactions.delete(parsedTransactionId);
-			const completionSessionId = oauthCompletionSessionIdSchema.parse(
-				createOAuthOpaqueIdentifier(),
-			);
-			const createdAtMs = now();
-			const completionSession = {
-				accountProfileId: current.accountProfileId,
-				agentId: current.agentId,
-				applicationId: current.applicationId,
-				authorizationMode: current.authorizationMode,
-				browserBindingSecret: createOAuthOpaqueIdentifier(),
-				completedApplications: current.completedApplications,
-				confirmedSelections: current.confirmedSelections,
-				completionSessionId,
-				createdAtMs,
-				csrfSecret: createOAuthOpaqueIdentifier(),
-				expiresAtMs: createdAtMs + completionSessionTtlMs,
-				kind: 'awaiting-account-confirmation' as const,
-				providerGrant: props.providerGrantSchema.parse(providerGrant),
-				remainingApplications: current.remainingApplications,
-				tailnetLogin: current.tailnetLogin,
-				transactionId: current.transactionId,
-			};
-			completionSessions.set(completionSessionId, completionSession);
-			completionSessionIdsByTransactionId.set(current.transactionId, completionSessionId);
-			return { kind: 'created', session: completionSession };
-		},
-		createTransaction: (createProps) => {
+		createTransaction: (unparsedInput) => {
+			const input = createTransactionInputSchema.parse(unparsedInput);
 			reapExpired();
-			if (transactions.size >= maxTransactions) {
+			if (transactions.size >= maxTransactions)
 				throw new Error('OAuth transaction capacity is exhausted.');
-			}
 			const transactionId = oauthTransactionIdSchema.parse(createOAuthOpaqueIdentifier());
 			const createdAtMs = now();
-			const transaction = {
-				accountProfileId: oauthAccountProfileIdSchema.parse(createProps.accountProfileId),
-				agentId: oauthAgentIdSchema.parse(createProps.agentId),
-				applicationIds: validateUniqueApplications(createProps.applicationIds, 'applicationIds'),
-				authorizationMode: createProps.authorizationMode,
+			const transaction = oauthSelectingTransactionSchema.parse({
+				...input,
 				browserBindingSecret: createOAuthOpaqueIdentifier(),
 				createdAtMs,
 				csrfSecret: createOAuthOpaqueIdentifier(),
 				expiresAtMs: createdAtMs + transactionTtlMs,
-				kind: 'selecting-permissions' as const,
-				...(createProps.suggestedSelections === undefined
-					? {}
-					: {
-							suggestedSelections: oauthPermissionSelectionsSchema.parse(
-								createProps.suggestedSelections,
-							),
-						}),
+				kind: 'selecting-permissions',
+				publicCeremonyId: input.publicCeremonyId ?? transactionId,
 				transactionId,
-			};
+			});
+			if (!transaction.applicationIds.includes(transaction.target.applicationId))
+				throw new Error('OAuth target is outside the admitted applications.');
+			if (transaction.target.kind !== 'enroll' && transaction.applicationIds.length !== 1)
+				throw new Error('An existing authorization ceremony targets one application.');
+			if (
+				transaction.initiator.kind === 'agent' &&
+				transaction.initiator.agentId !== transaction.agentId
+			)
+				throw new Error('OAuth initiator cannot select another agent.');
 			transactions.set(transactionId, transaction);
 			return transaction;
 		},
-		finishCompletion: discardCompletionSession,
-		getCeremonyOwner: (transactionId) => {
-			const parsedTransactionId = oauthTransactionIdSchema.parse(transactionId);
-			const transaction = transactions.get(parsedTransactionId);
-			if (transaction !== undefined) {
-				return {
-					accountProfileId: transaction.accountProfileId,
-					agentId: transaction.agentId,
-					transactionId: transaction.transactionId,
-				};
+		bindBrowserIdentity: (input) => {
+			const id = oauthTransactionIdSchema.parse(input.transactionId);
+			const current = transactions.get(id);
+			if (current?.kind !== 'selecting-permissions')
+				throw new Error('OAuth transaction is not selecting permissions.');
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(id);
+				throw new Error('OAuth transaction expired.');
 			}
-			const completionSessionId = completionSessionIdsByTransactionId.get(parsedTransactionId);
+			const identity = oauthBrowserSessionIdentitySchema.parse(input.identity);
+			if (current.identity !== undefined && !sameOAuthBrowserSession(current.identity, identity))
+				throw new Error('OAuth transaction is already bound to another browser session.');
+			if (
+				current.initiator.kind === 'website_owner' &&
+				(current.initiator.ownerIdentity.issuer !== identity.issuer ||
+					current.initiator.ownerIdentity.userId !== identity.userId)
+			)
+				throw new Error('OAuth transaction belongs to another website owner.');
+			const bound = oauthSelectingTransactionSchema.parse({ ...current, identity });
+			transactions.set(id, bound);
+			return bound;
+		},
+		beginApplicationAuthorization: (unparsedInput) => {
+			const input = beginApplicationInputSchema.parse(unparsedInput);
+			const id = oauthTransactionIdSchema.parse(input.transactionId);
+			const current = transactions.get(id);
+			if (current?.kind !== 'selecting-permissions' || current.target.kind === 'disconnect')
+				throw new Error('OAuth transaction cannot start Google authorization.');
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(id);
+				throw new Error('OAuth transaction expired.');
+			}
+			if (current.identity === undefined)
+				throw new Error('OAuth transaction has no verified browser session.');
+			if (!current.applicationIds.includes(input.applicationId))
+				throw new Error('OAuth application is outside this ceremony.');
+			const pkce = createOAuthPkcePair();
+			const next = oauthAuthorizingTransactionSchema.parse({
+				...current,
+				...input,
+				identity: current.identity,
+				kind: 'authorizing-application',
+				oauthState: createOAuthOpaqueIdentifier(),
+				pkceChallenge: pkce.challenge,
+				pkceVerifier: pkce.verifier,
+			});
+			const progressIds = [
+				...next.completedApplications,
+				next.applicationId,
+				...next.remainingApplications,
+			];
+			if (
+				new Set(progressIds).size !== progressIds.length ||
+				progressIds.some((applicationId) => !current.applicationIds.includes(applicationId))
+			)
+				throw new Error('OAuth application progress is inconsistent.');
+			transactions.set(id, next);
+			return next;
+		},
+		beginCallbackConsumption: (input) => {
+			const id = oauthTransactionIdSchema.parse(input.transactionId);
+			const current = transactions.get(id);
+			if (current === undefined) return { kind: 'rejected', reason: 'consumed-or-missing' };
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(id);
+				return { kind: 'rejected', reason: 'expired' };
+			}
+			if (current.kind !== 'authorizing-application')
+				return { kind: 'rejected', reason: 'wrong-state' };
+			if (
+				!sameOAuthBrowserSession(
+					current.identity,
+					oauthBrowserSessionIdentitySchema.parse(input.identity),
+				)
+			)
+				return { kind: 'rejected', reason: 'identity-mismatch' };
+			if (!oauthBrowserSecretsEqual(current.browserBindingSecret, input.browserBindingSecret))
+				return { kind: 'rejected', reason: 'browser-binding-mismatch' };
+			if (current.redirectUri !== input.redirectUri)
+				return { kind: 'rejected', reason: 'invalid-redirect' };
+			if (!oauthBrowserSecretsEqual(current.oauthState, input.oauthState))
+				return { kind: 'rejected', reason: 'invalid-state' };
+			const consuming = oauthConsumingTransactionSchema.parse({
+				...current,
+				kind: 'consuming-callback',
+			});
+			transactions.set(id, consuming);
+			return { kind: 'accepted', transaction: consuming };
+		},
+		completeCallback: (input) => {
+			const id = oauthTransactionIdSchema.parse(input.transactionId);
+			const current = transactions.get(id);
+			if (current?.kind !== 'consuming-callback')
+				throw new Error('OAuth callback is not consuming.');
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(id);
+				throw new Error('OAuth transaction expired during exchange.');
+			}
+			if (completionSessions.size >= maxCompletionSessions) return { kind: 'capacity-exhausted' };
+			const providerGrant = props.providerGrantSchema.parse(input.providerGrant);
+			const createdAtMs = now();
+			const completionSessionId = oauthCompletionSessionIdSchema.parse(
+				createOAuthOpaqueIdentifier(),
+			);
+			const common = oauthCompletionCommonSchema.parse({
+				...oauthCeremonyCommonSchema.strip().parse(current),
+				applicationId: current.applicationId,
+				completedApplications: current.completedApplications,
+				confirmedScopes: current.confirmedScopes,
+				confirmedSelections: current.confirmedSelections,
+				identity: current.identity,
+				remainingApplications: current.remainingApplications,
+				browserBindingSecret: createOAuthOpaqueIdentifier(),
+				completionSessionId,
+				createdAtMs,
+				csrfSecret: createOAuthOpaqueIdentifier(),
+				expiresAtMs: createdAtMs + completionSessionTtlMs,
+			});
+			const session = { ...common, kind: 'awaiting-account-confirmation' as const, providerGrant };
+			transactions.delete(id);
+			completionSessions.set(completionSessionId, session);
+			completionIdsByTransaction.set(id, completionSessionId);
+			return { kind: 'created', session };
+		},
+		beginCompletionCommit: (input) => {
+			const id = oauthCompletionSessionIdSchema.parse(input.completionSessionId);
+			const current = completionSessions.get(id);
+			if (current === undefined) return { kind: 'rejected', reason: 'consumed-or-missing' };
+			if (current.expiresAtMs <= now()) {
+				discardCompletion(id);
+				return { kind: 'rejected', reason: 'expired' };
+			}
+			if (current.kind !== 'awaiting-account-confirmation')
+				return { kind: 'rejected', reason: 'wrong-state' };
+			const failure = browserDecisionFailure(current, input);
+			if (failure !== undefined) return { kind: 'rejected', reason: failure };
+			const session = { ...current, kind: 'committing' as const };
+			completionSessions.set(id, session);
+			return { kind: 'accepted', session };
+		},
+		beginDisconnectCommit: (input) => {
+			const id = oauthTransactionIdSchema.parse(input.transactionId);
+			const current = transactions.get(id);
+			if (current?.kind !== 'selecting-permissions' || current.target.kind !== 'disconnect')
+				return { kind: 'rejected', reason: 'wrong-state' };
+			if (current.expiresAtMs <= now()) {
+				transactions.delete(id);
+				return { kind: 'rejected', reason: 'expired' };
+			}
+			const failure = browserDecisionFailure(current, input);
+			if (failure !== undefined) return { kind: 'rejected', reason: failure };
+			const transaction = oauthCommittingDisconnectSchema.parse({
+				...current,
+				kind: 'committing-disconnect',
+			});
+			transactions.set(id, transaction);
+			return { kind: 'accepted', transaction };
+		},
+		cancelPendingTransaction: (input) => cancel(input, true),
+		cancelTransaction: (input) => cancel(input, false),
+		cancelCompletion: (input) => {
+			const id = oauthCompletionSessionIdSchema.parse(input.completionSessionId);
+			const current = completionSessions.get(id);
+			if (current === undefined) return undefined;
+			if (current.expiresAtMs <= now()) {
+				discardCompletion(id);
+				return undefined;
+			}
+			if (
+				current.kind !== 'awaiting-account-confirmation' ||
+				browserDecisionFailure(current, input) !== undefined
+			)
+				return undefined;
+			const context = oauthCeremonyContextSchema.strip().parse(current);
+			discardCompletion(id);
+			return context;
+		},
+		cancelBrowserCeremonies: (identity) => {
+			let count = 0;
+			for (const [id, transaction] of transactions) {
+				if (
+					transaction.kind !== 'committing-disconnect' &&
+					transaction.identity !== undefined &&
+					sameOAuthBrowserSession(transaction.identity, identity)
+				) {
+					transactions.delete(id);
+					count++;
+				}
+			}
+			for (const [id, session] of completionSessions) {
+				if (session.kind !== 'committing' && sameOAuthBrowserSession(session.identity, identity)) {
+					discardCompletion(id);
+					count++;
+				}
+			}
+			return count;
+		},
+		getCeremonyContext: (transactionId) => {
+			const id = oauthTransactionIdSchema.parse(transactionId);
+			const transaction = transactions.get(id);
+			if (transaction !== undefined) return oauthCeremonyContextSchema.strip().parse(transaction);
+			const completionId = completionIdsByTransaction.get(id);
 			const completion =
-				completionSessionId === undefined ? undefined : completionSessions.get(completionSessionId);
+				completionId === undefined ? undefined : completionSessions.get(completionId);
 			return completion === undefined
 				? undefined
-				: {
-						accountProfileId: completion.accountProfileId,
-						agentId: completion.agentId,
-						transactionId: completion.transactionId,
-					};
+				: oauthCeremonyContextSchema.strip().parse(completion);
 		},
-		getTransaction: (transactionId) =>
-			transactions.get(oauthTransactionIdSchema.parse(transactionId)),
+		getTransaction: (id) => transactions.get(oauthTransactionIdSchema.parse(id)),
+		getCompletionSession: (id) => completionSessions.get(oauthCompletionSessionIdSchema.parse(id)),
+		finishCompletion: discardCompletion,
+		finishDisconnect: (transactionId) => {
+			const id = oauthTransactionIdSchema.parse(transactionId);
+			if (transactions.get(id)?.kind !== 'committing-disconnect') return false;
+			return transactions.delete(id);
+		},
 		invalidateAll: () => {
 			transactions.clear();
-			for (const completionSessionId of completionSessions.keys()) {
-				discardCompletionSession(completionSessionId);
-			}
+			for (const id of completionSessions.keys()) discardCompletion(id);
 		},
 		reapExpired,
 	};

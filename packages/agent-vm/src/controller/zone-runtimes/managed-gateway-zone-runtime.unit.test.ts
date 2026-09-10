@@ -2149,9 +2149,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 
 	it('exposes stopping state and blocks gateway commands while stop is pending', async () => {
 		const closeDeferred = createDeferredPromise<void>();
+		const destructionStarted = createDeferredPromise<void>();
 		const terminationOrder: string[] = [];
 		const destroyGateway = vi.fn(async () => {
 			terminationOrder.push('terminate-started');
+			destructionStarted.resolve();
 			await closeDeferred.promise;
 			terminationOrder.push('terminate-complete');
 			terminationOrder.push('runtime-record-deleted');
@@ -2205,6 +2207,8 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 			"Gateway runtime for zone 'shravan' is unavailable.",
 		);
 		expect(gatewayExec).not.toHaveBeenCalled();
+		// Stopping is published before asynchronous lifecycle records and destruction.
+		await destructionStarted.promise;
 		expect(destroyGateway).toHaveBeenCalledOnce();
 
 		closeDeferred.resolve();

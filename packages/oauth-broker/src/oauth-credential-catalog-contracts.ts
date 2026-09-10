@@ -1,150 +1,264 @@
 import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
-	oauthCredentialIdSchema,
+	oauthAccountIdSchema,
+	type oauthApplicationIdSchema,
+	oauthAuthorizationIdSchema,
+	oauthBrowserOwnerIdentitySchema,
+	type oauthCredentialIdSchema,
 	oauthMaterialRevisionSchema,
 	oauthProviderIdSchema,
 	oauthScopeSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import { encryptedOAuthEnvelopeSchema, oauthProviderSubjectSchema } from './envelope-codec.js';
+import {
+	encryptedOAuthEnvelopeSchema,
+	oauthEnvelopeBindingSchema,
+	oauthProviderSubjectSchema,
+} from './envelope-codec.js';
+import {
+	oauthAccountPolicyChangeEventSchema,
+	type OAuthAccountPolicySaveInput,
+	type OAuthAccountPolicyActivationInput,
+	type OAuthAccountPolicyContainmentInput,
+	type OAuthAccountPolicyChangeEvent,
+} from './oauth-account-policy-contracts.js';
+import {
+	oauthPolicyDefaultsChangeEventSchema,
+	type OAuthPolicyDefaultsActivationInput,
+	type OAuthStoredPolicyDefaultsActivation,
+	type OAuthPolicyDefaultsChangeEvent,
+} from './oauth-policy-defaults-contracts.js';
 
-const oauthGrantLifecycleKindSchema = z.enum(['active', 'degraded', 'reauthorization-required']);
+const timestampSchema = z.number().int().nonnegative();
+const revisionSchema = z.number().int().positive();
+const groupIdsSchema = z.array(z.string().min(1).max(128)).max(64).readonly();
+const scopeSetSchema = z.array(oauthScopeSchema).max(128).readonly();
+const lifecycleKindSchema = z.enum(['active', 'degraded', 'reauthorization-required']);
 
-export const oauthStoredGrantSchema = z
+export const oauthStoredAccountMetadataSchema = z
 	.object({
+		accountId: oauthAccountIdSchema,
 		accountLabel: z.string().min(1).max(320),
-		accountProfileId: oauthAccountProfileIdSchema,
-		accountProfileStatus: z.enum(['partially-enrolled', 'enrolled']),
-		agentId: z.string().min(1).max(128),
-		applicationId: oauthApplicationIdSchema,
-		credentialId: oauthCredentialIdSchema,
-		envelope: encryptedOAuthEnvelopeSchema,
-		failureClass: z.string().min(1).max(128).nullable(),
-		grantedScopes: z.array(oauthScopeSchema).readonly(),
-		lastRefreshAttemptAtMs: z.number().int().nonnegative().nullable(),
-		lastRefreshSucceededAtMs: z.number().int().nonnegative().nullable(),
-		lifecycleKind: oauthGrantLifecycleKindSchema,
-		materialRevision: oauthMaterialRevisionSchema,
-		nextRefreshEligibleAtMs: z.number().int().nonnegative().nullable(),
-		profileRecordId: z.uuid(),
-		providerCredentialVersion: z.number().int().positive(),
+		createdAtMs: timestampSchema,
+		owner: oauthBrowserOwnerIdentitySchema,
 		providerId: oauthProviderIdSchema,
 		providerSubject: oauthProviderSubjectSchema,
-		reauthorizationReason: z.string().min(1).max(128).nullable(),
-		recordRevision: z.number().int().positive(),
-		updatedAtMs: z.number().int().nonnegative(),
+		recordRevision: revisionSchema,
+		updatedAtMs: timestampSchema,
 		zoneId: z.string().min(1).max(128),
+	})
+	.strict();
+export type OAuthStoredAccountMetadata = z.infer<typeof oauthStoredAccountMetadataSchema>;
+
+export const oauthStoredGrantSchema = oauthEnvelopeBindingSchema
+	.extend({
+		accountAlias: z.string().min(1).max(320),
+		envelope: encryptedOAuthEnvelopeSchema,
+		failureClass: z.string().min(1).max(128).nullable(),
+		grantedScopes: scopeSetSchema,
+		lastRefreshAttemptAtMs: timestampSchema.nullable(),
+		lastRefreshSucceededAtMs: timestampSchema.nullable(),
+		lifecycleKind: lifecycleKindSchema,
+		materialRevision: oauthMaterialRevisionSchema,
+		nextRefreshEligibleAtMs: timestampSchema.nullable(),
+		providerCredentialVersion: revisionSchema,
+		reauthorizationReason: z.string().min(1).max(128).nullable(),
+		recordRevision: revisionSchema,
+		requestedScopes: scopeSetSchema,
+		selectedGroupIds: groupIdsSchema,
+		transitionId: z.uuid(),
+		updatedAtMs: timestampSchema,
 	})
 	.strict();
 export type OAuthStoredGrant = z.infer<typeof oauthStoredGrantSchema>;
 
-export const oauthStoredAccountProfileMetadataSchema = z
-	.object({
-		accountLabel: z.string().min(1).max(320),
-		accountProfileId: oauthAccountProfileIdSchema,
-		agentId: z.string().min(1).max(128),
-		providerSubject: oauthProviderSubjectSchema,
-		status: z.enum(['partially-enrolled', 'enrolled']),
-		zoneId: z.string().min(1).max(128),
-	})
-	.strict();
-export type OAuthStoredAccountProfileMetadata = z.infer<
-	typeof oauthStoredAccountProfileMetadataSchema
->;
+const authorizationMetadataSchema = oauthStoredGrantSchema.omit({
+	credentialId: true,
+	envelope: true,
+	materialRevision: true,
+});
+export const oauthStoredAuthorizationSchema = z.discriminatedUnion('accessState', [
+	oauthStoredGrantSchema.extend({ accessState: z.enum(['connected', 'replacing']) }).strict(),
+	authorizationMetadataSchema
+		.extend({
+			accessState: z.enum(['disconnecting', 'disconnected']),
+			credentialId: z.null(),
+			envelope: z.null(),
+			materialRevision: z.null(),
+		})
+		.strict(),
+]);
+export type OAuthStoredAuthorization = z.infer<typeof oauthStoredAuthorizationSchema>;
 
-export const oauthEnrollmentGrantInputSchema = z
-	.object({
+export const oauthEnrollmentGrantInputSchema = oauthStoredGrantSchema
+	.omit({
+		failureClass: true,
+		lastRefreshAttemptAtMs: true,
+		lastRefreshSucceededAtMs: true,
+		lifecycleKind: true,
+		nextRefreshEligibleAtMs: true,
+		reauthorizationReason: true,
+		recordRevision: true,
+		transitionId: true,
+		updatedAtMs: true,
+	})
+	.extend({
 		accountLabel: z.string().min(1).max(320),
-		accountProfileId: oauthAccountProfileIdSchema,
-		accountProfileStatus: z.enum(['partially-enrolled', 'enrolled']),
-		agentId: z.string().min(1).max(128),
-		applicationId: oauthApplicationIdSchema,
-		credentialId: oauthCredentialIdSchema,
-		envelope: encryptedOAuthEnvelopeSchema,
-		grantedScopes: z.array(oauthScopeSchema).min(1).readonly(),
-		materialRevision: oauthMaterialRevisionSchema,
-		providerCredentialVersion: z.number().int().positive(),
-		providerId: oauthProviderIdSchema,
-		providerSubject: oauthProviderSubjectSchema,
-		zoneId: z.string().min(1).max(128),
+		expectedRecordRevision: revisionSchema.nullable(),
+		initialPolicyEnvelope: encryptedOAuthEnvelopeSchema.optional(),
+		providerCredentialVersion: revisionSchema.default(1),
 	})
 	.strict();
 export type OAuthEnrollmentGrantInput = z.infer<typeof oauthEnrollmentGrantInputSchema>;
 
-export const oauthReplaceGrantEnvelopeInputSchema = z
-	.object({
-		credentialId: oauthCredentialIdSchema,
-		envelope: encryptedOAuthEnvelopeSchema,
-		expectedRecordRevision: z.number().int().positive(),
-		failureClass: z.string().min(1).max(128).nullable(),
-		lastRefreshAttemptAtMs: z.number().int().nonnegative(),
-		lastRefreshSucceededAtMs: z.number().int().nonnegative().nullable(),
-		lifecycleKind: oauthGrantLifecycleKindSchema,
-		materialRevision: oauthMaterialRevisionSchema,
-		nextRefreshEligibleAtMs: z.number().int().nonnegative().nullable(),
-		providerCredentialVersion: z.number().int().positive(),
-		reauthorizationReason: z.string().min(1).max(128).nullable(),
+export const oauthReplaceGrantEnvelopeInputSchema = oauthStoredGrantSchema
+	.pick({
+		credentialId: true,
+		envelope: true,
+		failureClass: true,
+		lastRefreshAttemptAtMs: true,
+		lastRefreshSucceededAtMs: true,
+		lifecycleKind: true,
+		materialRevision: true,
+		nextRefreshEligibleAtMs: true,
+		providerCredentialVersion: true,
+		reauthorizationReason: true,
 	})
+	.extend({ expectedRecordRevision: revisionSchema })
 	.strict();
 export type OAuthReplaceGrantEnvelopeInput = z.infer<typeof oauthReplaceGrantEnvelopeInputSchema>;
 
-export type OAuthCommitEnrollmentResult =
-	| { readonly grant: OAuthStoredGrant; readonly kind: 'committed' }
-	| {
-			readonly actualProviderSubject: string;
-			readonly expectedProviderSubject: string;
-			readonly kind: 'subject-mismatch';
-	  };
+export const oauthStoredPolicySchema = z
+	.object({
+		authorizationId: oauthAuthorizationIdSchema,
+		envelope: encryptedOAuthEnvelopeSchema,
+		overrideRevision: revisionSchema,
+		state: z.enum(['active', 'applying']),
+		transitionId: z.uuid(),
+		updatedAtMs: timestampSchema,
+	})
+	.strict();
+export type OAuthStoredPolicy = z.infer<typeof oauthStoredPolicySchema>;
 
+export const oauthAuthorizationChangeEventSchema = z
+	.object({
+		accountId: oauthAccountIdSchema,
+		agentId: z.string().min(1).max(128),
+		actor: z.discriminatedUnion('kind', [
+			z.object({ kind: z.literal('owner'), identity: oauthBrowserOwnerIdentitySchema }).strict(),
+			z.object({ kind: z.literal('system-initialization') }).strict(),
+			z.object({ kind: z.literal('system-recovery') }).strict(),
+		]),
+		authorizationId: oauthAuthorizationIdSchema,
+		eventId: z.uuid(),
+		kind: z.enum([
+			'authorization-created',
+			'authorization-replaced',
+			'authorization-disconnecting',
+			'authorization-settled',
+			'policy-initialized',
+		]),
+		newRevision: revisionSchema,
+		oldRevision: revisionSchema.nullable(),
+		selectedGroupIds: groupIdsSchema,
+		timestampMs: timestampSchema,
+		transitionId: z.uuid(),
+		zoneId: z.string().min(1).max(128),
+	})
+	.strict();
+export type OAuthAuthorizationChangeEvent = z.infer<typeof oauthAuthorizationChangeEventSchema>;
+export const oauthPermissionChangeEventSchema = z.union([
+	oauthAuthorizationChangeEventSchema,
+	oauthPolicyDefaultsChangeEventSchema,
+	oauthAccountPolicyChangeEventSchema,
+]);
+export type OAuthPermissionChangeEvent = z.infer<typeof oauthPermissionChangeEventSchema>;
+export type OAuthAccountPolicyMutationResult =
+	| { readonly kind: 'updated'; readonly policy: OAuthStoredPolicy }
+	| { readonly kind: 'unavailable' | 'stale' | 'owner-mismatch' | 'defaults-changed' };
+
+export type OAuthCommitEnrollmentResult =
+	| { readonly authorization: OAuthStoredAuthorization; readonly kind: 'committed' }
+	| { readonly kind: 'owner-mismatch' | 'account-conflict' | 'duplicate-authorization' | 'stale' };
 export type OAuthReplaceGrantEnvelopeResult =
 	| { readonly grant: OAuthStoredGrant; readonly kind: 'updated' }
 	| { readonly kind: 'missing' }
 	| { readonly currentRecordRevision: number; readonly kind: 'stale' };
+export type OAuthAuthorizationTransitionResult =
+	| { readonly authorization: OAuthStoredAuthorization; readonly kind: 'updated' }
+	| { readonly kind: 'missing' | 'stale' | 'owner-mismatch' };
 
-export type OAuthDeleteGrantResult =
-	| { readonly kind: 'deleted' }
-	| { readonly kind: 'missing' }
-	| {
-			readonly currentCredentialId: z.infer<typeof oauthCredentialIdSchema>;
-			readonly currentRecordRevision: number;
-			readonly kind: 'stale';
-	  };
+export interface OAuthAccountApplicationQuery {
+	readonly accountId: z.infer<typeof oauthAccountIdSchema>;
+	readonly agentId: string;
+	readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
+	readonly zoneId: string;
+}
 
 export interface OAuthCredentialCatalog {
 	close(): void;
 	commitEnrollmentGrant(input: OAuthEnrollmentGrantInput): OAuthCommitEnrollmentResult;
-	deleteGrantForAccountApplication(props: {
-		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
-		readonly agentId: string;
-		readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
-		readonly expectedCredentialId: z.infer<typeof oauthCredentialIdSchema>;
-		readonly expectedRecordRevision: number;
+	replaceAuthorization(input: OAuthEnrollmentGrantInput): OAuthCommitEnrollmentResult;
+	getAccountMetadata(
+		accountId: z.infer<typeof oauthAccountIdSchema>,
+	): OAuthStoredAccountMetadata | undefined;
+	findAccount(props: {
 		readonly zoneId: string;
-	}): OAuthDeleteGrantResult;
+		readonly providerId: string;
+		readonly providerSubject: string;
+	}): OAuthStoredAccountMetadata | undefined;
+	getAuthorization(
+		authorizationId: z.infer<typeof oauthAuthorizationIdSchema>,
+	): OAuthStoredAuthorization | undefined;
+	getAuthorizationForAccountApplication(
+		props: OAuthAccountApplicationQuery,
+	): OAuthStoredAuthorization | undefined;
 	getGrant(credentialId: z.infer<typeof oauthCredentialIdSchema>): OAuthStoredGrant | undefined;
-	getAccountProfileMetadata(props: {
-		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
+	getGrantForAccountApplication(props: OAuthAccountApplicationQuery): OAuthStoredGrant | undefined;
+	listGrantsForAgent(props: {
 		readonly agentId: string;
 		readonly zoneId: string;
-	}): OAuthStoredAccountProfileMetadata | undefined;
-	getGrantForAccountApplication(props: {
-		readonly accountProfileId: z.infer<typeof oauthAccountProfileIdSchema>;
+	}): readonly OAuthStoredGrant[];
+	listAuthorizationsForAgent(props: {
 		readonly agentId: string;
-		readonly applicationId: z.infer<typeof oauthApplicationIdSchema>;
 		readonly zoneId: string;
-	}): OAuthStoredGrant | undefined;
+	}): readonly OAuthStoredAuthorization[];
+	getPolicy(
+		authorizationId: z.infer<typeof oauthAuthorizationIdSchema>,
+	): OAuthStoredPolicy | undefined;
+	saveAccountPolicy(input: OAuthAccountPolicySaveInput): OAuthAccountPolicyMutationResult;
+	activateAccountPolicy(input: OAuthAccountPolicyActivationInput): OAuthAccountPolicyMutationResult;
+	recordAccountPolicyContainment(
+		input: OAuthAccountPolicyContainmentInput,
+	): OAuthAccountPolicyMutationResult;
+	listAccountPolicyHistory(
+		authorizationId: z.infer<typeof oauthAuthorizationIdSchema>,
+	): readonly OAuthAccountPolicyChangeEvent[];
+	listAuthorizationHistory(
+		authorizationId: z.infer<typeof oauthAuthorizationIdSchema>,
+	): readonly OAuthAuthorizationChangeEvent[];
+	activatePolicyDefaults(input: OAuthPolicyDefaultsActivationInput): {
+		readonly kind: 'activated' | 'unchanged';
+		readonly activation: OAuthStoredPolicyDefaultsActivation;
+	};
+	getPolicyDefaultsActivation(zoneId: string): OAuthStoredPolicyDefaultsActivation | undefined;
+	listPolicyDefaultsHistory(zoneId: string): readonly OAuthPolicyDefaultsChangeEvent[];
+	replaceGrantEnvelope(input: OAuthReplaceGrantEnvelopeInput): OAuthReplaceGrantEnvelopeResult;
+	disconnectAuthorization(props: {
+		readonly authorizationId: z.infer<typeof oauthAuthorizationIdSchema>;
+		readonly expectedRecordRevision: number;
+		readonly owner: z.infer<typeof oauthBrowserOwnerIdentitySchema>;
+	}): OAuthAuthorizationTransitionResult;
+	settleAuthorizationTransition(props: {
+		readonly authorizationId: z.infer<typeof oauthAuthorizationIdSchema>;
+		readonly expectedRecordRevision: number;
+		readonly transitionId: string;
+	}): OAuthAuthorizationTransitionResult;
 	getStorageDiagnostics(): {
 		readonly busyTimeoutMs: number;
 		readonly foreignKeysEnabled: boolean;
 		readonly journalMode: string;
 		readonly synchronousMode: number;
 	};
-	listGrantsForAgent(props: {
-		readonly agentId: string;
-		readonly zoneId: string;
-	}): readonly OAuthStoredGrant[];
-	replaceGrantEnvelope(props: OAuthReplaceGrantEnvelopeInput): OAuthReplaceGrantEnvelopeResult;
 	verifyOrInitializeKeyEncryptionKey(keyEncryptionKey: Uint8Array): void;
 }

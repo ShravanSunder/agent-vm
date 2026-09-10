@@ -1,36 +1,41 @@
-import {
-	oauthApplicationIdSchema,
-	oauthPermissionChoiceSchema,
-	oauthServiceIdSchema,
-} from '@agent-vm/oauth-broker-contracts';
+import { oauthApplicationIdSchema, oauthServiceIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-export const oauthServiceChoiceModelSchema = z
+const permissionGroupIdSchema = z.string().regex(/^[a-z][a-z0-9.-]{0,127}$/u);
+export const oauthPermissionGroupModelSchema = z
 	.object({
-		allowedChoices: z.array(oauthPermissionChoiceSchema).min(1).readonly(),
-		label: z.string().min(1).max(160),
-		selectedChoice: oauthPermissionChoiceSchema,
+		groupId: permissionGroupIdSchema,
 		serviceId: oauthServiceIdSchema,
-		suggestedChoice: oauthPermissionChoiceSchema.optional(),
+		effect: z.enum(['read', 'write']),
+		label: z.string().min(1).max(160),
+		warning: z.string().min(1).max(2000),
+		offered: z.boolean(),
 	})
-	.strict()
-	.superRefine((service, context) => {
-		if (service.allowedChoices.includes(service.selectedChoice)) return;
-		context.addIssue({
-			code: z.ZodIssueCode.custom,
-			message: 'Selected OAuth permission is not an allowed choice.',
-			path: ['selectedChoice'],
-		});
-	});
+	.strict();
 
 export const oauthApplicationChoiceModelSchema = z
 	.object({
 		applicationId: oauthApplicationIdSchema,
 		description: z.string().min(1).max(500),
 		label: z.string().min(1).max(160),
-		services: z.array(oauthServiceChoiceModelSchema).min(1).readonly(),
+		groups: z.array(oauthPermissionGroupModelSchema).min(1).max(64).readonly(),
+		recommendedGroupIds: z.array(permissionGroupIdSchema).max(64).readonly(),
+		selectedGroupIds: z.array(permissionGroupIdSchema).max(64).readonly(),
+		suggestedGroupIds: z.array(permissionGroupIdSchema).max(64).readonly().optional(),
+		selectionMode: z.enum(['off', 'recommended', 'custom']).optional(),
 	})
-	.strict();
+	.strict()
+	.refine((application) => {
+		const known = new Set(application.groups.map((group) => group.groupId));
+		const offered = new Set(
+			application.groups.filter((group) => group.offered).map((group) => group.groupId),
+		);
+		return (
+			known.size === application.groups.length &&
+			application.selectedGroupIds.every((id) => known.has(id)) &&
+			application.recommendedGroupIds.every((id) => offered.has(id))
+		);
+	}, 'Permission groups must be known, unique and recommended within the current maximum.');
 export type OAuthApplicationChoiceModel = z.infer<typeof oauthApplicationChoiceModelSchema>;
 
 export const oauthApplicationProgressModelSchema = z
@@ -53,7 +58,9 @@ export type OAuthPermissionFieldError = z.infer<typeof oauthPermissionFieldError
 export const oauthApprovalPageModelSchema = z.discriminatedUnion('kind', [
 	z
 		.object({
-			accountProfileLabel: z.string().min(1).max(160),
+			agentId: z.string().min(1).max(128),
+			ownerLabel: z.string().min(1).max(160),
+			accountAlias: z.string().min(1).max(320).optional(),
 			applications: z.array(oauthApplicationChoiceModelSchema).min(1).readonly(),
 			errors: z.array(oauthPermissionFieldErrorSchema).readonly().optional(),
 			kind: z.literal('permission-selection'),
@@ -61,8 +68,17 @@ export const oauthApprovalPageModelSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z
 		.object({
+			kind: z.literal('disconnect-confirmation'),
+			agentId: z.string().min(1).max(128),
+			accountAlias: z.string().min(1).max(320),
+			applicationLabel: z.string().min(1).max(160),
+		})
+		.strict(),
+	z
+		.object({
 			accountLabel: z.string().min(1).max(320),
 			applicationLabel: z.string().min(1).max(160),
+			previousPermissionLabels: z.array(z.string().min(1).max(200)).readonly().optional(),
 			grantedPermissionLabels: z.array(z.string().min(1).max(200)).readonly(),
 			kind: z.literal('account-confirmation'),
 		})
@@ -88,7 +104,7 @@ export const oauthApprovalPageModelSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z
 		.object({
-			kind: z.enum(['expired', 'cancelled', 'failed']),
+			kind: z.enum(['expired', 'cancelled', 'failed', 'disconnected', 'pending']),
 			message: z.string().min(1).max(500),
 		})
 		.strict(),

@@ -1,0 +1,16 @@
+{
+	"caseId": "attachment-cleaned-result",
+	"schemaId": "portal.attachment.result",
+	"tags": ["native-attachment", "accepted"],
+	"input": {
+		"kind": "cleaned"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "cleaned"
+		},
+		"canonicalJson": "{\"kind\":\"cleaned\"}",
+		"refinementIdentities": []
+	}
+}

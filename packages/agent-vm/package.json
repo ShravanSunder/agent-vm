@@ -18,6 +18,7 @@
 	},
 	"files": [
 		"dist",
+		"guest-programs",
 		"managed-images.json"
 	],
 	"type": "module",
@@ -54,6 +55,7 @@
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"@agent-vm/tool-portal": "workspace:*",
+		"@clerk/backend": "3.17.1",
 		"@hono/node-server": "2.0.10",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",

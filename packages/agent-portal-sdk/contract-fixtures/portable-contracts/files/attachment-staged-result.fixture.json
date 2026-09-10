@@ -1,0 +1,24 @@
+{
+	"caseId": "attachment-staged-result",
+	"schemaId": "portal.attachment.result",
+	"tags": ["native-attachment", "accepted"],
+	"input": {
+		"kind": "staged",
+		"stagingId": "11111111-1111-4111-8111-111111111111",
+		"path": "/home/hermes/.cache/agent-vm-native/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/portal-native-sun-11111111-1111-4111-8111-111111111111/report.bin",
+		"byteLength": 4,
+		"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"kind": "staged",
+			"stagingId": "11111111-1111-4111-8111-111111111111",
+			"path": "/home/hermes/.cache/agent-vm-native/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/portal-native-sun-11111111-1111-4111-8111-111111111111/report.bin",
+			"byteLength": 4,
+			"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
+		"canonicalJson": "{\"byteLength\":4,\"kind\":\"staged\",\"path\":\"/home/hermes/.cache/agent-vm-native/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/portal-native-sun-11111111-1111-4111-8111-111111111111/report.bin\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"stagingId\":\"11111111-1111-4111-8111-111111111111\"}",
+		"refinementIdentities": []
+	}
+}

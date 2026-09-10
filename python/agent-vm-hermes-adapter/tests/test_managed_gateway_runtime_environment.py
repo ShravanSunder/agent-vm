@@ -499,7 +499,8 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
                 self.assertEqual(unrelated_result, "shared-loop-responsive")
         finally:
             os.close(stdout_read_fd)
-            if stream_read_future is not None:
+            # Submission may raise before assigning the future.
+            if stream_read_future is not None:  # ty: ignore[redundant-condition-strict]
                 self.assertIsNone(stream_read_future.result(timeout=2))
             try:
                 os.close(stdout_write_fd)

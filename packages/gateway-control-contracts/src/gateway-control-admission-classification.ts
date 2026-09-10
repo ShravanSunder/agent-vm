@@ -131,6 +131,8 @@ export function classifyGatewayControlAdmission(
 			case 'lease_use_end':
 			case 'tool_portal_controller_execution':
 			case 'tool_portal_oauth_availability':
+			case 'tool_portal_google_preflight':
+			case 'tool_portal_attachment':
 			case 'tool_portal_approval_decide':
 			case 'tool_portal_admission_reserve':
 			case 'tool_portal_dispatch_arm':
@@ -174,6 +176,8 @@ export function classifyGatewayControlAdmission(
 		case 'lease_use_end':
 		case 'tool_portal_controller_execution':
 		case 'tool_portal_oauth_availability':
+		case 'tool_portal_google_preflight':
+		case 'tool_portal_attachment':
 		case 'tool_portal_approval_decide':
 		case 'tool_portal_admission_reserve':
 		case 'tool_portal_dispatch_arm':

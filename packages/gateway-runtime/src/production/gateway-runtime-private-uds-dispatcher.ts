@@ -1,4 +1,6 @@
 import {
+	PortalAttachmentRequestSchema,
+	PortalAttachmentResultSchema,
 	GatewayRuntimeTrustedInvocationContextSchema,
 	GatewayApprovalDecisionRequestSchema,
 	GatewayApprovalDecisionResultSchema,
@@ -22,6 +24,7 @@ import {
 import { z } from 'zod/v4';
 
 import type { GatewayRuntimeApprovalDecisionOperations } from '../gateway-runtime-approval-decision-operations.js';
+import type { GatewayControlNativeAttachmentPort } from '../native-attachment-gateway-control-port.js';
 import type {
 	GatewayRuntimeArtifactProjectionOperations,
 	GatewayRuntimePortalProjectionOperations,
@@ -69,6 +72,7 @@ export type GatewayRuntimeTraceContextDispatch = <TResult>(
 ) => Promise<TResult>;
 
 export interface CreateGatewayRuntimePrivateUdsDispatcherProps {
+	readonly attachmentOperations?: GatewayControlNativeAttachmentPort;
 	readonly approvalOperations: GatewayRuntimeApprovalDecisionOperations;
 	readonly artifactOperations: GatewayRuntimeArtifactProjectionOperations;
 	readonly portalOperations: GatewayRuntimePortalProjectionOperations;
@@ -235,6 +239,19 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 	return {
 		dispatch: async (request): Promise<unknown> => {
 			switch (request.method) {
+				case 'portal.attachment': {
+					const operation = props.attachmentOperations;
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						request,
+						requestSchema: PortalAttachmentRequestSchema,
+						resultSchema: PortalAttachmentResultSchema,
+						projection: async (invocation) =>
+							operation === undefined
+								? { kind: 'unavailable' }
+								: await operation({ ...invocation, signal: request.signal }),
+					});
+				}
 				case 'approval.decide':
 					return await dispatchProjectionRequest({
 						dispatcherProps: props,

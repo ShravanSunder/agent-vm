@@ -30,6 +30,7 @@
 @layer components {
 	.page-shell {
 		@apply mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-16;
+		overflow-wrap: anywhere;
 	}
 	.page-header {
 		@apply space-y-3;

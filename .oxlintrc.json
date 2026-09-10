@@ -72,6 +72,12 @@
 	},
 	"overrides": [
 		{
+			"files": ["packages/oauth-approval-ui/src/**/*.tsx"],
+			"rules": {
+				"react/react-in-jsx-scope": "off"
+			}
+		},
+		{
 			"files": ["**/*.gen.ts", "**/__generated__/**"],
 			"rules": {
 				"typescript/no-explicit-any": "off",

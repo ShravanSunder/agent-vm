@@ -1,4 +1,10 @@
-import { toolPortalConfigSchema, type ToolPortalConfig } from '@agent-vm/config-contracts';
+import {
+	toolPortalConfigSchema,
+	preparedManagedToolPortalConfigSchema,
+	createEffectiveManagedToolPortalConfig,
+	createGatewayRuntimeManagedToolPortalConfig,
+	type GatewayRuntimeManagedToolPortalConfig,
+} from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,8 +12,8 @@ import {
 	type ToolPortalCallPolicyDecision,
 } from './tool-portal-service-common.js';
 
-function createConfig(): ToolPortalConfig {
-	return toolPortalConfigSchema.parse({
+function createConfig(): GatewayRuntimeManagedToolPortalConfig {
+	const authoredConfig = toolPortalConfigSchema.parse({
 		agents: { agent: { profile: 'profile' } },
 		mode: 'managed',
 		profiles: {
@@ -70,6 +76,11 @@ function createConfig(): ToolPortalConfig {
 		},
 		schemaVersion: 1,
 	});
+	return createGatewayRuntimeManagedToolPortalConfig(
+		createEffectiveManagedToolPortalConfig(
+			preparedManagedToolPortalConfigSchema.parse(authoredConfig),
+		),
+	);
 }
 
 function decide(

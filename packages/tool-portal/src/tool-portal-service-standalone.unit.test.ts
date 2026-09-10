@@ -536,7 +536,7 @@ describe('standalone-v1 ToolPortalService seam', () => {
 							profile: 'sandbox_ssh',
 						};
 
-			const parsedPrivilegedConfig = standaloneToolPortalConfigSchema.parse({
+			const privilegedConfig = {
 				...standaloneConfig,
 				profiles: {
 					'code-builder': {
@@ -553,17 +553,19 @@ describe('standalone-v1 ToolPortalService seam', () => {
 						},
 					},
 				},
-			});
+			};
+			expect(standaloneToolPortalConfigSchema.safeParse(privilegedConfig).success).toBe(false);
 			const fixture = createStandaloneFixture();
 			expect(() =>
 				createToolPortalService({
 					approvalCoordinator: fixture.approvalCoordinator,
 					baseSemanticSnapshot: standaloneSemanticSnapshot,
 					backendPorts: { mcpProvider: fixture.backend.port },
-					config: parsedPrivilegedConfig,
+					// @ts-expect-error Exercise runtime rejection of an untyped privileged config.
+					config: privilegedConfig,
 					mcpConfig: standaloneMcpConfig,
 				}),
-			).toThrow('Standalone Tool Portal version 1 does not admit the privileged');
+			).toThrow('mcp_provider');
 		},
 	);
 });

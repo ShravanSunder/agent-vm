@@ -1,3 +1,8 @@
+import {
+	oauthToolRequirementSchema,
+	oauthAccountToolOptionSchema,
+	oauthToolAvailabilitySchema,
+} from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import {
@@ -24,6 +29,10 @@ import {
 } from '../contracts/index.js';
 import {
 	PortalCallItemResultSchema,
+	PortalFileRequestSchema,
+	PortalFileResultSchema,
+	PortalAttachmentRequestSchema,
+	PortalAttachmentResultSchema,
 	PortalCallRequestSchema,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
@@ -34,12 +43,28 @@ import {
 	PortalSearchResultSchema,
 } from '../portal-call-surface/index.js';
 import { PortalProgressEventSchema } from '../portal-event-surface/index.js';
-import { portableRefinementIdentityForCheck } from './portable-refinement-authoring.js';
+import {
+	portableRefinementIdentityForCheck,
+	registerPortableExternalRefinement,
+} from './portable-refinement-authoring.js';
 import { PORTABLE_REFINEMENT_IDENTITIES } from './portable-refinement-descriptors.js';
 export {
 	PORTABLE_REFINEMENT_DESCRIPTORS,
 	PORTABLE_REFINEMENT_IDENTITIES,
 } from './portable-refinement-descriptors.js';
+
+registerPortableExternalRefinement({
+	schema: oauthToolRequirementSchema.shape.operations,
+	refinementIdentity: 'portal.google.discovery-policy',
+});
+registerPortableExternalRefinement({
+	schema: oauthAccountToolOptionSchema,
+	refinementIdentity: 'portal.google.discovery-policy',
+});
+registerPortableExternalRefinement({
+	schema: oauthToolAvailabilitySchema,
+	refinementIdentity: 'portal.google.discovery-policy',
+});
 
 interface PortableAcceptedContractParseResult {
 	readonly kind: 'accepted';
@@ -188,6 +213,17 @@ function mapPortableIssue(props: {
 	readonly issue: z.core.$ZodIssue;
 	readonly schemaId: string;
 }): string {
+	// The generated JSON-schema reader reports failure of these outer unions as
+	// one shape error; keep TS diagnostics identical without relaxing either schema.
+	if (
+		[
+			'portal.file.request',
+			'portal.file.result',
+			'portal.attachment.request',
+			'portal.attachment.result',
+		].includes(props.schemaId)
+	)
+		return 'portable.schema.invalid-union';
 	if (props.schemaId === 'portal.call.item-result') {
 		const firstPathSegment = props.issue.path?.[0];
 		if (
@@ -225,6 +261,11 @@ function mapPortableIssue(props: {
 		return 'portable.number.above-maximum';
 	}
 	if (props.issue.code === 'custom') {
+		if (
+			props.issue.message.startsWith('Google operation') ||
+			props.issue.message.startsWith('Usable account activity')
+		)
+			return 'portal.google.discovery-policy';
 		if (props.issue.message.includes('decoded canonical base64 content')) {
 			return 'sandbox.binary-chunk.byte-length-mismatch';
 		}
@@ -254,6 +295,30 @@ function mapPortableIssue(props: {
 		}
 	}
 	return `portable.zod.${props.issue.code}`;
+}
+
+function mapPortableIssues(props: {
+	readonly input: unknown;
+	readonly issue: z.core.$ZodIssue;
+	readonly schemaId: string;
+}): readonly string[] {
+	if (
+		props.schemaId === 'portal.call.item-result' &&
+		props.issue.code === 'invalid_union' &&
+		props.issue.path.length === 0 &&
+		isUnknownRecord(props.input)
+	) {
+		// Completed delivery errors share a status with ordinary errors. Preserve
+		// field-level error codes from the closest matching status branch.
+		const matchingBranches = props.issue.errors.filter(
+			(issues) => !issues.some((issue) => issue.path[0] === 'status'),
+		);
+		const selected = matchingBranches.toSorted((left, right) => left.length - right.length)[0];
+		if (selected !== undefined && selected.length > 0) {
+			return selected.map((issue) => mapPortableIssue({ ...props, issue }));
+		}
+	}
+	return [mapPortableIssue(props)];
 }
 
 function createPortableContractAdapter(props: {
@@ -286,8 +351,8 @@ function createPortableContractAdapter(props: {
 						? ['portal.result.status-shape']
 						: [
 								...new Set(
-									parsed.error.issues.map((issue) =>
-										mapPortableIssue({ input, issue, schemaId: props.schemaId }),
+									parsed.error.issues.flatMap((issue) =>
+										mapPortableIssues({ input, issue, schemaId: props.schemaId }),
 									),
 								),
 							].toSorted((leftCode, rightCode) => leftCode.localeCompare(rightCode));
@@ -307,9 +372,20 @@ function createPortableContractAdapter(props: {
 }
 
 function callItemHasStatusShapeConflict(input: Record<string, unknown>): boolean {
+	const outcome = input['outcome'];
+	const completedDelivery =
+		isUnknownRecord(outcome) &&
+		outcome['kind'] === 'completed' &&
+		outcome['completion'] === 'failed' &&
+		outcome['certainty'] === 'proven' &&
+		outcome['retryClass'] === 'forbidden' &&
+		typeof input['operationId'] === 'string' &&
+		input['operationId'].length > 0 &&
+		typeof input['owningGeneration'] === 'string' &&
+		input['owningGeneration'].length > 0;
 	return (
 		(input['status'] === 'ok' && 'error' in input) ||
-		(input['status'] === 'error' && 'value' in input)
+		(input['status'] === 'error' && 'value' in input && !completedDelivery)
 	);
 }
 
@@ -354,6 +430,10 @@ const portableContractDefinitions = {
 		},
 		schema: PortalCallRequestSchema,
 	},
+	'portal.file.request': { refinementIdentities: [], schema: PortalFileRequestSchema },
+	'portal.file.result': { refinementIdentities: [], schema: PortalFileResultSchema },
+	'portal.attachment.request': { refinementIdentities: [], schema: PortalAttachmentRequestSchema },
+	'portal.attachment.result': { refinementIdentities: [], schema: PortalAttachmentResultSchema },
 	'portal.call.result': {
 		refinementIdentities: [
 			'portal.request-id.not-reserved',
@@ -371,7 +451,11 @@ const portableContractDefinitions = {
 		schema: PortalDescribeRequestSchema,
 	},
 	'portal.describe.result': {
-		refinementIdentities: ['portal.request-id.not-reserved', 'portal.result.aggregate-status'],
+		refinementIdentities: [
+			'portal.request-id.not-reserved',
+			'portal.result.aggregate-status',
+			'portal.google.discovery-policy',
+		],
 		schema: PortalDescribeResultSchema,
 	},
 	'portal.json-value': {
@@ -392,7 +476,11 @@ const portableContractDefinitions = {
 		schema: PortalListRequestSchema,
 	},
 	'portal.list.result': {
-		refinementIdentities: ['portal.request-id.not-reserved', 'portal.result.aggregate-status'],
+		refinementIdentities: [
+			'portal.request-id.not-reserved',
+			'portal.result.aggregate-status',
+			'portal.google.discovery-policy',
+		],
 		schema: PortalListResultSchema,
 	},
 	'portal.progress.event': {
@@ -409,7 +497,11 @@ const portableContractDefinitions = {
 		schema: PortalSearchRequestSchema,
 	},
 	'portal.search.result': {
-		refinementIdentities: ['portal.request-id.not-reserved', 'portal.result.aggregate-status'],
+		refinementIdentities: [
+			'portal.request-id.not-reserved',
+			'portal.result.aggregate-status',
+			'portal.google.discovery-policy',
+		],
 		schema: PortalSearchResultSchema,
 	},
 } as const satisfies Readonly<Record<string, PortableContractDefinition>>;
