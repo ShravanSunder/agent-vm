@@ -46,13 +46,32 @@ not unresolved product decisions. Canonical implementation plan:
 - Built CLI `manual update` generated 15 manuals in an owned OS-temp directory;
   the output contains the invitation URL and same-email rule.
 
-Still required: final sign-out correction checks/review, fresh-invitation proof,
-keyboard proof and passing exact-head CI. The private returning-user callback is
-now observed, but the final sign-out correction needs a live retest. The approved account
-is already enrolled, so do not delete/recreate it to manufacture a fresh-invite
-test. No other live account is authorized. No beta config migration, VM image,
-Gondolin change, or resource grant was performed. Screenshots are in the session;
-the loopback preview is explicitly not an authenticated application deployment.
+### Latest verification — 2026-09-11
+
+The preceding failed attempts are historical, superseded by these observations:
+
+- Source head `082269479628e50381265e29a806536c81621fab` passed CI run
+  `34584730069`: all 13 jobs, including Validation, six VM shards and Hermes.
+  The containment fixture now waits for pending-create registration before its
+  timeout; no production behavior or containment assertion was weakened.
+- Current-head private returning-user proof passed: keyboard Google action,
+  callback 303, real owner landing, keyboard change-person, session revocation,
+  and immediate stale-JWT/live-signed-out login recovery to 200. Desktop and
+  390x844 screenshots were captured. Viewport restored and listener stopped.
+- Final fresh-context independent review completed. Parent confirmed a journey
+  gap: the runbook enrolls a new identity before configuring its Clerk user ID,
+  but first return requires that ID to already be in configured owners. Following
+  that order can consume the continuation and return 403. Resolve the intended
+  first-arrival experience without weakening the existing owner boundary.
+- Add direct session-route integration coverage for a Google-verified return
+  whose user ID is absent from configured owners, after that behavior is settled.
+
+PR #227 remains draft and unmerged. Fresh hosted invitation and expired real
+invitation proof remain unobserved. The sole approved account is already enrolled;
+do not delete/recreate it or use another identity without authorization. No beta
+configuration migration, Gondolin change or resource grant was performed. The
+isolated private login proof is not complete beta deployment proof. Screenshots
+are in the session, not persisted image files.
 
 ## Requested outcome
 
@@ -67,7 +86,7 @@ Deliver as a separate PR, unmerged, from freshly fetched origin/master. New bran
 The main checkout and previous OAuth worktree have unrelated dirty work and were
 not changed. New worktree: agent-vm.fix-google-invite-onboarding.
 
-## Current evidence
+## Historical pre-implementation evidence
 
 - controller/oauth/clerk-login-routes.ts redirects a signed-out bootstrap to
   verifier.signInUrl(); it preserves a bounded cookie-bound continuation.
