@@ -37,7 +37,7 @@ import {
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	evaluateCliAllowanceInvocation,
+	validateCliAllowanceInvocation,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
 } from '@agent-vm/tool-portal';
@@ -314,7 +314,9 @@ function configuredRegistration(props: {
 		parseArguments: (argumentsValue: JsonObject) => {
 			const parsedInput = inputSchema.safeParse(argumentsValue);
 			if (!parsedInput.success) return { kind: 'invalid' };
-			const validation = evaluateCliAllowanceInvocation({
+			// Registration validates syntax only. Managed account policy is resolved
+			// by the controller; the static evaluator deliberately rejects that mode.
+			const validation = validateCliAllowanceInvocation({
 				allowance: {
 					calls: props.operation.calls,
 					commands: props.operation.commands,
@@ -322,10 +324,9 @@ function configuredRegistration(props: {
 					stdin: props.operation.stdin,
 					timeout: props.operation.timeout,
 				},
-				baseline: 'without_approval',
 				input: parsedInput.data,
 			});
-			return validation.ok
+			return validation.ok && !validation.matchedDenyRule
 				? { kind: 'valid', value: JsonObjectSchema.parse(parsedInput.data) }
 				: { kind: 'invalid' };
 		},
