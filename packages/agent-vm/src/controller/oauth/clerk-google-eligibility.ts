@@ -18,14 +18,17 @@ const clerkGoogleUserSchema = z.object({
 });
 
 /** Eligibility only: durable ownership remains issuer + Clerk user ID. */
-export function hasVerifiedGoogleIdentity(value: unknown, expectedUserId: string): boolean {
+export function getVerifiedGoogleEmailAddress(
+	value: unknown,
+	expectedUserId: string,
+): string | undefined {
 	const parsed = clerkGoogleUserSchema.safeParse(value);
-	if (!parsed.success || parsed.data.id !== expectedUserId) return false;
+	if (!parsed.success || parsed.data.id !== expectedUserId) return undefined;
 	const primary = parsed.data.emailAddresses.find(
 		(address) => address.id === parsed.data.primaryEmailAddressId,
 	);
-	if (primary?.verification?.status !== 'verified') return false;
-	return parsed.data.externalAccounts.some(
+	if (primary?.verification?.status !== 'verified') return undefined;
+	const matches = parsed.data.externalAccounts.some(
 		(account) =>
 			// Backend API preserves oauth_; ClerkJS alone strips that prefix.
 			account.provider === 'oauth_google' &&
@@ -33,4 +36,5 @@ export function hasVerifiedGoogleIdentity(value: unknown, expectedUserId: string
 			account.verification?.status === 'verified' &&
 			account.emailAddress.toLowerCase() === primary.emailAddress.toLowerCase(),
 	);
+	return matches ? primary.emailAddress : undefined;
 }

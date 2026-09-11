@@ -19,6 +19,7 @@ import type { GoogleOAuthBrokerService } from '@agent-vm/oauth-broker/google';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 
+import type { ClerkBrowserIdentityVerifier } from './clerk-browser-identity-verifier.js';
 import { beginClerkLogin } from './clerk-login-routes.js';
 import type {
 	GooglePermissionPolicyService,
@@ -27,6 +28,7 @@ import type {
 import {
 	oauthNavigationCookieName,
 	oauthNavigationBindingCookieName,
+	createOAuthNavigationCookies,
 	type OAuthBrowserSessionRoutes,
 } from './oauth-browser-session-routes.js';
 
@@ -64,6 +66,7 @@ export function createOAuthAccountPolicyRoutes(props: {
 	readonly broker: GoogleOAuthBrokerService;
 	readonly policy: GooglePermissionPolicyService;
 	readonly browser: OAuthBrowserSessionRoutes;
+	readonly verifier: ClerkBrowserIdentityVerifier;
 	readonly navigation: OAuthBrowserNavigationStore;
 	readonly continuations: OAuthLoginContinuationStore;
 	readonly stylesheet: string;
@@ -85,6 +88,21 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const current = await props.browser.readIdentity(context.req.raw, { kind: 'navigation' });
 		if (current.kind !== 'verified') throw new Error('Browser identity is unavailable.');
 		return current.identity;
+	};
+	const navigateAfterForm = (options: {
+		readonly context: Context;
+		readonly identity: NonNullable<ReturnType<OAuthBrowserNavigationStore['read']>>['identity'];
+		readonly target: OAuthLoginContinuationTarget;
+		readonly destination: string;
+	}): Response => {
+		// The POST already verified this identity. Starting another bootstrap
+		// could redirect an aged Clerk cookie outside this form's CSP origin.
+		const created = props.navigation.create({ identity: options.identity, target: options.target });
+		if (created.kind !== 'created')
+			return options.context.text('Navigation is unavailable. Reload your accounts.', 503);
+		for (const cookie of createOAuthNavigationCookies(created))
+			options.context.header('Set-Cookie', cookie, { append: true });
+		return options.context.redirect(options.destination, 303);
 	};
 	const requireNavigationForm = (
 		context: Context,
@@ -147,6 +165,9 @@ export function createOAuthAccountPolicyRoutes(props: {
 				continuations: props.continuations,
 			});
 		const owner = await identity(context);
+		const verifiedGoogle = await props.verifier.verifyGoogleIdentity(owner);
+		if (verifiedGoogle.kind !== 'verified')
+			return context.text('Your signed-in identity could not be verified. Sign in again.', 403);
 		const agents = props.policy.listOwnerAccounts(owner).map((agent) => ({
 			agentId: agent.agentId,
 			accounts: agent.accounts.flatMap((account) =>
@@ -167,7 +188,7 @@ export function createOAuthAccountPolicyRoutes(props: {
 		return context.html(
 			renderOAuthOwnerIndex({
 				stylesheet: props.stylesheet,
-				model: { agents, csrfToken: current.csrfToken },
+				model: { agents, csrfToken: current.csrfToken, signedInEmail: verifiedGoogle.emailAddress },
 			}),
 		);
 	});
@@ -246,14 +267,20 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const applicationId = oauthApplicationIdSchema.parse(
 			googleOAuthApplicationIdSchema.parse(formString(form, 'applicationId')),
 		);
+		const owner = await identity(context);
 		const result = props.broker.beginWebsiteAuthorization({
 			agentId: context.req.param('agentId'),
-			identity: await identity(context),
+			identity: owner,
 			request: { actionId: 'oauth_authorization.begin', applicationId },
 		});
 		if (result.kind !== 'authorization-begun')
 			return context.text('Could not begin authorization.', 403);
-		return context.redirect(new URL(result.authorizationUrl).pathname, 303);
+		return navigateAfterForm({
+			context,
+			identity: owner,
+			target: { kind: 'authorization', transactionId: result.transactionId },
+			destination: new URL(result.authorizationUrl).pathname,
+		});
 	});
 	app.post('/oauth/agents/:agentId/accounts/:accountId/:applicationId/:action', async (context) => {
 		const form = await context.req.formData();
@@ -271,9 +298,10 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const applicationId = oauthApplicationIdSchema.parse(
 			googleOAuthApplicationIdSchema.parse(context.req.param('applicationId')),
 		);
+		const owner = await identity(context);
 		const result = props.broker.beginWebsiteAuthorization({
 			agentId,
-			identity: await identity(context),
+			identity: owner,
 			request: {
 				actionId:
 					action === 'reauthorize'
@@ -285,7 +313,12 @@ export function createOAuthAccountPolicyRoutes(props: {
 		});
 		if (result.kind !== 'authorization-begun')
 			return context.text('Could not begin authorization.', 403);
-		return context.redirect(new URL(result.authorizationUrl).pathname, 303);
+		return navigateAfterForm({
+			context,
+			identity: owner,
+			target: { kind: 'authorization', transactionId: result.transactionId },
+			destination: new URL(result.authorizationUrl).pathname,
+		});
 	});
 	app.post('/oauth/policies/:contextId/:action', async (context) => {
 		if (context.req.header('origin') !== props.config.browser.publicBaseUrl)
@@ -333,7 +366,13 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const result = await props.policy.confirmPolicyChange(common);
 		for (const name of [policyContextCookie, policyBindingCookie])
 			deleteCookie(context, name, { path: '/oauth/policies', secure: true });
-		if (result.kind === 'applied') return context.redirect('/oauth/agents', 303);
+		if (result.kind === 'applied')
+			return navigateAfterForm({
+				context,
+				identity: common.identity,
+				target: { kind: 'agents' },
+				destination: '/oauth/agents',
+			});
 		return context.text(
 			result.kind === 'pending' || result.kind === 'containment-failed'
 				? 'Policy saved. Access remains paused until runtime containment is confirmed. Return to your accounts to check its status.'

@@ -110,7 +110,8 @@ export function createClerkLoginRoutes(props: {
 		let continuationId = getCookie(context, loginCookieName);
 		let browserBindingSecret = getCookie(context, bindingCookieName);
 		const isInvitation = context.req.path === '/oauth/auth/invite';
-		const isStart = context.req.path === '/oauth/auth/start' || isInvitation;
+		const isSignedOutLanding = context.req.path === '/oauth/auth/signed-out';
+		const isStart = context.req.path === '/oauth/auth/start' || isInvitation || isSignedOutLanding;
 		if (continuationId === undefined || browserBindingSecret === undefined) {
 			if (!isStart) return context.text('Login context missing. Start again.', 409);
 			const created = props.continuations.create({ kind: 'agents' });
@@ -138,6 +139,9 @@ export function createClerkLoginRoutes(props: {
 			return context.text('Login context expired. Start again.', 409);
 		}
 		if (isInvitation) return renderPage(context, 'invitation');
+		// End native sign-out on our origin, without a Clerk handshake in the
+		// form's redirect chain. The browser SDK loads on this public GET.
+		if (isSignedOutLanding) return renderPage(context, 'sign-in');
 		try {
 			const requestUrl = new URL(context.req.url);
 			if (requestUrl.searchParams.get('issue') === 'incomplete')
@@ -206,6 +210,7 @@ export function createClerkLoginRoutes(props: {
 		}
 	};
 	app.get('/oauth/auth/start', bootstrap);
+	app.get('/oauth/auth/signed-out', bootstrap);
 	app.get('/oauth/auth/invite', bootstrap);
 	app.get('/oauth/auth/return', bootstrap);
 	app.get('/oauth/auth/callback', (context) => {

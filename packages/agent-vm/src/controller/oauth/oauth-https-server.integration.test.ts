@@ -85,7 +85,11 @@ function createTestOAuthApp(
 				identity: props.verifiedSessionIdentity ?? identity,
 			}),
 			revokeSession: async () => ({ kind: 'revoked' }),
-			verifyGoogleIdentity: async (identity) => ({ kind: 'verified', identity }),
+			verifyGoogleIdentity: async (identity) => ({
+				kind: 'verified',
+				identity,
+				emailAddress: 'member@example.test',
+			}),
 		},
 	});
 }

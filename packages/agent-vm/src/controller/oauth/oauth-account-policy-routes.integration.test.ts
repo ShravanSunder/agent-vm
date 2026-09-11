@@ -15,8 +15,13 @@ import { wrappingKey } from '../../../../oauth-broker/src/oauth-catalog-test-fix
 import { createGooglePermissionPolicyService } from './google-permission-policy-service.js';
 import { createOAuthHttpsApp } from './oauth-https-server.js';
 
-function nativeForm(html: string): { readonly action: string; readonly fields: URLSearchParams } {
-	const form = /<form action="([^"]+)"[^>]*>(.*?)<\/form>/su.exec(html);
+function nativeForm(
+	html: string,
+	actionSuffix?: string,
+): { readonly action: string; readonly fields: URLSearchParams } {
+	const form = [...html.matchAll(/<form[^>]*action="([^"]+)"[^>]*>(.*?)<\/form>/gsu)].find(
+		(candidate) => actionSuffix === undefined || candidate[1]?.endsWith(actionSuffix),
+	);
 	if (form?.[1] === undefined || form[2] === undefined) throw new Error('Expected native form.');
 	const fields = new URLSearchParams();
 	for (const input of form[2].matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"[^>]*>/gu))
@@ -60,6 +65,7 @@ describe('website account-policy journey with real broker, SQLite and native for
 			verifySession: async (identity) => ({ kind: 'verified', identity }),
 			containPolicyMaterial: async () => 'contained',
 		});
+		let bootstrapEnabled = true;
 		const app = createOAuthHttpsApp({
 			assets: {
 				files: {},
@@ -80,15 +86,26 @@ describe('website account-policy journey with real broker, SQLite and native for
 				resolvePeerIdentity: async () => ({ loginName: 'network-person@example.test' }),
 			},
 			browserIdentityVerifier: {
-				verifyBootstrap: async () => ({
-					kind: 'verified',
-					identity: facadeIdentity,
-					setCookies: [],
-				}),
+				verifyBootstrap: async () =>
+					bootstrapEnabled
+						? {
+								kind: 'verified',
+								identity: facadeIdentity,
+								setCookies: [],
+							}
+						: {
+								kind: 'redirect',
+								location: 'https://identity.example.test/handshake',
+								setCookies: [],
+							},
 				verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 				verifySession: async (identity) => ({ kind: 'verified', identity }),
 				revokeSession: async () => ({ kind: 'revoked' }),
-				verifyGoogleIdentity: async (identity) => ({ kind: 'verified', identity }),
+				verifyGoogleIdentity: async (identity) => ({
+					kind: 'verified',
+					identity,
+					emailAddress: 'member@example.test',
+				}),
 			},
 		});
 		const cookies = new Map<string, string>();
@@ -123,7 +140,20 @@ describe('website account-policy journey with real broker, SQLite and native for
 		const login = await request(first.headers.get('location') ?? '');
 		expect(login.status).toBe(303);
 		const index = await request(login.headers.get('location') ?? '');
-		expect(await index.text()).toContain('sun mailbox');
+		const indexHtml = await index.text();
+		expect(indexHtml).toContain('sun mailbox');
+		// An aged Clerk cookie would need an external handshake on another
+		// bootstrap. A verified same-origin form must not trigger that chain.
+		bootstrapEnabled = false;
+		const connect = nativeForm(indexHtml, '/sun/connect');
+		connect.fields.set('applicationId', 'gmail-app');
+		const connected = await request(connect.action, connect.fields);
+		expect(connected.status).toBe(303);
+		const consent = await request(connected.headers.get('location') ?? '');
+		expect(consent.status).toBe(200);
+		expect(await consent.text()).toContain('Choose Google access');
+		expect(consent.headers.get('content-security-policy')).toContain("form-action 'self'");
+		bootstrapEnabled = true;
 		const target = `/oauth/agents/sun/accounts/${account.accountId}?application=gmail-app`;
 		const accountLogin = await request(target);
 		expect(accountLogin.status).toBe(303);

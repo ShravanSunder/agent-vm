@@ -48,6 +48,19 @@ not unresolved product decisions. Canonical implementation plan:
 
 ### Latest verification — 2026-09-11
 
+Current owner-requested correction adds a server-verified signed-in email header,
+compact agent connections and a shared dark theme. React/shadcn migration is
+explicitly a separate PR. Connect/reconnect/disconnect and policy-save redirects
+now bind the already-verified form identity to their destination; they do not
+start another Clerk bootstrap in a native form redirect chain. Sign-out lands on
+a public same-origin page. CSP remains `form-action 'self'`.
+
+The new navigation regression failed before the correction and passes after it.
+Direct unconfigured-owner return coverage now proves denial without navigation
+or authorization creation. Current source quality: 16 checks passed, 4,614 unit
+tests and 919 integration tests passed. Updated beta visual/button proof and
+fresh independent review are still required for this correction.
+
 The preceding failed attempts are historical, superseded by these observations:
 
 - Source head `082269479628e50381265e29a806536c81621fab` passed CI run
@@ -63,8 +76,9 @@ The preceding failed attempts are historical, superseded by these observations:
   but first return requires that ID to already be in configured owners. Following
   that order can consume the continuation and return 403. Resolve the intended
   first-arrival experience without weakening the existing owner boundary.
-- Add direct session-route integration coverage for a Google-verified return
-  whose user ID is absent from configured owners, after that behavior is settled.
+- Direct session-route integration coverage now confirms rejection of a
+  Google-verified return whose user ID is absent from configured owners. The
+  first-arrival experience remains a distinct unresolved design decision.
 
 PR #227 remains draft and unmerged. Fresh hosted invitation and expired real
 invitation proof remain unobserved. The sole approved account is already enrolled;

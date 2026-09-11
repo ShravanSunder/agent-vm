@@ -223,6 +223,7 @@ export function createOAuthHttpsApp(props: {
 			broker: props.brokerService,
 			policy: props.policyService,
 			browser,
+			verifier: props.browserIdentityVerifier,
 			navigation: props.navigation,
 			continuations: props.loginContinuations,
 			stylesheet: props.assets.manifest.css,

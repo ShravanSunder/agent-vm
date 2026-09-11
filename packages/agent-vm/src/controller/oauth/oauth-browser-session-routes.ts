@@ -15,6 +15,15 @@ import { createClerkLoginRoutes } from './clerk-login-routes.js';
 export const oauthNavigationCookieName = 'agent_vm_oauth_navigation';
 export const oauthNavigationBindingCookieName = 'agent_vm_oauth_navigation_binding';
 
+export function createOAuthNavigationCookies(
+	created: Extract<ReturnType<OAuthBrowserNavigationStore['create']>, { kind: 'created' }>,
+): readonly string[] {
+	return [
+		`${oauthNavigationCookieName}=${created.contextId}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
+		`${oauthNavigationBindingCookieName}=${created.browserBindingSecret}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
+	];
+}
+
 export interface OAuthBrowserSessionRoutes {
 	readonly routes: Hono;
 	readIdentity(
@@ -39,12 +48,6 @@ export function createOAuthBrowserSessionRoutes(props: {
 	readonly cancelPolicyContexts: (identity: OAuthBrowserSessionIdentity) => void;
 }): OAuthBrowserSessionRoutes {
 	const routes = new Hono();
-	const navigationCookies = (
-		created: Extract<ReturnType<OAuthBrowserNavigationStore['create']>, { kind: 'created' }>,
-	): readonly string[] => [
-		`${oauthNavigationCookieName}=${created.contextId}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
-		`${oauthNavigationBindingCookieName}=${created.browserBindingSecret}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
-	];
 	const readCookies = (request: Request): ReadonlyMap<string, string> =>
 		new Map(
 			(request.headers.get('cookie') ?? '').split(';').map((part) => {
@@ -132,7 +135,7 @@ export function createOAuthBrowserSessionRoutes(props: {
 					}
 				}
 				const created = props.navigation.create({ identity, target });
-				return created.kind === 'created' ? navigationCookies(created) : undefined;
+				return created.kind === 'created' ? createOAuthNavigationCookies(created) : undefined;
 			},
 		}),
 	);
@@ -159,7 +162,7 @@ export function createOAuthBrowserSessionRoutes(props: {
 			deleteCookie(context, name, { path: '/oauth', secure: true });
 		const revoked = await props.verifier.revokeSession(navigation.identity);
 		return revoked.kind === 'revoked'
-			? context.redirect('/oauth/auth/start', 303)
+			? context.redirect('/oauth/auth/signed-out', 303)
 			: context.text(
 					'Local forms were cancelled, but browser sign-out could not be confirmed. Try signing out in Clerk.',
 					503,

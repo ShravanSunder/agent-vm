@@ -8,7 +8,7 @@ import {
 import { createClerkClient, verifyToken, type ClerkClient } from '@clerk/backend';
 import { z } from 'zod';
 
-import { hasVerifiedGoogleIdentity } from './clerk-google-eligibility.js';
+import { getVerifiedGoogleEmailAddress } from './clerk-google-eligibility.js';
 
 export type ClerkBrowserBootstrapResult =
 	| {
@@ -20,9 +20,15 @@ export type ClerkBrowserBootstrapResult =
 	| Exclude<OAuthBrowserIdentityVerification, { kind: 'verified' }>;
 
 export interface ClerkBrowserIdentityVerifier {
-	verifyGoogleIdentity(
-		identity: OAuthBrowserSessionIdentity,
-	): Promise<OAuthBrowserIdentityVerification | { readonly kind: 'setup-required' }>;
+	verifyGoogleIdentity(identity: OAuthBrowserSessionIdentity): Promise<
+		| Exclude<OAuthBrowserIdentityVerification, { kind: 'verified' }>
+		| {
+				readonly kind: 'verified';
+				readonly identity: OAuthBrowserSessionIdentity;
+				readonly emailAddress: string;
+		  }
+		| { readonly kind: 'setup-required' }
+	>;
 	verifyBootstrap(request: Request): Promise<ClerkBrowserBootstrapResult>;
 	verifyCurrentCookie(
 		request: Request,
@@ -172,8 +178,9 @@ export function createClerkBrowserIdentityVerifier(
 					requestTimeoutMs,
 				);
 				if (user.id !== identity.userId) return { kind: 'identity-mismatch' };
-				return hasVerifiedGoogleIdentity(user, identity.userId)
-					? { kind: 'verified', identity }
+				const emailAddress = getVerifiedGoogleEmailAddress(user, identity.userId);
+				return emailAddress !== undefined
+					? { kind: 'verified', identity, emailAddress }
 					: { kind: 'setup-required' };
 			} catch {
 				return { kind: 'verification-unavailable' };

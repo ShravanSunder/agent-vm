@@ -39,7 +39,7 @@ function fixture(): {
 	const bound: { target: unknown; identity: unknown }[] = [];
 	const verifier: ClerkBrowserIdentityVerifier = {
 		verifyGoogleIdentity: vi.fn<ClerkBrowserIdentityVerifier['verifyGoogleIdentity']>(
-			async (value) => ({ kind: 'verified', identity: value }),
+			async (value) => ({ kind: 'verified', identity: value, emailAddress: 'member@example.test' }),
 		),
 		verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 		verifyBootstrap: vi.fn<ClerkBrowserIdentityVerifier['verifyBootstrap']>(async () => ({
@@ -81,6 +81,23 @@ function loginCookie(
 }
 
 describe('Clerk safe login routes with real Hono and continuation storage', () => {
+	it('ends sign-out on a public same-origin page without a Clerk handshake', async () => {
+		const { app, verifier } = fixture();
+		const bootstrap = vi.spyOn(verifier, 'verifyBootstrap').mockResolvedValue({
+			kind: 'redirect',
+			location: 'https://identity.example.test/handshake',
+			setCookies: [],
+		});
+		const response = await app.request(`${site}/oauth/auth/signed-out`);
+		expect(response.status).toBe(200);
+		expect(response.headers.get('location')).toBeNull();
+		expect(response.headers.get('content-security-policy')).toContain("form-action 'self'");
+		expect(
+			response.headers.getSetCookie().some((cookie) => cookie.startsWith('agent_vm_oauth_login=')),
+		).toBe(true);
+		expect(await response.text()).toContain('Continue with Google');
+		expect(bootstrap).not.toHaveBeenCalled();
+	});
 	it('shows public sign-in immediately after revocation even while its old JWT still verifies', async () => {
 		const { app, verifier, bound } = fixture();
 		vi.spyOn(verifier, 'verifySession').mockResolvedValue({ kind: 'signed-out' });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasVerifiedGoogleIdentity } from './clerk-google-eligibility.js';
+import { getVerifiedGoogleEmailAddress } from './clerk-google-eligibility.js';
 
 function user(): unknown {
 	return {
@@ -26,10 +26,10 @@ function user(): unknown {
 
 describe('same-email Google onboarding eligibility', () => {
 	it('accepts the matching verified Google identity', () => {
-		expect(hasVerifiedGoogleIdentity(user(), 'user_owner')).toBe(true);
+		expect(getVerifiedGoogleEmailAddress(user(), 'user_owner')).toBe('member@example.test');
 	});
 	it('does not accept another Clerk user', () => {
-		expect(hasVerifiedGoogleIdentity(user(), 'user_other')).toBe(false);
+		expect(getVerifiedGoogleEmailAddress(user(), 'user_other')).toBeUndefined();
 	});
 	it.each([
 		{ externalAccounts: [] },
@@ -76,6 +76,8 @@ describe('same-email Google onboarding eligibility', () => {
 	])('rejects incomplete or mismatched remote identity: %j', (override) => {
 		const original = user();
 		if (typeof original !== 'object' || original === null) throw new Error('Invalid fixture');
-		expect(hasVerifiedGoogleIdentity({ ...original, ...override }, 'user_owner')).toBe(false);
+		expect(
+			getVerifiedGoogleEmailAddress({ ...original, ...override }, 'user_owner'),
+		).toBeUndefined();
 	});
 });
