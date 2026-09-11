@@ -165,6 +165,9 @@ export function createClerkLoginRoutes(props: {
 				);
 			}
 			const active = await props.verifier.verifySession(verified.identity);
+			// Revocation can precede expiry of Clerk's short cookie JWT. The safe
+			// start page is public; never bind that revoked identity to navigation.
+			if (active.kind === 'signed-out' && isStart) return renderPage(context, 'sign-in');
 			if (active.kind !== 'verified') {
 				clearLoginCookies(context);
 				return context.text(

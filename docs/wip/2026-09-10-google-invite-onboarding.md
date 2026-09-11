@@ -21,14 +21,34 @@ not unresolved product decisions. Canonical implementation plan:
   Google connection and matching verified primary email.
 - The localhost callback was blocked by browser protections. This is not proof
   of the private HTTPS return. No browser protections were disabled.
-- The private HTTPS test listener was rejected by the approval system because it
-  would use the shared host's TLS key and open a listener. No listener started,
-  no workaround was attempted, and its unrun scaffold was removed.
+- The first private HTTPS listener attempt was rejected; no workaround was used.
+  After the owner explicitly approved that listener, the existing production
+  login/session handlers ran behind real TLS and socket-peer Tailscale WhoIs.
+  The sole permitted account completed Google identity sign-in, the return route
+  returned 303, and the browser reached the actual owner-index renderer using a
+  verified bounded navigation context. Screenshots capture entry and landing.
+  This was an isolated login proof with no resource broker or agent tools, not
+  a complete beta deployment or a fresh invitation test.
+- Cancelling Google sign-in returned the app-owned Google entry without access.
+  Native change-person revoked the session, but initially returned an error
+  before a reload. Redacted live diagnostics proved that the old cookie JWT
+  still verified while the live session correctly reported signed-out. The safe
+  start route now renders public sign-in in that case; callback/consent denial
+  remains unchanged. The new regression test failed 403 versus 200 before the
+  correction, then all 17 login integration tests passed.
+- Final live sign-out retest could not start: 1Password authorization timed out.
+  No listener remains running; the permitted test session was revoked.
+- CI run 34473785732 at 67d39f8f completed with the Hermes lane failing:
+  8 failed / 6 passed (Gateway boot/health timeouts and a virtio queue-full error).
+  Validation and all other E2E lanes passed. No failing Hermes files or VM
+  implementation were changed in this branch; their root cause is not claimed.
+  No CI retry, timeout change, image change or Gondolin patch was performed.
 - Built CLI `manual update` generated 15 manuals in an owned OS-temp directory;
   the output contains the invitation URL and same-email rule.
 
-Still required: final remediation checks/review and PR/CI; actual private HTTPS
-callback and fresh-invitation completion remain unproved. The approved account
+Still required: final sign-out correction checks/review, fresh-invitation proof,
+keyboard proof and passing exact-head CI. The private returning-user callback is
+now observed, but the final sign-out correction needs a live retest. The approved account
 is already enrolled, so do not delete/recreate it to manufacture a fresh-invite
 test. No other live account is authorized. No beta config migration, VM image,
 Gondolin change, or resource grant was performed. Screenshots are in the session;

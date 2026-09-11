@@ -81,6 +81,17 @@ function loginCookie(
 }
 
 describe('Clerk safe login routes with real Hono and continuation storage', () => {
+	it('shows public sign-in immediately after revocation even while its old JWT still verifies', async () => {
+		const { app, verifier, bound } = fixture();
+		vi.spyOn(verifier, 'verifySession').mockResolvedValue({ kind: 'signed-out' });
+		const google = vi.spyOn(verifier, 'verifyGoogleIdentity');
+		const response = await app.request(`${site}/oauth/auth/start`);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('Continue with Google');
+		expect(bound).toEqual([]);
+		expect(google).not.toHaveBeenCalled();
+		expect(response.headers.get('cache-control')).toBe('no-store');
+	});
 	it('opens a fresh invitation with bound cookies without exposing its ticket in HTML', async () => {
 		const { app, verifier, bound } = fixture();
 		const verify = vi.spyOn(verifier, 'verifyBootstrap');
