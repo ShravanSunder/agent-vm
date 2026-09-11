@@ -214,6 +214,8 @@ describe('server-rendered OAuth approval page', () => {
 		expect(html).toContain('/oauth/completions/completion-id/cancel');
 		expect(html).toContain('Confirm this account');
 		expect(html).toContain('name="accountAlias"');
+		expect(html).toContain('class="account-alias-field"');
+		expect(html).toContain('value="human@example.test"');
 		expect(html).toContain('Cancel');
 		expect(html).toContain('method="post"');
 	});

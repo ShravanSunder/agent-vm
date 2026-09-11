@@ -351,15 +351,17 @@ function AccountConfirmationPage(props: {
 			)}
 			<form action={props.formAction} method="post">
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
-				<label for="accountAlias">Name this account for the agent</label>
-				<input
-					id="accountAlias"
-					name="accountAlias"
-					type="text"
-					required
-					maxlength={320}
-					value={props.model.accountLabel}
-				/>
+				<div class="account-alias-field">
+					<label for="accountAlias">Name this account for the agent</label>
+					<input
+						id="accountAlias"
+						name="accountAlias"
+						type="text"
+						required
+						maxlength={320}
+						value={props.model.accountLabel}
+					/>
+				</div>
 				<div class="form-actions">
 					<button class="primary-button" type="submit">
 						Confirm this account

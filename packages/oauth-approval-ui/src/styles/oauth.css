@@ -43,6 +43,15 @@
 }
 
 @layer components {
+	.account-alias-field {
+		@apply mb-5 grid w-full min-w-0 max-w-xl gap-2;
+	}
+	.account-alias-field label {
+		@apply text-sm font-medium;
+	}
+	.account-alias-field input {
+		@apply block w-full min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100;
+	}
 	.page-shell.onboarding-shell {
 		@apply max-w-lg justify-center gap-9;
 	}

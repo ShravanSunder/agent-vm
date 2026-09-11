@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import {
 	loadOAuthApprovalAssetBundle,
 	renderGoogleOnboardingPage,
+	renderOAuthApprovalPage,
 	renderWaitingForAccessPage,
 } from '../dist/index.js';
 
@@ -15,6 +16,26 @@ const server = createServer((request, response) => {
 	const url = new URL(request.url ?? '/', 'http://localhost');
 	response.setHeader('Cache-Control', 'no-store');
 	response.setHeader('Referrer-Policy', 'no-referrer');
+	if (url.pathname === '/confirmation') {
+		response.setHeader('Content-Type', 'text/html; charset=utf-8');
+		response.end(
+			renderOAuthApprovalPage({
+				assetBasePath: '/oauth/assets',
+				stylesheetAssetName: assets.manifest.css,
+				javascriptAssetName: assets.manifest.javascript,
+				csrfToken: 'preview-only'.repeat(4),
+				formAction: '/oauth/auth/return',
+				cancelAction: '/oauth/auth/return',
+				model: {
+					kind: 'account-confirmation',
+					accountLabel: 'example.member@gmail.com',
+					applicationLabel: 'Gmail',
+					grantedPermissionLabels: ['Read Gmail'],
+				},
+			}),
+		);
+		return;
+	}
 	if (url.pathname === '/waiting') {
 		response.setHeader('Content-Type', 'text/html; charset=utf-8');
 		response.statusCode = 403;
@@ -26,10 +47,18 @@ const server = createServer((request, response) => {
 		);
 		return;
 	}
-	if (url.pathname === '/phone' || url.pathname === '/waiting-phone') {
+	if (
+		url.pathname === '/phone' ||
+		url.pathname === '/waiting-phone' ||
+		url.pathname === '/confirmation-phone'
+	) {
 		response.setHeader('Content-Type', 'text/html; charset=utf-8');
 		const framePath =
-			url.pathname === '/waiting-phone' ? '/waiting' : '/oauth/auth/start?mode=setup';
+			url.pathname === '/confirmation-phone'
+				? '/confirmation'
+				: url.pathname === '/waiting-phone'
+					? '/waiting'
+					: '/oauth/auth/start?mode=setup';
 		response.end(
 			`<!doctype html><html><head><title>390px onboarding preview</title></head><body style="margin:0;background:#18181b;display:flex;justify-content:center"><iframe title="Phone-width onboarding" width="390" height="844" style="border:0" src="${framePath}"></iframe></body></html>`,
 		);
