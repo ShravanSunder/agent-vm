@@ -1,6 +1,6 @@
 # One Google-first entry, existing permission boundaries
 
-This realizes [R1–R6](specification.md) without changing agent permissions or
+This realizes [R1–R7](specification.md) without changing agent permissions or
 Google resource-token custody. The website owns the short onboarding journey;
 Clerk still owns invitations, Google identity connections and login sessions.
 The existing controller verifier remains the admission boundary.
@@ -148,6 +148,36 @@ This is an onboarding eligibility check, not an email-based owner lookup.
 
 ## State, failure and recovery
 
+For R7, `oauth-browser-session-routes.ts:bindVerifiedContinuation` returns an
+explicit result: `bound` with navigation cookies, `waiting-for-access` for a
+verified same-issuer person absent from owner configuration, or `denied` for
+other failures. This replaces an ambiguous absent-cookie result; it does not
+change the admission policy or add storage.
+
+```text
+Login return -> live session and Google identity checks       UNCHANGED, async
+             -> consume one-use continuation                 UNCHANGED
+             -> bindVerifiedContinuation                    CHANGED result
+                |-- configured/valid -> navigation cookies   UNCHANGED
+                |-- absent owner -> waiting renderer        ADDED, no navigation
+                `-- wrong issuer/invalid target -> denial    UNCHANGED
+
+Check access again -> existing /oauth/auth/start -> fresh checks and continuation
+```
+
+The pure `waiting-for-access-renderer` receives only the backend-verified email
+and local stylesheet name. It emits no script or resource form. Login routes
+retain no-store/no-referrer and a self-only stylesheet CSP. Waiting is derived
+from owner configuration, not a persistent enrollment state. The operator still
+updates configuration through the existing deployment workflow; a retry checks
+the configuration loaded by the controller. Expired/replayed continuations and
+provider failures retain their existing outcomes.
+
+Real Hono/broker integration proves waiting creates no navigation or resource
+authorization, distinguishes other denials, and admits a fresh retry after owner
+configuration changes. Renderer/browser preview proves presentation with a
+synthetic identity, not actual hosted invitation completion.
+
 ```text
 page loading -> ready -> pending -> provider redirect -> callback -> server check
                   ^        |                            |             |
@@ -212,6 +242,8 @@ R5 / U-ONB-01,03 -> fixed routes + existing browser-bound continuation
   hostile destination/duplicate return tests; no token reflection or logging
 R6 / U-ONB-05 -> renderer, pending state, semantic button/status, responsive CSS
   keyboard and phone/desktop browser screenshots; no-JS explanation
+R7 / U-ONB-06 -> explicit admission result + pure waiting renderer
+  denied-state and retry integration; desktop/phone waiting-page evidence
 ```
 
 Controller integration tests use real Hono, SDK verification and continuation

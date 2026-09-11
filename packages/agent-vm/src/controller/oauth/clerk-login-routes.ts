@@ -1,5 +1,6 @@
 import {
 	renderGoogleOnboardingPage,
+	renderWaitingForAccessPage,
 	type OAuthApprovalAssetManifest,
 } from '@agent-vm/oauth-approval-ui';
 import type {
@@ -69,7 +70,11 @@ export function createClerkLoginRoutes(props: {
 	readonly bindVerifiedContinuation: (value: {
 		readonly identity: OAuthBrowserSessionIdentity;
 		readonly target: OAuthLoginContinuationTarget;
-	}) => Promise<readonly string[] | undefined>;
+	}) => Promise<
+		| { readonly kind: 'bound'; readonly cookies: readonly string[] }
+		| { readonly kind: 'waiting-for-access' }
+		| { readonly kind: 'denied' }
+	>;
 }): Hono {
 	const app = new Hono();
 	const renderPage = (
@@ -196,13 +201,27 @@ export function createClerkLoginRoutes(props: {
 			clearLoginCookies(context);
 			if (consumed.kind !== 'accepted')
 				return context.text('Login context expired or already consumed.', 409);
-			const cookies = await props.bindVerifiedContinuation({
+			const admission = await props.bindVerifiedContinuation({
 				target: consumed.target,
 				identity: consumed.identity,
 			});
-			if (cookies === undefined)
+			if (admission.kind === 'waiting-for-access') {
+				context.header(
+					'Content-Security-Policy',
+					"default-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+				);
+				return context.html(
+					renderWaitingForAccessPage({
+						emailAddress: google.emailAddress,
+						stylesheet: props.assets.css,
+					}),
+					403,
+				);
+			}
+			if (admission.kind === 'denied')
 				return context.text('This account or agent is not available.', 403);
-			for (const cookie of cookies) context.header('Set-Cookie', cookie, { append: true });
+			for (const cookie of admission.cookies)
+				context.header('Set-Cookie', cookie, { append: true });
 			return context.redirect(continuationDestination(consumed.target), 303);
 		} catch {
 			clearLoginCookies(context);

@@ -19,7 +19,10 @@
    there is no account-menu setup step or different-email linking flow.
 5. Configure the enrolled Clerk user ID as the appropriate owner/editor under the
    existing OAuth policy. An invitation never auto-promotes a person. A person
-   without configured ownership cannot enter the permissions pages.
+   without configured ownership sees **Waiting for access**, not permission
+   pages. After applying the configuration through the normal deployment
+   workflow, ask them to choose **Check access again**. This does not require
+   another invitation and does not grant Google API permissions.
 
 Already-delivered invitations pointing at Clerk Account Portal cannot be changed
 by updating application code. Send replacement invitations with the custom URL,

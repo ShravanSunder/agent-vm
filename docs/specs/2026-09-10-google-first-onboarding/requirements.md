@@ -27,6 +27,9 @@ correction; no priority among them was specified.
   accepted agent/account permission model and owner's separate-consent decision.
 - **U-ONB-05:** Prove the actual visible flow and show screenshots of our UI.
   Basis: owner's screenshot and usable-family-onboarding requests.
+- **U-ONB-06:** A Google-authenticated person awaiting owner configuration needs
+  a clear waiting-for-access page, not a bare rejection, with no agents or
+  accounts exposed. Basis: owner's explicit waiting-page decision.
 
 Existing issuer/session validation, owner/editor configuration, per-agent account
 policy, resource-token custody, and tailnet-only access remain authoritative.

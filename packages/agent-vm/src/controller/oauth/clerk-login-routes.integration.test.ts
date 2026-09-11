@@ -65,7 +65,7 @@ function fixture(): {
 			continuations,
 			bindVerifiedContinuation: async (value) => {
 				bound.push(value);
-				return [];
+				return { kind: 'bound', cookies: [] };
 			},
 		}),
 	};
@@ -276,7 +276,7 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 			continuations,
 			bindVerifiedContinuation: async (value) => {
 				bound.push(value);
-				return [];
+				return { kind: 'bound', cookies: [] };
 			},
 		});
 		// Act

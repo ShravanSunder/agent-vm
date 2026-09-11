@@ -1,6 +1,10 @@
 import { createServer } from 'node:http';
 
-import { loadOAuthApprovalAssetBundle, renderGoogleOnboardingPage } from '../dist/index.js';
+import {
+	loadOAuthApprovalAssetBundle,
+	renderGoogleOnboardingPage,
+	renderWaitingForAccessPage,
+} from '../dist/index.js';
 
 // Loopback-only visual preview. It never verifies identity or grants application access.
 const assets = await loadOAuthApprovalAssetBundle();
@@ -11,10 +15,23 @@ const server = createServer((request, response) => {
 	const url = new URL(request.url ?? '/', 'http://localhost');
 	response.setHeader('Cache-Control', 'no-store');
 	response.setHeader('Referrer-Policy', 'no-referrer');
-	if (url.pathname === '/phone') {
+	if (url.pathname === '/waiting') {
 		response.setHeader('Content-Type', 'text/html; charset=utf-8');
+		response.statusCode = 403;
 		response.end(
-			'<!doctype html><html><head><title>390px onboarding preview</title></head><body style="margin:0;background:#ddd;display:flex;justify-content:center"><iframe title="Phone-width onboarding" width="390" height="844" style="border:0" src="/oauth/auth/start?mode=setup"></iframe></body></html>',
+			renderWaitingForAccessPage({
+				emailAddress: 'member@example.test',
+				stylesheet: assets.manifest.css,
+			}),
+		);
+		return;
+	}
+	if (url.pathname === '/phone' || url.pathname === '/waiting-phone') {
+		response.setHeader('Content-Type', 'text/html; charset=utf-8');
+		const framePath =
+			url.pathname === '/waiting-phone' ? '/waiting' : '/oauth/auth/start?mode=setup';
+		response.end(
+			`<!doctype html><html><head><title>390px onboarding preview</title></head><body style="margin:0;background:#18181b;display:flex;justify-content:center"><iframe title="Phone-width onboarding" width="390" height="844" style="border:0" src="${framePath}"></iframe></body></html>`,
 		);
 		return;
 	}

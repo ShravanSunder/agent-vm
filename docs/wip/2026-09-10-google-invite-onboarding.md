@@ -1,6 +1,36 @@
 # Google-first invitation onboarding
 
-## Current delivery checkpoint
+## Current delivery checkpoint — waiting-page correction
+
+PR #227 is still unmerged. Committed head `1e917362` passed all 13 CI jobs;
+actual beta returning-user login, aged Connect, Switch account and dark
+desktop/phone pages were exercised at that head. The actual beta deployment is
+running; that proof supersedes the earlier isolated login-only harness below.
+
+The owner has now chosen a waiting-for-access page for verified people absent
+from owner configuration. R7 and the program design record the correction:
+explicit bound/waiting/denied result, pure dark page, backend-verified email,
+no navigation/resource grants, and a local retry after operator configuration.
+There is no new enrollment store or automatic owner promotion.
+
+Current correction proof: 4,616 unit tests, 921 integration tests, 16 quality
+checks and 17 package builds passed. One unrelated Gateway readiness timeout
+occurred; the targeted 14-test file and the subsequent aggregate run passed
+without source or timeout changes. Desktop and 390px waiting-page previews are
+saved as local screenshots with synthetic identity. They are not hosted
+invitation proof. Independent correction review and new-head CI remain pending.
+
+Remaining live boundary: the sole approved account is already enrolled, so a
+fresh hosted invitation is not proved. Do not delete/recreate it. Actual beta
+still has no connected Gmail resource account; Google's Testing-app warning
+and consent need user completion before Gog/Tool Portal execution proof.
+React/shadcn remains a separate PR. No DNS/Tailscale, QEMU, image, or Gondolin
+changes belong to this correction.
+
+Current remaining-work plan:
+`tmp/plan-workflows/2026-09-11-waiting-access-completion.md`.
+
+## Historical delivery checkpoints
 
 The owner confirmed same invitation/Google verified email. Implementation is on
 `fix/google-invite-onboarding`, based on `origin/master` at `21765292`; initial

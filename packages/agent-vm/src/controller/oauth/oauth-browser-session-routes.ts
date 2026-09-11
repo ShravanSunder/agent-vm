@@ -122,20 +122,22 @@ export function createOAuthBrowserSessionRoutes(props: {
 			verifier: props.verifier,
 			continuations: props.continuations,
 			bindVerifiedContinuation: async ({ identity, target }) => {
+				if (identity.issuer !== props.config.browser.identity.issuer) return { kind: 'denied' };
 				if (
-					identity.issuer !== props.config.browser.identity.issuer ||
 					!Object.values(props.config.owners).some((owner) => owner.clerkUserId === identity.userId)
 				)
-					return undefined;
+					return { kind: 'waiting-for-access' };
 				if (target.kind === 'authorization') {
 					try {
 						props.broker.getPermissionPage({ identity, transactionId: target.transactionId });
 					} catch {
-						return undefined;
+						return { kind: 'denied' };
 					}
 				}
 				const created = props.navigation.create({ identity, target });
-				return created.kind === 'created' ? createOAuthNavigationCookies(created) : undefined;
+				return created.kind === 'created'
+					? { kind: 'bound', cookies: createOAuthNavigationCookies(created) }
+					: { kind: 'denied' };
 			},
 		}),
 	);

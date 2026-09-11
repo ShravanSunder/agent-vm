@@ -1,6 +1,6 @@
 # Google-first entry contract
 
-Basis: [Requirements](requirements.md), U-ONB-01–05. Existing resource permission
+Basis: [Requirements](requirements.md), U-ONB-01–06. Existing resource permission
 contracts remain in [agent/account specification](../2026-09-04-agent-account-and-tool-permissions/specification.md).
 
 ## Visible behavior
@@ -49,6 +49,19 @@ consent forms remain supported after login.
 
 ## Context
 
+**R7 / U-ONB-06:** A person with verified Google sign-in but no configured owner
+entry sees “Waiting for access”, their verified sign-in email, and an explanation
+that their household administrator must configure access. The page exposes no
+agents, accounts, permission forms, or resource grants. A Check access again
+action rechecks current authentication and configuration; it does not enroll the
+person. Access remains denied (HTTP 403). Invalid sessions and issuer mismatches
+do not receive the waiting page. For configured owners, inaccessible transactions
+retain the existing rejection. The waiting page reveals no target information.
+
+New member: Google sign-in -> waiting for access -> operator configures access
+-> Check access again -> authorized destination. This does not automate the
+operator's configuration step.
+
 ```text
 Operator -- invitation/configuration --> Permissions website <-- entry -- Member
                                              |
@@ -74,6 +87,11 @@ navigation or resource authorization was created on denied/partial completion.
 V3 (R4): request/state observations establish identity-only Google authentication
 and unchanged resource grants/policies. Synthetic SDK responses must be labelled;
 they do not establish hosted provider behavior.
+
+V4 (R7): automated admission, denial, and retry cases prove no navigation or
+resource authorization is created while waiting. Browser evidence proves the
+waiting page is readable on desktop and phone; fixture proof is not hosted
+invitation proof.
 
 An existing configured owner is still required for access to agent policy pages.
 This correction does not auto-promote an invited identity to owner or policy editor.
