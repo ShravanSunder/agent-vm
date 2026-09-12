@@ -1,4 +1,5 @@
 import type { OAuthConfig } from '@agent-vm/config-contracts';
+import type { OAuthApprovalAssetManifest } from '@agent-vm/oauth-approval-ui';
 import type {
 	OAuthBrowserNavigationStore,
 	OAuthLoginContinuationStore,
@@ -13,6 +14,15 @@ import { createClerkLoginRoutes } from './clerk-login-routes.js';
 
 export const oauthNavigationCookieName = 'agent_vm_oauth_navigation';
 export const oauthNavigationBindingCookieName = 'agent_vm_oauth_navigation_binding';
+
+export function createOAuthNavigationCookies(
+	created: Extract<ReturnType<OAuthBrowserNavigationStore['create']>, { kind: 'created' }>,
+): readonly string[] {
+	return [
+		`${oauthNavigationCookieName}=${created.contextId}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
+		`${oauthNavigationBindingCookieName}=${created.browserBindingSecret}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
+	];
+}
 
 export interface OAuthBrowserSessionRoutes {
 	readonly routes: Hono;
@@ -29,6 +39,7 @@ export interface OAuthBrowserSessionRoutes {
 
 /** Network admission is supplied by the outer website. Only safe GET bootstrap may redirect to Clerk. */
 export function createOAuthBrowserSessionRoutes(props: {
+	readonly assets: OAuthApprovalAssetManifest;
 	readonly broker: GoogleOAuthBrokerService;
 	readonly config: OAuthConfig;
 	readonly verifier: ClerkBrowserIdentityVerifier;
@@ -37,12 +48,6 @@ export function createOAuthBrowserSessionRoutes(props: {
 	readonly cancelPolicyContexts: (identity: OAuthBrowserSessionIdentity) => void;
 }): OAuthBrowserSessionRoutes {
 	const routes = new Hono();
-	const navigationCookies = (
-		created: Extract<ReturnType<OAuthBrowserNavigationStore['create']>, { kind: 'created' }>,
-	): readonly string[] => [
-		`${oauthNavigationCookieName}=${created.contextId}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
-		`${oauthNavigationBindingCookieName}=${created.browserBindingSecret}; Path=/oauth; Max-Age=600; HttpOnly; Secure; SameSite=Lax`,
-	];
 	const readCookies = (request: Request): ReadonlyMap<string, string> =>
 		new Map(
 			(request.headers.get('cookie') ?? '').split(';').map((part) => {
@@ -110,23 +115,29 @@ export function createOAuthBrowserSessionRoutes(props: {
 	routes.route(
 		'/',
 		createClerkLoginRoutes({
+			websiteOrigin: props.config.browser.publicBaseUrl,
+			issuer: props.config.browser.identity.issuer,
+			publishableKey: props.config.browser.identity.publishableKey,
+			assets: props.assets,
 			verifier: props.verifier,
 			continuations: props.continuations,
 			bindVerifiedContinuation: async ({ identity, target }) => {
+				if (identity.issuer !== props.config.browser.identity.issuer) return { kind: 'denied' };
 				if (
-					identity.issuer !== props.config.browser.identity.issuer ||
 					!Object.values(props.config.owners).some((owner) => owner.clerkUserId === identity.userId)
 				)
-					return undefined;
+					return { kind: 'waiting-for-access' };
 				if (target.kind === 'authorization') {
 					try {
 						props.broker.getPermissionPage({ identity, transactionId: target.transactionId });
 					} catch {
-						return undefined;
+						return { kind: 'denied' };
 					}
 				}
 				const created = props.navigation.create({ identity, target });
-				return created.kind === 'created' ? navigationCookies(created) : undefined;
+				return created.kind === 'created'
+					? { kind: 'bound', cookies: createOAuthNavigationCookies(created) }
+					: { kind: 'denied' };
 			},
 		}),
 	);
@@ -153,7 +164,7 @@ export function createOAuthBrowserSessionRoutes(props: {
 			deleteCookie(context, name, { path: '/oauth', secure: true });
 		const revoked = await props.verifier.revokeSession(navigation.identity);
 		return revoked.kind === 'revoked'
-			? context.redirect('/oauth/auth/start', 303)
+			? context.redirect('/oauth/auth/signed-out', 303)
 			: context.text(
 					'Local forms were cancelled, but browser sign-out could not be confirmed. Try signing out in Clerk.',
 					503,

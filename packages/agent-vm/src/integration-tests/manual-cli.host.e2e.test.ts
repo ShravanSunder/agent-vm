@@ -76,6 +76,10 @@ describe('smoke: agent-vm manual CLI', () => {
 		const layout = await readText(targetDir, 'docs/manual/layout.md');
 		expect(layout).toContain('Clerk is human login only and never supplies Gog tokens');
 		expect(layout).toContain('Explicit website account overrides win independently');
+		expect(layout).toContain('all-supported catalog preset');
+		expect(layout).toContain('do not introduce an extra per-agent OAuth maximum');
+		expect(layout).toContain('Google resource consent to the application');
+		expect(layout).toContain('Waiting for access');
 		expect(layout).not.toContain('account-profile-scoped');
 		const portal = await readText(targetDir, 'docs/manual/mcp-portal.md');
 		expect(portal).toContain('no separate list/materialize copy action');

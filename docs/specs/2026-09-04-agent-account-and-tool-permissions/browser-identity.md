@@ -1,5 +1,12 @@
 # Clerk browser identity behind restricted Tailscale
 
+The hosted-only entry, browser SDK prohibition, and hosted-login sequence below
+are superseded by [Google-first onboarding](../2026-09-10-google-first-onboarding/program-design.md).
+Current entry is our website's `/oauth/auth/start`; invitation redirects use
+`/oauth/auth/invite`, with the same verified Google email. The existing issuer,
+session, owner, resource-consent and network boundaries below remain applicable.
+See [setup instructions](../../getting-started/google-onboarding.md).
+
 This is the browser-identity realization of [Specification R9/C9](specification.md#r9--c9-clerk-login-and-restricted-network-access),
 within the [Program Design](program-design.md). It changes human authentication,
 not machine authentication or Google credential ownership.

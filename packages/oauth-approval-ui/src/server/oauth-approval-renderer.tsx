@@ -56,14 +56,16 @@ export async function loadOAuthApprovalAssetBundle(): Promise<OAuthApprovalAsset
 		await readFile(new URL('manifest.json', assetsDirectoryUrl), 'utf8'),
 	);
 	const manifest = oauthApprovalAssetManifestSchema.parse(parsedManifest);
-	const [css, javascript] = await Promise.all([
+	const [css, javascript, onboarding] = await Promise.all([
 		readFile(new URL(manifest.css, assetsDirectoryUrl)),
 		readFile(new URL(manifest.javascript, assetsDirectoryUrl)),
+		readFile(new URL(manifest.onboarding, assetsDirectoryUrl)),
 	]);
 	return {
 		files: {
 			[manifest.css]: new Uint8Array(css),
 			[manifest.javascript]: new Uint8Array(javascript),
+			[manifest.onboarding]: new Uint8Array(onboarding),
 		},
 		manifest,
 	};
@@ -349,15 +351,17 @@ function AccountConfirmationPage(props: {
 			)}
 			<form action={props.formAction} method="post">
 				<input name="csrfToken" type="hidden" value={props.csrfToken} />
-				<label for="accountAlias">Name this account for the agent</label>
-				<input
-					id="accountAlias"
-					name="accountAlias"
-					type="text"
-					required
-					maxlength={320}
-					value={props.model.accountLabel}
-				/>
+				<div class="account-alias-field">
+					<label for="accountAlias">Name this account for the agent</label>
+					<input
+						id="accountAlias"
+						name="accountAlias"
+						type="text"
+						required
+						maxlength={320}
+						value={props.model.accountLabel}
+					/>
+				</div>
 				<div class="form-actions">
 					<button class="primary-button" type="submit">
 						Confirm this account

@@ -4,7 +4,7 @@
 
 @layer base {
 	:root {
-		color-scheme: light;
+		color-scheme: dark;
 		font-family:
 			ui-sans-serif,
 			system-ui,
@@ -12,51 +12,96 @@
 			BlinkMacSystemFont,
 			'Segoe UI',
 			sans-serif;
-		background: #f7f7f5;
-		color: #171715;
+		background: #0d1015;
+		color: #eceff4;
 	}
 	body {
 		@apply min-h-screen antialiased;
 	}
 	button,
-	input {
+	input,
+	select {
 		font: inherit;
 	}
 	:focus-visible {
-		@apply outline-2 outline-offset-2 outline-sky-700;
+		@apply outline-2 outline-offset-4 outline-sky-400;
+	}
+	select {
+		@apply max-w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100;
+	}
+	input[type='checkbox'],
+	input[type='radio'] {
+		accent-color: #7dd3fc;
+	}
+	button {
+		cursor: pointer;
+	}
+	button:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
 	}
 }
 
 @layer components {
+	.account-alias-field {
+		@apply mb-5 grid w-full min-w-0 max-w-xl gap-2;
+	}
+	.account-alias-field label {
+		@apply text-sm font-medium;
+	}
+	.account-alias-field input {
+		@apply block w-full min-w-0 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-100;
+	}
+	.page-shell.onboarding-shell {
+		@apply max-w-lg justify-center gap-9;
+	}
+	.onboarding-action {
+		@apply space-y-4;
+	}
+	.google-button {
+		@apply flex w-full items-center justify-center gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-5 py-3 text-sm font-medium hover:bg-zinc-800 disabled:cursor-wait disabled:opacity-60;
+	}
+	.google-mark {
+		@apply text-lg font-semibold text-sky-300;
+	}
+	.onboarding-hint {
+		@apply text-sm leading-6 text-zinc-400;
+	}
+	.onboarding-footer {
+		@apply space-y-3 border-t border-zinc-800 pt-6 text-sm leading-6 text-zinc-400;
+	}
+	.onboarding-footer a {
+		@apply underline underline-offset-4;
+	}
 	.page-shell {
-		@apply mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-16;
+		@apply mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-7 px-5 py-8 sm:px-8 sm:py-12;
 		overflow-wrap: anywhere;
 	}
 	.page-header {
-		@apply space-y-3;
+		@apply space-y-2;
 	}
 	.page-header h1 {
-		@apply text-3xl font-semibold tracking-tight sm:text-4xl;
+		@apply text-2xl font-semibold tracking-tight sm:text-3xl;
 	}
 	.page-header p:not(.eyebrow) {
-		@apply max-w-2xl text-base leading-7 text-stone-600;
+		@apply max-w-2xl text-sm leading-6 text-zinc-400;
 	}
 	.eyebrow {
-		@apply text-sm font-semibold uppercase tracking-widest text-sky-800;
+		@apply text-xs font-medium uppercase tracking-widest text-sky-300;
 	}
 	.application-section,
 	.confirmation-panel {
-		@apply mb-6 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm sm:p-7;
+		@apply mb-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5;
 	}
 	.application-heading {
 		@apply mb-6 space-y-2;
 	}
 	.application-heading h2,
 	.confirmation-panel h2 {
-		@apply text-xl font-semibold;
+		@apply text-lg font-semibold;
 	}
 	.application-heading p {
-		@apply text-sm leading-6 text-stone-600;
+		@apply text-sm leading-6 text-zinc-400;
 	}
 	.permission-fieldset {
 		@apply mb-6 border-0 p-0 last:mb-0;
@@ -65,7 +110,7 @@
 		@apply mb-2 font-medium;
 	}
 	.suggestion-note {
-		@apply mb-3 text-sm text-sky-800;
+		@apply mb-3 text-sm text-sky-300;
 	}
 	.permission-options {
 		@apply grid grid-cols-3 gap-2;
@@ -77,17 +122,17 @@
 		@apply sr-only;
 	}
 	.permission-option span {
-		@apply flex min-h-11 items-center justify-center rounded-lg border border-stone-300 px-3 py-2 text-sm font-medium capitalize peer-checked:border-sky-700 peer-checked:bg-sky-50 peer-checked:text-sky-900;
+		@apply flex min-h-11 items-center justify-center rounded-lg border border-zinc-700 px-3 py-2 text-sm font-medium capitalize peer-checked:border-sky-400 peer-checked:bg-sky-950 peer-checked:text-sky-100;
 	}
 	.permission-option input:focus-visible + span {
-		@apply outline-2 outline-offset-2 outline-sky-700;
+		@apply outline-2 outline-offset-2 outline-sky-400;
 	}
 	.permission-option input:checked + span::after {
 		@apply ml-2 font-bold;
 		content: '✓';
 	}
 	.error-summary {
-		@apply rounded-xl border border-red-300 bg-red-50 p-5 text-red-950;
+		@apply rounded-xl border border-red-900 bg-red-950/40 p-5 text-red-200;
 	}
 	.error-summary h2 {
 		@apply mb-2 font-semibold;
@@ -100,21 +145,78 @@
 		@apply flex flex-wrap gap-3;
 	}
 	.primary-button {
-		@apply rounded-lg bg-sky-800 px-5 py-3 font-semibold text-white hover:bg-sky-900;
+		@apply inline-flex min-h-10 items-center justify-center rounded-md bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-white;
 	}
 	.secondary-button {
-		@apply rounded-lg border border-stone-300 bg-white px-5 py-3 font-semibold hover:bg-stone-50;
+		@apply inline-flex min-h-10 items-center justify-center rounded-md border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800;
 	}
 	.permission-summary {
-		@apply mb-4 min-h-6 text-sm text-stone-600;
+		@apply mb-4 min-h-6 text-sm text-zinc-400;
 	}
 	.progress-list {
-		@apply divide-y divide-stone-200 rounded-2xl border border-stone-200 bg-white px-5;
+		@apply divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/60 px-5;
 	}
 	.progress-list li {
 		@apply flex items-center justify-between gap-4 py-4;
 	}
 	.progress-list strong {
-		@apply text-sm capitalize text-sky-800;
+		@apply text-sm capitalize text-sky-300;
+	}
+	.account-toolbar {
+		@apply flex flex-col gap-6 border-b border-zinc-800 pb-7 sm:flex-row sm:items-start sm:justify-between;
+	}
+	.account-toolbar > div:first-child {
+		@apply space-y-2;
+	}
+	.signed-in-person {
+		@apply flex shrink-0 flex-col gap-1 text-sm sm:text-right;
+	}
+	.signed-in-person > span {
+		@apply text-xs text-zinc-500;
+	}
+	.signed-in-person strong {
+		@apply font-medium text-zinc-200;
+	}
+	.account-switch {
+		@apply py-1 text-xs text-sky-300 underline-offset-4 hover:underline;
+	}
+	.agent-list {
+		@apply grid gap-3;
+	}
+	.agent-card {
+		@apply grid grid-cols-1 gap-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-6;
+	}
+	.agent-card-heading {
+		@apply flex items-center gap-3;
+	}
+	.agent-card-heading h2 {
+		@apply text-base font-semibold text-zinc-100;
+	}
+	.agent-card-heading p {
+		@apply mt-1 text-xs text-zinc-400;
+	}
+	.agent-avatar {
+		@apply flex size-10 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-xs font-medium text-zinc-300;
+	}
+	.agent-connect-form {
+		@apply flex flex-col gap-2 sm:col-start-2 sm:row-start-1 sm:items-end;
+	}
+	.connection-application {
+		@apply text-xs text-zinc-400;
+	}
+	.application-select {
+		@apply flex flex-col gap-1 text-xs text-zinc-400;
+	}
+	.connected-accounts {
+		@apply col-span-full divide-y divide-zinc-800 border-t border-zinc-800;
+	}
+	.connected-accounts a {
+		@apply flex flex-wrap items-center justify-between gap-2 py-3 text-sm text-zinc-200 hover:text-white;
+	}
+	.account-link-action {
+		@apply text-xs text-sky-300;
+	}
+	.account-footer-note {
+		@apply text-xs leading-5 text-zinc-500;
 	}
 }

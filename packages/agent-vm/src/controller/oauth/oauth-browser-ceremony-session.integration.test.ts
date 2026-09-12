@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	createBrokerFacadeFixture,
@@ -15,11 +15,106 @@ describe('browser ceremony identity across real broker states', () => {
 		await fixture?.broker.close();
 		fixture?.catalog.close();
 	});
+	it.each(['unconfigured', 'wrong-issuer', 'inaccessible-transaction'] as const)(
+		'keeps admission explicit for %s',
+		async (scenario) => {
+			fixture = await createBrokerFacadeFixture();
+			const identity = {
+				...facadeIdentity,
+				...(scenario === 'unconfigured' ? { userId: 'user_unconfigured' } : {}),
+				...(scenario === 'wrong-issuer' ? { issuer: 'https://wrong.example.test' } : {}),
+			};
+			const navigation = createOAuthBrowserNavigationStore();
+			const createNavigation = vi.spyOn(navigation, 'create');
+			const beginAuthorization = vi.spyOn(fixture.broker, 'beginWebsiteAuthorization');
+			const continuations = createOAuthLoginContinuationStore();
+			const login = continuations.create(
+				scenario === 'inaccessible-transaction'
+					? {
+							kind: 'authorization',
+							transactionId: 'missing-transaction-111111111111111111111111111',
+						}
+					: { kind: 'agents' },
+			);
+			if (login.kind !== 'created') throw new Error('Expected login continuation.');
+			const browser = createOAuthBrowserSessionRoutes({
+				assets: {
+					css: 'oauth.1111111111111111.css',
+					javascript: 'oauth.2222222222222222.js',
+					onboarding: 'onboarding.3333333333333333.js',
+				},
+				broker: fixture.broker,
+				config: fixture.config,
+				navigation,
+				continuations,
+				cancelPolicyContexts: () => {},
+				verifier: {
+					verifyBootstrap: async () => ({ kind: 'verified', identity, setCookies: [] }),
+					verifyCurrentCookie: async () => ({ kind: 'not-current' }),
+					verifySession: async () => ({ kind: 'verified', identity }),
+					revokeSession: async () => ({ kind: 'revoked' }),
+					verifyGoogleIdentity: async () => ({
+						kind: 'verified',
+						identity,
+						emailAddress: 'unconfigured@example.test',
+					}),
+				},
+			});
+			const cookie = `agent_vm_oauth_login=${login.continuationId}; agent_vm_oauth_login_binding=${login.browserBindingSecret}`;
+			const response = await browser.routes.request(
+				`${fixture.config.browser.publicBaseUrl}/oauth/auth/return`,
+				{ headers: { cookie } },
+			);
+			expect(response.status).toBe(403);
+			const html = await response.text();
+			if (scenario === 'unconfigured') {
+				expect(html).toContain('Waiting for access');
+				expect(html).toContain('unconfigured@example.test');
+				expect(html).toContain('href="/oauth/auth/start"');
+			} else {
+				expect(html).not.toContain('Waiting for access');
+				expect(html).not.toContain('unconfigured@example.test');
+			}
+			expect(html).not.toContain('<form');
+			expect(html).not.toContain('<script');
+			expect(response.headers.get('cache-control')).toBe('no-store');
+			expect(createNavigation).not.toHaveBeenCalled();
+			expect(beginAuthorization).not.toHaveBeenCalled();
+			expect(
+				response.headers
+					.getSetCookie()
+					.some((value) => value.startsWith('agent_vm_oauth_navigation=')),
+			).toBe(false);
+			expect(
+				continuations.isActive({
+					continuationId: login.continuationId,
+					browserBindingSecret: login.browserBindingSecret,
+				}),
+			).toBe(false);
+			// Once the operator configures this person, a fresh login rechecks access.
+			if (scenario !== 'unconfigured') return;
+			const owner = Object.values(fixture.config.owners)[0];
+			if (owner === undefined) throw new Error('Expected configured owner fixture.');
+			owner.clerkUserId = identity.userId;
+			const retry = await browser.routes.request(
+				`${fixture.config.browser.publicBaseUrl}/oauth/auth/start`,
+			);
+			expect(retry.status).toBe(303);
+			expect(retry.headers.get('location')).toBe('/oauth/agents');
+			expect(createNavigation).toHaveBeenCalledOnce();
+			expect(beginAuthorization).not.toHaveBeenCalled();
+		},
+	);
 	it('authenticates the callback state without reopening permission selection and rejects wrong bindings', async () => {
 		// Arrange: real broker transactions, synthetic Google and Clerk boundaries.
 		fixture = await createBrokerFacadeFixture();
 		const prepared = await prepareBrokerConsent(fixture);
 		const browser = createOAuthBrowserSessionRoutes({
+			assets: {
+				css: 'oauth.1111111111111111.css',
+				javascript: 'oauth.2222222222222222.js',
+				onboarding: 'onboarding.3333333333333333.js',
+			},
 			broker: fixture.broker,
 			config: fixture.config,
 			navigation: createOAuthBrowserNavigationStore(),
@@ -34,7 +129,11 @@ describe('browser ceremony identity across real broker states', () => {
 				verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 				verifySession: async (identity) => ({ kind: 'verified', identity }),
 				revokeSession: async () => ({ kind: 'revoked' }),
-				signInUrl: () => 'https://identity.example.test/sign-in',
+				verifyGoogleIdentity: async (identity) => ({
+					kind: 'verified',
+					identity,
+					emailAddress: 'member@example.test',
+				}),
 			},
 		});
 		const request = (kind: 'transaction' | 'completion', id: string, secret: string): Request =>

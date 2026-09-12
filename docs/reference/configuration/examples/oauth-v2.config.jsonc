@@ -47,8 +47,8 @@
 			"applications": {
 				"gmail-app": {
 					"ceiling": {
-						"kind": "explicit",
-						"groupIds": ["gmail.read", "gmail.write"],
+						"kind": "catalog-preset",
+						"presetId": "all-supported",
 					},
 				},
 			},
@@ -57,8 +57,8 @@
 			"applications": {
 				"gmail-app": {
 					"ceiling": {
-						"kind": "explicit",
-						"groupIds": ["gmail.read", "gmail.write"],
+						"kind": "catalog-preset",
+						"presetId": "all-supported",
 					},
 				},
 			},

@@ -115,6 +115,7 @@ export const oauthApprovalAssetManifestSchema = z
 	.object({
 		css: z.string().regex(/^oauth\.[a-f0-9]{16}\.css$/u),
 		javascript: z.string().regex(/^oauth\.[a-f0-9]{16}\.js$/u),
+		onboarding: z.string().regex(/^onboarding\.[a-f0-9]{16}\.js$/u),
 	})
 	.strict();
 export type OAuthApprovalAssetManifest = z.infer<typeof oauthApprovalAssetManifestSchema>;

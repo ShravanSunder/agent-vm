@@ -636,6 +636,77 @@ function createFixture(
 }
 
 describe('Gateway Control controller-execution adapter', () => {
+	it.each(['wrong-command', 'stdin', 'missing-account', 'explicit-deny'] as const)(
+		'rejects invalid managed Google invocation before dispatch: %s',
+		async (scenario) => {
+			const config = createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);
+			const backend = config.profiles['profile-a']?.namespaces.oauth_cli?.backend;
+			if (backend?.kind !== 'controller_execution') throw new Error('Expected controller backend.');
+			const operation = backend.operations.gog_quick;
+			if (operation?.kind !== 'configured_cli') throw new Error('Expected Gog operation.');
+			if (scenario === 'explicit-deny')
+				operation.calls.deny.push({ path: ['gmail', 'search'], flags: [] });
+			const fixture = createFixture({ config });
+			const result = await fixture.backend.call(
+				{
+					calls: [
+						{
+							id: 'invalid-google',
+							namespace: 'oauth_cli',
+							name: 'gog_quick',
+							arguments: {
+								...(scenario === 'missing-account'
+									? {}
+									: { accountId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+								argv:
+									scenario === 'wrong-command' ? ['gmail', 'send'] : ['gmail', 'search', 'missing'],
+								reason: 'Negative admission probe',
+								...(scenario === 'stdin' ? { stdin: 'unexpected' } : {}),
+							},
+						},
+					],
+				},
+				callOptions(),
+			);
+			expect(result).toMatchObject({
+				ok: false,
+				items: [{ status: 'error', outcome: { kind: 'not-dispatched' } }],
+			});
+			expect(fixture.sendCommand).not.toHaveBeenCalled();
+		},
+	);
+	it('passes managed Google syntax to controller account-policy enforcement', async () => {
+		const fixture = createFixture();
+		const input = {
+			accountId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			argv: ['gmail', 'search', 'rfc822msgid:missing@example.invalid', '--max', '1'],
+			reason: 'Read-only account probe',
+		};
+		await fixture.backend.call(
+			{
+				calls: [
+					{
+						id: 'google-read',
+						namespace: 'oauth_cli',
+						name: 'gog_quick',
+						arguments: input,
+					},
+				],
+			},
+			callOptions(),
+		);
+		expect(fixture.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: expect.objectContaining({
+					payload: expect.objectContaining({
+						kind: 'configured_cli',
+						operationName: 'gog_quick',
+						input,
+					}),
+				}),
+			}),
+		);
+	});
 	it('exposes file argument conventions through the existing describe response', async () => {
 		// Arrange
 		const config = createGatewayRuntimeManagedToolPortalConfig(toolPortalConfig);

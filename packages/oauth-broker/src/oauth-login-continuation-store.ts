@@ -23,6 +23,7 @@ export const oauthLoginContinuationTargetSchema = z.discriminatedUnion('kind', [
 ]);
 export type OAuthLoginContinuationTarget = z.infer<typeof oauthLoginContinuationTargetSchema>;
 interface LoginContinuation {
+	readonly expectedIdentity?: Pick<OAuthBrowserSessionIdentity, 'issuer' | 'userId'>;
 	readonly target: OAuthLoginContinuationTarget;
 	readonly browserBindingSecret: string;
 	readonly expiresAtMs: number;
@@ -37,7 +38,7 @@ export type OAuthLoginContinuationCreation =
 			readonly expiresAtMs: number;
 	  };
 export type OAuthLoginContinuationConsumption =
-	| { readonly kind: 'missing' | 'expired' | 'browser-mismatch' }
+	| { readonly kind: 'missing' | 'expired' | 'browser-mismatch' | 'identity-mismatch' }
 	| {
 			readonly kind: 'accepted';
 			readonly target: OAuthLoginContinuationTarget;
@@ -45,6 +46,15 @@ export type OAuthLoginContinuationConsumption =
 	  };
 
 export interface OAuthLoginContinuationStore {
+	isActive(props: {
+		readonly continuationId: string;
+		readonly browserBindingSecret: string;
+	}): boolean;
+	bindExpectedIdentity(props: {
+		readonly continuationId: string;
+		readonly browserBindingSecret: string;
+		readonly identity: OAuthBrowserSessionIdentity;
+	}): boolean;
 	acceptRedirect(props: {
 		readonly continuationId: string;
 		readonly browserBindingSecret: string;
@@ -69,7 +79,38 @@ export function createOAuthLoginContinuationStore(
 		.max(1024)
 		.parse(props.capacity ?? 128);
 	const continuations = new Map<string, LoginContinuation>();
+	const readActive = (request: {
+		readonly continuationId: string;
+		readonly browserBindingSecret: string;
+	}): LoginContinuation | undefined => {
+		const entry = continuations.get(request.continuationId);
+		if (
+			entry === undefined ||
+			entry.expiresAtMs <= now() ||
+			!/^[A-Za-z0-9_-]{43}$/u.test(request.browserBindingSecret) ||
+			!oauthBrowserSecretsEqual(entry.browserBindingSecret, request.browserBindingSecret)
+		)
+			return undefined;
+		return entry;
+	};
 	return {
+		isActive: (request) => readActive(request) !== undefined,
+		bindExpectedIdentity: (request) => {
+			const entry = readActive(request);
+			const identity = oauthBrowserSessionIdentitySchema.safeParse(request.identity);
+			if (entry === undefined || !identity.success) return false;
+			if (
+				entry.expectedIdentity !== undefined &&
+				(entry.expectedIdentity.issuer !== identity.data.issuer ||
+					entry.expectedIdentity.userId !== identity.data.userId)
+			)
+				return false;
+			continuations.set(request.continuationId, {
+				...entry,
+				expectedIdentity: { issuer: identity.data.issuer, userId: identity.data.userId },
+			});
+			return true;
+		},
 		acceptRedirect: (request) => {
 			const entry = continuations.get(request.continuationId);
 			if (
@@ -121,6 +162,12 @@ export function createOAuthLoginContinuationStore(
 				return { kind: 'browser-mismatch' };
 			}
 			const identity = oauthBrowserSessionIdentitySchema.parse(request.identity);
+			if (
+				entry.expectedIdentity !== undefined &&
+				(entry.expectedIdentity.issuer !== identity.issuer ||
+					entry.expectedIdentity.userId !== identity.userId)
+			)
+				return { kind: 'identity-mismatch' };
 			continuations.delete(request.continuationId);
 			return { kind: 'accepted', target: structuredClone(entry.target), identity };
 		},

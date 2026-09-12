@@ -16,6 +16,16 @@ const identity = {
 	sessionId: 'sess_owner',
 };
 const site = 'https://auth.example.test:18900';
+const page = {
+	websiteOrigin: site,
+	issuer: identity.issuer,
+	publishableKey: 'pk_test_Zml4dHVyZSQ=',
+	assets: {
+		css: 'oauth.1111111111111111.css',
+		javascript: 'oauth.2222222222222222.js',
+		onboarding: 'onboarding.3333333333333333.js',
+	},
+};
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -28,6 +38,9 @@ function fixture(): {
 	const continuations = createOAuthLoginContinuationStore();
 	const bound: { target: unknown; identity: unknown }[] = [];
 	const verifier: ClerkBrowserIdentityVerifier = {
+		verifyGoogleIdentity: vi.fn<ClerkBrowserIdentityVerifier['verifyGoogleIdentity']>(
+			async (value) => ({ kind: 'verified', identity: value, emailAddress: 'member@example.test' }),
+		),
 		verifyCurrentCookie: async () => ({ kind: 'not-current' }),
 		verifyBootstrap: vi.fn<ClerkBrowserIdentityVerifier['verifyBootstrap']>(async () => ({
 			kind: 'verified',
@@ -41,19 +54,18 @@ function fixture(): {
 		revokeSession: vi.fn<ClerkBrowserIdentityVerifier['revokeSession']>(async () => ({
 			kind: 'revoked',
 		})),
-		signInUrl: () =>
-			`https://accounts.example.test/sign-in?redirect_url=${encodeURIComponent(`${site}/oauth/auth/return`)}`,
 	};
 	return {
 		verifier,
 		continuations,
 		bound,
 		app: createClerkLoginRoutes({
+			...page,
 			verifier,
 			continuations,
 			bindVerifiedContinuation: async (value) => {
 				bound.push(value);
-				return [];
+				return { kind: 'bound', cookies: [] };
 			},
 		}),
 	};
@@ -69,6 +81,114 @@ function loginCookie(
 }
 
 describe('Clerk safe login routes with real Hono and continuation storage', () => {
+	it('ends sign-out on a public same-origin page without a Clerk handshake', async () => {
+		const { app, verifier } = fixture();
+		const bootstrap = vi.spyOn(verifier, 'verifyBootstrap').mockResolvedValue({
+			kind: 'redirect',
+			location: 'https://identity.example.test/handshake',
+			setCookies: [],
+		});
+		const response = await app.request(`${site}/oauth/auth/signed-out`);
+		expect(response.status).toBe(200);
+		expect(response.headers.get('location')).toBeNull();
+		expect(response.headers.get('content-security-policy')).toContain("form-action 'self'");
+		expect(
+			response.headers.getSetCookie().some((cookie) => cookie.startsWith('agent_vm_oauth_login=')),
+		).toBe(true);
+		expect(await response.text()).toContain('Continue with Google');
+		expect(bootstrap).not.toHaveBeenCalled();
+	});
+	it('shows public sign-in immediately after revocation even while its old JWT still verifies', async () => {
+		const { app, verifier, bound } = fixture();
+		vi.spyOn(verifier, 'verifySession').mockResolvedValue({ kind: 'signed-out' });
+		const google = vi.spyOn(verifier, 'verifyGoogleIdentity');
+		const response = await app.request(`${site}/oauth/auth/start`);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('Continue with Google');
+		expect(bound).toEqual([]);
+		expect(google).not.toHaveBeenCalled();
+		expect(response.headers.get('cache-control')).toBe('no-store');
+	});
+	it('opens a fresh invitation with bound cookies without exposing its ticket in HTML', async () => {
+		const { app, verifier, bound } = fixture();
+		const verify = vi.spyOn(verifier, 'verifyBootstrap');
+		const response = await app.request(`${site}/oauth/auth/invite?__clerk_ticket=private-ticket`);
+		expect(response.status).toBe(200);
+		expect(response.headers.getSetCookie()).toHaveLength(2);
+		const html = await response.text();
+		expect(html).toContain('Continue with Google');
+		expect(html).not.toContain('private-ticket');
+		expect(verify).not.toHaveBeenCalled();
+		expect(bound).toEqual([]);
+	});
+	it('shows setup immediately and never binds an email-only session', async () => {
+		const { app, verifier, bound } = fixture();
+		vi.spyOn(verifier, 'verifyGoogleIdentity').mockResolvedValue({ kind: 'setup-required' });
+		const response = await app.request(`${site}/oauth/auth/start`);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('Connect Google to finish setup');
+		expect(bound).toEqual([]);
+	});
+	it('pins the current verified person before sign-out and rejects another owner on return', async () => {
+		const { app, verifier, continuations, bound } = fixture();
+		const cookie = loginCookie(continuations);
+		vi.spyOn(verifier, 'verifyCurrentCookie').mockResolvedValue({ kind: 'verified', identity });
+		expect(
+			(
+				await app.request(`${site}/oauth/auth/prepare-google`, {
+					method: 'POST',
+					headers: { cookie, origin: site },
+				})
+			).status,
+		).toBe(204);
+		const other = { ...identity, userId: 'other-owner', sessionId: 'other-session' };
+		vi.spyOn(verifier, 'verifyBootstrap').mockResolvedValue({
+			kind: 'verified',
+			identity: other,
+			setCookies: [],
+		});
+		vi.spyOn(verifier, 'verifySession').mockResolvedValue({ kind: 'verified', identity: other });
+		const response = await app.request(`${site}/oauth/auth/return`, { headers: { cookie } });
+		expect(response.status).toBe(409);
+		expect(bound).toEqual([]);
+	});
+	it.each([undefined, 'https://hostile.example'])(
+		'rejects prepare with wrong Origin %s',
+		async (origin) => {
+			const { app, verifier, continuations } = fixture();
+			const verify = vi.spyOn(verifier, 'verifyCurrentCookie');
+			const response = await app.request(`${site}/oauth/auth/prepare-google`, {
+				method: 'POST',
+				headers: {
+					cookie: loginCookie(continuations),
+					...(origin === undefined ? {} : { origin }),
+				},
+			});
+			expect(response.status).toBe(403);
+			expect(verify).not.toHaveBeenCalled();
+		},
+	);
+	it('never trusts a submitted user ID without a current verified cookie', async () => {
+		const { app, continuations } = fixture();
+		expect(
+			(
+				await app.request(`${site}/oauth/auth/prepare-google`, {
+					method: 'POST',
+					headers: { cookie: loginCookie(continuations), origin: site },
+					body: JSON.stringify(identity),
+				})
+			).status,
+		).toBe(400);
+	});
+	it('requires a live continuation before callback SDK work', async () => {
+		const { app, continuations } = fixture();
+		expect((await app.request(`${site}/oauth/auth/callback`)).status).toBe(409);
+		const response = await app.request(`${site}/oauth/auth/callback`, {
+			headers: { cookie: loginCookie(continuations) },
+		});
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('Finishing sign-in');
+	});
 	it('runs the real SDK, route and continuation store with only the remote BAPI mocked', async () => {
 		// Arrange
 		const now = Date.now();
@@ -108,6 +228,31 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 			'fetch',
 			vi.fn(async (input: string | URL | Request): Promise<Response> => {
 				remoteCalls.push(input instanceof Request ? input.url : input.toString());
+				if (remoteCalls.at(-1)?.includes('/users/'))
+					return Response.json({
+						object: 'user',
+						id: identity.userId,
+						primary_email_address_id: 'email_primary',
+						email_addresses: [
+							{
+								object: 'email_address',
+								id: 'email_primary',
+								linked_to: [],
+								email_address: 'member@example.test',
+								verification: { status: 'verified', strategy: 'oauth_google' },
+							},
+						],
+						external_accounts: [
+							{
+								object: 'google_account',
+								id: 'external_google',
+								provider: 'oauth_google',
+								provider_user_id: 'google_member',
+								email_address: 'member@example.test',
+								verification: { status: 'verified', strategy: 'oauth_google' },
+							},
+						],
+					});
 				return Response.json({
 					object: 'session',
 					id: identity.sessionId,
@@ -126,11 +271,12 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 		const continuations = createOAuthLoginContinuationStore();
 		const bound: unknown[] = [];
 		const app = createClerkLoginRoutes({
+			...page,
 			verifier,
 			continuations,
 			bindVerifiedContinuation: async (value) => {
 				bound.push(value);
-				return [];
+				return { kind: 'bound', cookies: [] };
 			},
 		});
 		// Act
@@ -140,7 +286,10 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 		// Assert
 		expect(response.status).toBe(303);
 		expect(bound).toEqual([{ target: { kind: 'agents' }, identity }]);
-		expect(remoteCalls).toEqual(['https://api.clerk.com/v1/sessions/sess_owner']);
+		expect(remoteCalls).toEqual([
+			'https://api.clerk.com/v1/sessions/sess_owner',
+			'https://api.clerk.com/v1/users/user_owner',
+		]);
 		expect(response.headers.get('location')).toBe('/oauth/agents');
 		expect(await response.text()).not.toContain(token);
 	});
@@ -161,7 +310,7 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 		);
 	});
 
-	it('keeps account destinations out of the hosted sign-in URL', async () => {
+	it('shows our Google entry without leaking account destinations', async () => {
 		// Arrange
 		const { app, verifier, continuations } = fixture();
 		vi.spyOn(verifier, 'verifyBootstrap').mockResolvedValue({ kind: 'signed-out' });
@@ -173,10 +322,11 @@ describe('Clerk safe login routes with real Hono and continuation storage', () =
 		// Act
 		const response = await app.request(`${site}/oauth/auth/start`, { headers: { cookie } });
 		// Assert
-		expect(response.status).toBe(303);
-		expect(response.headers.get('location')).toBe(verifier.signInUrl());
-		expect(response.headers.get('location')).not.toContain('ember');
-		expect(response.headers.get('location')).not.toContain('11111111');
+		expect(response.status).toBe(200);
+		const html = await response.text();
+		expect(html).toContain('Continue with Google');
+		expect(html).not.toContain('ember');
+		expect(html).not.toContain('11111111-1111');
 	});
 
 	it('creates Secure HttpOnly bounded cookies for a new login', async () => {

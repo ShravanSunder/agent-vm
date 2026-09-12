@@ -158,7 +158,11 @@ describe('controller OAuth runtime composition', () => {
 			},
 			loadApprovalAssets: async () => ({
 				files: {},
-				manifest: { css: 'oauth.css', javascript: 'oauth.js' },
+				manifest: {
+					css: 'oauth.css',
+					javascript: 'oauth.js',
+					onboarding: 'onboarding.3333333333333333.js',
+				},
 			}),
 			secretResolver: secretResolver(),
 			selectedZoneIds: ['apollofam'],
@@ -279,6 +283,7 @@ describe('controller OAuth runtime composition', () => {
 					manifest: {
 						css: 'oauth.1111111111111111.css',
 						javascript: 'oauth.2222222222222222.js',
+						onboarding: 'onboarding.3333333333333333.js',
 					},
 				}),
 				secretResolver: secretResolver({ duplicateClientIds: true }),
@@ -329,7 +334,11 @@ describe('controller OAuth runtime composition', () => {
 				},
 				loadApprovalAssets: async () => ({
 					files: {},
-					manifest: { css: 'oauth.css', javascript: 'oauth.js' },
+					manifest: {
+						css: 'oauth.css',
+						javascript: 'oauth.js',
+						onboarding: 'onboarding.3333333333333333.js',
+					},
 				}),
 				secretResolver: secretResolver(),
 				selectedZoneIds: ['apollofam'],
@@ -344,7 +353,11 @@ describe('controller OAuth runtime composition', () => {
 		const retry = await prepareControllerOAuthRuntime({
 			loadApprovalAssets: async () => ({
 				files: {},
-				manifest: { css: 'oauth.css', javascript: 'oauth.js' },
+				manifest: {
+					css: 'oauth.css',
+					javascript: 'oauth.js',
+					onboarding: 'onboarding.3333333333333333.js',
+				},
 			}),
 			secretResolver: secretResolver(),
 			selectedZoneIds: ['apollofam'],
@@ -386,6 +399,7 @@ describe('controller OAuth runtime composition', () => {
 				manifest: {
 					css: 'oauth.1111111111111111.css',
 					javascript: 'oauth.2222222222222222.js',
+					onboarding: 'onboarding.3333333333333333.js',
 				},
 			}),
 			secretResolver: secretResolver(),

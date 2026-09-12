@@ -25,10 +25,20 @@ describe('OAuth v2 configuration examples', () => {
 		const compiled = compileOAuthPolicy({ oauthConfig, toolPortalConfig, catalog });
 
 		// Assert
-		expect(compiled.operationIdsByAgent).toEqual({
-			ember: ['gmail.search'],
-			sun: ['gmail.search'],
-		});
+		const supportedOperations = catalog.operations
+			.filter((operation) => operation.familyId === 'communications')
+			.map((operation) => operation.operationId)
+			.toSorted();
+		const supportedGroups = catalog.groups
+			.filter((group) => group.familyId === 'communications')
+			.map((group) => group.groupId)
+			.toSorted();
+		for (const agent of ['sun', 'ember']) {
+			expect(compiled.operationIdsByAgent[agent]).toEqual(supportedOperations);
+			expect(compiled.offeredGroupIdsByAgentApplication[agent]?.['gmail-app']).toEqual(
+				supportedGroups,
+			);
+		}
 		expect(compiled.defaultsByAgentApplication.sun).toEqual({
 			'gmail-app': {
 				gmail: { read: 'allow', write: 'deny' },

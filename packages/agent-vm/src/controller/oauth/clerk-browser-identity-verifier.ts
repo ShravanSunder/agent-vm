@@ -8,6 +8,8 @@ import {
 import { createClerkClient, verifyToken, type ClerkClient } from '@clerk/backend';
 import { z } from 'zod';
 
+import { getVerifiedGoogleEmailAddress } from './clerk-google-eligibility.js';
+
 export type ClerkBrowserBootstrapResult =
 	| {
 			readonly kind: 'verified';
@@ -18,6 +20,15 @@ export type ClerkBrowserBootstrapResult =
 	| Exclude<OAuthBrowserIdentityVerification, { kind: 'verified' }>;
 
 export interface ClerkBrowserIdentityVerifier {
+	verifyGoogleIdentity(identity: OAuthBrowserSessionIdentity): Promise<
+		| Exclude<OAuthBrowserIdentityVerification, { kind: 'verified' }>
+		| {
+				readonly kind: 'verified';
+				readonly identity: OAuthBrowserSessionIdentity;
+				readonly emailAddress: string;
+		  }
+		| { readonly kind: 'setup-required' }
+	>;
 	verifyBootstrap(request: Request): Promise<ClerkBrowserBootstrapResult>;
 	verifyCurrentCookie(
 		request: Request,
@@ -26,7 +37,6 @@ export interface ClerkBrowserIdentityVerifier {
 	revokeSession(
 		identity: OAuthBrowserSessionIdentity,
 	): Promise<{ readonly kind: 'revoked' | 'identity-mismatch' | 'verification-unavailable' }>;
-	signInUrl(): string;
 }
 
 export interface CreateClerkBrowserIdentityVerifierProps {
@@ -34,6 +44,7 @@ export interface CreateClerkBrowserIdentityVerifierProps {
 	readonly sessionCookieNames: readonly string[];
 	readonly client: Pick<ClerkClient, 'authenticateRequest'> & {
 		readonly sessions: Pick<ClerkClient['sessions'], 'getSession' | 'revokeSession'>;
+		readonly users: Pick<ClerkClient['users'], 'getUser'>;
 	};
 	readonly issuer: string;
 	readonly websiteOrigin: string;
@@ -159,6 +170,22 @@ export function createClerkBrowserIdentityVerifier(
 		identity.issuer === props.issuer;
 
 	return {
+		verifyGoogleIdentity: async (identity) => {
+			if (!identityMatchesIssuer(identity)) return { kind: 'identity-mismatch' };
+			try {
+				const user = await boundedClerkRequest(
+					() => props.client.users.getUser(identity.userId),
+					requestTimeoutMs,
+				);
+				if (user.id !== identity.userId) return { kind: 'identity-mismatch' };
+				const emailAddress = getVerifiedGoogleEmailAddress(user, identity.userId);
+				return emailAddress !== undefined
+					? { kind: 'verified', identity, emailAddress }
+					: { kind: 'setup-required' };
+			} catch {
+				return { kind: 'verification-unavailable' };
+			}
+		},
 		verifyCurrentCookie: async (request) => {
 			const header = request.headers.get('cookie') ?? '';
 			if (header.length > 32_768) return { kind: 'identity-mismatch' };
@@ -328,11 +355,6 @@ export function createClerkBrowserIdentityVerifier(
 			} catch {
 				return { kind: 'verification-unavailable' };
 			}
-		},
-		signInUrl: () => {
-			const target = new URL(signIn);
-			target.searchParams.set('redirect_url', fixedReturnUrl);
-			return target.toString();
 		},
 	};
 }

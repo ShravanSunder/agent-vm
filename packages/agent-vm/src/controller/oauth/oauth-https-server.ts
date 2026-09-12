@@ -207,6 +207,7 @@ export function createOAuthHttpsApp(props: {
 	});
 	app.use('*', bodyLimit({ maxSize: 16_384 }));
 	const browser = createOAuthBrowserSessionRoutes({
+		assets: props.assets.manifest,
 		broker: props.brokerService,
 		config: props.config,
 		verifier: props.browserIdentityVerifier,
@@ -222,6 +223,7 @@ export function createOAuthHttpsApp(props: {
 			broker: props.brokerService,
 			policy: props.policyService,
 			browser,
+			verifier: props.browserIdentityVerifier,
 			navigation: props.navigation,
 			continuations: props.loginContinuations,
 			stylesheet: props.assets.manifest.css,

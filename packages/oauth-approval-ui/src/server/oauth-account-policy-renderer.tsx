@@ -268,6 +268,7 @@ export function renderOAuthAccountPolicyPage(props: {
 
 const ownerIndexSchema = z
 	.object({
+		signedInEmail: labelSchema,
 		agents: z
 			.array(
 				z
@@ -296,47 +297,94 @@ export function renderOAuthOwnerIndex(props: {
 		stylesheet: props.stylesheet,
 		content: (
 			<>
-				<header class="page-header">
-					<h1>Your agents and accounts</h1>
-					<p>Only your accounts are shown. Each agent has its own authorization and policy.</p>
-				</header>
-				{model.agents.map((agent) => (
-					<section class="application-section" key={agent.agentId}>
-						<h2>{agent.agentId}</h2>
-						<ul>
-							{agent.accounts.map((account) => (
-								<li key={account.href}>
-									<a href={account.href}>{account.accountAlias}</a>
-								</li>
-							))}
-						</ul>
-						<form
-							action={`/oauth/agents/${encodeURIComponent(agent.agentId)}/connect`}
-							method="post"
-						>
+				<header class="page-header account-toolbar">
+					<div>
+						<p class="eyebrow">Permissions</p>
+						<h1>Your agents and accounts</h1>
+						<p>Connect your accounts. Choose what each agent can access.</p>
+					</div>
+					<div class="signed-in-person">
+						<span>Signed in as</span>
+						<strong>{model.signedInEmail}</strong>
+						<form action="/oauth/auth/change-person" method="post">
 							<input type="hidden" name="csrfToken" value={model.csrfToken} />
-							<label>
-								Connect an account for{' '}
-								<select name="applicationId">
-									{agent.applications.map((application) => (
-										<option key={application.applicationId} value={application.applicationId}>
-											{application.label}
-										</option>
-									))}
-								</select>
-							</label>
-							<button class="primary-button" type="submit">
-								Connect Google account
+							<button class="account-switch" type="submit">
+								Switch account
 							</button>
 						</form>
-					</section>
-				))}
-				<form action="/oauth/auth/change-person" method="post">
-					<input type="hidden" name="csrfToken" value={model.csrfToken} />
-					<button class="secondary-button" type="submit">
-						Change signed-in person
-					</button>
-				</form>
+					</div>
+				</header>
+				<div class="agent-list">
+					{model.agents.map((agent) => (
+						<section class="agent-card" key={agent.agentId}>
+							<div class="agent-card-heading">
+								<div class="agent-avatar" aria-hidden="true">
+									{agent.agentId.slice(0, 2).toUpperCase()}
+								</div>
+								<div>
+									<h2>{agent.agentId}</h2>
+									<p>
+										{agent.accounts.length === 0
+											? 'No accounts connected'
+											: `${agent.accounts.length} ${agent.accounts.length === 1 ? 'connection' : 'connections'}`}
+									</p>
+								</div>
+							</div>
+							{agent.accounts.length === 0 ? null : (
+								<ul class="connected-accounts">
+									{agent.accounts.map((account) => (
+										<li key={account.href}>
+											<a href={account.href}>
+												<span>{account.accountAlias}</span>
+												<span class="account-link-action">
+													Manage access <span aria-hidden="true">↗</span>
+												</span>
+											</a>
+										</li>
+									))}
+								</ul>
+							)}
+							{agent.applications.length === 0 ? (
+								<p class="permission-summary">No Google applications are enabled for this agent.</p>
+							) : (
+								<form
+									class="agent-connect-form"
+									action={`/oauth/agents/${encodeURIComponent(agent.agentId)}/connect`}
+									method="post"
+								>
+									<input type="hidden" name="csrfToken" value={model.csrfToken} />
+									{agent.applications.length === 1 ? (
+										<>
+											<input
+												type="hidden"
+												name="applicationId"
+												value={agent.applications[0]?.applicationId}
+											/>
+											<span class="connection-application">{agent.applications[0]?.label}</span>
+										</>
+									) : (
+										<label class="application-select">
+											<span>Google application</span>
+											<select name="applicationId">
+												{agent.applications.map((application) => (
+													<option key={application.applicationId} value={application.applicationId}>
+														{application.label}
+													</option>
+												))}
+											</select>
+										</label>
+									)}
+									<button class="primary-button" type="submit">
+										Connect Google account
+									</button>
+								</form>
+							)}
+						</section>
+					))}
+				</div>
+				<p class="account-footer-note">
+					Connections are private to you. Access is authorized separately for each agent.
+				</p>
 			</>
 		),
 	});

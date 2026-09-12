@@ -85,7 +85,11 @@ function createTestOAuthApp(
 				identity: props.verifiedSessionIdentity ?? identity,
 			}),
 			revokeSession: async () => ({ kind: 'revoked' }),
-			signInUrl: () => 'https://identity.example.test/sign-in',
+			verifyGoogleIdentity: async (identity) => ({
+				kind: 'verified',
+				identity,
+				emailAddress: 'member@example.test',
+			}),
 		},
 	});
 }
@@ -146,6 +150,7 @@ function approvalAssets(): OAuthApprovalAssets {
 		manifest: {
 			css: 'oauth.1111111111111111.css',
 			javascript: 'oauth.2222222222222222.js',
+			onboarding: 'onboarding.3333333333333333.js',
 		},
 	};
 }
