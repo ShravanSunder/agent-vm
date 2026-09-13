@@ -193,6 +193,15 @@ class HermesGatewayRuntimeProcessHandle:
 class HermesGatewayRuntimeEnvironment(BaseEnvironment):
     """Hermes shell environment mapped to one stable managed-agent projection."""
 
+    _profile_scoped_passthrough = True
+
+    def _additional_profile_scoped_passthrough_names(self) -> t.Iterable[str]:
+        """Keep invocation endpoints fresh across the shared Hermes shell snapshot."""
+        return (
+            _TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME,
+            _TOOL_PORTAL_SDK_MANIFEST_ENVIRONMENT_NAME,
+        )
+
     def __init__(
         self,
         *,

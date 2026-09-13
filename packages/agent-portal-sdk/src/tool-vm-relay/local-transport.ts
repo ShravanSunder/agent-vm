@@ -22,6 +22,32 @@ interface PendingRequest {
 	};
 }
 
+type PortalSocketPhase = 'active' | 'connecting' | 'negotiating';
+type PortalSocketFailureCode =
+	| 'EACCES'
+	| 'ECONNREFUSED'
+	| 'ECONNRESET'
+	| 'ENAMETOOLONG'
+	| 'ENOENT'
+	| 'ETIMEDOUT'
+	| 'other';
+
+export function classifyLocalToolPortalSocketFailure(error: unknown): PortalSocketFailureCode {
+	if (typeof error !== 'object' || error === null || !('code' in error)) return 'other';
+	const code = error.code;
+	switch (code) {
+		case 'EACCES':
+		case 'ECONNREFUSED':
+		case 'ECONNRESET':
+		case 'ENAMETOOLONG':
+		case 'ENOENT':
+		case 'ETIMEDOUT':
+			return code;
+		default:
+			return 'other';
+	}
+}
+
 function portalOperation(name: string): 'list' | 'search' | 'describe' | 'call' {
 	switch (name) {
 		case 'tool_portal_list':
@@ -50,6 +76,7 @@ export function createLocalToolPortalTransport(props: {
 	let nextId = 0;
 	let maximumPending = 16;
 	let maximumMessageBytes = 1_048_576;
+	let socketPhase: PortalSocketPhase = 'connecting';
 	let handshake: { resolve: () => void; reject: (error: Error) => void } | undefined;
 	const pending = new Map<string, PendingRequest>();
 	const decoder = new PortalRelayDecoder();
@@ -126,6 +153,7 @@ export function createLocalToolPortalTransport(props: {
 			maximumPending = message.maxPendingRequests;
 			maximumMessageBytes = message.maxMessageBytes;
 			ready = true;
+			socketPhase = 'active';
 			handshake.resolve();
 			handshake = undefined;
 			return;
@@ -223,9 +251,10 @@ export function createLocalToolPortalTransport(props: {
 					},
 				};
 				socket = createConnection(socketPath);
-				socket.once('connect', () =>
-					socket?.write(encodeRelayFrame({ kind: 'hello', version: 1 })),
-				);
+				socket.once('connect', () => {
+					socketPhase = 'negotiating';
+					socket?.write(encodeRelayFrame({ kind: 'hello', version: 1 }));
+				});
 				socket.on('data', (chunk: Buffer) => {
 					try {
 						for (const message of decoder.feed(chunk)) receive(message);
@@ -233,8 +262,12 @@ export function createLocalToolPortalTransport(props: {
 						fail(new Error('Invalid Portal traffic; outstanding effects may be uncertain.'));
 					}
 				});
-				socket.once('error', () =>
-					fail(new Error('Portal connection failed; outstanding effects may be uncertain.')),
+				socket.once('error', (error) =>
+					fail(
+						new Error(
+							`Portal connection failed; phase=${socketPhase}; code=${classifyLocalToolPortalSocketFailure(error)}; outstanding effects may be uncertain.`,
+						),
+					),
 				);
 				socket.once('close', () =>
 					fail(new Error('Portal connection ended; outstanding effects may be uncertain.')),

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createLocalToolPortalTransport } from './local-transport.js';
+import {
+	classifyLocalToolPortalSocketFailure,
+	createLocalToolPortalTransport,
+} from './local-transport.js';
 
 describe('local Tool Portal transport admission', () => {
 	it('requires explicit execution context without a default Gateway socket', () => {
@@ -29,4 +32,23 @@ describe('local Tool Portal transport admission', () => {
 			transport.callTool({ name: 'tool_portal_call', arguments: {}, approvalToken: 'forged' }),
 		).rejects.toThrow('approval');
 	});
+	it.each(['ECONNREFUSED', 'ENOENT', 'ECONNRESET', 'EACCES', 'ETIMEDOUT', 'ENAMETOOLONG'])(
+		'retains allowlisted socket failure code %s without exposing raw error data',
+		(code) => {
+			const sensitiveCanary = 'private-socket-path-and-provider-data';
+			expect(
+				classifyLocalToolPortalSocketFailure({
+					code,
+					message: sensitiveCanary,
+					path: sensitiveCanary,
+				}),
+			).toBe(code);
+			expect(
+				classifyLocalToolPortalSocketFailure({
+					code: `SECRET_${sensitiveCanary}`,
+					message: sensitiveCanary,
+				}),
+			).toBe('other');
+		},
+	);
 });

@@ -3,6 +3,7 @@ import base64
 import concurrent.futures
 import io
 import os
+import subprocess
 import threading
 import typing as t
 import unittest
@@ -12,6 +13,7 @@ from unittest.mock import patch
 from agent_vm_agent_portal_sdk.gateway_portal_session import GatewayPortalSessionConfig
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, ConfigDict
+from tools.environments.base import BaseEnvironment
 
 from agent_vm_hermes_adapter.managed_gateway_runtime_environment import (
     HermesGatewayRuntimeEnvironment,
@@ -34,6 +36,40 @@ PROJECTION_COHORT_DIGEST = (
 
 class PortableResult(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+def run_local_snapshot_bash(
+    cmd_string: str,
+    *,
+    login: bool = False,
+    timeout: int = 120,
+    stdin_data: str | None = None,
+) -> subprocess.Popen[str]:
+    del timeout
+    command = ["bash", *(["-l"] if login else []), "-c", cmd_string]
+    return subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+class LocalSnapshotHermesEnvironment(HermesGatewayRuntimeEnvironment):
+    """Exercise the pinned BaseEnvironment snapshot with the adapter exclusion hook."""
+
+    def __init__(self) -> None:
+        BaseEnvironment.__init__(self, cwd="/tmp", timeout=10)
+        self.init_session()
+
+    @t.override
+    def cleanup(self) -> None:
+        for path in (self._snapshot_path, self._cwd_file):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
 
 class FakeOperationCallable(t.Protocol):
@@ -242,6 +278,46 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
     _client: FakeGatewayRuntimeClient | None = None
     _adapter: HermesManagedAdapter | None = None
     _factory: HermesGatewayRuntimeEnvironmentFactory | None = None
+
+    def test_invocation_environment_does_not_leak_through_stock_shell_snapshot(self) -> None:
+        environment_names = (
+            "AGENT_VM_TOOL_PORTAL_SOCKET",
+            "AGENT_VM_TOOL_PORTAL_SDK_MANIFEST",
+        )
+        with (
+            patch("agent.secret_scope.is_multiplex_active", return_value=True),
+            patch.object(
+                LocalSnapshotHermesEnvironment, "_run_bash", side_effect=run_local_snapshot_bash
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    environment_names[0]: "/tmp/invocation-a/socket",
+                    environment_names[1]: "/tmp/invocation-a/manifest.json",
+                },
+                clear=False,
+            ),
+        ):
+            environment = LocalSnapshotHermesEnvironment()
+            try:
+                command = (
+                    f'printf "%s|%s" "${{{environment_names[0]}}}" "${{{environment_names[1]}}}"'
+                )
+                first = environment.execute(command)
+                os.environ[environment_names[0]] = "/tmp/invocation-b/socket"
+                os.environ[environment_names[1]] = "/tmp/invocation-b/manifest.json"
+                second = environment.execute(command)
+            finally:
+                environment.cleanup()
+
+        self.assertEqual(
+            first["output"],
+            "/tmp/invocation-a/socket|/tmp/invocation-a/manifest.json",
+        )
+        self.assertEqual(
+            second["output"],
+            "/tmp/invocation-b/socket|/tmp/invocation-b/manifest.json",
+        )
 
     @property
     def client(self) -> FakeGatewayRuntimeClient:

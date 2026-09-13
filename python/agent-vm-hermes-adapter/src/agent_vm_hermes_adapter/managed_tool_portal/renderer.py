@@ -179,6 +179,31 @@ def render_catalog_guidance(
         )
         for namespace in manifest.namespaces
     )
+    if catalog_mode == "compact":
+        compact_orientation = render_orientation(inventory, catalog_mode="compact")
+        if not isinstance(compact_orientation, RenderedOrientation):
+            raise RuntimeError("Essential compact Tool Portal guidance exceeds its byte budget.")
+        for displayed_import_count in range(len(import_lines), -1, -1):
+            omitted_import_count = len(import_lines) - displayed_import_count
+            suffix_lines = [
+                "Generated Tool Portal TypeScript imports for this Gateway epoch:",
+                "- import { connectToolPortal } from '@agent-vm/agent-portal-sdk';",
+                *import_lines[:displayed_import_count],
+                *(
+                    (
+                        f"- {omitted_import_count} namespace imports omitted; read the complete "
+                        "local manifest before choosing another static import.",
+                    )
+                    if omitted_import_count > 0
+                    else ()
+                ),
+                f"- Complete manifest: {publication_root}/manifest.json",
+            ]
+            candidate = f"{compact_orientation.orientation}\n{'\n'.join(suffix_lines)}"
+            if len(candidate.encode("utf-8")) <= MAX_ORIENTATION_UTF8_BYTES:
+                return candidate
+        return compact_orientation.orientation
+
     for displayed_import_count in range(len(import_lines), -1, -1):
         omitted_import_count = len(import_lines) - displayed_import_count
         guidance_lines = [

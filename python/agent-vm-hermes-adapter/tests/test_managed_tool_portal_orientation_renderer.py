@@ -104,6 +104,7 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             _inventory(*names),
             _catalog_manifest(*names),
             changed_fingerprint=True,
+            catalog_mode="catalog",
         )
 
         displayed_factories = [
@@ -415,6 +416,36 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertIn("  read_thing", rendered.orientation)
         self.assertIn("  write_thing", rendered.orientation)
         self.assertLessEqual(rendered.utf8_byte_count, 2_000)
+
+        compact_with_generated_catalog = render_catalog_guidance(
+            inventory,
+            _catalog_manifest(
+                "controller_execution",
+                "oauth_authorization",
+                "orientation-unavailable",
+                "upstream-mock",
+            ),
+            changed_fingerprint=True,
+            catalog_mode="compact",
+        )
+
+        self.assertEqual(compact_with_generated_catalog, rendered.orientation)
+        for required_text in (
+            'Namespace: "controller_execution"',
+            'Summary: "Controller-owned orientation E2E operations"',
+            "  controller_host_probe",
+            'Namespace: "oauth_authorization"',
+            "  list",
+            "  revoke",
+            'Namespace: "orientation-unavailable"',
+            'Namespace: "upstream-mock"',
+            "  read_thing",
+            "  write_thing",
+            "Python connect_tool_portal()",
+            "/agent-vm/tool-portal.md",
+        ):
+            self.assertIn(required_text, compact_with_generated_catalog)
+        self.assertLessEqual(len(compact_with_generated_catalog.encode("utf-8")), 2_000)
 
     def test_reports_additional_tools_when_the_inventory_probe_has_a_next_page(self) -> None:
         rendered = _require_rendered(
