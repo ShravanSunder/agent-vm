@@ -15,7 +15,16 @@ async function requestDeterministicModel(
 	port: number,
 	messages: readonly Readonly<Record<string, unknown>>[],
 ): Promise<string> {
-	const response = await fetch(`http://127.0.0.1:${String(port)}/v1/chat/completions`, {
+	const response = await requestDeterministicModelResponse(port, messages);
+	expect(response.status).toBe(200);
+	return await response.text();
+}
+
+async function requestDeterministicModelResponse(
+	port: number,
+	messages: readonly Readonly<Record<string, unknown>>[],
+): Promise<Response> {
+	return await fetch(`http://127.0.0.1:${String(port)}/v1/chat/completions`, {
 		body: JSON.stringify({
 			messages,
 			tools: [
@@ -26,8 +35,15 @@ async function requestDeterministicModel(
 		headers: { 'content-type': 'application/json' },
 		method: 'POST',
 	});
-	expect(response.status).toBe(200);
-	return await response.text();
+}
+
+async function expectGenericExecuteCodeFailure(options: {
+	readonly messages: readonly Readonly<Record<string, unknown>>[];
+	readonly port: number;
+}): Promise<void> {
+	const response = await requestDeterministicModelResponse(options.port, options.messages);
+	expect(response.status).toBe(500);
+	expect(await response.text()).toContain('execute_code omitted the portal composition marker');
 }
 
 describe('portal composition generated program syntax', () => {
@@ -126,6 +142,41 @@ describe('portal composition generated foreground terminal program', () => {
 			expect(third).toContain('host-proof-finished');
 			expect(server.executeCodeRequestCount()).toBe(1);
 			expect(server.generatedTerminalRequestCount()).toBe(1);
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('does not advance to terminal when a failed execute_code result is retried', async () => {
+		const fingerprint = 'c'.repeat(64);
+		const promptMarker = 'RUN_FAILED_GENERIC_RETRY_HOST_PROOF';
+		const orientation = [
+			'Python connect_tool_portal()',
+			'TypeScript connectToolPortal()',
+			'/agent-vm/tool-portal.md',
+			'for the active foreground invocation; endpoint expires afterward.',
+			`- import { bindPortalCompositionExecutionTools } from '/run/agent-vm/tool-portal-sdk/${fingerprint}/portal-composition-execution-11111111.ts';`,
+			`- import { bindUpstreamMockTools } from '/run/agent-vm/tool-portal-sdk/${fingerprint}/upstream-mock-22222222.ts';`,
+		].join('\n');
+		const server = await startPortalCompositionModelServer({
+			compositionProgram: 'raise RuntimeError("generic failed")',
+			finalMarker: 'must-not-finish',
+			promptMarker,
+			programResultMarker: 'generic-program-complete',
+		});
+		try {
+			const messages: Readonly<Record<string, unknown>>[] = [
+				{ content: orientation, role: 'system' },
+				{ content: promptMarker, role: 'user' },
+			];
+			await requestDeterministicModel(server.port, messages);
+			messages.push({ content: 'generic execute_code failed before marker', role: 'tool' });
+
+			await expectGenericExecuteCodeFailure({ messages, port: server.port });
+			await expectGenericExecuteCodeFailure({ messages, port: server.port });
+			expect(server.latestExecuteCodeResult()).toBeUndefined();
+			expect(server.latestGeneratedTerminalResult()).toBeUndefined();
+			expect(server.generatedTerminalRequestCount()).toBe(0);
 		} finally {
 			await server.close();
 		}

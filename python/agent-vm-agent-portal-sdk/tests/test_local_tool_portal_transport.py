@@ -32,6 +32,48 @@ def test_unavailable_socket_has_public_connection_error(monkeypatch: pytest.Monk
     asyncio.run(scenario())
 
 
+def test_handshake_failure_is_not_replaced_by_cleanup_connection_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EndedReader:
+        async def read(self, _maximum_bytes: int) -> bytes:
+            return b""
+
+    class ResettingWriter:
+        def __init__(self) -> None:
+            self.closed = False
+            self.waited = False
+
+        def write(self, content: bytes) -> None:
+            assert content
+
+        async def drain(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            self.waited = True
+            raise ConnectionResetError("peer reset during cleanup")
+
+    writer = ResettingWriter()
+
+    async def open_connection(_path: str) -> tuple[EndedReader, ResettingWriter]:
+        return EndedReader(), writer
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", open_connection)
+
+    async def scenario() -> None:
+        transport = LocalToolPortalTransport(socket_path="/expired-invocation.sock")
+        with pytest.raises(PortalConnectionUnavailableError, match="active managed execution"):
+            await transport.connect()
+        assert writer.closed is True
+        assert writer.waited is True
+        assert transport._writer is None
+        assert transport._read_task is None
+
+    asyncio.run(scenario())
+
+
 def test_automatic_client_requires_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
     # Existing isolation tests reload package modules; resolve the current error class.
     from agent_vm_agent_portal_sdk.local_tool_portal_transport import PortalConnectionUnavailableError as CurrentConnectionError

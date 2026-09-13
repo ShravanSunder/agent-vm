@@ -212,12 +212,12 @@ export async function startPortalCompositionModelServer(options: {
 				return;
 			}
 			if (latestExecuteCodeResult === undefined) {
-				latestExecuteCodeResult = toolResult;
 				if (!toolResult.includes(options.programResultMarker)) {
 					throw new Error(
 						`execute_code omitted the portal composition marker: ${toolResult.slice(0, 2_000)}`,
 					);
 				}
+				latestExecuteCodeResult = toolResult;
 				if (observedGeneratedTerminalProgram === undefined) {
 					throw new Error('Hermes model server lost the generated terminal program.');
 				}

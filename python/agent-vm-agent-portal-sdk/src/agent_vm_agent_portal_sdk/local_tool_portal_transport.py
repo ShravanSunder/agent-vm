@@ -4,6 +4,7 @@ import asyncio
 import os
 import typing as t
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import PurePosixPath
 
 from .artifact_read_resource_uri import PORTAL_ARTIFACT_READ_REQUEST_META_KEY, create_portal_artifact_read_resource_request
@@ -227,9 +228,17 @@ class LocalToolPortalTransport:
 
     async def close(self) -> None:
         self._closed = True
-        if self._writer is not None:
-            self._writer.close()
-            await self._writer.wait_closed()
-        if self._read_task is not None:
-            self._read_task.cancel()
-            await asyncio.gather(self._read_task, return_exceptions=True)
+        writer = self._writer
+        read_task = self._read_task
+        self._writer = None
+        self._read_task = None
+        try:
+            if writer is not None:
+                writer.close()
+                # A reset means the peer is already gone; shutdown still owns reader-task cleanup.
+                with suppress(ConnectionResetError):
+                    await writer.wait_closed()
+        finally:
+            if read_task is not None:
+                read_task.cancel()
+                await asyncio.gather(read_task, return_exceptions=True)
