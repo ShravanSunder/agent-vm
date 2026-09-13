@@ -86,6 +86,7 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(layout).not.toContain('extra per-agent OAuth maximum');
 		expect(layout).toContain('Google resource consent to the application');
 		expect(layout).toContain('Waiting for access');
+		expect(layout).toContain('https://auth.claw-beta.askluna.xyz:18900 for beta');
 		expect(layout).not.toContain('account-profile-scoped');
 		const portal = await readText(targetDir, 'docs/manual/mcp-portal.md');
 		expect(portal).toContain('no separate list/materialize copy action');

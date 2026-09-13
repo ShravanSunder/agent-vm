@@ -117,6 +117,7 @@ describe('manual templates', () => {
 		);
 		expect(layout).not.toContain('extra per-agent OAuth maximum');
 		expect(layout).toContain('Waiting for access');
+		expect(layout).toContain('https://auth.claw-beta.askluna.xyz:18900 for beta');
 		expect(layout).toContain('Google resource consent to the application');
 		expect(layout).toContain('<website-origin>/oauth/auth/invite');
 		expect(layout).toContain('invitation email must match the verified Google sign-in email');

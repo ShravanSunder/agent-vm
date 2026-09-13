@@ -1,11 +1,46 @@
 import { describe, expect, it } from 'vitest';
 
 import { createOAuthConfigTestInput } from './oauth-config-test-fixture.js';
-import { googleOAuthCallbackUrl, oauthConfigSchema } from './oauth-config.js';
+import {
+	googleOAuthCallbackUrl,
+	oauthBrowserPublicBaseUrlSchema,
+	oauthConfigSchema,
+} from './oauth-config.js';
 import { createOAuthPolicyCompilerTestInput } from './oauth-policy-compiler-test-fixture.js';
 import { compileOAuthPolicy } from './oauth-tool-portal-config.js';
 
 describe('OAuth config contract', () => {
+	it.each([
+		'http://auth.claw-beta.askluna.xyz:18900',
+		'https://auth.claw-beta.askluna.xyz',
+		'https://auth.claw-beta.askluna.xyz:18899',
+		'https://auth.claw-beta.askluna.xyz:18900/path',
+		'https://auth.claw-beta.askluna.xyz:18900?query=value',
+		'https://auth.claw-beta.askluna.xyz:18900#fragment',
+		'https://user:password@auth.claw-beta.askluna.xyz:18900',
+		'https://auth.claw-beta.askluna.xyz.evil.test:18900',
+	])('rejects an unsafe beta origin %s', (origin) => {
+		// Act / Assert
+		expect(oauthBrowserPublicBaseUrlSchema.safeParse(origin).success).toBe(false);
+	});
+	it('accepts the beta origin and derives its Google callback with matching Clerk return', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		const betaOrigin = 'https://auth.claw-beta.askluna.xyz:18900';
+		input.browser.publicBaseUrl = betaOrigin;
+		input.browser.identity.fixedLoginReturnOrigin = betaOrigin;
+		// Act
+		const config = oauthConfigSchema.parse(input);
+		// Assert
+		expect(googleOAuthCallbackUrl(config)).toBe(`${betaOrigin}/oauth/google/callback`);
+	});
+	it('rejects a beta website paired with a production Clerk return origin', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		input.browser.publicBaseUrl = 'https://auth.claw-beta.askluna.xyz:18900';
+		// Act / Assert
+		expect(oauthConfigSchema.safeParse(input).success).toBe(false);
+	});
 	it('parses the strict three-application Google config and derives one callback', () => {
 		// Arrange / Act
 		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());

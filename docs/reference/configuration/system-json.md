@@ -526,6 +526,12 @@ sibling authored config files in `config/gateways/<zone>/`:
   1Password KEK. Accounts and agent authorizations are enrolled dynamically and
   never appear as static config slots.
 
+The production website origin is `https://auth.claw.askluna.xyz:18900`; the beta
+origin is `https://auth.claw-beta.askluna.xyz:18900`. These are the only admitted
+hostnames. Clerk's `fixedLoginReturnOrigin` must match the selected origin. Before
+moving a deployment, configure its DNS-only record, matching TLS certificate,
+Clerk redirects, and Google callback at `<origin>/oauth/google/callback`.
+
 OAuth configuration is valid only for a managed Hermes zone with a matching Tool
 Portal agent/profile policy. The `oauth_authorization` namespace uses registered
 controller actions named `list`, `begin`, `status`, `cancel`, `reauthorize`, and
