@@ -1,0 +1,26 @@
+{
+	"caseId": "attachment-public-request",
+	"schemaId": "portal.file.request",
+	"tags": ["native-attachment", "accepted"],
+	"input": {
+		"action": "attach",
+		"source": {
+			"kind": "tool-vm-file",
+			"path": "report.bin"
+		},
+		"caption": "Report"
+	},
+	"expectation": {
+		"kind": "accepted",
+		"normalized": {
+			"action": "attach",
+			"source": {
+				"kind": "tool-vm-file",
+				"path": "report.bin"
+			},
+			"caption": "Report"
+		},
+		"canonicalJson": "{\"action\":\"attach\",\"caption\":\"Report\",\"source\":{\"kind\":\"tool-vm-file\",\"path\":\"report.bin\"}}",
+		"refinementIdentities": []
+	}
+}

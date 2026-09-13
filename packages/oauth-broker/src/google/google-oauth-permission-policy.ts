@@ -7,161 +7,137 @@ import {
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
 	oauthScopeSchema,
-	oauthServiceIdSchema,
-	type OAuthAccountProfileId,
-	type OAuthMinimumPermission,
-	type OAuthPermissionChoice,
 	type OAuthPermissionSelections,
 	type OAuthScope,
-	type OAuthServiceId,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-type GoogleOAuthAccountProfile =
-	OAuthConfig['agents'][string]['accountProfiles'][OAuthAccountProfileId];
+import { googleIdentityScopes } from './google-oauth-adapter.js';
+import {
+	compileGooglePermissionSelection,
+	getGooglePermissionGroups,
+	googleGogSourceIdentity,
+	googlePermissionCatalogVersion,
+	resolveGoogleCeilingPreset,
+} from './google-permission-catalog.js';
 
-export function googleOAuthPermissionRank(permission: OAuthPermissionChoice): number {
-	switch (permission) {
-		case 'none':
-			return 0;
-		case 'read':
-			return 1;
-		case 'write':
-			return 2;
-	}
+export type GoogleOfferedPermissionGroups = Readonly<
+	Record<string, Partial<Record<GoogleOAuthApplicationId, readonly string[]>>>
+>;
+
+interface GoogleSelectionRequest {
+	readonly agentId: string;
+	readonly selections: z.input<typeof oauthPermissionSelectionsSchema>;
 }
 
-export function requiredGoogleScopesForServicePermission(props: {
-	readonly minimumPermission: OAuthMinimumPermission;
-	readonly readScopes: readonly OAuthScope[];
-	readonly writeScopes?: readonly OAuthScope[] | undefined;
-}): readonly OAuthScope[] {
-	if (
-		props.minimumPermission === 'write' &&
-		(props.writeScopes === undefined || props.writeScopes.length === 0)
-	) {
-		return [];
+export class GoogleOAuthSelectionError extends Error {
+	constructor(readonly code: 'configuration-change-required' | 'unsupported-selection') {
+		super(
+			code === 'configuration-change-required'
+				? 'Google selection exceeds the configured executable permission maximum.'
+				: 'Google selection is unsupported by the pinned catalog.',
+		);
+		this.name = 'GoogleOAuthSelectionError';
 	}
-	const requiredScopes =
-		props.minimumPermission === 'read'
-			? props.readScopes
-			: [...props.readScopes, ...(props.writeScopes ?? [])];
-	return z
-		.array(oauthScopeSchema)
-		.readonly()
-		.parse([...new Set(requiredScopes)].toSorted());
-}
-
-export function googleApplicationSelections(
-	selections: OAuthPermissionSelections,
-	applicationId: string,
-): Readonly<Record<OAuthServiceId, OAuthPermissionChoice>> | undefined {
-	return selections[oauthApplicationIdSchema.parse(applicationId)];
 }
 
 export interface GoogleOAuthPermissionPolicy {
-	completeSelections(props: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly selections: OAuthPermissionSelections;
-	}): OAuthPermissionSelections;
+	completeSelections(props: GoogleSelectionRequest): OAuthPermissionSelections;
+	validateSelections(props: GoogleSelectionRequest): OAuthPermissionSelections;
 	scopesForApplication(
 		applicationId: GoogleOAuthApplicationId,
 		selections: OAuthPermissionSelections,
 	): readonly OAuthScope[];
-	validateSelections(props: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly selections: OAuthPermissionSelections;
-	}): OAuthPermissionSelections;
 }
 
 export function createGoogleOAuthPermissionPolicy(props: {
 	readonly config: OAuthConfig;
-	readonly requireAccountProfile: (
-		agentId: string,
-		accountProfileId: OAuthAccountProfileId,
-	) => GoogleOAuthAccountProfile;
+	readonly offeredGroupIdsByAgentApplication: GoogleOfferedPermissionGroups;
 }): GoogleOAuthPermissionPolicy {
-	const validateSelections = (selectionProps: {
-		readonly accountProfileId: OAuthAccountProfileId;
-		readonly agentId: string;
-		readonly selections: OAuthPermissionSelections;
-	}): OAuthPermissionSelections => {
-		const profile = props.requireAccountProfile(
-			selectionProps.agentId,
-			selectionProps.accountProfileId,
-		);
-		const selections = oauthPermissionSelectionsSchema.parse(selectionProps.selections);
-		for (const [applicationId, serviceSelections] of Object.entries(selections)) {
-			const parsedApplicationId = googleOAuthApplicationIdSchema.safeParse(applicationId);
-			if (!parsedApplicationId.success) {
-				throw new Error(`Unknown Google OAuth application "${applicationId}".`);
+	const provider = props.config.providers.google;
+	if (
+		provider.catalogVersion !== googlePermissionCatalogVersion ||
+		provider.gogBuildIdentity.version !== googleGogSourceIdentity.version ||
+		provider.gogBuildIdentity.commit !== googleGogSourceIdentity.commit
+	) {
+		throw new Error('OAuth configuration does not match the pinned Google/Gog catalog.');
+	}
+	const groups = getGooglePermissionGroups();
+	const groupById = new Map(groups.map((group) => [group.groupId, group]));
+	const offered = structuredClone(props.offeredGroupIdsByAgentApplication);
+
+	const maximum = (agentId: string, applicationId: GoogleOAuthApplicationId): readonly string[] => {
+		const ceiling = props.config.agents[agentId]?.applications[applicationId]?.ceiling;
+		if (ceiling === undefined) return [];
+		const familyId = provider.applications[applicationId].catalogFamilyId;
+		const groupIds =
+			ceiling.kind === 'explicit'
+				? ceiling.groupIds
+				: resolveGoogleCeilingPreset(ceiling.presetId, familyId);
+		compileGooglePermissionSelection({ familyId, groupIds: [], ceiling: groupIds });
+		return groupIds;
+	};
+	for (const [agentId, applications] of Object.entries(offered)) {
+		if (props.config.agents[agentId] === undefined)
+			throw new Error('Compiled Google offers reference an unknown agent.');
+		for (const [applicationId, groupIds] of Object.entries(applications)) {
+			const parsedApplicationId = googleOAuthApplicationIdSchema.parse(applicationId);
+			const allowed = new Set(maximum(agentId, parsedApplicationId));
+			if (groupIds.some((groupId) => !allowed.has(groupId)))
+				throw new Error('Compiled Google offers exceed the authored ceiling.');
+		}
+	}
+
+	const validateSelections = (request: GoogleSelectionRequest): OAuthPermissionSelections => {
+		if (props.config.agents[request.agentId] === undefined)
+			throw new GoogleOAuthSelectionError('configuration-change-required');
+		const selections = oauthPermissionSelectionsSchema.parse(request.selections);
+		for (const [applicationId, groupIds] of Object.entries(selections)) {
+			const application = googleOAuthApplicationIdSchema.safeParse(applicationId);
+			if (!application.success) throw new GoogleOAuthSelectionError('unsupported-selection');
+			const familyId = provider.applications[application.data].catalogFamilyId;
+			if (groupIds.some((groupId) => groupById.get(groupId)?.familyId !== familyId))
+				throw new GoogleOAuthSelectionError('unsupported-selection');
+			const maximumGroups = new Set(maximum(request.agentId, application.data));
+			const offeredGroups = new Set(offered[request.agentId]?.[application.data] ?? []);
+			if (groupIds.some((groupId) => !maximumGroups.has(groupId) || !offeredGroups.has(groupId))) {
+				throw new GoogleOAuthSelectionError('configuration-change-required');
 			}
-			const maximums = profile.applications[parsedApplicationId.data]?.maximumPermissions;
-			if (maximums === undefined) {
-				throw new Error(
-					`OAuth application "${applicationId}" is not assigned to this account profile.`,
-				);
-			}
-			for (const [serviceId, selection] of Object.entries(serviceSelections)) {
-				const maximum = maximums[oauthServiceIdSchema.parse(serviceId)];
-				if (
-					maximum === undefined ||
-					googleOAuthPermissionRank(selection) > googleOAuthPermissionRank(maximum)
-				) {
-					throw new Error(
-						`OAuth selection exceeds the authored maximum for ${applicationId}/${serviceId}.`,
-					);
-				}
-			}
+			compileGooglePermissionSelection({ familyId, groupIds, ceiling: [...offeredGroups] });
 		}
 		return selections;
 	};
 
 	return {
-		completeSelections: (selectionProps): OAuthPermissionSelections => {
-			const profile = props.requireAccountProfile(
-				selectionProps.agentId,
-				selectionProps.accountProfileId,
-			);
-			const validated = validateSelections(selectionProps);
+		validateSelections,
+		completeSelections: (request) => {
+			const selections = validateSelections(request);
+			const agent = props.config.agents[request.agentId];
+			if (agent === undefined) throw new GoogleOAuthSelectionError('configuration-change-required');
 			return oauthPermissionSelectionsSchema.parse(
 				Object.fromEntries(
-					Object.entries(profile.applications).map(([applicationId, applicationMaximum]) => [
+					Object.keys(agent.applications).map((applicationId) => [
 						applicationId,
-						Object.fromEntries(
-							Object.keys(applicationMaximum.maximumPermissions).map((serviceId) => [
-								serviceId,
-								googleApplicationSelections(validated, applicationId)?.[
-									oauthServiceIdSchema.parse(serviceId)
-								] ?? 'none',
-							]),
-						),
+						selections[oauthApplicationIdSchema.parse(applicationId)] ?? [],
 					]),
 				),
 			);
 		},
-		scopesForApplication: (applicationId, selections): readonly OAuthScope[] => {
-			const application = props.config.providers.google.applications[applicationId];
-			const serviceSelections = selections[oauthApplicationIdSchema.parse(applicationId)] ?? {};
-			const scopes = Object.entries(serviceSelections).flatMap(([serviceId, permission]) => {
-				if (permission === 'none') return [];
-				const service = application.services[oauthServiceIdSchema.parse(serviceId)];
-				if (service === undefined) {
-					throw new Error(`Unknown service "${serviceId}" for ${applicationId}.`);
-				}
-				return requiredGoogleScopesForServicePermission({
-					minimumPermission: permission,
-					readScopes: service.read,
-					writeScopes: service.write,
-				});
+		scopesForApplication: (applicationId, selections) => {
+			const groupIds = selections[oauthApplicationIdSchema.parse(applicationId)] ?? [];
+			if (groupIds.length === 0) return [];
+			const familyId = provider.applications[applicationId].catalogFamilyId;
+			const compiled = compileGooglePermissionSelection({
+				familyId,
+				groupIds,
+				ceiling: groups
+					.filter((group) => group.familyId === familyId)
+					.map((group) => group.groupId),
 			});
 			return z
 				.array(oauthScopeSchema)
 				.readonly()
-				.parse([...new Set(scopes)].toSorted());
+				.parse([...new Set([...googleIdentityScopes, ...compiled.scopes])].toSorted());
 		},
-		validateSelections,
 	};
 }

@@ -203,6 +203,32 @@ describe('OpenClaw removal audit', () => {
 		}
 	});
 
+	it.each(['allowed', 'runtime-reference', 'different-version', 'different-file'] as const)(
+		'limits the pinned Gog download exception: %s',
+		async (scenario) => {
+			const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), 'gog-url-audit-'));
+			const relativePath =
+				scenario === 'different-file'
+					? 'packages/example/src/index.ts'
+					: 'packages/agent-vm/src/integration-tests/pinned-gog-runtime-test-fixture.ts';
+			const sourcePath = path.join(repositoryRoot, relativePath);
+			try {
+				await mkdir(path.dirname(sourcePath), { recursive: true });
+				const version = scenario === 'different-version' ? '0.39.0' : '0.38.1';
+				await writeFile(
+					sourcePath,
+					`const url = 'https://github.com/openclaw/gogcli/releases/download/v${version}/asset';\n${scenario === 'runtime-reference' ? "const framework = 'openclaw';" : ''}`,
+				);
+				const findings = await auditOpenClawRemoval(repositoryRoot);
+				expect(findings).toEqual(
+					scenario === 'allowed' ? [] : [`${relativePath} contains active OpenClaw residue`],
+				);
+			} finally {
+				await rm(repositoryRoot, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it('finds no active residue in the current repository', async () => {
 		await expect(auditOpenClawRemoval(process.cwd())).resolves.toEqual([]);
 	});

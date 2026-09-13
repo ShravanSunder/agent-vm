@@ -7,6 +7,7 @@ import {
 	toolPortalBackendKindSchema,
 	type ToolPortalBackendKind,
 } from '@agent-vm/config-contracts';
+import { managedGoogleReadyPreflightSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 
 import {
@@ -77,6 +78,7 @@ export const GatewayRuntimeApprovalCallSchema = z
 
 export const GatewayRuntimeApprovalChallengeIntentSchema = z
 	.object({
+		managedGoogle: managedGoogleReadyPreflightSchema.optional(),
 		backendKind: toolPortalBackendKindSchema,
 		call: GatewayRuntimeApprovalCallSchema,
 		operationId: z.string().uuid(),

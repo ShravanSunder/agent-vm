@@ -1,773 +1,329 @@
 import {
-	oauthAccountProfileIdSchema,
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
-	oauthScopeSchema,
-	oauthServiceIdSchema,
+	type OAuthPermissionSelections,
+	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-	catalog,
-	config,
-	createAdapter,
-	createService,
-	gmailReadScope,
-	redirectUri,
-} from './google-oauth-broker-test-fixture.js';
+	createBrokerFacadeFixture,
+	facadeApplicationId,
+	facadeIdentity,
+} from './google-broker-facade-test-fixture.js';
+import {
+	type GoogleOAuthRedirectResult,
+	type GoogleOAuthConfirmationResult,
+} from './google-oauth-broker-contracts.js';
 
+const bothSelections = oauthPermissionSelectionsSchema.parse({
+	'gmail-app': ['gmail.read'],
+	'workspace-app': ['drive.all-files.read'],
+});
 describe('Google OAuth broker enrollment ceremonies', () => {
-	it('runs a tailnet-bound enrollment and commits one encrypted grant', async () => {
-		const service = await createService();
-		expect(
-			service.resolveToolAvailability({
-				agentId: 'hermes',
-				requirement: {
-					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-					kind: 'oauth-account-profile',
-					minimumPermission: 'read',
-					serviceId: oauthServiceIdSchema.parse('gmail'),
-				},
-			}),
-		).toEqual({ kind: 'authorization-required' });
-		const begun = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				suggestedSelections: oauthPermissionSelectionsSchema.parse({
-					'gmail-app': { gmail: 'read' },
-				}),
-			},
+	let fixture: Awaited<ReturnType<typeof createBrokerFacadeFixture>> | undefined;
+	afterEach(async () => {
+		await fixture?.broker.close();
+		fixture?.catalog.close();
+	});
+	async function beginSelections(selections: OAuthPermissionSelections): Promise<{
+		readonly transactionId: OAuthTransactionId;
+		readonly redirect: GoogleOAuthRedirectResult;
+	}> {
+		if (fixture === undefined) throw new Error('Expected test fixture.');
+		const begun = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
+			request: { actionId: 'oauth_authorization.begin', applicationId: facadeApplicationId },
 		});
-		expect(begun.kind).toBe('authorization-begun');
-		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
-		expect(() =>
-			service.getPermissionPage({
-				tailnetLogin: 'other@example.test',
-				transactionId: begun.transactionId,
-			}),
-		).toThrow('Tailnet identity');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected begin.');
+		const page = fixture.broker.getPermissionPage({
+			identity: facadeIdentity,
 			transactionId: begun.transactionId,
 		});
-		expect(page.applications[0]).toMatchObject({ label: 'Gmail' });
-		const redirect = service.submitPermissions({
+		const redirect = fixture.broker.submitPermissions({
+			identity: facadeIdentity,
+			transactionId: page.transactionId,
 			browserBindingSecret: page.browserBindingSecret,
 			csrfToken: page.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
+			selections,
 		});
-		expect(redirect.kind).toBe('redirect');
-		if (redirect.kind !== 'redirect') throw new Error('Expected Google redirect.');
-		const state = new URL(redirect.authorizationUrl).searchParams.get('state');
-		if (state === null) throw new Error('Google redirect omitted OAuth state.');
-		const callback = await service.handleGoogleCallback({
-			authorizationCode: 'single-use-code',
-			browserBindingSecret: redirect.browserBindingSecret,
-			oauthState: state,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: redirect.transactionId,
-		});
-		expect(callback.kind).toBe('confirmation');
-		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
-		const completed = await service.confirmAccount({
-			browserBindingSecret: callback.confirmation.browserBindingSecret,
-			completionSessionId: callback.confirmation.completionSessionId,
-			csrfToken: callback.confirmation.csrfToken,
-			tailnetLogin: 'human@example.test',
-		});
-		expect(completed).toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
-		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.status',
-					transactionId: begun.transactionId,
-				},
-			}),
-		).toMatchObject({
-			accountLabel: 'human@example.test',
-			accountProfileId: 'personal-google',
-			applicationId: 'gmail-app',
-			kind: 'authorization-completed',
-		});
+		if (redirect.kind !== 'redirect') throw new Error('Expected consent redirect.');
+		return { transactionId: begun.transactionId, redirect };
+	}
+	async function confirmRedirect(
+		redirect: GoogleOAuthRedirectResult,
+	): Promise<GoogleOAuthConfirmationResult> {
+		if (fixture === undefined) throw new Error('Expected fixture.');
+		const callback = await fixture.exchangeRedirect(redirect);
+		if (callback.kind !== 'confirmation') throw new Error('Expected confirmation.');
+		return await fixture.confirm(callback.confirmation);
+	}
 
-		const listed = await service.executeAuthorizationAction({
-			agentId: 'hermes',
+	it('runs a Clerk-bound enrollment, advertises verified metadata and resolves only admitted credential material', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture();
+		// Act
+		const completed = await fixture.enroll();
+		const listed = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
 			request: { actionId: 'oauth_authorization.list' },
 		});
+		const read = await fixture.broker.resolveRuntimeCredential({
+			agentId: 'sun',
+			accountId: completed.accountId,
+			applicationId: facadeApplicationId,
+			operationId: 'gmail.search',
+			gmailWriteAllowed: false,
+		});
+		const write = await fixture.broker.resolveRuntimeCredential({
+			agentId: 'sun',
+			accountId: completed.accountId,
+			applicationId: facadeApplicationId,
+			operationId: 'gmail.send',
+			gmailWriteAllowed: true,
+		});
+		// Assert
 		expect(listed).toMatchObject({
 			kind: 'authorization-list',
-			profiles: [
-				{
-					accountLabel: 'human@example.test',
-					accountProfileId: 'personal-google',
-					applications: [
-						{ applicationId: 'gmail-app', grantedScopes: expect.arrayContaining([gmailReadScope]) },
-					],
-					kind: 'enrolled',
-				},
+			accounts: [
+				{ applications: [{ metadata: { kind: 'verified', accountAlias: 'sun mailbox' } }] },
 			],
 		});
-		expect(JSON.stringify(listed)).not.toContain('provider-access-token-marker');
-		expect(JSON.stringify(listed)).not.toContain('provider-refresh-token-marker');
-		expect(
-			service.resolveToolAvailability({
-				agentId: 'hermes',
-				requirement: {
-					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-					kind: 'oauth-account-profile',
-					minimumPermission: 'read',
-					serviceId: oauthServiceIdSchema.parse('gmail'),
-				},
-			}),
-		).toEqual({
-			accountProfiles: [
-				{ accountLabel: 'human@example.test', accountProfileId: 'personal-google' },
-			],
+		expect(JSON.stringify(listed)).not.toMatch(/synthetic-(access|refresh)/u);
+		expect(read).toMatchObject({
 			kind: 'ready',
-		});
-		expect(
-			service.resolveToolAvailability({
-				agentId: 'hermes',
-				requirement: {
-					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-					kind: 'oauth-account-profile',
-					minimumPermission: 'write',
-					serviceId: oauthServiceIdSchema.parse('gmail'),
-				},
-			}),
-		).toEqual({ kind: 'scope-insufficient' });
-
-		const runtimeCredential = await service.resolveRuntimeCredential({
-			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			agentId: 'hermes',
-			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-			minimumPermission: 'read',
-			serviceId: 'gmail',
-		});
-		expect(runtimeCredential).toMatchObject({
 			allowedHosts: ['gmail.googleapis.com'],
-			kind: 'ready',
+			gmailNoSend: true,
 		});
-		if (runtimeCredential.kind !== 'ready') throw new Error('Expected runtime credential.');
-		expect(new TextDecoder().decode(runtimeCredential.accessToken)).toBe(
-			'provider-access-token-marker',
-		);
-		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.begin',
-					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				},
-			}),
-		).toEqual({ failure: { kind: 'authorization-denied' }, kind: 'authorization-failed' });
-		const reauthorization = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.reauthorize',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-			},
-		});
-		if (reauthorization.kind !== 'authorization-begun') {
-			throw new Error('Expected approved reauthorization to begin.');
-		}
-		const reauthorizationPage = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		const reauthorizationRedirect = service.submitPermissions({
-			browserBindingSecret: reauthorizationPage.browserBindingSecret,
-			csrfToken: reauthorizationPage.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
-			}),
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		if (reauthorizationRedirect.kind !== 'redirect') {
-			throw new Error('Expected approved reauthorization redirect.');
-		}
-		const reauthorizationState = new URL(reauthorizationRedirect.authorizationUrl).searchParams.get(
-			'state',
-		);
-		if (reauthorizationState === null) {
-			throw new Error('Reauthorization redirect omitted OAuth state.');
-		}
-		const reauthorizationCallback = await service.handleGoogleCallback({
-			authorizationCode: 'reauthorization-code',
-			browserBindingSecret: reauthorizationRedirect.browserBindingSecret,
-			oauthState: reauthorizationState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		if (reauthorizationCallback.kind !== 'confirmation') {
-			throw new Error('Expected reauthorization account confirmation.');
-		}
-		expect(
-			await service.confirmAccount({
-				browserBindingSecret: reauthorizationCallback.confirmation.browserBindingSecret,
-				completionSessionId: reauthorizationCallback.confirmation.completionSessionId,
-				csrfToken: reauthorizationCallback.confirmation.csrfToken,
-				tailnetLogin: 'human@example.test',
-			}),
-		).toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
-		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.revoke',
-					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-					applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-				},
-			}),
-		).toEqual({ kind: 'authorization-revoked' });
-		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: { actionId: 'oauth_authorization.list' },
-			}),
-		).toMatchObject({
-			profiles: [
-				{
-					accountLabel: 'human@example.test',
-					accountProfileId: 'personal-google',
-					applications: [],
-					kind: 'partially-enrolled',
-				},
-			],
-		});
+		expect(write.kind).toBe('unavailable');
 	});
 
-	it('rejects reauthorization that would downgrade an existing grant before revocation', async () => {
-		const service = await createService();
-		const initial = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (initial.kind !== 'authorization-begun') throw new Error('Expected initial enrollment.');
-		const initialPage = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: initial.transactionId,
-		});
-		const initialRedirect = service.submitPermissions({
-			browserBindingSecret: initialPage.browserBindingSecret,
-			csrfToken: initialPage.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'write' } }),
-			tailnetLogin: 'human@example.test',
-			transactionId: initial.transactionId,
-		});
-		if (initialRedirect.kind !== 'redirect') throw new Error('Expected initial redirect.');
-		const initialState = new URL(initialRedirect.authorizationUrl).searchParams.get('state');
-		if (initialState === null) throw new Error('Initial redirect omitted OAuth state.');
-		const initialCallback = await service.handleGoogleCallback({
-			authorizationCode: 'initial-write-code',
-			browserBindingSecret: initialRedirect.browserBindingSecret,
-			oauthState: initialState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: initial.transactionId,
-		});
-		if (initialCallback.kind !== 'confirmation') throw new Error('Expected initial confirmation.');
-		expect(initialCallback.confirmation.grantedPermissionLabels).toContain('Gmail messages');
-		await service.confirmAccount({
-			browserBindingSecret: initialCallback.confirmation.browserBindingSecret,
-			completionSessionId: initialCallback.confirmation.completionSessionId,
-			csrfToken: initialCallback.confirmation.csrfToken,
-			tailnetLogin: 'human@example.test',
-		});
-		expect(
-			await service.resolveRuntimeCredential({
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				agentId: 'hermes',
-				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-				minimumPermission: 'read',
-				serviceId: 'gmail',
-			}),
-		).toMatchObject({ kind: 'ready' });
-
-		const reauthorization = await service.executeAuthorizationAction({
-			agentId: 'hermes',
+	it('permits an explicitly confirmed scope reduction using a new credential, never provider revocation', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture();
+		const first = await beginSelections(
+			oauthPermissionSelectionsSchema.parse({ 'gmail-app': ['gmail.read', 'gmail.write'] }),
+		);
+		const initial = await confirmRedirect(first.redirect);
+		if (initial.kind !== 'completed') throw new Error('Expected initial grant.');
+		const before = fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })[0];
+		const begun = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
 			request: {
 				actionId: 'oauth_authorization.reauthorize',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
+				accountId: initial.accountId,
+				applicationId: facadeApplicationId,
 			},
 		});
-		if (reauthorization.kind !== 'authorization-begun') {
-			throw new Error('Expected reauthorization.');
-		}
-		const reauthorizationPage = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		const reauthorizationRedirect = service.submitPermissions({
-			browserBindingSecret: reauthorizationPage.browserBindingSecret,
-			csrfToken: reauthorizationPage.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': { gmail: 'read' } }),
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		if (reauthorizationRedirect.kind !== 'redirect') {
-			throw new Error('Expected reauthorization redirect.');
-		}
-		const reauthorizationState = new URL(reauthorizationRedirect.authorizationUrl).searchParams.get(
-			'state',
-		);
-		if (reauthorizationState === null) throw new Error('Reauthorization omitted OAuth state.');
-		const reauthorizationCallback = await service.handleGoogleCallback({
-			authorizationCode: 'downgrade-code',
-			browserBindingSecret: reauthorizationRedirect.browserBindingSecret,
-			oauthState: reauthorizationState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: reauthorization.transactionId,
-		});
-		if (reauthorizationCallback.kind !== 'confirmation') {
-			throw new Error('Expected downgrade confirmation.');
-		}
-		expect(
-			await service.confirmAccount({
-				browserBindingSecret: reauthorizationCallback.confirmation.browserBindingSecret,
-				completionSessionId: reauthorizationCallback.confirmation.completionSessionId,
-				csrfToken: reauthorizationCallback.confirmation.csrfToken,
-				tailnetLogin: 'human@example.test',
-			}),
-		).toEqual({ kind: 'authorization-denied' });
-		expect(
-			catalog?.getGrantForAccountApplication({
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				agentId: 'hermes',
-				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
-				zoneId: 'apollofam',
-			})?.grantedScopes,
-		).toContain(oauthScopeSchema.parse('gmail.modify'));
-	});
-
-	it('continues one browser ceremony across two configured applications', async () => {
-		const service = await createService({ oauthConfig: config({ includeWorkspace: true }) });
-		const begun = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected reauthorization.');
+		const page = fixture.broker.getPermissionPage({
+			identity: facadeIdentity,
 			transactionId: begun.transactionId,
 		});
-		const firstRedirect = service.submitPermissions({
+		expect(page.applications[0]?.selectedGroupIds).toContain('gmail.write');
+		const redirect = fixture.broker.submitPermissions({
+			identity: facadeIdentity,
+			transactionId: page.transactionId,
 			browserBindingSecret: page.browserBindingSecret,
 			csrfToken: page.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
-				'workspace-app': { calendar: 'read' },
-			}),
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
+			selections: oauthPermissionSelectionsSchema.parse({ 'gmail-app': ['gmail.read'] }),
 		});
-		if (firstRedirect.kind !== 'redirect') throw new Error('Expected first Google redirect.');
-		const firstState = new URL(firstRedirect.authorizationUrl).searchParams.get('state');
-		if (firstState === null) throw new Error('First Google redirect omitted OAuth state.');
-		const firstCallback = await service.handleGoogleCallback({
-			authorizationCode: 'gmail-code',
-			browserBindingSecret: firstRedirect.browserBindingSecret,
-			oauthState: firstState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: firstRedirect.transactionId,
-		});
-		if (firstCallback.kind !== 'confirmation') throw new Error('Expected first confirmation.');
-		const secondRedirect = await service.confirmAccount({
-			browserBindingSecret: firstCallback.confirmation.browserBindingSecret,
-			completionSessionId: firstCallback.confirmation.completionSessionId,
-			csrfToken: firstCallback.confirmation.csrfToken,
-			tailnetLogin: 'human@example.test',
-		});
-		expect(secondRedirect.kind).toBe('redirect');
-		if (secondRedirect.kind !== 'redirect') throw new Error('Expected second Google redirect.');
-		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.status',
-					transactionId: begun.transactionId,
-				},
-			}),
-		).toEqual({ kind: 'authorization-pending', transactionId: begun.transactionId });
-		expect(secondRedirect.applications).toEqual([
-			{ applicationId: 'gmail-app', label: 'Gmail', status: 'completed' },
-			{ applicationId: 'workspace-app', label: 'Workspace', status: 'authorizing' },
+		if (redirect.kind !== 'redirect') throw new Error('Expected narrower consent.');
+		// Act
+		expect((await confirmRedirect(redirect)).kind).toBe('completed');
+		// Assert
+		const after = fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })[0];
+		expect(after?.grantedScopes).not.toContain('https://www.googleapis.com/auth/gmail.modify');
+		expect(after?.credentialId).not.toBe(before?.credentialId);
+		expect(after?.generation).toBe(2);
+		expect(fixture.providerRequests.some((url) => url.includes('revoke'))).toBe(false);
+	});
+
+	it('continues the same public ceremony across two applications for the same subject', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture({ includeDocuments: true });
+		const first = await beginSelections(bothSelections);
+		// Act
+		const next = await confirmRedirect(first.redirect);
+		if (next.kind !== 'redirect') throw new Error('Expected second application.');
+		expect(next.applications).toMatchObject([
+			{ applicationId: 'gmail-app', status: 'completed' },
+			{ applicationId: 'workspace-app', status: 'authorizing' },
 		]);
-		const secondState = new URL(secondRedirect.authorizationUrl).searchParams.get('state');
-		if (secondState === null) throw new Error('Second Google redirect omitted OAuth state.');
-		const secondCallback = await service.handleGoogleCallback({
-			authorizationCode: 'workspace-code',
-			browserBindingSecret: secondRedirect.browserBindingSecret,
-			oauthState: secondState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: secondRedirect.transactionId,
-		});
-		if (secondCallback.kind !== 'confirmation') throw new Error('Expected second confirmation.');
-		await expect(
-			service.confirmAccount({
-				browserBindingSecret: secondCallback.confirmation.browserBindingSecret,
-				completionSessionId: secondCallback.confirmation.completionSessionId,
-				csrfToken: secondCallback.confirmation.csrfToken,
-				tailnetLogin: 'human@example.test',
-			}),
-		).resolves.toEqual({ accountLabel: 'human@example.test', kind: 'completed' });
 		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.status',
-					transactionId: begun.transactionId,
-				},
+			await fixture.broker.executeAuthorizationAction({
+				agentId: 'sun',
+				request: { actionId: 'oauth_authorization.status', transactionId: first.transactionId },
+			}),
+		).toEqual({ kind: 'authorization-pending', transactionId: first.transactionId });
+		expect((await confirmRedirect(next)).kind).toBe('completed');
+		// Assert
+		const grants = fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' });
+		expect(grants).toHaveLength(2);
+		expect(new Set(grants.map((grant) => grant.accountId)).size).toBe(1);
+		expect(
+			await fixture.broker.executeAuthorizationAction({
+				agentId: 'sun',
+				request: { actionId: 'oauth_authorization.status', transactionId: first.transactionId },
 			}),
 		).toMatchObject({ kind: 'authorization-completed' });
-		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(2);
 	});
 
-	it('reports a failed ceremony when the next application cannot start after a durable commit', async () => {
+	it('retains the committed first app and reports failure when the next app cannot start', async () => {
 		// Arrange
-		const baseAdapter = createAdapter();
-		let authorizationUrlCount = 0;
-		const service = await createService({
-			adapter: {
-				...baseAdapter,
-				buildAuthorizationUrl: (authorization) => {
-					authorizationUrlCount += 1;
-					if (authorizationUrlCount === 2) {
-						throw new Error('forced next-application startup failure');
-					}
-					return baseAdapter.buildAuthorizationUrl(authorization);
+		let calls = 0;
+		fixture = await createBrokerFacadeFixture({
+			includeDocuments: true,
+			transformAdapter: (adapter) => ({
+				...adapter,
+				buildAuthorizationUrl: (request) => {
+					if (++calls === 2) throw new Error('next app failed');
+					return adapter.buildAuthorizationUrl(request);
 				},
-			},
-			oauthConfig: config({ includeWorkspace: true }),
-		});
-		const begun = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
-		});
-		const firstRedirect = service.submitPermissions({
-			browserBindingSecret: page.browserBindingSecret,
-			csrfToken: page.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
-				'workspace-app': { calendar: 'read' },
 			}),
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
 		});
-		if (firstRedirect.kind !== 'redirect') throw new Error('Expected first redirect.');
-		const firstState = new URL(firstRedirect.authorizationUrl).searchParams.get('state');
-		if (firstState === null) throw new Error('First redirect omitted OAuth state.');
-		const callback = await service.handleGoogleCallback({
-			authorizationCode: 'gmail-code',
-			browserBindingSecret: firstRedirect.browserBindingSecret,
-			oauthState: firstState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: firstRedirect.transactionId,
-		});
-		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
-
+		const first = await beginSelections(bothSelections);
 		// Act
-		await expect(
-			service.confirmAccount({
-				browserBindingSecret: callback.confirmation.browserBindingSecret,
-				completionSessionId: callback.confirmation.completionSessionId,
-				csrfToken: callback.confirmation.csrfToken,
-				tailnetLogin: 'human@example.test',
-			}),
-		).rejects.toThrow('forced next-application startup failure');
-
+		await expect(confirmRedirect(first.redirect)).rejects.toThrow('next app failed');
 		// Assert
 		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.status',
-					transactionId: begun.transactionId,
-				},
-			}),
-		).toEqual({ failure: { kind: 'unavailable' }, kind: 'authorization-failed' });
-		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
 		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.begin',
-					accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-				},
+			await fixture.broker.executeAuthorizationAction({
+				agentId: 'sun',
+				request: { actionId: 'oauth_authorization.status', transactionId: first.transactionId },
 			}),
-		).toMatchObject({ kind: 'authorization-begun' });
+		).toEqual({ kind: 'authorization-failed', failure: { kind: 'unavailable' } });
 	});
 
-	it('cancels a later application through the public ceremony identity returned by begin', async () => {
-		const service = await createService({ oauthConfig: config({ includeWorkspace: true }) });
-		const begun = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
-		});
-		const firstRedirect = service.submitPermissions({
-			browserBindingSecret: page.browserBindingSecret,
-			csrfToken: page.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
-				'workspace-app': { calendar: 'read' },
-			}),
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
-		});
-		if (firstRedirect.kind !== 'redirect') throw new Error('Expected first redirect.');
-		const firstState = new URL(firstRedirect.authorizationUrl).searchParams.get('state');
-		if (firstState === null) throw new Error('First redirect omitted OAuth state.');
-		const firstCallback = await service.handleGoogleCallback({
-			authorizationCode: 'gmail-cancel-chain-code',
-			browserBindingSecret: firstRedirect.browserBindingSecret,
-			oauthState: firstState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: firstRedirect.transactionId,
-		});
-		if (firstCallback.kind !== 'confirmation') throw new Error('Expected first confirmation.');
-		const secondRedirect = await service.confirmAccount({
-			browserBindingSecret: firstCallback.confirmation.browserBindingSecret,
-			completionSessionId: firstCallback.confirmation.completionSessionId,
-			csrfToken: firstCallback.confirmation.csrfToken,
-			tailnetLogin: 'human@example.test',
-		});
-		if (secondRedirect.kind !== 'redirect') throw new Error('Expected second redirect.');
-		const secondState = new URL(secondRedirect.authorizationUrl).searchParams.get('state');
-		if (secondState === null) throw new Error('Second redirect omitted OAuth state.');
-
+	it('cancels a later application through the original public ceremony ID without removing completed grants', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture({ includeDocuments: true });
+		const first = await beginSelections(bothSelections);
+		const next = await confirmRedirect(first.redirect);
+		if (next.kind !== 'redirect') throw new Error('Expected second application.');
+		// Act
 		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.cancel',
-					transactionId: begun.transactionId,
-				},
+			await fixture.broker.executeAuthorizationAction({
+				agentId: 'sun',
+				request: { actionId: 'oauth_authorization.cancel', transactionId: first.transactionId },
 			}),
 		).toEqual({ kind: 'authorization-cancelled' });
-		expect(
-			await service.handleGoogleCallback({
-				authorizationCode: 'workspace-after-cancel-code',
-				browserBindingSecret: secondRedirect.browserBindingSecret,
-				oauthState: secondState,
-				redirectUri,
-				tailnetLogin: 'human@example.test',
-				transactionId: secondRedirect.transactionId,
-			}),
-		).toEqual({ kind: 'failed', reason: 'browser-binding-mismatch' });
-		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
-	});
-
-	it('preserves completed grants and creates a bound retry after a later application fails', async () => {
-		// Arrange
-		const baseAdapter = createAdapter();
-		let exchangeCount = 0;
-		const service = await createService({
-			adapter: {
-				...baseAdapter,
-				exchangeAuthorizationCode: async (exchangeProps) => {
-					exchangeCount += 1;
-					return exchangeCount === 2
-						? {
-								failure: { kind: 'provider-unavailable' as const, retryable: true as const },
-								kind: 'failed' as const,
-							}
-						: await baseAdapter.exchangeAuthorizationCode(exchangeProps);
-				},
-			},
-			oauthConfig: config({ includeWorkspace: true }),
-		});
-		const begun = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (begun.kind !== 'authorization-begun') throw new Error('Expected begun authorization.');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
-		});
-		const firstRedirect = service.submitPermissions({
-			browserBindingSecret: page.browserBindingSecret,
-			csrfToken: page.csrfToken,
-			selections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
-				'workspace-app': { calendar: 'read' },
-			}),
-			tailnetLogin: 'human@example.test',
-			transactionId: begun.transactionId,
-		});
-		if (firstRedirect.kind !== 'redirect') throw new Error('Expected first redirect.');
-		const firstState = new URL(firstRedirect.authorizationUrl).searchParams.get('state');
-		if (firstState === null) throw new Error('First redirect omitted state.');
-		const firstCallback = await service.handleGoogleCallback({
-			authorizationCode: 'gmail-code',
-			browserBindingSecret: firstRedirect.browserBindingSecret,
-			oauthState: firstState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: firstRedirect.transactionId,
-		});
-		if (firstCallback.kind !== 'confirmation') throw new Error('Expected first confirmation.');
-		const secondRedirect = await service.confirmAccount({
-			browserBindingSecret: firstCallback.confirmation.browserBindingSecret,
-			completionSessionId: firstCallback.confirmation.completionSessionId,
-			csrfToken: firstCallback.confirmation.csrfToken,
-			tailnetLogin: 'human@example.test',
-		});
-		if (secondRedirect.kind !== 'redirect') throw new Error('Expected second redirect.');
-		const secondState = new URL(secondRedirect.authorizationUrl).searchParams.get('state');
-		if (secondState === null) throw new Error('Second redirect omitted state.');
-
-		// Act
-		const partial = await service.handleGoogleCallback({
-			authorizationCode: 'workspace-code',
-			browserBindingSecret: secondRedirect.browserBindingSecret,
-			oauthState: secondState,
-			redirectUri,
-			tailnetLogin: 'human@example.test',
-			transactionId: secondRedirect.transactionId,
-		});
-
 		// Assert
-		expect(partial).toMatchObject({
-			completed: ['Gmail'],
-			kind: 'partial-completion',
-			retry: { kind: 'redirect' },
-			retryable: ['Workspace'],
+		expect((await fixture.exchangeRedirect(next)).kind).toBe('failed');
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+	});
+
+	it('preserves completed grants and creates a session-bound retry after a later provider failure', async () => {
+		// Arrange
+		let exchanges = 0;
+		fixture = await createBrokerFacadeFixture({
+			includeDocuments: true,
+			transformAdapter: (adapter) => ({
+				...adapter,
+				exchangeAuthorizationCode: async (request) =>
+					++exchanges === 2
+						? { kind: 'failed', failure: { kind: 'provider-unavailable', retryable: true } }
+						: await adapter.exchangeAuthorizationCode(request),
+			}),
 		});
-		if (partial.kind !== 'partial-completion') {
-			throw new Error('Expected partial completion.');
-		}
+		const first = await beginSelections(bothSelections);
+		const next = await confirmRedirect(first.redirect);
+		if (next.kind !== 'redirect') throw new Error('Expected second app.');
+		// Act
+		const partial = await fixture.exchangeRedirect(next);
+		// Assert
+		if (partial.kind !== 'partial-completion') throw new Error('Expected retry.');
+		expect(partial.completed).toEqual(['gmail-app']);
+		expect(partial.retryable).toEqual(['workspace-app']);
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
 		expect(() =>
-			service.retryApplication({
+			fixture?.broker.retryApplication({
+				identity: { ...facadeIdentity, sessionId: 'other' },
+				transactionId: partial.retry.transactionId,
 				browserBindingSecret: partial.retry.browserBindingSecret,
 				csrfToken: partial.retryCsrfToken,
-				tailnetLogin: 'other@example.test',
-				transactionId: partial.retry.transactionId,
 			}),
-		).toThrow('retry authority is invalid');
+		).toThrow();
 		expect(
-			service.retryApplication({
+			fixture.broker.retryApplication({
+				identity: facadeIdentity,
+				transactionId: partial.retry.transactionId,
 				browserBindingSecret: partial.retry.browserBindingSecret,
 				csrfToken: partial.retryCsrfToken,
-				tailnetLogin: 'human@example.test',
-				transactionId: partial.retry.transactionId,
 			}),
-		).toMatchObject({
-			authorizationUrl: partial.retry.authorizationUrl,
-			kind: 'redirect',
-			transactionId: partial.retry.transactionId,
-		});
-		expect(catalog?.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(1);
+		).toMatchObject({ kind: 'redirect', transactionId: partial.retry.transactionId });
+		expect((await confirmRedirect(partial.retry)).kind).toBe('completed');
 	});
 
-	it('replaces an expired begin transaction instead of returning a dead URL', async () => {
-		let currentTimeMs = 1_000;
-		const service = await createService({ now: () => currentTimeMs });
-		const first = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
+	it('creates a fresh link after expiry and refuses the old ceremony', async () => {
+		// Arrange
+		let now = 1_000;
+		fixture = await createBrokerFacadeFixture({ now: () => now });
+		const first = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
+			request: { actionId: 'oauth_authorization.begin', applicationId: facadeApplicationId },
 		});
-		if (first.kind !== 'authorization-begun') throw new Error('Expected first authorization.');
-		currentTimeMs += 11 * 60_000;
-		const second = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
+		if (first.kind !== 'authorization-begun') throw new Error('Expected link.');
+		// Act
+		now += 660_000;
+		const second = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
+			request: { actionId: 'oauth_authorization.begin', applicationId: facadeApplicationId },
 		});
-		expect(second.kind).toBe('authorization-begun');
-		if (second.kind !== 'authorization-begun')
-			throw new Error('Expected replacement authorization.');
+		// Assert
+		expect(second).toMatchObject({ kind: 'authorization-begun' });
+		if (second.kind !== 'authorization-begun') throw new Error('Expected fresh link.');
 		expect(second.transactionId).not.toBe(first.transactionId);
-	});
-
-	it('clears the public ceremony identity when the human selects no applications', async () => {
-		const service = await createService();
-		const first = await service.executeAuthorizationAction({
-			agentId: 'hermes',
-			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
-			},
-		});
-		if (first.kind !== 'authorization-begun') throw new Error('Expected first authorization.');
-		const page = service.getPermissionPage({
-			tailnetLogin: 'human@example.test',
-			transactionId: first.transactionId,
-		});
-		expect(
-			service.submitPermissions({
-				browserBindingSecret: page.browserBindingSecret,
-				csrfToken: page.csrfToken,
-				selections: oauthPermissionSelectionsSchema.parse({
-					'gmail-app': { gmail: 'none' },
-				}),
-				tailnetLogin: 'human@example.test',
+		expect(() =>
+			fixture?.broker.getPermissionPage({
+				identity: facadeIdentity,
 				transactionId: first.transactionId,
 			}),
-		).toEqual({ kind: 'already-satisfied' });
+		).toThrow();
+	});
 
-		const second = await service.executeAuthorizationAction({
-			agentId: 'hermes',
+	it('treats Off as no selection rather than a grant or implicit disconnect', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture();
+		const connected = await fixture.enroll();
+		const begun = await fixture.broker.executeAuthorizationAction({
+			agentId: 'sun',
 			request: {
-				actionId: 'oauth_authorization.begin',
-				accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+				actionId: 'oauth_authorization.reauthorize',
+				accountId: connected.accountId,
+				applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 			},
 		});
-		if (second.kind !== 'authorization-begun') throw new Error('Expected second authorization.');
-		expect(second.transactionId).not.toBe(first.transactionId);
+		if (begun.kind !== 'authorization-begun') throw new Error('Expected ceremony.');
+		const page = fixture.broker.getPermissionPage({
+			identity: facadeIdentity,
+			transactionId: begun.transactionId,
+		});
+		// Act
 		expect(
-			await service.executeAuthorizationAction({
-				agentId: 'hermes',
-				request: {
-					actionId: 'oauth_authorization.status',
-					transactionId: first.transactionId,
-				},
+			fixture.broker.submitPermissions({
+				identity: facadeIdentity,
+				transactionId: page.transactionId,
+				browserBindingSecret: page.browserBindingSecret,
+				csrfToken: page.csrfToken,
+				selections: oauthPermissionSelectionsSchema.parse({}),
 			}),
-		).toEqual({ failure: { kind: 'consumed' }, kind: 'authorization-failed' });
+		).toEqual({ kind: 'no-selections' });
+		// Assert
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+		expect(
+			await fixture.broker.executeAuthorizationAction({
+				agentId: 'sun',
+				request: { actionId: 'oauth_authorization.status', transactionId: begun.transactionId },
+			}),
+		).toEqual({ kind: 'authorization-cancelled' });
 	});
 });

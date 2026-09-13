@@ -1,5 +1,4 @@
 import {
-	oauthAccountProfileIdSchema,
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
 	oauthScopeSchema,
@@ -24,6 +23,11 @@ const providerGrantSchema = z
 	.strict();
 
 type ProviderGrant = z.infer<typeof providerGrantSchema>;
+const identity = {
+	issuer: 'https://identity.example.test',
+	userId: 'test-owner',
+	sessionId: 'test-session',
+};
 
 function requireCreatedCompletion(
 	result: OAuthCallbackCompletionResult<ProviderGrant>,
@@ -51,23 +55,24 @@ function createAuthorizingTransaction(
 } {
 	const store = existingStore ?? createOAuthTransactionStore({ now, providerGrantSchema });
 	const transaction = store.createTransaction({
-		accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+		configRevision: 'test-config',
+		initiator: { kind: 'agent', agentId: 'hermes' },
+		target: { kind: 'enroll', applicationId: oauthApplicationIdSchema.parse('gmail-app') },
 		agentId: 'hermes',
 		applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
-		authorizationMode: 'enroll-missing',
 		suggestedSelections: oauthPermissionSelectionsSchema.parse({
-			'gmail-app': { gmail: 'read' },
+			'gmail-app': ['gmail.read'],
 		}),
 	});
-	const boundTransaction = store.bindTailnetIdentity({
-		tailnetLogin: 'human@example.test',
+	const boundTransaction = store.bindBrowserIdentity({
+		identity,
 		transactionId: transaction.transactionId,
 	});
 	const authorizing = store.beginApplicationAuthorization({
 		applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 		completedApplications: [],
 		confirmedSelections: oauthPermissionSelectionsSchema.parse({
-			'gmail-app': { gmail: 'read' },
+			'gmail-app': ['gmail.read'],
 		}),
 		confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
 		redirectUri: 'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
@@ -83,7 +88,8 @@ describe('OAuth transaction store', () => {
 		const callback = {
 			oauthState: authorizing.oauthState,
 			redirectUri: authorizing.redirectUri,
-			tailnetLogin: authorizing.tailnetLogin,
+			identity: authorizing.identity,
+			browserBindingSecret: authorizing.browserBindingSecret,
 			transactionId: transaction.transactionId,
 		};
 		const first = store.beginCallbackConsumption(callback);
@@ -95,7 +101,7 @@ describe('OAuth transaction store', () => {
 	});
 
 	it.each([
-		['identity', { tailnetLogin: 'other@example.test' }, 'identity-mismatch'],
+		['identity', { identity: { ...identity, userId: 'another-owner' } }, 'identity-mismatch'],
 		['state', { oauthState: 'z'.repeat(43) }, 'invalid-state'],
 		[
 			'redirect',
@@ -108,7 +114,8 @@ describe('OAuth transaction store', () => {
 			store.beginCallbackConsumption({
 				oauthState: authorizing.oauthState,
 				redirectUri: authorizing.redirectUri,
-				tailnetLogin: authorizing.tailnetLogin,
+				identity: authorizing.identity,
+				browserBindingSecret: authorizing.browserBindingSecret,
 				transactionId: transaction.transactionId,
 				...override,
 			}),
@@ -121,7 +128,8 @@ describe('OAuth transaction store', () => {
 			store.beginCallbackConsumption({
 				oauthState: authorizing.oauthState,
 				redirectUri: authorizing.redirectUri,
-				tailnetLogin: authorizing.tailnetLogin,
+				identity: authorizing.identity,
+				browserBindingSecret: authorizing.browserBindingSecret,
 				transactionId: transaction.transactionId,
 			}),
 		).toMatchObject({ kind: 'accepted' });
@@ -142,7 +150,7 @@ describe('OAuth transaction store', () => {
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: completion.csrfSecret,
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toMatchObject({ kind: 'accepted', session: { kind: 'committing' } });
 		expect(
@@ -150,7 +158,7 @@ describe('OAuth transaction store', () => {
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: completion.csrfSecret,
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toEqual({ kind: 'rejected', reason: 'wrong-state' });
 	});
@@ -160,7 +168,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: authorizing.oauthState,
 			redirectUri: authorizing.redirectUri,
-			tailnetLogin: authorizing.tailnetLogin,
+			identity: authorizing.identity,
+			browserBindingSecret: authorizing.browserBindingSecret,
 			transactionId: transaction.transactionId,
 		});
 		const completion = requireCreatedCompletion(
@@ -174,7 +183,7 @@ describe('OAuth transaction store', () => {
 			}),
 		);
 
-		expect(store.getCeremonyOwner(transaction.transactionId)).toMatchObject({
+		expect(store.getCeremonyContext(transaction.transactionId)).toMatchObject({
 			agentId: 'hermes',
 			transactionId: transaction.transactionId,
 		});
@@ -184,13 +193,13 @@ describe('OAuth transaction store', () => {
 				transactionId: transaction.transactionId,
 			}),
 		).toBe(true);
-		expect(store.getCeremonyOwner(transaction.transactionId)).toBeUndefined();
+		expect(store.getCeremonyContext(transaction.transactionId)).toBeUndefined();
 		expect(
 			store.beginCompletionCommit({
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: completion.csrfSecret,
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toEqual({ kind: 'rejected', reason: 'consumed-or-missing' });
 	});
@@ -201,7 +210,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: authorizing.oauthState,
 			redirectUri: authorizing.redirectUri,
-			tailnetLogin: authorizing.tailnetLogin,
+			identity: authorizing.identity,
+			browserBindingSecret: authorizing.browserBindingSecret,
 			transactionId: transaction.transactionId,
 		});
 		const completion = requireCreatedCompletion(
@@ -219,7 +229,7 @@ describe('OAuth transaction store', () => {
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: completion.csrfSecret,
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toMatchObject({ kind: 'accepted', session: { kind: 'committing' } });
 
@@ -231,7 +241,7 @@ describe('OAuth transaction store', () => {
 
 		// Assert
 		expect(cancelled).toBe(false);
-		expect(store.getCeremonyOwner(transaction.transactionId)).toMatchObject({
+		expect(store.getCeremonyContext(transaction.transactionId)).toMatchObject({
 			agentId: 'hermes',
 			transactionId: transaction.transactionId,
 		});
@@ -244,7 +254,8 @@ describe('OAuth transaction store', () => {
 			store.beginCallbackConsumption({
 				oauthState: authorizing.oauthState,
 				redirectUri: authorizing.redirectUri,
-				tailnetLogin: authorizing.tailnetLogin,
+				identity: authorizing.identity,
+				browserBindingSecret: authorizing.browserBindingSecret,
 				transactionId: transaction.transactionId,
 			}),
 		).toMatchObject({ kind: 'accepted', transaction: { kind: 'consuming-callback' } });
@@ -269,7 +280,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: authorizing.oauthState,
 			redirectUri: authorizing.redirectUri,
-			tailnetLogin: authorizing.tailnetLogin,
+			identity: authorizing.identity,
+			browserBindingSecret: authorizing.browserBindingSecret,
 			transactionId: transaction.transactionId,
 		});
 		const completion = requireCreatedCompletion(
@@ -288,7 +300,7 @@ describe('OAuth transaction store', () => {
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: 'x'.repeat(43),
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toBeUndefined();
 		expect(
@@ -296,10 +308,10 @@ describe('OAuth transaction store', () => {
 				browserBindingSecret: completion.browserBindingSecret,
 				completionSessionId: completion.completionSessionId,
 				csrfToken: completion.csrfSecret,
-				tailnetLogin: completion.tailnetLogin,
+				identity: completion.identity,
 			}),
 		).toMatchObject({ transactionId: transaction.transactionId });
-		expect(store.getCeremonyOwner(transaction.transactionId)).toBeUndefined();
+		expect(store.getCeremonyContext(transaction.transactionId)).toBeUndefined();
 	});
 
 	it('invalidates restart-local authority and discards sensitive completion grants', () => {
@@ -311,20 +323,21 @@ describe('OAuth transaction store', () => {
 			providerGrantSchema,
 		});
 		const replacementTransaction = store.createTransaction({
-			accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+			configRevision: 'test-config',
+			initiator: { kind: 'agent', agentId: 'hermes' },
+			target: { kind: 'enroll', applicationId: oauthApplicationIdSchema.parse('gmail-app') },
 			agentId: 'hermes',
 			applicationIds: [oauthApplicationIdSchema.parse('gmail-app')],
-			authorizationMode: 'enroll-missing',
 		});
-		const boundReplacementTransaction = store.bindTailnetIdentity({
-			tailnetLogin: 'human@example.test',
+		const boundReplacementTransaction = store.bindBrowserIdentity({
+			identity,
 			transactionId: replacementTransaction.transactionId,
 		});
 		const replacementAuthorizing = store.beginApplicationAuthorization({
 			applicationId: oauthApplicationIdSchema.parse('gmail-app'),
 			completedApplications: [],
 			confirmedSelections: oauthPermissionSelectionsSchema.parse({
-				'gmail-app': { gmail: 'read' },
+				'gmail-app': ['gmail.read'],
 			}),
 			confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
 			redirectUri: authorizing.redirectUri,
@@ -334,7 +347,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: replacementAuthorizing.oauthState,
 			redirectUri: replacementAuthorizing.redirectUri,
-			tailnetLogin: replacementAuthorizing.tailnetLogin,
+			identity: replacementAuthorizing.identity,
+			browserBindingSecret: replacementAuthorizing.browserBindingSecret,
 			transactionId: replacementTransaction.transactionId,
 		});
 		store.completeCallback({
@@ -361,7 +375,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: first.authorizing.oauthState,
 			redirectUri: first.authorizing.redirectUri,
-			tailnetLogin: first.authorizing.tailnetLogin,
+			identity: first.authorizing.identity,
+			browserBindingSecret: first.authorizing.browserBindingSecret,
 			transactionId: first.transaction.transactionId,
 		});
 		const firstCompletion = requireCreatedCompletion(
@@ -378,7 +393,8 @@ describe('OAuth transaction store', () => {
 		store.beginCallbackConsumption({
 			oauthState: second.authorizing.oauthState,
 			redirectUri: second.authorizing.redirectUri,
-			tailnetLogin: second.authorizing.tailnetLogin,
+			identity: second.authorizing.identity,
+			browserBindingSecret: second.authorizing.browserBindingSecret,
 			transactionId: second.transaction.transactionId,
 		});
 
@@ -418,7 +434,8 @@ describe('OAuth transaction store', () => {
 			store.beginCallbackConsumption({
 				oauthState: authorizing.oauthState,
 				redirectUri: authorizing.redirectUri,
-				tailnetLogin: authorizing.tailnetLogin,
+				identity: authorizing.identity,
+				browserBindingSecret: authorizing.browserBindingSecret,
 				transactionId: transaction.transactionId,
 			}),
 		).toEqual({ kind: 'rejected', reason: 'expired' });

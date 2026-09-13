@@ -139,6 +139,9 @@ function createManagedVmStub(options: {
 function createHarness(
 	options: {
 		readonly coordinator?: GatewayOwnershipCoordinator;
+		readonly cleanupManagedVmStagingRoot?: NonNullable<
+			Parameters<typeof createLeaseManager>[0]['cleanupManagedVmStagingRoot']
+		>;
 		readonly createManagedVm?: (properties: {
 			readonly events: string[];
 			readonly id: string;
@@ -239,6 +242,9 @@ function createHarness(
 			},
 		} satisfies ManagedVmExactProcessTerminationCapability);
 	const leaseManager = createLeaseManager({
+		...(options.cleanupManagedVmStagingRoot === undefined
+			? {}
+			: { cleanupManagedVmStagingRoot: options.cleanupManagedVmStagingRoot }),
 		controllerPort: 18_800,
 		createLeafGeneration: (() => {
 			let nextLeaf = 1;
@@ -348,6 +354,66 @@ afterEach(() => {
 });
 
 describe('createLeaseManager stock Gondolin lifecycle', () => {
+	it('cleans staging after provider absence is established during creation failure', async () => {
+		// Arrange
+		const cleanupManagedVmStagingRoot = vi.fn(async () => {});
+		const harness = createHarness({
+			cleanupManagedVmStagingRoot,
+			createManagedVm: async () => {
+				throw new Error('provider rejected creation');
+			},
+		});
+		// Act / Assert
+		await expect(harness.leaseManager.createLease(createLeaseOptions())).rejects.toThrow(
+			'provider rejected creation',
+		);
+		expect(cleanupManagedVmStagingRoot).toHaveBeenCalledWith({
+			agentId: 'beta',
+			leafGeneration: 'tool-leaf-1',
+			leaseId: 'lease-1',
+			zoneId: 'shravan',
+		});
+	});
+
+	it('cleans staging after a returned VM fails before starting and is proven absent', async () => {
+		// Arrange
+		const cleanupOrder: string[] = [];
+		const cleanupManagedVmStagingRoot = vi.fn(async () => {
+			cleanupOrder.push('staging-root-cleanup');
+		});
+		const harness = createHarness({
+			cleanupManagedVmStagingRoot,
+			createManagedVm: async ({ events, id, pid, runtime }) => {
+				const vm = createManagedVmStub({ events, id, pid, runtime });
+				return {
+					...vm,
+					async close(): Promise<void> {
+						cleanupOrder.push('vm-close');
+						await vm.close();
+					},
+					async start(): Promise<void> {
+						throw new Error('start rejected before spawn');
+					},
+				};
+			},
+		});
+		// Act / Assert
+		await expect(harness.leaseManager.createLease(createLeaseOptions())).rejects.toThrow(
+			'start rejected before spawn',
+		);
+		expect(cleanupManagedVmStagingRoot).toHaveBeenCalledWith({
+			agentId: 'beta',
+			leafGeneration: 'tool-leaf-1',
+			leaseId: 'lease-1',
+			vmId: 'tool-vm-1',
+			zoneId: 'shravan',
+		});
+		expect(cleanupOrder).toEqual(['vm-close', 'staging-root-cleanup']);
+		expect(harness.events).toEqual(
+			expect.arrayContaining(['vm-close:tool-vm-1', 'membership-destroyed:beta']),
+		);
+	});
+
 	it('constructs unstarted, attaches, starts, persists process identity, enables SSH, and commits', async () => {
 		const harness = createHarness();
 
@@ -525,7 +591,9 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 	});
 
 	it('captures fallback runtime evidence when start rejects after spawning a runner', async () => {
+		const cleanupManagedVmStagingRoot = vi.fn(async () => {});
 		const harness = createHarness({
+			cleanupManagedVmStagingRoot,
 			createManagedVm: async ({ events, id, pid, runtime }) => {
 				const vm = createManagedVmStub({ events, id, pid, runtime });
 				return {
@@ -552,10 +620,17 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			]),
 		);
 		expect(harness.tcpPool.allocate()).toBe(0);
+		expect(cleanupManagedVmStagingRoot).toHaveBeenCalledWith(
+			expect.objectContaining({ vmId: 'tool-vm-1' }),
+		);
 	});
 
 	it('closes the VM and SSH, deletes the runtime record and membership, then releases the TCP slot', async () => {
-		const harness = createHarness();
+		const cleanupOrder: string[] = [];
+		const cleanupManagedVmStagingRoot = vi.fn(async () => {
+			cleanupOrder.push('staging-root-cleanup');
+		});
+		const harness = createHarness({ cleanupManagedVmStagingRoot });
 		const lease = await harness.leaseManager.createLease(createLeaseOptions());
 		harness.events.length = 0;
 
@@ -569,6 +644,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 			'record-delete:00000000-0000-4000-8000-000000000001',
 			'membership-destroyed:beta',
 		]);
+		expect(cleanupOrder).toEqual(['staging-root-cleanup']);
 		expect(harness.leaseManager.listLeases()).toEqual([]);
 		expect(harness.tcpPool.allocate()).toBe(0);
 	});
@@ -662,7 +738,9 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 
 	it('preserves cleanup debt without restoring predecessor authority after close failure', async () => {
 		const deleteRuntimeRecord = vi.fn(async () => {});
+		const cleanupManagedVmStagingRoot = vi.fn(async () => {});
 		const harness = createHarness({
+			cleanupManagedVmStagingRoot,
 			createManagedVm: async ({ events, id, pid, runtime }) => ({
 				...createManagedVmStub({ events, id, pid, runtime }),
 				close: () => Promise.reject(new Error('close failed')),
@@ -675,6 +753,7 @@ describe('createLeaseManager stock Gondolin lifecycle', () => {
 		await expect(harness.leaseManager.releaseLease(lease.id)).rejects.toThrow('close failed');
 
 		expect(deleteRuntimeRecord).not.toHaveBeenCalled();
+		expect(cleanupManagedVmStagingRoot).not.toHaveBeenCalled();
 		expect(harness.tcpPool.isQuarantined(lease.tcpSlot)).toBe(true);
 		expect(harness.coordinator.snapshotGateway(TEST_GATEWAY_EPOCH)).toMatchObject({
 			children: [expect.objectContaining({ state: 'retiring' })],

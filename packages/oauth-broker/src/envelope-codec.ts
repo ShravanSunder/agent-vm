@@ -1,6 +1,9 @@
 import {
-	oauthAccountProfileIdSchema,
+	googleAccountPolicyBindingSchema,
+	oauthAccountIdSchema,
 	oauthApplicationIdSchema,
+	oauthAuthorizationIdSchema,
+	oauthBrowserOwnerIdentitySchema,
 	oauthCredentialIdSchema,
 	oauthProviderIdSchema,
 } from '@agent-vm/oauth-broker-contracts';
@@ -10,8 +13,6 @@ import { z } from 'zod';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
-const payloadPurpose = 'agent-vm/oauth/payload/v1';
-const dekWrapPurpose = 'agent-vm/oauth/dek-wrap/v1';
 const xchachaKeyByteLength = 32;
 const xchachaNonceByteLength = 24;
 const poly1305TagByteLength = 16;
@@ -31,21 +32,38 @@ export const oauthProviderSubjectSchema = z
 
 export const oauthEnvelopeBindingSchema = z
 	.object({
-		accountProfileId: oauthAccountProfileIdSchema,
+		accountId: oauthAccountIdSchema,
+		agentId: z.string().min(1).max(128),
 		applicationId: oauthApplicationIdSchema,
+		authorizationId: oauthAuthorizationIdSchema,
+		authorizationMetadataRevision: z.number().int().positive(),
+		catalogVersion: z.string().min(1).max(256),
+		clientBindingRevision: z.string().min(1).max(256),
+		clientId: z.string().min(1).max(1024),
 		credentialId: oauthCredentialIdSchema,
+		generation: z.number().int().positive(),
+		owner: oauthBrowserOwnerIdentitySchema,
 		providerId: oauthProviderIdSchema,
 		providerSubject: oauthProviderSubjectSchema,
+		zoneId: z.string().min(1).max(128),
 	})
 	.strict();
 export type OAuthEnvelopeBinding = z.infer<typeof oauthEnvelopeBindingSchema>;
+
+export const oauthPolicyEnvelopeBindingSchema = googleAccountPolicyBindingSchema
+	.extend({
+		format: z.literal(1),
+		overrideRevision: z.number().int().positive(),
+	})
+	.strict();
+export type OAuthPolicyEnvelopeBinding = z.infer<typeof oauthPolicyEnvelopeBindingSchema>;
 
 export const encryptedOAuthEnvelopeSchema = z
 	.object({
 		dekCiphertext: base64UrlBytesSchema,
 		dekWrapAlgorithm: z.literal('xchacha20-poly1305'),
 		dekWrapNonce: base64UrlBytesSchema,
-		envelopeVersion: z.literal(1),
+		envelopeVersion: z.literal(2),
 		keyEncryptionKeyVersion: z.number().int().positive(),
 		payloadAlgorithm: z.literal('xchacha20-poly1305'),
 		payloadCiphertext: base64UrlBytesSchema,
@@ -78,18 +96,10 @@ function decodeBase64Url(encoded: string, expectedByteLength?: number): Uint8Arr
 	return decoded;
 }
 
-function aadBytes(purpose: string, binding: OAuthEnvelopeBinding): Uint8Array {
-	return textEncoder.encode(
-		[
-			purpose,
-			'1',
-			binding.credentialId,
-			binding.providerId,
-			binding.applicationId,
-			binding.accountProfileId,
-			binding.providerSubject,
-		].join('\0'),
-	);
+function aadBytes(purpose: string, binding: unknown): Uint8Array {
+	// The fixed strict binding schema determines property order, including nested
+	// owner identity. JSON escaping avoids ambiguous delimiter-separated identities.
+	return textEncoder.encode(JSON.stringify({ version: 2, purpose, binding }));
 }
 
 function serializePayload<TPayload>(
@@ -106,14 +116,14 @@ function parsePayload<TPayload>(
 	return payloadSchema.parse(JSON.parse(textDecoder.decode(plaintextBytes)) as unknown);
 }
 
-export interface OAuthEnvelopeCodec<TPayload> {
+export interface OAuthEnvelopeCodec<TPayload, TBinding = OAuthEnvelopeBinding> {
 	decrypt(props: {
-		readonly binding: OAuthEnvelopeBinding;
+		readonly binding: TBinding;
 		readonly envelope: EncryptedOAuthEnvelope;
 		readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 	}): TPayload;
 	encrypt(props: {
-		readonly binding: OAuthEnvelopeBinding;
+		readonly binding: TBinding;
 		readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 		readonly keyEncryptionKeyVersion: number;
 		readonly payload: TPayload;
@@ -124,10 +134,36 @@ export function createOAuthEnvelopeCodec<TPayload>(props: {
 	readonly payloadSchema: z.ZodType<TPayload>;
 	readonly randomBytes?: (byteLength: number) => Uint8Array;
 }): OAuthEnvelopeCodec<TPayload> {
+	return createBoundEnvelopeCodec({
+		...props,
+		bindingSchema: oauthEnvelopeBindingSchema,
+		purpose: 'agent-vm/oauth/credential',
+	});
+}
+
+export function createOAuthPolicyEnvelopeCodec<TPayload>(props: {
+	readonly payloadSchema: z.ZodType<TPayload>;
+	readonly randomBytes?: (byteLength: number) => Uint8Array;
+}): OAuthEnvelopeCodec<TPayload, OAuthPolicyEnvelopeBinding> {
+	return createBoundEnvelopeCodec({
+		...props,
+		bindingSchema: oauthPolicyEnvelopeBindingSchema,
+		purpose: 'agent-vm/oauth/policy',
+	});
+}
+
+function createBoundEnvelopeCodec<TPayload, TBinding>(props: {
+	readonly bindingSchema: z.ZodType<TBinding>;
+	readonly payloadSchema: z.ZodType<TPayload>;
+	readonly purpose: 'agent-vm/oauth/credential' | 'agent-vm/oauth/policy';
+	readonly randomBytes?: (byteLength: number) => Uint8Array;
+}): OAuthEnvelopeCodec<TPayload, TBinding> {
+	const payloadPurpose = `${props.purpose}/payload/v2`;
+	const dekWrapPurpose = `${props.purpose}/dek-wrap/v2`;
 	const randomBytesSource = props.randomBytes ?? randomBytes;
 	return {
 		decrypt: ({ binding: unparsedBinding, envelope: unparsedEnvelope, keyEncryptionKey }) => {
-			const binding = oauthEnvelopeBindingSchema.parse(unparsedBinding);
+			const binding = props.bindingSchema.parse(unparsedBinding);
 			const envelope = encryptedOAuthEnvelopeSchema.parse(unparsedEnvelope);
 			const parsedKeyEncryptionKey = oauthKeyEncryptionKeySchema.parse(keyEncryptionKey);
 			const payloadNonce = decodeBase64Url(envelope.payloadNonce, xchachaNonceByteLength);
@@ -165,7 +201,7 @@ export function createOAuthEnvelopeCodec<TPayload>(props: {
 			}
 		},
 		encrypt: ({ binding: unparsedBinding, keyEncryptionKey, keyEncryptionKeyVersion, payload }) => {
-			const binding = oauthEnvelopeBindingSchema.parse(unparsedBinding);
+			const binding = props.bindingSchema.parse(unparsedBinding);
 			const parsedKeyEncryptionKey = oauthKeyEncryptionKeySchema.parse(keyEncryptionKey);
 			if (!Number.isSafeInteger(keyEncryptionKeyVersion) || keyEncryptionKeyVersion <= 0) {
 				throw new Error('OAuth key-encryption-key versions must be positive safe integers.');
@@ -191,7 +227,7 @@ export function createOAuthEnvelopeCodec<TPayload>(props: {
 					dekCiphertext: encodeBase64Url(encryptedDek),
 					dekWrapAlgorithm: 'xchacha20-poly1305',
 					dekWrapNonce: encodeBase64Url(dekWrapNonce),
-					envelopeVersion: 1,
+					envelopeVersion: 2,
 					keyEncryptionKeyVersion,
 					payloadAlgorithm: 'xchacha20-poly1305',
 					payloadCiphertext: encodeBase64Url(payloadCiphertext),

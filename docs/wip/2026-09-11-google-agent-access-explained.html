@@ -1,0 +1,1090 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Google access explained</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				font-family:
+					system-ui,
+					-apple-system,
+					sans-serif;
+				background: #101318;
+				color: #e6eaf0;
+			}
+			body {
+				margin: 0;
+			}
+			main {
+				max-width: 1040px;
+				margin: auto;
+				padding: 36px 28px 96px;
+				font-size: 17px;
+				line-height: 1.65;
+			}
+			h1 {
+				font-size: 34px;
+				line-height: 1.2;
+				max-width: 900px;
+			}
+			h2 {
+				font-size: 25px;
+				margin-top: 64px;
+				border-top: 1px solid #39404b;
+				padding-top: 28px;
+				scroll-margin-top: 20px;
+			}
+			h3 {
+				font-size: 20px;
+				margin-top: 32px;
+			}
+			p {
+				max-width: 960px;
+			}
+			a {
+				color: #9ad3ff;
+				text-underline-offset: 3px;
+			}
+			strong {
+				color: #fff;
+			}
+			code {
+				font-family: ui-monospace, monospace;
+				font-size: 0.9em;
+				background: #222a35;
+				border-radius: 3px;
+				padding: 2px 4px;
+			}
+			pre {
+				font:
+					14px/1.65 ui-monospace,
+					SFMono-Regular,
+					monospace;
+				overflow-x: auto;
+				background: #171d26;
+				border: 1px solid #39404b;
+				padding: 24px;
+				border-radius: 8px;
+				color: #e0efff;
+			}
+			.table {
+				overflow-x: auto;
+			}
+			table {
+				border-collapse: collapse;
+				width: 100%;
+				font-size: 15px;
+				line-height: 1.55;
+			}
+			th,
+			td {
+				padding: 13px 15px;
+				border: 1px solid #39404b;
+				text-align: left;
+				vertical-align: top;
+			}
+			th {
+				background: #243040;
+				color: #fff;
+			}
+			tr:nth-child(even) {
+				background: #171d26;
+			}
+			li {
+				margin-bottom: 10px;
+			}
+			.view-note {
+				color: #aab6c8;
+				font-size: 14px;
+				margin-bottom: 28px;
+			}
+			@media (max-width: 650px) {
+				main {
+					padding: 20px 16px 64px;
+					font-size: 16px;
+				}
+				h1 {
+					font-size: 28px;
+				}
+				pre {
+					font-size: 12px;
+					padding: 14px;
+				}
+				th,
+				td {
+					min-width: 130px;
+					padding: 10px;
+				}
+			}
+			@media print {
+				:root {
+					color-scheme: light;
+					background: white;
+					color: #111;
+				}
+				a,
+				strong {
+					color: #111;
+				}
+				main {
+					max-width: none;
+					padding: 0;
+				}
+				pre,
+				th,
+				tr:nth-child(even),
+				code {
+					background: #f4f6f8;
+					color: #111;
+				}
+				h2 {
+					break-before: auto;
+				}
+				table,
+				pre {
+					break-inside: avoid;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<div class="view-note">
+				Readable view of
+				<a href="2026-09-11-google-agent-access-explained.md">the Markdown document</a>. This
+				explains boundaries; it does not change permissions.
+			</div>
+			<h1 id="google-access-who-gets-access-who-decides-and-when-we-ask">
+				Google access: who gets access, who decides, and when we ask
+			</h1>
+			<p>
+				<strong>Purpose:</strong> a shared explanation for the household system, not an
+				implementation plan or a claim that the whole flow is proven.
+			</p>
+			<p>
+				<strong>The key distinction:</strong> Google authorizes a Google account's access to our
+				Google application. Our system decides which agent may use a connected account, for which
+				operations, and whether to ask before a particular operation. Google does not know that Sun,
+				Mak, or Ember exists.
+			</p>
+			<p>
+				<strong>Decision for now:</strong> do not use an additional operator-configured per-agent
+				OAuth maximum. The updated configuration examples use <code>all-supported</code>, making the
+				required compatibility ceiling non-narrowing. The schema field still exists; deleting it is
+				deferred. Google consent, account policy and supported-command checks remain mandatory.
+			</p>
+			<p>
+				Start with <a href="#1-the-two-sides-of-the-boundary">the two sides</a>,
+				<a href="#3-the-dimensionsnot-one-giant-permission-matrix">the dimensions</a>, and
+				<a href="#7-which-system-owns-which-responsibility">who owns what</a>. The later examples
+				explain the tricky cases.
+			</p>
+			<h2 id="1-the-two-sides-of-the-boundary">1. The two sides of the boundary</h2>
+			<pre>
+GOOGLE'S SIDE                         OUR SYSTEM'S SIDE
+
+Google account                       Human signed into our website
+       |                                    |
+       | consents to scopes                 | connects an account for an agent
+       v                                    v
+Google application                   Agent + Google account + integration
+(Cloud project / OAuth client)              |
+       |                                    | saved Read/Write policy
+       | issues scoped credentials          v
+       +----------------------------&gt; Credential broker + Tool Portal
+                                            |
+                                            | authorized operation only
+                                            v
+                                      Credentialed Gog execution
+                                            |
+                                            +----&gt; Google API
+
+Google recognizes the account, application/client, token and scopes.
+Our system recognizes the human owner, agent, selected account and operation.
+An agent name in our database does not become a Google consent boundary.</pre
+			>
+			<p>
+				This picture leaves out networking and storage, which are explained separately below. The
+				broker/controller is trusted infrastructure. In the configured HTTP-mediated Gog path, the
+				execution VM gets an opaque placeholder; the host supplies the real access token only on
+				permitted API requests. The refresh token stays in the broker. This is our enforcement
+				boundary, not a Google-recognized agent identity.
+			</p>
+			<h2 id="2-the-nouns-these-are-different-things">2. The nouns: these are different things</h2>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>What it actually means</th>
+							<th>What it does not mean</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Human website identity</td>
+							<td>
+								The person Clerk authenticated. Our owner identity uses verified issuer plus Clerk
+								user ID.
+							</td>
+							<td>A Google resource grant; or the identity of an agent.</td>
+						</tr>
+						<tr>
+							<td>Google account</td>
+							<td>
+								The resource account whose Gmail, Calendar, files, etc. may be accessed. Google
+								identifies it by its subject identifier.
+							</td>
+							<td>An OAuth app; or an agent. An editable nickname does not change this account.</td>
+						</tr>
+						<tr>
+							<td>Google Cloud project</td>
+							<td>
+								Google's container for the logical application, API configuration and related client
+								registrations.
+							</td>
+							<td>A household member or agent.</td>
+						</tr>
+						<tr>
+							<td>OAuth client</td>
+							<td>
+								A registered component of that Google application, with a client ID, client secret
+								and callback configuration.
+							</td>
+							<td>
+								Proof of independent consent isolation from other clients in the same project.
+							</td>
+						</tr>
+						<tr>
+							<td>Scope</td>
+							<td>A Google-defined permission such as Gmail read-only.</td>
+							<td>Our Ask/Allow setting; or an exact Gog command.</td>
+						</tr>
+						<tr>
+							<td>Google consent/grant</td>
+							<td>
+								The human's authorization for the Google application to access that Google account
+								with granted scopes.
+							</td>
+							<td>Permission for a named agent, or permission to all Google accounts.</td>
+						</tr>
+						<tr>
+							<td>Access token</td>
+							<td>
+								A credential used on API requests, carrying a scope set and subject to expiration
+								and provider rules.
+							</td>
+							<td>A per-call user approval.</td>
+						</tr>
+						<tr>
+							<td>Refresh token</td>
+							<td>A credential the broker can use to obtain later access tokens.</td>
+							<td>
+								An independently revocable per-agent grant merely because it is stored in a
+								different row.
+							</td>
+						</tr>
+						<tr>
+							<td>Integration</td>
+							<td>
+								Our configured grouping of services and its Google client binding, such as
+								<code>gmail-app</code>. The code calls this an application ID. It can be shared by
+								agents.
+							</td>
+							<td>A per-agent connection or policy row.</td>
+						</tr>
+						<tr>
+							<td>Agent connection</td>
+							<td>
+								Our record for <strong>agent + Google account + integration</strong>, with its
+								credential material and owner-confirmed access. The code calls this an authorization
+								record.
+							</td>
+							<td>A Google-native agent identity.</td>
+						</tr>
+						<tr>
+							<td>Saved account policy</td>
+							<td>Our Read and Write rules for that connection's services: Deny, Ask or Allow.</td>
+							<td>Another identity provider or a second consent at Google.</td>
+						</tr>
+						<tr>
+							<td>One-call approval</td>
+							<td>Permission for the specific pending operation when its policy is Ask.</td>
+							<td>A policy edit, a new connection, or additional Google scopes.</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				Google explains the project/client distinction and shared application trust in its
+				<a
+					href="https://developers.google.com/identity/protocols/oauth2/cross-client-identity?hl=en"
+					>cross-client identity documentation</a
+				>. Our account/connection distinction is visible in
+				<a href="../../packages/oauth-broker/src/catalog-schema.ts">the catalog schema</a>.
+			</p>
+			<h3 id="what-does-our-integration-name-mean">What does our integration name mean?</h3>
+			<p>
+				The repository's shipped example uses these logical bindings; the service family is
+				configuration, not a meaning enforced by the English name:
+			</p>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Our integration ID</th>
+							<th>Services grouped under it</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><code>gmail-app</code></td>
+							<td>Gmail, Calendar, Contacts</td>
+						</tr>
+						<tr>
+							<td><code>workspace-app</code></td>
+							<td>Drive, Docs, Sheets, Slides, Forms</td>
+						</tr>
+						<tr>
+							<td><code>youtube-app</code></td>
+							<td>YouTube</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				The shipped example places all three integrations in one Google project,
+				<code>example-project</code>. Different service groups therefore do
+				<strong>not</strong> imply different Google consent/revocation boundaries. Actual
+				deployments can choose different project mappings.
+			</p>
+			<p>
+				These IDs select configured Google client/project bindings and a service catalog. Their
+				names do not themselves determine which scopes are granted, whether Google projects are
+				separate, or which agents get access. Calling a group “Gmail” does not make Calendar a
+				different OAuth app. See
+				<a href="../../packages/oauth-broker/src/google/google-permission-catalog.ts"
+					>the catalog</a
+				>
+				and
+				<a href="../../packages/config-contracts/src/oauth-config.ts">client configuration schema</a
+				>.
+			</p>
+			<h2 id="3-the-dimensionsnot-one-giant-permission-matrix">
+				3. The dimensions—not one giant permission matrix
+			</h2>
+			<p>
+				Different decisions have different keys. Putting all of them on the same two-axis grid is
+				what made the earlier explanation misleading.
+			</p>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Decision</th>
+							<th>Dimensions it depends on</th>
+							<th>Authority</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Reach the private website</td>
+							<td>Device/network identity + destination</td>
+							<td>Tailscale/network configuration</td>
+						</tr>
+						<tr>
+							<td>Sign into the website</td>
+							<td>Clerk issuer + human user + current session</td>
+							<td>Clerk, verified by our server</td>
+						</tr>
+						<tr>
+							<td>Send requests to an agent</td>
+							<td>Messaging user/channel or API credential + target agent</td>
+							<td>Gateway/channel admission, separate from website login</td>
+						</tr>
+						<tr>
+							<td>Manage an account for an agent</td>
+							<td>Human owner + target agent/account; configured editor rights</td>
+							<td>Our controller</td>
+						</tr>
+						<tr>
+							<td>Grant Google API access</td>
+							<td>Google account + Google application/client + requested/granted scopes</td>
+							<td>Google and the consenting Google account user</td>
+						</tr>
+						<tr>
+							<td>Make a connected account usable by an agent</td>
+							<td>Household/zone + agent + account + integration</td>
+							<td>Our broker's connection record</td>
+						</tr>
+						<tr>
+							<td>Decide whether a call needs approval</td>
+							<td>That connection + service + Read/Write effect</td>
+							<td>Tool Portal's effective account policy</td>
+						</tr>
+						<tr>
+							<td>Approve one call</td>
+							<td>Exact pending operation, arguments, account and current authorization context</td>
+							<td>Existing approval system and eligible approver</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p><strong>The everyday settings matrix is only:</strong></p>
+			<pre>
+Agent  ×  Google account  ×  Service  ×  Read or Write
+                                           |
+                                           +-- Deny / Ask / Allow</pre
+			>
+			<p>
+				Internally the zone (the configured deployment grouping for these agents/accounts) and
+				integration also bind the record. The human owner controls editing; the owner is not another
+				Read/Write setting. The provider token has its own scopes; those are not another Ask/Allow
+				axis.
+				<a href="#10-current-implementation-versus-the-agreed-simplification">Section 10</a>
+				explains the non-narrowing compatibility setting retained by the schema.
+			</p>
+			<h3 id="a-concrete-settings-page">A concrete settings page</h3>
+			<p>For <strong>Ember → your personal Google account</strong>:</p>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Service</th>
+							<th>Read</th>
+							<th>Write</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Gmail</td>
+							<td>Allow</td>
+							<td>Ask</td>
+						</tr>
+						<tr>
+							<td>Calendar</td>
+							<td>Ask</td>
+							<td>Deny</td>
+						</tr>
+						<tr>
+							<td>Contacts</td>
+							<td>Deny</td>
+							<td>Deny</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				This is an illustrative choice, not a claim about today's beta defaults or available
+				commands. For each row, Read and Write are independent. There are nine possible pairs
+				because each can be Deny, Ask or Allow—not just four quadrants.
+			</p>
+			<p>
+				“Write allowed” does not automatically set local Read to Allow. If a supported command needs
+				both effects, both cells must permit it. Any Deny blocks the command; otherwise any Ask
+				requires approval. All-Allow permits execution without a per-call prompt. See
+				<a href="../../packages/tool-portal/src/google-account-policy.ts">the policy evaluator</a>.
+			</p>
+			<h2 id="4-recommendations-saved-choices-and-actual-google-scopes">
+				4. Recommendations, saved choices, and actual Google scopes
+			</h2>
+			<p>
+				<strong>Recommended means a starting point, never an unchangeable maximum.</strong> There
+				are two suggestions a recommendation collection can supply:
+			</p>
+			<ol>
+				<li>Suggested <strong>Google access selections</strong> for a consent request.</li>
+				<li>Default <strong>local Read/Write policy</strong> for future operations.</li>
+			</ol>
+			<p>
+				Those suggestions are related, but not interchangeable. Choosing Ask is not a Google scope.
+				Granting a write-capable Google scope is not a standing instruction to perform writes.
+			</p>
+			<pre>
+LOCAL POLICY, ONE CELL
+
+Explicit saved choice in SQLite? ---- yes ---&gt; use that Deny / Ask / Allow
+                  |
+                  no: “Use default”
+                  v
+        use configured default
+        (missing default fails closed to Deny)
+
+GOOGLE ACCESS, SEPARATELY
+
+Suggested scopes -&gt; owner's choice -&gt; Google consent -&gt; actual returned scopes</pre
+			>
+			<p>
+				An explicit saved choice wins over a later default change. A cell left on “Use default”
+				follows the newly activated configuration. The configuration is not live-reloaded merely
+				because someone edits a file. Current activation uses the deployment workflow.
+			</p>
+			<p>
+				The built-in read-only collection selects read groups for covered services in each
+				family—Gmail in communications, selected document services, and YouTube. It
+				<strong>sets the corresponding local Read policy to Allow</strong>, so those reads need no
+				per-call prompt. It defaults every Write cell to <strong>Deny</strong>, not Ask; unselected
+				services also default to Deny.
+			</p>
+			<p>
+				If the <strong>loaded, compiled defaults</strong> do not match SQLite's active defaults
+				snapshot—for example, during incomplete activation—the policy service fails closed as
+				unavailable. That is not a fallback to old defaults. Editing a file alone does not change
+				the running service.
+			</p>
+			<p>
+				Other examples in this document are choices the owner could make.
+				<a href="../../packages/oauth-broker/src/google/google-policy-catalog.ts"
+					>Default collection</a
+				>
+				·
+				<a href="../../packages/oauth-broker-contracts/src/google-account-policy-contracts.ts"
+					>Override format</a
+				>
+			</p>
+			<p>
+				If policy allows a write but the account connection only has read scopes, the result is
+				<strong>additional Google consent required</strong>, not execution and not a per-call
+				approval that magically supplies scopes. Conversely, a token capable of writing cannot
+				override local Write = Deny.
+			</p>
+			<p>
+				Google console setup declares the app's scope usage; it does not grant all those scopes to
+				every person. Each OAuth request sends scopes, and our broker checks what Google actually
+				returns. Google may return less than requested. A mismatch must not be silently presented as
+				the requested access. Current code requires the returned scope set to match the confirmed
+				selection.
+				<a href="https://developers.google.com/identity/protocols/oauth2/web-server?hl=en"
+					>Google authorization flow</a
+				>
+				·
+				<a href="../../packages/oauth-broker/src/google/google-authorization-commit.ts"
+					>Current confirmation check</a
+				>
+			</p>
+			<p>
+				<strong>Gmail caution:</strong> a Google permission capable of drafting can also be capable
+				of sending. “Draft only” must not be presented as a narrower Google token if Google provides
+				no such scope. Local command support and policy may restrict use, but cannot rewrite a
+				token's authority.
+				<a href="../../packages/oauth-broker/src/google/google-permission-catalog.ts"
+					>Current Gmail scope catalog</a
+				>
+			</p>
+			<h2 id="5-sun-and-ember-using-the-same-google-account">
+				5. Sun and Ember using the same Google account
+			</h2>
+			<pre>
+                YOUR ONE GOOGLE ACCOUNT
+                           |
+                  our Google application
+                           |
+                Google-scoped credentials
+                           |
+                  OUR TRUSTED BROKER
+                    /             \
+        Sun + this account       Ember + this account
+        separate local binding   separate local binding
+        separate local policy    separate local policy</pre
+			>
+			<p>
+				For the same configured integration, Sun and Ember use
+				<strong>the same Google client ID</strong>: configuration selects the client by integration,
+				not by agent. Google sees the same application asking the same account again—not a Google
+				app for Sun and another for Ember.
+				<a href="../../packages/oauth-broker/src/google/google-authorization-commit.ts"
+					>Client selection in the broker</a
+				>
+			</p>
+			<p>
+				The diagram does not assert that both agents share one token or that Google creates two
+				isolated grants. Current storage holds credential material per agent connection. The
+				important point is which system owns the separation.
+			</p>
+			<p>
+				Suppose you connect this account to Sun and Ember, then permit Sun to write while Ember
+				remains read-only:
+			</p>
+			<ul>
+				<li>Sun's local policy change does not edit Ember's policy row.</li>
+				<li>
+					If Sun needs additional Google scopes, that is a Google authorization request by our
+					application for your account—not a request by a Google-recognized “Sun” identity.
+				</li>
+				<li>
+					Ember's local Write = Deny must still be enforced, regardless of the breadth of a
+					credential.
+				</li>
+				<li>
+					We must not infer that Ember's Google credential remains independently narrow merely
+					because the database has separate records.
+				</li>
+			</ul>
+			<p>
+				<strong>What Google documents:</strong> incremental authorization can produce a combined
+				authorization containing scopes previously granted to the API project, even through
+				different client IDs. A refresh token for that combined authorization can obtain tokens for
+				that combined scope set. Revoking a token representing that combined authorization revokes
+				its combined scopes together.
+				<a
+					href="https://developers.google.com/identity/protocols/oauth2/web-server?hl=en#incrementalAuth"
+					>Google's incremental authorization rules</a
+				>
+			</p>
+			<p>
+				<strong>What that does not prove:</strong> it does not say every older access token
+				automatically broadens when another consent occurs. It also does not establish independent
+				revocation from separate refresh-token strings. Current broker requests omit
+				<code>include_granted_scopes</code>; the raw endpoint documentation does not establish an
+				omitted-value default. We have not completed a same-account multi-agent
+				grant/refresh/revocation qualification.
+				<a href="../../packages/oauth-broker/src/google/google-oauth-adapter.ts"
+					>Actual request builder</a
+				>
+			</p>
+			<p>
+				Therefore the promised agent separation is
+				<strong>our broker and Tool Portal enforcement</strong>, with checked token scopes as an
+				additional constraint—not an unproved Google per-agent grant boundary. A compromised trusted
+				controller or someone with full host-and-key access is outside what these local policy
+				checks can contain. Stronger provider isolation would need a separately justified design; it
+				is not created just by naming clients after agents.
+			</p>
+			<h3 id="ember-shared-by-two-people">Ember shared by two people</h3>
+			<p>
+				Ember can have a connection to your Google account and another to your wife's account. They
+				are different account rows, different agent–account bindings, and different policies. You
+				may permit reads on yours; she may require approval on hers. Her consent does not connect
+				your account, and your policy edit does not change hers.
+			</p>
+			<p>
+				<strong>Sharing an agent is not the same as per-person data isolation.</strong> This matrix
+				controls what Ember may do; it does not itself mean “only the account owner may ask Ember to
+				use this account.” Who may send requests to Ember is a separate Gateway/channel-admission
+				concern. Do not infer per-human confidentiality inside a shared agent from this
+				account-policy matrix alone. The current policy lookup is keyed by the trusted agent and
+				selected account, not by the human who wrote the chat message.
+				<a href="../../packages/agent-vm/src/controller/oauth/google-permission-policy-service.ts"
+					>Policy lookup inputs</a
+				>
+			</p>
+			<p>
+				Current policy editing requires three things: <strong>this human owns the account</strong>,
+				<strong>owner configuration admits that human to the target agent</strong>, and
+				<strong>editor configuration permits that human to edit that agent</strong>. These are
+				who-may-manage checks, not OAuth scope maxima. Being an editor for Ember alone does not let
+				you edit your wife's account policy. This is distinct from who may approve one invocation;
+				eligible approvers are configured through the existing approval-access system.
+				<a href="../../packages/agent-vm/src/controller/oauth/google-permission-policy-service.ts"
+					>Owner/editor checks</a
+				>
+			</p>
+			<p>
+				<strong>Accepted household behavior:</strong> anyone admitted to use Ember may ask it to use
+				Ember's connected accounts, subject to each account's consent and Read/Write policy. Account
+				ownership restricts managing access, not which admitted chat participant can request an
+				operation.
+			</p>
+			<h2 id="6-one-read-request-from-agent-to-google">
+				6. One read request, from agent to Google
+			</h2>
+			<pre>
+Ember requests a supported command for a selected account
+       |
+       v
+Our system establishes the caller's agent identity
+and checks that agent's connection to that account
+       |
+       v
+Check command shape, owner-confirmed access and usable Google scopes
+       |
+       v
+Resolve required Read/Write cells: saved choice, otherwise default
+       |
+       +-- Deny ----------&gt; stop
+       +-- Ask -----------&gt; eligible person approves this exact call
+       +-- Allow ---------&gt; no per-call prompt
+                                |
+                                v
+                 Recheck current authority, then broker-mediated Gog call
+                                |
+                                v
+                     Google enforces the credential's scopes</pre
+			>
+			<p>
+				A local Deny blocks the call; missing Google scopes do not turn that Deny into a consent
+				prompt. If policy is Ask but scopes are missing, consent is required
+				<strong>before</strong> a one-call approval can allow execution.
+			</p>
+			<p>
+				This is a responsibility diagram, not a claim that every implementation check runs in this
+				exact order. Missing consent, unsupported commands, expired credentials and denied policy
+				are distinct outcomes. An agent cannot gain another agent's access by supplying its name or
+				a guessed account ID: the controller checks the trusted caller and matching connection.
+				<a href="../../packages/agent-vm/src/controller/oauth/google-permission-policy-service.ts"
+					>Invocation checks</a
+				>
+				·
+				<a
+					href="../../packages/agent-vm/src/controller/control-session/gateway-control-controller-execution-authorization.ts"
+					>Final dispatch authority</a
+				>
+			</p>
+			<h2 id="7-which-system-owns-which-responsibility">
+				7. Which system owns which responsibility?
+			</h2>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>System</th>
+							<th>Owns</th>
+							<th>Does not own</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Tailscale</td>
+							<td>Network admission to the private website</td>
+							<td>Google scopes or account Read/Write policy</td>
+						</tr>
+						<tr>
+							<td>Clerk</td>
+							<td>Human login/session identity; Google sign-in for our website</td>
+							<td>Our agent resource-token vault or agent policy</td>
+						</tr>
+						<tr>
+							<td>Google</td>
+							<td>
+								Resource-account consent, scope semantics, token issuance and provider revocation
+							</td>
+							<td>Our agent names, account policies or one-call approvals</td>
+						</tr>
+						<tr>
+							<td>Controller/broker</td>
+							<td>
+								Verified account connection, credential custody/refresh, agent–account binding and
+								enforcement
+							</td>
+							<td>The meaning of Google's scopes</td>
+						</tr>
+						<tr>
+							<td>Tool Portal</td>
+							<td>
+								Supported command exposure, effective call policy and routing into
+								approval/execution
+							</td>
+							<td>Manufacturing Google consent</td>
+						</tr>
+						<tr>
+							<td>Website</td>
+							<td>Owner-facing connection, account confirmation and policy-editing interface</td>
+							<td>Trusting browser-supplied owner identity or silently granting access</td>
+						</tr>
+						<tr>
+							<td>Existing approval system</td>
+							<td>Approval of an exact pending operation by an eligible approver</td>
+							<td>Persistent policy edits or new OAuth scopes</td>
+						</tr>
+						<tr>
+							<td>Agent</td>
+							<td>
+								Requests an operation for an available account; may request owner authorization
+							</td>
+							<td>Editing its own access or handling the human's Clerk session</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				“Clerk is login only” means <strong>we do not use Clerk's social tokens for Gog</strong>.
+				Clerk may itself retain the credentials needed for its Google login connection. Those are
+				distinct from resource credentials managed by our broker. Signing into Clerk with Google is
+				not the same as connecting Gmail to Sun.
+				<a href="../specs/2026-09-04-agent-account-and-tool-permissions/browser-identity.md"
+					>Browser identity boundary</a
+				>
+			</p>
+			<h2 id="8-what-is-configured-and-what-is-stored-in-sqlite">
+				8. What is configured, and what is stored in SQLite?
+			</h2>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Item</th>
+							<th>Authored/stored where</th>
+							<th>Who changes it</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>
+								Google clients, integration bindings, network and human owner/editor admission
+							</td>
+							<td>Deployment configuration; client secrets in 1Password</td>
+							<td>Operator</td>
+						</tr>
+						<tr>
+							<td>Available tool commands and recommendation/default collections</td>
+							<td>Code catalog plus Tool Portal configuration</td>
+							<td>Operator/code maintainer</td>
+						</tr>
+						<tr>
+							<td>Google account identity and human ownership</td>
+							<td>Controller SQLite account record</td>
+							<td>Verified account connection workflow; not an editable alias</td>
+						</tr>
+						<tr>
+							<td>Agent connection and resource credentials</td>
+							<td>Controller SQLite; credential payload envelope-encrypted</td>
+							<td>Broker after owner confirmation</td>
+						</tr>
+						<tr>
+							<td>Per-service Read/Write overrides</td>
+							<td>SQLite; override snapshot encrypted and bound to its connection</td>
+							<td>Account owner who is also an admitted agent editor, through website</td>
+						</tr>
+						<tr>
+							<td>Active defaults snapshot and change history</td>
+							<td>SQLite, alongside authored defaults in config</td>
+							<td>
+								Controller records activation/history; not a second user-editable default source
+							</td>
+						</tr>
+						<tr>
+							<td>One-call approval state</td>
+							<td>Existing controller approval storage</td>
+							<td>Existing approval flow</td>
+						</tr>
+						<tr>
+							<td>Envelope wrapping key</td>
+							<td>1Password, loaded by trusted controller</td>
+							<td>Operator</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				“Envelope-encrypted” means the payload is encrypted with a data key, and that data key is
+				itself protected by the wrapping key held in 1Password.
+			</p>
+			<p>
+				SQLite encryption protects stored material; it does not replace identity, ownership,
+				command, or policy checks. <strong>It does not hide all metadata:</strong> account/agent
+				references, account label (currently the verified Google email), editable account nickname,
+				client ID, requested/granted scopes, selected access groups and lifecycle fields also exist
+				as plaintext columns. Those can be private even though they are not tokens. Credential
+				payloads and policy override snapshots are envelope-encrypted, with authenticated bindings
+				checked before use. Some authority metadata, including the nickname, also has an
+				authenticated copy inside the encrypted payload; that does not hide its plaintext column.
+				<a href="../../packages/oauth-broker/src/catalog-schema.ts">Storage tables</a> ·
+				<a href="../../packages/agent-vm/src/controller/oauth/google-account-policy-editor.ts"
+					>Policy writes</a
+				>
+			</p>
+			<h2 id="9-three-different-stop-access-actions">9. Three different “stop access” actions</h2>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Action</th>
+							<th>Effect</th>
+							<th>Not a promise of</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Set a cell to Deny</td>
+							<td>Stops relevant operations under our local policy</td>
+							<td>Revoking Google's app consent</td>
+						</tr>
+						<tr>
+							<td>Disconnect this agent's account connection</td>
+							<td>
+								Blocks further local use of that connection and stops its runtime credential use
+							</td>
+							<td>Revoking every provider grant or other agent connection</td>
+						</tr>
+						<tr>
+							<td>Revoke the app's access at Google</td>
+							<td>
+								Changes provider-side authorization; can affect other uses of the same
+								application/account
+							</td>
+							<td>Removing just one agent's permission</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				The current local disconnect implementation does not call Google's revocation endpoint. It
+				removes the credential payload from the active connection row while blocking further local
+				use. The broker cannot later revoke using that row's removed refresh token; the account
+				owner can still revoke the application's access directly at Google. Removing a row's payload
+				is not a promise of secure erasure from backups or all prior copies.
+			</p>
+			<p>
+				Google's current documentation is stronger than “revocation might be shared”: its revocation
+				<strong>Key Point</strong> says it removes the project's previously granted scopes and
+				invalidates issued access/refresh tokens for all clients registered under that project. This
+				concerns that account's application authorization, not all household members' accounts. Do
+				not offer Google revocation as “disconnect only Ember.”
+				<a href="../../packages/oauth-broker/src/google/google-authorization-disconnect.ts"
+					>Local disconnect</a
+				>
+				·
+				<a
+					href="https://developers.google.com/identity/protocols/oauth2/web-server?hl=en#tokenrevoke"
+					>Google revocation</a
+				>
+			</p>
+			<p>
+				<strong>Connection expired or needs reauthorization?</strong> Reconnect/reauthorize it
+				through the website; a local Allow setting cannot repair an expired or revoked Google
+				credential. If it reports unavailable or degraded rather than asking for consent, the
+				operator needs to inspect the reported state instead of treating a policy edit as a repair.
+			</p>
+			<p>
+				<strong>Wrong account selected?</strong> For a new resource connection, Google returns the
+				selected account; our confirmation screen shows it before attaching it to the agent. Cancel
+				and start again if it is wrong. Cancel does not imply Google has undone consent already
+				given. Reauthorization of an existing connection must not silently swap to a different
+				Google subject. The Google account used for website sign-in and the Google resource account
+				you connect <strong>may be different</strong>. The invitation's same-email sign-in rule is
+				about website login, not a rule that every connected resource account must have that email.
+				Website login remains a different identity flow with invitation/owner checks.
+				<a href="../../packages/oauth-broker/src/google/google-authorization-commit.ts"
+					>Account confirmation checks</a
+				>
+			</p>
+			<h2 id="10-current-implementation-versus-the-agreed-simplification">
+				10. Current implementation versus the agreed simplification
+			</h2>
+			<div class="table">
+				<table>
+					<thead>
+						<tr>
+							<th>Item</th>
+							<th>Current code</th>
+							<th>Intended model for now</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Additional per-agent OAuth maximum</td>
+							<td>
+								Schema field remains; updated examples use non-narrowing <code>all-supported</code>
+							</td>
+							<td><strong>Do not use an extra restriction. Field deletion is deferred.</strong></td>
+						</tr>
+						<tr>
+							<td>Recommendation</td>
+							<td>Suggested consent selections and local defaults</td>
+							<td>Keep editable; never interpret as a maximum</td>
+						</tr>
+						<tr>
+							<td>Saved owner policy</td>
+							<td>Connection-specific overrides in SQLite</td>
+							<td>Keep Deny / Ask / Allow, independently for Read and Write</td>
+						</tr>
+						<tr>
+							<td>Supported/configured command set</td>
+							<td>Determines available operations</td>
+							<td>Keep; label unavailable functionality honestly</td>
+						</tr>
+						<tr>
+							<td>Human ownership/editor rights</td>
+							<td>Required to manage a connection</td>
+							<td>Keep; not an extra OAuth scope maximum</td>
+						</tr>
+						<tr>
+							<td>Google consent and actual token scopes</td>
+							<td>Required for resource access</td>
+							<td>Keep; not replaceable by local Allow or a one-call approval</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>
+				Today the effective offered access is computed from
+				<strong
+					>the configured ceiling and the operations reachable through configured commands</strong
+				>. The compiler rejects inconsistent commands, recommendations and defaults. The current
+				schema requires the ceiling field: deleting it needs code changes. The updated examples use
+				the existing <code>all-supported</code> preset to make it non-narrowing while retaining
+				command restrictions. Older deployments must activate the updated configuration; this is not
+				a runtime bypass of their existing settings.
+				<a href="../../packages/config-contracts/src/oauth-tool-portal-config.ts">Compiler</a> ·
+				<a href="../../packages/oauth-broker/src/google/google-policy-catalog.ts"
+					>Catalog presets</a
+				>
+			</p>
+			<p>
+				<strong>Do not confuse not using the extra maximum with exposing every Gog command.</strong>
+				An unimplemented command is unavailable functionality. A configured supported command may
+				still be forbidden by the owner's Deny. Neither is a recommendation.
+			</p>
+			<p>
+				The
+				<a href="../reference/configuration/examples/oauth-v2.config.jsonc"
+					>updated OAuth example</a
+				>
+				uses <code>all-supported</code>; its
+				<a href="../reference/configuration/examples/tool-portal-google-policy.config.jsonc"
+					>paired Tool Portal example</a
+				>
+				exposes all 15 catalog-supported Gmail, Calendar and Contacts commands. All six Read/Write
+				access groups are therefore available as choices. The examples preserve their existing
+				defaults: Calendar, Contacts and Gmail writes remain Deny. Making a choice available does
+				not grant Google access or authorize an operation. The
+				<a href="../../packages/config-contracts/src/oauth-config-examples.integration.test.ts"
+					>example integration test</a
+				>
+				verifies both availability and unchanged defaults.
+			</p>
+			<h2 id="11-check-our-understanding-with-these-questions">
+				11. Check our understanding with these questions
+			</h2>
+			<ol>
+				<li>
+					<strong>If Sun gets write access, did Google grant it to “Sun”?</strong> No. Google
+					granted scopes to the application for that account; our system binds their permitted use
+					to Sun.
+				</li>
+				<li>
+					<strong>Can Ember use an account connected only to Sun?</strong> Not through the broker:
+					Ember needs its own local agent–account binding.
+				</li>
+				<li>
+					<strong>Can Write = Allow overcome a read-only Google connection?</strong> No; additional
+					resource consent is needed.
+				</li>
+				<li>
+					<strong>Does approving one write turn Write = Ask into Allow?</strong> No; a policy edit
+					is a separate action.
+				</li>
+				<li>
+					<strong>Does a new default replace an explicit saved choice?</strong> No. It affects
+					inheriting cells, not explicit overrides.
+				</li>
+				<li>
+					<strong>Does Disconnect for Ember revoke Google's application grant?</strong> Not in the
+					current local disconnect path; Google-side revocation is different and may be broader.
+				</li>
+				<li>
+					<strong>Are two credential rows proof of two isolated Google grants?</strong> No. That
+					provider-level guarantee has not been established.
+				</li>
+			</ol>
+			<p>
+				The extra maximum is not used in the updated setup. Deleting its compatibility field and
+				qualifying provider-level multi-agent grant behavior remain separate future work. Any later
+				administrator maximum would be a new, explicit decision rather than a hidden consequence of
+				Recommended.
+			</p>
+		</main>
+	</body>
+</html>

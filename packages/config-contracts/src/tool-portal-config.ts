@@ -1,18 +1,26 @@
 import { z } from 'zod';
 
+import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
 import {
 	configuredCliAuthorizationSchema,
 	configuredCliAllowedCommandSchema,
 	configuredCliInvocationCallPolicySchema,
 	configuredCliCredentialLogicalNameSchema,
 	configuredCliPatternRuleSchema,
+	configuredCliStaticInvocationCallPolicySchema,
 	configuredCliStdinPolicySchema,
 	configuredCliTimeoutPolicySchema,
 	controllerExecutionOperationSchema,
 	controllerRegisteredOperationSchema,
-	effectiveControllerConfiguredCliOperationSchema,
+	effectiveControllerHostConfiguredCliOperationSchema,
 	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
+	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	isEffectiveControllerToolVmConfiguredCliOperation,
 } from './controller-configured-cli.js';
+import {
+	googlePolicyDefaultsConfigSchema,
+	managedGoogleNamespaceCallPolicySchema,
+} from './google-policy-defaults-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { namespaceDiscoverySchema } from './mcp-config.js';
 import { secretValueSchema } from './secret-value.js';
@@ -43,6 +51,54 @@ export const toolPortalCallPolicySchema = z
 	});
 
 export type ToolPortalCallPolicy = z.infer<typeof toolPortalCallPolicySchema>;
+
+export const toolPortalNamespaceCallPolicySchema = z.union([
+	toolPortalCallPolicySchema,
+	managedGoogleNamespaceCallPolicySchema,
+]);
+export type ToolPortalNamespaceCallPolicy = z.infer<typeof toolPortalNamespaceCallPolicySchema>;
+
+function validateManagedGoogleNamespace(
+	policy: {
+		readonly calls: ToolPortalNamespaceCallPolicy;
+		readonly backend: {
+			readonly kind: string;
+			readonly operations?:
+				| Readonly<
+						Record<
+							string,
+							{
+								readonly kind: string;
+								readonly authorization?: { readonly kind: string } | undefined;
+							}
+						>
+				  >
+				| undefined;
+		};
+	},
+	context: z.RefinementCtx,
+): void {
+	const managed = 'source' in policy.calls;
+	if (managed && policy.backend.kind !== 'controller_execution') {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: 'Managed Google policy requires controller execution.',
+			path: ['calls'],
+		});
+		return;
+	}
+	for (const [name, operation] of Object.entries(policy.backend.operations ?? {})) {
+		const google =
+			operation.kind === 'configured_cli' && operation.authorization?.kind === 'oauth_account';
+		if (google !== managed)
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message:
+					'Managed Google namespaces contain only account-authorized Google CLI operations; other namespaces retain static call policy.',
+				path: ['backend', 'operations', name],
+			});
+	}
+}
 
 export const toolPortalBackendKindSchema = z.enum([
 	'mcp_provider',
@@ -196,10 +252,12 @@ const toolPortalMcpNamespacePolicySchema = z
 const toolPortalControllerExecutionNamespacePolicySchema = z
 	.object({
 		...toolPortalNamespacePolicyCommonShape,
+		calls: toolPortalNamespaceCallPolicySchema,
 		backend: toolPortalControllerExecutionBackendBindingSchema,
 		discovery: namespaceDiscoverySchema.default({}),
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const toolPortalSandboxSshNamespacePolicySchema = z
 	.object({
@@ -228,7 +286,7 @@ export function toolPortalSelectorAllowsOperation(
 }
 
 export interface ToolPortalOperationReachabilityPolicy {
-	readonly calls: ToolPortalCallPolicy;
+	readonly calls: ToolPortalNamespaceCallPolicy;
 	readonly tools: ToolPortalToolSelector;
 }
 
@@ -238,7 +296,8 @@ export function toolPortalNamespaceAllowsOperation(
 ): boolean {
 	return (
 		toolPortalSelectorAllowsOperation(namespacePolicy.tools, operationName) &&
-		(toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
+		('source' in namespacePolicy.calls ||
+			toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
 			toolPortalSelectorAllowsOperation(namespacePolicy.calls.withoutApproval, operationName))
 	);
 }
@@ -246,6 +305,12 @@ export function toolPortalNamespaceAllowsOperation(
 export const toolPortalProfileDefinitionSchema = z
 	.object({
 		namespaces: z.record(z.string().min(1), toolPortalNamespacePolicySchema).default({}),
+	})
+	.strict();
+
+const standaloneToolPortalProfileDefinitionSchema = z
+	.object({
+		namespaces: z.record(z.string().min(1), toolPortalMcpNamespacePolicySchema).default({}),
 	})
 	.strict();
 
@@ -281,6 +346,7 @@ export const toolPortalCredentialBindingSchema = z
 
 export const managedToolPortalAgentConfigSchema = z
 	.object({
+		googlePolicyDefaults: googlePolicyDefaultsConfigSchema.optional(),
 		credentialBindings: z
 			.record(configuredCliCredentialLogicalNameSchema, toolPortalCredentialBindingSchema)
 			.optional(),
@@ -419,11 +485,12 @@ const preparedToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 const preparedToolPortalNamespacePolicySchema = z
 	.object({
 		backend: preparedToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const preparedToolPortalProfileDefinitionSchema = z
 	.object({
@@ -444,7 +511,6 @@ export const preparedManagedToolPortalConfigSchema = z
 export type PreparedManagedToolPortalConfig = z.infer<typeof preparedManagedToolPortalConfigSchema>;
 
 const gatewayRuntimeConfiguredCliCommonShape = {
-	authorization: configuredCliAuthorizationSchema.optional(),
 	calls: configuredCliInvocationCallPolicySchema,
 	commands: z.array(configuredCliAllowedCommandSchema).min(1),
 	deniedPatterns: z.array(configuredCliPatternRuleSchema),
@@ -454,36 +520,46 @@ const gatewayRuntimeConfiguredCliCommonShape = {
 	timeout: configuredCliTimeoutPolicySchema,
 } as const;
 
+export const gatewayRuntimeControllerHostConfiguredCliOperationSchema = z
+	.object({
+		...gatewayRuntimeConfiguredCliCommonShape,
+		authorization: configuredCliAuthorizationSchema.optional(),
+		targetKind: z.literal('controller_host'),
+	})
+	.strict();
+
+export const gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema = z
+	.object({
+		...gatewayRuntimeConfiguredCliCommonShape,
+		authorization: configuredCliAuthorizationSchema.optional(),
+		compiledGoogle: compiledGoogleCommandSetSchema.optional(),
+		targetKind: z.literal('ephemeral_managed_vm'),
+	})
+	.strict();
+
+export const gatewayRuntimeToolVmConfiguredCliOperationSchema = z
+	.object({
+		...gatewayRuntimeConfiguredCliCommonShape,
+		calls: configuredCliStaticInvocationCallPolicySchema,
+		executablePath: z.string().min(1),
+		mandatoryArgvPrefix: z.array(z.string().max(4_096)).max(64),
+		output: z
+			.object({
+				modelVisibleStderr: z.enum(['none', 'fixed_safe_summary']),
+				overflow: z.enum(['fail', 'truncate']),
+				stderrMaxBytes: z.number().int().positive().max(16_777_216),
+				stdoutMaxBytes: z.number().int().positive().max(16_777_216),
+			})
+			.strict(),
+		targetKind: z.literal('tool_vm'),
+		workingDirectory: z.string().min(1),
+	})
+	.strict();
+
 export const gatewayRuntimeConfiguredCliOperationSchema = z.discriminatedUnion('targetKind', [
-	z
-		.object({
-			...gatewayRuntimeConfiguredCliCommonShape,
-			targetKind: z.literal('controller_host'),
-		})
-		.strict(),
-	z
-		.object({
-			...gatewayRuntimeConfiguredCliCommonShape,
-			targetKind: z.literal('ephemeral_managed_vm'),
-		})
-		.strict(),
-	z
-		.object({
-			...gatewayRuntimeConfiguredCliCommonShape,
-			executablePath: z.string().min(1),
-			mandatoryArgvPrefix: z.array(z.string().max(4_096)).max(64),
-			output: z
-				.object({
-					modelVisibleStderr: z.enum(['none', 'fixed_safe_summary']),
-					overflow: z.enum(['fail', 'truncate']),
-					stderrMaxBytes: z.number().int().positive().max(16_777_216),
-					stdoutMaxBytes: z.number().int().positive().max(16_777_216),
-				})
-				.strict(),
-			targetKind: z.literal('tool_vm'),
-			workingDirectory: z.string().min(1),
-		})
-		.strict(),
+	gatewayRuntimeControllerHostConfiguredCliOperationSchema,
+	gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema,
+	gatewayRuntimeToolVmConfiguredCliOperationSchema,
 ]);
 
 export const gatewayRuntimeControllerExecutionOperationSchema = z.discriminatedUnion('kind', [
@@ -495,29 +571,11 @@ export type GatewayRuntimeControllerExecutionOperation = z.infer<
 	typeof gatewayRuntimeControllerExecutionOperationSchema
 >;
 
-const effectiveControllerHostConfiguredCliOperationSchema =
-	effectiveControllerConfiguredCliOperationSchema.refine(
-		(operation) => operation.executionTarget.kind === 'controller_host',
-		{ message: 'Persisted effective configured CLI operations may retain only host targets.' },
-	);
-
-const effectiveCredentialedConfiguredCliOperationSchema =
-	gatewayRuntimeConfiguredCliOperationSchema.refine(
-		(operation) => operation.targetKind === 'ephemeral_managed_vm',
-		{ message: 'Credentialed effective operations must project the Managed VM target kind.' },
-	);
-
-const effectiveToolVmConfiguredCliOperationSchema =
-	gatewayRuntimeConfiguredCliOperationSchema.refine(
-		(operation) => operation.targetKind === 'tool_vm',
-		{ message: 'Tool VM effective operations must project the Tool VM target kind.' },
-	);
-
 const effectiveControllerExecutionOperationSchema = z.union([
 	controllerRegisteredOperationSchema,
 	effectiveControllerHostConfiguredCliOperationSchema,
-	effectiveCredentialedConfiguredCliOperationSchema,
-	effectiveToolVmConfiguredCliOperationSchema,
+	gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema,
+	gatewayRuntimeToolVmConfiguredCliOperationSchema,
 ]);
 
 const effectiveControllerExecutionBackendBindingSchema = z
@@ -538,11 +596,12 @@ const effectiveToolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 const effectiveToolPortalNamespacePolicySchema = z
 	.object({
 		backend: effectiveToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const effectiveToolPortalProfileDefinitionSchema = z
 	.object({
@@ -568,11 +627,12 @@ const gatewayRuntimeToolPortalBackendBindingSchema = z.discriminatedUnion('kind'
 const gatewayRuntimeToolPortalNamespacePolicySchema = z
 	.object({
 		backend: gatewayRuntimeToolPortalBackendBindingSchema,
-		calls: toolPortalCallPolicySchema,
+		calls: toolPortalNamespaceCallPolicySchema,
 		discovery: namespaceDiscoverySchema,
 		tools: toolPortalToolSelectorSchema,
 	})
-	.strict();
+	.strict()
+	.superRefine(validateManagedGoogleNamespace);
 
 const gatewayRuntimeToolPortalProfileDefinitionSchema = z
 	.object({
@@ -602,7 +662,39 @@ function projectedConfiguredCliOperation(
 	>['operations'][string],
 ): GatewayRuntimeControllerExecutionOperation {
 	if (operation.kind === 'registered_action') return operation;
-	return gatewayRuntimeConfiguredCliOperationSchema.parse({
+	if (isEffectiveControllerEphemeralManagedVmConfiguredCliOperation(operation)) {
+		return gatewayRuntimeEphemeralManagedVmConfiguredCliOperationSchema.parse({
+			...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
+			...(operation.compiledGoogle === undefined
+				? {}
+				: { compiledGoogle: operation.compiledGoogle }),
+			calls: operation.calls,
+			commands: operation.commands,
+			deniedPatterns: operation.deniedPatterns,
+			kind: 'configured_cli',
+			safeHelp: operation.safeHelp,
+			stdin: operation.stdin,
+			targetKind: operation.executionTarget.kind,
+			timeout: operation.timeout,
+		});
+	}
+	if (isEffectiveControllerToolVmConfiguredCliOperation(operation)) {
+		return gatewayRuntimeToolVmConfiguredCliOperationSchema.parse({
+			calls: operation.calls,
+			commands: operation.commands,
+			deniedPatterns: operation.deniedPatterns,
+			executablePath: operation.executablePath,
+			kind: 'configured_cli',
+			mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
+			output: operation.output,
+			safeHelp: operation.safeHelp,
+			stdin: operation.stdin,
+			targetKind: operation.executionTarget.kind,
+			timeout: operation.timeout,
+			workingDirectory: operation.executionTarget.workingDirectory,
+		});
+	}
+	return gatewayRuntimeControllerHostConfiguredCliOperationSchema.parse({
 		...(operation.authorization === undefined ? {} : { authorization: operation.authorization }),
 		calls: operation.calls,
 		commands: operation.commands,
@@ -612,14 +704,6 @@ function projectedConfiguredCliOperation(
 		stdin: operation.stdin,
 		targetKind: operation.executionTarget.kind,
 		timeout: operation.timeout,
-		...(operation.executionTarget.kind === 'tool_vm'
-			? {
-					executablePath: operation.executablePath,
-					mandatoryArgvPrefix: operation.mandatoryArgvPrefix,
-					output: operation.output,
-					workingDirectory: operation.executionTarget.workingDirectory,
-				}
-			: {}),
 	});
 }
 
@@ -732,7 +816,7 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 
 export const standaloneToolPortalConfigSchema = z
 	.object({
-		...toolPortalCommonConfigShape,
+		$schema: z.string().min(1).optional(),
 		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
 		authentication: toolPortalStandaloneAuthenticationSchema,
 		drain: z
@@ -742,6 +826,8 @@ export const standaloneToolPortalConfigSchema = z
 			.strict(),
 		entrypoints: toolPortalStandaloneEntrypointsSchema,
 		mode: z.literal('standalone'),
+		profiles: z.record(z.string().min(1), standaloneToolPortalProfileDefinitionSchema),
+		schemaVersion: z.literal(1),
 	})
 	.strict();
 
@@ -831,11 +917,16 @@ export const toolPortalConfigSchema = z
 					continue;
 				}
 				const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
-				for (const [selectorPath, selector] of [
-					[['tools'], namespacePolicy.tools],
-					[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval],
-					[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval],
-				] as const) {
+				const selectors = [
+					[['tools'], namespacePolicy.tools] as const,
+					...('source' in namespacePolicy.calls
+						? []
+						: [
+								[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval] as const,
+								[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval] as const,
+							]),
+				];
+				for (const [selectorPath, selector] of selectors) {
 					const explicitNames = [
 						...(selector.allow === '*' ? [] : selector.allow),
 						...selector.deny,
@@ -855,19 +946,6 @@ export const toolPortalConfigSchema = z
 
 		if (config.mode !== 'standalone') {
 			return;
-		}
-
-		for (const [profileId, profile] of Object.entries(config.profiles)) {
-			for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
-				if (namespacePolicy.backend.kind === 'mcp_provider') {
-					continue;
-				}
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Standalone Tool Portal version 1 does not admit the privileged "${namespacePolicy.backend.kind}" backend.`,
-					path: ['profiles', profileId, 'namespaces', namespaceId, 'backend', 'kind'],
-				});
-			}
 		}
 
 		const configuredAgentIds = Object.keys(config.agents);
@@ -944,8 +1022,12 @@ export const ToolPortalMcpProjectionSchema = z
 
 export type ToolPortalMcpProjection = z.infer<typeof ToolPortalMcpProjectionSchema>;
 
-export const ToolPortalControllerExecutionProjectionNamespaceSchema =
-	ToolPortalMcpProjectionNamespaceSchema;
+export const ToolPortalControllerExecutionProjectionNamespaceSchema = z
+	.object({
+		calls: toolPortalNamespaceCallPolicySchema,
+		tools: toolPortalToolSelectorSchema,
+	})
+	.strict();
 
 export type ToolPortalControllerExecutionProjectionNamespace = z.infer<
 	typeof ToolPortalControllerExecutionProjectionNamespaceSchema

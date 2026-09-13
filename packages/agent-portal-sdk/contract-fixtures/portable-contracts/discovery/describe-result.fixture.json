@@ -17,6 +17,10 @@
 			"ok": true
 		},
 		"canonicalJson": "{\"items\":[{\"id\":\"describe-1\",\"status\":\"ok\",\"value\":{\"namespaceDiscovery\":[],\"tools\":[]}}],\"ok\":true}",
-		"refinementIdentities": ["portal.request-id.not-reserved", "portal.result.aggregate-status"]
+		"refinementIdentities": [
+			"portal.google.discovery-policy",
+			"portal.request-id.not-reserved",
+			"portal.result.aggregate-status"
+		]
 	}
 }

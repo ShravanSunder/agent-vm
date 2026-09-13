@@ -7,6 +7,22 @@ Sandboxed QEMU micro-VM controller and managed Gateway packages for autonomous c
 @.cursor/rules/ts-rules.md
 @.cursor/rules/monorepo-rules.md
 
+### Gondolin patch approval
+
+Every Gondolin dependency patch requires Shravan's explicit approval before it
+is added or changed, including rebases, expanded scope, runtime monkeypatches,
+guest/helper changes, and fork adoption. Existing approval is not blanket authority
+for future patches. Document each patch and its proof/distribution limits in
+[Gondolin patches](docs/architecture/gondolin-patches.md).
+Keep that document's upstream tracker current for every carried patch: PR URL,
+pinned revision, last verified status/date, fixed release and removal gate.
+Track a missing PR as not submitted; never equate merged with released or deployed.
+
+No Gondolin patches are currently carried. Shravan approved retiring the two
+PR #136 completion-promise handlers with the obsolete rootfs-transfer path on
+2026-09-09. Reintroduction or any new patch requires fresh approval. The separate
+experimental duplex guest patch is not approved for adoption.
+
 ## Agent Orientation
 
 Use progressive disclosure when learning this repo:

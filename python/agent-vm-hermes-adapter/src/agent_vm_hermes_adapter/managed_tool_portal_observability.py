@@ -441,6 +441,7 @@ def _safe_tool_name(value: object) -> str | None:
         "tool_portal_search",
         "tool_portal_describe",
         "tool_portal_call",
+        "tool_portal_file",
     }:
         return None
     return value

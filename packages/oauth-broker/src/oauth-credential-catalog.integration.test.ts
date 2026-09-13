@@ -1,339 +1,220 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
-	oauthCredentialIdSchema,
-	oauthMaterialRevisionSchema,
-	oauthProviderIdSchema,
-	oauthScopeSchema,
-} from '@agent-vm/oauth-broker-contracts';
-import { afterEach, describe, expect, it } from 'vitest';
-import { z } from 'zod';
+import { oauthMaterialRevisionSchema } from '@agent-vm/oauth-broker-contracts';
+import { describe, expect, it } from 'vitest';
 
 import { createOAuthEnvelopeCodec, oauthEnvelopeBindingSchema } from './envelope-codec.js';
 import {
-	type OAuthCredentialCatalog,
-	type OAuthEnrollmentGrantInput,
-} from './oauth-credential-catalog-contracts.js';
+	credentialPayloadSchema,
+	enrollmentInput,
+	owner,
+	wrappingKey,
+} from './oauth-catalog-test-fixture.js';
+import type { OAuthCredentialCatalog } from './oauth-credential-catalog-contracts.js';
 import { openOAuthCredentialCatalog } from './oauth-credential-catalog.js';
 
-const providerPayloadSchema = z
-	.object({
-		accessToken: z.string().min(1),
-		accessTokenExpiresAtMs: z.number().int().positive(),
-		refreshToken: z.string().min(1),
-	})
-	.strict();
-
-const keyEncryptionKey = new Uint8Array(32).fill(73);
-const credentialId = oauthCredentialIdSchema.parse('11111111-1111-4111-8111-111111111111');
-const accountProfileId = oauthAccountProfileIdSchema.parse('personal-google');
-const applicationId = oauthApplicationIdSchema.parse('gmail-app');
-const providerId = oauthProviderIdSchema.parse('google');
-const grantedScopes = [oauthScopeSchema.parse('gmail.readonly')];
-const initialMaterialRevision = oauthMaterialRevisionSchema.parse(
-	'sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-);
-const refreshedMaterialRevision = oauthMaterialRevisionSchema.parse(
-	'sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-);
-
-let openCatalog: OAuthCredentialCatalog | undefined;
-
-afterEach(() => {
-	openCatalog?.close();
-	openCatalog = undefined;
-});
-
-function createEnrollmentInput(props: {
-	readonly accessToken: string;
-	readonly databaseCredentialId?: typeof credentialId;
-	readonly providerSubject?: string;
-}): OAuthEnrollmentGrantInput {
-	const selectedCredentialId = props.databaseCredentialId ?? credentialId;
-	const providerSubject = props.providerSubject ?? 'google-subject-1';
-	const codec = createOAuthEnvelopeCodec({ payloadSchema: providerPayloadSchema });
-	const envelope = codec.encrypt({
-		binding: oauthEnvelopeBindingSchema.parse({
-			accountProfileId,
-			applicationId,
-			credentialId: selectedCredentialId,
-			providerId,
-			providerSubject,
-		}),
-		keyEncryptionKey,
-		keyEncryptionKeyVersion: 1,
-		payload: {
-			accessToken: props.accessToken,
-			accessTokenExpiresAtMs: 2_000_000,
-			refreshToken: 'refresh-token-marker',
-		},
-	});
-	return {
-		accountLabel: 'Personal Google',
-		accountProfileId,
-		accountProfileStatus: 'enrolled',
-		agentId: 'hermes',
-		applicationId,
-		credentialId: selectedCredentialId,
-		envelope,
-		grantedScopes,
-		materialRevision: initialMaterialRevision,
-		providerCredentialVersion: 1,
-		providerId,
-		providerSubject,
-		zoneId: 'apollofam',
-	};
-}
-
-async function readCatalogFiles(databasePath: string): Promise<Buffer> {
-	const contents = await Promise.all(
-		[databasePath, `${databasePath}-wal`, `${databasePath}-shm`].map(
-			async (filePath) =>
-				await readFile(filePath).catch((error: unknown) => {
-					const errorCode =
-						typeof error === 'object' && error !== null && 'code' in error
-							? Reflect.get(error, 'code')
-							: undefined;
-					if (errorCode === 'ENOENT') return Buffer.alloc(0);
-					throw error;
-				}),
-		),
-	);
-	return Buffer.concat(contents);
-}
-
 describe('OAuth credential catalog', () => {
-	it('retains bound account-profile metadata when its last application grant is deleted', async () => {
-		const stateDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-catalog-delete-'));
-		openCatalog = await openOAuthCredentialCatalog({
-			databasePath: path.join(stateDirectory, 'oauth', 'credentials.sqlite'),
-			now: () => 1_000,
+	it('retains human-owned account metadata and policy after its last authorization disconnects', async () => {
+		// Arrange
+		const directory = await mkdtemp(path.join(tmpdir(), 'oauth-account-retention-'));
+		const catalog = await openOAuthCredentialCatalog({
+			databasePath: path.join(directory, 'credentials.sqlite'),
 		});
-		const committed = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({ accessToken: 'access-token-delete-marker' }),
-		);
-		if (committed.kind !== 'committed') throw new Error('Expected committed grant.');
+		try {
+			const input = enrollmentInput({ accountId: randomUUID(), agentId: 'sun' });
+			expect(catalog.commitEnrollmentGrant(input).kind).toBe('committed');
+			const policy = catalog.getPolicy(input.authorizationId);
 
-		expect(
-			openCatalog.deleteGrantForAccountApplication({
-				accountProfileId,
-				agentId: 'hermes',
-				applicationId,
-				expectedCredentialId: committed.grant.credentialId,
-				expectedRecordRevision: committed.grant.recordRevision,
-				zoneId: 'apollofam',
-			}),
-		).toEqual({ kind: 'deleted' });
-		expect(openCatalog.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toEqual([]);
-		expect(
-			openCatalog.getAccountProfileMetadata({
-				accountProfileId,
-				agentId: 'hermes',
-				zoneId: 'apollofam',
-			}),
-		).toMatchObject({
-			accountLabel: 'Personal Google',
-			providerSubject: 'google-subject-1',
-			status: 'partially-enrolled',
-		});
+			// Act
+			const removed = catalog.disconnectAuthorization({
+				authorizationId: input.authorizationId,
+				expectedRecordRevision: 1,
+				owner,
+			});
+
+			// Assert
+			expect(removed.kind).toBe('updated');
+			expect(catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+			expect(catalog.getAccountMetadata(input.accountId)).toMatchObject({
+				owner,
+				providerSubject: input.providerSubject,
+			});
+			expect(catalog.getPolicy(input.authorizationId)).toEqual(policy);
+			expect(catalog.getAuthorization(input.authorizationId)).toMatchObject({
+				accessState: 'disconnecting',
+				envelope: null,
+			});
+		} finally {
+			catalog.close();
+		}
 	});
 
-	it('preserves a replacement grant when deletion targets a stale record revision', async () => {
-		const stateDirectory = await mkdtemp(
-			path.join(tmpdir(), 'agent-vm-oauth-catalog-stale-delete-'),
-		);
-		openCatalog = await openOAuthCredentialCatalog({
-			databasePath: path.join(stateDirectory, 'oauth', 'credentials.sqlite'),
-			now: () => 1_000,
+	it('preserves a replacement when a disconnect targets its previous record revision', async () => {
+		// Arrange
+		const directory = await mkdtemp(path.join(tmpdir(), 'oauth-replacement-retention-'));
+		const catalog = await openOAuthCredentialCatalog({
+			databasePath: path.join(directory, 'credentials.sqlite'),
 		});
-		const initial = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({ accessToken: 'initial-access-token-marker' }),
-		);
-		if (initial.kind !== 'committed') throw new Error('Expected initial grant.');
-		const replacement = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({ accessToken: 'replacement-access-token-marker' }),
-		);
-		if (replacement.kind !== 'committed') throw new Error('Expected replacement grant.');
+		try {
+			const input = enrollmentInput({ accountId: randomUUID(), agentId: 'sun' });
+			const initial = catalog.commitEnrollmentGrant(input);
+			if (initial.kind !== 'committed') throw new Error('Expected initial enrollment.');
+			const replacement = enrollmentInput({
+				accountId: input.accountId,
+				agentId: 'sun',
+				retainedAuthorization: initial.authorization,
+			});
+			expect(catalog.replaceAuthorization(replacement).kind).toBe('committed');
 
-		expect(
-			openCatalog.deleteGrantForAccountApplication({
-				accountProfileId,
-				agentId: 'hermes',
-				applicationId,
-				expectedCredentialId: initial.grant.credentialId,
-				expectedRecordRevision: initial.grant.recordRevision,
-				zoneId: 'apollofam',
-			}),
-		).toEqual({
-			currentCredentialId: replacement.grant.credentialId,
-			currentRecordRevision: replacement.grant.recordRevision,
-			kind: 'stale',
-		});
-		expect(
-			openCatalog.getGrantForAccountApplication({
-				accountProfileId,
-				agentId: 'hermes',
-				applicationId,
-				zoneId: 'apollofam',
-			}),
-		).toEqual(replacement.grant);
+			// Act / Assert
+			expect(
+				catalog.disconnectAuthorization({
+					authorizationId: input.authorizationId,
+					expectedRecordRevision: 1,
+					owner,
+				}).kind,
+			).toBe('stale');
+			expect(catalog.getAuthorization(input.authorizationId)).toMatchObject({
+				credentialId: replacement.credentialId,
+				accessState: 'replacing',
+				recordRevision: 2,
+			});
+			expect(catalog.getGrant(input.credentialId)).toBeUndefined();
+		} finally {
+			catalog.close();
+		}
 	});
 
-	it('migrates, commits, encrypts, refreshes atomically, and reopens', async () => {
-		const stateDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-catalog-'));
-		const databasePath = path.join(stateDirectory, 'oauth', 'credentials.sqlite');
-		let nowMs = 1_000;
-		openCatalog = await openOAuthCredentialCatalog({ databasePath, now: () => nowMs });
-		expect(() => openCatalog?.verifyOrInitializeKeyEncryptionKey(keyEncryptionKey)).not.toThrow();
-		expect(() =>
-			openCatalog?.verifyOrInitializeKeyEncryptionKey(new Uint8Array(32).fill(7)),
-		).toThrow('does not match the catalog verifier');
-		expect(() => openCatalog?.verifyOrInitializeKeyEncryptionKey(keyEncryptionKey)).not.toThrow();
-		const initialInput = createEnrollmentInput({ accessToken: 'access-token-marker-v1' });
-		const committed = openCatalog.commitEnrollmentGrant(initialInput);
-		expect(committed).toMatchObject({ kind: 'committed' });
-		if (committed.kind !== 'committed') throw new Error('Expected committed OAuth grant.');
-		expect(committed.grant.accountProfileStatus).toBe('enrolled');
-		expect(committed.grant.recordRevision).toBe(1);
-		expect(
-			openCatalog.getGrantForAccountApplication({
-				accountProfileId,
-				agentId: 'hermes',
-				applicationId,
-				zoneId: 'apollofam',
-			}),
-		).toMatchObject({ credentialId });
-		expect(openCatalog.listGrantsForAgent({ agentId: 'hermes', zoneId: 'apollofam' })).toHaveLength(
-			1,
-		);
-
-		const codec = createOAuthEnvelopeCodec({ payloadSchema: providerPayloadSchema });
-		expect(
-			codec.decrypt({
-				binding: oauthEnvelopeBindingSchema.parse({
-					accountProfileId,
-					applicationId,
-					credentialId,
-					providerId,
-					providerSubject: 'google-subject-1',
-				}),
-				envelope: committed.grant.envelope,
-				keyEncryptionKey,
-			}),
-		).toMatchObject({ accessToken: 'access-token-marker-v1' });
-		expect((await readCatalogFiles(databasePath)).includes('access-token-marker-v1')).toBe(false);
-		expect((await readCatalogFiles(databasePath)).includes('refresh-token-marker')).toBe(false);
-
-		nowMs = 2_000;
-		const refreshedEnvelope = codec.encrypt({
-			binding: oauthEnvelopeBindingSchema.parse({
-				accountProfileId,
-				applicationId,
-				credentialId,
-				providerId,
-				providerSubject: 'google-subject-1',
-			}),
-			keyEncryptionKey,
-			keyEncryptionKeyVersion: 1,
-			payload: {
-				accessToken: 'access-token-marker-v2',
-				accessTokenExpiresAtMs: 3_000_000,
-				refreshToken: 'rotated-refresh-token-marker',
-			},
+	it('initializes, hardens, encrypts, refreshes with CAS, verifies its key, and reopens the current catalog', async () => {
+		// Arrange
+		const directory = await mkdtemp(path.join(tmpdir(), 'oauth-current-catalog-'));
+		const databasePath = path.join(directory, 'oauth', 'credentials.sqlite');
+		let catalog: OAuthCredentialCatalog | undefined = await openOAuthCredentialCatalog({
+			databasePath,
+			now: () => 1_000,
 		});
-		const refreshed = openCatalog.replaceGrantEnvelope({
-			credentialId,
-			envelope: refreshedEnvelope,
-			expectedRecordRevision: committed.grant.recordRevision,
-			failureClass: null,
-			lastRefreshAttemptAtMs: 1_900,
-			lastRefreshSucceededAtMs: 2_000,
-			lifecycleKind: 'active',
-			materialRevision: refreshedMaterialRevision,
-			nextRefreshEligibleAtMs: null,
-			providerCredentialVersion: 2,
-			reauthorizationReason: null,
-		});
-		expect(refreshed).toMatchObject({ kind: 'updated', grant: { recordRevision: 2 } });
-		const reauthorized = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({ accessToken: 'reauthorized-access-token-marker' }),
-		);
-		expect(reauthorized).toMatchObject({ kind: 'committed', grant: { recordRevision: 3 } });
-		expect(
-			openCatalog.replaceGrantEnvelope({
-				credentialId,
-				envelope: initialInput.envelope,
+		const input = enrollmentInput({ accountId: randomUUID(), agentId: 'sun' });
+		const codec = createOAuthEnvelopeCodec({ payloadSchema: credentialPayloadSchema });
+		try {
+			catalog.verifyOrInitializeKeyEncryptionKey(wrappingKey);
+			expect(() => catalog?.verifyOrInitializeKeyEncryptionKey(new Uint8Array(32).fill(7))).toThrow(
+				'does not match the catalog verifier',
+			);
+			expect(catalog.commitEnrollmentGrant(input).kind).toBe('committed');
+			const initial = catalog.getGrant(input.credentialId);
+			if (initial === undefined) throw new Error('Expected stored credential.');
+			const binding = oauthEnvelopeBindingSchema.strip().parse(initial);
+			const payload = codec.decrypt({
+				binding,
+				envelope: initial.envelope,
+				keyEncryptionKey: wrappingKey,
+			});
+			const replacementEnvelope = codec.encrypt({
+				binding,
+				keyEncryptionKey: wrappingKey,
+				keyEncryptionKeyVersion: 1,
+				payload: {
+					...payload,
+					accessToken: 'updated-access-token',
+					refreshToken: 'updated-refresh-token',
+				},
+			});
+			const refresh = {
+				credentialId: input.credentialId,
+				envelope: replacementEnvelope,
 				expectedRecordRevision: 1,
 				failureClass: null,
-				lastRefreshAttemptAtMs: 2_100,
-				lastRefreshSucceededAtMs: null,
-				lifecycleKind: 'degraded',
-				materialRevision: initialMaterialRevision,
-				nextRefreshEligibleAtMs: 3_100,
-				providerCredentialVersion: 1,
+				lastRefreshAttemptAtMs: 1_900,
+				lastRefreshSucceededAtMs: 2_000,
+				lifecycleKind: 'active' as const,
+				materialRevision: oauthMaterialRevisionSchema.parse('sha256:' + 'B'.repeat(43)),
+				nextRefreshEligibleAtMs: null,
+				providerCredentialVersion: 2,
 				reauthorizationReason: null,
-			}),
-		).toEqual({ currentRecordRevision: 3, kind: 'stale' });
+			};
 
-		openCatalog.close();
-		openCatalog = undefined;
-		expect((await stat(path.dirname(databasePath))).mode & 0o777).toBe(0o700);
-		expect((await stat(databasePath)).mode & 0o777).toBe(0o600);
-		openCatalog = await openOAuthCredentialCatalog({ databasePath, now: () => nowMs });
-		const reopened = openCatalog.getGrant(credentialId);
-		expect(reopened).toMatchObject({
-			materialRevision: initialMaterialRevision,
-			recordRevision: 3,
-		});
-		if (reopened === undefined) throw new Error('Expected reopened OAuth grant.');
-		expect(
-			codec.decrypt({
-				binding: oauthEnvelopeBindingSchema.parse({
-					accountProfileId,
-					applicationId,
-					credentialId,
-					providerId,
-					providerSubject: 'google-subject-1',
-				}),
-				envelope: reopened.envelope,
-				keyEncryptionKey,
-			}),
-		).toMatchObject({ accessToken: 'reauthorized-access-token-marker' });
-		expect(openCatalog.getStorageDiagnostics()).toEqual({
-			busyTimeoutMs: 5_000,
-			foreignKeysEnabled: true,
-			journalMode: 'wal',
-			synchronousMode: 2,
-		});
-	}, 30_000);
+			// Act
+			expect(catalog.replaceGrantEnvelope(refresh).kind).toBe('updated');
+			expect(catalog.replaceGrantEnvelope(refresh)).toEqual({
+				kind: 'stale',
+				currentRecordRevision: 2,
+			});
 
-	it('fails a different-subject enrollment without changing the existing grant', async () => {
-		const stateDirectory = await mkdtemp(path.join(tmpdir(), 'agent-vm-oauth-subject-'));
-		const databasePath = path.join(stateDirectory, 'oauth', 'credentials.sqlite');
-		openCatalog = await openOAuthCredentialCatalog({ databasePath, now: () => 5_000 });
-		const initial = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({ accessToken: 'subject-bound-token' }),
-		);
-		expect(initial.kind).toBe('committed');
+			// Assert: no token plaintext on disk and all catalog paths hardened.
+			await Promise.all(
+				[databasePath, databasePath + '-wal', databasePath + '-shm'].map(
+					async (filePath): Promise<void> => {
+						const contents = await readFile(filePath);
+						for (const marker of [
+							'credential-for-sun',
+							'refresh-for-sun',
+							'updated-access-token',
+							'updated-refresh-token',
+						]) {
+							expect(contents.includes(marker)).toBe(false);
+						}
+						expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+					},
+				),
+			);
+			expect((await stat(path.dirname(databasePath))).mode & 0o777).toBe(0o700);
+			catalog.close();
+			catalog = undefined;
+			catalog = await openOAuthCredentialCatalog({ databasePath });
+			catalog.verifyOrInitializeKeyEncryptionKey(wrappingKey);
+			const reopened = catalog.getGrant(input.credentialId);
+			if (reopened === undefined) throw new Error('Expected reopened credential.');
+			expect(reopened).toMatchObject({
+				recordRevision: 2,
+				authorizationMetadataRevision: 1,
+				generation: 1,
+			});
+			expect(
+				codec.decrypt({ binding, envelope: reopened.envelope, keyEncryptionKey: wrappingKey }),
+			).toMatchObject({
+				accessToken: 'updated-access-token',
+				refreshToken: 'updated-refresh-token',
+			});
+			expect(catalog.getStorageDiagnostics()).toEqual({
+				busyTimeoutMs: 5_000,
+				foreignKeysEnabled: true,
+				journalMode: 'wal',
+				synchronousMode: 2,
+			});
+		} finally {
+			catalog?.close();
+		}
+	});
 
-		const otherCredentialId = oauthCredentialIdSchema.parse('22222222-2222-4222-8222-222222222222');
-		const mismatch = openCatalog.commitEnrollmentGrant(
-			createEnrollmentInput({
-				accessToken: 'must-not-commit',
-				databaseCredentialId: otherCredentialId,
-				providerSubject: 'different-google-subject',
-			}),
-		);
-		expect(mismatch).toEqual({
-			actualProviderSubject: 'different-google-subject',
-			expectedProviderSubject: 'google-subject-1',
-			kind: 'subject-mismatch',
+	it('refuses to change the verified subject of an existing account during replacement', async () => {
+		// Arrange
+		const directory = await mkdtemp(path.join(tmpdir(), 'oauth-subject-binding-'));
+		const catalog = await openOAuthCredentialCatalog({
+			databasePath: path.join(directory, 'credentials.sqlite'),
 		});
-		expect(openCatalog.getGrant(credentialId)).toBeDefined();
-		expect(openCatalog.getGrant(otherCredentialId)).toBeUndefined();
-	}, 30_000);
+		try {
+			const input = enrollmentInput({ accountId: randomUUID(), agentId: 'sun' });
+			const initial = catalog.commitEnrollmentGrant(input);
+			if (initial.kind !== 'committed') throw new Error('Expected initial enrollment.');
+			const mismatch = enrollmentInput({
+				accountId: input.accountId,
+				agentId: 'sun',
+				retainedAuthorization: initial.authorization,
+				providerSubject: 'different-subject',
+			});
+
+			// Act / Assert
+			expect(catalog.replaceAuthorization(mismatch).kind).toBe('account-conflict');
+			expect(catalog.getGrant(input.credentialId)).toBeDefined();
+			expect(catalog.getGrant(mismatch.credentialId)).toBeUndefined();
+			expect(catalog.getAccountMetadata(input.accountId)?.providerSubject).toBe(
+				input.providerSubject,
+			);
+		} finally {
+			catalog.close();
+		}
+	});
 });

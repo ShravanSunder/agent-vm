@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import {
 	oauthMaterialRevisionSchema,
@@ -15,23 +15,19 @@ import {
 	type OAuthKeyEncryptionKey,
 } from '../envelope-codec.js';
 import {
+	oauthStoredGrantSchema,
 	type OAuthCredentialCatalog,
 	type OAuthStoredGrant,
 } from '../oauth-credential-catalog-contracts.js';
+import {
+	decryptGoogleCredentialPayload,
+	googleStoredCredentialPayloadSchema,
+} from './google-credential-payload.js';
 import {
 	googleWebClientCredentialsSchema,
 	type GoogleOAuthAdapter,
 	type GoogleWebClientCredentials,
 } from './google-oauth-adapter.js';
-
-export const googleStoredCredentialPayloadSchema = z
-	.object({
-		accessToken: z.string().min(1),
-		accessTokenExpiresAtMs: z.number().int().positive(),
-		refreshToken: z.string().min(1),
-	})
-	.strict();
-export type GoogleStoredCredentialPayload = z.infer<typeof googleStoredCredentialPayloadSchema>;
 
 export type GoogleCredentialResolution =
 	| {
@@ -62,10 +58,12 @@ function createMaterialRevision(): OAuthMaterialRevision {
 	return oauthMaterialRevisionSchema.parse(`sha256:${randomBytes(32).toString('base64url')}`);
 }
 
-function sameScopeSet(left: readonly OAuthScope[], right: readonly OAuthScope[]): boolean {
-	if (left.length !== right.length) return false;
+function sameScopeSet(left: readonly string[], right: readonly string[]): boolean {
+	const leftScopes = new Set(left);
 	const rightScopes = new Set(right);
-	return left.every((scope) => rightScopes.has(scope));
+	return (
+		leftScopes.size === rightScopes.size && [...leftScopes].every((scope) => rightScopes.has(scope))
+	);
 }
 
 function containsRequiredScopes(
@@ -77,18 +75,12 @@ function containsRequiredScopes(
 }
 
 function envelopeBinding(grant: OAuthStoredGrant): OAuthEnvelopeBinding {
-	return oauthEnvelopeBindingSchema.parse({
-		accountProfileId: grant.accountProfileId,
-		applicationId: grant.applicationId,
-		credentialId: grant.credentialId,
-		providerId: grant.providerId,
-		providerSubject: grant.providerSubject,
-	});
+	return oauthEnvelopeBindingSchema.strip().parse(grant);
 }
 
 export function createGoogleCredentialRefreshCoordinator(props: {
 	readonly accessTokenRefreshSkewMs?: number;
-	readonly catalog: OAuthCredentialCatalog;
+	readonly catalog: Pick<OAuthCredentialCatalog, 'replaceGrantEnvelope'>;
 	readonly degradedRetryDelayMs?: number;
 	readonly googleAdapter: GoogleOAuthAdapter;
 	readonly now?: () => number;
@@ -107,7 +99,13 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 	const envelopeCodec = createOAuthEnvelopeCodec({
 		payloadSchema: googleStoredCredentialPayloadSchema,
 	});
-	const inFlightByCredentialId = new Map<string, Promise<GoogleCredentialResolution>>();
+	const inFlightByCredentialId = new Map<
+		string,
+		{
+			readonly snapshotDigest: string;
+			readonly resolution: Promise<GoogleCredentialResolution>;
+		}
+	>();
 
 	const resolveLeader = async (resolutionProps: {
 		readonly clientCredentials: GoogleWebClientCredentials;
@@ -140,9 +138,8 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		}
 		let payload: z.infer<typeof googleStoredCredentialPayloadSchema>;
 		try {
-			payload = envelopeCodec.decrypt({
-				binding: envelopeBinding(grant),
-				envelope: grant.envelope,
+			payload = decryptGoogleCredentialPayload({
+				grant,
 				keyEncryptionKey: resolutionProps.keyEncryptionKey,
 			});
 		} catch {
@@ -238,6 +235,7 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 		const refreshedPayload = {
 			accessToken: refreshResult.accessToken,
 			accessTokenExpiresAtMs: refreshResult.accessTokenExpiresAtMs,
+			authority: payload.authority,
 			refreshToken: refreshResult.replacementRefreshToken ?? payload.refreshToken,
 		};
 		const refreshedEnvelope = envelopeCodec.encrypt({
@@ -269,21 +267,30 @@ export function createGoogleCredentialRefreshCoordinator(props: {
 
 	return {
 		resolveAccessToken: async (resolutionProps) => {
+			if (resolutionProps.clientCredentials.web.client_id !== resolutionProps.grant.clientId) {
+				return { kind: 'reauthorization-required' };
+			}
 			const credentialId = resolutionProps.grant.credentialId;
+			// Sharing is per exact authenticated candidate, not merely a credential
+			// ID copied into a different owner's/agent's or corrupted metadata row.
+			const snapshotDigest = createHash('sha256')
+				.update(JSON.stringify(oauthStoredGrantSchema.parse(resolutionProps.grant)))
+				.digest('hex');
 			const existing = inFlightByCredentialId.get(credentialId);
 			if (existing !== undefined) {
-				const sharedResult = await existing;
+				if (existing.snapshotDigest !== snapshotDigest) return { kind: 'stale-write' };
+				const sharedResult = await existing.resolution;
 				return sharedResult.kind === 'ready' &&
 					!containsRequiredScopes(sharedResult.grant.grantedScopes, resolutionProps.requiredScopes)
 					? { kind: 'scope-insufficient' }
 					: sharedResult;
 			}
 			const leader = resolveLeader(resolutionProps);
-			inFlightByCredentialId.set(credentialId, leader);
+			inFlightByCredentialId.set(credentialId, { snapshotDigest, resolution: leader });
 			try {
 				return await leader;
 			} finally {
-				if (inFlightByCredentialId.get(credentialId) === leader) {
+				if (inFlightByCredentialId.get(credentialId)?.resolution === leader) {
 					inFlightByCredentialId.delete(credentialId);
 				}
 			}

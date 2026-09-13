@@ -336,6 +336,32 @@ def _execute_refinements(  # noqa: PLR0912
             defaults = _require_mapping(operation.get("values"))
             for path, default_value in defaults.items():
                 _apply_default_path(normalized_value, path, default_value)
+        elif operation_kind == "google-discovery-policy":
+            for result_item in t.cast("list[object]", _require_mapping(normalized_value).get("items", [])):
+                result_value = _require_mapping(result_item).get("value")
+                if not isinstance(result_value, dict):
+                    continue
+                for tool in t.cast("list[object]", result_value.get("tools", [])):
+                    capability = _require_mapping(tool)
+                    requirement = capability.get("oauthRequirement")
+                    if isinstance(requirement, dict):
+                        operations = t.cast("list[object]", requirement.get("operations", []))
+                        identities = [(_require_mapping(item).get("applicationId"), _require_mapping(item).get("operationId")) for item in operations]
+                        if len(identities) != len(set(identities)):
+                            raise _portable_error(error_code, "Google operation requirements must be unique.")
+                    availability = capability.get("oauthAvailability")
+                    if not isinstance(availability, dict) or availability.get("kind") != "operation-options":
+                        continue
+                    operation_results = t.cast("list[object]", availability.get("items", []))
+                    identities = [(_require_mapping(_require_mapping(item).get("requirement", {})).get("applicationId"), _require_mapping(_require_mapping(item).get("requirement", {})).get("operationId")) for item in operation_results]
+                    if len(identities) != len(set(identities)):
+                        raise _portable_error(error_code, "Google operation availability results must be unique.")
+                    for operation_result in operation_results:
+                        account_options = _require_mapping(_require_mapping(operation_result).get("availability", {}))
+                        for account in t.cast("list[object]", account_options.get("accounts", [])):
+                            option = _require_mapping(account)
+                            if _require_mapping(option.get("availability", {})).get("kind") == "ready" and _require_mapping(option.get("metadata", {})).get("kind") != "verified":
+                                raise _portable_error(error_code, "Usable account activity requires authenticated account metadata.")
         elif operation_kind == "canonical-json":
             normalized_value = _canonicalize_json(normalized_value, operation)
         elif operation_kind == "maximum-object-entries":
@@ -458,10 +484,28 @@ def _execute_refinements(  # noqa: PLR0912
     return normalized_value
 
 
+def _call_item_has_status_shape_conflict(item: dict[str, object]) -> bool:
+    outcome_value = item.get("outcome")
+    outcome = t.cast("dict[str, object]", outcome_value) if isinstance(outcome_value, dict) else {}
+    operation_id = item.get("operationId")
+    owning_generation = item.get("owningGeneration")
+    completed_delivery = (
+        outcome.get("kind") == "completed"
+        and outcome.get("completion") == "failed"
+        and outcome.get("certainty") == "proven"
+        and outcome.get("retryClass") == "forbidden"
+        and isinstance(operation_id, str) and bool(operation_id)
+        and isinstance(owning_generation, str) and bool(owning_generation)
+    )
+    return (item.get("status") == "ok" and "error" in item) or (
+        item.get("status") == "error" and "value" in item and not completed_delivery
+    )
+
+
 def _schema_error_code(schema_id: str, value: object, mismatch_code: str) -> str:
     if schema_id == "portal.call.item-result" and isinstance(value, dict):
         item = t.cast("dict[str, object]", value)
-        if (item.get("status") == "ok" and "error" in item) or (item.get("status") == "error" and "value" in item):
+        if _call_item_has_status_shape_conflict(item):
             return "portal.result.status-shape"
     return mismatch_code
 
@@ -476,9 +520,7 @@ def _create_contract_adapter(schema_id: str) -> TypeAdapter[object]:
     def _validate(value: object) -> object:
         if schema_id == "portal.call.item-result" and isinstance(value, dict):
             item = t.cast("dict[str, object]", value)
-            if (item.get("status") == "ok" and "error" in item) or (
-                item.get("status") == "error" and "value" in item
-            ):
+            if _call_item_has_status_shape_conflict(item):
                 raise _portable_error(
                     "portal.result.status-shape",
                     "Call result fields conflict with the status discriminant.",

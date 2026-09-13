@@ -73,7 +73,7 @@ const classifiedRemovalTestFiles = new Map<string, number>([
 		2,
 	],
 	['scripts/audit-managed-vm-boundaries.unit.test.ts', 8],
-	['scripts/audit-openclaw-removal.unit.test.ts', 36],
+	['scripts/audit-openclaw-removal.unit.test.ts', 40],
 	['scripts/audit-test-taxonomy.unit.test.ts', 1],
 	['scripts/ci-workflow.unit.test.ts', 1],
 	['scripts/inspect-managed-vm-package-cut.unit.test.ts', 4],
@@ -123,7 +123,14 @@ async function collectTextResidue(
 	for (const filePath of filePaths) {
 		if (!(await pathExists(filePath))) continue;
 		const sourceText = await readFile(filePath, 'utf8');
-		if (/openclaw/iu.test(sourceText)) {
+		// The official Gog release owner is not an installed agent framework.
+		// Exempt only this pinned URL in its checksum-verifying test fixture.
+		const auditedText =
+			path.relative(repositoryRoot, filePath).replaceAll('\\', '/') ===
+			'packages/agent-vm/src/integration-tests/pinned-gog-runtime-test-fixture.ts'
+				? sourceText.replace('https://github.com/openclaw/gogcli/releases/download/v0.38.1/', '')
+				: sourceText;
+		if (/openclaw/iu.test(auditedText)) {
 			violations.push(
 				`${path.relative(repositoryRoot, filePath)} contains active OpenClaw residue`,
 			);

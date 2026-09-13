@@ -965,32 +965,34 @@ def _run_managed_hermes_gateway_runtime(
         (hermes_gateway.run_gateway if stock_gateway_runner is None else stock_gateway_runner)()
     finally:
         try:
-            if inventory_coordinator is not None and adapter is not None:
+            # Construction above can fail before any assignment; ty narrows this
+            # finally block using the successful path only. Keep partial-startup guards.
+            if inventory_coordinator is not None and adapter is not None:  # ty: ignore[redundant-condition-strict]
                 _close_managed_tool_portal_state(
                     adapter=adapter,
                     inventory_coordinator=inventory_coordinator,
                     injection_state_cache=injection_state_cache,
                 )
-            elif injection_state_cache is not None:
+            elif injection_state_cache is not None:  # ty: ignore[redundant-condition-strict]
                 injection_state_cache.close(EvictionReason.RUNTIME_SHUTDOWN)
         finally:
             try:
                 clear_managed_tool_portal_plugin_configuration()
             finally:
                 try:
-                    if managed_policy_bindings is not None:
+                    if managed_policy_bindings is not None:  # ty: ignore[redundant-condition-strict]
                         managed_policy_bindings.close()
                 finally:
                     try:
-                        if process_hooks is not None:
+                        if process_hooks is not None:  # ty: ignore[redundant-condition-strict]
                             process_hooks.close()
                     finally:
                         try:
-                            if hooks is not None:
+                            if hooks is not None:  # ty: ignore[redundant-condition-strict]
                                 hooks.close()
                         finally:
                             try:
-                                if adapter is not None:
+                                if adapter is not None:  # ty: ignore[redundant-condition-strict]
                                     adapter.close()
                             finally:
                                 telemetry.shutdown()

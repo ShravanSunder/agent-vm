@@ -2149,9 +2149,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 
 	it('exposes stopping state and blocks gateway commands while stop is pending', async () => {
 		const closeDeferred = createDeferredPromise<void>();
+		const destructionStarted = createDeferredPromise<void>();
 		const terminationOrder: string[] = [];
 		const destroyGateway = vi.fn(async () => {
 			terminationOrder.push('terminate-started');
+			destructionStarted.resolve();
 			await closeDeferred.promise;
 			terminationOrder.push('terminate-complete');
 			terminationOrder.push('runtime-record-deleted');
@@ -2205,6 +2207,8 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 			"Gateway runtime for zone 'shravan' is unavailable.",
 		);
 		expect(gatewayExec).not.toHaveBeenCalled();
+		// Stopping is published before asynchronous lifecycle records and destruction.
+		await destructionStarted.promise;
 		expect(destroyGateway).toHaveBeenCalledOnce();
 
 		closeDeferred.resolve();
@@ -2767,6 +2771,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 			// Arrange
 			let gatewayStartCount = 0;
 			const pendingGatewayCreate = createDeferredPromise<TestGatewayZoneStartResult>();
+			const pendingGatewayCreateRegistered = createDeferredPromise<void>();
 			const pendingCreateContainment = createDeferredPromise<void>();
 			const containPendingCreate = vi.fn(
 				async (): Promise<void> => await pendingCreateContainment.promise,
@@ -2780,6 +2785,7 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 					gatewayStartCount += 1;
 					if (gatewayStartCount === pendingGatewayStartOrdinal) {
 						startOptions?.onPendingVmCreation?.({ contain: containPendingCreate });
+						pendingGatewayCreateRegistered.resolve(undefined);
 						return await pendingGatewayCreate.promise;
 					}
 					return {
@@ -2825,10 +2831,11 @@ describe('createManagedGatewayZoneRuntime stop and restart safety', () => {
 				timedOperationKind === 'restart'
 					? runtime.restart({ timeoutMs: 5_000 })
 					: runtime.coldStart({ timeoutMs: 5_000 });
-			await vi.waitFor(() => {
-				expect(restartTimeoutCallbacks).toHaveLength(1);
-				expect(containPendingCreate).not.toHaveBeenCalled();
-			});
+			// The timeout is armed before asynchronous preflight finishes. This
+			// scenario must time out an actual pending create, not preflight.
+			await pendingGatewayCreateRegistered.promise;
+			expect(restartTimeoutCallbacks).toHaveLength(1);
+			expect(containPendingCreate).not.toHaveBeenCalled();
 
 			// Act
 			restartTimeoutCallbacks[0]?.();

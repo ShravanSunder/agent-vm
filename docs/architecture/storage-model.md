@@ -120,6 +120,13 @@ gitdirs/agents/<agentId>            controller-selected host root      optional 
 /work                               managed Tool VM guest path         rootfs/COW; repos, builds, caches,
 	                                default execution cwd              packages, and temporary work
 
+/agent-vm/files                    managed Tool VM guest path         fixed read-only RealFS projection of
+	                                temporary Gog publications         controller-owned receiver staging;
+	                                                                   expires after one hour or VM close
+
+/agent-vm/gog-work                 credentialed Gog VM guest path     fixed writable RealFS projection of
+	                                private operation folders          controller-owned producer staging
+
 effectiveGuestCwd                   plugin/controller response         Tool VM guest cwd for commands;
 	                                controller-selected                normally /work or a child
 
@@ -250,6 +257,14 @@ zone runtime artifacts
   Rule: active runtime evidence that is not rebuildable cache and not durable
         state
 
+Google file staging
+	Owner: controller staging lifecycle
+	Host: controller-derived temporary producer and receiver roots outside backup
+	VM: Gog producer at /agent-vm/gog-work; exact Tool VM receiver at /agent-vm/files
+	Backup: no
+	Rule: bounded independent-inode publication; receiver read-only; cleanup at
+	      one hour or receiver close; producer close does not recall publication
+
 zone files
 	Owner: long-lived gateway/user workflow
 	Host: <storageRootDir>/<zoneId>/zone-files (`zoneFilesDir`)
@@ -345,6 +360,16 @@ agent workspace into a managed Tool VM at `/workspace`. `/work` remains
 rootfs/COW and `/gitdirs` exposes only the optional selected agent workspace Git
 database. Remote workspace push is controller-owned over HTTPS through
 `workspace_git_push`; Tool VM Git SSH remains read-only.
+
+OAuth-enabled Gog delivery adds one separate temporary surface. Credentialed Gog
+runtimes receive only their controller-owned producer root at
+`/agent-vm/gog-work`; managed Tool VMs receive only their generation's receiver
+root at read-only `/agent-vm/files`. These paths do not replace input `/work` or
+durable `/workspace`. Publication copies bytes to independent host-disk inodes,
+then exposes a receiver child atomically. Published files are removed after one
+hour or receiver retirement, while producer retirement and later Google
+disconnect leave already delivered files until that deadline. Deletion follows
+ordinary unlink/open-handle semantics rather than forced descriptor revocation.
 
 ## Gondolin VFS Performance Notes
 

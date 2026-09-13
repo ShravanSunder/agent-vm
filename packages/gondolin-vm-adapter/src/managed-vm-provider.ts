@@ -171,20 +171,22 @@ function translateExecStreamMode(mode: ManagedVmExecStreamMode): 'ignore' | 'pip
 
 function translateExecStreamingOptions(
 	output: NonNullable<ManagedVmExecOptions['output']>,
-): Pick<NativeManagedExecOptions, 'stderr' | 'stdout' | 'windowBytes'> {
+): Pick<NativeManagedExecOptions, 'buffer' | 'stderr' | 'stdout' | 'windowBytes'> {
 	if (
-		!Number.isInteger(output.windowBytes) ||
-		output.windowBytes < MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES ||
-		output.windowBytes > MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES
+		output.windowBytes !== undefined &&
+		(!Number.isInteger(output.windowBytes) ||
+			output.windowBytes < MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES ||
+			output.windowBytes > MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES)
 	) {
 		throw new Error(
 			`Managed VM exec output window must be an integer between ${String(MANAGED_VM_EXEC_OUTPUT_WINDOW_MIN_BYTES)} and ${String(MANAGED_VM_EXEC_OUTPUT_WINDOW_MAX_BYTES)} bytes.`,
 		);
 	}
 	return {
+		buffer: false,
 		stderr: translateExecStreamMode(output.stderr),
 		stdout: translateExecStreamMode(output.stdout),
-		windowBytes: output.windowBytes,
+		...(output.windowBytes === undefined ? {} : { windowBytes: output.windowBytes }),
 	};
 }
 

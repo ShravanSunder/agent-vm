@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	OAuthAuthorizationControllerActionRequestSchema,
 	OAuthAuthorizationControllerActionResultSchema,
+	OAuthAuthorizationDisconnectArgumentsSchema,
 } from './index.js';
 
 describe('OAuth authorization controller-execution boundary', () => {
@@ -10,15 +11,39 @@ describe('OAuth authorization controller-execution boundary', () => {
 		expect(
 			OAuthAuthorizationControllerActionRequestSchema.safeParse({
 				actionId: 'oauth_authorization.begin',
-				accountProfileId: 'personal-google',
-				suggestedSelections: { 'gmail-app': { gmail: 'read' } },
+				applicationId: 'gmail-app',
+				suggestedSelections: { 'gmail-app': ['gmail.read'] },
 			}).success,
 		).toBe(true);
 		expect(
 			OAuthAuthorizationControllerActionRequestSchema.safeParse({
 				actionId: 'oauth_authorization.begin',
-				accountProfileId: 'personal-google',
+				applicationId: 'gmail-app',
 				scopes: ['gmail.modify'],
+			}).success,
+		).toBe(false);
+	});
+
+	it('exports the account-bound disconnect ceremony instead of provider revocation', () => {
+		// Arrange
+		const disconnectArguments = {
+			accountId: '11111111-1111-4111-8111-111111111111',
+			applicationId: 'gmail-app',
+		};
+		// Act / Assert
+		expect(OAuthAuthorizationDisconnectArgumentsSchema.parse(disconnectArguments)).toEqual(
+			disconnectArguments,
+		);
+		expect(
+			OAuthAuthorizationControllerActionRequestSchema.safeParse({
+				actionId: 'oauth_authorization.disconnect',
+				...disconnectArguments,
+			}).success,
+		).toBe(true);
+		expect(
+			OAuthAuthorizationControllerActionRequestSchema.safeParse({
+				actionId: 'oauth_authorization.revoke',
+				...disconnectArguments,
 			}).success,
 		).toBe(false);
 	});

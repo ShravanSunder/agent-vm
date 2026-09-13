@@ -9,7 +9,6 @@ import type {
 	EffectiveManagedToolPortalConfig,
 	FormattedSecretValue,
 	GatewayRuntimeManagedToolPortalConfig,
-	ManagedToolPortalConfig,
 	McpConfig,
 } from '@agent-vm/config-contracts';
 
@@ -115,10 +114,12 @@ interface NormalizedProfilePolicyInputs {
 				Record<
 					string,
 					{
-						readonly calls: {
-							readonly requiresApproval: NormalizedToolSelector;
-							readonly withoutApproval: NormalizedToolSelector;
-						};
+						readonly calls:
+							| {
+									readonly requiresApproval: NormalizedToolSelector;
+									readonly withoutApproval: NormalizedToolSelector;
+							  }
+							| { readonly source: 'managed_google_policy' };
 						readonly tools: NormalizedToolSelector;
 					}
 				>
@@ -199,9 +200,7 @@ function recordEntries<TValue>(
 	return Object.entries(record);
 }
 
-type BindingConfigProfile =
-	| EffectiveManagedToolPortalConfig['profiles'][string]
-	| ManagedToolPortalConfig['profiles'][string];
+type BindingConfigProfile = EffectiveManagedToolPortalConfig['profiles'][string];
 type BindingConfigNamespacePolicy = BindingConfigProfile['namespaces'][string];
 type BindingControllerExecutionBackend = Extract<
 	BindingConfigNamespacePolicy['backend'],
@@ -363,10 +362,17 @@ function normalizedProfilePolicyInputs(props: {
 					Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 						namespaceId,
 						{
-							calls: {
-								requiresApproval: normalizedToolSelector(namespacePolicy.calls.requiresApproval),
-								withoutApproval: normalizedToolSelector(namespacePolicy.calls.withoutApproval),
-							},
+							calls:
+								'source' in namespacePolicy.calls
+									? { source: namespacePolicy.calls.source }
+									: {
+											requiresApproval: normalizedToolSelector(
+												namespacePolicy.calls.requiresApproval,
+											),
+											withoutApproval: normalizedToolSelector(
+												namespacePolicy.calls.withoutApproval,
+											),
+										},
 							tools: normalizedToolSelector(namespacePolicy.tools),
 						},
 					]),
@@ -378,7 +384,7 @@ function normalizedProfilePolicyInputs(props: {
 }
 
 function normalizedBindingInputs(
-	config: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
+	config: EffectiveManagedToolPortalConfig,
 ): NormalizedBindingInputs {
 	const profiles = Object.fromEntries(
 		recordEntries<BindingConfigProfile>(config.profiles).map(([profileId, profile]) => [
@@ -448,24 +454,16 @@ function normalizedControllerExecutionOperation(
 	operation: BindingControllerExecutionOperation,
 ): object {
 	if (operation.kind === 'registered_action') return operation;
-	if ('suggestCalls' in operation) {
-		return {
-			...operation,
-			suggestCalls: {
-				suggestDeny: normalizedInvocationMatchers(operation.suggestCalls.suggestDeny),
-				suggestRequiresApproval: normalizedInvocationMatchers(
-					operation.suggestCalls.suggestRequiresApproval,
-				),
-				suggestWithoutApproval: operation.suggestCalls.suggestWithoutApproval,
-			},
-		};
-	}
 	return {
 		...operation,
 		calls: {
 			deny: normalizedInvocationMatchers(operation.calls.deny),
-			requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
-			withoutApproval: operation.calls.withoutApproval,
+			...('source' in operation.calls
+				? { source: operation.calls.source }
+				: {
+						requiresApproval: normalizedInvocationMatchers(operation.calls.requiresApproval),
+						withoutApproval: operation.calls.withoutApproval,
+					}),
 		},
 	};
 }
@@ -514,7 +512,7 @@ function revision(domain: string, material: object): string {
 }
 
 export function deriveGatewayRuntimePortalBindingRevision(
-	toolPortalConfig: ManagedToolPortalConfig | EffectiveManagedToolPortalConfig,
+	toolPortalConfig: EffectiveManagedToolPortalConfig,
 ): string {
 	return revision('binding', normalizedBindingInputs(toolPortalConfig));
 }

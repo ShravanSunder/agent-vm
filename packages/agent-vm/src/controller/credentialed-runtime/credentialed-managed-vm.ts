@@ -9,6 +9,7 @@ import type {
 	ManagedVm,
 	ManagedVmFactory,
 	ManagedVmMediatedSecretDescriptor,
+	OwnedHostDirectory,
 } from '@agent-vm/managed-vm';
 import type { SecretResolver } from '@agent-vm/secret-management';
 
@@ -29,6 +30,7 @@ const credentialedRuntimeResources = {
 } as const;
 
 export async function createUnstartedCredentialedManagedVm(props: {
+	readonly producerDirectory?: OwnedHostDirectory;
 	readonly dynamicHttpMediation?: CredentialedRuntimeDynamicHttpMediation | undefined;
 	readonly managedVmFactory: ManagedVmFactory;
 	readonly resolution: CredentialedRuntimeResolution;
@@ -104,7 +106,16 @@ export async function createUnstartedCredentialedManagedVm(props: {
 					environment: ordinaryEnvironment,
 					imageReference: preparedImage.imageReference,
 					mediatedSecrets,
-					mounts: {},
+					mounts:
+						props.producerDirectory === undefined
+							? {}
+							: {
+									'/agent-vm/gog-work': {
+										kind: 'owned-host-directory',
+										access: 'read-write',
+										directory: props.producerDirectory,
+									},
+								},
 					resources: credentialedRuntimeResources,
 					rootfsMode: 'cow',
 					sessionLabel: props.sessionLabel,
@@ -120,6 +131,7 @@ export async function createUnstartedCredentialedManagedVm(props: {
 		}
 		commandEnvironment = Object.freeze({
 			[projection.environmentName]: dynamicMediation.placeholderValue,
+			...(dynamicMediation.gmailNoSend ? { GOG_GMAIL_NO_SEND: '1' } : {}),
 		});
 		mediatedSecrets = [
 			{
@@ -135,15 +147,25 @@ export async function createUnstartedCredentialedManagedVm(props: {
 		environment: { ...ordinaryEnvironment, ...commandEnvironment },
 		imageReference: preparedImage.imageReference,
 		mediatedSecrets,
-		mounts:
-			projection.kind === 'file_binding'
+		mounts: {
+			...(props.producerDirectory === undefined
+				? {}
+				: {
+						'/agent-vm/gog-work': {
+							kind: 'owned-host-directory' as const,
+							access: 'read-write' as const,
+							directory: props.producerDirectory,
+						},
+					}),
+			...(projection.kind === 'file_binding'
 				? {
 						[CredentialedRuntimeCredentialRoot]: {
 							access: 'read-only',
 							kind: 'finalizable-memory',
 						},
 					}
-				: {},
+				: {}),
+		},
 		resources: credentialedRuntimeResources,
 		rootfsMode: 'cow',
 		sessionLabel: props.sessionLabel,
@@ -172,6 +194,8 @@ export interface CredentialedManagedVmCommandResult {
 export async function executeCredentialedManagedVmCommand(props: {
 	readonly input: ControllerConfiguredCliInput;
 	readonly commandEnvironment: Readonly<Record<string, string>>;
+	/** Selected only by the runtime owner after preparing this command's folder. */
+	readonly operationCwd?: string;
 	readonly resolution: CredentialedRuntimeResolution;
 	readonly signal?: AbortSignal;
 	readonly vm: ManagedVm;
@@ -215,7 +239,7 @@ export async function executeCredentialedManagedVmCommand(props: {
 		const process = props.vm.exec(
 			[operation.executablePath, ...operation.mandatoryArgvPrefix, ...props.input.argv],
 			{
-				cwd: target.guestCwd,
+				cwd: props.operationCwd ?? target.guestCwd,
 				env: {
 					...resolveConfiguredCliEnvironment(target.environment),
 					...props.commandEnvironment,
@@ -223,7 +247,6 @@ export async function executeCredentialedManagedVmCommand(props: {
 				output: {
 					stderr: { kind: 'pipe' },
 					stdout: { kind: 'pipe' },
-					windowBytes: Math.max(operation.output.stderrMaxBytes, operation.output.stdoutMaxBytes),
 				},
 				pty: false,
 				signal: executionSignal,

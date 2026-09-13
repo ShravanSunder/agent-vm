@@ -54,7 +54,14 @@ class HermesApprovalGateway(t.Protocol):
 class HermesGatewayApprovalRoute:
     """Bounded session route; native actor identity never leaves Hermes."""
 
-    __slots__ = ("adapter", "gateway_loop", "session_key", "session_store", "source")
+    __slots__ = (
+        "adapter",
+        "gateway_loop",
+        "session_key",
+        "session_store",
+        "source",
+        "authority_is_current",
+    )
 
     def __init__(
         self,
@@ -64,12 +71,14 @@ class HermesGatewayApprovalRoute:
         session_key: str,
         session_store: HermesApprovalSessionStore,
         source: HermesApprovalSessionSource,
+        authority_is_current: t.Callable[[], bool],
     ) -> None:
         self.adapter = adapter
         self.gateway_loop = gateway_loop
         self.session_key = session_key
         self.session_store = session_store
         self.source = source
+        self.authority_is_current = authority_is_current
 
 
 class HermesGatewayApprovalRouteStore:
@@ -109,6 +118,7 @@ class HermesGatewayApprovalRouteStore:
             session_key=session_key,
             session_store=session_store,
             source=source,
+            authority_is_current=lambda: gateway._is_user_authorized(source),
         )
         with self._lock:
             self._routes_by_session_key[session_key] = route

@@ -4,8 +4,7 @@ import {
 	type GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	oauthAccountProfileIdSchema,
-	oauthAccountProfileToolRequirementSchema,
+	oauthOperationToolRequirementSchema,
 	oauthToolAvailabilityBatchResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { describe, expect, it, vi } from 'vitest';
@@ -24,11 +23,9 @@ const trustedContext = {
 	},
 } satisfies GatewayRuntimeTrustedInvocationContext;
 
-const requirement = oauthAccountProfileToolRequirementSchema.parse({
+const requirement = oauthOperationToolRequirementSchema.parse({
 	applicationId: 'gmail-app',
-	kind: 'oauth-account-profile',
-	minimumPermission: 'read',
-	serviceId: 'gmail',
+	operationId: 'gmail.search',
 });
 
 const acceptedSession = {
@@ -64,13 +61,19 @@ describe('Gateway control OAuth availability port', () => {
 						items: [
 							{
 								availability: {
-									accountProfiles: [
+									accounts: [
 										{
-											accountLabel: 'Personal Google',
-											accountProfileId: oauthAccountProfileIdSchema.parse('personal-google'),
+											accountId: '11111111-1111-4111-8111-111111111111',
+											metadata: { kind: 'verified', accountAlias: 'Personal Google' },
+											availability: {
+												kind: 'ready',
+												disposition: 'ask',
+												overrideRevision: 1,
+												defaultsRevision: 'defaults-1',
+											},
 										},
 									],
-									kind: 'ready',
+									kind: 'accounts',
 								},
 								requirement,
 							},
@@ -105,6 +108,17 @@ describe('Gateway control OAuth availability port', () => {
 				message: expect.objectContaining({ operation: 'tool_portal_oauth_availability' }),
 			}),
 		);
-		expect(result.items[0]).toMatchObject({ availability: { kind: 'ready' }, requirement });
+		expect(result.items[0]).toMatchObject({
+			availability: {
+				kind: 'accounts',
+				accounts: [
+					{
+						metadata: { kind: 'verified', accountAlias: 'Personal Google' },
+						availability: { kind: 'ready', disposition: 'ask' },
+					},
+				],
+			},
+			requirement,
+		});
 	});
 });

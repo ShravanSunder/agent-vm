@@ -1,0 +1,17 @@
+{
+	"caseId": "file-materialized-result",
+	"schemaId": "portal.file.result",
+	"tags": ["operation-file", "rejected", "obsolete-rpc"],
+	"input": {
+		"kind": "materialized",
+		"path": "/work/portal-file-example/report.pdf",
+		"byteLength": 0,
+		"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"cleanup": "complete"
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portable.schema.invalid-union"],
+		"refinementIdentities": []
+	}
+}

@@ -23,6 +23,9 @@ DerivedData/
 Package.resolved
 
 # IDE
+# Local Mindle editor sidecars (never product source)
+*.mindle.json
+.mindle/
 .idea/
 .vscode/
 *.swp

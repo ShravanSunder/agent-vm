@@ -57,6 +57,10 @@ import {
 } from '../gateway-runtime-approval-decision-operations.js';
 import { createGatewayRuntimeApprovalPort } from '../gateway-runtime-approval-port.js';
 import type { GatewayRuntimeManagedToolPortalBackendPortFactories } from '../managed-tool-portal-composition.js';
+import {
+	createGatewayControlNativeAttachmentPort,
+	type GatewayControlNativeAttachmentPort,
+} from '../native-attachment-gateway-control-port.js';
 import { createGatewayControlOAuthAvailabilityPort } from '../oauth-availability-gateway-control-port.js';
 import { createGatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-process-registry.js';
 import {
@@ -167,6 +171,7 @@ export interface GatewayRuntimeProductionControlRuntimeDependencies {
 }
 
 export interface GatewayRuntimeProductionControlRuntime {
+	readonly attachmentOperations: GatewayControlNativeAttachmentPort;
 	readonly acquisitionPort: GatewayControlOperationActiveUseAcquisitionPort;
 	readonly approvalPort: ToolPortalApprovalPort;
 	readonly approvalDecisionOperations: GatewayRuntimeApprovalDecisionOperations;
@@ -241,6 +246,10 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		controlCommandClient,
 	});
 	const oauthAvailabilityPort = dependencies.createOAuthAvailabilityPort({
+		callerContextRegistrationClient,
+		controlCommandClient,
+	});
+	const attachmentOperations = createGatewayControlNativeAttachmentPort({
 		callerContextRegistrationClient,
 		controlCommandClient,
 	});
@@ -388,6 +397,7 @@ export async function createGatewayRuntimeProductionControlRuntime(
 		};
 	return {
 		acquisitionPort,
+		attachmentOperations,
 		approvalPort,
 		approvalDecisionOperations,
 		applicationMessageHandler,

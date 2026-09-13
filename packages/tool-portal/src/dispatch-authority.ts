@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
+import type { ManagedGoogleReadyPreflight } from '@agent-vm/oauth-broker-contracts';
 
 function canonicalAuthorityJson(value: unknown): string {
 	if (value === null || typeof value === 'boolean' || typeof value === 'string') {
@@ -58,6 +59,7 @@ export function deterministicOperationId(props: {
 }
 
 export function directDispatchFingerprint(props: {
+	readonly managedGoogle?: ManagedGoogleReadyPreflight | undefined;
 	readonly backendKind: ToolPortalBackendKind;
 	readonly call: PortalCallRequest['calls'][number];
 	readonly principal: unknown;
@@ -72,6 +74,7 @@ export function directDispatchFingerprint(props: {
 	readonly surfaceClass: string;
 }): `sha256:${string}` {
 	const fingerprintInput = {
+		...(props.managedGoogle === undefined ? {} : { managedGoogle: props.managedGoogle }),
 		backendKind: props.backendKind,
 		capability: { name: props.call.name, namespace: props.call.namespace },
 		canonicalArguments: props.call.arguments,

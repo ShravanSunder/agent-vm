@@ -1,94 +1,82 @@
 import { z } from 'zod';
 
-import {
-	oauthAccountProfileIdSchema,
-	oauthApplicationIdSchema,
-	oauthServiceIdSchema,
-} from './oauth-identifiers.js';
-import { oauthMinimumPermissionSchema } from './oauth-permission-contracts.js';
+import { oauthAccountIdSchema } from './google-account-policy-contracts.js';
+import { oauthAccountActivityAvailabilitySchema } from './oauth-authorization-action-contracts.js';
+import { oauthApplicationIdSchema } from './oauth-identifiers.js';
 
-export const oauthAccountProfileToolRequirementSchema = z
+export const oauthOperationToolRequirementSchema = z
 	.object({
 		applicationId: oauthApplicationIdSchema,
-		kind: z.literal('oauth-account-profile'),
-		minimumPermission: oauthMinimumPermissionSchema,
-		serviceId: oauthServiceIdSchema,
+		operationId: z.string().min(1).max(128),
 	})
 	.strict();
-export type OAuthAccountProfileToolRequirement = z.infer<
-	typeof oauthAccountProfileToolRequirementSchema
->;
+export type OAuthOperationToolRequirement = z.infer<typeof oauthOperationToolRequirementSchema>;
+export const oauthToolAvailabilityBatchMaximumRequirements = 256;
+export function oauthOperationRequirementIdentity(
+	requirement: OAuthOperationToolRequirement,
+): string {
+	return JSON.stringify([requirement.applicationId, requirement.operationId]);
+}
+const requirementsSchema = z
+	.array(oauthOperationToolRequirementSchema)
+	.min(1)
+	.max(oauthToolAvailabilityBatchMaximumRequirements)
+	.readonly()
+	.refine(
+		(requirements) =>
+			new Set(requirements.map(oauthOperationRequirementIdentity)).size === requirements.length,
+		'Google operation requirements must be unique.',
+	);
 
-export const oauthInvocationDependentToolRequirementSchema = z
+export const oauthToolRequirementSchema = z
 	.object({
-		accountProfileArgument: z.literal('accountProfile'),
+		kind: z.literal('google-account'),
+		accountArgument: z.literal('accountId'),
 		describeBeforeCall: z.literal(true),
-		kind: z.literal('invocation-dependent-oauth-account-profile'),
+		operations: requirementsSchema,
 	})
 	.strict();
-
-export const oauthToolRequirementSchema = z.discriminatedUnion('kind', [
-	oauthAccountProfileToolRequirementSchema,
-	oauthInvocationDependentToolRequirementSchema,
-]);
 export type OAuthToolRequirement = z.infer<typeof oauthToolRequirementSchema>;
 
-export const oauthEligibleAccountProfileSchema = z
+export const oauthAccountToolOptionSchema = z
 	.object({
-		accountLabel: z.string().min(1).max(320),
-		accountProfileId: oauthAccountProfileIdSchema,
-	})
-	.strict();
-export type OAuthEligibleAccountProfile = z.infer<typeof oauthEligibleAccountProfileSchema>;
-
-export const oauthToolAvailabilitySchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			accountProfiles: z.array(oauthEligibleAccountProfileSchema).min(1).readonly(),
-			kind: z.literal('ready'),
-		})
-		.strict(),
-	z.object({ kind: z.literal('authorization-required') }).strict(),
-	z.object({ kind: z.literal('reauthorization-required') }).strict(),
-	z.object({ kind: z.literal('scope-insufficient') }).strict(),
-	z.object({ kind: z.literal('authorization-status-unavailable') }).strict(),
-]);
-export type OAuthToolAvailability = z.infer<typeof oauthToolAvailabilitySchema>;
-
-export const oauthToolAvailabilityBatchMaximumRequirements = 256;
-
-function oauthToolRequirementIdentity(requirement: OAuthAccountProfileToolRequirement): string {
-	return [requirement.applicationId, requirement.serviceId, requirement.minimumPermission].join(
-		'\u0000',
-	);
-}
-
-export const oauthToolAvailabilityBatchRequestSchema = z
-	.object({
-		requirements: z
-			.array(oauthAccountProfileToolRequirementSchema)
-			.min(1)
-			.max(oauthToolAvailabilityBatchMaximumRequirements)
-			.readonly(),
+		accountId: oauthAccountIdSchema,
+		metadata: z.discriminatedUnion('kind', [
+			z.object({ kind: z.literal('verified'), accountAlias: z.string().min(1).max(320) }).strict(),
+			z.object({ kind: z.literal('unavailable') }).strict(),
+		]),
+		availability: oauthAccountActivityAvailabilitySchema,
 	})
 	.strict()
 	.refine(
-		(request) =>
-			new Set(request.requirements.map(oauthToolRequirementIdentity)).size ===
-			request.requirements.length,
-		{ message: 'OAuth availability batch requirements must be unique.' },
+		(option) => option.availability.kind !== 'ready' || option.metadata.kind === 'verified',
+		'Usable account activity requires authenticated account metadata.',
 	);
+export type OAuthAccountToolOption = z.infer<typeof oauthAccountToolOptionSchema>;
+
+export const oauthOperationAvailabilitySchema = z.discriminatedUnion('kind', [
+	z
+		.object({
+			kind: z.literal('accounts'),
+			accounts: z.array(oauthAccountToolOptionSchema).max(256).readonly(),
+		})
+		.strict(),
+	z.object({ kind: z.literal('unavailable') }).strict(),
+]);
+export type OAuthOperationAvailability = z.infer<typeof oauthOperationAvailabilitySchema>;
+export const oauthToolAvailabilityBatchRequestSchema = z
+	.object({ requirements: requirementsSchema })
+	.strict();
 export type OAuthToolAvailabilityBatchRequest = z.infer<
 	typeof oauthToolAvailabilityBatchRequestSchema
 >;
 
 export const oauthToolAvailabilityBatchItemSchema = z
 	.object({
-		availability: oauthToolAvailabilitySchema,
-		requirement: oauthAccountProfileToolRequirementSchema,
+		requirement: oauthOperationToolRequirementSchema,
+		availability: oauthOperationAvailabilitySchema,
 	})
 	.strict();
-
 export const oauthToolAvailabilityBatchResultSchema = z
 	.object({
 		items: z
@@ -99,10 +87,28 @@ export const oauthToolAvailabilityBatchResultSchema = z
 	.strict()
 	.refine(
 		(result) =>
-			new Set(result.items.map((item) => oauthToolRequirementIdentity(item.requirement))).size ===
-			result.items.length,
-		{ message: 'OAuth availability batch result requirements must be unique.' },
+			new Set(result.items.map((item) => oauthOperationRequirementIdentity(item.requirement)))
+				.size === result.items.length,
+		'Google operation availability results must be unique.',
 	);
 export type OAuthToolAvailabilityBatchResult = z.infer<
 	typeof oauthToolAvailabilityBatchResultSchema
 >;
+export const oauthToolAvailabilitySchema = z
+	.discriminatedUnion('kind', [
+		z
+			.object({
+				kind: z.literal('operation-options'),
+				items: oauthToolAvailabilityBatchResultSchema.shape.items,
+			})
+			.strict(),
+		z.object({ kind: z.literal('unavailable') }).strict(),
+	])
+	.refine(
+		(availability) =>
+			availability.kind !== 'operation-options' ||
+			new Set(availability.items.map((item) => oauthOperationRequirementIdentity(item.requirement)))
+				.size === availability.items.length,
+		'Google operation availability results must be unique.',
+	);
+export type OAuthToolAvailability = z.infer<typeof oauthToolAvailabilitySchema>;

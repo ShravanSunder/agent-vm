@@ -143,6 +143,7 @@ export type GatewayZonePreflightOptions = Omit<
 >;
 
 export type GatewayZoneCleanupFailureStage =
+	| 'native-attachment-cleanup'
 	| 'control-session-disposal'
 	| 'control-session-material-deletion'
 	| 'ingress-withdrawal'

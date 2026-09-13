@@ -4,7 +4,7 @@ import {
 	OAuthAuthorizationCancelArgumentsSchema,
 	OAuthAuthorizationListArgumentsSchema,
 	OAuthAuthorizationReauthorizeArgumentsSchema,
-	OAuthAuthorizationRevokeArgumentsSchema,
+	OAuthAuthorizationDisconnectArgumentsSchema,
 	OAuthAuthorizationStatusArgumentsSchema,
 } from '@agent-vm/controller-execution-contracts';
 import type { GatewayControlToolPortalControllerExecutionPayload } from '@agent-vm/gateway-control-contracts';
@@ -36,7 +36,10 @@ export function resolveRegisteredOAuthInvocationContext(
 			return {
 				arguments: jsonObjectSchema.parse(
 					OAuthAuthorizationBeginArgumentsSchema.parse({
-						accountProfileId: action.accountProfileId,
+						applicationId: action.applicationId,
+						...(action.suggestedAlias === undefined
+							? {}
+							: { suggestedAlias: action.suggestedAlias }),
 						...(action.suggestedSelections === undefined
 							? {}
 							: { suggestedSelections: action.suggestedSelections }),
@@ -69,7 +72,7 @@ export function resolveRegisteredOAuthInvocationContext(
 			return {
 				arguments: jsonObjectSchema.parse(
 					OAuthAuthorizationReauthorizeArgumentsSchema.parse({
-						accountProfileId: action.accountProfileId,
+						accountId: action.accountId,
 						applicationId: action.applicationId,
 						...(action.suggestedSelections === undefined
 							? {}
@@ -79,11 +82,11 @@ export function resolveRegisteredOAuthInvocationContext(
 				authority: action.authority,
 				invocation: action.invocation,
 			};
-		case 'oauth_authorization.revoke':
+		case 'oauth_authorization.disconnect':
 			return {
 				arguments: jsonObjectSchema.parse(
-					OAuthAuthorizationRevokeArgumentsSchema.parse({
-						accountProfileId: action.accountProfileId,
+					OAuthAuthorizationDisconnectArgumentsSchema.parse({
+						accountId: action.accountId,
 						applicationId: action.applicationId,
 					}),
 				),

@@ -1,37 +1,46 @@
 import path from 'node:path';
 
-import {
-	oauthAccountProfileIdSchema,
-	oauthPermissionChoiceSchema,
-	oauthProviderIdSchema,
-	oauthScopeSchema,
-	oauthServiceIdSchema,
-} from '@agent-vm/oauth-broker-contracts';
+import { googleCatalogFamilyIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
+import { clerkBrowserIdentityConfigSchema } from './clerk-browser-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 
 export const googleOAuthApplicationIds = ['workspace-app', 'gmail-app', 'youtube-app'] as const;
-
 export const googleOAuthApplicationIdSchema = z.enum(googleOAuthApplicationIds);
 export type GoogleOAuthApplicationId = z.infer<typeof googleOAuthApplicationIdSchema>;
 
-const googleOAuthProviderIdSchema = oauthProviderIdSchema.refine(
-	(providerId) => providerId === 'google',
-	{ message: 'The initial OAuth provider must be Google.' },
-);
-
+const namedIdSchema = z
+	.string()
+	.min(1)
+	.max(128)
+	.regex(/^[a-z0-9][a-z0-9._-]*$/u);
+const groupIdSchema = z
+	.string()
+	.min(1)
+	.max(128)
+	.regex(/^[a-z][a-z0-9.-]*$/u);
+const uniqueAgentIdsSchema = z
+	.array(namedIdSchema)
+	.min(1)
+	.max(128)
+	.readonly()
+	.refine((ids) => new Set(ids).size === ids.length, 'Agent identifiers must be unique.');
 const controllerOwnedAbsolutePathSchema = z
 	.string()
 	.min(1)
-	.max(4_096)
-	.refine((value) => path.isAbsolute(value) && !value.includes('\0'), {
-		message: 'OAuth controller paths must be absolute and contain no NUL bytes.',
-	});
-
+	.max(4096)
+	.refine(
+		(value) => path.isAbsolute(value) && !value.includes('\0'),
+		'OAuth controller paths must be absolute and contain no NUL bytes.',
+	);
 const onePasswordOAuthSecretSchema = z
 	.object({
-		ref: z.string().regex(/^op:\/\//u, '1Password refs must start with op://'),
+		ref: z
+			.string()
+			.min(6)
+			.max(4096)
+			.regex(/^op:\/\//u),
 		source: z.literal('1password'),
 	})
 	.strict();
@@ -50,208 +59,228 @@ export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
 	);
 }, 'OAuth publicBaseUrl must be the auth.claw.askluna.xyz HTTPS origin on port 18900 without credentials, path, query, or fragment.');
 
-export const oauthPermissionScopeMappingSchema = z
-	.object({
-		label: z.string().min(1).max(160),
-		read: z.array(oauthScopeSchema).min(1).readonly(),
-		write: z.array(oauthScopeSchema).min(1).readonly().optional(),
-	})
-	.strict()
-	.superRefine((mapping, context) => {
-		for (const [fieldName, scopes] of [
-			['read', mapping.read],
-			['write', mapping.write ?? []],
-		] as const) {
-			if (new Set(scopes).size === scopes.length) continue;
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: `OAuth ${fieldName} scopes must be unique.`,
-				path: [fieldName],
-			});
-		}
-	});
-
 export const googleOAuthApplicationConfigSchema = z
 	.object({
+		catalogFamilyId: googleCatalogFamilyIdSchema,
 		clientCredentials: onePasswordOAuthSecretSchema,
 		clientKind: z.literal('web'),
 		description: z.string().min(1).max(500),
 		label: z.string().min(1).max(160),
-		services: z
-			.record(oauthServiceIdSchema, oauthPermissionScopeMappingSchema)
-			.refine((services) => Object.keys(services).length > 0, {
-				message: 'Google OAuth applications must configure at least one service.',
-			}),
+		projectId: namedIdSchema,
 	})
 	.strict();
 export type GoogleOAuthApplicationConfig = z.infer<typeof googleOAuthApplicationConfigSchema>;
 
-const googleOAuthApplicationsSchema = z
-	.object({
-		'gmail-app': googleOAuthApplicationConfigSchema,
-		'workspace-app': googleOAuthApplicationConfigSchema,
-		'youtube-app': googleOAuthApplicationConfigSchema,
-	})
-	.strict();
-
-function isSafeTailnetLoginCharacter(character: string): boolean {
-	const codePoint = character.codePointAt(0);
-	return (
-		codePoint !== undefined && codePoint >= 0x20 && codePoint !== 0x7f && !/^\s$/u.test(character)
-	);
-}
-
-export const oauthAccountProfileApplicationMaximumSchema = z
-	.object({
-		maximumPermissions: z.record(
-			oauthServiceIdSchema,
-			oauthPermissionChoiceSchema.exclude(['none']),
-		),
-	})
-	.strict()
-	.refine((application) => Object.keys(application.maximumPermissions).length > 0, {
-		message: 'OAuth account-profile applications must configure at least one service maximum.',
-	});
-
-export const oauthAccountProfileConfigSchema = z
-	.object({
-		applications: z
-			.partialRecord(googleOAuthApplicationIdSchema, oauthAccountProfileApplicationMaximumSchema)
-			.refine((applications) => Object.keys(applications).length > 0, {
-				message: 'OAuth account profiles must configure at least one application.',
-			}),
-		authorizedTailnetLogins: z
-			.array(
-				z
-					.string()
-					.min(1)
-					.max(320)
-					.refine((login) => Array.from(login).every(isSafeTailnetLoginCharacter), {
-						message: 'Authorized tailnet logins must not contain whitespace or control bytes.',
-					}),
-			)
-			.min(1)
-			.refine((logins) => new Set(logins).size === logins.length, {
-				message: 'Authorized tailnet logins must be unique.',
-			}),
-		provider: googleOAuthProviderIdSchema,
-	})
-	.strict();
-
+export const googleOAuthCeilingSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('catalog-preset'), presetId: namedIdSchema }).strict(),
+	z
+		.object({
+			kind: z.literal('explicit'),
+			groupIds: z
+				.array(groupIdSchema)
+				.max(128)
+				.readonly()
+				.refine(
+					(groups) => new Set(groups).size === groups.length,
+					'Ceiling groups must be unique.',
+				),
+		})
+		.strict(),
+]);
 export const oauthAgentConfigSchema = z
 	.object({
-		accountProfiles: z
-			.record(oauthAccountProfileIdSchema, oauthAccountProfileConfigSchema)
-			.refine((profiles) => Object.keys(profiles).length > 0, {
-				message: 'OAuth agents must configure at least one account profile.',
-			}),
+		applications: z.partialRecord(
+			googleOAuthApplicationIdSchema,
+			z.object({ ceiling: googleOAuthCeilingSchema }).strict(),
+		),
 	})
 	.strict();
+
+export const oauthOwnerConfigSchema = z
+	.object({
+		label: z.string().min(1).max(160),
+		clerkUserId: z.string().min(1).max(256),
+		allowedAgentIds: uniqueAgentIdsSchema,
+	})
+	.strict();
+export const oauthPolicyEditorConfigSchema = z
+	.object({
+		clerkUserId: z.string().min(1).max(256),
+		editableAgentIds: uniqueAgentIdsSchema,
+	})
+	.strict();
+
+const tailnetLoginSchema = z
+	.string()
+	.min(1)
+	.max(320)
+	.refine(
+		(login) =>
+			Array.from(login).every((character) => {
+				const point = character.codePointAt(0);
+				return point !== undefined && point >= 0x20 && point !== 0x7f && !/^\s$/u.test(character);
+			}),
+		'Tailnet logins must not contain whitespace or control bytes.',
+	);
 
 export const oauthConfigSchema = z
 	.object({
 		agents: z
-			.record(z.string().min(1).max(128), oauthAgentConfigSchema)
-			.refine((agents) => Object.keys(agents).length > 0, {
-				message: 'oauth.config.jsonc must configure at least one agent.',
-			}),
+			.record(namedIdSchema, oauthAgentConfigSchema)
+			.refine(
+				(agents) => Object.keys(agents).length > 0,
+				'At least one OAuth agent must be configured.',
+			),
 		browser: z
 			.object({
+				identity: clerkBrowserIdentityConfigSchema,
 				listener: z
 					.object({
 						certificatePath: controllerOwnedAbsolutePathSchema,
 						kind: z.literal('tailscale_https'),
-						port: z.literal(18_900),
+						port: z.literal(18900),
 						privateKeyPath: controllerOwnedAbsolutePathSchema,
+					})
+					.strict(),
+				network: z
+					.object({
+						admittedTailnetLogins: z
+							.array(tailnetLoginSchema)
+							.min(1)
+							.max(128)
+							.readonly()
+							.refine(
+								(logins) => new Set(logins).size === logins.length,
+								'Tailnet logins must be unique.',
+							),
 					})
 					.strict(),
 				publicBaseUrl: oauthBrowserPublicBaseUrlSchema,
 			})
 			.strict(),
+		owners: z
+			.record(namedIdSchema, oauthOwnerConfigSchema)
+			.refine(
+				(owners) => Object.keys(owners).length > 0,
+				'At least one account owner must be admitted.',
+			),
+		policyEditors: z.record(namedIdSchema, oauthPolicyEditorConfigSchema),
 		providers: z
 			.object({
 				google: z
 					.object({
-						applications: googleOAuthApplicationsSchema,
+						applications: z
+							.object({
+								'gmail-app': googleOAuthApplicationConfigSchema,
+								'workspace-app': googleOAuthApplicationConfigSchema,
+								'youtube-app': googleOAuthApplicationConfigSchema,
+							})
+							.strict(),
+						catalogVersion: z.string().min(1).max(256),
+						gogBuildIdentity: z
+							.object({
+								version: z.string().min(1).max(64),
+								commit: z.string().regex(/^[a-f0-9]{40}$/u),
+							})
+							.strict(),
 						kind: z.literal('google'),
+						projects: z.record(
+							namedIdSchema,
+							z.object({ publishingStatus: z.enum(['testing', 'production']) }).strict(),
+						),
 					})
 					.strict(),
 			})
 			.strict(),
-		schemaVersion: z.literal(1),
-		storage: z
-			.object({
-				keyEncryptionKey: onePasswordOAuthSecretSchema,
-			})
-			.strict(),
+		schemaVersion: z.literal(2),
+		storage: z.object({ keyEncryptionKey: onePasswordOAuthSecretSchema }).strict(),
+		zoneId: namedIdSchema,
 	})
 	.strict()
 	.superRefine((config, context) => {
-		const applications = config.providers.google.applications;
-		const clientReferenceOwners = new Map<string, GoogleOAuthApplicationId>();
-		for (const applicationId of googleOAuthApplicationIds) {
-			const reference = applications[applicationId].clientCredentials.ref;
-			const existingOwner = clientReferenceOwners.get(reference);
-			if (existingOwner === undefined) {
-				clientReferenceOwners.set(reference, applicationId);
-				continue;
-			}
+		if (
+			config.browser.identity.fixedLoginReturnOrigin !==
+			new URL(config.browser.publicBaseUrl).origin
+		) {
 			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: `Google OAuth applications "${existingOwner}" and "${applicationId}" must use distinct client credential references.`,
-				path: ['providers', 'google', 'applications', applicationId, 'clientCredentials', 'ref'],
+				code: 'custom',
+				message: 'Clerk return origin must equal the configured OAuth website origin.',
+				path: ['browser', 'identity', 'fixedLoginReturnOrigin'],
 			});
 		}
-		for (const [agentId, agent] of Object.entries(config.agents)) {
-			for (const [accountProfileId, accountProfile] of Object.entries(agent.accountProfiles)) {
-				for (const applicationId of googleOAuthApplicationIds) {
-					const maximum = accountProfile.applications[applicationId];
-					if (maximum === undefined) continue;
-					const application = applications[applicationId];
-					for (const [serviceId, permission] of Object.entries(maximum.maximumPermissions)) {
-						const parsedServiceId = oauthServiceIdSchema.parse(serviceId);
-						const service = application.services[parsedServiceId];
-						const issuePath = [
-							'agents',
-							agentId,
-							'accountProfiles',
-							accountProfileId,
-							'applications',
-							applicationId,
-							'maximumPermissions',
-							serviceId,
-						];
-						if (service === undefined) {
-							context.addIssue({
-								code: z.ZodIssueCode.custom,
-								message: `OAuth account profile references unknown service "${serviceId}" in application "${applicationId}".`,
-								path: issuePath,
-							});
-							continue;
-						}
-						if (permission === 'write' && service.write === undefined) {
-							context.addIssue({
-								code: z.ZodIssueCode.custom,
-								message: `OAuth service "${serviceId}" does not configure write scopes.`,
-								path: issuePath,
-							});
-						}
-					}
-				}
+		const clientReferences = new Set<string>();
+		const families = new Set<string>();
+		for (const applicationId of googleOAuthApplicationIds) {
+			const application = config.providers.google.applications[applicationId];
+			if (clientReferences.has(application.clientCredentials.ref)) {
+				context.addIssue({
+					code: 'custom',
+					message: 'Google applications must use distinct client credential references.',
+					path: ['providers', 'google', 'applications', applicationId, 'clientCredentials'],
+				});
+			}
+			clientReferences.add(application.clientCredentials.ref);
+			if (families.has(application.catalogFamilyId)) {
+				context.addIssue({
+					code: 'custom',
+					message: 'Each Google catalog family must have exactly one application binding.',
+					path: ['providers', 'google', 'applications', applicationId, 'catalogFamilyId'],
+				});
+			}
+			families.add(application.catalogFamilyId);
+			if (config.providers.google.projects[application.projectId] === undefined) {
+				context.addIssue({
+					code: 'custom',
+					message: 'Google application references an unregistered project.',
+					path: ['providers', 'google', 'applications', applicationId, 'projectId'],
+				});
+			}
+		}
+		const ownerIdentities = new Set<string>();
+		for (const [ownerId, owner] of Object.entries(config.owners)) {
+			if (ownerIdentities.has(owner.clerkUserId))
+				context.addIssue({
+					code: 'custom',
+					message: 'Clerk owner identities must be unique.',
+					path: ['owners', ownerId, 'clerkUserId'],
+				});
+			ownerIdentities.add(owner.clerkUserId);
+			for (const agentId of owner.allowedAgentIds) {
+				if (config.agents[agentId] === undefined)
+					context.addIssue({
+						code: 'custom',
+						message: 'Owner admission references an unconfigured agent.',
+						path: ['owners', ownerId, 'allowedAgentIds'],
+					});
+			}
+		}
+		const editorIdentities = new Set<string>();
+		for (const [editorId, editor] of Object.entries(config.policyEditors)) {
+			if (editorIdentities.has(editor.clerkUserId))
+				context.addIssue({
+					code: 'custom',
+					message: 'Clerk editor identities must be unique.',
+					path: ['policyEditors', editorId, 'clerkUserId'],
+				});
+			editorIdentities.add(editor.clerkUserId);
+			for (const agentId of editor.editableAgentIds) {
+				if (config.agents[agentId] === undefined)
+					context.addIssue({
+						code: 'custom',
+						message: 'Editor admission references an unconfigured agent.',
+						path: ['policyEditors', editorId, 'editableAgentIds'],
+					});
 			}
 		}
 	});
-
 export type OAuthConfig = z.infer<typeof oauthConfigSchema>;
 
 export function googleOAuthCallbackUrl(config: OAuthConfig): string {
 	return new URL('/oauth/google/callback', config.browser.publicBaseUrl).toString();
 }
-
 export async function loadOAuthConfig(configPath: string): Promise<OAuthConfig> {
 	return oauthConfigSchema.parse(await loadJsonConfigFile(configPath));
 }
-
 export function requireGoogleOAuthApplication(
 	config: OAuthConfig,
 	applicationId: GoogleOAuthApplicationId,

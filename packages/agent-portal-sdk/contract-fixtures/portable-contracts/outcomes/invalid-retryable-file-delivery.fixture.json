@@ -1,0 +1,40 @@
+{
+	"caseId": "invalid-retryable-file-delivery",
+	"schemaId": "portal.call.item-result",
+	"tags": ["rejected", "outcome", "result-discriminant"],
+	"input": {
+		"artifacts": [
+			{
+				"byteLength": 3,
+				"expiresAt": "2099-01-01T00:00:00.000Z",
+				"fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"id": "complete-file"
+			}
+		],
+		"error": {
+			"code": "execution_failed",
+			"message": "One output could not be delivered."
+		},
+		"id": "call-1",
+		"operationId": "operation-1",
+		"outcome": {
+			"certainty": "proven",
+			"completion": "failed",
+			"kind": "completed",
+			"retryClass": "policy-gated"
+		},
+		"owningGeneration": "generation-1",
+		"status": "error",
+		"value": {
+			"delivery": "partial",
+			"remoteExecution": {
+				"exitCode": 0
+			}
+		}
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.result.status-shape"],
+		"refinementIdentities": ["portal.request-id.not-reserved"]
+	}
+}

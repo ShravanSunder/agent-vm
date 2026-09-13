@@ -23,7 +23,7 @@ import {
 	OAuthAuthorizationControllerActionRequestSchema,
 	OAuthAuthorizationListArgumentsSchema,
 	OAuthAuthorizationReauthorizeArgumentsSchema,
-	OAuthAuthorizationRevokeArgumentsSchema,
+	OAuthAuthorizationDisconnectArgumentsSchema,
 	OAuthAuthorizationStatusArgumentsSchema,
 	OAuthAuthorizationControllerActionResultSchema,
 } from '@agent-vm/controller-execution-contracts';
@@ -37,7 +37,7 @@ import {
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	evaluateCliAllowanceInvocation,
+	validateCliAllowanceInvocation,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
 } from '@agent-vm/tool-portal';
@@ -50,6 +50,7 @@ import {
 	executeConfiguredCliInToolVm,
 	type ConfiguredCliToolVmAcquisitionPort,
 } from './configured-cli-tool-vm-executor.js';
+import { configuredGogFileDiscovery } from './configured-gog-file-discovery.js';
 import {
 	createControllerExecutionBackendPort,
 	defineControllerExecutionRegistration,
@@ -170,7 +171,7 @@ const oauthAuthorizationRegistrations = Object.freeze([
 		argumentsSchema: OAuthAuthorizationListArgumentsSchema,
 		capabilityName: 'list',
 		description:
-			'List Google account profiles, configured application and service IDs, maximum permissions, and safe authorization status. Build begin suggestedSelections as applicationId → serviceId → none|read|write.',
+			'List this agent’s Google accounts, application groups, limits and account-specific authorization status. Suggestions name application IDs and offered group IDs; only the account owner can grant access.',
 		input: { optional: [], propertyCount: 0, required: [], type: 'object' },
 		readOnly: true,
 		title: 'List Google authorizations',
@@ -178,11 +179,12 @@ const oauthAuthorizationRegistrations = Object.freeze([
 	defineOAuthAuthorizationRegistration({
 		argumentsSchema: OAuthAuthorizationBeginArgumentsSchema,
 		capabilityName: 'begin',
-		description: 'Begin a human-controlled Google authorization ceremony for one account profile.',
+		description:
+			'Ask the account owner to connect a Google account for this agent and application.',
 		input: {
-			optional: ['suggestedSelections'],
-			propertyCount: 2,
-			required: ['accountProfileId'],
+			optional: ['suggestedAlias', 'suggestedSelections'],
+			propertyCount: 3,
+			required: ['applicationId'],
 			type: 'object',
 		},
 		readOnly: false,
@@ -211,24 +213,25 @@ const oauthAuthorizationRegistrations = Object.freeze([
 		input: {
 			optional: ['suggestedSelections'],
 			propertyCount: 3,
-			required: ['accountProfileId', 'applicationId'],
+			required: ['accountId', 'applicationId'],
 			type: 'object',
 		},
 		readOnly: false,
 		title: 'Reauthorize Google application',
 	}),
 	defineOAuthAuthorizationRegistration({
-		argumentsSchema: OAuthAuthorizationRevokeArgumentsSchema,
-		capabilityName: 'revoke',
-		description: 'Revoke and remove one configured Google application authorization.',
+		argumentsSchema: OAuthAuthorizationDisconnectArgumentsSchema,
+		capabilityName: 'disconnect',
+		description:
+			'Ask the owner to disconnect this agent’s account authorization locally. Does not revoke Google consent or disconnect other agents.',
 		input: {
 			optional: [],
 			propertyCount: 2,
-			required: ['accountProfileId', 'applicationId'],
+			required: ['accountId', 'applicationId'],
 			type: 'object',
 		},
 		readOnly: false,
-		title: 'Revoke Google application',
+		title: 'Disconnect Google account authorization',
 	}),
 ]);
 
@@ -264,7 +267,8 @@ function configuredInputSchema(
 	| typeof openConfiguredCliInputSchema
 	| typeof quickOAuthConfiguredCliInputSchema
 	| typeof openOAuthConfiguredCliInputSchema {
-	return operation.authorization?.kind === 'oauth_account_profile'
+	return operation.targetKind === 'ephemeral_managed_vm' &&
+		operation.authorization?.kind === 'oauth_account'
 		? operation.timeout.kind === 'quick'
 			? quickOAuthConfiguredCliInputSchema
 			: openOAuthConfiguredCliInputSchema
@@ -281,12 +285,24 @@ function configuredRegistration(props: {
 		{ kind: 'configured_cli' }
 	>;
 }): ControllerExecutionRegistration {
-	const inputSchema = configuredInputSchema(props.operation);
+	const operation = props.operation;
+	const inputSchema = configuredInputSchema(operation);
 	const toolRef = `${props.namespace}.${props.name}`;
-	const requiresAccountProfile = props.operation.authorization?.kind === 'oauth_account_profile';
+	const requiresAccount =
+		operation.targetKind === 'ephemeral_managed_vm' &&
+		operation.authorization?.kind === 'oauth_account';
+	const fileHandling =
+		operation.targetKind === 'ephemeral_managed_vm' &&
+		operation.authorization?.kind === 'oauth_account'
+			? configuredGogFileDiscovery(operation.compiledGoogle?.descriptors ?? [])
+			: undefined;
 	return {
 		descriptor: {
-			annotations: { authority: 'controller_execution', operationKind: 'configured_cli' },
+			annotations: {
+				authority: 'controller_execution',
+				operationKind: 'configured_cli',
+				...(fileHandling === undefined ? {} : { fileHandling }),
+			},
 			description: props.operation.safeHelp,
 			inputSchema: JsonObjectSchema.parse(z.toJSONSchema(inputSchema)),
 			name: props.name,
@@ -299,7 +315,9 @@ function configuredRegistration(props: {
 		parseArguments: (argumentsValue: JsonObject) => {
 			const parsedInput = inputSchema.safeParse(argumentsValue);
 			if (!parsedInput.success) return { kind: 'invalid' };
-			const validation = evaluateCliAllowanceInvocation({
+			// Registration validates syntax only. Managed account policy is resolved
+			// by the controller; the static evaluator deliberately rejects that mode.
+			const validation = validateCliAllowanceInvocation({
 				allowance: {
 					calls: props.operation.calls,
 					commands: props.operation.commands,
@@ -307,10 +325,9 @@ function configuredRegistration(props: {
 					stdin: props.operation.stdin,
 					timeout: props.operation.timeout,
 				},
-				baseline: 'without_approval',
 				input: parsedInput.data,
 			});
-			return validation.ok
+			return validation.ok && !validation.matchedDenyRule
 				? { kind: 'valid', value: JsonObjectSchema.parse(parsedInput.data) }
 				: { kind: 'invalid' };
 		},
@@ -319,10 +336,8 @@ function configuredRegistration(props: {
 			input: {
 				optional: props.operation.timeout.kind === 'open' ? ['stdin', 'timeoutMs'] : ['stdin'],
 				propertyCount:
-					(props.operation.timeout.kind === 'open' ? 4 : 3) + (requiresAccountProfile ? 1 : 0),
-				required: requiresAccountProfile
-					? ['accountProfile', 'argv', 'reason']
-					: ['argv', 'reason'],
+					(props.operation.timeout.kind === 'open' ? 4 : 3) + (requiresAccount ? 1 : 0),
+				required: requiresAccount ? ['accountId', 'argv', 'reason'] : ['argv', 'reason'],
 				type: 'object',
 			},
 			name: props.name,
@@ -448,7 +463,7 @@ function oauthAuthorizationActionIdForCapability(capability: {
 		case 'cancel':
 		case 'list':
 		case 'reauthorize':
-		case 'revoke':
+		case 'disconnect':
 		case 'status':
 			return OAuthAuthorizationControllerActionIdSchema.parse(
 				`${oauthAuthorizationNamespace}.${capability.name}`,

@@ -4,36 +4,41 @@ import type {
 	PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
 import type {
-	EffectiveManagedToolPortalConfig,
 	GatewayRuntimeManagedToolPortalConfig,
+	StandaloneToolPortalConfig,
 	ToolPortalBackendKind,
 	ToolPortalConfig,
-	ToolPortalCallPolicy,
 	ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import {
-	configuredCliPolicyFromSuggestions,
 	openConfiguredCliInputSchema,
 	openOAuthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
 	quickOAuthConfiguredCliInputSchema,
+	controllerConfiguredCliInputSchema,
+	resolveCompiledGoogleCommand,
 } from '@agent-vm/config-contracts';
 export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
 
-import { evaluateCliAllowanceInvocation } from './cli-allowances/cli-allowance-validator.js';
+import { oauthApplicationIdSchema } from '@agent-vm/oauth-broker-contracts';
+
+import {
+	evaluateCliAllowanceInvocation,
+	validateCliAllowanceInvocation,
+} from './cli-allowances/cli-allowance-validator.js';
 
 export type PortalCallItem = PortalCallResult['items'][number];
 
 export interface ToolPortalRuntimeNamespacePolicy {
 	readonly backend: { readonly kind: ToolPortalBackendKind };
-	readonly calls: ToolPortalCallPolicy;
+	readonly calls: ToolPortalConfig['profiles'][string]['namespaces'][string]['calls'];
 	readonly tools: ToolPortalToolSelector;
 }
 
 export type ToolPortalCallPolicyDecision =
 	| {
 			readonly backendKind: ToolPortalBackendKind;
-			readonly kind: 'requires-approval' | 'without-approval';
+			readonly kind: 'requires-approval' | 'without-approval' | 'managed-google';
 			readonly policy: ToolPortalRuntimeNamespacePolicy;
 	  }
 	| { readonly kind: 'denied' };
@@ -67,6 +72,9 @@ export function canonicalJson(value: unknown): string {
 }
 
 export function approvalRequiredItem(props: {
+	readonly managedGoogleDisplay?:
+		| import('@agent-vm/oauth-broker-contracts').ManagedGoogleDisplay
+		| undefined;
 	readonly challengeId: string;
 	readonly expiresAt: string;
 	readonly id: string;
@@ -74,7 +82,13 @@ export function approvalRequiredItem(props: {
 	readonly owningGeneration: string;
 }): PortalCallItem {
 	return {
-		approvalChallenge: { challengeId: props.challengeId, expiresAt: props.expiresAt },
+		approvalChallenge: {
+			challengeId: props.challengeId,
+			expiresAt: props.expiresAt,
+			...(props.managedGoogleDisplay === undefined
+				? {}
+				: { kind: 'managed_google' as const, managedGoogleDisplay: props.managedGoogleDisplay }),
+		},
 		error: {
 			code: 'approval_required',
 			message: 'Capability execution requires operator approval.',
@@ -176,10 +190,40 @@ function selectorIncludesTool(selector: ToolPortalToolSelector, toolName: string
 export function capabilityDiscoveryMetadata(props: {
 	readonly policy:
 		| GatewayRuntimeManagedToolPortalConfig['profiles'][string]['namespaces'][string]
-		| ToolPortalConfig['profiles'][string]['namespaces'][string];
+		| StandaloneToolPortalConfig['profiles'][string]['namespaces'][string];
 	readonly toolName: string;
 }): CapabilityDiscoveryMetadata | undefined {
 	if (!selectorIncludesTool(props.policy.tools, props.toolName)) return undefined;
+	if ('source' in props.policy.calls) {
+		if (props.policy.backend.kind !== 'controller_execution') return undefined;
+		const operation = props.policy.backend.operations[props.toolName];
+		if (
+			operation?.kind !== 'configured_cli' ||
+			operation.targetKind !== 'ephemeral_managed_vm' ||
+			operation.authorization?.kind !== 'oauth_account' ||
+			operation.compiledGoogle === undefined
+		)
+			return undefined;
+		const set = operation.compiledGoogle;
+		return {
+			callDisposition: { kind: 'invocation-dependent', describeBeforeCall: true },
+			...(set.descriptors.length === 0
+				? {}
+				: {
+						oauthRequirement: {
+							kind: 'google-account',
+							accountArgument: 'accountId',
+							describeBeforeCall: true,
+							operations: set.descriptors.map((descriptor) => ({
+								applicationId: oauthApplicationIdSchema.parse(
+									set.applicationIdsByFamily[descriptor.familyId],
+								),
+								operationId: descriptor.operationId,
+							})),
+						},
+					}),
+		};
+	}
 	const withoutApproval = selectorIncludesTool(props.policy.calls.withoutApproval, props.toolName);
 	const requiresApproval = selectorIncludesTool(
 		props.policy.calls.requiresApproval,
@@ -209,51 +253,19 @@ export function capabilityDiscoveryMetadata(props: {
 			},
 		};
 	}
-	const operationPolicy =
-		'suggestCalls' in operation ? configuredCliPolicyFromSuggestions(operation) : operation;
-	const hasInvocationApprovalRules = operationPolicy.calls.requiresApproval.length > 0;
-	const authorization = 'authorization' in operation ? operation.authorization : undefined;
-	const oauthRequirement = ((): CapabilityDiscoveryMetadata['oauthRequirement'] | undefined => {
-		if (authorization?.kind !== 'oauth_account_profile') return undefined;
-		const firstRequirement = authorization.rules[0]?.requirement;
-		if (
-			firstRequirement?.kind === 'oauth' &&
-			authorization.rules.every(
-				(rule) =>
-					rule.requirement.kind === 'oauth' &&
-					rule.requirement.applicationId === firstRequirement.applicationId &&
-					rule.requirement.serviceId === firstRequirement.serviceId &&
-					rule.requirement.minimumPermission === firstRequirement.minimumPermission,
-			)
-		) {
-			return {
-				applicationId: firstRequirement.applicationId,
-				kind: 'oauth-account-profile',
-				minimumPermission: firstRequirement.minimumPermission,
-				serviceId: firstRequirement.serviceId,
-			};
-		}
-		return {
-			accountProfileArgument: 'accountProfile',
-			describeBeforeCall: true,
-			kind: 'invocation-dependent-oauth-account-profile',
-		};
-	})();
+	const hasInvocationApprovalRules =
+		!('source' in operation.calls) && operation.calls.requiresApproval.length > 0;
 	return {
 		callDisposition:
 			discoveryRequiresApproval || !hasInvocationApprovalRules
 				? { kind: discoveryRequiresApproval ? 'requires-approval' : 'without-approval' }
 				: { describeBeforeCall: true, kind: 'invocation-dependent' },
-		...(oauthRequirement === undefined ? {} : { oauthRequirement }),
 	};
 }
 
 export function callPolicyDecision(props: {
 	readonly call: PortalCallRequest['calls'][number];
-	readonly config:
-		| EffectiveManagedToolPortalConfig
-		| GatewayRuntimeManagedToolPortalConfig
-		| ToolPortalConfig;
+	readonly config: GatewayRuntimeManagedToolPortalConfig | StandaloneToolPortalConfig;
 	readonly profileId: string;
 	readonly semanticSnapshot: {
 		readonly surfaceEligibilityByProfile: Readonly<
@@ -274,6 +286,27 @@ export function callPolicyDecision(props: {
 	) {
 		return { kind: 'denied' };
 	}
+	if ('source' in policy.calls) {
+		if (policy.backend.kind !== 'controller_execution') return { kind: 'denied' };
+		const operation = policy.backend.operations[props.call.name];
+		if (
+			operation?.kind !== 'configured_cli' ||
+			operation.targetKind !== 'ephemeral_managed_vm' ||
+			operation.authorization?.kind !== 'oauth_account' ||
+			operation.compiledGoogle === undefined
+		)
+			return { kind: 'denied' };
+		const input = controllerConfiguredCliInputSchema.safeParse(props.call.arguments);
+		if (!input.success) return { kind: 'denied' };
+		const shape = validateCliAllowanceInvocation({ allowance: operation, input: input.data });
+		if (
+			!shape.ok ||
+			shape.matchedDenyRule ||
+			resolveCompiledGoogleCommand(operation.compiledGoogle, input.data.argv).kind === 'denied'
+		)
+			return { kind: 'denied' };
+		return { kind: 'managed-google', backendKind: 'controller_execution', policy };
+	}
 	const baseline = selectorIncludesTool(policy.calls.withoutApproval, props.call.name)
 		? 'without_approval'
 		: selectorIncludesTool(policy.calls.requiresApproval, props.call.name)
@@ -283,21 +316,20 @@ export function callPolicyDecision(props: {
 	if (policy.backend.kind === 'controller_execution') {
 		const operation = policy.backend.operations[props.call.name];
 		if (operation?.kind === 'configured_cli') {
-			const operationPolicy =
-				'suggestCalls' in operation ? configuredCliPolicyFromSuggestions(operation) : operation;
-			const authorization = 'authorization' in operation ? operation.authorization : undefined;
+			const authorization =
+				operation.targetKind === 'ephemeral_managed_vm' ? operation.authorization : undefined;
 			const inputSchema =
-				authorization?.kind === 'oauth_account_profile'
-					? operationPolicy.timeout.kind === 'quick'
+				authorization?.kind === 'oauth_account'
+					? operation.timeout.kind === 'quick'
 						? quickOAuthConfiguredCliInputSchema
 						: openOAuthConfiguredCliInputSchema
-					: operationPolicy.timeout.kind === 'quick'
+					: operation.timeout.kind === 'quick'
 						? quickConfiguredCliInputSchema
 						: openConfiguredCliInputSchema;
 			const parsedInput = inputSchema.safeParse(props.call.arguments);
 			if (!parsedInput.success) return { kind: 'denied' };
 			const evaluation = evaluateCliAllowanceInvocation({
-				allowance: operationPolicy,
+				allowance: operation,
 				baseline,
 				input: parsedInput.data,
 			});

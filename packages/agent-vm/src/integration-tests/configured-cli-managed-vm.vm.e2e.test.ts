@@ -35,6 +35,7 @@ import { authorizeGatewayControlControllerExecution } from '../controller/contro
 import { createCredentialedRuntimeManager } from '../controller/credentialed-runtime/credentialed-runtime-manager.js';
 import { createControllerCredentialedRuntimeRegistryPublisher } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
 import type { CredentialedRuntimeResolution } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
+import { createOperationFileRetentionBudget } from '../controller/files/operation-file-retention-budget.js';
 import { createConfiguredCliManagedVmExecutor } from '../controller/runner/configured-cli-managed-vm-executor.js';
 import { writeGatewayRuntimePortalAdmissionFile } from '../gateway/gateway-runtime-portal-admission-file.js';
 import { materializeGatewayRuntimePortalAdmission } from '../gateway/gateway-runtime-portal-admission-material.js';
@@ -553,6 +554,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				},
 			};
 			const runtimeManager = createCredentialedRuntimeManager({
+				retentionBudget: createOperationFileRetentionBudget(),
 				controllerStateDir: path.join(imageFixture.project.tempRoot, 'controller-state'),
 				exactProcessTermination: managedVm.managedVmExactProcessTermination,
 				managedVmFactory,
@@ -896,6 +898,11 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				callId: 'hold-call',
 				input: holdInput,
 			});
+			// Observe rejection immediately even if the record probe fails before retirement.
+			const heldOutcome = holdPromise.then(
+				() => ({ kind: 'completed' as const }),
+				(error: unknown) => ({ kind: 'failed' as const, error }),
+			);
 			const recordsDirectory = path.join(
 				imageFixture.project.tempRoot,
 				'controller-state',
@@ -910,10 +917,12 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 						const recordNames = await readdir(recordsDirectory).catch(() => []);
 						// oxlint-disable-next-line no-await-in-loop -- each poll reads the current bounded record set together
 						const recordContents = await Promise.all(
-							recordNames.map(
-								async (recordName) =>
-									await readFile(path.join(recordsDirectory, recordName), 'utf8'),
-							),
+							recordNames
+								.filter((recordName) => recordName.endsWith('.json'))
+								.map(
+									async (recordName) =>
+										await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+								),
 						);
 						if (recordContents.some((record) => record.includes('"kind":"current-active"'))) {
 							return;
@@ -948,7 +957,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				force: true,
 				zoneId: acceptedSession.zoneId,
 			});
-			await expect(holdPromise).rejects.toBeDefined();
+			await expect(heldOutcome).resolves.toMatchObject({ kind: 'failed' });
 			await expect(retirement).resolves.toEqual({ kind: 'retired' });
 
 			expect(
@@ -972,7 +981,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				operationName: 'mediated_runner_proof',
 				profileId: 'mediated',
 			});
-			const mediatedAcquisition = await runtimeManager.acquireCommand({
+			const mediatedRequest = {
 				finalAuthorization: async () => true,
 				operationId: 'mediated-agent-operation',
 				ownerIdentity: {
@@ -983,7 +992,8 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 					stablePrincipal: 'mediated-agent-stable-principal',
 				},
 				resolution: mediatedResolution,
-			});
+			};
+			const mediatedAcquisition = await runtimeManager.acquireCommand(mediatedRequest);
 			if (mediatedAcquisition.kind !== 'acquired') {
 				throw new Error('Mediated agent did not acquire its credentialed runtime.');
 			}
@@ -994,12 +1004,23 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 					timeoutMs: 60_000,
 				});
 				expect(allowedResult.stdout).toMatch(/^env:GONDOLIN_SECRET_[0-9a-f]{48}\nsubstituted$/u);
-				const untrustedResult = await mediatedAcquisition.command.exec({
-					argv: ['mediated', '--http-untrusted', `http://${untrustedCredentialHost}/proof`],
-					reason: 'prove credentialed HTTP host isolation',
-					timeoutMs: 60_000,
+				await mediatedAcquisition.command.complete({ kind: 'completed' });
+				const untrustedAcquisition = await runtimeManager.acquireCommand({
+					...mediatedRequest,
+					operationId: 'mediated-agent-untrusted-operation',
 				});
-				expect(untrustedResult.stdout).toBe('not-substituted');
+				if (untrustedAcquisition.kind !== 'acquired')
+					throw new Error('Expected a fresh command authorization.');
+				try {
+					const untrustedResult = await untrustedAcquisition.command.exec({
+						argv: ['mediated', '--http-untrusted', `http://${untrustedCredentialHost}/proof`],
+						reason: 'prove credentialed HTTP host isolation',
+						timeoutMs: 60_000,
+					});
+					expect(untrustedResult.stdout).toBe('not-substituted');
+				} finally {
+					await untrustedAcquisition.command.complete({ kind: 'completed' });
+				}
 			} finally {
 				await mediatedAcquisition.command.complete({ kind: 'completed' });
 			}
@@ -1029,31 +1050,43 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 					kind: 'oauth_http_mediation',
 				},
 			} satisfies CredentialedRuntimeResolution;
-			const oauthAccessTokenBytes = new TextEncoder().encode(mediatedCredentialValue);
-			const oauthAcquisition = await runtimeManager.acquireCommand({
-				finalAuthorization: async () => true,
-				materializeResolution: async () => ({
-					dynamicHttpMediation: {
-						allowedHosts: [mediatedCredentialHost, '127.0.0.1'],
-						credentialId: 'oauth-credential-real-vm-proof',
-						environmentName: 'GOG_ACCESS_TOKEN',
-						kind: 'dynamic_http_mediation',
-						materialRevision: 'sha256:oauth-real-vm-material',
-						placeholderValue: `GONDOLIN_SECRET_${'a'.repeat(48)}`,
-						secretValue: oauthAccessTokenBytes,
+			let oauthAccessTokenBytes = new TextEncoder().encode(mediatedCredentialValue);
+			const acquireOAuthCommand = async (
+				operationId: string,
+			): ReturnType<typeof runtimeManager.acquireCommand> =>
+				await runtimeManager.acquireCommand({
+					finalAuthorization: async () => true,
+					materializeResolution: async () => ({
+						dynamicHttpMediation: {
+							allowedHosts: [mediatedCredentialHost, '127.0.0.1'],
+							credentialId: 'oauth-credential-real-vm-proof',
+							environmentName: 'GOG_ACCESS_TOKEN',
+							gmailNoSend: true,
+							kind: 'dynamic_http_mediation',
+							authorization: {
+								accountId: 'account-real-vm-proof',
+								applicationId: 'gmail-app',
+								authorizationId: 'authorization-real-vm-proof',
+								generation: 1,
+								overrideRevision: 1,
+							},
+							materialRevision: 'sha256:oauth-real-vm-material',
+							placeholderValue: `GONDOLIN_SECRET_${'a'.repeat(48)}`,
+							secretValue: oauthAccessTokenBytes,
+						},
+						resolution: oauthResolution,
+					}),
+					operationId,
+					ownerIdentity: {
+						controllerEpoch: 'controller-epoch-configured-runner',
+						gatewayEpoch: 'gateway-epoch-configured-runner',
+						parentGatewayVmId: imageFixture.vm.id,
+						runtimeEpoch: 'runtime-epoch-configured-runner',
+						stablePrincipal: 'oauth-agent-stable-principal',
 					},
-					resolution: oauthResolution,
-				}),
-				operationId: 'oauth-real-vm-operation',
-				ownerIdentity: {
-					controllerEpoch: 'controller-epoch-configured-runner',
-					gatewayEpoch: 'gateway-epoch-configured-runner',
-					parentGatewayVmId: imageFixture.vm.id,
-					runtimeEpoch: 'runtime-epoch-configured-runner',
-					stablePrincipal: 'oauth-agent-stable-principal',
-				},
-				runtimeIdentity: { agentId: 'oauth-agent', zoneId: acceptedSession.zoneId },
-			});
+					runtimeIdentity: { agentId: 'oauth-agent', zoneId: acceptedSession.zoneId },
+				});
+			const oauthAcquisition = await acquireOAuthCommand('oauth-real-vm-operation');
 			if (oauthAcquisition.kind !== 'acquired') {
 				throw new Error('OAuth agent did not acquire its credentialed runtime.');
 			}
@@ -1064,12 +1097,22 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 					timeoutMs: 60_000,
 				});
 				expect(allowedResult.stdout).toMatch(/^env:GONDOLIN_SECRET_[0-9a-f]{48}\nsubstituted$/u);
-				const untrustedResult = await oauthAcquisition.command.exec({
-					argv: ['mediated', '--oauth-untrusted', `http://${untrustedCredentialHost}/proof`],
-					reason: 'prove OAuth access-token host isolation',
-					timeoutMs: 60_000,
-				});
-				expect(untrustedResult.stdout).toBe('not-substituted');
+				await oauthAcquisition.command.complete({ kind: 'completed' });
+				expect(oauthAccessTokenBytes.every((byte) => byte === 0)).toBe(true);
+				oauthAccessTokenBytes = new TextEncoder().encode(mediatedCredentialValue);
+				const untrustedAcquisition = await acquireOAuthCommand('oauth-untrusted-operation');
+				if (untrustedAcquisition.kind !== 'acquired')
+					throw new Error('Expected fresh OAuth command authorization.');
+				try {
+					const untrustedResult = await untrustedAcquisition.command.exec({
+						argv: ['mediated', '--oauth-untrusted', `http://${untrustedCredentialHost}/proof`],
+						reason: 'prove OAuth access-token host isolation',
+						timeoutMs: 60_000,
+					});
+					expect(untrustedResult.stdout).toBe('not-substituted');
+				} finally {
+					await untrustedAcquisition.command.complete({ kind: 'completed' });
+				}
 			} finally {
 				await oauthAcquisition.command.complete({ kind: 'completed' });
 			}
@@ -1088,10 +1131,12 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			);
 			const recordNames = await readdir(recordsDirectory).catch(() => []);
 			const recordContents = await Promise.all(
-				recordNames.map(async (recordName) => ({
-					record: await readFile(path.join(recordsDirectory, recordName), 'utf8'),
-					recordName,
-				})),
+				recordNames
+					.filter((recordName) => recordName.endsWith('.json'))
+					.map(async (recordName) => ({
+						record: await readFile(path.join(recordsDirectory, recordName), 'utf8'),
+						recordName,
+					})),
 			);
 			throw new Error(
 				`Configured runner failed with operation records: ${JSON.stringify(recordContents)}`,

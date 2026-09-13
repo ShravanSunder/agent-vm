@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +13,7 @@ import type {
 	ManagedVmExecProcess,
 	ManagedVmExecResult,
 } from '@agent-vm/managed-vm';
+import { createOwnedHostDirectoryController } from '@agent-vm/managed-vm';
 import { formatMessage, parseSync } from '@optique/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +21,8 @@ import { defaultCliDependencies, type CliIo } from '../../cli/agent-vm-cli-suppo
 import { dispatchAgentVmCommand } from '../../cli/agent-vm-command-dispatcher.js';
 import { agentVmRootParser } from '../../cli/agent-vm-command-parser.js';
 import { createControllerRuntimeOperations } from '../controller-runtime-operations.js';
+import { createControllerSharedStaging } from '../files/controller-shared-staging.js';
+import { createOperationFileRetentionBudget } from '../files/operation-file-retention-budget.js';
 import { createControllerClient } from '../http/controller-client.js';
 import { createControllerApp } from '../http/controller-http-routes.js';
 import { startControllerHttpServer } from '../http/controller-http-server.js';
@@ -61,6 +64,8 @@ interface FakeVmState {
 }
 
 interface ManagerFixture {
+	readonly controllerRuntimeDir: string;
+	readonly sharedStaging: ReturnType<typeof createControllerSharedStaging>;
 	readonly createManagedVm: ReturnType<typeof vi.fn>;
 	readonly exactTerminate: ReturnType<typeof vi.fn>;
 	readonly manager: ReturnType<typeof createCredentialedRuntimeManager>;
@@ -216,13 +221,32 @@ function createFixture(
 	options: {
 		readonly afterRecordWrite?: (kind: CredentialedRuntimeRecord['kind']) => Promise<void>;
 		readonly beforeManagedVmCreate?: () => Promise<void>;
+		readonly beforeManagedVmStart?: () => Promise<void>;
 		readonly beforeResolveAll?: () => Promise<void>;
 		readonly failingRecordKinds?: readonly CredentialedRuntimeRecord['kind'][];
+		readonly fileHelperOutput?: (argv: readonly string[]) => string;
+		readonly execExitCode?: (argv: readonly string[]) => number;
+		readonly beforeExecCompletion?: () => Promise<void>;
+		readonly managedVmCloseFailure?: Error;
+		readonly openHostDirectoryFailure?: Error;
 	} = {},
 ): ManagerFixture {
 	const states: FakeVmState[] = [];
+	const retentionBudget = createOperationFileRetentionBudget();
+	const controllerRuntimeDir = path.join(testRoot, crypto.randomUUID());
+	const sharedStaging = createControllerSharedStaging({
+		controllerRuntimeDir,
+		controllerEpoch: ownerIdentity.controllerEpoch,
+		retentionBudget,
+		now,
+	});
 	const createManagedVm = vi.fn(async (request: ManagedVmCreateRequest): Promise<ManagedVm> => {
 		await options.beforeManagedVmCreate?.();
+		const producerMount = request.mounts?.['/agent-vm/gog-work'];
+		const producerDirectory =
+			producerMount?.kind === 'owned-host-directory'
+				? producerMount.directory.consume()
+				: undefined;
 		const ordinal = states.length + 1;
 		const state: FakeVmState = {
 			closed: false,
@@ -236,22 +260,35 @@ function createFixture(
 		};
 		states.push(state);
 		const exec = vi.fn(
-			(_argv: readonly string[], execOptions: ManagedVmExecOptions = {}): ManagedVmExecProcess => {
+			(argv: readonly string[], execOptions: ManagedVmExecOptions = {}): ManagedVmExecProcess => {
 				state.execCallCount += 1;
 				state.lastExecSignal = execOptions.signal;
-				const stdoutBuffer = Buffer.from(`vm:${state.id}`);
+				const stdoutBuffer = Buffer.from(options.fileHelperOutput?.(argv) ?? `vm:${state.id}`);
+				const exitCode = options.execExitCode?.(argv) ?? 0;
 				const result: ManagedVmExecResult = {
-					exitCode: 0,
-					json: <TValue>(): TValue => JSON.parse(stdoutBuffer.toString('utf8')) as TValue,
+					exitCode,
+					json: (): never => {
+						throw new Error('Streaming runtime tests must not parse buffered VM results.');
+					},
 					lines: () => [stdoutBuffer.toString('utf8')],
-					ok: true,
+					ok: exitCode === 0,
 					stderr: '',
 					stderrBuffer: Buffer.alloc(0),
 					stdout: stdoutBuffer.toString('utf8'),
 					stdoutBuffer,
 					toString: () => stdoutBuffer.toString('utf8'),
 				};
-				const resultPromise = Promise.resolve(result);
+				const resultPromise = (async () => {
+					await options.beforeExecCompletion?.();
+					if (execOptions.cwd?.startsWith('/agent-vm/gog-work/') && producerDirectory) {
+						const relativeDirectory = path.posix.relative('/agent-vm/gog-work', execOptions.cwd);
+						await writeFile(
+							path.join(producerDirectory.identity.canonicalPath, relativeDirectory, 'report.bin'),
+							new Uint8Array([0, 255, 1]),
+						);
+					}
+					return result;
+				})();
 				return Object.assign(resultPromise, {
 					[Symbol.asyncIterator]: async function* () {},
 					end: vi.fn(),
@@ -271,6 +308,8 @@ function createFixture(
 		);
 		return {
 			close: async () => {
+				if (options.managedVmCloseFailure !== undefined) throw options.managedVmCloseFailure;
+				producerDirectory?.close();
 				state.closed = true;
 				state.hostProcessId = null;
 			},
@@ -281,6 +320,7 @@ function createFixture(
 			getHostProcessId: () => state.hostProcessId,
 			id: state.id,
 			start: async () => {
+				await options.beforeManagedVmStart?.();
 				state.started = true;
 				state.hostProcessId = 20_000 + ordinal;
 			},
@@ -333,9 +373,25 @@ function createFixture(
 		},
 	};
 	return {
+		controllerRuntimeDir,
+		sharedStaging,
 		createManagedVm,
 		exactTerminate,
 		manager: createCredentialedRuntimeManager({
+			retentionBudget,
+			sharedStaging: {
+				getStore: async (zoneId, agentId) => await sharedStaging.getStore(zoneId, agentId),
+				ownedDirectories: {
+					openHostDirectory: (hostPath) => {
+						if (options.openHostDirectoryFailure !== undefined)
+							throw options.openHostDirectoryFailure;
+						return createOwnedHostDirectoryController({
+							identity: { canonicalPath: hostPath, device: 1, inode: 1 },
+							onClose: () => {},
+						});
+					},
+				},
+			},
 			controllerStateDir: testRoot,
 			exactProcessTermination: { terminateRecordedHostProcess: exactTerminate },
 			managedVmFactory: { createManagedVm },
@@ -351,6 +407,12 @@ function createFixture(
 	};
 }
 
+async function listProducerRootEntries(fixture: ManagerFixture): Promise<readonly string[]> {
+	return (await readdir(fixture.controllerRuntimeDir, { recursive: true })).filter((entry) =>
+		/(?:^|\/)producer\/[^/]+$/u.test(entry),
+	);
+}
+
 async function acquire(
 	fixture: ManagerFixture,
 	runtimeResolution = resolution(),
@@ -364,6 +426,290 @@ async function acquire(
 }
 
 describe('credentialed runtime manager', () => {
+	it('removes the producer root when creation fails before the provider returns a VM', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmCreate: async () => {
+				throw new Error('provider rejected creation');
+			},
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root when opening its directory capability fails', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			openHostDirectoryFailure: new Error('directory capability failed'),
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.createManagedVm).not.toHaveBeenCalled();
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root after containing a VM that fails before start', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmStart: async () => {
+				throw new Error('start failed');
+			},
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.states[0]).toMatchObject({ closed: true, started: false });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('removes the producer root after containing a provisionally started VM', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			failingRecordKinds: ['identity-published'],
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'not-dispatched' });
+		expect(fixture.states[0]).toMatchObject({ closed: true, started: true });
+		expect(await listProducerRootEntries(fixture)).toEqual([]);
+	});
+
+	it('retains the producer root when provisional VM containment is unproven', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, {
+			beforeManagedVmStart: async () => {
+				throw new Error('start failed');
+			},
+			managedVmCloseFailure: new Error('close failed'),
+		});
+		// Act
+		const result = await acquire(fixture);
+		// Assert
+		expect(result).toMatchObject({ kind: 'owner-unsafe' });
+		expect(await listProducerRootEntries(fixture)).toHaveLength(1);
+	});
+
+	it('executes prepared file commands in their operation folder without rewriting argv or later cwd', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, { fileHelperOutput: () => '' });
+		const acquired = await acquire(fixture);
+		if (
+			acquired.kind !== 'acquired' ||
+			acquired.command.prepareSharedStagingOperation === undefined
+		)
+			throw new Error('Expected folder-capable runtime.');
+		const folder = await acquired.command.prepareSharedStagingOperation({
+			maximumBytes: 1024,
+			authorityIsCurrent: () => true,
+		});
+		const input = {
+			argv: ['drive', 'download', 'file-id', '--out', './report.pdf'],
+			reason: 'Read file.',
+		};
+		const original = structuredClone(input);
+		// Act
+		await acquired.command.exec(input);
+		const callsAfterFirstCommand = fixture.states[0]?.execCallCount;
+		await expect(acquired.command.exec(input)).rejects.toMatchObject({ code: 'not_dispatched' });
+		expect(fixture.states[0]?.execCallCount).toBe(callsAfterFirstCommand);
+		await acquired.command.complete({ kind: 'completed' });
+		const ordinary = await acquire(fixture);
+		if (ordinary.kind !== 'acquired') throw new Error('Expected ordinary command.');
+		await ordinary.command.exec({ argv: ['calendar', 'list'], reason: 'Read calendar.' });
+		await ordinary.command.complete({ kind: 'completed' });
+		// Assert
+		const vm = await fixture.createManagedVm.mock.results[0]?.value;
+		expect(vm?.exec).toHaveBeenCalledWith(
+			expect.arrayContaining(original.argv),
+			expect.objectContaining({ cwd: folder.root }),
+		);
+		expect(vm?.exec).toHaveBeenLastCalledWith(
+			expect.arrayContaining(['calendar', 'list']),
+			expect.objectContaining({ cwd: '/work' }),
+		);
+		expect(input).toEqual(original);
+		await fixture.manager.closeZone('zone-a');
+	});
+
+	it.each([0, 1])(
+		'publishes terminal exit %s files for the exact receiver until expiry, independent of producer retirement',
+		async (exitCode) => {
+			// Arrange
+			let nowMs = 1_000;
+			let current = true;
+			const fixture = createFixture(() => nowMs, { execExitCode: () => exitCode });
+			const store = await fixture.sharedStaging.getStore('zone-a', 'sun');
+			const receiver = { leaseId: 'lease', leafGeneration: 'leaf', vmId: 'tool-vm' };
+			const receiverRoot = await store.prepareReceiverRoot(receiver.leafGeneration);
+			const acquired = await acquire(fixture);
+			if (
+				acquired.kind !== 'acquired' ||
+				acquired.command.prepareSharedStagingOperation === undefined
+			)
+				throw new Error('Expected staging-capable runtime.');
+			const folder = await acquired.command.prepareSharedStagingOperation({
+				maximumBytes: 1024,
+				authorityIsCurrent: () => current,
+			});
+			const publicationRequest = {
+				receiver,
+				withPublicationAuthority: async (expose: () => Promise<void>): Promise<void> => {
+					if (!current) throw new Error('Policy changed');
+					await expose();
+				},
+			};
+			// Act / Assert
+			await expect(folder.publish(publicationRequest)).rejects.toThrow();
+			await expect(
+				acquired.command.exec({ argv: ['calendar', 'list'], reason: 'Produce result.' }),
+			).resolves.toMatchObject({ exitCode });
+			const published = await folder.publish(publicationRequest);
+			await acquired.command.complete({ kind: 'completed' });
+			const request = {
+				publicationId: published.publicationId,
+				receiver,
+				relativePath: 'report.bin',
+				signal: new AbortController().signal,
+			};
+			const readBytes = async (binding = receiver): Promise<number[]> => {
+				const bytes: number[] = [];
+				for await (const chunk of store.readPublishedFile({ ...request, receiver: binding }))
+					bytes.push(...chunk);
+				return bytes;
+			};
+			expect(published.files).toHaveLength(1);
+			await expect(readBytes({ ...receiver, vmId: 'another-tool-vm' })).rejects.toThrow();
+			await expect(readBytes()).resolves.toEqual([0, 255, 1]);
+			await fixture.manager.retire({ agentId: 'sun', zoneId: 'zone-a', force: false });
+			expect(fixture.states[0]?.closed).toBe(true);
+			current = false;
+			await expect(readBytes()).resolves.toEqual([0, 255, 1]);
+			nowMs = published.expiresAtMs;
+			await expect(readBytes()).rejects.toThrow();
+			await fixture.sharedStaging.reapExpired();
+			expect(await readdir(receiverRoot)).toEqual([]);
+		},
+	);
+
+	it('rechecks the account policy immediately before exec after a file-staging reservation', async () => {
+		// Arrange
+		let current = true;
+		const fixture = createFixture(() => 1_000, { fileHelperOutput: () => '' });
+		const acquired = await fixture.manager.acquireCommand({
+			finalAuthorization: async () => true,
+			finalMaterialAuthorization: () => current,
+			operationId: crypto.randomUUID(),
+			ownerIdentity,
+			resolution: resolution(),
+		});
+		if (
+			acquired.kind !== 'acquired' ||
+			acquired.command.prepareSharedStagingOperation === undefined
+		)
+			throw new Error('Expected acquired runtime.');
+		await acquired.command.prepareSharedStagingOperation({
+			maximumBytes: 1024,
+			authorityIsCurrent: () => current,
+		});
+		current = false;
+		const callsBefore = fixture.states[0]?.execCallCount;
+		// Act / Assert
+		await expect(
+			acquired.command.exec({ argv: ['calendar', 'list'], reason: 'Read calendar' }),
+		).rejects.toThrow();
+		expect(fixture.states[0]?.execCallCount).toBe(callsBefore);
+		await acquired.command.complete({ kind: 'retire', reason: 'Policy changed before dispatch.' });
+	});
+
+	it('cannot execute after an approved input fails staged-byte verification', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000, { fileHelperOutput: () => '' });
+		const acquired = await acquire(fixture);
+		if (
+			acquired.kind !== 'acquired' ||
+			acquired.command.prepareSharedStagingOperation === undefined
+		)
+			throw new Error('Expected folder-capable runtime.');
+		const folder = await acquired.command.prepareSharedStagingOperation({
+			maximumBytes: 1024,
+			authorityIsCurrent: () => true,
+		});
+		// Act / Assert
+		await expect(
+			folder.stageInput(
+				'input.bin',
+				(async function* () {
+					yield new Uint8Array([1]);
+				})(),
+				{ byteLength: 1, sha256: '0'.repeat(64) },
+			),
+		).rejects.toThrow();
+		const before = fixture.states[0]?.execCallCount;
+		await expect(
+			acquired.command.exec({ argv: ['calendar', 'list'], reason: 'Attempt after failed input.' }),
+		).rejects.toThrow();
+		expect(fixture.states[0]?.execCallCount).toBe(before);
+		await acquired.command.complete({ kind: 'retire', reason: 'Input verification failed.' });
+	});
+	it('does not wait for or retire another account when containing one authorization', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000);
+		const active = await fixture.manager.acquireCommand({
+			finalAuthorization: async () => true,
+			operationId: 'account-b-call',
+			ownerIdentity,
+			runtimeIdentity: { agentId: 'sun', zoneId: 'zone-a' },
+			materializeResolution: async () => ({
+				resolution: oauthResolution('sha256:account-b'),
+				dynamicHttpMediation: {
+					authorization: {
+						accountId: 'account-b',
+						applicationId: 'gmail-app',
+						authorizationId: 'grant-b',
+						generation: 1,
+						overrideRevision: 1,
+					},
+					allowedHosts: ['gmail.googleapis.com'],
+					credentialId: 'credential-b',
+					environmentName: 'GOG_ACCESS_TOKEN',
+					gmailNoSend: true,
+					kind: 'dynamic_http_mediation',
+					materialRevision: 'sha256:material-b',
+					placeholderValue: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
+					secretValue: new TextEncoder().encode('synthetic-b'),
+				},
+			}),
+		});
+		if (active.kind !== 'acquired') throw new Error('Expected account B runtime.');
+		// Act
+		const result = await fixture.manager.invalidateMaterial({
+			agentId: 'sun',
+			zoneId: 'zone-a',
+			reason: 'Account A disconnected',
+			scope: {
+				kind: 'oauth-authorization',
+				accountId: 'account-a',
+				applicationId: 'gmail-app',
+				authorizationId: 'grant-a',
+				throughGeneration: 1,
+			},
+		});
+		// Assert
+		expect(result).toEqual({ kind: 'absent' });
+		expect(fixture.states[0]?.closed).toBe(false);
+		await expect(
+			active.command.exec({ argv: ['gmail', 'search'], reason: 'Account B still works' }),
+		).resolves.toMatchObject({ exitCode: 0 });
+		await active.command.complete({ kind: 'completed' });
+		expect(fixture.exactTerminate).not.toHaveBeenCalled();
+	});
 	it('reserves the agent slot before dynamic OAuth materialization and clears the supplied bytes', async () => {
 		const fixture = createFixture(() => 1_000);
 		const accessTokenBytes = new TextEncoder().encode('oauth-access-token-marker');
@@ -372,7 +718,15 @@ describe('credentialed runtime manager', () => {
 				allowedHosts: ['gmail.googleapis.com'],
 				credentialId: 'credential-a',
 				environmentName: 'GOG_ACCESS_TOKEN',
+				gmailNoSend: true,
 				kind: 'dynamic_http_mediation' as const,
+				authorization: {
+					accountId: 'account-a',
+					applicationId: 'gmail-app',
+					authorizationId: 'grant-a',
+					generation: 1,
+					overrideRevision: 1,
+				},
 				materialRevision: 'sha256:material-a',
 				placeholderValue: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
 				secretValue: accessTokenBytes,
@@ -426,7 +780,15 @@ describe('credentialed runtime manager', () => {
 					allowedHosts: ['gmail.googleapis.com'],
 					credentialId: 'credential-a',
 					environmentName: 'GOG_ACCESS_TOKEN',
+					gmailNoSend: true,
 					kind: 'dynamic_http_mediation' as const,
+					authorization: {
+						accountId: 'account-a',
+						applicationId: 'gmail-app',
+						authorizationId: 'grant-a',
+						generation: 1,
+						overrideRevision: 1,
+					},
 					materialRevision: 'sha256:material-a',
 					placeholderValue: 'GONDOLIN_SECRET_TEST_PLACEHOLDER',
 					secretValue: reusedAccessTokenBytes,
@@ -458,7 +820,15 @@ describe('credentialed runtime manager', () => {
 						allowedHosts: ['gmail.googleapis.com'],
 						credentialId: 'credential-a',
 						environmentName: 'GOG_ACCESS_TOKEN',
+						gmailNoSend: true,
 						kind: 'dynamic_http_mediation',
+						authorization: {
+							accountId: 'account-a',
+							applicationId: 'gmail-app',
+							authorizationId: 'grant-a',
+							generation: 1,
+							overrideRevision: 1,
+						},
 						materialRevision: revision,
 						placeholderValue: `placeholder-${revision}`,
 						secretValue,
@@ -510,6 +880,26 @@ describe('credentialed runtime manager', () => {
 		expect(fixture.states[0]).toMatchObject({ finalized: true, started: true });
 	});
 
+	it('uses stock streaming flow control rather than sizing the window from text preview limits', async () => {
+		// Arrange
+		const fixture = createFixture(() => 1_000);
+		const acquired = await acquire(fixture);
+		if (acquired.kind !== 'acquired') throw new Error('Expected acquisition.');
+		const vm = await fixture.createManagedVm.mock.results[0]?.value;
+		if (vm === undefined) throw new Error('Expected created VM.');
+		// Act
+		await acquired.command.exec({ argv: ['calendar', 'list'], reason: 'Read events' });
+		await acquired.command.complete({ kind: 'completed' });
+		// Assert
+		expect(vm.exec).toHaveBeenCalledWith(
+			expect.any(Array),
+			expect.objectContaining({
+				output: { stderr: { kind: 'pipe' }, stdout: { kind: 'pipe' } },
+				pty: false,
+			}),
+		);
+	});
+
 	it('returns busy with no queue, renewal, creation, or late dispatch', async () => {
 		const fixture = createFixture(() => 1_000);
 		const first = await acquire(fixture);
@@ -548,7 +938,12 @@ describe('credentialed runtime manager', () => {
 		const request = fixture.createManagedVm.mock.calls[0]?.[0] as
 			| ManagedVmCreateRequest
 			| undefined;
-		expect(request?.mounts).toEqual({});
+		expect(request?.mounts).toEqual({
+			'/agent-vm/gog-work': expect.objectContaining({
+				kind: 'owned-host-directory',
+				access: 'read-write',
+			}),
+		});
 		expect(request?.environment.GOOGLE_PLACES_API_KEY).toMatch(/^GONDOLIN_SECRET_[0-9a-f]{48}$/u);
 		expect(request?.mediatedSecrets).toEqual([
 			expect.objectContaining({
@@ -876,13 +1271,16 @@ describe('credentialed runtime manager', () => {
 	});
 
 	it('defers OAuth material invalidation until an active command completes', async () => {
-		const fixture = createFixture(() => 1_000);
+		const completion = Promise.withResolvers<void>();
+		const fixture = createFixture(() => 1_000, { beforeExecCompletion: () => completion.promise });
 		const active = await acquire(fixture);
 		if (active.kind !== 'acquired') throw new Error('Expected active acquisition.');
+		const execution = active.command.exec({ argv: ['gmail', 'search'], reason: 'already running' });
 
 		let invalidationSettled = false;
 		const invalidation = fixture.manager
 			.invalidateMaterial({
+				scope: { kind: 'agent' },
 				agentId: 'sun',
 				reason: 'OAuth credential material changed',
 				zoneId: 'zone-a',
@@ -895,9 +1293,8 @@ describe('credentialed runtime manager', () => {
 		});
 		expect(invalidationSettled).toBe(false);
 		expect(fixture.states[0]?.closed).toBe(false);
-		await expect(
-			active.command.exec({ argv: ['gmail', 'search'], reason: 'still active' }),
-		).resolves.toMatchObject({ exitCode: 0 });
+		completion.resolve();
+		await expect(execution).resolves.toMatchObject({ exitCode: 0 });
 
 		await active.command.complete({ kind: 'completed' });
 		await expect(invalidation).resolves.toEqual({ kind: 'retired' });
@@ -917,6 +1314,7 @@ describe('credentialed runtime manager', () => {
 		fixture.exactTerminate.mockRejectedValueOnce(new Error('forced exact termination failure'));
 
 		const invalidation = fixture.manager.invalidateMaterial({
+			scope: { kind: 'agent' },
 			agentId: 'sun',
 			reason: 'OAuth credential material changed',
 			zoneId: 'zone-a',
@@ -1158,7 +1556,7 @@ describe('credentialed runtime manager', () => {
 			'utf8',
 		);
 
-		await fixture.manager.recoverZone(zoneId);
+		await expect(fixture.manager.recoverZone(zoneId)).resolves.toEqual({ kind: 'contained' });
 		expect(fixture.exactTerminate).toHaveBeenCalledOnce();
 		expect(fixture.createManagedVm).not.toHaveBeenCalled();
 		expect(
@@ -1192,7 +1590,7 @@ describe('credentialed runtime manager', () => {
 			result: undefined,
 		}));
 
-		await fixture.manager.recoverZone(zoneId);
+		await expect(fixture.manager.recoverZone(zoneId)).resolves.toEqual({ kind: 'owner-unsafe' });
 		expect(fixture.exactTerminate).not.toHaveBeenCalled();
 		expect(await store.listRecords()).toEqual([
 			expect.objectContaining({

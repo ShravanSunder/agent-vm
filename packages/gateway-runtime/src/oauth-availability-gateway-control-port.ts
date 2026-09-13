@@ -3,7 +3,10 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 } from '@agent-vm/gateway-control-contracts';
-import { oauthToolAvailabilityBatchResultSchema } from '@agent-vm/oauth-broker-contracts';
+import {
+	oauthToolAvailabilityBatchResultSchema,
+	managedGooglePreflightResultSchema,
+} from '@agent-vm/oauth-broker-contracts';
 import type { ToolPortalOAuthAvailabilityPort } from '@agent-vm/tool-portal';
 
 import type { GatewayControlCallerContextRegistrationClient } from './control-endpoint/gateway-control-caller-context-registration-client.js';
@@ -22,6 +25,39 @@ export function createGatewayControlOAuthAvailabilityPort(props: {
 }): ToolPortalOAuthAvailabilityPort {
 	const now = props.now ?? Date.now;
 	return {
+		preflight: async ({ request, signal, trustedContext }) => {
+			requireNotAborted(signal);
+			const callerContext = await props.callerContextRegistrationClient.register({
+				purpose: 'tool_portal_controller_execution',
+				trustedContext,
+			});
+			requireNotAborted(signal);
+			const message = GatewayControlRpcCommandMessageSchema.parse({
+				kind: 'command',
+				operation: 'tool_portal_google_preflight',
+				payload: { callerContext: { callerContextId: callerContext.callerContextId }, request },
+			});
+			if (message.operation !== 'tool_portal_google_preflight')
+				throw new Error('Unexpected Google preflight command.');
+			const createdAtMs = Math.max(1, now());
+			const result = await props.controlCommandClient.sendCommand({
+				admissionPrincipal: callerContext.admissionPrincipal,
+				createdAtMs,
+				expiresAtMs:
+					createdAtMs +
+					gatewayControlCommandExecutionTimeoutMsByOperation.tool_portal_google_preflight,
+				message,
+			});
+			requireNotAborted(signal);
+			const response = GatewayControlRpcCommandResultMessageSchema.parse(result.response);
+			if (
+				response.operation !== 'tool_portal_google_preflight' ||
+				response.payload.responseToMessageId !== result.messageId ||
+				response.payload.result !== 'ok'
+			)
+				throw new Error('Controller did not return Google preflight.');
+			return managedGooglePreflightResultSchema.parse(response.payload.googlePreflight);
+		},
 		resolve: async ({ request, signal, trustedContext }) => {
 			requireNotAborted(signal);
 			const callerContext = await props.callerContextRegistrationClient.register({

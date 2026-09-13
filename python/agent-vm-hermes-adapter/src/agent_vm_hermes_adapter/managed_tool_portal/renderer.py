@@ -12,24 +12,26 @@ MAX_ORIENTATION_UTF8_BYTES = 2_000
 MAX_DISPLAYED_NAMESPACE_COUNT = 20
 
 _ORIENTATION_INTRODUCTION = (
-    "Tool Portal exposes profile-authorized capabilities through four operations:"
+    "Tool Portal exposes profile-authorized capabilities and operation files:"
 )
 _OPERATION_LINES = (
     "- tool_portal_list: Discover authorized capabilities.",
     "- tool_portal_search: Find capabilities by intent.",
     "- tool_portal_describe: Get exact schemas.",
     "- tool_portal_call: Validate and call.",
+    "- tool_portal_file: Attach a selected file.",
 )
 _COMPOSITION_LINES = (
     "Tool VM clients: Python connect_tool_portal(), TypeScript connectToolPortal(), "
-    "and the tool-portal CLI.",
-    "They connect automatically in the active foreground invocation; the endpoint expires "
-    "when it ends.",
-    "Inspect and compose results; wait for human approval.",
-    "Transport uncertain? do not replay uncertain effects.",
-    "Guide: /agent-vm/tool-portal.md",
+    "and tool-portal CLI.",
+    "During the active foreground invocation, inspect and compose results; wait for human approval.",
+    "Transport uncertain? do not replay uncertain effects. Guide: /agent-vm/tool-portal.md",
 )
-_WORKFLOW_LINE = "Workflow: discover, describe, call, inspect."
+_WORKFLOW_LINE = (
+    "Workflow: discover, describe, call, inspect.\n"
+    "Files: use /work-relative inputs and --out; /agent-vm/files is read-only and expires. "
+    "Copy wanted files to /workspace; check exitCode."
+)
 
 
 def _orientation_child_text(value: str) -> str:

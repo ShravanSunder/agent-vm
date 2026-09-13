@@ -64,17 +64,20 @@ const controllerExecutionPrompt = 'call-controller-host-probe-through-tool-porta
 const controllerExecutionSuccessMarker = 'hermes-controller-execution-succeeded';
 const oauthListPrompt = 'list-google-authorizations-through-tool-portal';
 const oauthListSuccessMarker = 'hermes-oauth-list-action-reached-controller';
-const oauthRevokePrompt = 'revoke-google-authorization-requires-approval';
-const oauthRevokeSuccessMarker = 'hermes-oauth-revoke-approval-required';
+const oauthDiscoveryPrompt = 'discover-google-authorization-tools-through-list';
+const oauthDiscoverySuccessMarker = 'hermes-oauth-lifecycle-tools-discovered';
+const oauthDisconnectPrompt = 'disconnect-google-authorization-requires-approval';
+const oauthDisconnectSuccessMarker = 'hermes-oauth-disconnect-approval-required';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker =
-	'Tool Portal exposes profile-authorized capabilities through four operations:';
+	'Tool Portal exposes profile-authorized capabilities and operation files:';
 const operationNames = [
 	'tool_portal_list',
 	'tool_portal_search',
 	'tool_portal_describe',
 	'tool_portal_call',
+	'tool_portal_file',
 ] as const;
 
 interface ProviderMessage {
@@ -276,6 +279,30 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 		const latestToolResult = messagesAfterLatestUser(observation).find(
 			({ role }) => role === 'tool',
 		)?.content;
+		if (latestUserContent === oauthDiscoveryPrompt) {
+			if (latestToolResult === undefined) {
+				writeServerSentToolCall(response, {
+					argumentsValue: {
+						arguments: {
+							requests: [{ id: 'oauth-discovery', namespaces: [oauthAuthorizationNamespace] }],
+						},
+						name: 'tool_portal_list',
+					},
+					id: 'hermes-oauth-discovery-call',
+					name: 'tool_call',
+				});
+				return;
+			}
+			const lifecycleToolsDiscovered =
+				/"status"\s*:\s*"ok"/u.test(latestToolResult) &&
+				/"name"\s*:\s*"list"/u.test(latestToolResult) &&
+				/"name"\s*:\s*"disconnect"/u.test(latestToolResult);
+			writeServerSentCompletion(
+				response,
+				lifecycleToolsDiscovered ? oauthDiscoverySuccessMarker : 'hermes-oauth-discovery-failed',
+			);
+			return;
+		}
 		if (latestUserContent === oauthListPrompt) {
 			if (latestToolResult === undefined) {
 				writeServerSentToolCall(response, {
@@ -305,7 +332,7 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 			);
 			return;
 		}
-		if (latestUserContent === oauthRevokePrompt) {
+		if (latestUserContent === oauthDisconnectPrompt) {
 			if (latestToolResult === undefined) {
 				writeServerSentToolCall(response, {
 					argumentsValue: {
@@ -313,18 +340,18 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 							calls: [
 								{
 									arguments: {
-										accountProfileId: 'personal-google',
+										accountId: '00000000-0000-4000-8000-000000000001',
 										applicationId: 'gmail-app',
 									},
-									id: 'oauth-revoke',
-									name: 'revoke',
+									id: 'oauth-disconnect',
+									name: 'disconnect',
 									namespace: oauthAuthorizationNamespace,
 								},
 							],
 						},
 						name: 'tool_portal_call',
 					},
-					id: 'hermes-oauth-revoke-call',
+					id: 'hermes-oauth-disconnect-call',
 					name: 'tool_call',
 				});
 				return;
@@ -333,8 +360,8 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 				response,
 				/"code"\s*:\s*"provider_unavailable"/u.test(latestToolResult) &&
 					latestToolResult.includes('The approval presenter was unavailable.')
-					? oauthRevokeSuccessMarker
-					: 'hermes-oauth-revoke-failed',
+					? oauthDisconnectSuccessMarker
+					: 'hermes-oauth-disconnect-failed',
 			);
 			return;
 		}
@@ -586,13 +613,13 @@ async function writeToolPortalConfiguration(options: {
 									backend: {
 										kind: 'controller_execution',
 										operations: Object.fromEntries(
-											['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'].map(
+											['begin', 'cancel', 'list', 'reauthorize', 'disconnect', 'status'].map(
 												(operationName) => [operationName, { kind: 'registered_action' }],
 											),
 										),
 									},
 									calls: {
-										requiresApproval: { allow: ['reauthorize', 'revoke'] },
+										requiresApproval: { allow: ['reauthorize', 'disconnect'] },
 										withoutApproval: { allow: ['begin', 'cancel', 'list', 'status'] },
 									},
 									discovery: {
@@ -600,7 +627,7 @@ async function writeToolPortalConfiguration(options: {
 											'Set up Google account authorization. OAuth consent does not replace Tool Portal approval.',
 									},
 									tools: {
-										allow: ['begin', 'cancel', 'list', 'reauthorize', 'revoke', 'status'],
+										allow: ['begin', 'cancel', 'list', 'reauthorize', 'disconnect', 'status'],
 									},
 								},
 								[fakeUpstreamNamespace]: {
@@ -935,8 +962,11 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			orientedUserContent,
 			oauthAuthorizationNamespace,
 		);
-		expect(oauthAuthorizationNamespaceBlock).toContain('  list');
-		expect(oauthAuthorizationNamespaceBlock).toContain('  revoke');
+		// Orientation is a bounded prefix, not the full capability inventory.
+		expect(oauthAuthorizationNamespaceBlock).toContain('Tools:');
+		expect(oauthAuthorizationNamespaceBlock).toContain(
+			'Additional tools are available through list/search.',
+		);
 		expect(orientedUserContent).toContain(`Summary: ${JSON.stringify(availableNamespaceSummary)}`);
 		expect(orientedUserContent).toContain(
 			`Summary: ${JSON.stringify(unavailableNamespaceSummary)}`,
@@ -982,17 +1012,23 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 		});
 		expect(controllerExecutionResponse).toContain(controllerExecutionSuccessMarker);
 
+		const oauthDiscoveryResponse = await requestHermesTurn({
+			gatewayPort: project.gatewayPort,
+			prompt: oauthDiscoveryPrompt,
+		});
+		expect(oauthDiscoveryResponse).toContain(oauthDiscoverySuccessMarker);
+
 		const oauthListResponse = await requestHermesTurn({
 			gatewayPort: project.gatewayPort,
 			prompt: oauthListPrompt,
 		});
 		expect(oauthListResponse).toContain(oauthListSuccessMarker);
 
-		const oauthRevokeResponse = await requestHermesTurn({
+		const oauthDisconnectResponse = await requestHermesTurn({
 			gatewayPort: project.gatewayPort,
-			prompt: oauthRevokePrompt,
+			prompt: oauthDisconnectPrompt,
 		});
-		expect(oauthRevokeResponse).toContain(oauthRevokeSuccessMarker);
+		expect(oauthDisconnectResponse).toContain(oauthDisconnectSuccessMarker);
 
 		const orientationBearingObservations = provider
 			.observations()

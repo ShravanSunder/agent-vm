@@ -5,3 +5,5 @@ export * from './models/portal-error-schema.js';
 export * from './models/portal-list-request-schema.js';
 export * from './models/portal-search-request-schema.js';
 export * from './portal-call-json-schema-exporter.js';
+export * from './models/portal-file-contracts.js';
+export * from './models/portal-attachment-contracts.js';

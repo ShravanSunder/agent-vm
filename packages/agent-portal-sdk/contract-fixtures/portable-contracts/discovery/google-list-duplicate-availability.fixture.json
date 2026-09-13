@@ -1,0 +1,109 @@
+{
+	"caseId": "google-list-duplicate-availability",
+	"schemaId": "portal.list.result",
+	"tags": ["rejected", "discovery", "google"],
+	"input": {
+		"items": [
+			{
+				"id": "list-google",
+				"status": "ok",
+				"value": {
+					"namespaceDiscovery": [],
+					"tools": [
+						{
+							"namespace": "google",
+							"name": "gog",
+							"toolRef": "google.gog",
+							"callDisposition": {
+								"kind": "invocation-dependent",
+								"describeBeforeCall": true
+							},
+							"oauthRequirement": {
+								"kind": "google-account",
+								"accountArgument": "accountId",
+								"describeBeforeCall": true,
+								"operations": [
+									{
+										"applicationId": "communications-app",
+										"operationId": "gmail.read"
+									}
+								]
+							},
+							"oauthAvailability": {
+								"kind": "operation-options",
+								"items": [
+									{
+										"requirement": {
+											"applicationId": "communications-app",
+											"operationId": "gmail.read"
+										},
+										"availability": {
+											"kind": "accounts",
+											"accounts": [
+												{
+													"accountId": "11111111-1111-4111-8111-111111111111",
+													"metadata": {
+														"kind": "verified",
+														"accountAlias": "Personal mailbox"
+													},
+													"availability": {
+														"kind": "ready",
+														"disposition": "ask",
+														"overrideRevision": 1,
+														"defaultsRevision": "defaults-v1"
+													}
+												}
+											]
+										}
+									},
+									{
+										"requirement": {
+											"applicationId": "communications-app",
+											"operationId": "gmail.read"
+										},
+										"availability": {
+											"kind": "accounts",
+											"accounts": [
+												{
+													"accountId": "11111111-1111-4111-8111-111111111111",
+													"metadata": {
+														"kind": "verified",
+														"accountAlias": "Personal mailbox"
+													},
+													"availability": {
+														"kind": "ready",
+														"disposition": "ask",
+														"overrideRevision": 1,
+														"defaultsRevision": "defaults-v1"
+													}
+												}
+											]
+										}
+									}
+								]
+							},
+							"input": {
+								"optional": [],
+								"propertyCount": 1,
+								"required": ["accountId"],
+								"type": "object"
+							},
+							"safety": {}
+						}
+					],
+					"namespaces": ["google"]
+				}
+			}
+		],
+		"ok": true
+	},
+	"expectation": {
+		"kind": "rejected",
+		"errorCodes": ["portal.google.discovery-policy"],
+		"refinementIdentities": [
+			"portal.google.discovery-policy",
+			"portal.request-id.not-reserved",
+			"portal.result.aggregate-status"
+		]
+	}
+}

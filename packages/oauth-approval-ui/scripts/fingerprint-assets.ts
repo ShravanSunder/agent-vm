@@ -28,6 +28,20 @@ if (browserOutput === undefined) throw new Error('OAuth browser asset build prod
 const javascriptAssetName = `oauth.${fingerprint(browserOutput.contents)}.js`;
 await writeFile(path.join(assetsDirectory, javascriptAssetName), browserOutput.contents);
 
+const onboardingBuild = await build({
+	bundle: true,
+	entryPoints: [path.join(packageRoot, 'src', 'browser', 'onboarding-entry.tsx')],
+	format: 'esm',
+	minify: true,
+	platform: 'browser',
+	sourcemap: false,
+	write: false,
+});
+const onboardingOutput = onboardingBuild.outputFiles[0];
+if (onboardingOutput === undefined) throw new Error('Onboarding asset build produced no output.');
+const onboardingAssetName = `onboarding.${fingerprint(onboardingOutput.contents)}.js`;
+await writeFile(path.join(assetsDirectory, onboardingAssetName), onboardingOutput.contents);
+
 const unhashedStylesheetPath = path.join(assetsDirectory, 'oauth.css');
 const stylesheetBytes = await readFile(unhashedStylesheetPath);
 const stylesheetAssetName = `oauth.${fingerprint(stylesheetBytes)}.css`;
@@ -35,6 +49,6 @@ await rename(unhashedStylesheetPath, path.join(assetsDirectory, stylesheetAssetN
 
 await writeFile(
 	path.join(assetsDirectory, 'manifest.json'),
-	`${JSON.stringify({ css: stylesheetAssetName, javascript: javascriptAssetName }, undefined, 2)}\n`,
+	`${JSON.stringify({ css: stylesheetAssetName, javascript: javascriptAssetName, onboarding: onboardingAssetName }, undefined, 2)}\n`,
 	{ encoding: 'utf8', mode: 0o644 },
 );

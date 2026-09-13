@@ -1,7 +1,8 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { compileOAuthPolicy } from '@agent-vm/config-contracts';
 import { CONTROL_SESSION_TIMING_MS } from '@agent-vm/control-protocol-contracts';
 import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
@@ -10,6 +11,7 @@ import type { SecretResolver } from '@agent-vm/secret-management';
 import { configure, dispose, reset, type LogRecord } from '@logtape/logtape';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
+import { createOAuthPolicyCompilerTestInput } from '../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import type { GatewayExpectedAdmissionCohort } from '../gateway/gateway-aggregate-admission-state.js';
 import type {
@@ -64,7 +66,42 @@ const controllerRuntimeTestRoot = path.join(
 
 function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAuthRuntime {
 	return {
+		withPublicationGuard: async (publish) => await publish(),
+		compiledOAuthPolicy: compileOAuthPolicy(createOAuthPolicyCompilerTestInput()),
+		activateAfterRuntimeCleanup: () => {
+			events.push('oauth-defaults-activated');
+		},
+		policyService: {
+			cancelBrowserPolicyContexts: () => undefined,
+			clear: () => undefined,
+			drain: async () => undefined,
+			listOwnerAccounts: () => [],
+			readAccountPolicyView: () => ({ kind: 'unavailable' }),
+			resolveActivityAvailability: () => ({ kind: 'unavailable' }),
+			resolveOperationAvailability: () => ({ kind: 'unavailable' }),
+			resolveManagedGoogleInvocation: () => ({ kind: 'unavailable' }),
+			readCurrentPolicyForDispatch: () => false,
+			openPolicyEditor: async () => ({ kind: 'unavailable' }),
+			previewPolicyChange: async () => ({ kind: 'unavailable' }),
+			confirmPolicyChange: async () => ({ kind: 'unavailable' }),
+		},
 		brokerService: {
+			getBrowserSession: () => undefined,
+			getConfirmationPage: () => {
+				throw new Error('unused OAuth confirmation fixture');
+			},
+			getRetryPage: () => {
+				throw new Error('unused OAuth retry fixture');
+			},
+			cancelBrowserCeremonies: () => 0,
+			beginWebsiteAuthorization: () => ({
+				kind: 'authorization-failed',
+				failure: { kind: 'unavailable' },
+			}),
+			confirmDisconnect: async () => ({
+				kind: 'authorization-failed',
+				failure: { kind: 'unavailable' },
+			}),
 			cancelBrowserCompletion: () => false,
 			cancelBrowserTransaction: () => false,
 			close: async () => {
@@ -73,8 +110,12 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 			drain: async () => {
 				events.push('oauth-broker-drained');
 			},
-			confirmAccount: async () => ({ accountLabel: 'test', kind: 'completed' }),
-			executeAuthorizationAction: async () => ({ kind: 'authorization-list', profiles: [] }),
+			confirmAccount: async () => ({ kind: 'unavailable' }),
+			executeAuthorizationAction: async () => ({
+				kind: 'authorization-list',
+				accounts: [],
+				authorizationOptions: [],
+			}),
 			getPermissionPage: () => {
 				throw new Error('unused OAuth browser fixture');
 			},
@@ -87,13 +128,12 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 				kind: 'stale',
 				reason: 'credential-unavailable',
 			}),
-			resolveToolAvailability: () => ({ kind: 'authorization-status-unavailable' }),
 			reapExpiredTransactions: () => ({ completionSessionCount: 0, transactionCount: 0 }),
 			retryApplication: () => {
 				throw new Error('unused OAuth retry fixture');
 			},
 			stopAdmission: () => events.push('oauth-admission-stopped'),
-			submitPermissions: () => ({ kind: 'already-satisfied' }),
+			submitPermissions: () => ({ kind: 'no-selections' }),
 		},
 		close: async () => {
 			events.push('oauth-runtime-closed');
@@ -102,7 +142,9 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 			events.push('oauth-runtime-drained');
 		},
 		port: 18_900,
-		setCredentialInvalidationHandler: () => events.push('oauth-invalidation-handler-set'),
+		setContainmentHandlers: () => {
+			events.push('oauth-invalidation-handler-set');
+		},
 		startHttpsListener: async () => {
 			events.push('oauth-listener-started');
 			return {
@@ -1700,6 +1742,33 @@ describe('startControllerRuntime', () => {
 			preparedMutation: preparedReleaseReplacementLease,
 			semanticOperationId: 'controller-runtime-test-lease-release',
 		});
+		createManagedToolVm.mockRejectedValueOnce(new Error('provider rejected Tool VM creation'));
+		const failedCreateLeasePayload = {
+			callerContext: {
+				callerContextId: refreshedControllerLeaseCallerContext.callerContextId,
+			},
+		};
+		const preparedFailedCreateLease = await gatewayControlLeaseRpc.prepareSemanticMutation({
+			attachmentGeneration: 1,
+			callerContext: refreshedControllerLeaseCallerContext,
+			gateway: capturedGatewayIdentity,
+			operation: 'lease_create',
+			payload: failedCreateLeasePayload,
+			processEpoch: 'controller-runtime-test-process-epoch',
+		});
+		await expect(
+			executePreparedGatewayLeaseMutation({
+				gateway: capturedGatewayIdentity,
+				operation: 'lease_create',
+				preparedMutation: preparedFailedCreateLease,
+				semanticOperationId: 'controller-runtime-test-failed-lease-create',
+			}),
+		).rejects.toThrow('provider rejected Tool VM creation');
+		expect(
+			(await readdir(absoluteLeaseSystemConfig.controllerRuntimeDir, { recursive: true })).filter(
+				(entry) => /(?:^|\/)receiver\/[^/]+$/u.test(entry),
+			),
+		).toEqual([]);
 		recordControllerHealthEvent(capturedHealthEventStore, {
 			channelProviderId: 'primary-channel',
 			health: 'transitioning',

@@ -395,6 +395,7 @@ describe('credentialed runtime registry compiler', () => {
 		hiddenOperation.executionTarget.allowedHosts = ['incompatible.example.com'];
 		if (namespace.tools.allow === '*') throw new Error('Expected explicit tool selector.');
 		namespace.tools.allow = namespace.tools.allow.filter((name) => name !== 'gmail_search');
+		if ('source' in namespace.calls) throw new Error('Expected static fixture calls.');
 		if (namespace.calls.withoutApproval.allow === '*') {
 			throw new Error('Expected explicit call selector.');
 		}

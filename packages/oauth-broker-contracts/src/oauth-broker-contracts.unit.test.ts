@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-	oauthAccountProfileStatusSchema,
 	oauthAuthorizationActionRequestSchema,
 	oauthAuthorizationActionResultSchema,
 	oauthCredentialLifecycleStateSchema,
@@ -14,25 +13,31 @@ import {
 } from './index.js';
 
 describe('OAuth broker portable contracts', () => {
-	it('exposes configured IDs and maximum permissions without provider secrets', () => {
+	it('exposes catalog group choices without static account slots or provider secrets', () => {
 		expect(
-			oauthAccountProfileStatusSchema.parse({
-				accountProfileId: 'personal-google',
-				applications: [],
+			oauthAuthorizationActionResultSchema.parse({
+				kind: 'authorization-list',
+				accounts: [],
 				authorizationOptions: [
 					{
 						applicationId: 'gmail-app',
 						applicationLabel: 'Gmail',
 						services: [
 							{
-								maximumPermission: 'write',
 								serviceId: 'gmail',
 								serviceLabel: 'Gmail messages',
+								groups: [
+									{
+										groupId: 'gmail.read',
+										effect: 'read',
+										label: 'Read Gmail',
+										scopeDescriptions: ['Read Gmail messages and settings.'],
+									},
+								],
 							},
 						],
 					},
 				],
-				kind: 'unbound',
 			}),
 		).toMatchObject({ authorizationOptions: [{ applicationId: 'gmail-app' }] });
 	});
@@ -41,17 +46,16 @@ describe('OAuth broker portable contracts', () => {
 		expect(
 			oauthAuthorizationActionRequestSchema.parse({
 				actionId: 'oauth_authorization.begin',
-				accountProfileId: 'personal-google',
+				applicationId: 'gmail-app',
 				suggestedSelections: {
-					'gmail-app': { gmail: 'read' },
-					'workspace-app': { calendar: 'write', drive: 'none' },
+					'gmail-app': ['gmail.read', 'calendar.write'],
 				},
 			}),
 		).toMatchObject({ actionId: 'oauth_authorization.begin' });
 		expect(
 			oauthAuthorizationActionRequestSchema.safeParse({
 				actionId: 'oauth_authorization.begin',
-				accountProfileId: 'personal-google',
+				applicationId: 'gmail-app',
 				scopes: ['https://mail.google.com/'],
 			}).success,
 		).toBe(false);
@@ -60,8 +64,8 @@ describe('OAuth broker portable contracts', () => {
 	it('keeps provider credential fields out of public results', () => {
 		expect(
 			oauthAuthorizationActionResultSchema.safeParse({
-				accountLabel: 'Personal Google',
-				accountProfileId: 'personal-google',
+				accountAlias: 'Personal Google',
+				accountId: '11111111-1111-4111-8111-111111111111',
 				accessToken: 'must-not-type-check',
 				applicationId: 'gmail-app',
 				grantedScopes: ['gmail.readonly'],
@@ -86,45 +90,70 @@ describe('OAuth broker portable contracts', () => {
 		).toMatchObject({ kind: 'reauthorization-required' });
 	});
 
-	it('distinguishes static and invocation-dependent tool requirements', () => {
+	it('describes exact Google operations with dynamic account selection', () => {
 		expect(
 			oauthToolRequirementSchema.parse({
-				applicationId: 'gmail-app',
-				kind: 'oauth-account-profile',
-				minimumPermission: 'read',
-				serviceId: 'gmail',
+				kind: 'google-account',
+				accountArgument: 'accountId',
+				describeBeforeCall: true,
+				operations: [{ applicationId: 'gmail-app', operationId: 'gmail.search' }],
 			}),
-		).toMatchObject({ kind: 'oauth-account-profile' });
+		).toMatchObject({ kind: 'google-account' });
 		expect(
-			oauthToolRequirementSchema.parse({
+			oauthToolRequirementSchema.safeParse({
 				accountProfileArgument: 'accountProfile',
 				describeBeforeCall: true,
 				kind: 'invocation-dependent-oauth-account-profile',
-			}),
-		).toMatchObject({ kind: 'invocation-dependent-oauth-account-profile' });
+			}).success,
+		).toBe(false);
 	});
 
-	it('requires safe account labels only for ready availability', () => {
-		expect(
-			oauthToolAvailabilitySchema.parse({
-				accountProfiles: [{ accountLabel: 'Personal Google', accountProfileId: 'personal-google' }],
+	it('requires authenticated account labels for usable activity', () => {
+		const option = {
+			accountId: '11111111-1111-4111-8111-111111111111',
+			metadata: { kind: 'verified', accountAlias: 'Personal Google' },
+			availability: {
 				kind: 'ready',
-			}),
-		).toMatchObject({ kind: 'ready' });
+				disposition: 'ask',
+				overrideRevision: 1,
+				defaultsRevision: 'defaults-1',
+			},
+		};
+		const availability = (account: unknown): unknown => ({
+			kind: 'operation-options',
+			items: [
+				{
+					requirement: { applicationId: 'gmail-app', operationId: 'gmail.search' },
+					availability: { kind: 'accounts', accounts: [account] },
+				},
+			],
+		});
+		expect(oauthToolAvailabilitySchema.parse(availability(option))).toMatchObject({
+			kind: 'operation-options',
+		});
+		expect(oauthToolAvailabilitySchema.parse({ kind: 'unavailable' })).toEqual({
+			kind: 'unavailable',
+		});
 		expect(
-			oauthToolAvailabilitySchema.parse({ kind: 'authorization-status-unavailable' }),
-		).toMatchObject({ kind: 'authorization-status-unavailable' });
-		expect(
-			oauthToolAvailabilitySchema.safeParse({ accountProfiles: [], kind: 'ready' }).success,
+			oauthToolAvailabilitySchema.safeParse(
+				availability({ ...option, metadata: { kind: 'unavailable' } }),
+			).success,
 		).toBe(false);
+		expect(
+			oauthToolAvailabilitySchema.safeParse(
+				availability({
+					...option,
+					metadata: { kind: 'unavailable' },
+					availability: { kind: 'unavailable' },
+				}),
+			).success,
+		).toBe(true);
 	});
 
 	it('bounds and deduplicates provider-neutral availability batches', () => {
 		const requirement = {
 			applicationId: 'gmail-app',
-			kind: 'oauth-account-profile' as const,
-			minimumPermission: 'read' as const,
-			serviceId: 'gmail',
+			operationId: 'gmail.search',
 		};
 		expect(
 			oauthToolAvailabilityBatchRequestSchema.parse({ requirements: [requirement] }),
@@ -137,9 +166,17 @@ describe('OAuth broker portable contracts', () => {
 		expect(
 			oauthToolAvailabilityBatchResultSchema.safeParse({
 				items: [
-					{ availability: { kind: 'authorization-required' }, requirement },
-					{ availability: { kind: 'ready', accountProfiles: [] }, requirement },
+					{ availability: { kind: 'unavailable' }, requirement },
+					{ availability: { kind: 'accounts', accounts: [] }, requirement },
 				],
+			}).success,
+		).toBe(false);
+		expect(
+			oauthToolAvailabilityBatchRequestSchema.safeParse({
+				requirements: Array.from({ length: 257 }, (_, index) => ({
+					...requirement,
+					operationId: `operation-${String(index)}`,
+				})),
 			}).success,
 		).toBe(false);
 	});
