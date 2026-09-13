@@ -17,6 +17,10 @@ import {
 } from './artifacts/artifact-store.js';
 import { createGatewayRuntimeFileArtifactStorageBackend } from './artifacts/runtime-file-artifact-storage.js';
 import {
+	createPreparedCatalogSourceCache,
+	type PreparedCatalogSourceCache,
+} from './catalog/prepared-catalog-source-cache.js';
+import {
 	createGatewayRuntimeManagedToolPortalService,
 	type GatewayRuntimeManagedToolPortalService,
 } from './runtime/managed-tool-portal-service.js';
@@ -52,7 +56,7 @@ export interface GatewayRuntimeManagedToolPortalBackendPortFactories {
 
 export interface CreateGatewayRuntimeManagedToolPortalCompositionProps<TUdsProjection> extends Omit<
 	CreateGatewayRuntimeToolPortalCompositionProps<TUdsProjection>,
-	'artifactReader' | 'createToolPortalCapabilityCore'
+	'artifactReader' | 'createToolPortalCapabilityCore' | 'preparedCatalogSourceCache'
 > {
 	readonly artifactRuntime: GatewayRuntimeManagedToolPortalArtifactRuntimeProps;
 	readonly backendPortFactories: GatewayRuntimeManagedToolPortalBackendPortFactories;
@@ -64,6 +68,7 @@ export interface GatewayRuntimeManagedToolPortalOwnedComponents<
 	TUdsProjection,
 > extends GatewayRuntimeToolPortalComposition<TUdsProjection> {
 	readonly artifactStore: GatewayRuntimeArtifactStore;
+	readonly preparedCatalogSourceCache: PreparedCatalogSourceCache;
 	readonly registerArtifactAuthority: GatewayRuntimeArtifactCurrentAuthorityRegistry['register'];
 	readonly retireArtifactAuthority: GatewayRuntimeArtifactCurrentAuthorityRegistry['retire'];
 	readonly retireEpoch: () => Promise<void>;
@@ -94,6 +99,7 @@ export async function createGatewayRuntimeManagedToolPortalComposition<TUdsProje
 		now: props.artifactRuntime.now,
 		storageBackend,
 	});
+	const preparedCatalogSourceCache = createPreparedCatalogSourceCache();
 	const backendFactoryRuntime = {
 		artifactStore,
 		registerArtifactAuthority: artifactAuthorityRegistry.register,
@@ -122,15 +128,20 @@ export async function createGatewayRuntimeManagedToolPortalComposition<TUdsProje
 				semanticSnapshot: serviceProps.semanticSnapshot,
 			}),
 		managedPluginAttachment: props.managedPluginAttachment,
+		preparedCatalogSourceCache,
 		semanticSnapshot: props.semanticSnapshot,
 	});
 
 	const ownedComponents: GatewayRuntimeManagedToolPortalOwnedComponents<TUdsProjection> = {
 		...composition,
 		artifactStore,
+		preparedCatalogSourceCache,
 		registerArtifactAuthority: artifactAuthorityRegistry.register,
 		retireArtifactAuthority: artifactAuthorityRegistry.retire,
-		retireEpoch: artifactStore.retireEpoch,
+		retireEpoch: async (): Promise<void> => {
+			preparedCatalogSourceCache.retireEpoch();
+			await artifactStore.retireEpoch();
+		},
 	};
 	return {
 		...ownedComponents,

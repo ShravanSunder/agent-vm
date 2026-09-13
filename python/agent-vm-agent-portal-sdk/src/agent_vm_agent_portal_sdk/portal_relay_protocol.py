@@ -13,6 +13,7 @@ MAX_RELAY_PENDING_REQUESTS = 16
 MAX_RELAY_RETAINED_BYTES = 64 * 1024 * 1024
 RELAY_CONTROL_RESERVE_BYTES = 8 * 1024
 RELAY_STREAM_CHUNK_BYTES = 64 * 1024
+MAX_RELAY_CATALOG_BUNDLE_BYTES = 16 * 1024 * 1024
 
 
 class PortalRelayProtocolError(ValueError):
@@ -84,6 +85,33 @@ class RelayCredit(_RelayModel):
     bytes: int = Field(ge=0, le=MAX_RELAY_RETAINED_BYTES)
 
 
+class RelayCatalogCacheStatus(_RelayModel):
+    kind: t.Literal["catalog-cache-status"]
+    definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
+    disposition: t.Literal["cache-hit", "content-required"]
+
+
+class RelayCatalogBundleChunk(_RelayModel):
+    kind: t.Literal["catalog-bundle-chunk"]
+    definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
+    offset: int = Field(ge=0, le=MAX_RELAY_CATALOG_BUNDLE_BYTES)
+    byte_length: int = Field(alias="byteLength", gt=0, le=RELAY_STREAM_CHUNK_BYTES)
+    content_base64: str = Field(alias="contentBase64", max_length=90_000)
+
+
+class RelayCatalogBundleEnd(_RelayModel):
+    kind: t.Literal["catalog-bundle-end"]
+    definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
+    bundle_sha256: str = Field(alias="bundleSha256", pattern=r"^sha256:[a-f0-9]{64}$")
+    bundle_byte_length: int = Field(alias="bundleByteLength", gt=0, le=MAX_RELAY_CATALOG_BUNDLE_BYTES)
+
+
+class RelayCatalogReady(_RelayModel):
+    kind: t.Literal["catalog-ready"]
+    definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
+    manifest_path: str = Field(alias="manifestPath", min_length=1, max_length=1_024)
+
+
 class RelayArtifactChunk(_RelayModel):
     kind: t.Literal["artifact-chunk"]
     request_id: str = Field(alias="requestId", min_length=1)
@@ -103,7 +131,20 @@ class RelayArtifactEnd(_RelayModel):
 
 
 type RelayMessage = t.Annotated[
-    RelayRequest | RelayCancel | RelayHello | RelayReady | RelayResult | RelayError | RelayClose | RelayCredit | RelayArtifactChunk | RelayArtifactEnd,
+    RelayRequest
+    | RelayCancel
+    | RelayHello
+    | RelayReady
+    | RelayResult
+    | RelayError
+    | RelayClose
+    | RelayCredit
+    | RelayCatalogCacheStatus
+    | RelayCatalogBundleChunk
+    | RelayCatalogBundleEnd
+    | RelayCatalogReady
+    | RelayArtifactChunk
+    | RelayArtifactEnd,
     Field(discriminator="kind"),
 ]
 _MESSAGE_ADAPTER = TypeAdapter(RelayMessage)

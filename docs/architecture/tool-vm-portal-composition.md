@@ -27,6 +27,54 @@ from `@agent-vm/agent-portal-sdk` and closes the client in `finally`. The
 All three expose list, search, describe, call, and authorized artifact reads.
 The packaged `/agent-vm/tool-portal.md` guide gives canonical request examples.
 
+## Catalog presentation and generated TypeScript
+
+Managed and standalone startup select catalog presentation in different places.
+A managed Tool Portal profile sets `catalogMode` to `compact` or `catalog` in
+`tool-portal.config.jsonc`; omission means `compact`. Compact mode keeps the
+generic Hermes list, search, describe, and call tools. Catalog mode registers the
+profile's admitted capabilities as individual Hermes-native tools. Generated
+TypeScript modules remain available to Tool VM code in both modes.
+
+Managed startup prepares every profile's complete admitted definitions after
+the private Gateway Runtime connection opens and before Hermes is started or the
+Gateway becomes ready. A catalog-mode profile with incomplete preparation blocks
+startup. The prepared definitions are fixed for that managed Gateway epoch:
+there is no live refresh and a newly leased Tool VM does not rediscover provider
+definitions. Config, provider, policy, or schema changes take effect after a
+managed Gateway restart prepares a new snapshot.
+
+Standalone MCP Portal uses its own startup switch:
+`mcp-portal mcp-proxy serve --catalog-mode compact|catalog`. Its default is also
+`compact`. This CLI option and standalone `mcp-portal.config.jsonc` do not become
+managed Gateway policy; managed profiles remain private-UDS configuration owned
+by `tool-portal.config.jsonc`.
+
+For a managed Hermes turn, orientation supplies exact import lines for selected
+prepared namespaces within its prompt budget. Each displayed line names the real
+per-namespace factory and its fingerprinted module under
+`/run/agent-vm/tool-portal-sdk/<definitionFingerprint>/`. The same directory's
+`manifest.json` is the complete mapping: it records the fingerprint plus every
+namespace's `modulePath` and `exportedFactoryName`, including namespaces omitted
+from orientation. Operators should copy those exact values rather than guessing
+generated identifiers. The namespace module itself declares the generated
+function names and input types. Once the relay reports catalog readiness, the
+foreground command receives that exact manifest path as
+`AGENT_VM_TOOL_PORTAL_SDK_MANIFEST`; its absence means generated imports were not
+admitted for that environment generation.
+
+Run the resulting `.ts` file with Node 24 from the foreground Hermes terminal.
+The script imports `connectToolPortal`, imports the namespace factory from the
+orientation-provided path, opens one client, binds every needed namespace
+factory to that client, and closes the client in `finally`. Generated functions
+return the full canonical Portal result (`ok`, `items`, and any diagnostics), so
+the script must inspect the complete result before deciding what follows. The
+factory is only a typed caller over that Portal client: it does not connect to a
+provider directly, bypass provider authentication, skip call policy or approval,
+or extend the invocation deadline. Immutable generated files may be reused by a
+later invocation when its fresh manifest selects the same fingerprint. The prior
+client, socket, and authority are invocation-scoped and must never be reused.
+
 The image installs Python in `/opt/agent-vm-tools`, selects it through the login
 PATH, and exposes the Node dependency tree through `/node_modules`. Imports
 therefore work from ordinary `/work`, `/workspace`, and temporary script paths.

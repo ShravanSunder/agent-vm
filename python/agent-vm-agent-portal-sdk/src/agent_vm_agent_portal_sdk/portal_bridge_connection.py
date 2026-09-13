@@ -1,11 +1,14 @@
 """Pump one guest relay process through trusted Portal callbacks."""
 
 import asyncio
+import base64
 import typing as t
 from collections.abc import Mapping
+from time import monotonic
 
 from pydantic import BaseModel, ValidationError
 
+from .catalog_relay_startup import GatewayPortalCatalogSource, stream_catalog_source_to_relay
 from .contracts import PORTABLE_CONTRACT_ADAPTERS
 from .portal_execution_bridge import PortalExecutionBridge
 from .portal_relay_protocol import (
@@ -35,10 +38,24 @@ class PortalRelayProcessPort(t.Protocol):
 
 
 class PortalBridgeConnection:
-    def __init__(self, *, process: PortalRelayProcessPort, bridge: PortalExecutionBridge, stream_artifact: StreamPortalArtifact | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        process: PortalRelayProcessPort,
+        bridge: PortalExecutionBridge,
+        stream_artifact: StreamPortalArtifact | None = None,
+        catalog_source: GatewayPortalCatalogSource | None = None,
+        startup_deadline_monotonic: float | None = None,
+    ) -> None:
         self._process = process
         self._bridge = bridge
         self._stream_artifact = stream_artifact
+        self._catalog_source = catalog_source
+        self._startup_deadline_monotonic = startup_deadline_monotonic
+        self._catalog_status_received = False
+        self._catalog_ready = False
+        self._catalog_manifest_path: str | None = None
+        self._catalog_streamed_bytes = 0
         self._artifact_request_id: str | None = None
         self._write_lock = asyncio.Lock()
         self._requests: set[asyncio.Task[None]] = set()
@@ -54,8 +71,20 @@ class PortalBridgeConnection:
         self._reservations: dict[str, int] = {}
 
     async def wait_ready(self) -> None:
-        async with asyncio.timeout(5):
+        timeout_seconds = 5.0 if self._startup_deadline_monotonic is None else max(0.0, self._startup_deadline_monotonic - monotonic())
+        async with asyncio.timeout(timeout_seconds):
             await asyncio.shield(self._ready)
+
+    @property
+    def catalog_manifest_path(self) -> str | None:
+        return self._catalog_manifest_path
+
+    async def _write_frame(self, frame: bytes) -> None:
+        async with self._write_lock:
+            if self._closed:
+                raise PortalRelayProtocolError("Portal bridge connection closed.")
+            for offset in range(0, len(frame), _MAX_CHUNK_BYTES):
+                await self._process.write(frame[offset : offset + _MAX_CHUNK_BYTES])
 
     async def _send(self, message: dict[str, object]) -> None:
         frame = encode_relay_frame(message)
@@ -71,15 +100,37 @@ class PortalBridgeConnection:
         if not reserved:
             self._pending_control_bytes += len(frame)
         try:
-            async with self._write_lock:
-                if self._closed:
-                    raise PortalRelayProtocolError("Portal bridge connection closed.")
-                for offset in range(0, len(frame), _MAX_CHUNK_BYTES):
-                    await self._process.write(frame[offset : offset + _MAX_CHUNK_BYTES])
+            await self._write_frame(frame)
         finally:
             self._pending_output_bytes -= len(frame)
             if not reserved:
                 self._pending_control_bytes -= len(frame)
+
+    async def _send_catalog_startup_data(self, message: dict[str, object]) -> None:
+        source = self._catalog_source
+        if source is None or not self._catalog_status_received or self._catalog_ready or self._ready.done():
+            raise PortalRelayProtocolError("Catalog startup data is outside its bounded startup phase.")
+        if message.get("definitionFingerprint") != source.identity.definition_fingerprint:
+            raise PortalRelayProtocolError("Catalog startup data belongs to another fingerprint.")
+        if message.get("kind") == "catalog-bundle-chunk":
+            encoded = message.get("contentBase64")
+            if not isinstance(encoded, str):
+                raise PortalRelayProtocolError("Catalog startup chunk omitted its content.")
+            try:
+                byte_length = len(base64.b64decode(encoded, validate=True))
+            except ValueError as error:
+                raise PortalRelayProtocolError("Catalog startup chunk was not valid base64.") from error
+            if message.get("offset") != self._catalog_streamed_bytes or message.get("byteLength") != byte_length:
+                raise PortalRelayProtocolError("Catalog startup chunk was not sequential.")
+            if self._catalog_streamed_bytes + byte_length > source.identity.bundle_byte_length:
+                raise PortalRelayProtocolError("Catalog startup exceeded its trusted byte length.")
+            self._catalog_streamed_bytes += byte_length
+        elif message.get("kind") == "catalog-bundle-end":
+            if self._catalog_streamed_bytes != source.identity.bundle_byte_length:
+                raise PortalRelayProtocolError("Catalog startup ended before all trusted bytes were sent.")
+        else:
+            raise PortalRelayProtocolError("Invalid catalog startup data frame.")
+        await self._write_frame(encode_relay_frame(message))
 
     async def _respond(self, message: dict[str, object]) -> None:
         self._started_ids.add(str(message["requestId"]))
@@ -190,9 +241,13 @@ class PortalBridgeConnection:
         self._ready.exception()
 
     async def _receive(self, message: dict[str, object]) -> None:
-        if message["kind"] == "ready":
+        if message["kind"] in {"catalog-cache-status", "catalog-ready"}:
+            await self._receive_catalog_startup(message)
+        elif message["kind"] == "ready":
             if self._ready.done():
                 raise PortalRelayProtocolError("Duplicate guest relay readiness.")
+            if self._catalog_source is not None and not self._catalog_ready:
+                raise PortalRelayProtocolError("Guest relay became ready before catalog publication.")
             self._ready.set_result(None)
             await self._advertise_credit()
         elif message["kind"] == "request":
@@ -209,6 +264,28 @@ class PortalBridgeConnection:
                     registered.cancel()
         else:
             raise PortalRelayProtocolError("Invalid guest relay direction.")
+
+    async def _receive_catalog_startup(self, message: dict[str, object]) -> None:
+        if message["kind"] == "catalog-cache-status":
+            source = self._catalog_source
+            if source is None or self._catalog_status_received or self._ready.done():
+                raise PortalRelayProtocolError("Unexpected catalog cache status.")
+            if message.get("definitionFingerprint") != source.identity.definition_fingerprint:
+                raise PortalRelayProtocolError("Catalog cache status belongs to another fingerprint.")
+            self._catalog_status_received = True
+            if message.get("disposition") == "content-required":
+                await stream_catalog_source_to_relay(source, self._send_catalog_startup_data)
+        elif message["kind"] == "catalog-ready":
+            source = self._catalog_source
+            if source is None or not self._catalog_status_received or self._catalog_ready or self._ready.done():
+                raise PortalRelayProtocolError("Unexpected catalog readiness.")
+            if message.get("definitionFingerprint") != source.identity.definition_fingerprint:
+                raise PortalRelayProtocolError("Catalog readiness belongs to another fingerprint.")
+            manifest_path = message.get("manifestPath")
+            if manifest_path != source.expected_manifest_path:
+                raise PortalRelayProtocolError("Catalog readiness returned an unexpected manifest path.")
+            self._catalog_manifest_path = t.cast("str", manifest_path)
+            self._catalog_ready = True
 
     async def _receive_request(self, message: dict[str, object]) -> None:
         if not self._ready.done():

@@ -1,0 +1,12 @@
+{
+	"caseId": "catalog-offer-result-unavailable",
+	"expectation": {
+		"canonicalJson": "{\"kind\":\"unavailable\",\"reason\":\"catalog-source-unavailable\"}",
+		"kind": "accepted",
+		"normalized": { "kind": "unavailable", "reason": "catalog-source-unavailable" },
+		"refinementIdentities": ["sandbox.path.work-relative"]
+	},
+	"input": { "kind": "unavailable", "reason": "catalog-source-unavailable" },
+	"schemaId": "portal.catalog.offer-result",
+	"tags": ["catalog", "accepted"]
+}

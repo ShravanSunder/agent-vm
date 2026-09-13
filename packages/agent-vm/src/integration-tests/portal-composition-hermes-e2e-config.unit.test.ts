@@ -56,6 +56,7 @@ describe('portal composition Hermes E2E fixture config', () => {
 		});
 		const namespace =
 			config.toolPortalConfig.profiles.main?.namespaces['portal_composition_execution'];
+		expect(config.toolPortalConfig.profiles.main?.catalogMode).toBe('catalog');
 		if (namespace?.backend.kind !== 'controller_execution' || 'source' in namespace.calls) {
 			throw new Error('Expected the fixture controller-execution namespace.');
 		}

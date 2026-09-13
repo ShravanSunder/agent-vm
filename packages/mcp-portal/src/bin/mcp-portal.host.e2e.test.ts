@@ -243,6 +243,7 @@ async function waitForPortalHealth(props: {
 }
 
 async function startPortalProcess(props: {
+	readonly catalogMode?: 'catalog';
 	readonly configDir: string;
 	readonly port: number;
 }): Promise<StartedPortalProcess> {
@@ -253,7 +254,16 @@ async function startPortalProcess(props: {
 	const output: ChildOutput = { stderr: '', stdout: '' };
 	const child = spawn(
 		binPath,
-		[sourcePath, 'mcp-proxy', 'serve', '--config-dir', props.configDir],
+		[
+			sourcePath,
+			'mcp-proxy',
+			'serve',
+			'--config-dir',
+			props.configDir,
+			'--port',
+			String(props.port),
+			...(props.catalogMode === undefined ? [] : ['--catalog-mode', props.catalogMode]),
+		],
 		{
 			env: {
 				...process.env,
@@ -556,6 +566,32 @@ describe('portal proxy CLI integration', () => {
 			});
 		} finally {
 			await portalClient.close();
+		}
+	}, 30_000);
+
+	it('starts the built CLI in explicit catalog mode and advertises individual tools', async () => {
+		if (configDir === null) {
+			throw new Error('Expected portal integration fixture to be initialized.');
+		}
+		const catalogPort = await findOpenPort();
+		const catalogPortal = await startPortalProcess({
+			catalogMode: 'catalog',
+			configDir,
+			port: catalogPort,
+		});
+		const catalogClient = await createPortalClient(catalogPort);
+		try {
+			const tools = await catalogClient.client.listTools();
+			expect(tools.tools).toHaveLength(2);
+			expect(tools.tools.map((tool) => tool.name)).toEqual(
+				expect.arrayContaining([
+					expect.stringMatching(/^upstream-mock__read_thing__[a-f0-9]{10}$/u),
+					expect.stringMatching(/^upstream-mock__write_thing__[a-f0-9]{10}$/u),
+				]),
+			);
+		} finally {
+			await catalogClient.close();
+			await stopPortalProcess(catalogPortal);
 		}
 	}, 30_000);
 });

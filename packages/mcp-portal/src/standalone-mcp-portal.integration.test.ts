@@ -7,8 +7,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { describe, expect, it } from 'vitest';
 
-import { startPortalServer } from './cli/portal-server-operation.js';
+import {
+	deriveApprovalHmacKeysFromMasterKey,
+	startPortalServer,
+} from './cli/portal-server-operation.js';
 import { deriveAgentBearerToken } from './portal-auth/agent-bearer-token.js';
+import { hashCallArguments, signApprovalToken } from './portal-auth/hmac-token.js';
 import {
 	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
@@ -185,6 +189,119 @@ describe('standalone MCP Portal', () => {
 				...(client === undefined ? [] : [client.close()]),
 				...(portal === undefined ? [] : [portal.close()]),
 				...(upstreamClosed ? [] : [upstream.close()]),
+			]);
+		}
+	});
+
+	it('exposes catalog tools and carries approval proof only through protected MCP metadata', async () => {
+		const upstream = await startFakeUpstreamMcpServer();
+		const configDir = await mkdtemp(join(tmpdir(), 'standalone-mcp-portal-catalog-'));
+		let portal: Awaited<ReturnType<typeof startPortalServer>> | undefined;
+		let client: Client | undefined;
+		try {
+			await writeFile(
+				join(configDir, 'mcp.config.jsonc'),
+				JSON.stringify({
+					providers: {
+						standaloneFixture: {
+							discovery: {},
+							kind: 'mcp',
+							namespace: fakeUpstreamNamespace,
+							transport: {
+								kind: 'streamable-http',
+								requiredEgressHosts: [],
+								url: upstream.url,
+							},
+						},
+					},
+					schemaVersion: 1,
+				}),
+			);
+			await writeFile(
+				join(configDir, 'mcp-portal.config.jsonc'),
+				JSON.stringify({
+					agents: { [agentId]: { profile: 'standalone' } },
+					externalAuth: {
+						masterKey: { name: 'MCP_PORTAL_MASTER_KEY', source: 'environment' },
+					},
+					mcpProxy: {
+						auth: { headerName: 'authorization' },
+						server: { host: '127.0.0.1', port: 18_791 },
+					},
+					profiles: {
+						standalone: {
+							namespaces: {
+								[fakeUpstreamNamespace]: {
+									calls: {
+										requiresApproval: { allow: ['write_thing'] },
+										withoutApproval: { allow: ['read_thing'] },
+									},
+									tools: { allow: ['read_thing', 'write_thing'] },
+								},
+							},
+						},
+					},
+					schemaVersion: 1,
+				}),
+			);
+			portal = await startPortalServer({
+				args: { agentOverrides: [], catalogMode: 'catalog', configDir, port: 0 },
+				env: { MCP_PORTAL_MASTER_KEY: masterKey.toString('base64url') },
+				logger: { log: () => undefined },
+			});
+			const endpoint = `http://127.0.0.1:${String(portal.port)}/agents/${agentId}/mcp`;
+			const bearer = deriveAgentBearerToken({ agentId, credentialVersion: 1, masterKey });
+			const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+				requestInit: { headers: { authorization: `Bearer ${bearer}` } },
+			});
+			client = new Client({ name: 'standalone-catalog-proof', version: '1.0.0' });
+			await client.connect(asClientTransport(transport));
+
+			const tools = await client.listTools();
+			expect(tools.tools).toHaveLength(2);
+			expect(tools.tools.map((tool) => tool.name)).not.toEqual(portalToolNames);
+			const writeTool = tools.tools.find((tool) => tool.description === 'Writes a mock record.');
+			if (writeTool === undefined) throw new Error('Expected catalog write tool.');
+			const writeArguments = { title: 'approved catalog call' };
+			const missingApproval = await client.callTool({
+				arguments: writeArguments,
+				name: writeTool.name,
+			});
+			expect(JSON.parse(firstTextContent(missingApproval))).toMatchObject({
+				items: [{ error: { code: 'approval_token_missing' }, status: 'failed' }],
+			});
+			expect(upstream.calls).toEqual([]);
+
+			const hmacKey = deriveApprovalHmacKeysFromMasterKey({ agentIds: [agentId], masterKey }).get(
+				agentId,
+			);
+			if (hmacKey === undefined) throw new Error('Expected derived approval key.');
+			const portalApprovalToken = signApprovalToken({
+				agentId,
+				calls: [
+					{
+						argumentsHash: hashCallArguments(writeArguments),
+						namespace: fakeUpstreamNamespace,
+						toolName: 'write_thing',
+					},
+				],
+				expiresAtMs: Date.now() + 30_000,
+				key: hmacKey,
+			});
+			const approved = await client.callTool({
+				_meta: { 'agent-vm/tool-portal-approval-token': portalApprovalToken },
+				arguments: writeArguments,
+				name: writeTool.name,
+			});
+			expect(JSON.parse(firstTextContent(approved))).toMatchObject({
+				items: [{ requestId: 'catalog-call', status: 'success' }],
+			});
+			expect(upstream.calls).toEqual([{ argumentsValue: writeArguments, name: 'write_thing' }]);
+		} finally {
+			await Promise.allSettled([
+				...(client === undefined ? [] : [client.close()]),
+				...(portal === undefined ? [] : [portal.close()]),
+				upstream.close(),
 			]);
 		}
 	});

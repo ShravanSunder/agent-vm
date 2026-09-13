@@ -208,6 +208,7 @@ export function buildPortalCompositionFixtureConfig(
 		mode: 'managed',
 		profiles: {
 			[options.agentId]: {
+				catalogMode: 'catalog',
 				namespaces: {
 					[options.toolVmArtifactNamespace]: {
 						backend: {

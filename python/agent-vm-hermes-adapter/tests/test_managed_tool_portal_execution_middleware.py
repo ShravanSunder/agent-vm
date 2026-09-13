@@ -61,6 +61,7 @@ class _MiddlewareRuntime:
         self.adapter = _RuntimeAdapter()
         self.approval_presenter = _ApprovalPresenter()
         self.selected_projection = _projection()
+        self.catalog_turn_bindings = None
 
     def current_projection(self) -> CanonicalManagedAgentProjection:
         return self.selected_projection
@@ -80,6 +81,7 @@ class _PortalSession:
         del client, present_approval
         self.config = config
         self.socket_path = f"/tmp/socket-{len(self.created)}"
+        self.catalog_manifest_path = None
         self.open_calls = 0
         self.close_calls = 0
         self.created.append(self)
@@ -448,6 +450,7 @@ class HermesToolExecutionMiddlewareTests(unittest.TestCase):
 
             class FailedOpeningSession:
                 socket_path = "/tmp/never-published/p.sock"
+                catalog_manifest_path = None
 
                 def __init__(self, **session_arguments: object) -> None:
                     del session_arguments

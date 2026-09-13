@@ -1425,6 +1425,7 @@ export async function createStockGatewayRuntimeSandboxVmHarness(): Promise<Stock
 			managedPluginAttachment: {
 				clientKind: stockProofManagedPluginAttachment.clientKind,
 				configuredAgentIds: stockProofManagedPluginAttachment.configuredAgentIds,
+				gatewayEpoch: stockProofManagedPluginAttachment.gatewayEpoch,
 				projectionCohortDigest: stockProofManagedPluginAttachment.projectionCohortDigest,
 			},
 			semanticSnapshot,

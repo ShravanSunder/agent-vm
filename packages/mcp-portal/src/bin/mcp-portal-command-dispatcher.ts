@@ -19,6 +19,7 @@ import {
 	createServeSecretResolver,
 	deriveApprovalHmacKeysFromMasterKey,
 	startPortalServer,
+	type PortalServerCliArgs,
 } from '../cli/portal-server-operation.js';
 import {
 	configureProcessLogging,
@@ -391,6 +392,17 @@ function assertNever(command: never): never {
 	throw new Error('Unhandled MCP Portal command.');
 }
 
+export function portalServerArgsFromServeCommand(
+	command: Extract<McpPortalCommand, { readonly command: 'mcp-proxy.serve' }>,
+): PortalServerCliArgs {
+	return {
+		agentOverrides: command.agentOverrides,
+		catalogMode: command.catalogMode,
+		configDir: command.configDir,
+		...(command.port === undefined ? {} : { port: command.port }),
+	};
+}
+
 export async function runMcpPortalCommand(
 	command: McpPortalCommand,
 	props: AgentVmMcpPortalRuntimeProps = {},
@@ -422,17 +434,7 @@ export async function runMcpPortalCommand(
 			case 'mcp-proxy.serve': {
 				const injectedSecretResolver = runtimeProps.secretResolver;
 				const server = await startPortalServer({
-					args:
-						command.port === undefined
-							? {
-									agentOverrides: command.agentOverrides,
-									configDir: command.configDir,
-								}
-							: {
-									agentOverrides: command.agentOverrides,
-									configDir: command.configDir,
-									port: command.port,
-								},
+					args: portalServerArgsFromServeCommand(command),
 					env: runtimeProps.env,
 					...(injectedSecretResolver !== undefined
 						? {

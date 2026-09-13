@@ -93,6 +93,7 @@ export interface PortalServerLogger {
 
 export interface PortalServerCliArgs {
 	readonly agentOverrides: readonly string[];
+	readonly catalogMode?: 'catalog' | 'compact';
 	readonly configDir: string;
 	readonly port?: number;
 }
@@ -500,6 +501,7 @@ export async function startPortalServer(
 			});
 		},
 		core,
+		...(props.args.catalogMode === undefined ? {} : { catalogMode: props.args.catalogMode }),
 		onSessionClosed: async (identity) => {
 			await core.invalidateSession(identity);
 		},

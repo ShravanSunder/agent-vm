@@ -39,29 +39,35 @@ export function compileToolPortalNamespaceDiscoveryByProfile(props: {
 	}
 
 	const discoveryByProfile = Object.fromEntries(
-		Object.entries(props.toolPortalConfig.profiles).map(([profileId, profile]) => {
-			const namespaceDiscovery = Object.entries(profile.namespaces)
-				.map(([namespace, namespacePolicy]): ToolPortalEffectiveNamespaceDiscovery => {
-					if ('discovery' in namespacePolicy) {
+		Object.entries<ToolPortalConfig['profiles'][string]>(props.toolPortalConfig.profiles).map(
+			([profileId, profile]) => {
+				const namespaceDiscovery = Object.entries<(typeof profile.namespaces)[string]>(
+					profile.namespaces,
+				)
+					.map(([namespace, namespacePolicy]): ToolPortalEffectiveNamespaceDiscovery => {
+						if ('discovery' in namespacePolicy) {
+							return toolPortalEffectiveNamespaceDiscoverySchema.parse({
+								...namespacePolicy.discovery,
+								namespace,
+							});
+						}
+						const matchingProviders = providersByNamespace.get(namespace) ?? [];
+						if (matchingProviders.length !== 1) {
+							throw new Error(
+								`Tool Portal profile "${profileId}" MCP namespace "${namespace}" must resolve to exactly one MCP provider; found ${matchingProviders.length}.`,
+							);
+						}
 						return toolPortalEffectiveNamespaceDiscoverySchema.parse({
-							...namespacePolicy.discovery,
+							...matchingProviders[0]?.discovery,
 							namespace,
 						});
-					}
-					const matchingProviders = providersByNamespace.get(namespace) ?? [];
-					if (matchingProviders.length !== 1) {
-						throw new Error(
-							`Tool Portal profile "${profileId}" MCP namespace "${namespace}" must resolve to exactly one MCP provider; found ${matchingProviders.length}.`,
-						);
-					}
-					return toolPortalEffectiveNamespaceDiscoverySchema.parse({
-						...matchingProviders[0]?.discovery,
-						namespace,
-					});
-				})
-				.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
-			return [profileId, Object.freeze(namespaceDiscovery)] as const;
-		}),
+					})
+					.toSorted((left, right) =>
+						compareUnicodeCodePointStrings(left.namespace, right.namespace),
+					);
+				return [profileId, Object.freeze(namespaceDiscovery)] as const;
+			},
+		),
 	);
 	return Object.freeze(discoveryByProfile);
 }

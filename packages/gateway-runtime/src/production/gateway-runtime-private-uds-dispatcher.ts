@@ -8,6 +8,14 @@ import {
 	PortalArtifactReadResultSchema,
 	PortalCallRequestSchema,
 	PortalCallResultSchema,
+	PortalCatalogOfferRequestSchema,
+	PortalCatalogOfferResultSchema,
+	PortalCatalogPrepareRequestSchema,
+	PortalCatalogPrepareResultSchema,
+	PortalCatalogReadRequestSchema,
+	PortalCatalogReadResultSchema,
+	PortalCatalogReleaseRequestSchema,
+	PortalCatalogReleaseResultSchema,
 	PortalDescribeRequestSchema,
 	PortalDescribeResultSchema,
 	PortalListRequestSchema,
@@ -27,6 +35,7 @@ import type { GatewayRuntimeApprovalDecisionOperations } from '../gateway-runtim
 import type { GatewayControlNativeAttachmentPort } from '../native-attachment-gateway-control-port.js';
 import type {
 	GatewayRuntimeArtifactProjectionOperations,
+	GatewayRuntimeCatalogProjectionOperations,
 	GatewayRuntimePortalProjectionOperations,
 } from '../tool-portal-projections.js';
 
@@ -75,6 +84,7 @@ export interface CreateGatewayRuntimePrivateUdsDispatcherProps {
 	readonly attachmentOperations?: GatewayControlNativeAttachmentPort;
 	readonly approvalOperations: GatewayRuntimeApprovalDecisionOperations;
 	readonly artifactOperations: GatewayRuntimeArtifactProjectionOperations;
+	readonly catalogOperations?: GatewayRuntimeCatalogProjectionOperations;
 	readonly portalOperations: GatewayRuntimePortalProjectionOperations;
 	readonly sandboxDispatch: (request: GatewayRuntimeSandboxDispatchRequest) => Promise<unknown>;
 	readonly traceContextDispatch?: GatewayRuntimeTraceContextDispatch;
@@ -295,6 +305,86 @@ export function createGatewayRuntimePrivateUdsDispatcher(
 						request,
 						requestSchema: PortalCallRequestSchema,
 						resultSchema: PortalCallResultSchema,
+					});
+				case 'portal.catalog.prepare':
+					if (props.catalogOperations === undefined) {
+						throw new GatewayRuntimePrivateUdsDispatcherError(
+							'method-not-found',
+							'Gateway runtime private UDS method was not found.',
+						);
+					}
+					const prepareCatalogOperations = props.catalogOperations;
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						projection: async (invocation) =>
+							await prepareCatalogOperations.prepare({
+								...invocation,
+								connectionId: request.connectionId,
+								signal: request.signal,
+							}),
+						request,
+						requestSchema: PortalCatalogPrepareRequestSchema,
+						resultSchema: PortalCatalogPrepareResultSchema,
+					});
+				case 'portal.catalog.offer':
+					if (props.catalogOperations === undefined) {
+						throw new GatewayRuntimePrivateUdsDispatcherError(
+							'method-not-found',
+							'Gateway runtime private UDS method was not found.',
+						);
+					}
+					const offerCatalogOperations = props.catalogOperations;
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						projection: async (invocation) =>
+							await offerCatalogOperations.offer({
+								...invocation,
+								connectionId: request.connectionId,
+								signal: request.signal,
+							}),
+						request,
+						requestSchema: PortalCatalogOfferRequestSchema,
+						resultSchema: PortalCatalogOfferResultSchema,
+					});
+				case 'portal.catalog.read':
+					if (props.catalogOperations === undefined) {
+						throw new GatewayRuntimePrivateUdsDispatcherError(
+							'method-not-found',
+							'Gateway runtime private UDS method was not found.',
+						);
+					}
+					const readCatalogOperations = props.catalogOperations;
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						projection: async (invocation) =>
+							await readCatalogOperations.read({
+								...invocation,
+								connectionId: request.connectionId,
+								signal: request.signal,
+							}),
+						request,
+						requestSchema: PortalCatalogReadRequestSchema,
+						resultSchema: PortalCatalogReadResultSchema,
+					});
+				case 'portal.catalog.release':
+					if (props.catalogOperations === undefined) {
+						throw new GatewayRuntimePrivateUdsDispatcherError(
+							'method-not-found',
+							'Gateway runtime private UDS method was not found.',
+						);
+					}
+					const releaseCatalogOperations = props.catalogOperations;
+					return await dispatchProjectionRequest({
+						dispatcherProps: props,
+						projection: async (invocation) =>
+							await releaseCatalogOperations.release({
+								...invocation,
+								connectionId: request.connectionId,
+								signal: request.signal,
+							}),
+						request,
+						requestSchema: PortalCatalogReleaseRequestSchema,
+						resultSchema: PortalCatalogReleaseResultSchema,
 					});
 				case 'artifact.read':
 					return await dispatchProjectionRequest({

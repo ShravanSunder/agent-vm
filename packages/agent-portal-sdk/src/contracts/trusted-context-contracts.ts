@@ -74,6 +74,7 @@ export const ManagedAgentProjectionSchema = withPortableSuperRefinement({
 			agentId: BoundedOpaqueIdentifierSchema,
 			frameworkIdentity: GatewayRuntimeFrameworkIdentitySchema,
 			profileAssignmentRevision: BoundedOpaqueIdentifierSchema,
+			toolPortalCatalogMode: z.enum(['compact', 'catalog']).optional(),
 			toolPortalNamespaces: z.array(EffectiveNamespaceDiscoverySchema).readonly(),
 			toolPortalProfileId: BoundedOpaqueIdentifierSchema,
 		})
@@ -129,6 +130,7 @@ export const GatewayRuntimeTrustedInvocationCorrelationSchema = z
 		sessionId: BoundedOpaqueIdentifierSchema.optional(),
 		sessionKey: BoundedOpaqueIdentifierSchema.optional(),
 		toolCallId: BoundedOpaqueIdentifierSchema.optional(),
+		turnId: BoundedOpaqueIdentifierSchema.optional(),
 	})
 	.strict();
 

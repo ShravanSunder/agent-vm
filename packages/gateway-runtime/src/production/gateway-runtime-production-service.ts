@@ -80,6 +80,7 @@ const RETIREMENT_EVIDENCE_FILENAME = 'tool-portal.retirement.json';
 
 export interface GatewayRuntimeProductionPrivateUdsProjection {
 	readonly artifactOperations: GatewayRuntimePrivateUdsProjectionFactoryProps['artifactOperations'];
+	readonly catalogOperations: GatewayRuntimePrivateUdsProjectionFactoryProps['catalogOperations'];
 	readonly capabilityCore: GatewayRuntimePrivateUdsProjectionFactoryProps['capabilityCore'];
 	readonly portalOperations: GatewayRuntimePrivateUdsProjectionFactoryProps['portalOperations'];
 	readonly semanticSnapshot: GatewayRuntimePrivateUdsProjectionFactoryProps['semanticSnapshot'];
@@ -629,6 +630,7 @@ export async function startGatewayRuntimeProductionService(
 			},
 			createPrivateUdsProjection: (projectionProps) => ({
 				artifactOperations: projectionProps.artifactOperations,
+				catalogOperations: projectionProps.catalogOperations,
 				capabilityCore: projectionProps.capabilityCore,
 				portalOperations: projectionProps.portalOperations,
 				semanticSnapshot: projectionProps.semanticSnapshot,
@@ -636,6 +638,7 @@ export async function startGatewayRuntimeProductionService(
 			managedPluginAttachment: {
 				clientKind: props.config.attachment.clientKind,
 				configuredAgentIds: props.config.attachment.configuredAgentIds,
+				gatewayEpoch: props.config.attachment.gatewayEpoch,
 				projectionCohortDigest: props.config.attachment.projectionCohortDigest,
 			},
 			oauthAvailabilityPort: startedControlRuntime.oauthAvailabilityPort,
@@ -659,6 +662,7 @@ export async function startGatewayRuntimeProductionService(
 			attachmentOperations: startedControlRuntime.attachmentOperations,
 			approvalOperations: startedControlRuntime.approvalDecisionOperations,
 			artifactOperations: startedComposition.privateUdsProjection.artifactOperations,
+			catalogOperations: startedComposition.privateUdsProjection.catalogOperations,
 			portalOperations: startedComposition.privateUdsProjection.portalOperations,
 			sandboxDispatch: startedTelemetryRuntime.wrapSandboxDispatch(
 				props.dependencies.sandboxDispatch ?? startedControlRuntime.sandboxDispatch,
@@ -674,6 +678,7 @@ export async function startGatewayRuntimeProductionService(
 				},
 			}),
 			dispatch: dispatcher.dispatch,
+			onConnectionClosed: startedComposition.preparedCatalogSourceCache.retireConnection,
 			paths,
 			resolveOperationGroup: resolveGatewayRuntimeOperationGroup,
 		});

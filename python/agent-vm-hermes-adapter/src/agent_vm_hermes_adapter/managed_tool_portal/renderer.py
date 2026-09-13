@@ -2,6 +2,7 @@
 
 from agent_vm_agent_portal_sdk import encode_canonical_json
 
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import PreparedCatalogManifest
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceInventory,
     OrientationRenderFailure,
@@ -139,3 +140,49 @@ def render_orientation(
         total_count=total_count,
         omitted_count=total_count,
     )
+
+
+def render_catalog_guidance(
+    inventory: NamespaceInventory,
+    manifest: PreparedCatalogManifest,
+    *,
+    changed_fingerprint: bool,
+) -> str | None:
+    """Render exact static imports while preserving the existing prompt budget."""
+    heading = (
+        "Generated Tool Portal TypeScript imports changed for this turn:"
+        if changed_fingerprint
+        else "Generated Tool Portal TypeScript imports for this turn:"
+    )
+    lines = [
+        heading,
+        "- Run TypeScript with foreground terminal in Tool VM; the manifest and Portal "
+        "endpoint expire with this invocation.",
+        "- import { connectToolPortal } from '@agent-vm/agent-portal-sdk';",
+    ]
+    publication_root = f"/run/agent-vm/tool-portal-sdk/{manifest.definition_fingerprint}"
+    for namespace in manifest.namespaces:
+        lines.append(
+            f"- import {{ {namespace.exported_factory_name} }} from "
+            f"'{publication_root}/{namespace.module_path}';"
+        )
+    lines.extend(
+        (
+            f"- Manifest: {publication_root}/manifest.json",
+            "- Connect once, bind the imported namespace factory, inspect every canonical result, "
+            "await human approval, and never replay an uncertain effect.",
+            "- Generic Python, TypeScript, and tool-portal CLI discovery remain available. "
+            "Guide: /agent-vm/tool-portal.md",
+        )
+    )
+    guidance = "\n".join(lines)
+    guidance_bytes = len(guidance.encode("utf-8"))
+    if guidance_bytes >= MAX_ORIENTATION_UTF8_BYTES:
+        return None
+    rendered = render_orientation(
+        inventory,
+        max_utf8_bytes=MAX_ORIENTATION_UTF8_BYTES - guidance_bytes - 1,
+    )
+    if not isinstance(rendered, RenderedOrientation):
+        return None
+    return f"{rendered.orientation}\n{guidance}"

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
@@ -11,6 +13,8 @@ import {
 } from '../portal-access-policy.js';
 import {
 	createPortalSessionManager,
+	PortalCatalogPreparationError,
+	type PortalCatalogSnapshot,
 	type PortalSessionManager,
 	type PortalSessionRuntime,
 } from '../portal-session.js';
@@ -205,13 +209,81 @@ export interface PortalCore {
 	readonly describeTools: (scope: PortalAgentScope) => readonly PortalCoreToolDescriptor[];
 	readonly invalidateAgentScope: (agentScopeId: string) => Promise<void>;
 	readonly invalidateSession: (scope: PortalAgentScope) => Promise<void>;
+	readonly prepareCatalog: (scope: PortalAgentScope) => Promise<PreparedPortalCatalog>;
 	readonly upstreamNamespaces: readonly string[];
+}
+
+export interface PreparedPortalCatalogTool {
+	readonly descriptor: Tool;
+	readonly namespace: string;
+	readonly toolName: string;
+}
+
+export interface PreparedPortalCatalog {
+	readonly sourceHash: string;
+	readonly tools: readonly PreparedPortalCatalogTool[];
 }
 
 export interface PortalCoreToolDescriptor {
 	readonly description: string;
 	readonly inputSchema: Tool['inputSchema'];
 	readonly name: PortalCoreToolName;
+}
+
+const maximumMcpToolNameLength = 128;
+
+function readableMcpToolNameSegment(value: string): string {
+	const segment = value.replaceAll(/[^A-Za-z0-9_-]/gu, '_').replaceAll(/_+/gu, '_');
+	return segment.length === 0 ? 'tool' : segment;
+}
+
+function catalogMcpToolName(namespace: string, toolName: string): string {
+	const suffix = createHash('sha256')
+		.update(JSON.stringify([namespace, toolName]))
+		.digest('hex')
+		.slice(0, 10);
+	const readablePrefix = `${readableMcpToolNameSegment(namespace)}__${readableMcpToolNameSegment(toolName)}`;
+	const maximumPrefixLength = maximumMcpToolNameLength - suffix.length - 2;
+	return `${readablePrefix.slice(0, maximumPrefixLength)}__${suffix}`;
+}
+
+export function preparePortalCatalogSnapshot(
+	catalog: PortalCatalogSnapshot,
+): PreparedPortalCatalog {
+	if (catalog.discoveryFailures.length > 0) {
+		throw new PortalCatalogPreparationError(catalog.discoveryFailures);
+	}
+	const preparedTools: PreparedPortalCatalogTool[] = [];
+	const exportedNames = new Set<string>();
+	for (const tool of catalog.tools) {
+		const exportedName = catalogMcpToolName(tool.namespace, tool.toolName);
+		if (exportedNames.has(exportedName)) {
+			throw new PortalCatalogPreparationError([
+				{
+					kind: 'catalog_tool_name_collision',
+					message: 'Authorized catalog contains duplicate exported MCP tool names.',
+					namespace: tool.namespace,
+					toolName: tool.toolName,
+				},
+			]);
+		}
+		exportedNames.add(exportedName);
+		preparedTools.push({
+			descriptor: {
+				...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+				...(tool.description === undefined ? {} : { description: tool.description }),
+				inputSchema: { ...cloneJsonObject(tool.inputSchema), type: 'object' },
+				name: exportedName,
+				...(tool.title === undefined ? {} : { title: tool.title }),
+			},
+			namespace: tool.namespace,
+			toolName: tool.toolName,
+		});
+	}
+	return {
+		sourceHash: catalog.sourceHash,
+		tools: preparedTools,
+	};
 }
 
 const portalCallRequestSchema = z
@@ -805,6 +877,8 @@ export function createPortalCore(props: CreatePortalCoreProps): PortalCore {
 		invalidateSession: async (scope) => {
 			await sessionManager.invalidateSession(scope);
 		},
+		prepareCatalog: async (scope) =>
+			preparePortalCatalogSnapshot((await sessionManager.getSession(scope)).catalog),
 		upstreamNamespaces: props.upstreamNamespaces,
 	};
 }

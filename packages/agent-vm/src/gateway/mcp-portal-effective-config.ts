@@ -250,6 +250,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 				return [
 					profileId,
 					{
+						...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 						namespaces: Object.fromEntries(
 							Object.entries(profile.namespaces).map(([namespace, namespacePolicy]) => [
 								namespace,
@@ -640,7 +641,9 @@ function assertManagedToolPortalConfig(props: {
 		);
 	}
 	for (const [profileId, profile] of Object.entries(props.toolPortalConfig.profiles)) {
-		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+		for (const [namespaceId, namespacePolicy] of Object.entries<
+			(typeof profile.namespaces)[string]
+		>(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') {
 				continue;
 			}
@@ -666,22 +669,26 @@ function selectorEffectivelyAllowsAnyTool(selector: ToolPortalNamespacePolicy['t
 
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
 	return Object.values(config.profiles).some((profile) =>
-		Object.values(profile.namespaces).some((namespacePolicy) => {
-			if ('source' in namespacePolicy.calls)
-				return selectorEffectivelyAllowsAnyTool(namespacePolicy.tools);
-			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
-			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
-			const calls = namespacePolicy.calls;
-			return Object.entries(namespacePolicy.backend.operations).some(
-				([operationName, operation]) =>
-					operation.kind === 'configured_cli' &&
-					(isControllerToolVmConfiguredCliOperation(operation)
-						? operation.suggestCalls.suggestRequiresApproval.length > 0
-						: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
-					selectorAllowsTool(namespacePolicy.tools, operationName) &&
-					selectorAllowsTool(calls.withoutApproval, operationName),
-			);
-		}),
+		Object.values<(typeof profile.namespaces)[string]>(profile.namespaces).some(
+			(namespacePolicy) => {
+				if ('source' in namespacePolicy.calls)
+					return selectorEffectivelyAllowsAnyTool(namespacePolicy.tools);
+				if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
+				if (namespacePolicy.backend.kind !== 'controller_execution') return false;
+				const calls = namespacePolicy.calls;
+				return Object.entries<(typeof namespacePolicy.backend.operations)[string]>(
+					namespacePolicy.backend.operations,
+				).some(
+					([operationName, operation]) =>
+						operation.kind === 'configured_cli' &&
+						(isControllerToolVmConfiguredCliOperation(operation)
+							? operation.suggestCalls.suggestRequiresApproval.length > 0
+							: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
+						selectorAllowsTool(namespacePolicy.tools, operationName) &&
+						selectorAllowsTool(calls.withoutApproval, operationName),
+				);
+			},
+		),
 	);
 }
 

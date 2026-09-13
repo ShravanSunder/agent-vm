@@ -3,12 +3,26 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import {
+	buildPortalCompositionGeneratedTerminalProgram,
+	portalCompositionGeneratedTerminalResultMarker,
+	type PortalCompositionGeneratedTerminalProgram,
+} from './portal-composition-hermes-generated-terminal.js';
 
 interface PortalCompositionModelServer {
 	readonly close: () => Promise<void>;
 	readonly executeCodeRequestCount: () => number;
+	readonly generatedTerminalRequestCount: () => number;
 	readonly latestExecuteCodeResult: () => string | undefined;
+	readonly latestGeneratedTerminalResult: () => string | undefined;
+	readonly observedGeneratedTerminalProgram: () =>
+		| PortalCompositionGeneratedTerminalProgram
+		| undefined;
 	readonly port: number;
+}
+
+function isObjectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function completionChunk(
@@ -40,22 +54,23 @@ async function readRequestBody(
 	for await (const chunk of request)
 		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
 	const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+	if (!isObjectRecord(value)) {
 		throw new Error('Portal composition model expected an object request.');
 	}
-	return value as Readonly<Record<string, unknown>>;
+	return value;
 }
 
 function latestToolResult(requestBody: Readonly<Record<string, unknown>>): string | undefined {
 	if (!Array.isArray(requestBody.messages)) return undefined;
-	const messages = requestBody.messages as readonly unknown[];
+	const messages: readonly unknown[] = requestBody.messages;
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
-		if (typeof message !== 'object' || message === null || Array.isArray(message)) continue;
-		const record = message as Readonly<Record<string, unknown>>;
-		if (record.role === 'user') return undefined;
-		if (record.role === 'tool') {
-			return typeof record.content === 'string' ? record.content : JSON.stringify(record.content);
+		if (!isObjectRecord(message)) continue;
+		if (message.role === 'user') return undefined;
+		if (message.role === 'tool') {
+			return typeof message.content === 'string'
+				? message.content
+				: JSON.stringify(message.content);
 		}
 	}
 	return undefined;
@@ -63,14 +78,41 @@ function latestToolResult(requestBody: Readonly<Record<string, unknown>>): strin
 
 function latestUserContent(requestBody: Readonly<Record<string, unknown>>): string | undefined {
 	if (!Array.isArray(requestBody.messages)) return undefined;
-	const messages = requestBody.messages as readonly unknown[];
+	const messages: readonly unknown[] = requestBody.messages;
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
-		if (typeof message !== 'object' || message === null || Array.isArray(message)) continue;
-		const record = message as Readonly<Record<string, unknown>>;
-		if (record.role === 'user' && typeof record.content === 'string') return record.content;
+		if (!isObjectRecord(message)) continue;
+		if (message.role === 'user' && typeof message.content === 'string') return message.content;
 	}
 	return undefined;
+}
+
+function modelMessageText(requestBody: Readonly<Record<string, unknown>>): string {
+	if (!Array.isArray(requestBody.messages)) return '';
+	return requestBody.messages
+		.flatMap((message): readonly string[] => {
+			if (!isObjectRecord(message)) return [];
+			const content = message.content;
+			if (typeof content === 'string') return [content];
+			if (!Array.isArray(content)) return [];
+			return content.flatMap((part): readonly string[] => {
+				if (typeof part === 'string') return [part];
+				if (!isObjectRecord(part)) return [];
+				const text = part.text;
+				return typeof text === 'string' ? [text] : [];
+			});
+		})
+		.join('\n');
+}
+
+function hasNamedTool(requestBody: Readonly<Record<string, unknown>>, toolName: string): boolean {
+	return (
+		Array.isArray(requestBody.tools) &&
+		requestBody.tools.some(
+			(tool) =>
+				isObjectRecord(tool) && isObjectRecord(tool.function) && tool.function.name === toolName,
+		)
+	);
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -86,7 +128,10 @@ export async function startPortalCompositionModelServer(options: {
 	readonly programResultMarker: string;
 }): Promise<PortalCompositionModelServer> {
 	let executeCodeRequestCount = 0;
+	let generatedTerminalRequestCount = 0;
 	let latestExecuteCodeResult: string | undefined;
+	let latestGeneratedTerminalResult: string | undefined;
+	let observedGeneratedTerminalProgram: PortalCompositionGeneratedTerminalProgram | undefined;
 	const server = createServer((request, response) => {
 		void (async () => {
 			if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -129,7 +174,7 @@ export async function startPortalCompositionModelServer(options: {
 			}
 			const toolResult = latestToolResult(body);
 			if (toolResult === undefined) {
-				const instructions = JSON.stringify(body.messages) ?? '';
+				const instructions = modelMessageText(body);
 				for (const required of [
 					'connect_tool_portal()',
 					'connectToolPortal()',
@@ -143,17 +188,13 @@ export async function startPortalCompositionModelServer(options: {
 				if (instructions.includes('portal-composition-fixture-token')) {
 					throw new Error('Hermes exposed the fixture credential value in model instructions.');
 				}
-				const hasExecuteCode = body.tools.some(
-					(tool) =>
-						typeof tool === 'object' &&
-						tool !== null &&
-						!Array.isArray(tool) &&
-						typeof (tool as { readonly function?: unknown }).function === 'object' &&
-						(tool as { readonly function: { readonly name?: unknown } }).function.name ===
-							'execute_code',
-				);
-				if (!hasExecuteCode)
+				if (!hasNamedTool(body, 'execute_code'))
 					throw new Error('Hermes omitted execute_code from the model tool set.');
+				if (!hasNamedTool(body, 'terminal'))
+					throw new Error('Hermes omitted foreground terminal from the model tool set.');
+				observedGeneratedTerminalProgram = buildPortalCompositionGeneratedTerminalProgram({
+					modelInstructions: instructions,
+				});
 				executeCodeRequestCount += 1;
 				const toolCall = {
 					function: {
@@ -170,10 +211,39 @@ export async function startPortalCompositionModelServer(options: {
 				]);
 				return;
 			}
-			latestExecuteCodeResult = toolResult;
-			if (!toolResult.includes(options.programResultMarker)) {
+			if (latestExecuteCodeResult === undefined) {
+				latestExecuteCodeResult = toolResult;
+				if (!toolResult.includes(options.programResultMarker)) {
+					throw new Error(
+						`execute_code omitted the portal composition marker: ${toolResult.slice(0, 2_000)}`,
+					);
+				}
+				if (observedGeneratedTerminalProgram === undefined) {
+					throw new Error('Hermes model server lost the generated terminal program.');
+				}
+				generatedTerminalRequestCount += 1;
+				const toolCall = {
+					function: {
+						arguments: JSON.stringify({
+							command: observedGeneratedTerminalProgram.command,
+							timeout: 300,
+						}),
+						name: 'terminal',
+					},
+					id: 'portal-composition-generated-terminal',
+					index: 0,
+					type: 'function',
+				};
+				writeServerSentEvents(response, [
+					completionChunk({ role: 'assistant', tool_calls: [toolCall] }, null),
+					completionChunk({}, 'tool_calls'),
+				]);
+				return;
+			}
+			latestGeneratedTerminalResult = toolResult;
+			if (!toolResult.includes(portalCompositionGeneratedTerminalResultMarker)) {
 				throw new Error(
-					`execute_code omitted the portal composition marker: ${toolResult.slice(0, 2_000)}`,
+					`foreground terminal omitted the generated composition marker: ${toolResult.slice(0, 2_000)}`,
 				);
 			}
 			writeServerSentEvents(response, [
@@ -208,7 +278,10 @@ export async function startPortalCompositionModelServer(options: {
 	return {
 		close: async () => closeServer(server),
 		executeCodeRequestCount: () => executeCodeRequestCount,
+		generatedTerminalRequestCount: () => generatedTerminalRequestCount,
 		latestExecuteCodeResult: () => latestExecuteCodeResult,
+		latestGeneratedTerminalResult: () => latestGeneratedTerminalResult,
+		observedGeneratedTerminalProgram: () => observedGeneratedTerminalProgram,
 		port: address.port,
 	};
 }

@@ -1,0 +1,22 @@
+{
+	"caseId": "catalog-read-request-accepted",
+	"expectation": {
+		"canonicalJson": "{\"definitionFingerprint\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"length\":65536,\"offerId\":\"offer-1\",\"offset\":0}",
+		"kind": "accepted",
+		"normalized": {
+			"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"length": 65536,
+			"offerId": "offer-1",
+			"offset": 0
+		},
+		"refinementIdentities": []
+	},
+	"input": {
+		"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"length": 65536,
+		"offerId": "offer-1",
+		"offset": 0
+	},
+	"schemaId": "portal.catalog.read-request",
+	"tags": ["catalog", "accepted"]
+}

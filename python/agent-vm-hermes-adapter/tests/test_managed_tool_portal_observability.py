@@ -991,7 +991,7 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
             finally:
                 release_exporters.set()
                 # Earlier assertions may fail before the thread is constructed.
-                if callback_thread is not None:  # ty: ignore[redundant-condition-strict]
+                if callback_thread is not None:
                     callback_thread.join(timeout=1)
                 telemetry.shutdown()
             self.assertFalse(callback_thread.is_alive())

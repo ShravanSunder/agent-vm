@@ -370,6 +370,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
 
         class FakePortalSession:
             socket_path = "/tmp/agent-vm-portal-test/p.sock"
+            catalog_manifest_path = None
 
             def __init__(
                 self,
@@ -395,6 +396,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         class Runtime:
             adapter = self.adapter
             approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
 
             @staticmethod
             def current_projection() -> CanonicalManagedAgentProjection:
@@ -466,6 +468,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
 
         class FailingPortalSession:
             socket_path = "/tmp/never-published/p.sock"
+            catalog_manifest_path = None
 
             def __init__(
                 self,
@@ -492,6 +495,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         class Runtime:
             adapter = self.adapter
             approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
 
             @staticmethod
             def current_projection() -> CanonicalManagedAgentProjection:
@@ -557,6 +561,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
 
         class FailingPortalSession:
             socket_path = "/tmp/never-published/p.sock"
+            catalog_manifest_path = None
 
             def __init__(self, **session_arguments: object) -> None:
                 del session_arguments
@@ -575,6 +580,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         class Runtime:
             adapter = self.adapter
             approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
 
             @staticmethod
             def current_projection() -> CanonicalManagedAgentProjection:
@@ -634,6 +640,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         class Runtime:
             adapter = self.adapter
             approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
 
             @staticmethod
             def current_projection() -> CanonicalManagedAgentProjection:
@@ -816,7 +823,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         finally:
             os.close(stdout_read_fd)
             # Submission may raise before assigning the future.
-            if stream_read_future is not None:  # ty: ignore[redundant-condition-strict]
+            if stream_read_future is not None:
                 self.assertIsNone(stream_read_future.result(timeout=2))
             try:
                 os.close(stdout_write_fd)

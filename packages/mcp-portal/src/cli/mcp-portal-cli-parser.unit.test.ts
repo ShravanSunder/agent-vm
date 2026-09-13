@@ -93,6 +93,7 @@ describe('MCP Portal Optique parser', () => {
 	it('preserves absent, repeated, and bounded serve values', () => {
 		expect(parseArguments(['mcp-proxy', 'serve', '--config-dir', '/config'])).toEqual({
 			agentOverrides: [],
+			catalogMode: 'compact',
 			command: 'mcp-proxy.serve',
 			configDir: '/config',
 			port: undefined,
@@ -112,6 +113,7 @@ describe('MCP Portal Optique parser', () => {
 			]),
 		).toEqual({
 			agentOverrides: ['shravan=builder', 'other=reviewer'],
+			catalogMode: 'compact',
 			command: 'mcp-proxy.serve',
 			configDir: '/config',
 			port: 0,
@@ -119,6 +121,29 @@ describe('MCP Portal Optique parser', () => {
 		expect(
 			parseArguments(['mcp-proxy', 'serve', '--config-dir', '/config', '--port', '65535']),
 		).toMatchObject({ port: 65_535 });
+	});
+
+	it('parses explicit catalog exposure and rejects unknown modes', () => {
+		expect(
+			parseArguments([
+				'mcp-proxy',
+				'serve',
+				'--config-dir',
+				'/config',
+				'--catalog-mode',
+				'catalog',
+			]),
+		).toMatchObject({ catalogMode: 'catalog' });
+		expect(
+			parseFailureMessage([
+				'mcp-proxy',
+				'serve',
+				'--config-dir',
+				'/config',
+				'--catalog-mode',
+				'expanded',
+			]),
+		).toContain('compact');
 	});
 
 	it('parses a non-default portal tool through the Zod enum domain', () => {

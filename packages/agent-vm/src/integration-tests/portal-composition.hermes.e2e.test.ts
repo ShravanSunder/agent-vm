@@ -2,6 +2,7 @@
 import { access, mkdir, readFile, watch, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import {
 	fakeUpstreamNamespace,
@@ -241,7 +242,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
 	});
 
-	it('runs Python, Node, and CLI Portal calls from execute_code without moving composition to host', async () => {
+	it('preserves generic execute_code composition and runs generated TypeScript through foreground terminal', async () => {
 		const repoRoot = path.resolve(process.cwd());
 		project = await scaffoldHermesE2eProject({
 			agents: [agentId],
@@ -382,7 +383,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			}).then((turnResponse) => {
 				expect(
 					turnResponse,
-					`Raw execute_code result: ${modelServer?.latestExecuteCodeResult() ?? 'missing'}`,
+					`Raw foreground results: ${JSON.stringify({ executeCode: modelServer?.latestExecuteCodeResult(), generatedTerminal: modelServer?.latestGeneratedTerminalResult() })}`,
 				).toContain(finalMarker);
 				return turnResponse;
 			}),
@@ -394,9 +395,10 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		]).finally(() => lossObservation.abort());
 		expect(
 			response,
-			`Raw execute_code result: ${modelServer.latestExecuteCodeResult() ?? 'missing'}`,
+			`Raw foreground results: ${JSON.stringify({ executeCode: modelServer.latestExecuteCodeResult(), generatedTerminal: modelServer.latestGeneratedTerminalResult() })}`,
 		).toContain(finalMarker);
 		expect(modelServer.executeCodeRequestCount()).toBe(1);
+		expect(modelServer.generatedTerminalRequestCount()).toBe(1);
 		const executeCodeResult = modelServer.latestExecuteCodeResult();
 		expect(executeCodeResult).toContain(programResultMarker);
 		expect(executeCodeResult).toContain(resultDerivedValue);
@@ -428,9 +430,75 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 				},
 			},
 		});
+		const generatedTerminalProgram = modelServer.observedGeneratedTerminalProgram();
+		expect(generatedTerminalProgram?.orientationImports).toEqual({
+			configuredCli: {
+				exportedFactoryName: 'bindPortalCompositionExecutionTools',
+				modulePath: expect.stringMatching(
+					/^\/run\/agent-vm\/tool-portal-sdk\/[a-f0-9]{64}\/portal-composition-execution-[a-f0-9]{8}\.ts$/u,
+				),
+			},
+			mcp: {
+				exportedFactoryName: 'bindUpstreamMockTools',
+				modulePath: expect.stringMatching(
+					/^\/run\/agent-vm\/tool-portal-sdk\/[a-f0-9]{64}\/upstream-mock-[a-f0-9]{8}\.ts$/u,
+				),
+			},
+		});
+		const generatedTerminalResult = modelServer.latestGeneratedTerminalResult();
+		expect(generatedTerminalResult).toContain('portal-composition-generated-terminal-complete');
+		const generatedTerminalEnvelope = z
+			.object({ exit_code: z.literal(0), output: z.string(), status: z.literal('success') })
+			.parse(JSON.parse(generatedTerminalResult ?? 'null'));
+		const generatedTerminalOutput = z
+			.object({
+				concurrentConfiguredCli: PortalCallResultSchema,
+				concurrentMcpWrite: PortalCallResultSchema,
+				dependentRead: PortalCallResultSchema,
+				derivedValue: z.literal('generated-from-read-thing'),
+				manifestFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+				marker: z.literal('portal-composition-generated-terminal-complete'),
+				orientationImports: z.object({
+					configuredCli: z.object({
+						exportedFactoryName: z.literal('bindPortalCompositionExecutionTools'),
+						modulePath: z.string(),
+					}),
+					mcp: z.object({
+						exportedFactoryName: z.literal('bindUpstreamMockTools'),
+						modulePath: z.string(),
+					}),
+				}),
+			})
+			.parse(JSON.parse(generatedTerminalEnvelope.output));
+		expect(generatedTerminalOutput.orientationImports).toEqual(
+			generatedTerminalProgram?.orientationImports,
+		);
+		expect(generatedTerminalOutput.orientationImports.mcp.modulePath.split('/').at(-2)).toBe(
+			generatedTerminalOutput.manifestFingerprint,
+		);
+		expect(generatedTerminalOutput.dependentRead.items[0]).toMatchObject({
+			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
+			status: 'ok',
+			value: { result: { structuredContent: { name: 'read_thing', ok: true } } },
+		});
+		expect(generatedTerminalOutput.concurrentMcpWrite.items[0]).toMatchObject({
+			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
+			status: 'ok',
+			value: { result: { structuredContent: { name: 'write_thing', ok: true } } },
+		});
+		expect(generatedTerminalOutput.concurrentConfiguredCli.items[0]).toMatchObject({
+			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
+			status: 'ok',
+			value: {
+				exitCode: 0,
+				stdout: 'tool-vm:generated-from-read-thing',
+			},
+		});
 		expect(mcpServer.calls).toEqual([
 			{ argumentsValue: { title: 'python-seed' }, name: 'read_thing' },
 			{ argumentsValue: { title: resultDerivedValue }, name: 'write_thing' },
+			{ argumentsValue: { title: 'generated-terminal-seed' }, name: 'read_thing' },
+			{ argumentsValue: { title: 'generated-from-read-thing' }, name: 'write_thing' },
 		]);
 		expect(JSON.parse(await readFile(hostEffectPath, 'utf8'))).toEqual({
 			argv: ['write-host-effect', resultDerivedValue],

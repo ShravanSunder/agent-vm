@@ -16,6 +16,17 @@ import {
 	PortalArtifactReadRequestSchema,
 	PortalArtifactReadResultSchema,
 } from '../artifact-surface/index.js';
+import {
+	PortalCatalogOfferRequestSchema,
+	PortalCatalogOfferResultSchema,
+	PortalCatalogPrepareRequestSchema,
+	PortalCatalogPrepareResultSchema,
+	PortalCatalogReadRequestSchema,
+	PortalCatalogReadResultSchema,
+	PortalCatalogReleaseRequestSchema,
+	PortalCatalogReleaseResultSchema,
+	PortalCatalogSourceManifestSchema,
+} from '../catalog-surface/index.js';
 import { JsonValueSchema } from '../contract-primitives/index.js';
 import {
 	GatewayRuntimeAttachmentMetadataSchema,
@@ -390,6 +401,39 @@ function callItemHasStatusShapeConflict(input: Record<string, unknown>): boolean
 }
 
 const portableContractDefinitions = {
+	'portal.catalog.manifest': {
+		refinementIdentities: ['sandbox.path.work-relative'],
+		schema: PortalCatalogSourceManifestSchema,
+	},
+	'portal.catalog.offer-request': {
+		refinementIdentities: [],
+		schema: PortalCatalogOfferRequestSchema,
+	},
+	'portal.catalog.offer-result': {
+		refinementIdentities: ['sandbox.path.work-relative'],
+		schema: PortalCatalogOfferResultSchema,
+	},
+	'portal.catalog.prepare-request': {
+		refinementIdentities: [],
+		schema: PortalCatalogPrepareRequestSchema,
+	},
+	'portal.catalog.prepare-result': {
+		refinementIdentities: ['sandbox.path.work-relative'],
+		schema: PortalCatalogPrepareResultSchema,
+	},
+	'portal.catalog.read-request': {
+		refinementIdentities: [],
+		schema: PortalCatalogReadRequestSchema,
+	},
+	'portal.catalog.read-result': { refinementIdentities: [], schema: PortalCatalogReadResultSchema },
+	'portal.catalog.release-request': {
+		refinementIdentities: [],
+		schema: PortalCatalogReleaseRequestSchema,
+	},
+	'portal.catalog.release-result': {
+		refinementIdentities: [],
+		schema: PortalCatalogReleaseResultSchema,
+	},
 	'portal.artifact.read-request': {
 		refinementIdentities: [],
 		schema: PortalArtifactReadRequestSchema,

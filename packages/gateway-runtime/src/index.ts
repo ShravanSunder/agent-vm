@@ -1,6 +1,7 @@
 export * from './artifacts/artifact-store.js';
 export * from './artifacts/runtime-file-artifact-storage.js';
 export * from './backends/index.js';
+export * from './catalog/index.js';
 export * from './controller-execution/index.js';
 export * from './control-endpoint/index.js';
 export * from './gateway-runtime-approval-port.js';

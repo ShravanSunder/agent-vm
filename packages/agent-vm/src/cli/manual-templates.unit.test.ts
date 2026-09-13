@@ -187,6 +187,27 @@ describe('manual templates', () => {
 		expect(portal).toContain('/agent-vm/tool-portal.md');
 		expect(portal).toContain('AGENT_VM_TOOL_PORTAL_SOCKET');
 		expect(portal).toContain('The endpoint ends with the invocation');
+		expect(portal).toContain('catalogMode: compact or catalog');
+		expect(portal).toContain('omission defaults to compact');
+		expect(portal).toContain('Generated TypeScript remains available inside Tool VM in both modes');
+		expect(portal).toContain('before Hermes is ready');
+		expect(portal).toContain('no live refresh and no per-Tool-VM rediscovery');
+		expect(portal).toContain('/run/agent-vm/tool-portal-sdk/<definitionFingerprint>/manifest.json');
+		expect(portal).toContain('AGENT_VM_TOOL_PORTAL_SDK_MANIFEST');
+		expect(portal).toContain('If the variable is absent, generated imports were not admitted');
+		expect(portal).toContain('complete modulePath and exportedFactoryName mapping');
+		expect(portal).toContain('including namespaces omitted from orientation');
+		expect(portal).toContain('Open one connectToolPortal client');
+		expect(portal).toContain('full canonical result including ok, items, and diagnostics');
+		expect(portal).toContain('cannot bypass provider authentication, policy, approval');
+		expect(portal).toContain(
+			"Immutable generated files may be reused when a later invocation's fresh manifest selects the same fingerprint",
+		);
+		expect(portal).toContain('Never reuse the prior client, socket, or authority');
+		expect(portal).toContain('mcp-portal mcp-proxy serve --catalog-mode compact|catalog');
+		expect(portal).toContain(
+			'separate from the managed profile catalogMode and private-UDS authority',
+		);
 		const runtimePaths = findManual(files, 'docs/manual/runtime-paths.md');
 		const toolAccess = findManual(files, 'docs/manual/tool-access.md');
 

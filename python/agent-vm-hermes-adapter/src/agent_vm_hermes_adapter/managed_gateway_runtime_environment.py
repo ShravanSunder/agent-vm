@@ -33,6 +33,7 @@ from .managed_tool_portal.execution_middleware import (
 _DEFAULT_TOOL_VM_CWD = "/work"
 _MAXIMUM_STREAM_CHUNK_BYTES = 1024 * 1024
 _TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME = "AGENT_VM_TOOL_PORTAL_SOCKET"
+_TOOL_PORTAL_SDK_MANIFEST_ENVIRONMENT_NAME = "AGENT_VM_TOOL_PORTAL_SDK_MANIFEST"
 
 
 class HermesGatewayRuntimeOutcomeError(RuntimeError):
@@ -93,14 +94,19 @@ def _render_remote_bash_command(
     *,
     login: bool,
     portal_socket_path: str | None,
+    portal_catalog_manifest_path: str | None = None,
 ) -> str:
     login_flag = "-l " if login else ""
     bash_command = f"bash {login_flag}-c {shlex.quote(command)}"
     if portal_socket_path is None:
         return bash_command
-    return (
-        f"{_TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME}={shlex.quote(portal_socket_path)} {bash_command}"
-    )
+    environment = [f"{_TOOL_PORTAL_SOCKET_ENVIRONMENT_NAME}={shlex.quote(portal_socket_path)}"]
+    if portal_catalog_manifest_path is not None:
+        environment.append(
+            f"{_TOOL_PORTAL_SDK_MANIFEST_ENVIRONMENT_NAME}="
+            f"{shlex.quote(portal_catalog_manifest_path)}"
+        )
+    return f"{' '.join(environment)} {bash_command}"
 
 
 class HermesGatewayRuntimeProcessHandle:
@@ -409,10 +415,10 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             if self._closed:
                 raise RuntimeError("Hermes managed Gateway Runtime environment is closed")
 
-    def _portal_socket_path_for_scope(
+    def _portal_environment_for_scope(
         self,
         scope: HermesPortalInvocationScope,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         identity = scope.identity
         if identity.projection != self._projection:
             raise HermesProfileAdmissionError(
@@ -421,6 +427,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         invocation_context = build_managed_trusted_context(
             identity.projection,
             session_id=identity.session_id,
+            turn_id=identity.turn_id,
         ).model_dump(
             by_alias=True,
             mode="json",
@@ -431,9 +438,10 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
             sandbox_context=invocation_context,
             portal_context=invocation_context,
             maximum_runtime_ms=scope.remaining_runtime_milliseconds(),
+            catalog_source=scope.catalog_source,
         )
         return self._adapter.run_gateway_runtime_coroutine(
-            scope.socket_path_for_environment(
+            scope.connection_environment_for_environment(
                 client=self.gateway_runtime_client,
                 owning_generation=self.owning_generation,
                 config=config,
@@ -525,6 +533,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         operation_state: dict[str, t.Mapping[str, object]],
         operation_ready: threading.Event,
         portal_socket_path: str | None,
+        portal_catalog_manifest_path: str | None,
     ) -> int:
         try:
             started = await self.gateway_runtime_client.sandbox.execution.start(
@@ -533,6 +542,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                         command,
                         login=login,
                         portal_socket_path=portal_socket_path,
+                        portal_catalog_manifest_path=portal_catalog_manifest_path,
                     ),
                     "cwd": self.cwd,
                     "environment": dict(self._environment_handle),
@@ -599,9 +609,13 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
         self._require_open()
         portal_scope = current_hermes_portal_invocation_scope()
         portal_socket_path: str | None = None
+        portal_catalog_manifest_path: str | None = None
         if portal_scope is not None:
             try:
-                portal_socket_path = self._portal_socket_path_for_scope(portal_scope)
+                (
+                    portal_socket_path,
+                    portal_catalog_manifest_path,
+                ) = self._portal_environment_for_scope(portal_scope)
             except PortalConnectionUnavailableError:
                 pass
         stdout_read_fd, stdout_write_fd = os.pipe()
@@ -632,6 +646,7 @@ class HermesGatewayRuntimeEnvironment(BaseEnvironment):
                 operation_state=operation_state,
                 operation_ready=operation_ready,
                 portal_socket_path=portal_socket_path,
+                portal_catalog_manifest_path=portal_catalog_manifest_path,
             )
         )
 

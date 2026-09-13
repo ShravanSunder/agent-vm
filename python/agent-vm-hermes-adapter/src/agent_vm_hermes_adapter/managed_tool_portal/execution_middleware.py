@@ -8,6 +8,7 @@ import typing as t
 from collections.abc import Awaitable, Callable
 from time import monotonic
 
+from agent_vm_agent_portal_sdk.catalog_relay_startup import GatewayPortalCatalogSource
 from agent_vm_agent_portal_sdk.gateway_portal_session import (
     GatewayPortalSession,
     GatewayPortalSessionConfig,
@@ -20,6 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
+)
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import (
+    ManagedCatalogTurnBindings,
+    OfferedDefinitionBinding,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,12 +67,18 @@ class _PortalExecutionRuntime(t.Protocol):
     @property
     def approval_presenter(self) -> _ApprovalPresenter: ...
 
+    @property
+    def catalog_turn_bindings(self) -> ManagedCatalogTurnBindings | None: ...
+
     def current_projection(self) -> CanonicalManagedAgentProjection: ...
 
 
 class _PortalSession(t.Protocol):
     @property
     def socket_path(self) -> str: ...
+
+    @property
+    def catalog_manifest_path(self) -> str | None: ...
 
     async def open(self) -> None: ...
 
@@ -93,10 +104,12 @@ class HermesPortalInvocationScope:
         identity: HermesPortalInvocationIdentity,
         present_approval: PresentApproval,
         session_factory: PortalSessionFactory | None = None,
+        catalog_source: GatewayPortalCatalogSource | None = None,
     ) -> None:
         self.identity = identity
         self._present_approval = present_approval
         self._session_factory = GatewayPortalSession if session_factory is None else session_factory
+        self.catalog_source = catalog_source
         self._loop: asyncio.AbstractEventLoop | None = None
         self._opening_by_generation: dict[str, asyncio.Task[_PortalSession]] = {}
         self._sessions_by_generation: dict[str, _PortalSession] = {}
@@ -176,6 +189,20 @@ class HermesPortalInvocationScope:
         owning_generation: str,
         config: GatewayPortalSessionConfig,
     ) -> str:
+        socket_path, _manifest_path = await self.connection_environment_for_environment(
+            client=client,
+            owning_generation=owning_generation,
+            config=config,
+        )
+        return socket_path
+
+    async def connection_environment_for_environment(
+        self,
+        *,
+        client: GatewayRuntimeClient,
+        owning_generation: str,
+        config: GatewayPortalSessionConfig,
+    ) -> tuple[str, str | None]:
         self._require_loop()
         if self._closed:
             raise RuntimeError("The originating Hermes Portal invocation has ended.")
@@ -210,7 +237,10 @@ class HermesPortalInvocationScope:
             finally:
                 if opening.done():
                     self._opening_by_generation.pop(owning_generation, None)
-        return session.socket_path
+        manifest_path = session.catalog_manifest_path
+        if manifest_path is not None and not isinstance(manifest_path, str):
+            raise TypeError("Managed Portal session returned an invalid catalog manifest path.")
+        return session.socket_path, manifest_path
 
     async def close(self) -> None:
         self._require_loop()
@@ -370,7 +400,18 @@ class HermesToolExecutionMiddleware:
         scope = HermesPortalInvocationScope(
             identity=identity,
             present_approval=present_approval,
+            catalog_source=None,
         )
+        binding: OfferedDefinitionBinding | None = None
+        bindings = self._runtime.catalog_turn_bindings
+        if bindings is not None:
+            binding = bindings.acquire(
+                identity.projection,
+                session_id=identity.session_id,
+                turn_id=identity.turn_id,
+            )
+            if binding is not None:
+                scope.catalog_source = binding.source
         scope_token = _CURRENT_HERMES_PORTAL_INVOCATION_SCOPE.set(scope)
         try:
             return next_call(args)
@@ -383,6 +424,9 @@ class HermesToolExecutionMiddleware:
                     "Hermes Portal invocation cleanup failed: failure=%s",
                     type(error).__name__,
                 )
+            finally:
+                if binding is not None and bindings is not None:
+                    bindings.release_invocation(identity.projection, binding)
 
 
 __all__ = (

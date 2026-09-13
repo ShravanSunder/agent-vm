@@ -260,6 +260,27 @@ function withCodeBuilderGithubRunner(
 }
 
 describe('Gateway runtime portal admission materialization', () => {
+	it('carries each profile catalog mode into protected agent metadata with compact as default', () => {
+		const props = createMaterializationProps();
+		const originalConfig = props.effectivePlan.effectiveToolPortalConfig;
+		const effectiveToolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
+			...originalConfig,
+			profiles: {
+				...originalConfig.profiles,
+				'code-builder': { ...originalConfig.profiles['code-builder'], catalogMode: 'catalog' },
+			},
+		});
+		const result = materializeGatewayRuntimePortalAdmission({
+			...props,
+			effectivePlan: { ...props.effectivePlan, effectiveToolPortalConfig },
+		});
+		expect(requireAgentProjection(result.semanticSnapshot, 'agent-a').toolPortalCatalogMode).toBe(
+			'catalog',
+		);
+		expect(requireAgentProjection(result.semanticSnapshot, 'agent-b').toolPortalCatalogMode).toBe(
+			'compact',
+		);
+	});
 	it('materializes one deterministic controller-authored semantic snapshot from parsed configs', () => {
 		// Arrange
 		const props = createMaterializationProps();
@@ -285,6 +306,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						agentId: 'agent-a',
 						frameworkIdentity: { kind: 'hermes', profileName: 'agent-a' },
 						profileAssignmentRevision: agentProjection.profileAssignmentRevision,
+						toolPortalCatalogMode: 'compact',
 						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 						toolPortalProfileId: 'code-builder',
 					},
@@ -293,6 +315,7 @@ describe('Gateway runtime portal admission materialization', () => {
 						frameworkIdentity: { kind: 'hermes', profileName: 'agent-b' },
 						profileAssignmentRevision: requireAgentProjection(semanticSnapshot, 'agent-b')
 							.profileAssignmentRevision,
+						toolPortalCatalogMode: 'compact',
 						toolPortalNamespaces: [{ namespace: 'filesystem' }, { namespace: 'github' }],
 						toolPortalProfileId: 'code-reviewer',
 					},

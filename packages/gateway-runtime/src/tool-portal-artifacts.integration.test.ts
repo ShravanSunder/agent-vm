@@ -174,6 +174,7 @@ function composeArtifactProjections(
 		managedPluginAttachment: {
 			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds: ['agent-a'],
+			gatewayEpoch: 'gateway-epoch-a',
 			projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 		},
 		semanticSnapshot,

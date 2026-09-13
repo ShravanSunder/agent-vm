@@ -276,6 +276,33 @@ describe('managed image release', () => {
 		expect(generatedToolPortalGuide).toContain('async with connect_tool_portal() as portal:');
 		expect(generatedToolPortalGuide).toContain('const portal = await connectToolPortal();');
 		expect(generatedToolPortalGuide).toContain(
+			'/run/agent-vm/tool-portal-sdk/<definitionFingerprint>/manifest.json',
+		);
+		expect(generatedToolPortalGuide).toContain('AGENT_VM_TOOL_PORTAL_SDK_MANIFEST');
+		expect(generatedToolPortalGuide).toContain(
+			"import { <exportedFactoryName> } from '<orientation-provided-module-path>';",
+		);
+		expect(generatedToolPortalGuide).toContain(
+			'Use one `connectToolPortal` client and bind every imported namespace factory to',
+		);
+		expect(generatedToolPortalGuide).toContain(
+			'Each generated function returns the full canonical Portal result',
+		);
+		expect(generatedToolPortalGuide).toContain(
+			'The manifest is the complete mapping from every namespace',
+		);
+		expect(generatedToolPortalGuide).toContain('including namespaces omitted from\norientation');
+		expect(generatedToolPortalGuide).toContain(
+			'provider auth,\ncall policy, approval, and artifact handling remain enforced',
+		);
+		expect(generatedToolPortalGuide).toContain(
+			"Immutable generated\nfiles may be reused when a later invocation's fresh manifest selects the same\nfingerprint",
+		);
+		expect(generatedToolPortalGuide).toContain(
+			'Never reuse the prior client, socket, or authority',
+		);
+		expect(generatedToolPortalGuide).not.toMatch(/bindExample|exampleTools\./u);
+		expect(generatedToolPortalGuide).toContain(
 			'CLI (managed transport is automatic; omit transport flags)',
 		);
 		expect(generatedToolPortalGuide).not.toContain('--transport');

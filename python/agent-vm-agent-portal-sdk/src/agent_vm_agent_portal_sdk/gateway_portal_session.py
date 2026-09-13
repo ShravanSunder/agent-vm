@@ -11,6 +11,7 @@ from time import monotonic
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .catalog_relay_startup import GatewayPortalCatalogSource
 from .gateway_approval_bridge import PresentApproval, execute_portal_call_with_approval
 from .gateway_runtime_client import GatewayRuntimeClient
 from .managed_relay_process_port import ManagedRelayProcessPort
@@ -19,12 +20,13 @@ from .portal_execution_bridge import PortalExecutionBridge
 
 
 class GatewayPortalSessionConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", frozen=True, strict=True)
 
     environment: dict[str, object]
     sandbox_context: dict[str, object]
     portal_context: dict[str, object]
     maximum_runtime_ms: int = Field(gt=0, le=86_400_000)
+    catalog_source: GatewayPortalCatalogSource | None = None
 
 
 def _mapping(value: object) -> dict[str, object]:
@@ -38,7 +40,8 @@ class GatewayPortalSession:
         self._client = client
         self._config = config
         self._present = present_approval
-        self._bridge = PortalExecutionBridge(invoke=self._invoke, deadline_monotonic=monotonic() + config.maximum_runtime_ms / 1000)
+        self._deadline_monotonic = monotonic() + config.maximum_runtime_ms / 1000
+        self._bridge = PortalExecutionBridge(invoke=self._invoke, deadline_monotonic=self._deadline_monotonic)
         self._connection: PortalBridgeConnection | None = None
         self._pump: asyncio.Task[None] | None = None
         self._stderr: asyncio.Task[None] | None = None
@@ -53,7 +56,21 @@ class GatewayPortalSession:
         if self._closed or self._connection is not None:
             raise RuntimeError("Portal invocation session was already opened or closed.")
         config = self._config
-        command = f"exec python3 -m agent_vm_agent_portal_sdk.guest_portal_relay_process --socket {shlex.quote(self.socket_path)} --create-directory"
+        command_parts = [
+            "exec python3 -m agent_vm_agent_portal_sdk.guest_portal_relay_process",
+            f"--socket {shlex.quote(self.socket_path)}",
+            "--create-directory",
+        ]
+        if config.catalog_source is not None:
+            identity = config.catalog_source.identity
+            command_parts.extend(
+                [
+                    f"--catalog-fingerprint {shlex.quote(identity.definition_fingerprint)}",
+                    f"--catalog-bundle-sha256 {shlex.quote(identity.bundle_sha256)}",
+                    f"--catalog-bundle-byte-length {identity.bundle_byte_length}",
+                ],
+            )
+        command = " ".join(command_parts)
         started = await self._client.sandbox.process.start(
             {
                 "environment": config.environment,
@@ -99,10 +116,21 @@ class GatewayPortalSession:
             write_stream=lambda request: self._client.sandbox.stream.write(request, trusted_context=config.sandbox_context),
             cancel_process=close_process,
         )
-        self._connection = PortalBridgeConnection(process=port, bridge=self._bridge, stream_artifact=self._stream_artifact)
+        self._connection = PortalBridgeConnection(
+            process=port,
+            bridge=self._bridge,
+            stream_artifact=self._stream_artifact,
+            catalog_source=config.catalog_source,
+            startup_deadline_monotonic=self._deadline_monotonic,
+        )
         self._pump = asyncio.create_task(self._connection.run())
         self._stderr = asyncio.create_task(self._drain_stderr(handles["stderr"]))
         await self._connection.wait_ready()
+
+    @property
+    def catalog_manifest_path(self) -> str | None:
+        connection = self._connection
+        return None if connection is None else connection.catalog_manifest_path
 
     async def _drain_stderr(self, stream: Mapping[str, object]) -> None:
         cursor: str | None = None

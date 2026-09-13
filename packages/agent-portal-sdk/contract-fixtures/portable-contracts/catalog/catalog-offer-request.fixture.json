@@ -1,0 +1,16 @@
+{
+	"caseId": "catalog-offer-request-accepted",
+	"expectation": {
+		"canonicalJson": "{\"definitionFingerprint\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+		"kind": "accepted",
+		"normalized": {
+			"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
+		"refinementIdentities": []
+	},
+	"input": {
+		"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	},
+	"schemaId": "portal.catalog.offer-request",
+	"tags": ["catalog", "accepted"]
+}

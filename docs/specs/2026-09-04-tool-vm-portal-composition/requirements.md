@@ -9,6 +9,17 @@ reusable SDK or CLI, and uses returned data to decide what to call next. Tool
 Portal continues to select each capability's execution destination. The
 composition program itself does not move to the host or credentialed VM.
 
+The primary agent experience is TypeScript composition through Hermes's
+foreground `terminal` tool. During managed Gateway startup, Tool Portal prepares
+authorized tool definitions for catalog and generated-SDK readiness and offers
+an explicit choice between compact discovery and individual MCP tools. Any
+complete prepared definitions remain fixed for that Gateway lifetime; a restart
+prepares any definition change. When preparation is incomplete, compact mode
+retains its existing generic discovery surface without advertising generated
+definitions. Generated TypeScript functions make prepared capabilities
+convenient to call through the existing SDK; neither exposure mode changes
+execution authority.
+
 ```text
 Agent's job (U1–U3)
   Learn the available interface
@@ -35,6 +46,14 @@ Tool VM. Existing Portal policy and arbitrary direct Tool VM execution are
 preserved by the earlier explicit boundary. The priorities below are musts
 because each is part of that requested outcome, not an external recommendation.
 
+The owner's 2026-09-13 discussion extends this basis with selectable catalog
+exposure, TypeScript-only function generation, complete preparation before
+catalog/generated readiness, definition stability for the full Gateway lifetime,
+restart-based definition changes, and measured generation/loading performance.
+Existing generic Python/TypeScript/CLI clients, compact discovery fallback and
+trusted Python infrastructure remain foundations. Python function generation is
+excluded.
+
 | ID | Consumer | Need and reason | Authority / priority |
 | --- | --- | --- | --- |
 | U1 | Agent composing a task | Execute the composition in Tool VM; sequence, branch, loop, and combine Portal results without a model turn for each sub-call. | Owner-authorized / must |
@@ -43,10 +62,19 @@ because each is part of that requested outcome, not an external recommendation.
 | U4 | Capability owner and approving human | Preserve Portal discovery, argument validation, routing, approval, and result behavior for calls originating in Tool VM. | Owner-authorized preservation / must |
 | U5 | Agent and operator | Know whether a call succeeded, failed, needs approval, was cancelled, or has an uncertain effect; do not silently repeat side effects. | Existing Portal behavior preserved / must |
 | U6 | Deployment owner | Keep agent/profile isolation and credential ownership intact across the new communication path; do not expose framework/admin authority to guest code. | Existing managed-runtime boundary preserved / must |
+| U7 | MCP client operator | Select compact discovery or individual authorized tool schemas at Portal startup, allowing the client to manage its own model context. | Owner-authorized 2026-09-13 / must |
+| U8 | Hermes agent composing TypeScript | Discover exact generated imports and typed functions, execute through foreground terminal, and retain normal Portal outcomes without manually constructing each call envelope. | Owner-authorized 2026-09-13 / must |
+| U9 | Deployment owner and composing agent | Prepare definitions during managed Gateway startup, reuse any complete set without generation on every call, apply changes only through Gateway restart, and measure preparation and import costs on realistic catalogs. | Owner-authorized 2026-09-13 / must |
 
 No separate buyer journey is introduced. The deployment owner is the affected
 operator and decision authority; other frameworks are potential SDK consumers,
 not new framework integrations promised by this change.
+
+External Codex and other MCP clients use the existing standalone MCP Portal
+surface with its own configuration and permissions. Managed Hermes uses managed
+Tool Portal's existing private connection and OAuth-backed capabilities. Catalog
+selection applies to each existing presentation surface; this work adds no
+external listener or external caller access to managed Tool Portal.
 
 ## Foundation and scope
 
@@ -71,11 +99,14 @@ Preserve:
 
 ## Negative space and complexity limit
 
-No provider-specific SDK/CLI generation, installation inventory, new policy
-engine, workflow scheduler, persistent composition database, automatic whole-
-program replay, general host proxy, or public admin endpoint. No Hermes fork or
-upstream distribution upgrade is implicitly authorized. No deployment secret,
-egress, or privileged configuration edits occur during this design cycle.
+No handwritten provider SDKs, Python function generation, generated provider
+CLIs, installation inventory, new policy engine, workflow scheduler, persistent
+composition database, automatic whole-program replay, general host proxy, or
+public admin endpoint. Schema-derived TypeScript functions are in scope. No new
+JavaScript sandbox or detached Portal execution lifetime is introduced. Hermes
+0.21.2 is authorized only if necessary and qualified; it is not a prerequisite
+inferred from the TypeScript choice. Beta package updates and reconciliation are
+authorized while preserving the unrelated Google onboarding work.
 
 Reuse the existing Tool VM configured-CLI target as a destination. Composition
 does not introduce a second execution path or redefine that target's policy.
@@ -89,3 +120,11 @@ concurrent calls, real approval interaction, denial and wrong-agent cases,
 connection-loss/cancellation behavior, and truthful agent instructions. Unit
 tests alone cannot prove cross-VM communication. Beta proof is a separate claim
 and cannot be inferred from local or CI evidence.
+
+The added experience requires a real foreground-terminal TypeScript journey
+using generated functions, accurate orientation and local import guidance,
+both MCP exposure modes with the same caller permissions, OAuth consent/denial
+preservation, managed Gateway lifetime stability, changed-definition preparation
+on a new Gateway epoch, and measured cold generation, reuse, import, output size,
+and memory costs. Performance measurements determine whether incremental
+generation machinery is warranted; it is not an independently required system.

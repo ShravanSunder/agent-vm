@@ -130,6 +130,92 @@ The new interface MUST NOT expose the rich managed-plugin socket, arbitrary
 Gateway RPC, host filesystem paths, or cross-agent artifacts. Same-agent code
 sharing an arbitrary-execution Tool VM is not a new process-isolation boundary.
 
+## R7 — Selectable catalog exposure (U6, U7)
+
+Standalone MCP Portal startup MUST accept an explicit choice between compact
+discovery and individual MCP tool exposure. Managed Hermes startup configuration
+MUST offer the equivalent choice for its native registered tools. Compact
+exposure retains each surface's existing discovery and call tools. Individual
+exposure MUST provide authorized capabilities with their exact input schemas and
+identifiable namespaces. Both selections MUST invoke their respective existing
+Portal authority and preserve that surface's canonical outcomes. Selection MUST
+NOT change profiles, OAuth grants, approval policy, or
+execution destinations, and MUST NOT disable managed SDK composition.
+
+Before the selected catalog is advertised as ready, its tool definitions MUST
+be prepared for the applicable authenticated caller. A client MUST NOT receive
+another profile's definitions. For managed Hermes, generated definitions and
+native catalog registration MUST be prepared once during managed Gateway
+startup. Catalog mode MUST complete that preparation before Gateway readiness.
+Compact mode MAY retain its existing generic discovery and SDK/CLI surface when
+preparation is incomplete, but it MUST NOT advertise catalog or generated-SDK
+readiness or guidance. Any complete profile catalog MUST remain immutable for
+that Gateway lifetime. Definition changes MUST take effect only through a
+managed Gateway restart, whose new epoch prepares a new complete catalog before
+advertising it as ready. Catalog readiness means an interface is available; it
+MUST NOT assert current OAuth consent, permission for every argument, or
+guaranteed provider execution. Client-side deferred loading and model-context
+injection remain the client's responsibility.
+
+Failed namespace discovery MUST NOT be treated as intentional tool removal or
+as a complete prepared catalog. In catalog mode, incomplete managed preparation
+on the initial start or a later restart MUST keep that Gateway epoch from
+readiness and MUST expose an actionable startup diagnostic. In compact mode, the
+existing generic discovery surface MAY remain ready, but catalog/generated-SDK
+guidance MUST remain absent. Standalone catalog-mode startup likewise MUST NOT
+advertise an incomplete catalog through its existing session failure behavior.
+Existing compact discovery retains its explicit partial-success diagnostics
+after a ready start. A running managed Gateway MUST NOT live-refresh definitions
+or silently substitute an incomplete catalog. Restart is the definition-change
+boundary; this contract adds no automatic retry scheduler or alternate provider
+connection.
+
+External clients use standalone MCP Portal's existing authentication and policy;
+managed Hermes retains its private managed authority. No new externally
+accessible managed MCP endpoint is part of this contract.
+
+## R8 — Generated TypeScript composition (U1, U3, U8)
+
+Hermes's primary generated-SDK path MUST use foreground `terminal` to execute
+TypeScript in Tool VM. Schema-derived named functions and argument definitions
+MUST be available before guidance advertises them as usable. The agent MUST
+receive bounded orientation and locally accessible instructions identifying
+discovery, exact module imports, execution, result handling, and approval waits.
+Generated functions MUST use the existing SDK connection and Portal semantics;
+they MUST NOT resolve credentials or contact providers directly.
+
+Generated public inputs MUST preserve wire names, required versus optional
+fields, and supported schema constraints. Unsupported conversion MUST be
+explicit rather than represented as an inaccurately precise type. The original
+Portal schema remains authoritative for call validation. Canonical result
+envelopes, including mixed outcomes and uncertainty, MUST remain inspectable.
+
+Every invocation using generated definitions in one managed Gateway lifetime
+MUST use its admitted profile's complete set for that epoch. Definition updates MUST become available only
+after a successful managed Gateway restart prepares a new epoch; they MUST NOT
+modify the running epoch. Definitions MUST confer no authority:
+OAuth/account preflight, consent, approvals, and all ordinary policy checks MUST
+run through the existing call path. Foreground completion or cancellation MUST
+close invocation authority; background process management MUST NOT extend it.
+
+Existing generic Python/TypeScript/CLI interfaces remain available. This addition
+does not generate Python functions or expose Hermes's internal tool registry.
+
+## R9 — Generation and loading costs (U9)
+
+The prepared Gateway-epoch definitions MUST be reusable across executions.
+Individual tool calls MUST NOT regenerate modules. Importing one namespace MUST
+NOT require loading every namespace's generated definitions. A new Gateway
+epoch's SDK MUST become visible as a complete usable set, never partially
+written modules.
+
+Proof MUST measure cold Gateway-start generation, same-epoch catalog reuse,
+changed-catalog preparation on restart, namespace import latency, generated
+size, and peak memory using representative small and large catalogs. Record
+workloads and observed costs; no numeric latency guarantee is introduced.
+Incremental generation is an optimization to justify from measured costs, not a
+required second subsystem.
+
 ## Observable contracts
 
 | Contract | Input / precondition | Output / boundary case |
@@ -140,6 +226,9 @@ sharing an arbitrary-execution Tool VM is not a new process-isolation boundary.
 | C4: lifecycle | Active execution and its current managed authority | Calls stop being admitted after cancellation/retirement; predecessor context cannot attach to successor execution |
 | C5: artifacts | Authorized opaque reference plus byte range | Bounded bytes and truncation metadata, or canonical denial/stale-reference failure |
 | C6: CLI | Canonical JSON input and automatic managed context | Canonical JSON on stdout; exit 0 success, 1 canonical Portal failure, 2 client/transport failure; diagnostics on stderr |
+| C7: MCP exposure | Startup selection and authenticated profile | Compact tools or individual schemas; identical Portal authority; no cross-profile catalog disclosure |
+| C8: generated TypeScript | Ready Gateway epoch and active foreground invocation | Discoverable imports and composable functions; one immutable epoch catalog; closed invocation cannot admit calls |
+| C9: generation reuse | Same Gateway epoch or restart with changed definitions | Same-epoch reuse or completely prepared new-epoch modules; no per-call generation; measured generation/import costs |
 
 A search followed by describe followed by call is valid. Starting a second call
 only after inspecting the first result is valid. Running two independent calls
@@ -156,6 +245,9 @@ an approval decision in a guest transport envelope is invalid.
 | U4 | P2 / O2 | R3–R4 / C1, C3 | V2–V4 |
 | U5 | P3 / O3 | R4–R5 / C2–C5 | V3–V5 |
 | U6 | P3 / O3 | R3–R4, R6 / C1, C3–C5 | V3–V4, V6 |
+| U7 | Compact-only MCP surface / native client discovery | R7 / C7 | V7 |
+| U8 | Generic envelopes / discoverable typed composition | R8 / C8 | V8 |
+| U9 | Per-call preparation and live drift / one stable prepared Gateway epoch | R9 / C9 | V9 |
 
 - V1: real supported Tool VM images import both SDKs and invoke the CLI from
   work directories without manual endpoint setup; mismatch/missing context is
@@ -175,6 +267,25 @@ an approval decision in a guest transport envelope is invalid.
 - V6: actual Hermes model-input/runtime-document evidence for accurate bounded
   instructions; no credentials or full catalog; reusable SDKs work without
   Hermes imports and unrelated direct execution remains unchanged.
+
+- V7: real MCP client enumeration and calls in both exposure modes, including
+  distinct profiles and hidden capabilities; verify canonical call results and
+  live authorization are preserved.
+- V8: real Hermes foreground-terminal TypeScript program imports generated
+  functions, performs dependent and concurrent calls, and returns selected
+  output. Observe approval in the originating conversation, cancellation, OAuth
+  consent/denial preservation, definition stability across executions in one
+  Gateway lifetime, changed definitions after restart, and actual model
+  orientation/local instructions. Preserve beta Google onboarding state.
+- V9: reproducible generation and import measurements across representative
+  catalog sizes, observing same-epoch reuse, changed preparation in a new epoch,
+  complete publication, module loading, output bytes, and memory. Include failed
+  initial and restarted-epoch namespace discovery: neither may advertise
+  catalog/generated-SDK readiness, masquerade as complete preparation, or look
+  like intentional tool removal. Catalog mode remains unready; compact mode
+  retains its existing generic surface without generated guidance. Successful
+  running epochs keep one prepared definition set while each call exercises live
+  authorization.
 
 These are required implementation proof modalities, not evidence already run.
 Performance has no new latency SLA; the obligation is bounded resources and

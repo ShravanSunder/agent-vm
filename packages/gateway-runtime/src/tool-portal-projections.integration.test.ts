@@ -194,7 +194,11 @@ type PortalRequest =
 
 type RecordingPrivateUdsProjection = Pick<
 	GatewayRuntimePrivateUdsProjectionFactoryProps,
-	'artifactOperations' | 'authenticatedOperationGroups' | 'capabilityCore' | 'portalOperations'
+	| 'artifactOperations'
+	| 'authenticatedOperationGroups'
+	| 'capabilityCore'
+	| 'catalogOperations'
+	| 'portalOperations'
 >;
 
 interface RecordingBackendInvocation {
@@ -421,6 +425,7 @@ function createRecordingPrivateUdsProjection(
 		authenticatedOperationGroups: props.authenticatedOperationGroups,
 		artifactOperations: props.artifactOperations,
 		capabilityCore: props.capabilityCore,
+		catalogOperations: props.catalogOperations,
 		portalOperations: props.portalOperations,
 	});
 }
@@ -482,6 +487,7 @@ function composeRecordingProjections(
 		managedPluginAttachment: {
 			clientKind: 'hermes-managed-plugin',
 			configuredAgentIds,
+			gatewayEpoch: 'gateway-epoch-a',
 			projectionCohortDigest,
 		},
 		semanticSnapshot,
@@ -505,6 +511,46 @@ function totalBackendInvocations(fixture: RecordingCompositionFixture): number {
 }
 
 describe('Gateway runtime Tool Portal projections', () => {
+	it('joins managed capability authority to the real compiler and immutable private catalog reader', async () => {
+		const fixture = composeRecordingProjections();
+		const trustedContext = {
+			...agentATrustedContext,
+			correlation: { ...agentATrustedContext.correlation, turnId: 'turn-a' },
+		};
+		const invocation = {
+			connectionId: 'connection-a',
+			publicRequest: {},
+			trustedContext,
+		};
+
+		const prepared =
+			await fixture.composition.privateUdsProjection.catalogOperations.prepare(invocation);
+
+		expect(prepared.kind).toBe('complete');
+		if (prepared.kind !== 'complete') throw new Error('Expected complete prepared catalog.');
+		const offered = await fixture.composition.privateUdsProjection.catalogOperations.offer({
+			...invocation,
+			publicRequest: { definitionFingerprint: prepared.manifest.definitionFingerprint },
+		});
+		expect(offered.kind).toBe('offered');
+		if (offered.kind !== 'offered') throw new Error('Expected offered catalog.');
+		const read = await fixture.composition.privateUdsProjection.catalogOperations.read({
+			...invocation,
+			publicRequest: {
+				definitionFingerprint: prepared.manifest.definitionFingerprint,
+				length: 64 * 1_024,
+				offerId: offered.offerId,
+				offset: 0,
+			},
+		});
+		expect(read.kind).toBe('content');
+		if (read.kind !== 'content') throw new Error('Expected catalog content.');
+		expect(JSON.parse(Buffer.from(read.contentBase64, 'base64').toString())).toMatchObject({
+			definitionFingerprint: prepared.manifest.definitionFingerprint,
+			files: [],
+		});
+	});
+
 	it('rejects duplicate configured agent ids before exact-set normalization', () => {
 		expect(() =>
 			composeRecordingProjections(semanticSnapshot.projectionCohortDigest, [

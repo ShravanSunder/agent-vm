@@ -25,6 +25,10 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
+		"./generated-tools": {
+			"types": "./dist/generated-tools/index.d.ts",
+			"import": "./dist/generated-tools/index.js"
+		},
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"

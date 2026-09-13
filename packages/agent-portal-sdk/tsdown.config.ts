@@ -5,6 +5,7 @@ export default defineConfig({
 	dts: true,
 	entry: [
 		'src/index.ts',
+		'src/generated-tools/index.ts',
 		'src/cli/tool-portal.ts',
 		'src/adapter-boundary/index.ts',
 		'src/approval-surface/index.ts',

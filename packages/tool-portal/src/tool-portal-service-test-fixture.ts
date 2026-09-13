@@ -309,6 +309,7 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 										tools: [
 											{
 												annotations: {},
+												inputSchema: { properties: {}, type: 'object' },
 												name: toolName,
 												namespace,
 												related: [],
@@ -328,7 +329,7 @@ function createRecordingBackendPort<TBackendKind extends ToolPortalBackendKind>(
 					items: parsedRequest.requests.map((item) => ({
 						id: item.id,
 						status: 'ok' as const,
-						value: { namespaces: [namespace], tools: [] },
+						value: { namespaces: [namespace], tools: [capabilitySummary] },
 					})),
 					ok: true,
 				});

@@ -14,6 +14,49 @@ execution certainty and artifact references, before deciding what to do next.
 Calls that require approval wait for the originating human approval route.
 Never automatically replay a call after a transport failure or uncertain effect.
 
+Generated TypeScript is available in both compact and catalog presentation
+modes. For a foreground Hermes terminal invocation, the orientation includes
+exact imports for selected prepared namespaces within its prompt budget and the
+exact manifest path:
+
+\`/run/agent-vm/tool-portal-sdk/<definitionFingerprint>/manifest.json\`
+
+After catalog readiness, the foreground command receives the same path in
+\`AGENT_VM_TOOL_PORTAL_SDK_MANIFEST\`. If that variable is absent, generated
+imports were not admitted for this environment generation.
+
+The manifest is the complete mapping from every namespace to its real
+\`modulePath\` and \`exportedFactoryName\`, including namespaces omitted from
+orientation. Copy an orientation-provided import or construct it from those exact
+manifest values; do not guess either value. Inspect that namespace module for its
+generated function names and input types. Create a \`.ts\` file by replacing every
+bracketed token below with values from the orientation or manifest and generated
+module, then run it with Node 24 in the same foreground terminal invocation:
+
+\`\`\`typescript
+import { connectToolPortal } from '@agent-vm/agent-portal-sdk';
+import { <exportedFactoryName> } from '<orientation-provided-module-path>';
+
+const portal = await connectToolPortal();
+try {
+  const namespaceTools = <exportedFactoryName>(portal);
+  const result = await namespaceTools.<generatedFunctionName>({
+    // Supply arguments matching the generated input type.
+  });
+  console.dir(result, { depth: null });
+} finally {
+  await portal.close();
+}
+\`\`\`
+
+Use one \`connectToolPortal\` client and bind every imported namespace factory to
+it. Each generated function returns the full canonical Portal result, including
+\`ok\`, every item, and diagnostics. It still calls Tool Portal, so provider auth,
+call policy, approval, and artifact handling remain enforced. Immutable generated
+files may be reused when a later invocation's fresh manifest selects the same
+fingerprint. Never reuse the prior client, socket, or authority from detached work
+or a later terminal invocation.
+
 Python (the client is an async context manager):
 
 \`\`\`python

@@ -389,6 +389,49 @@ class _GatewayRuntimeArtifactOperations:
         return validated_result
 
 
+class _GatewayRuntimeCatalogOperations:
+    """Trusted catalog-source operations unavailable to guest relay callers."""
+
+    def __init__(self, client: "GatewayRuntimeClient") -> None:
+        self._client = client
+
+    async def _execute_catalog_operation(
+        self,
+        *,
+        operation_name: t.Literal["prepare", "offer", "read", "release"],
+        request: Mapping[str, object],
+        trusted_context: Mapping[str, object],
+    ) -> BaseModel:
+        validated_request = PORTABLE_CONTRACT_ADAPTERS[f"portal.catalog.{operation_name}-request"].validate_python(request)
+        if not isinstance(validated_request, BaseModel):
+            invalid_request_message = f"Portal catalog {operation_name} request did not produce a typed model."
+            raise TypeError(invalid_request_message)
+        response = await self._client.request(
+            f"portal.catalog.{operation_name}",
+            {
+                "publicRequest": validated_request.model_dump(by_alias=True, mode="json", exclude_none=True),
+                "trustedContext": _validate_trusted_invocation_context(trusted_context),
+            },
+        )
+        validated_result = PORTABLE_CONTRACT_ADAPTERS[f"portal.catalog.{operation_name}-result"].validate_python(response)
+        if not isinstance(validated_result, BaseModel):
+            invalid_result_message = f"Portal catalog {operation_name} result did not produce a typed model."
+            raise TypeError(invalid_result_message)
+        return validated_result
+
+    async def prepare(self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]) -> BaseModel:
+        return await self._execute_catalog_operation(operation_name="prepare", request=request, trusted_context=trusted_context)
+
+    async def offer(self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]) -> BaseModel:
+        return await self._execute_catalog_operation(operation_name="offer", request=request, trusted_context=trusted_context)
+
+    async def read(self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]) -> BaseModel:
+        return await self._execute_catalog_operation(operation_name="read", request=request, trusted_context=trusted_context)
+
+    async def release(self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]) -> BaseModel:
+        return await self._execute_catalog_operation(operation_name="release", request=request, trusted_context=trusted_context)
+
+
 class _GatewayRuntimeApprovalOperations:
     def __init__(self, client: "GatewayRuntimeClient") -> None:
         self._client = client
@@ -450,6 +493,7 @@ class GatewayRuntimeClient:
         self._lifecycle_lock = asyncio.Lock()
         self.approvals = _GatewayRuntimeApprovalOperations(self)
         self.artifacts = _GatewayRuntimeArtifactOperations(self)
+        self.catalog = _GatewayRuntimeCatalogOperations(self)
         self.portal = _GatewayRuntimePortalOperations(self)
         self.sandbox = GatewayRuntimeSandboxOperations(self)
 

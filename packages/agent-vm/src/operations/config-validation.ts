@@ -301,10 +301,12 @@ async function collectToolPortalConfigChecks(
 		const requiresOAuth =
 			loadedToolPortalConfig !== undefined &&
 			Object.values(loadedToolPortalConfig.profiles).some((profile) =>
-				Object.values(profile.namespaces).some(
+				Object.values<(typeof profile.namespaces)[string]>(profile.namespaces).some(
 					(namespace) =>
 						namespace.backend.kind === 'controller_execution' &&
-						Object.values(namespace.backend.operations).some(
+						Object.values<(typeof namespace.backend.operations)[string]>(
+							namespace.backend.operations,
+						).some(
 							(operation) =>
 								operation.kind === 'configured_cli' &&
 								isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&

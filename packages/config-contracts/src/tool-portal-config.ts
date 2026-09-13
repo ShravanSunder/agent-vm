@@ -304,6 +304,7 @@ export function toolPortalNamespaceAllowsOperation(
 
 export const toolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), toolPortalNamespacePolicySchema).default({}),
 	})
 	.strict();
@@ -494,6 +495,7 @@ const preparedToolPortalNamespacePolicySchema = z
 
 const preparedToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), preparedToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -605,6 +607,7 @@ const effectiveToolPortalNamespacePolicySchema = z
 
 const effectiveToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), effectiveToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -636,6 +639,7 @@ const gatewayRuntimeToolPortalNamespacePolicySchema = z
 
 const gatewayRuntimeToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), gatewayRuntimeToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -727,6 +731,7 @@ export function createEffectiveManagedToolPortalConfig(
 			Object.entries(config.profiles).map(([profileId, profile]) => [
 				profileId,
 				{
+					...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 					namespaces: Object.fromEntries(
 						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 							namespaceId,
@@ -782,6 +787,7 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 			Object.entries(config.profiles).map(([profileId, profile]) => [
 				profileId,
 				{
+					...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 					namespaces: Object.fromEntries(
 						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 							namespaceId,
@@ -908,8 +914,12 @@ export const toolPortalConfigSchema = z
 			}
 		}
 
-		for (const [profileId, profile] of Object.entries(config.profiles)) {
-			for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+		for (const [profileId, profile] of Object.entries<(typeof config.profiles)[string]>(
+			config.profiles,
+		)) {
+			for (const [namespaceId, namespacePolicy] of Object.entries<
+				(typeof profile.namespaces)[string]
+			>(profile.namespaces)) {
 				if (
 					namespacePolicy.backend.kind !== 'tool_vm_runner' &&
 					namespacePolicy.backend.kind !== 'controller_execution'

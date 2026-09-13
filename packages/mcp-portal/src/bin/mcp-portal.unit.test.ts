@@ -20,6 +20,7 @@ import {
 } from '../testing/fake-upstream-mcp-server.js';
 import {
 	runMcpPortalCommandWithProcessLogging,
+	portalServerArgsFromServeCommand,
 	waitUntilPortalServerShutdown,
 	type AgentVmMcpPortalRuntimeProps,
 } from './mcp-portal-command-dispatcher.js';
@@ -60,6 +61,34 @@ const externalMasterKey = Buffer.from('0123456789abcdef0123456789abcdef');
 const externalMasterKeyText = externalMasterKey.toString('base64url');
 
 describe('mcp-portal CLI', () => {
+	it('defaults serve startup to compact catalog exposure and accepts catalog mode', () => {
+		const defaultMode = parseSync(mcpPortalRootParser, [
+			'mcp-proxy',
+			'serve',
+			'--config-dir',
+			'/config',
+		]);
+		const catalogMode = parseSync(mcpPortalRootParser, [
+			'mcp-proxy',
+			'serve',
+			'--config-dir',
+			'/config',
+			'--catalog-mode',
+			'catalog',
+		]);
+
+		expect(defaultMode.success && defaultMode.value).toMatchObject({ catalogMode: 'compact' });
+		expect(catalogMode.success && catalogMode.value).toMatchObject({ catalogMode: 'catalog' });
+		if (!catalogMode.success || catalogMode.value.command !== 'mcp-proxy.serve') {
+			throw new Error('Expected parsed catalog serve command.');
+		}
+		expect(portalServerArgsFromServeCommand(catalogMode.value)).toEqual({
+			agentOverrides: [],
+			catalogMode: 'catalog',
+			configDir: '/config',
+		});
+	});
+
 	it('distinguishes parser rejection from an operation failure', async () => {
 		expect(await runMcpPortal(['validate'])).toBe(parserRejected);
 		expect(parserRejected).not.toBe(1);

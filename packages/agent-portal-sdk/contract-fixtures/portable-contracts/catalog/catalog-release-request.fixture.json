@@ -1,0 +1,18 @@
+{
+	"caseId": "catalog-release-request-accepted",
+	"expectation": {
+		"canonicalJson": "{\"definitionFingerprint\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"offerId\":\"offer-1\"}",
+		"kind": "accepted",
+		"normalized": {
+			"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"offerId": "offer-1"
+		},
+		"refinementIdentities": []
+	},
+	"input": {
+		"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"offerId": "offer-1"
+	},
+	"schemaId": "portal.catalog.release-request",
+	"tags": ["catalog", "accepted"]
+}

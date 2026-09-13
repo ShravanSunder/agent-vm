@@ -13,6 +13,7 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesSessionSource,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import MarkInserted, PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import ManagedCatalogTurnBindings
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalRouteStore,
 )
@@ -25,6 +26,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     ReadyState,
     RenderedOrientation,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.renderer import render_catalog_guidance
 from agent_vm_hermes_adapter.managed_tool_portal_observability import HermesToolPortalTelemetry
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +61,9 @@ class ManagedToolPortalHookRuntime(t.Protocol):
     @property
     def approval_routes(self) -> HermesGatewayApprovalRouteStore: ...
 
+    @property
+    def catalog_turn_bindings(self) -> ManagedCatalogTurnBindings | None: ...
+
 
 @t.runtime_checkable
 class HermesGatewayMessageEvent(t.Protocol):
@@ -80,6 +85,7 @@ class PreLlmCall(_FrozenModel):
     """The exact session identity needed by the orientation hook."""
 
     session_id: str = Field(min_length=1)
+    turn_id: str | None = Field(default=None, min_length=1)
 
 
 def _inventory_projection(runtime: ManagedToolPortalHookRuntime) -> InventoryProjection:
@@ -115,6 +121,7 @@ def _validated_hook_model[TModel: BaseModel](
 def _orientation_for_session(
     runtime: ManagedToolPortalHookRuntime,
     session_id: str,
+    turn_id: str | None,
 ) -> str | None:
     profile = _inventory_projection(runtime)
     snapshot = runtime.inventory_coordinator.read_snapshot(profile.cache_key())
@@ -136,6 +143,17 @@ def _orientation_for_session(
         tool_portal_profile_id=profile.tool_portal_profile_id,
         session_id=session_id,
     )
+    bindings = runtime.catalog_turn_bindings
+    if bindings is not None and turn_id is not None:
+        binding, changed = bindings.offer_for_turn(
+            runtime.current_projection(), session_id=session_id, turn_id=turn_id
+        )
+        if binding is not None:
+            return render_catalog_guidance(
+                ready_value.inventory,
+                binding.manifest,
+                changed_fingerprint=changed,
+            )
     mark = runtime.injection_state_cache.mark_if_absent(
         injection_key,
         InjectionMarker(),
@@ -208,10 +226,12 @@ class _PreLlmCallHook:
             telemetry_schema_version,
         )
         context: dict[str, str] | None = None
-        request = _validated_hook_model(PreLlmCall, {"session_id": session_id})
+        request = _validated_hook_model(PreLlmCall, {"session_id": session_id, "turn_id": turn_id})
         try:
             if request is not None:
-                orientation = _orientation_for_session(self._runtime, request.session_id)
+                orientation = _orientation_for_session(
+                    self._runtime, request.session_id, request.turn_id
+                )
                 if orientation is not None:
                     context = {"context": orientation}
         except Exception as error:
@@ -443,6 +463,12 @@ class _OnSessionEndHook:
         )
         if isinstance(session_id, str) and session_id:
             self._runtime.approval_routes.clear_by_session_id(session_id)
+            bindings = self._runtime.catalog_turn_bindings
+            if bindings is not None:
+                try:
+                    bindings.close_session(self._runtime.current_projection(), session_id)
+                except Exception as error:
+                    _log_orientation_failure("on_session_end", error)
         if self._runtime.telemetry.observer_hooks_enabled:
             self._runtime.framework_observability.on_session_end(
                 turn_id=turn_id,

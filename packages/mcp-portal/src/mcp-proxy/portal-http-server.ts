@@ -7,7 +7,8 @@ import { Hono, type Context } from 'hono';
 import type { PortalCore } from '../core/portal-core.js';
 import { createPortalAgentIdentity, type PortalAgentIdentity } from '../portal-access-policy.js';
 import { verifyAgentBearerAuthorization } from '../portal-auth/agent-bearer-token.js';
-import { createPortalMcpServer } from './portal-mcp-server.js';
+import { PortalCatalogPreparationError } from '../portal-session.js';
+import { createPortalMcpServer, type PortalCatalogMode } from './portal-mcp-server.js';
 
 export interface PortalHttpAgentIdentity extends PortalAgentIdentity {}
 
@@ -40,6 +41,7 @@ export interface PortalHttpAppOptions {
 		readonly windowMs: number;
 	};
 	readonly core: PortalCore;
+	readonly catalogMode?: PortalCatalogMode;
 	readonly onSessionClosed?: (identity: PortalAgentIdentity) => Promise<void> | void;
 	readonly onSessionCloseError?: (
 		error: Error,
@@ -84,6 +86,20 @@ function rateLimitedResponse(): Response {
 
 function unavailableResponse(): Response {
 	return Response.json({ error: { kind: 'shutting_down' }, ok: false }, { status: 503 });
+}
+
+function catalogUnavailableResponse(error: PortalCatalogPreparationError): Response {
+	return Response.json(
+		{
+			error: {
+				failedNamespaces: error.failedNamespaces,
+				kind: 'catalog_preparation_failed',
+				message: error.message,
+			},
+			ok: false,
+		},
+		{ status: 503 },
+	);
 }
 
 function errorFromUnknown(error: unknown): Error {
@@ -237,7 +253,11 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			},
 			sessionIdGenerator: () => sessionId,
 		});
+		const catalog =
+			options.catalogMode === 'catalog' ? await options.core.prepareCatalog(identity) : undefined;
 		server = createPortalMcpServer({
+			...(catalog === undefined ? {} : { catalog }),
+			catalogMode: options.catalogMode ?? 'compact',
 			core: options.core,
 			scope: identity,
 		});
@@ -339,7 +359,15 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			if (closing) {
 				return unavailableResponse();
 			}
-			const activeSession = await createActiveSession(agentIdentity);
+			let activeSession: ActivePortalMcpSession;
+			try {
+				activeSession = await createActiveSession(agentIdentity);
+			} catch (error) {
+				if (error instanceof PortalCatalogPreparationError) {
+					return catalogUnavailableResponse(error);
+				}
+				throw error;
+			}
 			if (closing) {
 				await activeSession.transport.close();
 				return unavailableResponse();

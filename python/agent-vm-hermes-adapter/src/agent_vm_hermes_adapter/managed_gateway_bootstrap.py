@@ -40,6 +40,10 @@ from .managed_profile_adapter import (
     _validate_canonical_managed_projection,
 )
 from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.catalog import (
+    ManagedCatalogCoordinator,
+    ManagedCatalogTurnBindings,
+)
 from .managed_tool_portal.gateway_runtime_inventory_port import (
     GatewayRuntimeInventoryPort,
     RedactedInventoryAttemptLogSink,
@@ -890,6 +894,8 @@ def _run_managed_hermes_gateway_runtime(
     managed_policy_bindings: _HermesManagedPolicyReadBindings | None = None
     inventory_coordinator: InventoryCoordinator | None = None
     injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker] | None = None
+    catalog_coordinator: ManagedCatalogCoordinator | None = None
+    catalog_turn_bindings: ManagedCatalogTurnBindings | None = None
     try:
         gateway_runtime_client = GatewayRuntimeClient(
             attachment=material.attachment,
@@ -915,6 +921,12 @@ def _run_managed_hermes_gateway_runtime(
         )
         managed_policy_bindings = _HermesManagedPolicyReadBindings()
         adapter.connect_gateway_runtime()
+        catalog_coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        adapter.run_gateway_runtime_coroutine(catalog_coordinator.prepare_all())
+        catalog_turn_bindings = ManagedCatalogTurnBindings(
+            adapter=adapter,
+            catalogs=catalog_coordinator,
+        )
         inventory_projections = tuple(
             _build_inventory_projection(
                 gateway_epoch=gateway_epoch,
@@ -941,6 +953,8 @@ def _run_managed_hermes_gateway_runtime(
             inventory_coordinator=inventory_coordinator,
             injection_state_cache=injection_state_cache,
             gateway_epoch=gateway_epoch,
+            catalog_coordinator=catalog_coordinator,
+            catalog_turn_bindings=catalog_turn_bindings,
         )
         adapter.submit_gateway_runtime_coroutine(
             _start_inventory_populations(
@@ -967,32 +981,32 @@ def _run_managed_hermes_gateway_runtime(
         try:
             # Construction above can fail before any assignment; ty narrows this
             # finally block using the successful path only. Keep partial-startup guards.
-            if inventory_coordinator is not None and adapter is not None:  # ty: ignore[redundant-condition-strict]
+            if inventory_coordinator is not None and adapter is not None:
                 _close_managed_tool_portal_state(
                     adapter=adapter,
                     inventory_coordinator=inventory_coordinator,
                     injection_state_cache=injection_state_cache,
                 )
-            elif injection_state_cache is not None:  # ty: ignore[redundant-condition-strict]
+            elif injection_state_cache is not None:
                 injection_state_cache.close(EvictionReason.RUNTIME_SHUTDOWN)
         finally:
             try:
                 clear_managed_tool_portal_plugin_configuration()
             finally:
                 try:
-                    if managed_policy_bindings is not None:  # ty: ignore[redundant-condition-strict]
+                    if managed_policy_bindings is not None:
                         managed_policy_bindings.close()
                 finally:
                     try:
-                        if process_hooks is not None:  # ty: ignore[redundant-condition-strict]
+                        if process_hooks is not None:
                             process_hooks.close()
                     finally:
                         try:
-                            if hooks is not None:  # ty: ignore[redundant-condition-strict]
+                            if hooks is not None:
                                 hooks.close()
                         finally:
                             try:
-                                if adapter is not None:  # ty: ignore[redundant-condition-strict]
+                                if adapter is not None:
                                     adapter.close()
                             finally:
                                 telemetry.shutdown()

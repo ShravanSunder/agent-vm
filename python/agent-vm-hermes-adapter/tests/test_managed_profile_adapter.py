@@ -106,6 +106,7 @@ class HermesManagedAdapterTests(unittest.TestCase):
                 "agentId",
                 "frameworkIdentity",
                 "profileAssignmentRevision",
+                "toolPortalCatalogMode",
                 "toolPortalNamespaces",
                 "toolPortalProfileId",
             },

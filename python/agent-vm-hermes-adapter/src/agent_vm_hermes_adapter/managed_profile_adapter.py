@@ -75,6 +75,9 @@ class CanonicalManagedAgentProjection(BaseModel):
         max_length=_BOUNDED_IDENTIFIER_MAXIMUM_LENGTH,
     )
     framework_identity: ManagedFrameworkIdentity = Field(alias="frameworkIdentity")
+    tool_portal_catalog_mode: Literal["compact", "catalog"] | None = Field(
+        default=None, alias="toolPortalCatalogMode"
+    )
     profile_assignment_revision: str = Field(
         alias="profileAssignmentRevision",
         min_length=1,
@@ -168,6 +171,12 @@ class ManagedTrustedInvocationCorrelation(BaseModel):
         min_length=1,
         max_length=_BOUNDED_IDENTIFIER_MAXIMUM_LENGTH,
     )
+    turn_id: str | None = Field(
+        default=None,
+        alias="turnId",
+        min_length=1,
+        max_length=_BOUNDED_IDENTIFIER_MAXIMUM_LENGTH,
+    )
 
 
 class ManagedTrustedContext(BaseModel):
@@ -227,11 +236,12 @@ def build_managed_trusted_context(
     projection: CanonicalManagedAgentProjection,
     *,
     session_id: str | None = None,
+    turn_id: str | None = None,
 ) -> ManagedTrustedContext:
     """Build the shared trusted principal from one admitted Hermes projection."""
     correlation = (
-        ManagedTrustedInvocationCorrelation(session_id=session_id)
-        if session_id is not None
+        ManagedTrustedInvocationCorrelation(session_id=session_id, turn_id=turn_id)
+        if session_id is not None or turn_id is not None
         else None
     )
     return ManagedTrustedContext(

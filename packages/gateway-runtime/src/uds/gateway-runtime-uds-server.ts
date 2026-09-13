@@ -78,6 +78,7 @@ export interface StartGatewayRuntimeUdsServerOptions {
 	readonly dispatch: GatewayRuntimeUdsOperationDispatcher;
 	readonly frameLimits?: GatewayRuntimeFrameLimitOverrides | undefined;
 	readonly limits?: GatewayRuntimeUdsServerLimits;
+	readonly onConnectionClosed?: (connectionId: string) => void;
 	readonly paths: GatewayRuntimePaths;
 	readonly resolveOperationGroup: (method: string) => string | undefined;
 }
@@ -355,6 +356,7 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 	readonly #dispatch: GatewayRuntimeUdsOperationDispatcher;
 	readonly #frameLimits: GatewayRuntimeFrameLimitOverrides;
 	readonly #limits: ResolvedGatewayRuntimeUdsServerLimits;
+	readonly #onConnectionClosed: ((connectionId: string) => void) | undefined;
 	readonly #paths: GatewayRuntimePaths;
 	readonly #resolveOperationGroup: (method: string) => string | undefined;
 	readonly #server: Server;
@@ -389,6 +391,7 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 		this.#dispatch = options.dispatch;
 		this.#frameLimits = options.frameLimits ?? {};
 		this.#limits = resolveServerLimits(options.limits);
+		this.#onConnectionClosed = options.onConnectionClosed;
 		this.#writableLimits = resolveGatewayRuntimeWritableLimits(this.#frameLimits);
 		this.#paths = options.paths;
 		this.#resolveOperationGroup = options.resolveOperationGroup;
@@ -804,6 +807,7 @@ class GatewayRuntimeUdsServerRuntime implements GatewayRuntimeUdsServer {
 		}
 		this.#pendingRequestCount -= connection.pendingDispatches.size;
 		connection.pendingDispatches.clear();
+		this.#onConnectionClosed?.(connection.connectionId);
 		const transition = reduceManagedPluginAttachmentState(this.#attachmentState, {
 			connectionId: connection.connectionId,
 			kind: 'disconnected',

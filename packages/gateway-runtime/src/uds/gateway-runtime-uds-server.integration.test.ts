@@ -15,6 +15,7 @@ import {
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createGatewayRuntimePrivateUdsDispatcher } from '../production/gateway-runtime-private-uds-dispatcher.js';
 import { createGatewayRuntimePaths, type GatewayRuntimePaths } from './gateway-runtime-paths.js';
 import {
 	GatewayRuntimeUdsServerError,
@@ -47,6 +48,10 @@ const SERVER_AUTHORITY = {
 
 const temporaryRoots: string[] = [];
 const runningServers: GatewayRuntimeUdsServer[] = [];
+
+async function rejectUnexpectedTestOperation(): Promise<never> {
+	throw new Error('Unexpected test operation.');
+}
 
 function failOnAttachmentObserverError(error: unknown): never {
 	throw error;
@@ -105,6 +110,7 @@ async function startTestServer(
 		};
 		readonly maxConnections?: number;
 		readonly maxPendingRequestsPerConnection?: number;
+		readonly onConnectionClosed?: (connectionId: string) => void;
 		readonly paths?: GatewayRuntimePaths;
 	} = {},
 ): Promise<GatewayRuntimeUdsServer> {
@@ -119,6 +125,9 @@ async function startTestServer(
 			maxConnections: props.maxConnections ?? 4,
 			maxPendingRequestsPerConnection: props.maxPendingRequestsPerConnection ?? 4,
 		},
+		...(props.onConnectionClosed === undefined
+			? {}
+			: { onConnectionClosed: props.onConnectionClosed }),
 		paths,
 		resolveOperationGroup,
 	});
@@ -183,6 +192,72 @@ afterEach(async (): Promise<void> => {
 });
 
 describe('production Gateway runtime private UDS server', () => {
+	it('dispatches a validated catalog preparation request through the authenticated private socket', async () => {
+		const catalogInvocations: unknown[] = [];
+		const closedConnectionIds: string[] = [];
+		const connectionClosed = Promise.withResolvers<string>();
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: rejectUnexpectedTestOperation },
+			artifactOperations: { read: rejectUnexpectedTestOperation },
+			catalogOperations: {
+				offer: rejectUnexpectedTestOperation,
+				prepare: async (invocation) => {
+					catalogInvocations.push(invocation);
+					return { diagnostics: [], kind: 'incomplete', reason: 'catalog-incomplete' };
+				},
+				read: rejectUnexpectedTestOperation,
+				release: rejectUnexpectedTestOperation,
+			},
+			portalOperations: {
+				call: rejectUnexpectedTestOperation,
+				describe: rejectUnexpectedTestOperation,
+				list: rejectUnexpectedTestOperation,
+				search: rejectUnexpectedTestOperation,
+			},
+			sandboxDispatch: rejectUnexpectedTestOperation,
+		});
+		const server = await startTestServer({
+			dispatch: dispatcher.dispatch,
+			onConnectionClosed: (connectionId) => {
+				closedConnectionIds.push(connectionId);
+				connectionClosed.resolve(connectionId);
+			},
+		});
+		const client = createClient(server.readiness.socketPath);
+		const trustedContext = {
+			correlation: { sessionId: 'session-1', turnId: 'turn-1' },
+			principal: {
+				agentId: 'main',
+				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
+				profileAssignmentRevision: 'assignment-1',
+				toolPortalProfileId: 'profile-1',
+			},
+		};
+
+		await client.connect();
+		const result = await client.request('portal.catalog.prepare', {
+			publicRequest: {},
+			trustedContext,
+		});
+
+		expect(result).toEqual({ diagnostics: [], kind: 'incomplete', reason: 'catalog-incomplete' });
+		expect(catalogInvocations).toEqual([
+			expect.objectContaining({ publicRequest: {}, trustedContext }),
+		]);
+		await client.disconnect();
+		await Promise.race([
+			connectionClosed.promise,
+			new Promise<never>((_resolve, reject) =>
+				AbortSignal.timeout(PROTOCOL_WAIT_MILLISECONDS).addEventListener(
+					'abort',
+					() => reject(new Error('Timed out waiting for catalog connection retirement.')),
+					{ once: true },
+				),
+			),
+		]);
+		expect(closedConnectionIds).toHaveLength(1);
+	});
+
 	it('reports immutable accepted and lost current attachment snapshots exactly once', async () => {
 		// Arrange
 		const server = await startTestServer();

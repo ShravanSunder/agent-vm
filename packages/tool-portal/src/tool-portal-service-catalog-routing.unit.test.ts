@@ -28,6 +28,61 @@ import {
 import { createManagedToolPortalCapabilityCore } from './tool-portal-service.js';
 
 describe('ToolPortalCapabilityCore catalog routing', () => {
+	it('prepares one complete exact-schema catalog across every admitted managed backend', async () => {
+		const fixture = createServiceFixture();
+
+		const result = await fixture.capabilityCore.prepareCatalog(udsOptions());
+
+		expect(result).toEqual({
+			kind: 'complete',
+			tools: [
+				{
+					inputSchema: { properties: {}, type: 'object' },
+					name: 'workspace_git_push',
+					namespace: 'controller_execution',
+				},
+				{
+					inputSchema: { properties: {}, type: 'object' },
+					name: 'get_issue',
+					namespace: 'github',
+				},
+				{
+					inputSchema: { properties: {}, type: 'object' },
+					name: 'exec',
+					namespace: 'sandbox',
+				},
+			],
+		});
+	});
+
+	it('marks preparation incomplete when one admitted backend cannot describe its definitions', async () => {
+		const approval = createRecordingApprovalPort();
+		const failingMcp = createRecordingBackendPort('mcp_provider', 'github', {
+			readErrorOperations: ['describe'],
+		});
+		const core = createManagedToolPortalCapabilityCore({
+			approvalPort: approval.port,
+			backendPorts: {
+				controllerExecution: createRecordingBackendPort(
+					'controller_execution',
+					'controller_execution',
+				).port,
+				mcpProvider: failingMcp.port,
+				toolVmRunner: createRecordingBackendPort('tool_vm_runner', 'sandbox').port,
+			},
+			config: mixedBackendConfig,
+			semanticSnapshot,
+		});
+
+		const result = await core.prepareCatalog(udsOptions());
+
+		expect(result.kind).toBe('incomplete');
+		if (result.kind !== 'incomplete') throw new Error('Expected incomplete catalog.');
+		expect(result.diagnostics).toContainEqual(
+			expect.objectContaining({ code: 'provider_unavailable' }),
+		);
+	});
+
 	it.each([
 		['accounts', false],
 		['unavailable', true],
@@ -392,7 +447,12 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 			]);
 		}
 		expect(backendListResult.items).toEqual([
-			expect.objectContaining({ value: { namespaces: ['github'], tools: [] } }),
+			expect.objectContaining({
+				value: {
+					namespaces: ['github'],
+					tools: [expect.objectContaining({ name: 'get_issue', namespace: 'github' })],
+				},
+			}),
 		]);
 		expect(backendListResult.items[0]).not.toHaveProperty('namespaceDiscovery');
 		expect(

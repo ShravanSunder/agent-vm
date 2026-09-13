@@ -30,6 +30,10 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesManagedAdapterConfig,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import (
+    ManagedCatalogCoordinator,
+    ManagedCatalogTurnBindings,
+)
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import RegisteredMiddleware
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     EvictionReason,
@@ -1433,6 +1437,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
                 injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
                 gateway_epoch: str,
+                catalog_coordinator: ManagedCatalogCoordinator,
+                catalog_turn_bindings: ManagedCatalogTurnBindings,
             ) -> None:
                 events.append("managed-runtime")
                 original_configure(
@@ -1442,6 +1448,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     inventory_coordinator=inventory_coordinator,
                     injection_state_cache=injection_state_cache,
                     gateway_epoch=gateway_epoch,
+                    catalog_coordinator=catalog_coordinator,
+                    catalog_turn_bindings=catalog_turn_bindings,
                 )
 
             with (
@@ -1556,6 +1564,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
             injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
             gateway_epoch: str,
+            catalog_coordinator: ManagedCatalogCoordinator,
+            catalog_turn_bindings: ManagedCatalogTurnBindings,
         ) -> None:
             events.append("configure")
             original_configure(
@@ -1565,6 +1575,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 inventory_coordinator=inventory_coordinator,
                 injection_state_cache=injection_state_cache,
                 gateway_epoch=gateway_epoch,
+                catalog_coordinator=catalog_coordinator,
+                catalog_turn_bindings=catalog_turn_bindings,
             )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
