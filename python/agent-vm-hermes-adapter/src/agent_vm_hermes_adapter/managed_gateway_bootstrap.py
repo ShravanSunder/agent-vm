@@ -86,6 +86,7 @@ _MANAGED_TOOL_VM_CWD = "/work"
 _STOCK_HERMES_RESERVED_DEFAULT_PROFILE_NAME = "default"
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _MANAGED_UPSTREAM_ROUTING_ENVIRONMENT: Mapping[str, str] = {
+    "TERMINAL_CWD": _MANAGED_TOOL_VM_CWD,
     "TERMINAL_ENV": "ssh",
     "TERMINAL_SSH_HOST": "managed-tool-vm.invalid",
     "TERMINAL_SSH_USER": "agent-vm-managed",

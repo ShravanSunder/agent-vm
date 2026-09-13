@@ -287,6 +287,7 @@ class FakeManagedEnvironment:
         self.cleanup_calls = 0
         self.cleanup_error: Exception | None = None
         self.retired = False
+        self.execute_calls: list[tuple[str, dict[str, object]]] = []
 
     def bind_cache_identity(self, cache_identity: str) -> None:
         self.bound_cache_identity = cache_identity
@@ -306,7 +307,7 @@ class FakeManagedEnvironment:
         self.retired = True
 
     def execute(self, command: str, **kwargs: object) -> dict[str, object]:
-        del command, kwargs
+        self.execute_calls.append((command, dict(kwargs)))
         return {"output": "", "returncode": 0}
 
 
@@ -911,6 +912,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 os.environ,
                 {
                     "TERMINAL_ENV": "local",
+                    "TERMINAL_CWD": "/previous/gateway/cwd",
                     "TERMINAL_SSH_HOST": "previous-host",
                     "TERMINAL_SSH_USER": "previous-user",
                 },
@@ -943,6 +945,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             hooks.install()
             try:
                 self.assertEqual(os.environ["TERMINAL_ENV"], "ssh")
+                self.assertEqual(os.environ["TERMINAL_CWD"], "/work")
                 self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "managed-tool-vm.invalid")
                 self.assertEqual(os.environ["TERMINAL_SSH_USER"], "agent-vm-managed")
                 result = stock_terminal_tool.terminal_tool(
@@ -956,6 +959,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter.close(disconnect_gateway_runtime=False)
 
             self.assertEqual(os.environ["TERMINAL_ENV"], "local")
+            self.assertEqual(os.environ["TERMINAL_CWD"], "/previous/gateway/cwd")
             self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "previous-host")
             self.assertEqual(os.environ["TERMINAL_SSH_USER"], "previous-user")
 
@@ -1013,6 +1017,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter.close(disconnect_gateway_runtime=False)
 
         self.assertEqual(json.loads(result)["exit_code"], 0)
+        self.assertEqual(len(managed_environment.execute_calls), 1)
+        command, execute_options = managed_environment.execute_calls[0]
+        self.assertEqual(command, "printf managed")
+        self.assertEqual(execute_options["cwd"], "/work")
         local_environment.assert_not_called()
         ssh_environment.assert_not_called()
 
