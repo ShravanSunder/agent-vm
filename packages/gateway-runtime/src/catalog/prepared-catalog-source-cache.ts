@@ -13,11 +13,11 @@ import {
 	type PortalCatalogReleaseResult,
 	type PortalCatalogSourceManifest,
 } from '@agent-vm/agent-portal-sdk';
-import {
+import type {
 	compileCatalogTypescriptModules,
 	fingerprintCatalogTypescriptInput,
-	type CompileCatalogTypescriptModulesInput,
-	type CompiledCatalogTypescriptBundle,
+	CompileCatalogTypescriptModulesInput,
+	CompiledCatalogTypescriptBundle,
 } from '@agent-vm/mcp-portal/catalog-typescript';
 
 export const PREPARED_CATALOG_SOURCE_CACHE_MAXIMUM_BYTES = 64 * 1_024 * 1_024;
@@ -95,6 +95,36 @@ export interface CreatePreparedCatalogSourceCacheProps {
 		readonly maximumBytes?: number;
 		readonly maximumEntries?: number;
 		readonly maximumOffers?: number;
+	};
+}
+
+interface CatalogTypescriptCompiler {
+	readonly compile: typeof compileCatalogTypescriptModules;
+	readonly fingerprint: typeof fingerprintCatalogTypescriptInput;
+}
+
+let catalogTypescriptCompilerPromise: Promise<CatalogTypescriptCompiler> | undefined;
+
+async function loadCatalogTypescriptCompiler(): Promise<CatalogTypescriptCompiler> {
+	catalogTypescriptCompilerPromise ??= import('@agent-vm/mcp-portal/catalog-typescript').then(
+		(compilerModule) => ({
+			compile: compilerModule.compileCatalogTypescriptModules,
+			fingerprint: compilerModule.fingerprintCatalogTypescriptInput,
+		}),
+	);
+	return await catalogTypescriptCompilerPromise;
+}
+
+async function resolveCatalogTypescriptCompiler(
+	props: CreatePreparedCatalogSourceCacheProps,
+): Promise<CatalogTypescriptCompiler> {
+	if (props.compile !== undefined && props.fingerprint !== undefined) {
+		return { compile: props.compile, fingerprint: props.fingerprint };
+	}
+	const defaultCompiler = await loadCatalogTypescriptCompiler();
+	return {
+		compile: props.compile ?? defaultCompiler.compile,
+		fingerprint: props.fingerprint ?? defaultCompiler.fingerprint,
 	};
 }
 
@@ -218,8 +248,6 @@ function hasCompleteCatalogOfferScope(authority: PreparedCatalogSourceAuthority)
 export function createPreparedCatalogSourceCache(
 	props: CreatePreparedCatalogSourceCacheProps = {},
 ): PreparedCatalogSourceCache {
-	const compile = props.compile ?? compileCatalogTypescriptModules;
-	const fingerprint = props.fingerprint ?? fingerprintCatalogTypescriptInput;
 	const maximumBytes = props.limits?.maximumBytes ?? PREPARED_CATALOG_SOURCE_CACHE_MAXIMUM_BYTES;
 	const maximumEntries =
 		props.limits?.maximumEntries ?? PREPARED_CATALOG_SOURCE_CACHE_MAXIMUM_ENTRIES;
@@ -317,6 +345,7 @@ export function createPreparedCatalogSourceCache(
 		},
 		prepare: async ({ authority, input }) => {
 			if (retired) return unavailableDiagnostic('Catalog source preparation is unavailable.');
+			const { compile, fingerprint } = await resolveCatalogTypescriptCompiler(props);
 			let definitionFingerprint: string;
 			try {
 				definitionFingerprint = fingerprint(input);
