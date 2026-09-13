@@ -11,26 +11,24 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
 MAX_ORIENTATION_UTF8_BYTES = 2_000
 MAX_DISPLAYED_NAMESPACE_COUNT = 20
 
-_ORIENTATION_INTRODUCTION = (
-    "Tool Portal exposes profile-authorized capabilities and operation files:"
-)
+_ORIENTATION_INTRODUCTION = "Profile-authorized Portal tools:"
 _OPERATION_LINES = (
-    "- tool_portal_list: Discover authorized capabilities.",
-    "- tool_portal_search: Find capabilities by intent.",
-    "- tool_portal_describe: Get exact schemas.",
-    "- tool_portal_call: Validate and call.",
-    "- tool_portal_file: Attach a selected file.",
+    "- tool_portal_list, tool_portal_search, tool_portal_describe, tool_portal_call, "
+    "tool_portal_file.",
 )
 _COMPOSITION_LINES = (
-    "Tool VM clients: Python connect_tool_portal(), TypeScript connectToolPortal(), "
-    "and tool-portal CLI.",
-    "During the active foreground invocation, inspect and compose results; wait for human approval.",
-    "Transport uncertain? do not replay uncertain effects. Guide: /agent-vm/tool-portal.md",
+    "Python connect_tool_portal(), TypeScript connectToolPortal(), and "
+    "tool-portal CLI auto-connect "
+    "for the active foreground invocation; endpoint expires afterward.",
+    "Inspect/compose; wait for human approval. Uncertain transport: do not replay "
+    "uncertain effects. Guide: /agent-vm/tool-portal.md",
 )
 _WORKFLOW_LINE = (
     "Workflow: discover, describe, call, inspect.\n"
-    "Files: use /work-relative inputs and --out; /agent-vm/files is read-only and expires. "
-    "Copy wanted files to /workspace; check exitCode."
+    "Gog files: relative --out/--out-dir uses an operation folder; use reported names or "
+    "list it. Inputs start at /work, not terminal cwd. /agent-vm/files is read-only to ordinary "
+    "tools; expiresAtMs or Tool VM close ends access; reads do not extend one hour. Copy to "
+    "/workspace; check exitCode—a file does not prove success."
 )
 
 
