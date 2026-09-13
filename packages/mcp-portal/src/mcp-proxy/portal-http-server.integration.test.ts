@@ -12,6 +12,12 @@ import {
 	type PortalAgentIdentity,
 } from '../portal-access-policy.js';
 import { deriveAgentBearerToken } from '../portal-auth/agent-bearer-token.js';
+import {
+	createUpstreamMcpClientRuntime,
+	type NormalizedUpstreamMcpServer,
+	type UpstreamMcpClientLike,
+	type UpstreamListToolsResult,
+} from '../upstream-mcp-client-runtime.js';
 import { createPortalHttpApp } from './portal-http-server.js';
 
 const masterKey = Buffer.from('master-key');
@@ -633,62 +639,129 @@ describe('portal HTTP server', () => {
 	});
 
 	it('refuses catalog-mode session initialization when authorized discovery is incomplete', async () => {
+		const upstreamClients: UpstreamMcpClientLike[] = [];
+		const upstreamNamespacesByClient = new Map<UpstreamMcpClientLike, string>();
+		const upstreamRuntime = createUpstreamMcpClientRuntime({
+			createClient: () => {
+				const client: UpstreamMcpClientLike = {
+					callTool: vi.fn(),
+					close: vi.fn(),
+					connect: vi.fn(async (transport) => {
+						if (
+							typeof transport !== 'object' ||
+							transport === null ||
+							!('namespace' in transport) ||
+							typeof transport.namespace !== 'string'
+						) {
+							throw new Error('test upstream transport did not identify its namespace');
+						}
+						upstreamNamespacesByClient.set(client, transport.namespace);
+					}),
+					listTools: vi.fn(async (): Promise<UpstreamListToolsResult> => {
+						const namespace = upstreamNamespacesByClient.get(client);
+						if (namespace === 'beta-failing') {
+							throw new Error('provider credential detail must not escape');
+						}
+						return {
+							tools: [{ inputSchema: { type: 'object' }, name: 'healthy_tool' }],
+						};
+					}),
+				};
+				upstreamClients.push(client);
+				return client;
+			},
+			createTransport: (server) => server,
+			servers: ['alpha-healthy', 'beta-failing'].map(
+				(namespace): NormalizedUpstreamMcpServer => ({
+					namespace,
+					transport: 'streamable-http',
+					url: `https://${namespace}.example.test/mcp`,
+				}),
+			),
+		});
 		const core = createPortalCore({
 			accessPolicy: {
 				defaultPolicy: 'deny-all',
-				enabledNamespacesByAgent: { 'agent-a': ['github'] },
+				enabledNamespacesByAgent: { 'agent-a': ['alpha-healthy', 'beta-failing'] },
 				hiddenToolsByAgent: {},
 			},
 			approval: allowApproval,
 			catalogTtlMs: 60_000,
 			runtime: {
-				callUpstreamTool: async () => ({}),
-				closeAgentScope: () => undefined,
-				listTools: async () => {
-					throw new Error('provider credential detail must not escape');
-				},
+				callUpstreamTool: upstreamRuntime.callTool,
+				closeAgentScope: upstreamRuntime.closeAgentScope,
+				closeSession: upstreamRuntime.closeSession,
+				listTools: upstreamRuntime.listTools,
 			},
-			upstreamNamespaces: ['github'],
+			upstreamNamespaces: ['alpha-healthy', 'beta-failing'],
 		});
+		const closedSessionIds: string[] = [];
+		const sessionCloseErrors: Error[] = [];
 		const app = createPortalHttpApp({
 			agentBearerAuth: { authorizationHeaderName: 'authorization', masterKey },
 			catalogMode: 'catalog',
 			core,
+			onSessionCloseError: (error) => {
+				sessionCloseErrors.push(error);
+			},
+			onSessionClosed: async (identity) => {
+				closedSessionIds.push(identity.sessionId ?? 'missing-session-id');
+				await core.invalidateSession(identity);
+				throw new Error('failed-start cleanup observer failed');
+			},
 			resolveAgentIdentity: (agentId) =>
 				agentId === 'agent-a'
 					? createPortalAgentIdentity({ agentId: 'agent-a', agentScopeId: 'agent-a' })
 					: null,
 		});
-
-		const response = await app.request('/agents/agent-a/mcp', {
-			body: JSON.stringify({
-				id: 1,
-				jsonrpc: '2.0',
-				method: 'initialize',
-				params: {
-					capabilities: {},
-					clientInfo: { name: 'catalog-preparation-test', version: '1.0.0' },
-					protocolVersion: '2025-06-18',
+		const initializeRequest = async (): Promise<Response> =>
+			await app.request('/agents/agent-a/mcp', {
+				body: JSON.stringify({
+					id: 1,
+					jsonrpc: '2.0',
+					method: 'initialize',
+					params: {
+						capabilities: {},
+						clientInfo: { name: 'catalog-preparation-test', version: '1.0.0' },
+						protocolVersion: '2025-06-18',
+					},
+				}),
+				headers: {
+					authorization: bearerAuthHeader('agent-a'),
+					'content-type': 'application/json',
 				},
-			}),
-			headers: {
-				authorization: bearerAuthHeader('agent-a'),
-				'content-type': 'application/json',
-			},
-			method: 'POST',
-		});
+				method: 'POST',
+			});
 
-		expect(response.status).toBe(503);
-		const responseText = await response.clone().text();
-		await expect(response.json()).resolves.toEqual({
+		const firstResponse = await initializeRequest();
+
+		expect(firstResponse.status).toBe(503);
+		const responseText = await firstResponse.clone().text();
+		await expect(firstResponse.json()).resolves.toEqual({
 			error: {
-				failedNamespaces: ['github'],
+				failedNamespaces: ['beta-failing'],
 				kind: 'catalog_preparation_failed',
-				message: expect.stringContaining('github'),
+				message: expect.stringContaining('beta-failing'),
 			},
 			ok: false,
 		});
 		expect(responseText).not.toContain('credential detail');
+		expect(upstreamClients).toHaveLength(2);
+		expect(upstreamClients[0]?.close).toHaveBeenCalledTimes(1);
+		expect(upstreamClients[1]?.close).toHaveBeenCalledTimes(1);
+
+		await expect(initializeRequest()).resolves.toMatchObject({ status: 503 });
+		expect(upstreamClients).toHaveLength(4);
+		expect(upstreamClients[2]?.close).toHaveBeenCalledTimes(1);
+		expect(upstreamClients[3]?.close).toHaveBeenCalledTimes(1);
+		expect(new Set(closedSessionIds).size).toBe(2);
+		expect(sessionCloseErrors.map((error) => error.message)).toEqual([
+			'failed-start cleanup observer failed',
+			'failed-start cleanup observer failed',
+		]);
+
+		await app.closePortalSessions();
+		expect(closedSessionIds).toHaveLength(2);
 		await core.close();
 	});
 

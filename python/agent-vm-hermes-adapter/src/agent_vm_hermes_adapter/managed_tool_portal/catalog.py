@@ -402,14 +402,16 @@ class ManagedCatalogTurnBindings:
         self._release_if_unused(projection, binding)
 
     def close_session(self, projection: CanonicalManagedAgentProjection, session_id: str) -> None:
+        profile_name = projection.framework_identity.profile_name
         with self._lock:
             selected = [
                 binding
                 for key, binding in self._bindings.items()
-                if key[:2] == (projection.framework_identity.profile_name, session_id)
+                if key[:2] == (profile_name, session_id)
             ]
             for binding in selected:
                 binding.turn_open = False
+            self._last_fingerprint_by_session.pop((profile_name, session_id), None)
         for binding in selected:
             self._release_if_unused(projection, binding)
 
@@ -418,6 +420,7 @@ class ManagedCatalogTurnBindings:
             selected = tuple(self._bindings.values())
             for binding in selected:
                 binding.turn_open = False
+            self._last_fingerprint_by_session.clear()
         projections = {
             projection.framework_identity.profile_name: projection
             for projection in self._adapter.profiles
@@ -434,6 +437,9 @@ class ManagedCatalogTurnBindings:
             if binding.released or binding.turn_open or binding.active_invocations != 0:
                 return
             binding.released = True
+            key = (binding.profile_name, binding.session_id, binding.turn_id)
+            if self._bindings.get(key) is binding:
+                del self._bindings[key]
         trusted_context = self._trusted_context(projection, binding.session_id, binding.turn_id)
         client = self._adapter.gateway_runtime_client_for_profile(binding.profile_name)
         self._adapter.run_gateway_runtime_coroutine(

@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import concurrent.futures
 import hashlib
 import json
+import threading
 import typing as t
 import unittest
 from collections.abc import Mapping
@@ -96,6 +98,8 @@ class FakeCatalogOperations:
         self.events: list[str] = []
         self.offers: list[tuple[str, str | None, str | None, str]] = []
         self.releases: list[tuple[str, str | None, str | None, str]] = []
+        self.release_error: Exception | None = None
+        self.turn_offer_barrier: threading.Barrier | None = None
 
     def set_tools(self, tools_by_agent: Mapping[str, tuple[str, ...]]) -> None:
         self._tools_by_agent = tools_by_agent
@@ -185,6 +189,8 @@ class FakeCatalogOperations:
     ) -> BaseModel:
         agent_id, session_id, turn_id = self._identity(trusted_context)
         self.events.append("offer")
+        if session_id is not None and self.turn_offer_barrier is not None:
+            self.turn_offer_barrier.wait()
         fingerprint = required_string(request["definitionFingerprint"])
         self.offers.append((agent_id, session_id, turn_id, fingerprint))
         selected, content = self._snapshot(agent_id, fingerprint)
@@ -227,6 +233,8 @@ class FakeCatalogOperations:
         self.releases.append(
             (agent_id, session_id, turn_id, required_string(request["definitionFingerprint"]))
         )
+        if self.release_error is not None:
+            raise self.release_error
         return PortableResult.model_validate({"kind": "released"})
 
 
@@ -459,6 +467,115 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
         self.assertTrue(after_restart_changed)
         self.assertEqual(after_restart.source.identity.definition_fingerprint, "b" * 64)
         restarted_bindings.close_session(profile, "session-1")
+
+    def test_completed_turn_bindings_are_reclaimed_while_active_turns_remain_retained(
+        self,
+    ) -> None:
+        profile = projection("researcher", mode="compact")
+        catalogs = FakeCatalogOperations({"researcher": manifest("a")})
+        adapter = FakeAdapter(
+            (profile,),
+            FakeClient(catalogs=catalogs, tools_by_agent={"researcher": ("overlap",)}),
+        )
+        coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        asyncio.run(coordinator.prepare_all())
+        bindings = ManagedCatalogTurnBindings(adapter=adapter, catalogs=coordinator)
+
+        active, _changed = bindings.offer_for_turn(
+            profile, session_id="session-1", turn_id="turn-active"
+        )
+        assert active is not None
+        self.assertIs(
+            bindings.acquire(profile, session_id="session-1", turn_id="turn-active"), active
+        )
+
+        current, _changed = bindings.offer_for_turn(
+            profile, session_id="session-1", turn_id="turn-0"
+        )
+        assert current is not None
+        self.assertEqual(len(bindings._bindings), 2)
+        for turn_number in range(1, 100):
+            current, _changed = bindings.offer_for_turn(
+                profile, session_id="session-1", turn_id=f"turn-{turn_number}"
+            )
+            assert current is not None
+            self.assertEqual(len(bindings._bindings), 2)
+
+        bindings.release_invocation(profile, active)
+        self.assertEqual(len(bindings._bindings), 1)
+        self.assertIs(bindings.acquire(profile, session_id="session-1", turn_id="turn-99"), current)
+        bindings.release_invocation(profile, current)
+        bindings.close_session(profile, "session-1")
+        self.assertEqual(bindings._bindings, {})
+
+    def test_release_failure_propagates_after_local_binding_and_session_marker_cleanup(
+        self,
+    ) -> None:
+        profile = projection("researcher", mode="compact")
+        catalogs = FakeCatalogOperations({"researcher": manifest("a")})
+        adapter = FakeAdapter(
+            (profile,),
+            FakeClient(catalogs=catalogs, tools_by_agent={"researcher": ("overlap",)}),
+        )
+        coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        asyncio.run(coordinator.prepare_all())
+        bindings = ManagedCatalogTurnBindings(adapter=adapter, catalogs=coordinator)
+
+        offered, changed = bindings.offer_for_turn(
+            profile, session_id="session-1", turn_id="turn-1"
+        )
+        assert offered is not None
+        self.assertTrue(changed)
+        catalogs.release_error = RuntimeError("release failed")
+
+        with self.assertRaisesRegex(RuntimeError, "release failed"):
+            bindings.close_session(profile, "session-1")
+
+        self.assertEqual(bindings._bindings, {})
+        catalogs.release_error = None
+        replacement, replacement_changed = bindings.offer_for_turn(
+            profile, session_id="session-1", turn_id="turn-1"
+        )
+        assert replacement is not None
+        self.assertIsNot(replacement, offered)
+        self.assertTrue(replacement_changed)
+        bindings.close_session(profile, "session-1")
+
+    def test_concurrent_duplicate_release_does_not_remove_the_installed_binding(self) -> None:
+        profile = projection("researcher", mode="compact")
+        catalogs = FakeCatalogOperations({"researcher": manifest("a")})
+        adapter = FakeAdapter(
+            (profile,),
+            FakeClient(catalogs=catalogs, tools_by_agent={"researcher": ("overlap",)}),
+        )
+        coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        asyncio.run(coordinator.prepare_all())
+        bindings = ManagedCatalogTurnBindings(adapter=adapter, catalogs=coordinator)
+        catalogs.turn_offer_barrier = threading.Barrier(2)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(
+                bindings.offer_for_turn,
+                profile,
+                session_id="session-1",
+                turn_id="turn-1",
+            )
+            second_future = executor.submit(
+                bindings.offer_for_turn,
+                profile,
+                session_id="session-1",
+                turn_id="turn-1",
+            )
+            first, _first_changed = first_future.result()
+            second, _second_changed = second_future.result()
+
+        assert first is not None and second is not None
+        self.assertIs(first, second)
+        self.assertEqual(len(bindings._bindings), 1)
+        acquired = bindings.acquire(profile, session_id="session-1", turn_id="turn-1")
+        self.assertIs(acquired, first)
+        bindings.release_invocation(profile, first)
+        bindings.close_session(profile, "session-1")
 
 
 if __name__ == "__main__":

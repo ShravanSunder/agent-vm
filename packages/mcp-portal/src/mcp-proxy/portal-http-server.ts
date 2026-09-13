@@ -145,6 +145,17 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 		await options.onSessionCloseError?.(errorFromUnknown(error), identity);
 	}
 
+	async function reportFailedSessionCleanupError(
+		error: unknown,
+		identity: PortalAgentIdentity,
+	): Promise<void> {
+		try {
+			await reportSessionCloseError(error, identity);
+		} catch {
+			// Failed-start cleanup must preserve the original initialization error.
+		}
+	}
+
 	function pruneAuthFailureBuckets(nowMs: number): void {
 		for (const [key, bucket] of authFailureBuckets) {
 			if (bucket.resetAtMs <= nowMs) {
@@ -253,16 +264,37 @@ export function createPortalHttpApp(options: PortalHttpAppOptions): PortalHttpAp
 			},
 			sessionIdGenerator: () => sessionId,
 		});
-		const catalog =
-			options.catalogMode === 'catalog' ? await options.core.prepareCatalog(identity) : undefined;
-		server = createPortalMcpServer({
-			...(catalog === undefined ? {} : { catalog }),
-			catalogMode: options.catalogMode ?? 'compact',
-			core: options.core,
-			scope: identity,
-		});
-		await server.connect(transport);
-		return { identity, server, transport };
+		try {
+			const catalog =
+				options.catalogMode === 'catalog' ? await options.core.prepareCatalog(identity) : undefined;
+			server = createPortalMcpServer({
+				...(catalog === undefined ? {} : { catalog }),
+				catalogMode: options.catalogMode ?? 'compact',
+				core: options.core,
+				scope: identity,
+			});
+			await server.connect(transport);
+			return { identity, server, transport };
+		} catch (error) {
+			if (server !== null) {
+				try {
+					await server.close();
+				} catch (closeError) {
+					await reportFailedSessionCleanupError(closeError, identity);
+				}
+			}
+			try {
+				await transport.close();
+			} catch (closeError) {
+				await reportFailedSessionCleanupError(closeError, identity);
+			}
+			try {
+				await options.onSessionClosed?.(identity);
+			} catch (closeError) {
+				await reportFailedSessionCleanupError(closeError, identity);
+			}
+			throw error;
+		}
 	}
 
 	async function closePortalSessions(): Promise<void> {
