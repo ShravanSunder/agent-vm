@@ -448,7 +448,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		const generatedTerminalResult = modelServer.latestGeneratedTerminalResult();
 		expect(generatedTerminalResult).toContain('portal-composition-generated-terminal-complete');
 		const generatedTerminalEnvelope = z
-			.object({ exit_code: z.literal(0), output: z.string(), status: z.literal('success') })
+			.object({ exit_code: z.literal(0), output: z.string(), error: z.null() })
 			.parse(JSON.parse(generatedTerminalResult ?? 'null'));
 		const generatedTerminalOutput = z
 			.object({
