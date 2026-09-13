@@ -1,7 +1,7 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
+	type ResolvedOAuthConfig,
 } from '@agent-vm/config-contracts';
 
 import { type OAuthKeyEncryptionKey } from '../envelope-codec.js';
@@ -40,7 +40,7 @@ export function createGoogleRuntimeCredentialPolicy(props: {
 	>;
 	readonly clientBindingRevisionsByApplication: Readonly<Record<GoogleOAuthApplicationId, string>>;
 	readonly allowedHostsByApplication: Readonly<Record<GoogleOAuthApplicationId, readonly string[]>>;
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly offeredGroupIdsByAgentApplication: GoogleOfferedPermissionGroups;
 	readonly operationIdsByAgent: Readonly<Record<string, readonly string[]>>;
 	readonly permissionPolicy: GoogleOAuthPermissionPolicy;

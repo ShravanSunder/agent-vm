@@ -26,7 +26,7 @@ describe('OAuth config contract', () => {
 		expect(
 			oauthConfigSchema.safeParse({
 				...input,
-				agents: { ...input.agents, sun: { ...input.agents.sun, email: 'synthetic@example.test' } },
+				agents: { sun: { email: 'synthetic@example.test' } },
 			}).success,
 		).toBe(false);
 		expect(
@@ -53,7 +53,9 @@ describe('OAuth config contract', () => {
 	it('rejects ceiling groups missing from the selected application family', () => {
 		// Arrange
 		const input = createOAuthPolicyCompilerTestInput();
-		input.oauthConfig.agents.sun.applications['gmail-app'].ceiling.groupIds = ['forms.body.read'];
+		input.toolPortalConfig.profiles.shared.oauthApplications['gmail-app'].ceiling.groupIds = [
+			'forms.body.read',
+		];
 		// Act / Assert
 		expect(() => compileOAuthPolicy(input)).toThrow('ceiling');
 	});
@@ -128,24 +130,27 @@ describe('OAuth and Tool Portal cross-reference contract', () => {
 	it('rejects a reachable Google operation for an agent with no OAuth admission', () => {
 		// Arrange
 		const input = createOAuthPolicyCompilerTestInput();
-		const config = oauthConfigSchema.parse(input.oauthConfig);
-		delete config.agents.sun;
-		for (const owner of Object.values(config.owners)) owner.allowedAgentIds = ['ember'];
-		for (const editor of Object.values(config.policyEditors)) editor.editableAgentIds = ['ember'];
+		const { oauthApplications: _removedApplications, ...sharedProfile } =
+			input.toolPortalConfig.profiles.shared;
+		const toolPortalConfig = {
+			...input.toolPortalConfig,
+			profiles: { ...input.toolPortalConfig.profiles, shared: sharedProfile },
+		};
 		// Act / Assert
-		expect(() => compileOAuthPolicy({ ...input, oauthConfig: config })).toThrow(
-			'without OAuth ceilings',
+		expect(() => compileOAuthPolicy({ ...input, toolPortalConfig })).toThrow(
+			'no application ceiling',
 		);
 	});
 	it('accepts configured Write Allow without adding a second OAuth must-ask policy', () => {
 		// Arrange
 		const input = createOAuthPolicyCompilerTestInput();
-		input.toolPortalConfig.profiles.shared.namespaces.google.backend.operations.gog.commands.push({
+		input.toolPortalConfig.profiles.ask.namespaces.google.backend.operations.gog.commands.push({
 			path: ['gmail', 'send'],
 			flagRules: [],
 		});
-		input.toolPortalConfig.agents.ember.googlePolicyDefaults.applications['gmail-app'].gmail.write =
-			'allow';
+		input.toolPortalConfig.profiles.ask.oauthApplications[
+			'gmail-app'
+		].policyDefaults.services.gmail.write = 'allow';
 		// Act / Assert
 		expect(compileOAuthPolicy(input).defaultsByAgentApplication.ember).toEqual({
 			'gmail-app': { gmail: { read: 'ask', write: 'allow' } },

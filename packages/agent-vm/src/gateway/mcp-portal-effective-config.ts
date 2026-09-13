@@ -9,6 +9,7 @@ import {
 	isControllerEphemeralManagedVmConfiguredCliOperation,
 	isControllerToolVmConfiguredCliOperation,
 	compileOAuthPolicy,
+	managedToolPortalRequiresOAuthConfiguration,
 	configuredGoogleOperationKey,
 	compileToolPortalNamespaceDiscoveryByProfile,
 	effectiveManagedToolPortalConfigSchema,
@@ -138,18 +139,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	if (effectiveConfig.mode !== 'managed') {
 		throw new Error('tool-portal: effective Managed VM image preparation requires managed mode.');
 	}
-	const hasGoogle = Object.values(effectiveConfig.profiles).some((profile) =>
-		Object.values(profile.namespaces).some(
-			(namespace) =>
-				namespace.backend.kind === 'controller_execution' &&
-				Object.values(namespace.backend.operations).some(
-					(operation) =>
-						operation.kind === 'configured_cli' &&
-						isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
-						operation.authorization?.kind === 'oauth_account',
-				),
-		),
-	);
+	const hasGoogle = managedToolPortalRequiresOAuthConfiguration(effectiveConfig);
 	let googleCompilation: ReturnType<typeof compileOAuthPolicy> | undefined;
 	if (hasGoogle) {
 		if (props.authoredConfigDir === undefined)
@@ -632,6 +622,9 @@ function assertManagedToolPortalConfig(props: {
 	readonly toolPortalConfig: ToolPortalConfig;
 	readonly workspaceGitPushAgentEligibility: WorkspaceGitPushAgentEligibility | undefined;
 }): void {
+	if (props.toolPortalConfig.mode !== 'managed') {
+		throw new Error('tool-portal: effective configuration requires managed mode.');
+	}
 	if (
 		!props.approvalAccessConfigured &&
 		managedToolPortalRequiresApprovalAccess(props.toolPortalConfig)
@@ -668,6 +661,7 @@ function selectorEffectivelyAllowsAnyTool(selector: ToolPortalNamespacePolicy['t
 }
 
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
+	if (config.mode !== 'managed') return false;
 	return Object.values(config.profiles).some((profile) =>
 		Object.values<(typeof profile.namespaces)[string]>(profile.namespaces).some(
 			(namespacePolicy) => {

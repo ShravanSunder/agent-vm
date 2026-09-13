@@ -18,11 +18,13 @@ import {
 	isEffectiveControllerToolVmConfiguredCliOperation,
 } from './controller-configured-cli.js';
 import {
+	googleConsentRecommendationConfigSchema,
 	googlePolicyDefaultsConfigSchema,
 	managedGoogleNamespaceCallPolicySchema,
 } from './google-policy-defaults-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 import { namespaceDiscoverySchema } from './mcp-config.js';
+import { googleOAuthApplicationIdSchema, googleOAuthCeilingSchema } from './oauth-config.js';
 import { secretValueSchema } from './secret-value.js';
 
 export const toolPortalToolSelectorSchema = z
@@ -306,6 +308,18 @@ export const toolPortalProfileDefinitionSchema = z
 	.object({
 		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), toolPortalNamespacePolicySchema).default({}),
+		oauthApplications: z
+			.partialRecord(
+				googleOAuthApplicationIdSchema,
+				z
+					.object({
+						ceiling: googleOAuthCeilingSchema,
+						consentRecommendation: googleConsentRecommendationConfigSchema.optional(),
+						policyDefaults: googlePolicyDefaultsConfigSchema.optional(),
+					})
+					.strict(),
+			)
+			.optional(),
 	})
 	.strict();
 
@@ -347,7 +361,6 @@ export const toolPortalCredentialBindingSchema = z
 
 export const managedToolPortalAgentConfigSchema = z
 	.object({
-		googlePolicyDefaults: googlePolicyDefaultsConfigSchema.optional(),
 		credentialBindings: z
 			.record(configuredCliCredentialLogicalNameSchema, toolPortalCredentialBindingSchema)
 			.optional(),
@@ -914,40 +927,38 @@ export const toolPortalConfigSchema = z
 			}
 		}
 
-		for (const [profileId, profile] of Object.entries<(typeof config.profiles)[string]>(
-			config.profiles,
-		)) {
-			for (const [namespaceId, namespacePolicy] of Object.entries<
-				(typeof profile.namespaces)[string]
-			>(profile.namespaces)) {
-				if (
-					namespacePolicy.backend.kind !== 'tool_vm_runner' &&
-					namespacePolicy.backend.kind !== 'controller_execution'
-				) {
-					continue;
-				}
-				const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
-				const selectors = [
-					[['tools'], namespacePolicy.tools] as const,
-					...('source' in namespacePolicy.calls
-						? []
-						: [
-								[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval] as const,
-								[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval] as const,
-							]),
-				];
-				for (const [selectorPath, selector] of selectors) {
-					const explicitNames = [
-						...(selector.allow === '*' ? [] : selector.allow),
-						...selector.deny,
+		if (config.mode === 'managed') {
+			for (const [profileId, profile] of Object.entries(config.profiles)) {
+				for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+					if (
+						namespacePolicy.backend.kind !== 'tool_vm_runner' &&
+						namespacePolicy.backend.kind !== 'controller_execution'
+					) {
+						continue;
+					}
+					const operationNames = new Set(Object.keys(namespacePolicy.backend.operations));
+					const selectors = [
+						[['tools'], namespacePolicy.tools] as const,
+						...('source' in namespacePolicy.calls
+							? []
+							: [
+									[['calls', 'requiresApproval'], namespacePolicy.calls.requiresApproval] as const,
+									[['calls', 'withoutApproval'], namespacePolicy.calls.withoutApproval] as const,
+								]),
 					];
-					for (const operationName of explicitNames) {
-						if (!operationNames.has(operationName)) {
-							context.addIssue({
-								code: z.ZodIssueCode.custom,
-								message: `${namespacePolicy.backend.kind} selector references missing operation "${operationName}".`,
-								path: ['profiles', profileId, 'namespaces', namespaceId, ...selectorPath],
-							});
+					for (const [selectorPath, selector] of selectors) {
+						const explicitNames = [
+							...(selector.allow === '*' ? [] : selector.allow),
+							...selector.deny,
+						];
+						for (const operationName of explicitNames) {
+							if (!operationNames.has(operationName)) {
+								context.addIssue({
+									code: z.ZodIssueCode.custom,
+									message: `${namespacePolicy.backend.kind} selector references missing operation "${operationName}".`,
+									path: ['profiles', profileId, 'namespaces', namespaceId, ...selectorPath],
+								});
+							}
 						}
 					}
 				}
@@ -1005,7 +1016,7 @@ export const toolPortalConfigSchema = z
 		}
 	});
 
-export type ToolPortalConfig = z.infer<typeof toolPortalConfigSchema>;
+export type ToolPortalConfig = ManagedToolPortalConfig | StandaloneToolPortalConfig;
 
 export async function loadToolPortalConfig(configPath: string): Promise<ToolPortalConfig> {
 	return toolPortalConfigSchema.parse(await loadJsonConfigFile(configPath));

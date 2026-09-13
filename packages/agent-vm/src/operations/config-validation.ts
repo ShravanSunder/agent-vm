@@ -6,7 +6,7 @@ import {
 	loadOAuthConfig,
 	loadToolPortalConfig,
 	compileOAuthPolicy,
-	isControllerEphemeralManagedVmConfiguredCliOperation,
+	managedToolPortalRequiresOAuthConfiguration,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { loadHermesManagedConfiguration } from '@agent-vm/hermes-gateway';
@@ -299,21 +299,8 @@ async function collectToolPortalConfigChecks(
 		checks.push({ name: `oauth-config-${zone.id}`, ok: true, hint: oauthConfigPath });
 	} catch (error) {
 		const requiresOAuth =
-			loadedToolPortalConfig !== undefined &&
-			Object.values(loadedToolPortalConfig.profiles).some((profile) =>
-				Object.values<(typeof profile.namespaces)[string]>(profile.namespaces).some(
-					(namespace) =>
-						namespace.backend.kind === 'controller_execution' &&
-						Object.values<(typeof namespace.backend.operations)[string]>(
-							namespace.backend.operations,
-						).some(
-							(operation) =>
-								operation.kind === 'configured_cli' &&
-								isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
-								operation.authorization?.kind === 'oauth_account',
-						),
-				),
-			);
+			loadedToolPortalConfig?.mode === 'managed' &&
+			managedToolPortalRequiresOAuthConfiguration(loadedToolPortalConfig);
 		if (!isMissingFileError(error) || requiresOAuth) {
 			checks.push({
 				name: `oauth-config-${zone.id}`,

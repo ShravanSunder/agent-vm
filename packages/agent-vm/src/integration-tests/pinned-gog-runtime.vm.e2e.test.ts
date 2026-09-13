@@ -103,80 +103,68 @@ describePinnedGogRuntime('pinned Gog v0.38.1 through Portal and credentialed Man
 				...catalog.families.documents.allowedHosts,
 			]),
 		];
-		const compiled = compileOAuthPolicy({
-			catalog,
-			oauthConfig: {
-				...compilerInput.oauthConfig,
-				agents: {
-					...compilerInput.oauthConfig.agents,
-					ember: {
-						applications: {
-							...compilerInput.oauthConfig.agents.ember?.applications,
-							'gmail-app': {
-								ceiling: {
-									kind: 'explicit',
-									groupIds: ['gmail.read', 'gmail.write'],
-								},
-							},
-							'workspace-app': {
-								ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
-							},
-						},
+		const sharedProfile = {
+			...compilerInput.toolPortalConfig.profiles.shared,
+			oauthApplications: {
+				'gmail-app': {
+					ceiling: { kind: 'explicit', groupIds: ['gmail.read', 'gmail.write'] },
+					policyDefaults: {
+						kind: 'explicit',
+						services: { gmail: { read: 'allow', write: 'ask' } },
 					},
-					sun: {
-						applications: {
-							'gmail-app': {
-								ceiling: {
-									kind: 'explicit',
-									groupIds: ['gmail.read', 'gmail.write'],
+				},
+				'workspace-app': {
+					ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
+					policyDefaults: {
+						kind: 'explicit',
+						services: { drive: { read: 'allow', write: 'deny' } },
+					},
+				},
+			},
+			namespaces: {
+				...compilerInput.toolPortalConfig.profiles.shared.namespaces,
+				google: {
+					...compilerInput.toolPortalConfig.profiles.shared.namespaces.google,
+					tools: { allow: ['gog'] },
+					backend: {
+						...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend,
+						operations: {
+							gog: {
+								...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend
+									.operations.gog,
+								commands,
+								executablePath: '/opt/pinned-gog/gog',
+								executionTarget: {
+									...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend
+										.operations.gog.executionTarget,
+									allowedHosts: qualifiedHosts,
 								},
-							},
-							'workspace-app': {
-								ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
 							},
 						},
 					},
 				},
 			},
+		};
+		const compiled = compileOAuthPolicy({
+			catalog,
+			oauthConfig: compilerInput.oauthConfig,
 			toolPortalConfig: {
 				...compilerInput.toolPortalConfig,
-				agents: {
-					...compilerInput.toolPortalConfig.agents,
-					sun: {
-						profile: 'shared',
-						googlePolicyDefaults: {
-							kind: 'explicit',
-							applications: {
-								'gmail-app': { gmail: { read: 'allow', write: 'ask' } },
-								'workspace-app': { drive: { read: 'allow', write: 'deny' } },
-							},
-						},
-					},
-				},
+				agents: { sun: { profile: 'shared' }, ember: { profile: 'ember' } },
 				profiles: {
-					shared: {
-						...compilerInput.toolPortalConfig.profiles.shared,
-						namespaces: {
-							...compilerInput.toolPortalConfig.profiles.shared.namespaces,
-							google: {
-								...compilerInput.toolPortalConfig.profiles.shared.namespaces.google,
-								tools: { allow: ['gog'] },
-								backend: {
-									...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend,
-									operations: {
-										gog: {
-											...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend
-												.operations.gog,
-											commands,
-											executablePath: '/opt/pinned-gog/gog',
-											executionTarget: {
-												...compilerInput.toolPortalConfig.profiles.shared.namespaces.google.backend
-													.operations.gog.executionTarget,
-												allowedHosts: qualifiedHosts,
-											},
-										},
-									},
+					shared: sharedProfile,
+					ember: {
+						...sharedProfile,
+						oauthApplications: {
+							'gmail-app': {
+								ceiling: sharedProfile.oauthApplications['gmail-app'].ceiling,
+								policyDefaults: {
+									kind: 'explicit',
+									services: { gmail: { read: 'ask', write: 'deny' } },
 								},
+							},
+							'workspace-app': {
+								ceiling: sharedProfile.oauthApplications['workspace-app'].ceiling,
 							},
 						},
 					},

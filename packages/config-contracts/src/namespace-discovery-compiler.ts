@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import type { McpConfig } from './mcp-config.js';
 import { namespaceDiscoverySchema } from './mcp-config.js';
-import type { ToolPortalConfig } from './tool-portal-config.js';
+import type { ToolPortalNamespacePolicy } from './tool-portal-config.js';
 
 export const toolPortalEffectiveNamespaceDiscoverySchema = namespaceDiscoverySchema
 	.extend({ namespace: z.string().min(1) })
@@ -29,7 +29,16 @@ function compareUnicodeCodePointStrings(left: string, right: string): number {
 
 export function compileToolPortalNamespaceDiscoveryByProfile(props: {
 	readonly mcpConfig: McpConfig;
-	readonly toolPortalConfig: ToolPortalConfig;
+	readonly toolPortalConfig: {
+		readonly profiles: Readonly<
+			Record<
+				string,
+				{
+					readonly namespaces: Readonly<Record<string, ToolPortalNamespacePolicy>>;
+				}
+			>
+		>;
+	};
 }): ToolPortalNamespaceDiscoveryByProfile {
 	const providersByNamespace = new Map<string, McpConfig['providers'][string][]>();
 	for (const provider of Object.values(props.mcpConfig.providers)) {

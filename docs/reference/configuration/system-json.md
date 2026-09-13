@@ -517,11 +517,11 @@ sibling authored config files in `config/gateways/<zone>/`:
 
 - `mcp.config.jsonc` describes upstream MCP providers and discovery.
 - `tool-portal.config.jsonc` describes agent profile assignments, complete
-  cross-backend namespace policies, explicit backend bindings, and call/tool
-  selectors.
+  cross-backend namespace policies, explicit backend bindings, call/tool
+  selectors, and profile-owned OAuth application policy.
 - `oauth.config.jsonc` is optional. When present, it configures the controller-owned
   Google OAuth broker, three fixed application-family bindings, human owners,
-  per-agent activity ceilings, website policy editors, authorized tailnet logins,
+  website policy editors, authorized tailnet logins,
   Clerk browser identity, the fixed direct HTTPS listener on `18900`, and a
   1Password KEK. Accounts and agent authorizations are enrolled dynamically and
   never appear as static config slots.
@@ -537,11 +537,92 @@ Google.
 
 Managed Gog calls carry an opaque `accountId` beside exact admitted argv. The
 `managed_google_policy` source resolves that account's explicit independent
-Read/Write overrides first and the active `googlePolicyDefaults` fallback second,
+Read/Write overrides first and the active profile `policyDefaults` fallback second,
 then intersects the result with current consent, scopes, activity ceiling, and the
 finite command catalog. `Deny`, `Ask`, and `Allow` are all valid for reads and
 writes; write is not hard-coded to Ask. Clerk authenticates the website human only
 and is never a source of Gog tokens.
+
+### Profile-owned OAuth application policy
+
+`profiles.<profile>.oauthApplications.<applicationId>` in
+`tool-portal.config.jsonc` references an application registered under
+`providers.google.applications` in `oauth.config.jsonc`. An agent selects the
+complete role with `agents.<agent>.profile`. Agents sharing a profile share
+configured permissions, recommendations, and defaults; their account connections
+and overrides remain separate. Use different complete profiles when roles differ;
+there is no inheritance or per-agent policy merge.
+
+```text
+oauth.config.jsonc                         tool-portal.config.jsonc
+providers.google.applications             agents.sun.profile
+  gmail-app <----------------------┐             |
+  credentials + family binding     |             v
+                                   |      profiles.household
+                                   └------  oauthApplications.gmail-app
+                                            ceiling
+                                            consentRecommendation
+                                            policyDefaults
+                                          namespaces (tools and commands)
+```
+
+| Application property | Accepted forms | Meaning |
+| --- | --- | --- |
+| `ceiling` (required) | `catalog-preset` + `presetId`, or `explicit` + `groupIds` | Hard maximum; `all-supported` leaves the catalog unnarrowed |
+| `consentRecommendation` (optional) | `collection` + `collectionId`/`version`, or `explicit` + `groupIds` | Initial enrollment selection; omission selects nothing |
+| `policyDefaults` (optional) | `collection` + `collectionId`/`version`, or `explicit` + `services` | Live read/write defaults; omitted cells deny |
+
+A collection supplies only the property that references it, scoped to that
+application's catalog family. Selecting a recommendation does not select policy
+defaults or grant consent. Named and explicit forms can be mixed independently:
+
+```json
+{
+  "oauthApplications": {
+    "gmail-app": {
+      "ceiling": { "kind": "catalog-preset", "presetId": "all-supported" },
+      "consentRecommendation": {
+        "kind": "explicit",
+        "groupIds": ["gmail.read", "calendar.read", "calendar.write"]
+      },
+      "policyDefaults": {
+        "kind": "explicit",
+        "services": {
+          "gmail": { "read": "allow", "write": "deny" },
+          "calendar": { "read": "allow", "write": "allow" }
+        }
+      }
+    }
+  }
+}
+```
+
+This is a profile excerpt: its namespace commands must support the selected
+permissions. The compiler rejects unknown or foreign-family groups, recommendations
+and non-deny defaults outside executable support, and commands above the ceiling.
+Declaring OAuth applications requires a valid sibling OAuth configuration even
+without executable OAuth commands. The pinned catalog determines which application
+family each Gog command requires; namespace names do not establish that binding.
+
+Actual consent and explicit read/write overrides remain specific to the
+agent/account/application connection. Inherited cells follow the active profile
+defaults; explicit cells do not. Each runtime call still checks executable policy,
+current consent, and effective account policy. `ask` uses the existing one-call
+approval flow and does not permanently change the account policy.
+
+To migrate an older config pair:
+
+1. Move each `oauth.config.jsonc` agent application's `ceiling` into its selected
+   Tool Portal profile's `oauthApplications` entry; remove the OAuth `agents` map.
+2. Move agent-level `googlePolicyDefaults` into each application's `policyDefaults`.
+   For explicit maps, the old application value becomes `services`.
+3. If a named collection previously supplied both defaults and recommendations,
+   declare that collection under both `policyDefaults` and `consentRecommendation`.
+   Explicit defaults previously supplied no recommendation; omission preserves that.
+4. Split profiles when agents previously had different role policies. Keep owner
+   and editor agent admission in OAuth config and keep account records unchanged.
+5. Run `agent-vm validate --config config/system.jsonc` before restarting. Old
+   property locations are rejected; upgrade configuration and binary together.
 
 Namespace discovery uses one optional bounded field: `discovery.summary`.
 MCP-backed namespaces author it only at
@@ -591,10 +672,11 @@ Managed Gateway policy is authored in `tool-portal.config.jsonc`. Its important
 fields are:
 
 - `agents.<agentId>.profile` selects one complete profile.
-- `agents.<agentId>.googlePolicyDefaults` selects a pinned collection or a
-  complete explicit application/service Read/Write default map. Explicit
-  account overrides live in controller SQLite and win cell-by-cell; an omitted
-  default is Deny.
+- `profiles.<name>.oauthApplications.<applicationId>` declares the application
+  ceiling, optional consent recommendation, and optional call-policy defaults.
+  See [profile-owned OAuth policy](#profile-owned-oauth-application-policy).
+  Explicit account overrides live in controller SQLite and win cell-by-cell;
+  an omitted default is Deny.
 - `agents.<agentId>.credentialBindings` optionally declares that agent's
   controller-only named 1Password file sets for credentialed Managed runtimes.
   Bindings select credentials but do not grant capabilities beyond the profile.

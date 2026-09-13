@@ -44,8 +44,11 @@ describe('code-owned Google policy catalog', () => {
 		// Arrange
 		const input = createOAuthPolicyCompilerTestInput();
 		const catalog = getGooglePolicyCatalog();
-		input.toolPortalConfig.profiles.shared.namespaces.google.backend.operations.gog.executionTarget.allowedHosts =
-			[...catalog.families.communications.allowedHosts];
+		for (const profile of Object.values(input.toolPortalConfig.profiles)) {
+			profile.namespaces.google.backend.operations.gog.executionTarget.allowedHosts = [
+				...catalog.families.communications.allowedHosts,
+			];
+		}
 		// Act
 		const compiled = compileOAuthPolicy({ ...input, catalog });
 		// Assert

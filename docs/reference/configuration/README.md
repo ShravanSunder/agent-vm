@@ -17,12 +17,16 @@ config/gateways/<zone>/mcp.config.jsonc
 
 config/gateways/<zone>/tool-portal.config.jsonc
   Managed Tool Portal agent/profile assignments and capability policy.
-  Per-agent Google policy defaults and the finite executable Gog surface.
+  Complete profiles: tools, OAuth application references, ceilings, consent
+  recommendations, and live call-policy defaults. Agents select a profile.
 
 config/gateways/<zone>/oauth.config.jsonc
   Optional controller-owned OAuth broker configuration.
-  Clerk human identity, owners/editors, application bindings and ceilings.
+  Clerk human identity, owners/editors, application bindings and credentials.
 ```
+
+Connected accounts, actual consent, and account-policy overrides live in the
+controller database and are managed through the private website.
 
 | Need | Read |
 | --- | --- |

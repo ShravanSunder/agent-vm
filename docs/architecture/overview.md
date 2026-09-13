@@ -131,6 +131,15 @@ account policy in controller state, and gives Gog only a short-lived access-toke
 placeholder through the authenticated agent's singleton credentialed Managed
 runtime.
 
+OAuth configuration owns application registrations and human admission. Complete
+Tool Portal profiles own `oauthApplications`: application references, ceilings,
+consent recommendations, and live call-policy defaults alongside the tool
+commands. Agents select a profile. The controller compiler derives per-agent
+runtime authorization inputs from that assignment; account consent and overrides
+remain independent database records. Controller-only profile policy is omitted
+from prepared and Gateway-visible projections. See the
+[profile policy reference](../reference/configuration/system-json.md#profile-owned-oauth-application-policy).
+
 Google callbacks retain `no-referrer` and redirect to clean, browser-bound
 confirmation or retry pages. Those pages use `same-origin` so native forms send
 the Origin required by the controller without retaining the callback query in
