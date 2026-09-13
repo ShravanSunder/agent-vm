@@ -53,7 +53,7 @@ function trustedContext(agentId: string): NonNullable<Parameters<typeof udsOptio
 			agentId,
 			frameworkIdentity: { kind: 'hermes', profileName: agentId },
 			profileAssignmentRevision: `assignment-${agentId}`,
-			toolPortalProfileId: 'shared',
+			toolPortalProfileId: agentId === 'ember' ? 'ask' : 'shared',
 		},
 	};
 }
@@ -190,7 +190,7 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 				isDeepStrictEqual(
 					await resolvePreflight({
 						agentId: intent.trustedContext.principal.agentId,
-						profileId: 'shared',
+						profileId: intent.trustedContext.principal.toolPortalProfileId,
 						namespaceId: intent.call.namespace,
 						operationName: intent.call.name,
 						input: controllerConfiguredCliInputSchema.parse(intent.call.arguments),
@@ -219,10 +219,14 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 			compiled.commandSetsByConfiguredOperation[
 				configuredGoogleOperationKey('shared', 'google', 'gog')
 			];
+		const askCommandSet =
+			compiled.commandSetsByConfiguredOperation[
+				configuredGoogleOperationKey('ask', 'google', 'gog')
+			];
 		const config = gatewayRuntimeManagedToolPortalConfigSchema.parse({
 			mode: 'managed',
 			schemaVersion: 1,
-			agents: { sun: { profile: 'shared' }, ember: { profile: 'shared' } },
+			agents: { sun: { profile: 'shared' }, ember: { profile: 'ask' } },
 			profiles: {
 				shared: {
 					namespaces: {
@@ -238,6 +242,32 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 										authorization: { kind: 'oauth_account' },
 										targetKind: 'ephemeral_managed_vm',
 										compiledGoogle: commandSet,
+										calls: { source: 'managed_google_policy', deny: [] },
+										commands: [{ path: ['gmail', 'search'], flagRules: [] }],
+										deniedPatterns: [],
+										stdin: { kind: 'none' },
+										timeout: { kind: 'quick' },
+										safeHelp: 'Search Gmail.',
+									},
+								},
+							},
+						},
+					},
+				},
+				ask: {
+					namespaces: {
+						google: {
+							calls: { source: 'managed_google_policy' },
+							tools: { allow: ['gog'] },
+							discovery: { summary: 'Google accounts' },
+							backend: {
+								kind: 'controller_execution',
+								operations: {
+									gog: {
+										kind: 'configured_cli',
+										authorization: { kind: 'oauth_account' },
+										targetKind: 'ephemeral_managed_vm',
+										compiledGoogle: askCommandSet,
 										calls: { source: 'managed_google_policy', deny: [] },
 										commands: [{ path: ['gmail', 'search'], flagRules: [] }],
 										deniedPatterns: [],
@@ -276,7 +306,10 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 						];
 					}),
 				),
-				surfaceEligibilityByProfile: { shared: { google: ['protected_uds'] } },
+				surfaceEligibilityByProfile: {
+					shared: { google: ['protected_uds'] },
+					ask: { google: ['protected_uds'] },
+				},
 			},
 			approvalPort: {
 				reserveDispatch: async ({ intent }) =>
@@ -470,7 +503,7 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 		expect(
 			fixture.policyService.resolveManagedGoogleInvocation({
 				agentId: 'ember',
-				profileId: 'shared',
+				profileId: 'ask',
 				namespaceId: 'google',
 				operationName: 'gog',
 				input: {

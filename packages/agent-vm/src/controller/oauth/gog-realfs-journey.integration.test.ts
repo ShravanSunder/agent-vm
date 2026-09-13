@@ -9,7 +9,6 @@ import {
 	controllerConfiguredCliInputSchema,
 	createGatewayRuntimeManagedToolPortalConfig,
 	jsonValueSchema,
-	oauthConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlControllerExecutionRpcWindow,
@@ -185,31 +184,19 @@ describe('Gog account policy to RealFS file journey', () => {
 			[...catalog.families.documents.allowedHosts];
 		const compilerToolPortalConfig = {
 			...compilerInput.toolPortalConfig,
-			agents: {
-				...compilerInput.toolPortalConfig.agents,
-				[agentId]: {
-					profile: 'shared',
-					googlePolicyDefaults: {
-						kind: 'explicit',
-						applications: {
-							'workspace-app': { drive: { read: 'allow', write: 'deny' } },
-						},
-					},
-				},
-				ember: {
-					profile: 'shared',
-					googlePolicyDefaults: {
-						kind: 'explicit',
-						applications: {
-							'workspace-app': { drive: { read: 'allow', write: 'deny' } },
-						},
-					},
-				},
-			},
+			agents: { [agentId]: { profile: 'shared' }, ember: { profile: 'shared' } },
 			profiles: {
-				...compilerInput.toolPortalConfig.profiles,
 				shared: {
 					...compilerInput.toolPortalConfig.profiles.shared,
+					oauthApplications: {
+						'workspace-app': {
+							ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
+							policyDefaults: {
+								kind: 'explicit',
+								services: { drive: { read: 'allow', write: 'deny' } },
+							},
+						},
+					},
 					namespaces: {
 						...compilerInput.toolPortalConfig.profiles.shared.namespaces,
 						google: {
@@ -220,26 +207,7 @@ describe('Gog account policy to RealFS file journey', () => {
 				},
 			},
 		};
-		const oauthConfig = oauthConfigSchema.parse({
-			...compilerInput.oauthConfig,
-			agents: {
-				...compilerInput.oauthConfig.agents,
-				[agentId]: {
-					applications: {
-						'workspace-app': {
-							ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
-						},
-					},
-				},
-				ember: {
-					applications: {
-						'workspace-app': {
-							ceiling: { kind: 'explicit', groupIds: ['drive.all-files.read'] },
-						},
-					},
-				},
-			},
-		});
+		const oauthConfig = compilerInput.oauthConfig;
 		const compiled = compileOAuthPolicy({
 			catalog,
 			oauthConfig,
@@ -327,6 +295,11 @@ describe('Gog account policy to RealFS file journey', () => {
 		const portalConfig = createGatewayRuntimeManagedToolPortalConfig(
 			effectivePlan.effectiveToolPortalConfig,
 		);
+		expect(compilerToolPortalConfig.profiles.shared).toHaveProperty('oauthApplications');
+		expect(effectivePlan.effectiveToolPortalConfig.profiles.shared).not.toHaveProperty(
+			'oauthApplications',
+		);
+		expect(portalConfig.profiles.shared).not.toHaveProperty('oauthApplications');
 		const portalAdmission = materializeGatewayRuntimePortalAdmission({
 			agentProjections: [
 				{

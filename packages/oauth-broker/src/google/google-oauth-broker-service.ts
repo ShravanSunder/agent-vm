@@ -1,7 +1,7 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
+	type ResolvedOAuthConfig,
 } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
@@ -85,7 +85,7 @@ export function createGoogleOAuthBrokerService(props: {
 	>;
 	readonly clientBindingRevisionsByApplication: Readonly<Record<GoogleOAuthApplicationId, string>>;
 	readonly allowedHostsByApplication: Readonly<Record<GoogleOAuthApplicationId, readonly string[]>>;
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly configRevision: string;
 	readonly isAdmissionOpen: () => boolean;
 	readonly googleAdapter: GoogleOAuthAdapter;

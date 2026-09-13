@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { oauthConfigSchema } from '@agent-vm/config-contracts';
+import { compileOAuthPolicy, type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
@@ -12,7 +12,7 @@ import {
 	type OAuthTransactionId,
 } from '@agent-vm/oauth-broker-contracts';
 
-import { createOAuthConfigTestInput } from '../../../config-contracts/src/oauth-config-test-fixture.js';
+import { createOAuthPolicyCompilerTestInput } from '../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import { clientCredentials, wrappingKey } from '../oauth-catalog-test-fixture.js';
 import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
 import { openOAuthCredentialCatalog } from '../oauth-credential-catalog.js';
@@ -35,7 +35,7 @@ export const facadeApplicationId = oauthApplicationIdSchema.parse('gmail-app');
 interface BrokerFacadeFixture {
 	readonly broker: GoogleOAuthBrokerService;
 	readonly catalog: OAuthCredentialCatalog;
-	readonly config: ReturnType<typeof oauthConfigSchema.parse>;
+	readonly config: ResolvedOAuthConfig;
 	readonly providerRequests: readonly string[];
 	readonly containments: readonly unknown[];
 	readonly exchangeRedirect: (
@@ -51,6 +51,7 @@ interface BrokerFacadeFixture {
 }
 export async function createBrokerFacadeFixture(
 	options: {
+		readonly emberRecommendationGroupIds?: readonly string[];
 		readonly includeDocuments?: boolean;
 		readonly isAdmissionOpen?: () => boolean;
 		readonly now?: () => number;
@@ -64,7 +65,14 @@ export async function createBrokerFacadeFixture(
 	const catalog = await openOAuthCredentialCatalog({
 		databasePath: path.join(directory, 'credentials.sqlite'),
 	});
-	const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
+	const compilerInput = createOAuthPolicyCompilerTestInput();
+	if (options.emberRecommendationGroupIds !== undefined) {
+		compilerInput.toolPortalConfig.profiles.ask.oauthApplications[
+			'gmail-app'
+		].consentRecommendation.groupIds = [...options.emberRecommendationGroupIds];
+	}
+	const compiled = compileOAuthPolicy(compilerInput);
+	const config = compiled.oauthConfig;
 	const now = options.now ?? (() => 1_000);
 	if (options.includeDocuments) {
 		const sun = config.agents.sun;
@@ -156,10 +164,7 @@ export async function createBrokerFacadeFixture(
 			sun: ['gmail.search', 'gmail.send', ...(options.includeDocuments ? ['drive.list'] : [])],
 			ember: ['gmail.search'],
 		},
-		recommendationSelectionsByAgent: {
-			sun: oauthPermissionSelectionsSchema.parse({ 'gmail-app': ['gmail.read'] }),
-			ember: oauthPermissionSelectionsSchema.parse({ 'gmail-app': ['gmail.read'] }),
-		},
+		recommendationSelectionsByAgent: compiled.recommendationSelectionsByAgent,
 		readAccountActivity: () => ({
 			kind: 'ready',
 			disposition: 'allow',

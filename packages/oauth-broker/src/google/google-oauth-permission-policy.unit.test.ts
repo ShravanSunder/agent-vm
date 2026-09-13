@@ -1,14 +1,14 @@
-import { oauthConfigSchema } from '@agent-vm/config-contracts';
+import { compileOAuthPolicy } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
-import { createOAuthConfigTestInput } from '../../../config-contracts/src/oauth-config-test-fixture.js';
+import { createOAuthPolicyCompilerTestInput } from '../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import { googleIdentityScopes } from './google-oauth-adapter.js';
 import { createGoogleOAuthPermissionPolicy } from './google-oauth-permission-policy.js';
 
 describe('Google group selection policy', () => {
 	it('compiles catalog scopes under agent ceilings without any account-slot input', () => {
 		// Arrange
-		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
+		const config = compileOAuthPolicy(createOAuthPolicyCompilerTestInput()).oauthConfig;
 		const policy = createGoogleOAuthPermissionPolicy({
 			config,
 			offeredGroupIdsByAgentApplication: {
@@ -34,7 +34,7 @@ describe('Google group selection policy', () => {
 
 	it('rejects a compiler projection that exceeds the authored maximum', () => {
 		// Arrange
-		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
+		const config = compileOAuthPolicy(createOAuthPolicyCompilerTestInput()).oauthConfig;
 		// Act / Assert
 		expect(() =>
 			createGoogleOAuthPermissionPolicy({
@@ -48,7 +48,7 @@ describe('Google group selection policy', () => {
 
 	it('does not authorize Off applications or silently clamp unsupported selections', () => {
 		// Arrange
-		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
+		const config = compileOAuthPolicy(createOAuthPolicyCompilerTestInput()).oauthConfig;
 		const policy = createGoogleOAuthPermissionPolicy({
 			config,
 			offeredGroupIdsByAgentApplication: { sun: { 'gmail-app': ['gmail.read'] } },

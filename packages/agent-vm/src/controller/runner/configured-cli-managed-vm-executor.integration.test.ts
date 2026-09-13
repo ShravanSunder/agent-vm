@@ -394,32 +394,22 @@ describe('configured CLI credentialed Managed VM executor', () => {
 				toolPortalConfig: {
 					...compilerInput.toolPortalConfig,
 					agents: Object.fromEntries(
-						['sun', 'ember'].map((agentId) => [
-							agentId,
-							{
-								profile: 'shared',
-								googlePolicyDefaults: {
-									kind: 'explicit',
-									applications: { 'workspace-app': { docs: { read: 'allow', write: 'deny' } } },
-								},
-							},
-						]),
+						['sun', 'ember'].map((agentId) => [agentId, { profile: 'shared' }]),
 					),
-				},
-				oauthConfig: {
-					...compilerInput.oauthConfig,
-					agents: Object.fromEntries(
-						['sun', 'ember'].map((agentId) => [
-							agentId,
-							{
-								applications: {
-									'workspace-app': {
-										ceiling: { kind: 'explicit', groupIds: ['docs.all-files.read'] },
+					profiles: {
+						shared: {
+							...compilerInput.toolPortalConfig.profiles.shared,
+							oauthApplications: {
+								'workspace-app': {
+									ceiling: { kind: 'explicit', groupIds: ['docs.all-files.read'] },
+									policyDefaults: {
+										kind: 'explicit',
+										services: { docs: { read: 'allow', write: 'deny' } },
 									},
 								},
 							},
-						]),
-					),
+						},
+					},
 				},
 			}).commandSetsByConfiguredOperation[configuredGoogleOperationKey('shared', 'google', 'gog')];
 			if (fileCompiled === undefined) throw new Error('Expected compiled file commands.');

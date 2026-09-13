@@ -13,6 +13,33 @@ describe('account-based Google broker facade', () => {
 		await fixture?.broker.close();
 		fixture?.catalog.close();
 	});
+
+	it('uses independently compiled named and explicit recommendations for enrollment preselection', async () => {
+		// Arrange
+		fixture = await createBrokerFacadeFixture({ emberRecommendationGroupIds: [] });
+		const broker = fixture.broker;
+		const beginForAgent = async (
+			agentId: 'sun' | 'ember',
+		): Promise<ReturnType<typeof broker.getPermissionPage>> => {
+			const begun = await broker.executeAuthorizationAction({
+				agentId,
+				request: { actionId: 'oauth_authorization.begin', applicationId: facadeApplicationId },
+			});
+			if (begun.kind !== 'authorization-begun') throw new Error('Expected enrollment link.');
+			return broker.getPermissionPage({
+				identity: facadeIdentity,
+				transactionId: begun.transactionId,
+			});
+		};
+		// Act
+		const named = await beginForAgent('sun');
+		const explicit = await beginForAgent('ember');
+		// Assert
+		expect(named?.applications[0]?.recommendedGroupIds).toEqual(['gmail.read']);
+		expect(named?.applications[0]?.selectedGroupIds).toEqual(['gmail.read']);
+		expect(explicit?.applications[0]?.recommendedGroupIds).toEqual([]);
+		expect(explicit?.applications[0]?.selectedGroupIds).toEqual([]);
+	});
 	it('admits neither ceremonies nor credential use before the host opens admission', async () => {
 		// Arrange
 		let admissionOpen = false;

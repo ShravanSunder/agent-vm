@@ -87,7 +87,7 @@ export const googleOAuthCeilingSchema = z.discriminatedUnion('kind', [
 		})
 		.strict(),
 ]);
-export const oauthAgentConfigSchema = z
+export const resolvedOAuthAgentConfigSchema = z
 	.object({
 		applications: z.partialRecord(
 			googleOAuthApplicationIdSchema,
@@ -125,12 +125,6 @@ const tailnetLoginSchema = z
 
 export const oauthConfigSchema = z
 	.object({
-		agents: z
-			.record(namedIdSchema, oauthAgentConfigSchema)
-			.refine(
-				(agents) => Object.keys(agents).length > 0,
-				'At least one OAuth agent must be configured.',
-			),
 		browser: z
 			.object({
 				identity: clerkBrowserIdentityConfigSchema,
@@ -245,14 +239,6 @@ export const oauthConfigSchema = z
 					path: ['owners', ownerId, 'clerkUserId'],
 				});
 			ownerIdentities.add(owner.clerkUserId);
-			for (const agentId of owner.allowedAgentIds) {
-				if (config.agents[agentId] === undefined)
-					context.addIssue({
-						code: 'custom',
-						message: 'Owner admission references an unconfigured agent.',
-						path: ['owners', ownerId, 'allowedAgentIds'],
-					});
-			}
 		}
 		const editorIdentities = new Set<string>();
 		for (const [editorId, editor] of Object.entries(config.policyEditors)) {
@@ -263,6 +249,27 @@ export const oauthConfigSchema = z
 					path: ['policyEditors', editorId, 'clerkUserId'],
 				});
 			editorIdentities.add(editor.clerkUserId);
+		}
+	});
+export type OAuthConfig = z.infer<typeof oauthConfigSchema>;
+
+export const resolvedOAuthConfigSchema = oauthConfigSchema
+	.extend({
+		agents: z.record(namedIdSchema, resolvedOAuthAgentConfigSchema),
+	})
+	.strict()
+	.superRefine((config, context) => {
+		for (const [ownerId, owner] of Object.entries(config.owners)) {
+			for (const agentId of owner.allowedAgentIds) {
+				if (config.agents[agentId] === undefined)
+					context.addIssue({
+						code: 'custom',
+						message: 'Owner admission references an unconfigured agent.',
+						path: ['owners', ownerId, 'allowedAgentIds'],
+					});
+			}
+		}
+		for (const [editorId, editor] of Object.entries(config.policyEditors)) {
 			for (const agentId of editor.editableAgentIds) {
 				if (config.agents[agentId] === undefined)
 					context.addIssue({
@@ -273,7 +280,7 @@ export const oauthConfigSchema = z
 			}
 		}
 	});
-export type OAuthConfig = z.infer<typeof oauthConfigSchema>;
+export type ResolvedOAuthConfig = z.infer<typeof resolvedOAuthConfigSchema>;
 
 export function googleOAuthCallbackUrl(config: OAuthConfig): string {
 	return new URL('/oauth/google/callback', config.browser.publicBaseUrl).toString();

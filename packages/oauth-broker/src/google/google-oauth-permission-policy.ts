@@ -1,7 +1,7 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
+	type ResolvedOAuthConfig,
 } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
@@ -51,7 +51,7 @@ export interface GoogleOAuthPermissionPolicy {
 }
 
 export function createGoogleOAuthPermissionPolicy(props: {
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly offeredGroupIdsByAgentApplication: GoogleOfferedPermissionGroups;
 }): GoogleOAuthPermissionPolicy {
 	const provider = props.config.providers.google;

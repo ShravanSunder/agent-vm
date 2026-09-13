@@ -40,30 +40,6 @@
 			"editableAgentIds": ["sun", "ember"],
 		},
 	},
-	// Accounts are enrolled dynamically by their verified owners. No Google
-	// account address, provider subject, credential, or agent account slot belongs here.
-	"agents": {
-		"sun": {
-			"applications": {
-				"gmail-app": {
-					"ceiling": {
-						"kind": "catalog-preset",
-						"presetId": "all-supported",
-					},
-				},
-			},
-		},
-		"ember": {
-			"applications": {
-				"gmail-app": {
-					"ceiling": {
-						"kind": "catalog-preset",
-						"presetId": "all-supported",
-					},
-				},
-			},
-		},
-	},
 	"providers": {
 		"google": {
 			"kind": "google",

@@ -66,8 +66,9 @@ describe('durable configured Google defaults activation', () => {
 			defaultsRevision: first.defaultsRevision,
 			snapshot: first.defaultsSnapshot,
 		});
-		input.toolPortalConfig.agents.ember.googlePolicyDefaults.applications['gmail-app'].gmail.read =
-			'allow';
+		input.toolPortalConfig.profiles.ask.oauthApplications[
+			'gmail-app'
+		].policyDefaults.services.gmail.read = 'allow';
 		const second = compileOAuthPolicy(input);
 		// Act
 		catalog.activatePolicyDefaults({
@@ -100,9 +101,9 @@ describe('durable configured Google defaults activation', () => {
 			database.exec(
 				"CREATE TRIGGER reject_default_history BEFORE INSERT ON permission_change_events WHEN NEW.authorization_id IS NULL BEGIN SELECT RAISE(ABORT, 'history unavailable'); END",
 			);
-			input.toolPortalConfig.agents.ember.googlePolicyDefaults.applications[
+			input.toolPortalConfig.profiles.ask.oauthApplications[
 				'gmail-app'
-			].gmail.read = 'allow';
+			].policyDefaults.services.gmail.read = 'allow';
 			const second = compileOAuthPolicy(input);
 			// Act / Assert
 			expect(() =>
@@ -148,8 +149,9 @@ describe('durable configured Google defaults activation', () => {
 			defaultsRevision: first.defaultsRevision,
 			snapshot: first.defaultsSnapshot,
 		});
-		input.toolPortalConfig.agents.ember.googlePolicyDefaults.applications['gmail-app'].gmail.read =
-			'allow';
+		input.toolPortalConfig.profiles.ask.oauthApplications[
+			'gmail-app'
+		].policyDefaults.services.gmail.read = 'allow';
 		const second = compileOAuthPolicy(input);
 		// Act / Assert
 		expect(() =>

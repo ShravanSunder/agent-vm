@@ -15,7 +15,8 @@ import type {
 } from '@agent-vm/oauth-broker/google';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createOAuthConfigTestInput } from '../../../../config-contracts/src/oauth-config-test-fixture.js';
+import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
+import { compileOAuthPolicy } from '../../../../config-contracts/src/oauth-tool-portal-config.js';
 import {
 	createOAuthHttpsApp,
 	type OAuthApprovalAssets,
@@ -44,7 +45,7 @@ function createTestOAuthApp(
 		'assets' | 'brokerService' | 'now' | 'publicBaseUrl' | 'tailnetIdentityResolver'
 	> & { readonly verifiedSessionIdentity?: typeof browserIdentity },
 ): ReturnType<typeof createOAuthHttpsApp> {
-	const config = createOAuthConfigTestInput();
+	const config = compileOAuthPolicy(createOAuthPolicyCompilerTestInput()).oauthConfig;
 	config.browser.network.admittedTailnetLogins = ['authorized-human@example.test'];
 	const navigation = createOAuthBrowserNavigationStore({ now: props.now ?? (() => 10_000) });
 	const created = navigation.create({

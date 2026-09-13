@@ -26,8 +26,9 @@ import {
 import {
 	googleOAuthApplicationIdSchema,
 	oauthConfigSchema,
+	resolvedOAuthConfigSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
+	type ResolvedOAuthConfig,
 } from './oauth-config.js';
 import {
 	toolPortalConfigSchema,
@@ -40,7 +41,7 @@ type DefaultMap = z.infer<typeof googleServicePolicyDefaultsSchema>;
 type ApplicationGroups = Partial<Record<GoogleOAuthApplicationId, readonly string[]>>;
 export type { CompiledGoogleCommandSet } from './compiled-google-command-set.js';
 export interface CompiledOAuthPolicy {
-	readonly oauthConfig: OAuthConfig;
+	readonly oauthConfig: ResolvedOAuthConfig;
 	readonly toolPortalConfig: ManagedToolPortalConfig;
 	readonly offeredGroupIdsByAgentApplication: Readonly<Record<string, ApplicationGroups>>;
 	readonly operationIdsByAgent: Readonly<Record<string, readonly string[]>>;
@@ -212,19 +213,72 @@ function compileCommandSet(props: {
 }
 const lifecycleTools = ['list', 'begin', 'status', 'cancel', 'reauthorize', 'disconnect'] as const;
 
+export function managedToolPortalRequiresOAuthConfiguration(
+	config: ManagedToolPortalConfig,
+): boolean {
+	return Object.values(config.profiles).some(
+		(profile) =>
+			Object.keys(profile.oauthApplications ?? {}).length > 0 ||
+			Object.values(profile.namespaces).some(
+				(namespace) =>
+					namespace.backend.kind === 'controller_execution' &&
+					Object.values(namespace.backend.operations).some(
+						(operation) =>
+							operation.kind === 'configured_cli' &&
+							isControllerEphemeralManagedVmConfiguredCliOperation(operation) &&
+							operation.authorization?.kind === 'oauth_account',
+					),
+			),
+	);
+}
+
+interface CompiledProfileOAuthPolicy {
+	readonly applications: ResolvedOAuthConfig['agents'][string]['applications'];
+	readonly defaults: Partial<Record<GoogleOAuthApplicationId, DefaultMap>>;
+	readonly defaultsSource: GooglePolicyDefaultsSource;
+	readonly offeredApplications: ApplicationGroups;
+	readonly operationIds: readonly string[];
+	readonly recommendations: OAuthPermissionSelections;
+}
+
+function normalizeDefaultsSource(
+	applications: NonNullable<ManagedToolPortalConfig['profiles'][string]['oauthApplications']>,
+): GooglePolicyDefaultsSource {
+	const configured = Object.values(applications).flatMap((application) =>
+		application.policyDefaults === undefined ? [] : [application.policyDefaults],
+	);
+	if (configured.length === 0) return { kind: 'missing' };
+	const first = configured[0];
+	if (
+		first?.kind === 'collection' &&
+		configured.every(
+			(candidate) =>
+				candidate.kind === 'collection' &&
+				candidate.collectionId === first.collectionId &&
+				candidate.version === first.version,
+		)
+	)
+		return {
+			kind: 'collection',
+			collectionId: first.collectionId,
+			version: first.version,
+		};
+	return { kind: 'explicit' };
+}
+
 /** Host composition supplies the pinned catalog. Neither authored config nor agents supply scopes or classifiers. */
 export function compileOAuthPolicy(input: {
 	readonly oauthConfig: unknown;
 	readonly toolPortalConfig: unknown;
 	readonly catalog: unknown;
 }): CompiledOAuthPolicy {
-	const oauthConfig = oauthConfigSchema.parse(input.oauthConfig);
+	const authoredOAuthConfig = oauthConfigSchema.parse(input.oauthConfig);
 	const toolPortalConfig = toolPortalConfigSchema.parse(input.toolPortalConfig);
 	const catalog = googlePolicyCatalogSchema.parse(input.catalog);
 	validateCatalog(catalog);
 	if (toolPortalConfig.mode !== 'managed')
 		compilationError('OAuth requires managed Tool Portal mode.');
-	const provider = oauthConfig.providers.google;
+	const provider = authoredOAuthConfig.providers.google;
 	if (
 		provider.catalogVersion !== catalog.catalogVersion ||
 		provider.gogBuildIdentity.version !== catalog.gogBuildIdentity.version ||
@@ -261,31 +315,25 @@ export function compileOAuthPolicy(input: {
 	> = {};
 	const commandSetsByConfiguredOperation: Record<string, CompiledGoogleCommandSet> = {};
 	const defaultsSourceByAgent: Record<string, GooglePolicyDefaultsSource> = {};
-	for (const agentId of Object.keys(oauthConfig.agents)) {
-		if (toolPortalConfig.agents[agentId] === undefined)
-			compilationError('an OAuth agent has no Tool Portal assignment.');
-	}
-	for (const [agentId, portalAgent] of Object.entries(toolPortalConfig.agents)) {
-		const profile = toolPortalConfig.profiles[portalAgent.profile];
-		if (profile === undefined) compilationError('Tool Portal profile is missing.');
-		const agent = oauthConfig.agents[agentId];
+	const profilePolicyById: Record<string, CompiledProfileOAuthPolicy> = {};
+	for (const [profileId, profile] of Object.entries(toolPortalConfig.profiles)) {
+		const applications = profile.oauthApplications ?? {};
 		const maxima: Partial<Record<GoogleOAuthApplicationId, readonly string[]>> = {};
-		if (agent !== undefined) {
-			for (const [id, application] of Object.entries(agent.applications)) {
-				const applicationId = googleOAuthApplicationIdSchema.parse(id);
-				const familyId = provider.applications[applicationId].catalogFamilyId;
-				const ceiling = application.ceiling;
-				const groupIds =
-					ceiling.kind === 'explicit'
-						? ceiling.groupIds
-						: catalog.ceilingPresets[ceiling.presetId]?.[familyId];
-				if (
-					groupIds === undefined ||
-					groupIds.some((groupId) => groupById.get(groupId)?.familyId !== familyId)
-				)
-					compilationError('a ceiling contains unknown, missing or foreign-family groups.');
-				maxima[applicationId] = groupIds;
-			}
+		for (const [id, application] of Object.entries(applications)) {
+			const applicationId = googleOAuthApplicationIdSchema.parse(id);
+			const familyId = provider.applications[applicationId].catalogFamilyId;
+			const groupIds =
+				application.ceiling.kind === 'explicit'
+					? application.ceiling.groupIds
+					: catalog.ceilingPresets[application.ceiling.presetId]?.[familyId];
+			if (
+				groupIds === undefined ||
+				groupIds.some((groupId) => groupById.get(groupId)?.familyId !== familyId)
+			)
+				compilationError('a ceiling contains unknown, missing or foreign-family groups.');
+			maxima[applicationId] = groupIds;
+		}
+		if (Object.keys(applications).length > 0) {
 			const lifecycle = profile.namespaces.oauth_authorization;
 			if (lifecycle?.backend.kind !== 'controller_execution' || 'source' in lifecycle.calls)
 				compilationError('OAuth lifecycle tools require a static configured disposition.');
@@ -313,11 +361,9 @@ export function compileOAuthPolicy(input: {
 					!toolPortalNamespaceAllowsOperation(namespace, operationName)
 				)
 					continue;
-				if (agent === undefined)
-					compilationError('an agent can reach Google commands without OAuth ceilings.');
 				if (!('source' in namespace.calls))
 					compilationError('Google namespace disposition is not managed account policy.');
-				const key = configuredGoogleOperationKey(portalAgent.profile, namespaceId, operationName);
+				const key = configuredGoogleOperationKey(profileId, namespaceId, operationName);
 				const commandSet =
 					commandSetsByConfiguredOperation[key] ??
 					compileCommandSet({ operation, catalog, applicationIdsByFamily });
@@ -341,59 +387,56 @@ export function compileOAuthPolicy(input: {
 									),
 							)
 						)
-							compilationError('a reachable Google command exceeds the agent ceiling.');
+							compilationError('a reachable Google command exceeds the profile ceiling.');
 					}
 					for (const group of compatible) offered.add(group.groupId);
 					reachedOperations.set(descriptor.operationId, descriptor);
 				}
 			}
 		}
-		if (agent === undefined) {
-			if (portalAgent.googlePolicyDefaults !== undefined)
-				compilationError('Google defaults refer to an agent without OAuth configuration.');
-			continue;
-		}
 		const offeredApplications: ApplicationGroups = {};
-		for (const id of Object.keys(agent.applications)) {
+		for (const id of Object.keys(applications)) {
 			const applicationId = googleOAuthApplicationIdSchema.parse(id);
 			const familyId = provider.applications[applicationId].catalogFamilyId;
 			offeredApplications[applicationId] = [...offered]
 				.filter((groupId) => groupById.get(groupId)?.familyId === familyId)
 				.toSorted();
 		}
-		offeredGroupIdsByAgentApplication[agentId] = offeredApplications;
-		operationIdsByAgent[agentId] = [...reachedOperations.keys()].toSorted();
 		const defaults: Partial<Record<GoogleOAuthApplicationId, DefaultMap>> = {};
 		const recommendations: Record<string, readonly string[]> = {};
-		const authored = portalAgent.googlePolicyDefaults;
-		if (authored?.kind === 'collection') {
-			const collection = catalog.collections[authored.collectionId];
-			if (collection === undefined || collection.version !== authored.version)
-				compilationError('unknown recommendation collection/version.');
-			defaultsSourceByAgent[agentId] = {
-				kind: 'collection',
-				collectionId: authored.collectionId,
-				version: authored.version,
-			};
-			for (const id of Object.keys(agent.applications)) {
-				const applicationId = googleOAuthApplicationIdSchema.parse(id);
-				const familyId = provider.applications[applicationId].catalogFamilyId;
-				const selected = collection.selections[familyId];
+		for (const [id, application] of Object.entries(applications)) {
+			const applicationId = googleOAuthApplicationIdSchema.parse(id);
+			const familyId = provider.applications[applicationId].catalogFamilyId;
+			const recommendation = application.consentRecommendation;
+			if (recommendation !== undefined) {
+				const selected =
+					recommendation.kind === 'explicit'
+						? recommendation.groupIds
+						: catalog.collections[recommendation.collectionId]?.version === recommendation.version
+							? catalog.collections[recommendation.collectionId]?.selections[familyId]
+							: undefined;
+				if (
+					selected === undefined ||
+					selected.some((groupId) => groupById.get(groupId)?.familyId !== familyId)
+				)
+					compilationError('unknown or foreign recommendation collection/group.');
 				if (selected.some((groupId) => !offeredApplications[applicationId]?.includes(groupId)))
 					compilationError('recommended consent exceeds the executable hard maximum.');
 				recommendations[applicationId] = selected;
-				defaults[applicationId] = collection.defaults[familyId];
 			}
-		} else if (authored?.kind === 'explicit') {
-			defaultsSourceByAgent[agentId] = { kind: 'explicit' };
-			for (const [id, services] of Object.entries(authored.applications)) {
-				const applicationId = googleOAuthApplicationIdSchema.parse(id);
-				if (agent.applications[applicationId] === undefined)
-					compilationError('defaults reference an application without a ceiling.');
+			const authoredDefaults = application.policyDefaults;
+			if (authoredDefaults !== undefined) {
+				const services =
+					authoredDefaults.kind === 'explicit'
+						? authoredDefaults.services
+						: catalog.collections[authoredDefaults.collectionId]?.version ===
+							  authoredDefaults.version
+							? catalog.collections[authoredDefaults.collectionId]?.defaults[familyId]
+							: undefined;
+				if (services === undefined) compilationError('unknown defaults collection/version.');
 				defaults[applicationId] = services;
 			}
-			// Explicit call defaults do not implicitly select a consent recommendation.
-		} else defaultsSourceByAgent[agentId] = { kind: 'missing' };
+		}
 		for (const [id, services] of Object.entries(defaults)) {
 			const applicationId = googleOAuthApplicationIdSchema.parse(id);
 			const familyId = provider.applications[applicationId].catalogFamilyId;
@@ -412,17 +455,45 @@ export function compileOAuthPolicy(input: {
 								group.familyId === familyId &&
 								group.serviceId === serviceId &&
 								group.effect === effect &&
-								offered.has(group.groupId),
+								offeredApplications[applicationId]?.includes(group.groupId) === true,
 						)
 					)
 						compilationError('configured defaults exceed the executable hard maximum.');
 				}
 			}
 		}
-		defaultsByAgentApplication[agentId] = defaults;
-		recommendationSelectionsByAgent[agentId] =
-			oauthPermissionSelectionsSchema.parse(recommendations);
+		profilePolicyById[profileId] = {
+			applications,
+			defaults,
+			defaultsSource: normalizeDefaultsSource(applications),
+			offeredApplications,
+			operationIds: [...reachedOperations.keys()].toSorted(),
+			recommendations: oauthPermissionSelectionsSchema.parse(recommendations),
+		};
 	}
+	const resolvedAgents: Record<string, ResolvedOAuthConfig['agents'][string]> = {};
+	for (const [agentId, portalAgent] of Object.entries(toolPortalConfig.agents)) {
+		const policy = profilePolicyById[portalAgent.profile];
+		if (policy === undefined) compilationError('Tool Portal profile is missing.');
+		if (Object.keys(policy.applications).length === 0) continue;
+		resolvedAgents[agentId] = {
+			applications: Object.fromEntries(
+				Object.entries(policy.applications).map(([applicationId, application]) => [
+					applicationId,
+					{ ceiling: application.ceiling },
+				]),
+			),
+		};
+		offeredGroupIdsByAgentApplication[agentId] = policy.offeredApplications;
+		operationIdsByAgent[agentId] = policy.operationIds;
+		recommendationSelectionsByAgent[agentId] = policy.recommendations;
+		defaultsByAgentApplication[agentId] = policy.defaults;
+		defaultsSourceByAgent[agentId] = policy.defaultsSource;
+	}
+	const oauthConfig = resolvedOAuthConfigSchema.parse({
+		...authoredOAuthConfig,
+		agents: resolvedAgents,
+	});
 	return {
 		oauthConfig,
 		toolPortalConfig,

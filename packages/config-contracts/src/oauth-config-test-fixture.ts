@@ -21,15 +21,7 @@ function createGoogleApplicationConfig(
 	};
 }
 
-const agent = {
-	applications: {
-		'gmail-app': {
-			ceiling: { kind: 'explicit' as const, groupIds: ['gmail.read', 'gmail.write'] },
-		},
-	},
-};
 const syntheticConfig = {
-	agents: { sun: structuredClone(agent), ember: structuredClone(agent) },
 	browser: {
 		identity: {
 			kind: 'clerk' as const,
