@@ -41,6 +41,34 @@ def test_helper_failure_before_ready_reports_actionable_error(startup_bytes: byt
     asyncio.run(scenario())
 
 
+def test_startup_protocol_failure_logs_only_bounded_failure_class_and_phase(caplog: pytest.LogCaptureFixture) -> None:
+    sensitive_canary = "sensitive-helper-path-canary"
+
+    async def scenario() -> None:
+        class Process:
+            async def read(self) -> bytes:
+                raise connection_module.PortalRelayProtocolError(sensitive_canary)
+
+            async def write(self, content: bytes) -> None:
+                raise AssertionError(content)
+
+            async def close(self) -> None:
+                pass
+
+        async def invoke(_operation: str, _request: Mapping[str, object]) -> BaseModel:
+            raise AssertionError("No Portal call is admitted before readiness.")
+
+        connection = PortalBridgeConnection(process=Process(), bridge=PortalExecutionBridge(invoke=invoke))
+        pump = asyncio.create_task(connection.run())
+        with pytest.raises(connection_module.PortalRelayProtocolError, match="before readiness"):
+            await connection.wait_ready()
+        await asyncio.gather(pump, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert "phase=startup failure=PortalRelayProtocolError" in caplog.text
+    assert sensitive_canary not in caplog.text
+
+
 def test_cancellation_in_same_chunk_prevents_not_yet_scheduled_request() -> None:
     async def scenario() -> None:
         effects: list[str] = []
@@ -86,7 +114,9 @@ def test_cancellation_in_same_chunk_prevents_not_yet_scheduled_request() -> None
     asyncio.run(scenario())
 
 
-def test_failed_response_write_closes_process_and_wakes_reader() -> None:
+def test_failed_response_write_logs_only_bounded_failure_class_and_phase(caplog: pytest.LogCaptureFixture) -> None:
+    sensitive_canary = "sensitive-provider-payload-canary"
+
     async def scenario() -> None:
         closed = asyncio.Event()
         frames = b"".join(
@@ -100,6 +130,7 @@ def test_failed_response_write_closes_process_and_wakes_reader() -> None:
         class Process:
             def __init__(self) -> None:
                 self.first = True
+                self.writes = 0
 
             async def read(self) -> bytes:
                 if self.first:
@@ -110,7 +141,10 @@ def test_failed_response_write_closes_process_and_wakes_reader() -> None:
 
             async def write(self, content: bytes) -> None:
                 assert content
-                raise ConnectionError("write failed")
+                self.writes += 1
+                if self.writes == 1:
+                    return
+                raise ConnectionError(sensitive_canary)
 
             async def close(self) -> None:
                 closed.set()
@@ -123,6 +157,9 @@ def test_failed_response_write_closes_process_and_wakes_reader() -> None:
         assert closed.is_set()
 
     asyncio.run(scenario())
+    assert "phase=active failure=ConnectionError" in caplog.text
+    assert "phase=request failure=PortalRelayProtocolError" in caplog.text
+    assert sensitive_canary not in caplog.text
 
 
 def test_output_budget_exhaustion_rejects_before_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:

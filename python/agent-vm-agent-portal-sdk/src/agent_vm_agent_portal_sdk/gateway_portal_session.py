@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import logging
 import secrets
 import shlex
 import typing as t
@@ -17,6 +18,8 @@ from .gateway_runtime_client import GatewayRuntimeClient
 from .managed_relay_process_port import ManagedRelayProcessPort
 from .portal_bridge_connection import PortalBridgeConnection
 from .portal_execution_bridge import PortalExecutionBridge
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class GatewayPortalSessionConfig(BaseModel):
@@ -125,7 +128,21 @@ class GatewayPortalSession:
         )
         self._pump = asyncio.create_task(self._connection.run())
         self._stderr = asyncio.create_task(self._drain_stderr(handles["stderr"]))
+        self._pump.add_done_callback(lambda task: self._observe_session_task(task, phase="pump"))
+        self._stderr.add_done_callback(lambda task: self._observe_session_task(task, phase="helper-stderr"))
         await self._connection.wait_ready()
+
+    @staticmethod
+    def _observe_session_task(task: asyncio.Task[None], *, phase: str) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            _LOGGER.warning(
+                "Tool Portal relay session task failed: phase=%s failure=%s",
+                phase,
+                type(error).__name__,
+            )
 
     @property
     def catalog_manifest_path(self) -> str | None:

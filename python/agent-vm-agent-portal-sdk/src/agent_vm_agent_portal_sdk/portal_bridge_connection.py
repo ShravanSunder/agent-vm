@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import logging
 import typing as t
 from collections.abc import Mapping
 from time import monotonic
@@ -26,6 +27,7 @@ _MAX_CHUNK_BYTES = RELAY_STREAM_CHUNK_BYTES
 _MAX_PENDING_REQUESTS = MAX_RELAY_PENDING_REQUESTS
 _MAX_RETAINED_BYTES = MAX_RELAY_RETAINED_BYTES
 _CONTROL_RESERVE_BYTES = RELAY_CONTROL_RESERVE_BYTES
+_LOGGER = logging.getLogger(__name__)
 type StreamPortalArtifact = t.Callable[[Mapping[str, object], t.Callable[[dict[str, object]], t.Awaitable[None]]], t.Awaitable[None]]
 
 
@@ -208,7 +210,12 @@ class PortalBridgeConnection:
                 self._request_bytes.pop(request_id, None)
                 if self._artifact_request_id == request_id:
                     self._artifact_request_id = None
-        if not task.cancelled() and task.exception() is not None:
+        task_error = None if task.cancelled() else task.exception()
+        if task_error is not None:
+            _LOGGER.warning(
+                "Tool Portal relay pump failed: phase=request failure=%s",
+                type(task_error).__name__,
+            )
             self._bridge.close()
             self._closed = True
             if self._cleanup_task is None:
@@ -222,14 +229,34 @@ class PortalBridgeConnection:
             while not self._closed and (chunk := await self._process.read()):
                 for message in decoder.feed(chunk):
                     await self._receive(message)
+            if not self._closed:
+                _LOGGER.warning(
+                    "Tool Portal relay pump failed: phase=%s failure=ProcessStreamEnded",
+                    self._relay_phase(),
+                )
             self._fail_readiness_if_pending()
-        except (ConnectionError, PortalRelayProtocolError):
+        except (ConnectionError, PortalRelayProtocolError) as error:
+            _LOGGER.warning(
+                "Tool Portal relay pump failed: phase=%s failure=%s",
+                self._relay_phase(),
+                type(error).__name__,
+            )
             self._fail_readiness_if_pending()
-        except Exception:
+        except Exception as error:
+            _LOGGER.warning(
+                "Tool Portal relay pump failed: phase=%s failure=%s",
+                self._relay_phase(),
+                type(error).__name__,
+            )
             self._fail_readiness_if_pending()
             raise
         finally:
             await self.close()
+
+    def _relay_phase(self) -> t.Literal["startup", "active", "closing"]:
+        if self._closed:
+            return "closing"
+        return "active" if self._ready.done() else "startup"
 
     def _fail_readiness_if_pending(self) -> None:
         if self._closed or self._ready.done():
