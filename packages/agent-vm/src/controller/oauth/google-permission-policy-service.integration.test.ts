@@ -27,7 +27,11 @@ describe('host account policy and activity resolution', () => {
 		await fixture?.broker.close();
 		fixture?.catalog.close();
 	});
-	async function arrange(): Promise<{
+	async function arrange(
+		compilerInput: ReturnType<
+			typeof createOAuthPolicyCompilerTestInput
+		> = createOAuthPolicyCompilerTestInput(),
+	): Promise<{
 		readonly service: ReturnType<typeof createGooglePermissionPolicyService>;
 		readonly target: {
 			readonly agentId: string;
@@ -38,13 +42,24 @@ describe('host account policy and activity resolution', () => {
 	}> {
 		fixture = await createBrokerFacadeFixture();
 		const enrolled = await fixture.enroll('sun');
-		const compiled = compileOAuthPolicy(createOAuthPolicyCompilerTestInput());
+		const compiled = compileOAuthPolicy(compilerInput);
 		fixture.catalog.activatePolicyDefaults({
 			zoneId: 'test-zone',
 			defaultsRevision: compiled.defaultsRevision,
 			snapshot: compiled.defaultsSnapshot,
 		});
-		const service = createGooglePermissionPolicyService({
+		const service = createPolicyService(compiled);
+		return {
+			service,
+			compiled,
+			target: { agentId: 'sun', accountId: enrolled.accountId, applicationId: facadeApplicationId },
+		};
+	}
+	function createPolicyService(
+		compiled: ReturnType<typeof compileOAuthPolicy>,
+	): ReturnType<typeof createGooglePermissionPolicyService> {
+		if (fixture === undefined) throw new Error('Expected fixture.');
+		return createGooglePermissionPolicyService({
 			catalog: fixture.catalog,
 			compiled,
 			configRevision: 'config-1',
@@ -59,11 +74,6 @@ describe('host account policy and activity resolution', () => {
 			containPolicyMaterial: async () => 'contained',
 			isAdmissionOpen: () => true,
 		});
-		return {
-			service,
-			compiled,
-			target: { agentId: 'sun', accountId: enrolled.accountId, applicationId: facadeApplicationId },
-		};
 	}
 	it('joins compiled defaults, real encrypted account policy and real broker enrollment without provider requests', async () => {
 		// Arrange
@@ -219,6 +229,116 @@ describe('host account policy and activity resolution', () => {
 				operationId: 'gmail.search',
 			}),
 		).toMatchObject({ kind: 'ready', disposition: 'ask' });
+	});
+	it('keeps account overrides independent while two agents inherit one shared profile', async () => {
+		// Arrange: both agents use the same compiled role and connect the same Google account.
+		const input = createOAuthPolicyCompilerTestInput();
+		input.toolPortalConfig.agents.ember.profile = 'shared';
+		const { service, target } = await arrange(input);
+		if (fixture === undefined) throw new Error('Expected fixture.');
+		const ember = await fixture.enroll('ember');
+		expect(ember.accountId).toBe(target.accountId);
+		const emberTarget = { ...target, agentId: 'ember' };
+		const sunView = service.readAccountPolicyView({ ...target, identity: facadeIdentity });
+		const emberView = service.readAccountPolicyView({ ...emberTarget, identity: facadeIdentity });
+		if (sunView.kind !== 'ready' || emberView.kind !== 'ready')
+			throw new Error('Expected account views.');
+		expect(sunView.snapshot.authorizationId).not.toBe(emberView.snapshot.authorizationId);
+		for (const accountTarget of [target, emberTarget]) {
+			expect(
+				service.resolveActivityAvailability({ ...accountTarget, operationId: 'gmail.search' }),
+			).toMatchObject({ kind: 'ready', disposition: 'allow' });
+		}
+
+		// Act: activate changed shared defaults; both inherited account cells follow them.
+		input.catalog.collections['read-only-assistant'].defaults.communications.gmail.read = 'ask';
+		const askDefaults = compileOAuthPolicy(input);
+		fixture.catalog.activatePolicyDefaults({
+			zoneId: 'test-zone',
+			defaultsRevision: askDefaults.defaultsRevision,
+			snapshot: askDefaults.defaultsSnapshot,
+		});
+		expect(service.resolveActivityAvailability({ ...target, operationId: 'gmail.search' })).toEqual(
+			{ kind: 'unavailable' },
+		);
+		const askService = createPolicyService(askDefaults);
+		for (const accountTarget of [target, emberTarget]) {
+			expect(
+				askService.resolveActivityAvailability({ ...accountTarget, operationId: 'gmail.search' }),
+			).toMatchObject({ kind: 'ready', disposition: 'ask' });
+		}
+
+		// The real editor and encrypted catalog change only Sun's override.
+		const opened = await askService.openPolicyEditor({ ...target, identity: facadeIdentity });
+		if (opened.kind !== 'opened') throw new Error('Expected editable account.');
+		const preview = await askService.previewPolicyChange({
+			contextId: opened.contextId,
+			browserBindingSecret: opened.browserBindingSecret,
+			csrfToken: opened.csrfToken,
+			identity: facadeIdentity,
+			origin: askDefaults.oauthConfig.browser.publicBaseUrl,
+			expectedConfigRevision: opened.view.configRevision,
+			expectedOverrideRevision: opened.view.snapshot.overrideRevision,
+			services: {
+				...opened.view.snapshot.services,
+				gmail: { read: { kind: 'explicit', disposition: 'allow' }, write: { kind: 'inherit' } },
+			},
+		});
+		if (preview.kind !== 'preview') throw new Error('Expected policy preview.');
+		expect(
+			await askService.confirmPolicyChange({
+				contextId: preview.contextId,
+				browserBindingSecret: opened.browserBindingSecret,
+				csrfToken: preview.csrfToken,
+				identity: facadeIdentity,
+				origin: askDefaults.oauthConfig.browser.publicBaseUrl,
+			}),
+		).toMatchObject({ kind: 'applied' });
+
+		input.catalog.collections['read-only-assistant'].defaults.communications.gmail.read = 'deny';
+		const denyDefaults = compileOAuthPolicy(input);
+		fixture.catalog.activatePolicyDefaults({
+			zoneId: 'test-zone',
+			defaultsRevision: denyDefaults.defaultsRevision,
+			snapshot: denyDefaults.defaultsSnapshot,
+		});
+		const denyService = createPolicyService(denyDefaults);
+		// Assert: the same default change denies Ember but cannot replace Sun's explicit rule.
+		expect(
+			denyService.resolveActivityAvailability({ ...target, operationId: 'gmail.search' }),
+		).toMatchObject({ kind: 'ready', disposition: 'allow' });
+		expect(
+			denyService.resolveActivityAvailability({ ...emberTarget, operationId: 'gmail.search' }),
+		).toEqual({ kind: 'denied' });
+		expect(
+			denyService.readAccountPolicyView({ ...target, identity: facadeIdentity }),
+		).toMatchObject({
+			snapshot: { authorizationId: sunView.snapshot.authorizationId, overrideRevision: 2 },
+		});
+		expect(
+			denyService.readAccountPolicyView({ ...emberTarget, identity: facadeIdentity }),
+		).toMatchObject({
+			snapshot: {
+				authorizationId: emberView.snapshot.authorizationId,
+				overrideRevision: 1,
+				services: { gmail: { read: { kind: 'inherit' } } },
+			},
+		});
+		const invocation = denyService.resolveManagedGoogleInvocation({
+			agentId: 'sun',
+			profileId: 'shared',
+			namespaceId: 'google',
+			operationName: 'gog',
+			input: {
+				accountId: target.accountId,
+				argv: ['gmail', 'search', 'unread'],
+				reason: 'Read inbox',
+			},
+		});
+		expect(invocation).toMatchObject({
+			kind: 'ready',
+			binding: { authorizationId: sunView.snapshot.authorizationId },
+		});
 	});
 	it('honors a stored Deny and keeps an applying edit unavailable', async () => {
 		// Arrange
