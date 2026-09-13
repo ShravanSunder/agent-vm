@@ -144,26 +144,26 @@ def _orientation_for_session(
         session_id=session_id,
     )
     bindings = runtime.catalog_turn_bindings
+    binding = None
+    changed = False
     if bindings is not None and turn_id is not None:
         binding, changed = bindings.offer_for_turn(
             runtime.current_projection(), session_id=session_id, turn_id=turn_id
         )
-        if binding is not None:
-            if not changed:
-                return None
-            projection = runtime.current_projection()
-            return render_catalog_guidance(
-                ready_value.inventory,
-                binding.manifest,
-                changed_fingerprint=changed,
-                catalog_mode=projection.tool_portal_catalog_mode or "compact",
-            )
     mark = runtime.injection_state_cache.mark_if_absent(
         injection_key,
         InjectionMarker(),
     )
     if not isinstance(mark, MarkInserted):
         return None
+    if binding is not None:
+        projection = runtime.current_projection()
+        return render_catalog_guidance(
+            ready_value.inventory,
+            binding.manifest,
+            changed_fingerprint=changed,
+            catalog_mode=projection.tool_portal_catalog_mode or "compact",
+        )
     return orientation.orientation
 
 

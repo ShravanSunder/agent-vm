@@ -11,19 +11,46 @@ from collections.abc import Mapping
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, ConfigDict
 
+from agent_vm_hermes_adapter.managed_framework_observability import ManagedFrameworkObservability
 from agent_vm_hermes_adapter.managed_profile_adapter import (
     CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
     ManagedFrameworkIdentity,
 )
+from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache, PopulationStarted
 from agent_vm_hermes_adapter.managed_tool_portal.catalog import (
     ManagedCatalogCoordinator,
     ManagedCatalogPreparationError,
     ManagedCatalogTurnBindings,
     PreparedCatalogManifest,
 )
-from agent_vm_hermes_adapter.managed_tool_portal.models import NamespaceDiscovery
+from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import (
+    _OnSessionEndHook,
+    _PreLlmCallHook,
+)
+from agent_vm_hermes_adapter.managed_tool_portal.inventory import InventoryCoordinator
+from agent_vm_hermes_adapter.managed_tool_portal.inventory_contracts import (
+    InventoryListRequest,
+    InventoryPortalListResult,
+    InventoryProjection,
+)
+from agent_vm_hermes_adapter.managed_tool_portal.models import (
+    InjectionCacheKey,
+    InjectionMarker,
+    InventoryCacheKey,
+    InventoryReadyValue,
+    NamespaceAvailability,
+    NamespaceDiscovery,
+    NamespaceInventory,
+    RenderedOrientation,
+)
+from agent_vm_hermes_adapter.managed_tool_portal_capability_tools import (
+    _ManagedToolPortalPluginRuntime,
+)
+from agent_vm_hermes_adapter.managed_tool_portal_observability import (
+    create_hermes_tool_portal_telemetry_from_environment,
+)
 
 
 class PortableResult(BaseModel):
@@ -257,6 +284,18 @@ class RejectingPortalOperations:
         raise AssertionError("Managed startup must not perform a second Portal describe.")
 
 
+class UnusedInventoryGateway:
+    async def list_for_projection(
+        self,
+        projection: InventoryProjection,
+        request: InventoryListRequest,
+        *,
+        timeout_seconds: float,
+    ) -> InventoryPortalListResult:
+        del projection, request, timeout_seconds
+        raise AssertionError("catalog hook tests must not start inventory I/O")
+
+
 class FakeClient(GatewayRuntimeClient):
     def __init__(
         self,
@@ -293,6 +332,107 @@ class FakeAdapter:
 
 @t.final
 class ManagedCatalogCoordinatorTests(unittest.TestCase):
+    def test_outer_turn_end_releases_binding_without_reinjecting_session_guidance(self) -> None:
+        profile = projection("researcher", mode="catalog")
+        catalogs = FakeCatalogOperations({"researcher": manifest("a")})
+        adapter = HermesManagedAdapter(
+            config=HermesManagedAdapterConfig(
+                profiles=(profile,),
+                projection_cohort_digest=(
+                    "projection-cohort:"
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ),
+                protected_hermes_home="/var/lib/agent-vm/hermes",
+            ),
+            gateway_runtime_client=FakeClient(
+                catalogs=catalogs,
+                tools_by_agent={"researcher": ("overlap",)},
+            ),
+        )
+        catalog_coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        asyncio.run(catalog_coordinator.prepare_all())
+        bindings = ManagedCatalogTurnBindings(adapter=adapter, catalogs=catalog_coordinator)
+        inventory = NamespaceInventory(
+            inventory_id="inventory-a",
+            namespaces=(NamespaceAvailability(namespace="shared", status="available"),),
+        )
+        orientation = "Tool Portal orientation"
+        inventory_cache = PluginStateCache[InventoryCacheKey, InventoryReadyValue](
+            key_model=InventoryCacheKey,
+            value_model=InventoryReadyValue,
+        )
+        inventory_projection = InventoryProjection(
+            gateway_epoch="epoch-a",
+            profile_assignment_revision=profile.profile_assignment_revision,
+            agent_id=profile.agent_id,
+            profile_name=profile.framework_identity.profile_name,
+            tool_portal_profile_id=profile.tool_portal_profile_id,
+            namespaces=profile.tool_portal_namespaces,
+        )
+        population = inventory_cache.start_population(inventory_projection.cache_key())
+        self.assertIsInstance(population, PopulationStarted)
+        assert isinstance(population, PopulationStarted)
+        publication = inventory_cache.publish_ready(
+            population.handle,
+            InventoryReadyValue(
+                inventory=inventory,
+                orientation=RenderedOrientation(
+                    inventory_id=inventory.inventory_id,
+                    orientation=orientation,
+                    utf8_byte_count=len(orientation.encode("utf-8")),
+                    displayed_count=1,
+                    total_count=1,
+                    omitted_count=0,
+                ),
+            ),
+        )
+        self.assertTrue(publication.accepted)
+        telemetry = create_hermes_tool_portal_telemetry_from_environment()
+        runtime = _ManagedToolPortalPluginRuntime(
+            adapter=adapter,
+            current_projection=lambda: profile,
+            framework_observability=ManagedFrameworkObservability(
+                sink=telemetry,
+                max_inflight_observations=telemetry.max_inflight_observations,
+            ),
+            telemetry=telemetry,
+            inventory_coordinator=InventoryCoordinator(
+                cache=inventory_cache,
+                gateway=UnusedInventoryGateway(),
+            ),
+            injection_state_cache=PluginStateCache[InjectionCacheKey, InjectionMarker](
+                key_model=InjectionCacheKey,
+                value_model=InjectionMarker,
+            ),
+            gateway_epoch="epoch-a",
+            catalog_coordinator=catalog_coordinator,
+            catalog_turn_bindings=bindings,
+        )
+        pre_llm_call = _PreLlmCallHook(runtime)
+        on_session_end = _OnSessionEndHook(runtime)
+
+        first_turn = pre_llm_call(session_id="session-1", turn_id="turn-1")
+        on_session_end(
+            session_id="session-1",
+            turn_id="turn-1",
+            completed=True,
+            interrupted=False,
+        )
+        second_turn = pre_llm_call(session_id="session-1", turn_id="turn-2")
+
+        self.assertIsNotNone(first_turn)
+        self.assertIsNone(second_turn)
+        self.assertEqual(
+            [(offer[1], offer[2]) for offer in catalogs.offers if offer[1] is not None],
+            [("session-1", "turn-1"), ("session-1", "turn-2")],
+        )
+        second_binding = bindings.acquire(profile, session_id="session-1", turn_id="turn-2")
+        self.assertIsNotNone(second_binding)
+        assert second_binding is not None
+        bindings.release_invocation(profile, second_binding)
+        bindings.close_session(profile, "session-1")
+        adapter.close(disconnect_gateway_runtime=False)
+
     def test_real_adapter_prepares_compact_and_catalog_profiles_through_admitted_accessor(
         self,
     ) -> None:
