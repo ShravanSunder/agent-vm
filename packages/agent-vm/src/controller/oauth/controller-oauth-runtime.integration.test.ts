@@ -27,6 +27,12 @@ function oauthConfig(): unknown {
 	return {
 		...input,
 		zoneId: 'apollofam',
+		owners: {
+			owner: { ...input.owners.owner, allowedAgentIds: ['sun'] },
+		},
+		policyEditors: {
+			editor: { ...input.policyEditors.editor, editableAgentIds: ['sun'] },
+		},
 		browser: {
 			...input.browser,
 			listener: {
@@ -43,18 +49,19 @@ function toolPortalConfig(): unknown {
 	const google = input.profiles.shared.namespaces.google;
 	return {
 		...input,
-		agents: {
-			sun: {
-				profile: 'shared',
-				googlePolicyDefaults: {
-					kind: 'explicit',
-					applications: { 'gmail-app': { gmail: { read: 'allow', write: 'deny' } } },
-				},
-			},
-			ember: input.agents.ember,
-		},
+		agents: { sun: { profile: 'shared' } },
 		profiles: {
 			shared: {
+				...input.profiles.shared,
+				oauthApplications: {
+					'gmail-app': {
+						...input.profiles.shared.oauthApplications['gmail-app'],
+						policyDefaults: {
+							kind: 'explicit',
+							services: { gmail: { read: 'allow', write: 'deny' } },
+						},
+					},
+				},
 				namespaces: {
 					...input.profiles.shared.namespaces,
 					google: {
@@ -449,6 +456,15 @@ describe('controller OAuth runtime composition', () => {
 	it('remains disabled when the selected Hermes zone has no OAuth config', async () => {
 		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
 		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			path.join(configDirectory, 'tool-portal.config.jsonc'),
+			JSON.stringify({
+				agents: {},
+				mode: 'managed',
+				profiles: { default: { namespaces: {} } },
+				schemaVersion: 1,
+			}),
+		);
 
 		await expect(
 			prepareControllerOAuthRuntime({

@@ -31,45 +31,65 @@ const googleOperation = {
 	},
 };
 const lifecycle = ['list', 'begin', 'status', 'cancel', 'reauthorize', 'disconnect'];
+const namespaces = {
+	google: {
+		tools: { allow: '*' },
+		calls: { source: 'managed_google_policy' },
+		backend: { kind: 'controller_execution', operations: { gog: googleOperation } },
+	},
+	oauth_authorization: {
+		tools: { allow: lifecycle },
+		calls: { requiresApproval: { allow: [] }, withoutApproval: { allow: lifecycle } },
+		backend: {
+			kind: 'controller_execution',
+			operations: Object.fromEntries(
+				lifecycle.map((name) => [name, { kind: 'registered_action' }]),
+			),
+		},
+	},
+};
+const ceiling = { kind: 'explicit', groupIds: ['gmail.read', 'gmail.write'] };
 const toolPortalConfig = {
 	schemaVersion: 1,
 	mode: 'managed',
 	agents: {
-		sun: {
-			profile: 'shared',
-			googlePolicyDefaults: {
-				kind: 'collection',
-				collectionId: 'read-only-assistant',
-				version: '1',
-			},
-		},
-		ember: {
-			profile: 'shared',
-			googlePolicyDefaults: {
-				kind: 'explicit',
-				applications: { 'gmail-app': { gmail: { read: 'ask', write: 'deny' } } },
-			},
-		},
+		sun: { profile: 'shared' },
+		ember: { profile: 'ask' },
 	},
 	profiles: {
 		shared: {
-			namespaces: {
-				google: {
-					tools: { allow: '*' },
-					calls: { source: 'managed_google_policy' },
-					backend: { kind: 'controller_execution', operations: { gog: googleOperation } },
-				},
-				oauth_authorization: {
-					tools: { allow: lifecycle },
-					calls: { requiresApproval: { allow: [] }, withoutApproval: { allow: lifecycle } },
-					backend: {
-						kind: 'controller_execution',
-						operations: Object.fromEntries(
-							lifecycle.map((name) => [name, { kind: 'registered_action' }]),
-						),
+			oauthApplications: {
+				'gmail-app': {
+					ceiling: structuredClone(ceiling),
+					consentRecommendation: {
+						kind: 'collection',
+						collectionId: 'read-only-assistant',
+						version: '1',
+					},
+					policyDefaults: {
+						kind: 'collection',
+						collectionId: 'read-only-assistant',
+						version: '1',
 					},
 				},
 			},
+			namespaces: structuredClone(namespaces),
+		},
+		ask: {
+			oauthApplications: {
+				'gmail-app': {
+					ceiling: structuredClone(ceiling),
+					consentRecommendation: {
+						kind: 'explicit',
+						groupIds: ['gmail.read'],
+					},
+					policyDefaults: {
+						kind: 'explicit',
+						services: { gmail: { read: 'ask', write: 'deny' } },
+					},
+				},
+			},
+			namespaces: structuredClone(namespaces),
 		},
 	},
 };

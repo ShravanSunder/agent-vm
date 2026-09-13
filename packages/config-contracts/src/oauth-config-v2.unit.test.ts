@@ -2,33 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import { createOAuthConfigTestInput } from './oauth-config-test-fixture.js';
 import { oauthConfigSchema } from './oauth-config.js';
+import { createOAuthPolicyCompilerTestInput } from './oauth-policy-compiler-test-fixture.js';
+import { compileOAuthPolicy } from './oauth-tool-portal-config.js';
 
 describe('OAuth version-2 ownership and application configuration', () => {
-	it('separates owner/editor admission, network admission, and per-agent ceilings without account slots', () => {
+	it('separates owner/editor admission, network admission, and application registrations', () => {
 		// Arrange / Act
 		const config = oauthConfigSchema.parse(createOAuthConfigTestInput());
 
 		// Assert
 		expect(config.schemaVersion).toBe(2);
-		expect(config.agents.sun).not.toHaveProperty('accountProfiles');
+		expect(config).not.toHaveProperty('agents');
 		expect(config.owners.owner?.clerkUserId).toBe('user_test_owner');
 		expect(config.browser.network.admittedTailnetLogins).toEqual(['network-person@example.test']);
 	});
 
-	it.each(['accountProfiles', 'email', 'providerSubject', 'googlePolicyDefaults'])(
-		'rejects authored dynamic accounts or duplicate policy authority: %s',
-		(field) => {
-			// Arrange
-			const input = createOAuthConfigTestInput();
-			// Act / Assert
-			expect(
-				oauthConfigSchema.safeParse({
-					...input,
-					agents: { ...input.agents, sun: { ...input.agents.sun, [field]: {} } },
-				}).success,
-			).toBe(false);
-		},
-	);
+	it('rejects the old authored OAuth agent policy map', () => {
+		// Arrange
+		const input = createOAuthConfigTestInput();
+		// Act / Assert
+		expect(
+			oauthConfigSchema.safeParse({
+				...input,
+				agents: {
+					sun: {
+						applications: {
+							'gmail-app': {
+								ceiling: { kind: 'explicit', groupIds: ['gmail.read'] },
+							},
+						},
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
 
 	it('rejects raw scope mappings, duplicate families and unregistered projects', () => {
 		// Arrange
@@ -57,7 +64,7 @@ describe('OAuth version-2 ownership and application configuration', () => {
 		}
 	});
 
-	it('rejects duplicate human identities and admissions to absent agents', () => {
+	it('rejects duplicate human identities and compilation rejects admissions to absent agents', () => {
 		// Arrange
 		const input = createOAuthConfigTestInput();
 		// Act / Assert
@@ -67,32 +74,18 @@ describe('OAuth version-2 ownership and application configuration', () => {
 				owners: { ...input.owners, duplicate: input.owners.owner },
 			}).success,
 		).toBe(false);
-		expect(
-			oauthConfigSchema.safeParse({
-				...input,
-				owners: { owner: { ...input.owners.owner, allowedAgentIds: ['unknown-agent'] } },
-			}).success,
-		).toBe(false);
-		expect(
-			oauthConfigSchema.safeParse({
-				...input,
-				policyEditors: {
-					editor: { ...input.policyEditors.editor, editableAgentIds: ['unknown-agent'] },
-				},
-			}).success,
-		).toBe(false);
+		const compilerInput = createOAuthPolicyCompilerTestInput();
+		compilerInput.oauthConfig.owners.owner.allowedAgentIds = ['unknown-agent'];
+		expect(() => compileOAuthPolicy(compilerInput)).toThrow('unconfigured agent');
+		const editorInput = createOAuthPolicyCompilerTestInput();
+		editorInput.oauthConfig.policyEditors.editor.editableAgentIds = ['unknown-agent'];
+		expect(() => compileOAuthPolicy(editorInput)).toThrow('unconfigured agent');
 	});
 
-	it('requires explicit ceilings and the same configured Clerk return origin', () => {
+	it('requires the same configured Clerk return origin', () => {
 		// Arrange
 		const input = createOAuthConfigTestInput();
 		// Act / Assert
-		expect(
-			oauthConfigSchema.safeParse({
-				...input,
-				agents: { sun: { applications: { 'gmail-app': {} } } },
-			}).success,
-		).toBe(false);
 		expect(
 			oauthConfigSchema.safeParse({
 				...input,

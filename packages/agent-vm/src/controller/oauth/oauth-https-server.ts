@@ -4,7 +4,7 @@ import { createServer } from 'node:https';
 import { isIP } from 'node:net';
 import { createSecureContext } from 'node:tls';
 
-import type { OAuthConfig } from '@agent-vm/config-contracts';
+import type { ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApprovalPageModelSchema,
 	renderOAuthApprovalPage,
@@ -178,7 +178,7 @@ function isTailscaleAddress(address: string): boolean {
 export function createOAuthHttpsApp(props: {
 	readonly assets: OAuthApprovalAssets;
 	readonly brokerService: GoogleOAuthBrokerService;
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly browserIdentityVerifier: ClerkBrowserIdentityVerifier;
 	readonly navigation: OAuthBrowserNavigationStore;
 	readonly loginContinuations: OAuthLoginContinuationStore;

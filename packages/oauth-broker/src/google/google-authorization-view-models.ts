@@ -1,4 +1,7 @@
-import { googleOAuthApplicationIdSchema, type OAuthConfig } from '@agent-vm/config-contracts';
+import {
+	googleOAuthApplicationIdSchema,
+	type ResolvedOAuthConfig,
+} from '@agent-vm/config-contracts';
 import type { GoogleOAuthApplicationId } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
@@ -70,7 +73,7 @@ function lifecycle(
 }
 export function createGoogleAuthorizationViewModels(props: {
 	readonly catalog: OAuthCredentialCatalog;
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly now: () => number;
 	readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 	readonly permissionPolicy: GoogleOAuthPermissionPolicy;

@@ -1,4 +1,7 @@
-import { googleOAuthApplicationIdSchema, type OAuthConfig } from '@agent-vm/config-contracts';
+import {
+	googleOAuthApplicationIdSchema,
+	type ResolvedOAuthConfig,
+} from '@agent-vm/config-contracts';
 import {
 	renderOAuthAccountPolicyPage,
 	renderOAuthOwnerIndex,
@@ -62,7 +65,7 @@ function parsePolicyCells(form: FormData): ReadyPolicyView['snapshot']['services
 }
 /** Owner pages share the outer OAuth website's network gate, CSP and body limits. */
 export function createOAuthAccountPolicyRoutes(props: {
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly broker: GoogleOAuthBrokerService;
 	readonly policy: GooglePermissionPolicyService;
 	readonly browser: OAuthBrowserSessionRoutes;

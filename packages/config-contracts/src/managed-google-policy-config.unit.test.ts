@@ -40,24 +40,24 @@ function config(): unknown {
 		schemaVersion: 1,
 		mode: 'managed',
 		agents: {
-			sun: {
-				profile: 'shared',
-				googlePolicyDefaults: {
-					kind: 'collection',
-					collectionId: 'read-only-assistant',
-					version: '1',
-				},
-			},
-			ember: {
-				profile: 'shared',
-				googlePolicyDefaults: {
-					kind: 'explicit',
-					applications: { 'gmail-app': { gmail: { read: 'ask', write: 'deny' } } },
-				},
-			},
+			sun: { profile: 'shared' },
+			ember: { profile: 'shared' },
 		},
 		profiles: {
 			shared: {
+				oauthApplications: {
+					'gmail-app': {
+						ceiling: { kind: 'catalog-preset', presetId: 'all-supported' },
+						consentRecommendation: {
+							kind: 'explicit',
+							groupIds: ['gmail.read'],
+						},
+						policyDefaults: {
+							kind: 'explicit',
+							services: { gmail: { read: 'ask', write: 'deny' } },
+						},
+					},
+				},
 				namespaces: {
 					google: {
 						tools: { allow: '*' },
@@ -71,14 +71,62 @@ function config(): unknown {
 }
 
 describe('managed Google config policy source', () => {
-	it('keeps per-agent defaults distinct even when agents share an executable profile', () => {
+	it('keeps OAuth policy in the shared profile and agents as profile assignments', () => {
 		// Arrange / Act
 		const parsed = toolPortalConfigSchema.parse(config());
 		// Assert
 		expect(parsed.mode).toBe('managed');
 		if (parsed.mode !== 'managed') throw new Error('Expected managed config.');
-		expect(parsed.agents.sun?.googlePolicyDefaults).toMatchObject({ kind: 'collection' });
-		expect(parsed.agents.ember?.googlePolicyDefaults).toMatchObject({ kind: 'explicit' });
+		expect(parsed.agents.sun).toEqual({ profile: 'shared' });
+		expect(parsed.profiles.shared?.oauthApplications?.['gmail-app']).toMatchObject({
+			ceiling: { kind: 'catalog-preset', presetId: 'all-supported' },
+			consentRecommendation: { kind: 'explicit', groupIds: ['gmail.read'] },
+			policyDefaults: { kind: 'explicit' },
+		});
+	});
+	it('rejects the old agent-level Google defaults location', () => {
+		// Arrange
+		const input = toolPortalConfigSchema.parse(config());
+		// Act / Assert
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...input,
+				agents: {
+					sun: {
+						profile: 'shared',
+						googlePolicyDefaults: {
+							kind: 'collection',
+							collectionId: 'read-only-assistant',
+							version: '1',
+						},
+					},
+				},
+			}).success,
+		).toBe(false);
+	});
+	it('requires a ceiling for every profile OAuth application entry', () => {
+		// Arrange
+		const input = toolPortalConfigSchema.parse(config());
+		if (input.mode !== 'managed') throw new Error('Expected managed config.');
+		const application = input.profiles.shared?.oauthApplications?.['gmail-app'];
+		if (application === undefined) throw new Error('Expected Gmail profile application.');
+		const { ceiling: _removedCeiling, ...withoutCeiling } = application;
+		// Act / Assert
+		expect(
+			toolPortalConfigSchema.safeParse({
+				...input,
+				profiles: {
+					...input.profiles,
+					shared: {
+						...input.profiles.shared,
+						oauthApplications: {
+							...input.profiles.shared?.oauthApplications,
+							'gmail-app': withoutCeiling,
+						},
+					},
+				},
+			}).success,
+		).toBe(false);
 	});
 	it('retains hard command constraints without a second Ask or Allow rule list', () => {
 		// Arrange / Act

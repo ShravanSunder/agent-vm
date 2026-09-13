@@ -7,9 +7,11 @@ import {
 	loadOAuthConfig,
 	loadToolPortalConfig,
 	compileOAuthPolicy,
+	managedToolPortalRequiresOAuthConfiguration,
 	type CompiledOAuthPolicy,
 	type GoogleOAuthApplicationId,
 	type OAuthConfig,
+	type ResolvedOAuthConfig,
 } from '@agent-vm/config-contracts';
 import { loadOAuthApprovalAssetBundle } from '@agent-vm/oauth-approval-ui';
 import {
@@ -83,14 +85,14 @@ async function loadSelectedOAuthConfiguration(props: {
 	readonly systemConfig: ControllerOAuthSystemConfig;
 }): Promise<
 	| {
-			readonly config: OAuthConfig;
+			readonly config: ResolvedOAuthConfig;
 			readonly compiled: CompiledOAuthPolicy;
 			readonly zoneId: string;
 	  }
 	| undefined
 > {
 	const configuredZones: {
-		readonly config: OAuthConfig;
+		readonly config: ResolvedOAuthConfig;
 		readonly compiled: CompiledOAuthPolicy;
 		readonly zoneId: string;
 	}[] = [];
@@ -98,18 +100,21 @@ async function loadSelectedOAuthConfiguration(props: {
 		const zone = props.systemConfig.zones.find((candidate) => candidate.id === zoneId);
 		if (zone?.gateway.type !== 'hermes' || zone.toolPortal === undefined) continue;
 		const oauthConfigPath = path.join(zone.toolPortal.configDir, oauthConfigFileName);
+		// oxlint-disable-next-line no-await-in-loop -- each selected zone owns one authored profile file.
+		const toolPortalConfig = await loadToolPortalConfig(
+			path.join(zone.toolPortal.configDir, toolPortalConfigFileName),
+		);
+		if (toolPortalConfig.mode !== 'managed') continue;
+		const requiresOAuth = managedToolPortalRequiresOAuthConfiguration(toolPortalConfig);
 		try {
 			// oxlint-disable-next-line no-await-in-loop -- selected zone config discovery is bounded and preserves deterministic diagnostics.
 			await access(oauthConfigPath);
 		} catch (error) {
-			if (isMissingFileError(error)) continue;
+			if (isMissingFileError(error) && !requiresOAuth) continue;
 			throw error;
 		}
 		// oxlint-disable-next-line no-await-in-loop -- each selected zone owns a distinct authored config pair.
-		const [oauthConfig, toolPortalConfig] = await Promise.all([
-			loadOAuthConfig(oauthConfigPath),
-			loadToolPortalConfig(path.join(zone.toolPortal.configDir, toolPortalConfigFileName)),
-		]);
+		const oauthConfig = await loadOAuthConfig(oauthConfigPath);
 		if (oauthConfig.zoneId !== zoneId)
 			throw new Error('OAuth config zone does not match its selected Hermes zone.');
 		const compiled = compileOAuthPolicy({
@@ -117,7 +122,7 @@ async function loadSelectedOAuthConfiguration(props: {
 			toolPortalConfig,
 			catalog: getGooglePolicyCatalog(),
 		});
-		configuredZones.push({ config: oauthConfig, compiled, zoneId });
+		configuredZones.push({ config: compiled.oauthConfig, compiled, zoneId });
 	}
 	if (configuredZones.length > 1) {
 		throw new Error('One controller process can host OAuth for exactly one selected Hermes zone.');

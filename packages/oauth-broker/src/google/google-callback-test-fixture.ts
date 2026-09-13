@@ -1,4 +1,4 @@
-import { oauthConfigSchema, type OAuthConfig } from '@agent-vm/config-contracts';
+import { compileOAuthPolicy, type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,
@@ -6,7 +6,7 @@ import {
 } from '@agent-vm/oauth-broker-contracts';
 import { vi, type Mock } from 'vitest';
 
-import { createOAuthConfigTestInput } from '../../../config-contracts/src/oauth-config-test-fixture.js';
+import { createOAuthPolicyCompilerTestInput } from '../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
 import { clientCredentials, owner, wrappingKey } from '../oauth-catalog-test-fixture.js';
 import { type OAuthCeremonyTarget } from '../oauth-ceremony-contracts.js';
 import { type OAuthCredentialCatalog } from '../oauth-credential-catalog-contracts.js';
@@ -45,7 +45,7 @@ interface GoogleCallbackTestFixture {
 	readonly begin: (props?: BeginCallbackTestInput) => CallbackRequest;
 	readonly buildAuthorizationUrl: Mock<GoogleOAuthAdapter['buildAuthorizationUrl']>;
 	readonly callback: GoogleProviderAuthorizationCallback;
-	readonly config: OAuthConfig;
+	readonly config: ResolvedOAuthConfig;
 	readonly exchangeAuthorizationCode: Mock<GoogleOAuthAdapter['exchangeAuthorizationCode']>;
 	readonly prepareCallbackRetry: Mock<PrepareRetry>;
 	readonly revokeAuthorization: Mock<GoogleOAuthAdapter['revokeAuthorization']>;
@@ -59,9 +59,9 @@ export function createCallbackTestFixture(
 ): GoogleCallbackTestFixture {
 	let timeMs = 1_000;
 	let admissionOpen = true;
-	const configInput = createOAuthConfigTestInput();
-	configInput.owners.owner.clerkUserId = owner.userId;
-	const config = oauthConfigSchema.parse(configInput);
+	const compilerInput = createOAuthPolicyCompilerTestInput();
+	compilerInput.oauthConfig.owners.owner.clerkUserId = owner.userId;
+	const config = compileOAuthPolicy(compilerInput).oauthConfig;
 	const permissionPolicy = createGoogleOAuthPermissionPolicy({
 		config,
 		offeredGroupIdsByAgentApplication: {

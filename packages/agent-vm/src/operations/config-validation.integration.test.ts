@@ -343,6 +343,11 @@ async function writeManagedOAuthConfigFiles(rootPath: string): Promise<void> {
 		mode: 'managed',
 		profiles: {
 			default: {
+				oauthApplications: {
+					'gmail-app': {
+						ceiling: { kind: 'explicit', groupIds: ['gmail.read'] },
+					},
+				},
 				namespaces: {
 					oauth_authorization: {
 						backend: {
@@ -368,7 +373,6 @@ async function writeManagedOAuthConfigFiles(rootPath: string): Promise<void> {
 	await writeJson(path.join(configDirectoryPath, 'oauth.config.jsonc'), {
 		...oauthConfig,
 		zoneId: 'shravan',
-		agents: { shravan: oauthConfig.agents.sun },
 		owners: { owner: { ...oauthConfig.owners.owner, allowedAgentIds: ['shravan'] } },
 		policyEditors: {
 			editor: { ...oauthConfig.policyEditors.editor, editableAgentIds: ['shravan'] },
