@@ -1,17 +1,26 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { decodeConfiguredCliPreparedImageIdentity } from '@agent-vm/config-contracts';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
+import { writeImageArtifactFixture } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
+import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
+import { writePreparedManagedVmImage } from '../build/prepared-gondolin-image-cache.js';
+import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import {
 	resolveMcpPortalEffectiveConfig,
 	writeMcpPortalEffectiveConfig,
 } from './mcp-portal-effective-config.js';
 
 const createdDirectories: string[] = [];
-function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
+function createEphemeralConfiguredCliToolPortalConfigInput(
+	options: {
+		readonly imageReference?: string;
+	} = {},
+): unknown {
 	return {
 		agents: {
 			shravan: {
@@ -62,7 +71,9 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 										},
 										environment: { kind: 'empty' },
 										guestCwd: '/run',
-										imageReference: '../../vm-images/controller-runners/default/build-config.json',
+										imageReference:
+											options.imageReference ??
+											'../../vm-images/controller-runners/default/build-config.json',
 										kind: 'ephemeral_managed_vm',
 									},
 									kind: 'configured_cli',
@@ -93,6 +104,65 @@ function createEphemeralConfiguredCliToolPortalConfigInput(): unknown {
 }
 
 describe('path-based configured image preparation', () => {
+	it('reuses the authoritative selection when the configured recipe matches a Tool VM profile', async () => {
+		const configuredImageReference = './runner/build-config.jsonc';
+		const authoredConfigDir = await createAuthoredDir({
+			mcpConfig: { providers: {}, schemaVersion: 1 },
+			toolPortalConfig: createEphemeralConfiguredCliToolPortalConfigInput({
+				imageReference: configuredImageReference,
+			}),
+		});
+		const effectiveHostConfigDir = path.join(authoredConfigDir, 'effective');
+		const sharedImageCacheDir = path.join(authoredConfigDir, 'shared-images');
+		const recipePath = path.resolve(authoredConfigDir, configuredImageReference);
+		const selectionRecordPath = path.join(
+			authoredConfigDir,
+			'generated/image-selections/toolVm/default.json',
+		);
+		await mkdir(path.dirname(recipePath), { recursive: true });
+		await writeFile(recipePath, JSON.stringify({ arch: 'aarch64', distro: 'alpine' }), 'utf8');
+		const fingerprint = await computeFingerprintFromConfigPath(recipePath);
+		const imagePath = path.join(sharedImageCacheDir, fingerprint);
+		await writeImageArtifactFixture(imagePath);
+		await writePreparedManagedVmImage({
+			buildConfigPath: recipePath,
+			fingerprint,
+			imagePath,
+			selectionRecordPath,
+			sharedImageCacheDir,
+		});
+		const managedVmImages = createManagedVmRuntimeComposition().managedVmImages;
+
+		const result = await writeMcpPortalEffectiveConfig({
+			authoredConfigDir,
+			approvalAccessConfigured: false,
+			effectiveHostConfigDir,
+			managedVmImageSelections: [{ recipePath, selectionRecordPath }],
+			sharedImageCacheDir,
+			managedVmImages,
+			secretResolver: emptySecretResolver,
+			zoneId: 'zone-a',
+			declaredAgentIds: ['shravan'],
+		});
+		const operation = result.credentialedRuntimeRegistrySnapshot.resolve({
+			agentId: 'shravan',
+			cohortRevision: result.credentialedRuntimeRegistrySnapshot.cohortRevision,
+			namespaceId: 'controller',
+			operationName: 'isolated',
+			profileId: 'default',
+		}).operation;
+		if (operation.executionTarget.kind !== 'ephemeral_managed_vm') {
+			throw new Error('Expected one prepared ephemeral Managed VM operation.');
+		}
+		expect(
+			decodeConfiguredCliPreparedImageIdentity(operation.executionTarget.imageReference),
+		).toEqual({
+			fingerprint,
+			imageReference: await realpath(imagePath),
+			schemaVersion: 1,
+		});
+	});
+
 	it('forwards the shared artifact cache through authored config loading', async () => {
 		const authoredConfigDir = await createAuthoredDir({
 			mcpConfig: { providers: {}, schemaVersion: 1 },

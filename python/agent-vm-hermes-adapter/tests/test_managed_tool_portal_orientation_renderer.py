@@ -1,5 +1,6 @@
 import unittest
 
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import PreparedCatalogManifest
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceAvailability,
     NamespaceInventory,
@@ -7,7 +8,10 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     OrientationRenderFailure,
     RenderedOrientation,
 )
-from agent_vm_hermes_adapter.managed_tool_portal.renderer import render_orientation
+from agent_vm_hermes_adapter.managed_tool_portal.renderer import (
+    render_catalog_guidance,
+    render_orientation,
+)
 
 
 def _inventory(*names: str) -> NamespaceInventory:
@@ -16,6 +20,36 @@ def _inventory(*names: str) -> NamespaceInventory:
         namespaces=tuple(
             NamespaceAvailability(namespace=name, status="available") for name in names
         ),
+    )
+
+
+def _catalog_manifest(*names: str) -> PreparedCatalogManifest:
+    fingerprint = "a" * 64
+    return PreparedCatalogManifest.model_validate(
+        {
+            "bundleByteLength": 1,
+            "bundleSha256": f"sha256:{'b' * 64}",
+            "definitionFingerprint": fingerprint,
+            "files": [
+                {
+                    "byteLength": 0,
+                    "namespace": name,
+                    "path": f"{name}-{index:08x}.ts",
+                    "sha256": "c" * 64,
+                }
+                for index, name in enumerate(names)
+            ],
+            "generatorVersion": "1",
+            "namespaces": [
+                {
+                    "exportedFactoryName": f"bindNamespace{index:02d}Tools",
+                    "modulePath": f"{name}-{index:08x}.ts",
+                    "namespace": name,
+                }
+                for index, name in enumerate(names)
+            ],
+            "sdkContractVersion": "1",
+        }
     )
 
 
@@ -36,6 +70,56 @@ def _require_failure(
 
 
 class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
+    def test_catalog_guidance_fits_realistic_three_namespace_imports_and_generic_clients(
+        self,
+    ) -> None:
+        names = ("upstream_mock", "portal_composition_execution", "artifact")
+
+        guidance = render_catalog_guidance(
+            _inventory(*names),
+            _catalog_manifest(*names),
+            changed_fingerprint=True,
+            catalog_mode="catalog",
+        )
+
+        self.assertIn("Python connect_tool_portal()", guidance)
+        self.assertIn("TypeScript connectToolPortal()", guidance)
+        self.assertIn("tool-portal CLI", guidance)
+        self.assertIn("wait for human approval", guidance)
+        self.assertIn("active foreground invocation", guidance)
+        self.assertIn("Generated Tool Portal TypeScript imports for this Gateway epoch", guidance)
+        self.assertIn("/run/agent-vm/tool-portal-sdk/" + "a" * 64 + "/manifest.json", guidance)
+        for index, name in enumerate(names):
+            self.assertIn(f"bindNamespace{index:02d}Tools", guidance)
+            self.assertIn(f"/{name}-{index:08x}.ts", guidance)
+        self.assertNotIn("namespace imports omitted", guidance)
+        self.assertNotIn("tool_portal_list, tool_portal_search", guidance)
+        self.assertIn("tool_portal_file remains available", guidance)
+        self.assertLessEqual(len(guidance.encode("utf-8")), 2_000)
+
+    def test_catalog_guidance_uses_a_complete_import_prefix_and_manifest_fallback(self) -> None:
+        names = tuple(f"namespace_{index:02d}_" + "x" * 30 for index in range(40))
+
+        guidance = render_catalog_guidance(
+            _inventory(*names),
+            _catalog_manifest(*names),
+            changed_fingerprint=True,
+        )
+
+        displayed_factories = [
+            index for index in range(40) if f"bindNamespace{index:02d}Tools" in guidance
+        ]
+        self.assertGreater(len(displayed_factories), 0)
+        self.assertLess(len(displayed_factories), len(names))
+        self.assertEqual(displayed_factories, list(range(len(displayed_factories))))
+        self.assertIn(
+            f"{len(names) - len(displayed_factories)} namespace imports omitted",
+            guidance,
+        )
+        self.assertIn("Complete manifest:", guidance)
+        self.assertIn("Python connect_tool_portal()", guidance)
+        self.assertLessEqual(len(guidance.encode("utf-8")), 2_000)
+
     def test_renderer_is_deterministic_and_uses_canonical_namespace_json(self) -> None:
         inventory = NamespaceInventory(
             inventory_id="inventory-a",
