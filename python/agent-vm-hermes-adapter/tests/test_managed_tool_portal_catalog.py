@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import hashlib
+import json
 import typing as t
 import unittest
 from collections.abc import Mapping
@@ -43,12 +46,6 @@ def optional_string(value: object) -> str | None:
     return value
 
 
-def mapping_list(value: object) -> list[Mapping[str, object]]:
-    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
-        raise AssertionError("expected mapping list")
-    return value
-
-
 def projection(
     agent_id: str, *, mode: t.Literal["compact", "catalog"]
 ) -> CanonicalManagedAgentProjection:
@@ -77,7 +74,7 @@ def manifest(fingerprint_character: str) -> PreparedCatalogManifest:
                     "sha256": "c" * 64,
                 }
             ],
-            "generatorVersion": "1",
+            "generatorVersion": "2",
             "namespaces": [
                 {
                     "namespace": "shared",
@@ -93,8 +90,65 @@ def manifest(fingerprint_character: str) -> PreparedCatalogManifest:
 class FakeCatalogOperations:
     def __init__(self, manifests: Mapping[str, PreparedCatalogManifest]) -> None:
         self._manifests = dict(manifests)
-        self.offers: list[tuple[str, str, str, str]] = []
-        self.releases: list[tuple[str, str, str, str]] = []
+        self._tools_by_agent: Mapping[str, tuple[str, ...]] = {}
+        self._prepared: dict[tuple[str, str], tuple[PreparedCatalogManifest, bytes]] = {}
+        self._offered_content: dict[str, bytes] = {}
+        self.events: list[str] = []
+        self.offers: list[tuple[str, str | None, str | None, str]] = []
+        self.releases: list[tuple[str, str | None, str | None, str]] = []
+
+    def set_tools(self, tools_by_agent: Mapping[str, tuple[str, ...]]) -> None:
+        self._tools_by_agent = tools_by_agent
+
+    def _snapshot(self, agent_id: str, fingerprint: str) -> tuple[PreparedCatalogManifest, bytes]:
+        key = (agent_id, fingerprint)
+        existing = self._prepared.get(key)
+        if existing is not None:
+            return existing
+        native_tools = [
+            {
+                "description": f"Call {tool_name}",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+                "namespace": "shared",
+                "registeredName": f"shared__{tool_name}",
+                "toolName": tool_name,
+            }
+            for tool_name in sorted(self._tools_by_agent.get(agent_id, ()))
+        ]
+        content = json.dumps(
+            {
+                "definitionFingerprint": fingerprint,
+                "files": [],
+                "manifest": {
+                    "definitionFingerprint": fingerprint,
+                    "generatorVersion": "2",
+                    "namespaces": [],
+                    "sdkContractVersion": "1",
+                    "tools": [],
+                },
+                "nativeTools": native_tools,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        selected = PreparedCatalogManifest.model_validate(
+            {
+                "definitionFingerprint": fingerprint,
+                "bundleSha256": f"sha256:{hashlib.sha256(content).hexdigest()}",
+                "bundleByteLength": len(content),
+                "files": [],
+                "generatorVersion": "2",
+                "namespaces": [],
+                "sdkContractVersion": "1",
+            }
+        )
+        snapshot = (selected, content)
+        self._prepared[key] = snapshot
+        return snapshot
 
     @staticmethod
     def _identity(trusted_context: Mapping[str, object]) -> tuple[str, str | None, str | None]:
@@ -110,17 +164,19 @@ class FakeCatalogOperations:
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
         del request
+        self.events.append("prepare")
         agent_id, _session_id, _turn_id = self._identity(trusted_context)
         selected = self._manifests.get(agent_id)
         if selected is None:
             return PortableResult.model_validate(
                 {"kind": "incomplete", "reason": "catalog-incomplete", "diagnostics": []}
             )
+        prepared_manifest, _content = self._snapshot(agent_id, selected.definition_fingerprint)
         return PortableResult.model_validate(
             {
                 "kind": "complete",
                 "cacheDisposition": "prepared",
-                "manifest": selected.model_dump(by_alias=True),
+                "manifest": prepared_manifest.model_dump(by_alias=True),
             }
         )
 
@@ -128,18 +184,16 @@ class FakeCatalogOperations:
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
         agent_id, session_id, turn_id = self._identity(trusted_context)
-        assert session_id is not None and turn_id is not None
+        self.events.append("offer")
         fingerprint = required_string(request["definitionFingerprint"])
         self.offers.append((agent_id, session_id, turn_id, fingerprint))
-        selected = self._manifests[agent_id]
-        # The coordinator test can publish an older prepared profile snapshot
-        # while this fake's latest pointer advances. The request remains authoritative.
-        if selected.definition_fingerprint != fingerprint:
-            selected = manifest(fingerprint[0])
+        selected, content = self._snapshot(agent_id, fingerprint)
+        offer_id = f"offer-{agent_id}-{session_id or 'startup'}-{turn_id or 'startup'}"
+        self._offered_content[offer_id] = content
         return PortableResult.model_validate(
             {
                 "kind": "offered",
-                "offerId": f"offer-{agent_id}-{turn_id}",
+                "offerId": offer_id,
                 "manifest": selected.model_dump(by_alias=True),
             }
         )
@@ -148,13 +202,20 @@ class FakeCatalogOperations:
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
         del trusted_context
+        self.events.append("read")
+        offer_id = required_string(request["offerId"])
+        content = self._offered_content[offer_id]
+        offset = request["offset"]
+        length = request["length"]
+        assert isinstance(offset, int) and isinstance(length, int)
+        chunk = content[offset : offset + length]
         return PortableResult.model_validate(
             {
                 "kind": "content",
-                "byteLength": request["length"],
-                "contentBase64": "",
-                "eof": False,
-                "totalLength": 123,
+                "byteLength": len(chunk),
+                "contentBase64": base64.b64encode(chunk).decode(),
+                "eof": offset + len(chunk) == len(content),
+                "totalLength": len(content),
             }
         )
 
@@ -162,77 +223,30 @@ class FakeCatalogOperations:
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
         agent_id, session_id, turn_id = self._identity(trusted_context)
-        assert session_id is not None and turn_id is not None
+        self.events.append("release")
         self.releases.append(
             (agent_id, session_id, turn_id, required_string(request["definitionFingerprint"]))
         )
         return PortableResult.model_validate({"kind": "released"})
 
 
-class FakePortalOperations:
-    def __init__(self, tools_by_agent: Mapping[str, tuple[str, ...]]) -> None:
-        self._tools_by_agent = tools_by_agent
-
-    @staticmethod
-    def _agent_id(trusted_context: Mapping[str, object]) -> str:
-        principal = required_mapping(trusted_context["principal"])
-        return required_string(principal["agentId"])
+class RejectingPortalOperations:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
 
     async def list(
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
-        del request
-        tools = self._tools_by_agent[self._agent_id(trusted_context)]
-        return PortableResult.model_validate(
-            {
-                "ok": True,
-                "items": [
-                    {
-                        "id": "catalog-native-list",
-                        "status": "ok",
-                        "value": {
-                            "namespaces": ["shared"],
-                            "tools": [
-                                {"namespace": "shared", "name": tool_name} for tool_name in tools
-                            ],
-                        },
-                    }
-                ],
-            }
-        )
+        del request, trusted_context
+        self.calls.append("list")
+        raise AssertionError("Managed startup must not perform a second Portal list.")
 
     async def describe(
         self, request: Mapping[str, object], *, trusted_context: Mapping[str, object]
     ) -> BaseModel:
-        del trusted_context
-        request_items = mapping_list(request["requests"])
-        tool_refs = mapping_list(request_items[0]["tools"])
-        return PortableResult.model_validate(
-            {
-                "ok": True,
-                "items": [
-                    {
-                        "id": "catalog-native-describe",
-                        "status": "ok",
-                        "value": {
-                            "tools": [
-                                {
-                                    "namespace": reference["namespace"],
-                                    "name": reference["name"],
-                                    "description": f"Call {reference['name']}",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {"value": {"type": "string"}},
-                                        "required": ["value"],
-                                    },
-                                }
-                                for reference in tool_refs
-                            ]
-                        },
-                    }
-                ],
-            }
-        )
+        del request, trusted_context
+        self.calls.append("describe")
+        raise AssertionError("Managed startup must not perform a second Portal describe.")
 
 
 class FakeClient(GatewayRuntimeClient):
@@ -242,8 +256,10 @@ class FakeClient(GatewayRuntimeClient):
         catalogs: FakeCatalogOperations,
         tools_by_agent: Mapping[str, tuple[str, ...]],
     ) -> None:
+        catalogs.set_tools(tools_by_agent)
         self.catalog = catalogs
-        self.portal = FakePortalOperations(tools_by_agent)
+        self.recorded_portal = RejectingPortalOperations()
+        self.portal = self.recorded_portal
 
 
 class FakeAdapter:
@@ -279,6 +295,10 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
         catalogs = FakeCatalogOperations(
             {"compact-agent": manifest("a"), "catalog-agent": manifest("b")}
         )
+        client = FakeClient(
+            catalogs=catalogs,
+            tools_by_agent={"compact-agent": ("compact-tool",), "catalog-agent": ()},
+        )
         adapter = HermesManagedAdapter(
             config=HermesManagedAdapterConfig(
                 profiles=profiles,
@@ -288,10 +308,7 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
                 ),
                 protected_hermes_home="/var/lib/agent-vm/hermes",
             ),
-            gateway_runtime_client=FakeClient(
-                catalogs=catalogs,
-                tools_by_agent={"compact-agent": ("compact-tool",), "catalog-agent": ()},
-            ),
+            gateway_runtime_client=client,
         )
         coordinator = ManagedCatalogCoordinator(adapter=adapter)
 
@@ -299,6 +316,8 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
 
         self.assertIsNotNone(coordinator.read_profile("compact-agent"))
         self.assertIsNotNone(coordinator.read_profile("catalog-agent"))
+        self.assertEqual(catalogs.events, ["prepare", "offer", "read", "release"] * 2)
+        self.assertEqual(client.recorded_portal.calls, [])
 
     def test_manifest_requires_the_complete_canonical_shape_and_rejects_schema_drift(
         self,
@@ -353,6 +372,7 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
         )
         self.assertNotIn("review-only", {tool.tool_name for tool in researcher.native_tools})
         self.assertEqual(len({tool.registered_name for tool in researcher.native_tools}), 2)
+        self.assertEqual(adapter._client.recorded_portal.calls, [])
 
     def test_catalog_mode_refuses_incomplete_preparation_while_compact_can_fall_back(self) -> None:
         compact = projection("compact-agent", mode="compact")
@@ -397,12 +417,21 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
         self.assertFalse(second_changed)
         self.assertEqual(first.source.identity.definition_fingerprint, "a" * 64)
         self.assertEqual(second.source.identity.definition_fingerprint, "a" * 64)
-        self.assertEqual(catalogs.releases, [])
+        self.assertEqual(
+            catalogs.releases,
+            [("researcher", None, None, "a" * 64)],
+        )
+        prepared_before_restart = coordinator.read_profile("researcher")
+        assert prepared_before_restart is not None
+        self.assertEqual(
+            [tool.tool_name for tool in prepared_before_restart.native_tools],
+            ["overlap"],
+        )
 
         bindings.release_invocation(profile, first)
         self.assertEqual(
-            catalogs.releases,
-            [("researcher", "session-1", "turn-1", "a" * 64)],
+            catalogs.releases[-1],
+            ("researcher", "session-1", "turn-1", "a" * 64),
         )
         bindings.close_session(profile, "session-1")
         self.assertEqual(
@@ -411,10 +440,15 @@ class ManagedCatalogCoordinatorTests(unittest.TestCase):
         )
 
         restarted_coordinator = ManagedCatalogCoordinator(adapter=adapter)
+        catalogs.set_tools({"researcher": ("changed-after-restart",)})
         asyncio.run(restarted_coordinator.prepare_all())
         restarted = restarted_coordinator.read_profile("researcher")
         assert restarted is not None
         self.assertEqual(restarted.manifest.definition_fingerprint, "b" * 64)
+        self.assertEqual(
+            [tool.tool_name for tool in restarted.native_tools],
+            ["changed-after-restart"],
+        )
         restarted_bindings = ManagedCatalogTurnBindings(
             adapter=adapter, catalogs=restarted_coordinator
         )

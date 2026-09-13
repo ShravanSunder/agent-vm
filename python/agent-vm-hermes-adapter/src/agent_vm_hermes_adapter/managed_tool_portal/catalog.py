@@ -1,13 +1,18 @@
 """Prepared catalog registration and exact Hermes turn bindings."""
 
-import hashlib
-import json
 import threading
 import typing as t
 from collections.abc import Mapping
 
-from agent_vm_agent_portal_sdk.catalog_module_publication import CatalogPublicationIdentity
-from agent_vm_agent_portal_sdk.catalog_relay_startup import GatewayPortalCatalogSource
+from agent_vm_agent_portal_sdk.catalog_module_publication import (
+    CATALOG_SOURCE_GENERATOR_VERSION,
+    CATALOG_SOURCE_SDK_CONTRACT_VERSION,
+    CatalogPublicationIdentity,
+)
+from agent_vm_agent_portal_sdk.catalog_relay_startup import (
+    GatewayPortalCatalogSource,
+    read_catalog_source_bundle,
+)
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
@@ -100,11 +105,38 @@ def _validated_catalog_relative_path(value: str) -> str:
 
 
 class ManagedNativeCatalogTool(_FrozenModel):
-    registered_name: str = Field(min_length=1, max_length=128)
+    registered_name: str = Field(alias="registeredName", min_length=1, max_length=128)
     namespace: str = Field(min_length=1)
-    tool_name: str = Field(min_length=1)
+    tool_name: str = Field(alias="toolName", min_length=1)
     description: str = ""
-    input_schema: dict[str, object]
+    input_schema: dict[str, object] = Field(alias="inputSchema")
+
+
+class _PreparedManagedCatalogBundle(_FrozenModel):
+    definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
+    files: tuple[object, ...]
+    manifest: dict[str, object]
+    native_tools: tuple[ManagedNativeCatalogTool, ...] = Field(alias="nativeTools")
+
+    @model_validator(mode="after")
+    def validate_native_tools(self) -> t.Self:
+        if self.manifest.get("definitionFingerprint") != self.definition_fingerprint:
+            raise ValueError("Prepared catalog bundle manifest belongs to another fingerprint.")
+        if self.manifest.get("generatorVersion") != CATALOG_SOURCE_GENERATOR_VERSION:
+            raise ValueError("Prepared catalog bundle generator version is incompatible.")
+        if self.manifest.get("sdkContractVersion") != CATALOG_SOURCE_SDK_CONTRACT_VERSION:
+            raise ValueError("Prepared catalog bundle SDK contract version is incompatible.")
+        identities = tuple((item.namespace, item.tool_name) for item in self.native_tools)
+        registered_names = tuple(item.registered_name for item in self.native_tools)
+        if len(identities) != len(set(identities)):
+            raise ValueError("Prepared catalog bundle contains duplicate native identities.")
+        if len(registered_names) != len(set(registered_names)):
+            raise ValueError("Prepared catalog bundle contains duplicate native registered names.")
+        if registered_names != tuple(sorted(registered_names)):
+            raise ValueError(
+                "Prepared catalog bundle native tools must be sorted by registered name."
+            )
+        return self
 
 
 class PreparedManagedProfileCatalog(_FrozenModel):
@@ -124,55 +156,10 @@ def _model_payload(result: BaseModel) -> dict[str, object]:
     return payload
 
 
-def _required_mapping(value: object, label: str) -> dict[str, object]:
-    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
-        raise TypeError(f"{label} must be an object.")
-    return {str(key): item for key, item in value.items()}
-
-
 def _required_string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise TypeError(f"{label} must be a non-empty string.")
     return value
-
-
-def _read_items(payload: Mapping[str, object], label: str) -> list[dict[str, object]]:
-    items = payload.get("items")
-    if payload.get("ok") is not True or not isinstance(items, list):
-        raise ManagedCatalogPreparationError(f"{label} was incomplete.")
-    return [_required_mapping(item, f"{label} item") for item in items]
-
-
-def _read_item_value(item: Mapping[str, object], label: str) -> dict[str, object]:
-    if item.get("status") != "ok" or item.get("diagnostics"):
-        raise ManagedCatalogPreparationError(f"{label} returned an unavailable capability.")
-    return _required_mapping(item.get("value"), f"{label} value")
-
-
-def _read_tools(value: Mapping[str, object], label: str) -> list[dict[str, object]]:
-    tools = value.get("tools")
-    if not isinstance(tools, list):
-        raise ManagedCatalogPreparationError(f"{label} omitted tools.")
-    return [_required_mapping(tool, f"{label} tool") for tool in tools]
-
-
-def _readable_tool_name_segment(value: str) -> str:
-    characters = [
-        character if character.isascii() and (character.isalnum() or character in "_-") else "_"
-        for character in value
-    ]
-    segment = "".join(characters)
-    while "__" in segment:
-        segment = segment.replace("__", "_")
-    return segment or "tool"
-
-
-def managed_catalog_tool_name(namespace: str, tool_name: str) -> str:
-    """Mirror the standalone collision-safe readable catalog name contract."""
-    identity = json.dumps([namespace, tool_name], ensure_ascii=False, separators=(",", ":"))
-    suffix = hashlib.sha256(identity.encode()).hexdigest()[:10]
-    prefix = f"{_readable_tool_name_segment(namespace)}__{_readable_tool_name_segment(tool_name)}"
-    return f"{prefix[: 128 - len(suffix) - 2]}__{suffix}"
 
 
 class ManagedCatalogCoordinator:
@@ -215,120 +202,66 @@ class ManagedCatalogCoordinator:
         if prepared.get("kind") != "complete":
             raise ManagedCatalogPreparationError("Generated catalog preparation was incomplete.")
         manifest = PreparedCatalogManifest.model_validate(prepared.get("manifest"))
-        native_tools = await self._prepare_native_tools(projection, trusted_context, client=client)
-        return PreparedManagedProfileCatalog(
-            profile_name=projection.framework_identity.profile_name,
-            manifest=manifest,
-            native_tools=native_tools,
-        )
-
-    async def _prepare_native_tools(
-        self,
-        projection: CanonicalManagedAgentProjection,
-        trusted_context: Mapping[str, object],
-        client: GatewayRuntimeClient,
-    ) -> tuple[ManagedNativeCatalogTool, ...]:
-        references: list[tuple[str, str]] = []
-        for namespace_projection in projection.tool_portal_namespaces:
-            cursor: str | None = None
-            seen_cursors: set[str] = set()
-            while True:
-                list_request: dict[str, object] = {
-                    "requestId": f"catalog-native-list-{namespace_projection.namespace}",
-                    "requests": [
-                        {
-                            "id": "catalog-native-list",
-                            "limit": 100,
-                            "namespaces": [namespace_projection.namespace],
-                            **({"cursor": cursor} if cursor is not None else {}),
-                        }
-                    ],
-                }
-                listed = _model_payload(
-                    await client.portal.list(list_request, trusted_context=trusted_context)
-                )
-                items = _read_items(listed, "Managed native catalog listing")
-                if len(items) != 1:
-                    raise ManagedCatalogPreparationError(
-                        "Managed native catalog listing returned an unexpected item count."
-                    )
-                value = _read_item_value(items[0], "Managed native catalog listing")
-                for tool in _read_tools(value, "Managed native catalog listing"):
-                    namespace = _required_string(tool.get("namespace"), "catalog namespace")
-                    name = _required_string(tool.get("name"), "catalog tool name")
-                    if namespace != namespace_projection.namespace:
-                        raise ManagedCatalogPreparationError(
-                            "Managed native catalog listing crossed namespaces."
-                        )
-                    references.append((namespace, name))
-                next_cursor = value.get("nextCursor")
-                if next_cursor is None:
-                    break
-                next_cursor = _required_string(next_cursor, "catalog next cursor")
-                if next_cursor in seen_cursors:
-                    raise ManagedCatalogPreparationError(
-                        "Managed native catalog listing repeated a cursor."
-                    )
-                seen_cursors.add(next_cursor)
-                cursor = next_cursor
-
-        if len(references) != len(set(references)):
+        if (
+            manifest.generator_version != CATALOG_SOURCE_GENERATOR_VERSION
+            or manifest.sdk_contract_version != CATALOG_SOURCE_SDK_CONTRACT_VERSION
+        ):
             raise ManagedCatalogPreparationError(
-                "Managed native catalog contains duplicate capability identities."
+                "Prepared catalog source versions are incompatible with Hermes."
             )
-        descriptors: list[ManagedNativeCatalogTool] = []
-        sorted_references = sorted(references)
-        for offset in range(0, len(sorted_references), 100):
-            selected = sorted_references[offset : offset + 100]
-            described = _model_payload(
-                await client.portal.describe(
+        offered = _model_payload(
+            await client.catalog.offer(
+                {"definitionFingerprint": manifest.definition_fingerprint},
+                trusted_context=trusted_context,
+            )
+        )
+        if offered.get("kind") != "offered":
+            raise ManagedCatalogPreparationError("Prepared startup catalog source was unavailable.")
+        offered_manifest = PreparedCatalogManifest.model_validate(offered.get("manifest"))
+        if offered_manifest != manifest:
+            raise ManagedCatalogPreparationError(
+                "Prepared startup catalog offer did not match its manifest."
+            )
+        offer_id = _required_string(offered.get("offerId"), "catalog startup offerId")
+
+        async def read(request: Mapping[str, object]) -> BaseModel:
+            return await client.catalog.read(request, trusted_context=trusted_context)
+
+        source = GatewayPortalCatalogSource(
+            offer_id=offer_id,
+            identity=CatalogPublicationIdentity(
+                definition_fingerprint=manifest.definition_fingerprint,
+                bundle_sha256=manifest.bundle_sha256,
+                bundle_byte_length=manifest.bundle_byte_length,
+            ),
+            read=read,
+        )
+        try:
+            bundle_content = await read_catalog_source_bundle(source)
+            bundle = _PreparedManagedCatalogBundle.model_validate_json(bundle_content)
+        finally:
+            released = _model_payload(
+                await client.catalog.release(
                     {
-                        "requestId": f"catalog-native-describe-{offset}",
-                        "requests": [
-                            {
-                                "id": "catalog-native-describe",
-                                "includeJsonSchema": True,
-                                "includeRelated": False,
-                                "includeTypescriptHelper": False,
-                                "includeZod": False,
-                                "tools": [
-                                    {"namespace": namespace, "name": name}
-                                    for namespace, name in selected
-                                ],
-                            }
-                        ],
+                        "definitionFingerprint": manifest.definition_fingerprint,
+                        "offerId": offer_id,
                     },
                     trusted_context=trusted_context,
                 )
             )
-            items = _read_items(described, "Managed native catalog description")
-            if len(items) != 1:
+            if released.get("kind") != "released":
                 raise ManagedCatalogPreparationError(
-                    "Managed native catalog description returned an unexpected item count."
+                    "Prepared startup catalog offer could not be released."
                 )
-            value = _read_item_value(items[0], "Managed native catalog description")
-            for tool in _read_tools(value, "Managed native catalog description"):
-                namespace = _required_string(tool.get("namespace"), "catalog namespace")
-                name = _required_string(tool.get("name"), "catalog tool name")
-                schema = _required_mapping(tool.get("inputSchema"), "catalog input schema")
-                description_value = tool.get("description", "")
-                description = description_value if isinstance(description_value, str) else ""
-                descriptors.append(
-                    ManagedNativeCatalogTool(
-                        registered_name=managed_catalog_tool_name(namespace, name),
-                        namespace=namespace,
-                        tool_name=name,
-                        description=description,
-                        input_schema=schema,
-                    )
-                )
-        if {(item.namespace, item.tool_name) for item in descriptors} != set(sorted_references):
+        if bundle.definition_fingerprint != manifest.definition_fingerprint:
             raise ManagedCatalogPreparationError(
-                "Managed native catalog description was incomplete."
+                "Prepared startup catalog bundle belonged to another fingerprint."
             )
-        if len({item.registered_name for item in descriptors}) != len(descriptors):
-            raise ManagedCatalogPreparationError("Managed native catalog exported duplicate names.")
-        return tuple(sorted(descriptors, key=lambda item: item.registered_name))
+        return PreparedManagedProfileCatalog(
+            profile_name=projection.framework_identity.profile_name,
+            manifest=manifest,
+            native_tools=bundle.native_tools,
+        )
 
 
 class OfferedDefinitionBinding:
@@ -531,5 +464,4 @@ __all__ = (
     "OfferedDefinitionBinding",
     "PreparedCatalogManifest",
     "PreparedManagedProfileCatalog",
-    "managed_catalog_tool_name",
 )

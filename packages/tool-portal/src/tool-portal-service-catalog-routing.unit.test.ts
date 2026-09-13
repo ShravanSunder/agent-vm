@@ -37,16 +37,19 @@ describe('ToolPortalCapabilityCore catalog routing', () => {
 			kind: 'complete',
 			tools: [
 				{
+					description: 'Fixture capability for controller_execution.',
 					inputSchema: { properties: {}, type: 'object' },
 					name: 'workspace_git_push',
 					namespace: 'controller_execution',
 				},
 				{
+					description: 'Fixture capability for github.',
 					inputSchema: { properties: {}, type: 'object' },
 					name: 'get_issue',
 					namespace: 'github',
 				},
 				{
+					description: 'Fixture capability for sandbox.',
 					inputSchema: { properties: {}, type: 'object' },
 					name: 'exec',
 					namespace: 'sandbox',

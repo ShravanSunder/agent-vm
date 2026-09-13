@@ -228,6 +228,7 @@ export type ToolPortalCapabilityCore<TMode extends ToolPortalServiceMode = 'mana
 	: {});
 
 export interface ToolPortalCatalogDefinition {
+	readonly description: string;
 	readonly inputSchema: Readonly<Record<string, import('@agent-vm/agent-portal-sdk').JsonValue>>;
 	readonly name: string;
 	readonly namespace: string;

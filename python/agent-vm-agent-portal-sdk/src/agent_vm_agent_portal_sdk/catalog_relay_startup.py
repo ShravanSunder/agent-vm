@@ -2,6 +2,7 @@
 
 import base64
 import dataclasses
+import hashlib
 import typing as t
 from collections.abc import Mapping
 from pathlib import Path
@@ -35,37 +36,70 @@ class GatewayPortalCatalogSource:
         return str(self.publication_root / self.identity.definition_fingerprint / "manifest.json")
 
 
+async def _read_catalog_source_range(source: GatewayPortalCatalogSource, *, offset: int, requested_length: int) -> bytes:
+    identity = source.identity
+    result = await source.read(
+        {
+            "definitionFingerprint": identity.definition_fingerprint,
+            "length": requested_length,
+            "offerId": source.offer_id,
+            "offset": offset,
+        },
+    )
+    payload = result.model_dump(by_alias=True, mode="json", exclude_none=True)
+    if payload.get("kind") != "content":
+        raise PortalRelayProtocolError("Offered catalog source became unavailable during startup.")
+    if payload.get("totalLength") != identity.bundle_byte_length or payload.get("byteLength") != requested_length:
+        raise PortalRelayProtocolError("Catalog source returned mismatched range metadata.")
+    encoded = payload.get("contentBase64")
+    if not isinstance(encoded, str):
+        raise PortalRelayProtocolError("Catalog source omitted its content bytes.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except ValueError as error:
+        raise PortalRelayProtocolError("Catalog source returned invalid base64 content.") from error
+    if len(content) != requested_length:
+        raise PortalRelayProtocolError("Catalog source returned a truncated range.")
+    expected_eof = offset + requested_length == identity.bundle_byte_length
+    if payload.get("eof") is not expected_eof:
+        raise PortalRelayProtocolError("Catalog source returned an invalid end marker.")
+    return content
+
+
+async def read_catalog_source_bundle(source: GatewayPortalCatalogSource) -> bytes:
+    """Read and authenticate one bounded private catalog offer for trusted startup use."""
+    identity = source.identity
+    content = bytearray()
+    while len(content) < identity.bundle_byte_length:
+        requested_length = min(
+            RELAY_STREAM_CHUNK_BYTES,
+            identity.bundle_byte_length - len(content),
+        )
+        content.extend(
+            await _read_catalog_source_range(
+                source,
+                offset=len(content),
+                requested_length=requested_length,
+            ),
+        )
+    bundle = bytes(content)
+    if f"sha256:{hashlib.sha256(bundle).hexdigest()}" != identity.bundle_sha256:
+        raise PortalRelayProtocolError("Catalog source bytes did not match the selected digest.")
+    return bundle
+
+
 async def stream_catalog_source_to_relay(source: GatewayPortalCatalogSource, send: SendRelayMessage) -> None:
     """Read an immutable offer sequentially without retaining the complete bundle."""
     identity = source.identity
     offset = 0
     while offset < identity.bundle_byte_length:
         requested_length = min(RELAY_STREAM_CHUNK_BYTES, identity.bundle_byte_length - offset)
-        result = await source.read(
-            {
-                "definitionFingerprint": identity.definition_fingerprint,
-                "length": requested_length,
-                "offerId": source.offer_id,
-                "offset": offset,
-            },
+        content = await _read_catalog_source_range(
+            source,
+            offset=offset,
+            requested_length=requested_length,
         )
-        payload = result.model_dump(by_alias=True, mode="json", exclude_none=True)
-        if payload.get("kind") != "content":
-            raise PortalRelayProtocolError("Offered catalog source became unavailable during startup.")
-        if payload.get("totalLength") != identity.bundle_byte_length or payload.get("byteLength") != requested_length:
-            raise PortalRelayProtocolError("Catalog source returned mismatched range metadata.")
-        encoded = payload.get("contentBase64")
-        if not isinstance(encoded, str):
-            raise PortalRelayProtocolError("Catalog source omitted its content bytes.")
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except ValueError as error:
-            raise PortalRelayProtocolError("Catalog source returned invalid base64 content.") from error
-        if len(content) != requested_length:
-            raise PortalRelayProtocolError("Catalog source returned a truncated range.")
-        expected_eof = offset + requested_length == identity.bundle_byte_length
-        if payload.get("eof") is not expected_eof:
-            raise PortalRelayProtocolError("Catalog source returned an invalid end marker.")
+        encoded = base64.b64encode(content).decode()
         await send(
             {
                 "kind": "catalog-bundle-chunk",

@@ -7,9 +7,18 @@ import type {
 import type { JsonObject } from '../json-schema.js';
 
 export interface NormalizedCatalogToolDefinition {
+	readonly description?: string;
 	readonly inputSchema: JsonObject;
 	readonly name: string;
 	readonly namespace: string;
+}
+
+export interface CompiledCatalogNativeTool {
+	readonly description: string;
+	readonly inputSchema: JsonObject;
+	readonly namespace: string;
+	readonly registeredName: string;
+	readonly toolName: string;
 }
 
 export interface CompileCatalogTypescriptModulesInput {
@@ -54,4 +63,5 @@ export interface CompiledCatalogTypescriptBundle {
 	readonly definitionFingerprint: string;
 	readonly files: readonly CompiledCatalogTypescriptFile[];
 	readonly manifest: CompiledCatalogTypescriptManifest;
+	readonly nativeTools: readonly CompiledCatalogNativeTool[];
 }

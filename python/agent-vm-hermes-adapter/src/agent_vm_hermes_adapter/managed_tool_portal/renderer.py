@@ -120,10 +120,20 @@ def render_orientation(
     if selected_displayed_count is not None:
         displayed_tool_counts = [0] * selected_displayed_count
         sorted_namespaces = tuple(sorted(inventory.namespaces, key=lambda item: item.namespace))
-        for namespace_index, namespace in enumerate(sorted_namespaces[:selected_displayed_count]):
-            for tool_count in range(1, len(namespace.tools) + 1):
+        displayed_namespaces = sorted_namespaces[:selected_displayed_count]
+        blocked_namespace_indexes: set[int] = set()
+        maximum_tool_count = max(
+            (len(namespace.tools) for namespace in displayed_namespaces),
+            default=0,
+        )
+        for tool_index in range(maximum_tool_count):
+            for namespace_index, namespace in enumerate(displayed_namespaces):
+                if namespace_index in blocked_namespace_indexes or tool_index >= len(
+                    namespace.tools
+                ):
+                    continue
                 candidate_counts = list(displayed_tool_counts)
-                candidate_counts[namespace_index] = tool_count
+                candidate_counts[namespace_index] = tool_index + 1
                 candidate = _candidate_orientation(
                     inventory,
                     displayed_count=selected_displayed_count,
@@ -131,7 +141,8 @@ def render_orientation(
                     catalog_mode=catalog_mode,
                 )
                 if len(candidate.encode("utf-8")) > max_utf8_bytes:
-                    break
+                    blocked_namespace_indexes.add(namespace_index)
+                    continue
                 displayed_tool_counts = candidate_counts
         orientation = _candidate_orientation(
             inventory,

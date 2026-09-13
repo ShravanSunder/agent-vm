@@ -68,7 +68,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from agent_vm_agent_portal_sdk.catalog_module_publication import CatalogPublicationIdentity
-from agent_vm_agent_portal_sdk.catalog_relay_startup import GatewayPortalCatalogSource
+from agent_vm_agent_portal_sdk.catalog_relay_startup import GatewayPortalCatalogSource, read_catalog_source_bundle
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from agent_vm_agent_portal_sdk.portal_bridge_connection import PortalBridgeConnection
 from agent_vm_agent_portal_sdk.portal_execution_bridge import PortalExecutionBridge
@@ -94,6 +94,7 @@ TRUSTED_CONTEXT = {
         "toolPortalProfileId": "profile-1",
     },
 }
+STARTUP_TRUSTED_CONTEXT = {"principal": TRUSTED_CONTEXT["principal"]}
 
 class SubprocessPort:
     def __init__(self, process: asyncio.subprocess.Process) -> None:
@@ -197,6 +198,32 @@ async def main() -> None:
         fingerprint = manifest["definitionFingerprint"]
         read_counts = [0, 0]
 
+        startup_offer = (await client.catalog.offer(
+            {"definitionFingerprint": fingerprint},
+            trusted_context=STARTUP_TRUSTED_CONTEXT,
+        )).model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert startup_offer["kind"] == "offered"
+
+        async def read_startup_bundle(request: Mapping[str, object]) -> BaseModel:
+            return await client.catalog.read(request, trusted_context=STARTUP_TRUSTED_CONTEXT)
+
+        startup_bundle = json.loads(await read_catalog_source_bundle(GatewayPortalCatalogSource(
+            offer_id=startup_offer["offerId"],
+            identity=CatalogPublicationIdentity(
+                definition_fingerprint=fingerprint,
+                bundle_sha256=manifest["bundleSha256"],
+                bundle_byte_length=manifest["bundleByteLength"],
+            ),
+            read=read_startup_bundle,
+        )))
+        assert startup_bundle["definitionFingerprint"] == fingerprint
+        assert [tool["namespace"] for tool in startup_bundle["nativeTools"]] == ["large-a", "large-b"]
+        startup_release = (await client.catalog.release(
+            {"definitionFingerprint": fingerprint, "offerId": startup_offer["offerId"]},
+            trusted_context=STARTUP_TRUSTED_CONTEXT,
+        )).model_dump(by_alias=True, mode="json", exclude_none=True)
+        assert startup_release["kind"] == "released"
+
         async def publish_once(index: int, label: str) -> str:
             offered = (await client.catalog.offer({"definitionFingerprint": fingerprint}, trusted_context=TRUSTED_CONTEXT)).model_dump(by_alias=True, mode="json", exclude_none=True)
             assert offered["kind"] == "offered"
@@ -280,8 +307,18 @@ describe('prepared catalog Python publication host journey', () => {
 			prepareCatalog: async () => ({
 				kind: 'complete' as const,
 				tools: [
-					{ inputSchema: largeCatalogInputSchema('large-a'), name: 'select', namespace: 'large-a' },
-					{ inputSchema: largeCatalogInputSchema('large-b'), name: 'select', namespace: 'large-b' },
+					{
+						description: 'Select one large-a value.',
+						inputSchema: largeCatalogInputSchema('large-a'),
+						name: 'select',
+						namespace: 'large-a',
+					},
+					{
+						description: 'Select one large-b value.',
+						inputSchema: largeCatalogInputSchema('large-b'),
+						name: 'select',
+						namespace: 'large-b',
+					},
 				],
 			}),
 			search: rejectUnexpectedOperation,

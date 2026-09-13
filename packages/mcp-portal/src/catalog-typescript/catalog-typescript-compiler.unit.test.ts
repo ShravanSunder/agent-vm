@@ -24,6 +24,30 @@ describe('compileCatalogTypescriptModules', () => {
 			fingerprintCatalogTypescriptInput({ tools: [...tools].reverse() }),
 		);
 	});
+	it('includes native presentation descriptors in the shared definition identity', async () => {
+		const tool = {
+			description: 'Read one issue.',
+			inputSchema: { properties: { issueId: { type: 'string' } }, type: 'object' },
+			name: 'read.issue',
+			namespace: 'issue-tracker',
+		};
+		const compiled = await compileCatalogTypescriptModules({ tools: [tool] });
+
+		expect(compiled.nativeTools).toEqual([
+			{
+				description: 'Read one issue.',
+				inputSchema: tool.inputSchema,
+				namespace: 'issue-tracker',
+				registeredName: expect.stringMatching(/^issue-tracker__read_issue__[a-f0-9]{10}$/u),
+				toolName: 'read.issue',
+			},
+		]);
+		expect(
+			fingerprintCatalogTypescriptInput({
+				tools: [{ ...tool, description: 'Read one issue with its comments.' }],
+			}),
+		).not.toBe(compiled.definitionFingerprint);
+	});
 	it('generates isolated deterministic namespace factories with exact wire names and typed schemas', async () => {
 		const input = {
 			tools: [

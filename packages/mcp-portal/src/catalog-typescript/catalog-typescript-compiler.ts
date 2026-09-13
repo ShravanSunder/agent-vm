@@ -9,6 +9,7 @@ import { compile, type JSONSchema } from 'json-schema-to-typescript';
 
 import type { JsonObject, JsonValue } from '../json-schema.js';
 import { buildZodValidatorFromJsonSchema } from '../zod-schema-loader.js';
+import { createCatalogToolPresentationName } from './catalog-tool-presentation-name.js';
 import type {
 	CompileCatalogTypescriptModulesInput,
 	CompiledCatalogTypescriptBundle,
@@ -20,13 +21,17 @@ import type {
 import { validateDeclarationOnlyTypeFragment } from './declaration-fragment-validation.js';
 import { createSafeSchemaProjection } from './safe-schema-projection.js';
 
-export const CatalogTypescriptGeneratorVersion = '1';
+export const CatalogTypescriptGeneratorVersion = '2';
 export const GeneratedToolsSdkContractVersion = '1';
 
 interface PreparedToolName {
 	readonly exportedFunctionName: string;
 	readonly exportedInputTypeName: string;
-	readonly tool: NormalizedCatalogToolDefinition;
+	readonly tool: CanonicalCatalogToolDefinition;
+}
+
+interface CanonicalCatalogToolDefinition extends NormalizedCatalogToolDefinition {
+	readonly description: string;
 }
 
 interface CompiledToolSource extends CompiledCatalogTypescriptTool {
@@ -105,10 +110,11 @@ function toolIdentity(tool: NormalizedCatalogToolDefinition): string {
 
 function normalizeTools(
 	tools: readonly NormalizedCatalogToolDefinition[],
-): readonly NormalizedCatalogToolDefinition[] {
+): readonly CanonicalCatalogToolDefinition[] {
 	const seenIdentities = new Set<string>();
 	return tools
 		.map((tool) => ({
+			description: tool.description ?? '',
 			inputSchema: canonicalizeJsonObject(tool.inputSchema),
 			name: tool.name,
 			namespace: tool.namespace,
@@ -130,7 +136,7 @@ function normalizeTools(
 }
 
 function prepareToolNames(
-	tools: readonly NormalizedCatalogToolDefinition[],
+	tools: readonly CanonicalCatalogToolDefinition[],
 ): readonly PreparedToolName[] {
 	const functionBases = tools.map((tool) => camelIdentifier(tool.name, 'tool'));
 	const baseCounts = new Map<string, number>();
@@ -152,7 +158,7 @@ function prepareToolNames(
 }
 
 function createFingerprintInput(
-	normalizedTools: readonly NormalizedCatalogToolDefinition[],
+	normalizedTools: readonly CanonicalCatalogToolDefinition[],
 ): string {
 	const toolsByNamespace = Map.groupBy(normalizedTools, (tool) => tool.namespace);
 	const mappedTools = [...toolsByNamespace]
@@ -160,12 +166,17 @@ function createFingerprintInput(
 		.flatMap(([namespace, namespaceTools]) => {
 			const modulePath = namespaceModulePath(namespace);
 			return prepareToolNames(namespaceTools).map((preparedTool) => ({
+				description: preparedTool.tool.description,
 				exportedFunctionName: preparedTool.exportedFunctionName,
 				exportedInputTypeName: preparedTool.exportedInputTypeName,
 				inputSchema: preparedTool.tool.inputSchema,
 				modulePath,
 				name: preparedTool.tool.name,
 				namespace,
+				registeredName: createCatalogToolPresentationName(
+					preparedTool.tool.namespace,
+					preparedTool.tool.name,
+				),
 			}));
 		});
 	return JSON.stringify({
@@ -341,7 +352,7 @@ function renderNamespaceSource(props: {
 }
 
 async function compileNamespaceEntry(
-	entry: readonly [string, NormalizedCatalogToolDefinition[]],
+	entry: readonly [string, CanonicalCatalogToolDefinition[]],
 ): Promise<{
 	readonly file: CompiledCatalogTypescriptFile;
 	readonly namespace: CompiledCatalogTypescriptNamespace;
@@ -410,5 +421,14 @@ export async function compileCatalogTypescriptModules(
 			sdkContractVersion: GeneratedToolsSdkContractVersion,
 			tools: compiledTools,
 		},
+		nativeTools: normalizedTools
+			.map((tool) => ({
+				description: tool.description,
+				inputSchema: tool.inputSchema,
+				namespace: tool.namespace,
+				registeredName: createCatalogToolPresentationName(tool.namespace, tool.name),
+				toolName: tool.name,
+			}))
+			.toSorted((left, right) => compareCanonicalText(left.registeredName, right.registeredName)),
 	};
 }

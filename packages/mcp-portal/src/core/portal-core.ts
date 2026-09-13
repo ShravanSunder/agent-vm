@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
-
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
+import { createCatalogToolPresentationName } from '../catalog-typescript/catalog-tool-presentation-name.js';
 import { jsonObjectSchema, type JsonValue } from '../json-schema.js';
 import {
 	createPortalAgentIdentity,
@@ -230,23 +229,6 @@ export interface PortalCoreToolDescriptor {
 	readonly name: PortalCoreToolName;
 }
 
-const maximumMcpToolNameLength = 128;
-
-function readableMcpToolNameSegment(value: string): string {
-	const segment = value.replaceAll(/[^A-Za-z0-9_-]/gu, '_').replaceAll(/_+/gu, '_');
-	return segment.length === 0 ? 'tool' : segment;
-}
-
-function catalogMcpToolName(namespace: string, toolName: string): string {
-	const suffix = createHash('sha256')
-		.update(JSON.stringify([namespace, toolName]))
-		.digest('hex')
-		.slice(0, 10);
-	const readablePrefix = `${readableMcpToolNameSegment(namespace)}__${readableMcpToolNameSegment(toolName)}`;
-	const maximumPrefixLength = maximumMcpToolNameLength - suffix.length - 2;
-	return `${readablePrefix.slice(0, maximumPrefixLength)}__${suffix}`;
-}
-
 export function preparePortalCatalogSnapshot(
 	catalog: PortalCatalogSnapshot,
 ): PreparedPortalCatalog {
@@ -256,7 +238,7 @@ export function preparePortalCatalogSnapshot(
 	const preparedTools: PreparedPortalCatalogTool[] = [];
 	const exportedNames = new Set<string>();
 	for (const tool of catalog.tools) {
-		const exportedName = catalogMcpToolName(tool.namespace, tool.toolName);
+		const exportedName = createCatalogToolPresentationName(tool.namespace, tool.toolName);
 		if (exportedNames.has(exportedName)) {
 			throw new PortalCatalogPreparationError([
 				{

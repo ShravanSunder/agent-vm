@@ -65,6 +65,7 @@ function bundle(
 			sdkContractVersion: '1',
 			tools: [],
 		},
+		nativeTools: [],
 	};
 }
 
@@ -112,6 +113,64 @@ describe('prepared catalog source cache', () => {
 			kind: 'content',
 			totalLength: offered.manifest.bundleByteLength,
 		});
+	});
+
+	it('admits only complete startup or foreground offer scopes', async () => {
+		const cache = createPreparedCatalogSourceCache({
+			compile: async () => bundle(fingerprintA, ['content']),
+			fingerprint: () => fingerprintA,
+		});
+		const {
+			sessionId: _startupSessionId,
+			turnId: _startupTurnId,
+			...startupAuthority
+		} = authority();
+		const { turnId: _sessionOnlyTurnId, ...sessionOnlyAuthority } = authority();
+		const { sessionId: _turnOnlySessionId, ...turnOnlyAuthority } = authority();
+		await cache.prepare({ authority: startupAuthority, input: { tools: [] } });
+		const startupOffer = cache.offer({
+			authority: startupAuthority,
+			definitionFingerprint: fingerprintA,
+		});
+		expect(startupOffer.kind).toBe('offered');
+		if (startupOffer.kind !== 'offered') throw new Error('Expected startup offer.');
+		expect(
+			cache.read({
+				authority: startupAuthority,
+				definitionFingerprint: fingerprintA,
+				length: 1,
+				offerId: startupOffer.offerId,
+				offset: 0,
+			}).kind,
+		).toBe('content');
+		expect(
+			cache.offer({
+				authority: sessionOnlyAuthority,
+				definitionFingerprint: fingerprintA,
+			}).kind,
+		).toBe('unavailable');
+		expect(
+			cache.offer({
+				authority: turnOnlyAuthority,
+				definitionFingerprint: fingerprintA,
+			}).kind,
+		).toBe('unavailable');
+		expect(
+			cache.read({
+				authority: authority(),
+				definitionFingerprint: fingerprintA,
+				length: 1,
+				offerId: startupOffer.offerId,
+				offset: 0,
+			}).kind,
+		).toBe('unavailable');
+		expect(
+			cache.release({
+				authority: startupAuthority,
+				definitionFingerprint: fingerprintA,
+				offerId: startupOffer.offerId,
+			}).kind,
+		).toBe('released');
 	});
 
 	it('joins concurrent preparation for one authority revision', async () => {
@@ -195,8 +254,15 @@ describe('prepared catalog source cache', () => {
 		const offered = cache.offer({ authority: authority(), definitionFingerprint: fingerprintA });
 		if (offered.kind !== 'offered') throw new Error('Expected offered catalog.');
 		for (const forged of [
+			authority({ activeRevision: 'other' }),
+			authority({ catalogRevision: 'other' }),
+			authority({ gatewayEpoch: 'other' }),
+			authority({ profileAssignmentRevision: 'other' }),
 			authority({ stablePrincipal: 'other' }),
 			authority({ profileId: 'other' }),
+			authority({ profilePolicyRevision: 'other' }),
+			authority({ providerRevision: 'other' }),
+			authority({ schemaRevision: 'other' }),
 			authority({ sessionId: 'other' }),
 			authority({ turnId: 'other' }),
 			authority({ connectionId: 'other' }),

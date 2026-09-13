@@ -38,7 +38,11 @@ export async function prepareManagedCatalogDefinitions(props: {
 	readonly operationOptions: ToolPortalInvocationOptions;
 }): Promise<ToolPortalCatalogPreparationResult> {
 	const diagnostics: SafeDiagnostic[] = [];
-	const toolReferences: { readonly name: string; readonly namespace: string }[] = [];
+	const toolReferences: {
+		readonly description: string;
+		readonly name: string;
+		readonly namespace: string;
+	}[] = [];
 	const listedToolIdentities = new Set<string>();
 	for (const entry of props.entries) {
 		for (const namespace of [...entry.namespaces].toSorted(compareUnicodeCodePointStrings)) {
@@ -89,7 +93,11 @@ export async function prepareManagedCatalogDefinitions(props: {
 						continue;
 					}
 					listedToolIdentities.add(identity);
-					toolReferences.push({ name: tool.name, namespace: tool.namespace });
+					toolReferences.push({
+						description: tool.description ?? '',
+						name: tool.name,
+						namespace: tool.namespace,
+					});
 				}
 				const nextCursor = item.value.nextCursor;
 				if (nextCursor === undefined) {
@@ -117,6 +125,9 @@ export async function prepareManagedCatalogDefinitions(props: {
 		compareUnicodeCodePointStrings(catalogToolIdentity(left), catalogToolIdentity(right)),
 	);
 	const definitions: ToolPortalCatalogDefinition[] = [];
+	const listedDescriptions = new Map(
+		uniqueReferences.map((tool) => [catalogToolIdentity(tool), tool.description] as const),
+	);
 	const describedToolIdentities = new Set<string>();
 	const expectedToolIdentities = new Set(uniqueReferences.map(catalogToolIdentity));
 	const describeResults = await Promise.all(
@@ -136,7 +147,7 @@ export async function prepareManagedCatalogDefinitions(props: {
 								includeRelated: false,
 								includeTypescriptHelper: false,
 								includeZod: false,
-								tools: selected,
+								tools: selected.map(({ name, namespace }) => ({ name, namespace })),
 							},
 						],
 					},
@@ -179,6 +190,7 @@ export async function prepareManagedCatalogDefinitions(props: {
 			}
 			describedToolIdentities.add(identity);
 			definitions.push({
+				description: tool.description ?? listedDescriptions.get(identity) ?? '',
 				inputSchema: tool.inputSchema,
 				name: tool.name,
 				namespace: tool.namespace,

@@ -53,8 +53,8 @@ interface PreparedCatalogSourceOffer {
 	readonly definitionFingerprint: string;
 	readonly entryKey: string;
 	readonly offerId: string;
-	readonly sessionId: string;
-	readonly turnId: string;
+	readonly sessionId?: string;
+	readonly turnId?: string;
 }
 
 export interface PreparedCatalogSourceCache {
@@ -211,6 +211,10 @@ function offerMatchesAuthority(
 	);
 }
 
+function hasCompleteCatalogOfferScope(authority: PreparedCatalogSourceAuthority): boolean {
+	return (authority.sessionId === undefined) === (authority.turnId === undefined);
+}
+
 export function createPreparedCatalogSourceCache(
 	props: CreatePreparedCatalogSourceCacheProps = {},
 ): PreparedCatalogSourceCache {
@@ -283,7 +287,7 @@ export function createPreparedCatalogSourceCache(
 	return {
 		inspect: () => ({ byteLength, entries: entries.size, offers: offers.size, retired }),
 		offer: ({ authority, definitionFingerprint }) => {
-			if (retired || authority.sessionId === undefined || authority.turnId === undefined) {
+			if (retired || !hasCompleteCatalogOfferScope(authority)) {
 				return { kind: 'unavailable', reason: 'catalog-source-unavailable' };
 			}
 			const profileKey = principalProfileKey(authority);
@@ -306,8 +310,8 @@ export function createPreparedCatalogSourceCache(
 				definitionFingerprint,
 				entryKey: key,
 				offerId,
-				sessionId: authority.sessionId,
-				turnId: authority.turnId,
+				...(authority.sessionId === undefined ? {} : { sessionId: authority.sessionId }),
+				...(authority.turnId === undefined ? {} : { turnId: authority.turnId }),
 			});
 			return { kind: 'offered', manifest: entry.manifest, offerId };
 		},

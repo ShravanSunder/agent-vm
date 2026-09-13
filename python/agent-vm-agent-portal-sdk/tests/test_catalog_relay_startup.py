@@ -10,7 +10,10 @@ from tempfile import TemporaryDirectory
 
 import pytest
 from agent_vm_agent_portal_sdk.catalog_module_publication import CatalogPublicationIdentity, publish_catalog_bundle
-from agent_vm_agent_portal_sdk.catalog_relay_startup import GatewayPortalCatalogSource
+from agent_vm_agent_portal_sdk.catalog_relay_startup import (
+    GatewayPortalCatalogSource,
+    read_catalog_source_bundle,
+)
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from agent_vm_agent_portal_sdk.portal_bridge_connection import PortalBridgeConnection
 from agent_vm_agent_portal_sdk.portal_execution_bridge import PortalExecutionBridge
@@ -40,10 +43,11 @@ def _catalog_bundle(definition_fingerprint: str, source_sizes: tuple[int, ...]) 
         "files": files,
         "manifest": {
             "definitionFingerprint": definition_fingerprint,
-            "generatorVersion": "test-1",
+            "generatorVersion": "2",
             "namespaces": namespaces,
-            "sdkContractVersion": "test-1",
+            "sdkContractVersion": "1",
         },
+        "nativeTools": [],
     }
     return json.dumps(bundle, separators=(",", ":"), sort_keys=True).encode()
 
@@ -194,6 +198,49 @@ def test_real_helper_publishes_large_catalog_then_reuses_verified_cache(tmp_path
             await cached_connection.close()
             await asyncio.gather(cached_pump, return_exceptions=True)
             assert cached_process.returncode == 0
+
+    asyncio.run(scenario())
+
+
+def test_trusted_startup_reader_authenticates_the_complete_bundle() -> None:
+    async def scenario() -> None:
+        fingerprint = "f" * 64
+        content = _catalog_bundle(fingerprint, (70_000,))
+        identity = _catalog_identity(content, fingerprint)
+        offsets: list[int] = []
+
+        async def read(request: Mapping[str, object]) -> BaseModel:
+            offset = t.cast("int", request["offset"])
+            length = t.cast("int", request["length"])
+            offsets.append(offset)
+            chunk = content[offset : offset + length]
+            result = PORTABLE_CONTRACT_ADAPTERS["portal.catalog.read-result"].validate_python(
+                {
+                    "byteLength": len(chunk),
+                    "contentBase64": base64.b64encode(chunk).decode(),
+                    "eof": offset + len(chunk) == len(content),
+                    "kind": "content",
+                    "totalLength": len(content),
+                },
+            )
+            assert isinstance(result, BaseModel)
+            return result
+
+        source = GatewayPortalCatalogSource(
+            offer_id="startup-offer",
+            identity=identity,
+            read=read,
+        )
+        assert await read_catalog_source_bundle(source) == content
+        assert offsets == [0, 65_536]
+
+        mismatched_source = GatewayPortalCatalogSource(
+            offer_id="startup-offer",
+            identity=identity.model_copy(update={"bundle_sha256": f"sha256:{'0' * 64}"}),
+            read=read,
+        )
+        with pytest.raises(PortalRelayProtocolError, match="selected digest"):
+            await read_catalog_source_bundle(mismatched_source)
 
     asyncio.run(scenario())
 

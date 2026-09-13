@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 MAXIMUM_CATALOG_BUNDLE_BYTES = 16 * 1024 * 1024
 MAXIMUM_CATALOG_FILE_BYTES = 1024 * 1024
 CATALOG_PUBLICATION_ROOT = Path("/run/agent-vm/tool-portal-sdk")
+CATALOG_SOURCE_GENERATOR_VERSION = "2"
+CATALOG_SOURCE_SDK_CONTRACT_VERSION = "1"
 
 
 class CatalogPublicationIdentity(BaseModel):
@@ -40,12 +42,23 @@ class _CatalogSourceFile(BaseModel):
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class _CatalogNativeTool(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    description: str
+    input_schema: dict[str, JsonValue] = Field(alias="inputSchema")
+    namespace: str = Field(min_length=1)
+    registered_name: str = Field(alias="registeredName", min_length=1, max_length=128)
+    tool_name: str = Field(alias="toolName", min_length=1)
+
+
 class _CatalogSourceBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     definition_fingerprint: str = Field(alias="definitionFingerprint", pattern=r"^[a-f0-9]{64}$")
     files: list[_CatalogSourceFile] = Field(max_length=256)
     manifest: dict[str, JsonValue]
+    native_tools: list[_CatalogNativeTool] = Field(alias="nativeTools")
 
 
 def _validated_bundle(content: bytes, identity: CatalogPublicationIdentity) -> _CatalogSourceBundle:
@@ -58,8 +71,16 @@ def _validated_bundle(content: bytes, identity: CatalogPublicationIdentity) -> _
         raise ValueError("Catalog bundle belongs to another definition fingerprint.")
     if bundle.manifest.get("definitionFingerprint") != identity.definition_fingerprint:
         raise ValueError("Catalog import manifest belongs to another fingerprint.")
+    if bundle.manifest.get("generatorVersion") != CATALOG_SOURCE_GENERATOR_VERSION:
+        raise ValueError("Catalog source generator version is incompatible.")
+    if bundle.manifest.get("sdkContractVersion") != CATALOG_SOURCE_SDK_CONTRACT_VERSION:
+        raise ValueError("Catalog source SDK contract version is incompatible.")
     if len({item.path for item in bundle.files}) != len(bundle.files):
         raise ValueError("Catalog bundle contains duplicate file paths.")
+    if len({item.registered_name for item in bundle.native_tools}) != len(bundle.native_tools):
+        raise ValueError("Catalog bundle contains duplicate native registered names.")
+    if len({(item.namespace, item.tool_name) for item in bundle.native_tools}) != len(bundle.native_tools):
+        raise ValueError("Catalog bundle contains duplicate native capability identities.")
     for item in bundle.files:
         encoded = item.source.encode("utf-8")
         if len(encoded) != item.byte_length or hashlib.sha256(encoded).hexdigest() != item.sha256:

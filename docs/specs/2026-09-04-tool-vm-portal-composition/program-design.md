@@ -161,8 +161,10 @@ startup across its MCP, configured-CLI and Tool VM runner backends using each
 admitted profile context. Both normalize authorized definitions into a
 `PreparedCatalogSnapshot`: sorted records, discovery failures, definition
 fingerprint, and compact/namespaced descriptors. They do not combine records or
-reuse one surface's snapshot on the other. Managed SDK preparation additionally
-feeds its complete normalized records to the pure module compiler. Standalone
+reuse one surface's snapshot on the other. Managed preparation feeds its complete
+normalized records once to the pure module compiler, whose bounded bundle contains
+both generated modules and the native Hermes descriptors covered by the same
+fingerprint. Standalone
 MCP serving does not generate TypeScript; the existing explicit
 `generate-helper` path keeps its current catalog-constant/validator generator
 and output contract.
@@ -186,7 +188,9 @@ bearer auth → MCP PortalCore                admitted projection → private UD
                               separate immutable snapshots
                                 └─ compact/namespaced descriptors
 
-Managed complete snapshot ──► preparation-only compiler ──► TS modules
+Managed complete snapshot ──► preparation-only compiler ──► one fingerprinted bundle
+                                                        ├─ TS modules
+                                                        └─ native Hermes descriptors
 
 Standalone owns MCP session/list/call projection.
 Hermes owns native registration, orientation and invocation selection.
@@ -222,7 +226,9 @@ configures the plugin, installs its hooks and policy bindings, and only then
 forces plugin discovery and starts the stock Gateway
 (`managed_gateway_bootstrap.py:893–979`; `managed_tool_portal/catalog.py:180–340`).
 Retain that ordering: one coordinator attempts preparation and stores at most
-one complete cross-backend snapshot per profile for the epoch. Catalog mode
+one complete cross-backend snapshot per profile for the epoch. It obtains native
+descriptors through a startup-scoped private offer of those already prepared bytes;
+it does not perform a second list/describe traversal. Catalog mode
 registers one native Hermes tool per descriptor through the existing
 `PluginContext.register_tool` seam
 (`managed_tool_portal_capability_tools.py:327–342`). Its dynamic handler uses
@@ -332,7 +338,7 @@ affected tool to `JsonObject`. The separately authored wrapper functions and
 embedded-schema constants are the module's only runtime statements.
 
 The trusted Python bridge does not generate source. Gateway Runtime's managed
-preparation owner keeps generated manifests and bytes in a process-local
+preparation owner keeps generated manifests, native descriptors and bytes in a process-local
 `PreparedCatalogSourceCache`, separate from operation-result artifacts. Its
 private authority key contains Gateway epoch, stable principal, profile ID,
 profile-assignment and semantic revisions, plus the definition fingerprint;
@@ -348,17 +354,24 @@ compact profile remains on its generic surface without generated guidance. A
 new private offer fails before guidance.
 
 The acquisition path is a narrow addition to the existing protected UDS
-`portal` operation group. During managed Gateway bootstrap,
+`portal` operation group. A private offer has exactly one of two trusted scopes:
+startup has both session and turn absent, while a foreground offer has both
+present. A half-present pair is rejected. Both scopes retain exact Gateway epoch,
+stable principal, profile, profile-assignment and semantic revisions, connection,
+and definition-fingerprint checks on every read and release. During managed Gateway bootstrap,
 `portal.catalog.prepare` returns an incomplete diagnostic or a complete manifest
 containing the fingerprint, deterministic namespace paths, file sizes and
-digests; it returns no source or host path. At `pre_llm_call`,
+digests; it returns no source or host path. The coordinator immediately offers,
+reads in at most 64 KiB ranges, validates and releases the startup-scoped bundle,
+then retains its native descriptors for registration. At `pre_llm_call`,
 `portal.catalog.offer` binds that profile's already-prepared epoch fingerprint
 to the trusted principal/profile/session and supplied outer turn, retains it,
 and returns an opaque offer ID plus the manifest. It does not discover,
 regenerate or select newer definitions. `portal.catalog.read` accepts that offer
 ID, fingerprint, exact offset and at most 64 KiB, then returns the immutable
 `contentBase64` range, byte length, total length and EOF. Every read synchronously
-validates the offer, trusted principal/profile/session, epoch fingerprint and
+validates the offer, trusted principal/profile and exact startup-or-foreground
+scope, epoch fingerprint and
 range. Repeated or out-of-order reads are harmless because no read mutates source
 or dispatches an effect. The Python binding keeps the offer retained while its
 outer turn is current or any matching invocation remains; when both are false it

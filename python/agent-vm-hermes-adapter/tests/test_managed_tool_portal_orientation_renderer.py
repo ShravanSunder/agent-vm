@@ -39,7 +39,7 @@ def _catalog_manifest(*names: str) -> PreparedCatalogManifest:
                 }
                 for index, name in enumerate(names)
             ],
-            "generatorVersion": "1",
+            "generatorVersion": "2",
             "namespaces": [
                 {
                     "exportedFactoryName": f"bindNamespace{index:02d}Tools",
@@ -342,8 +342,8 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
                         NamespaceToolSummary(
                             name="begin",
                             description=(
-                                "Begin a human-controlled Google authorization ceremony for one "
-                                "account profile."
+                                "Ask the account owner to connect a Google account for this agent "
+                                "and application."
                             ),
                         ),
                         NamespaceToolSummary(
@@ -354,12 +354,21 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
                             ),
                         ),
                         NamespaceToolSummary(
+                            name="disconnect",
+                            description=(
+                                "Ask the owner to disconnect this agent’s account authorization "
+                                "locally. Does not revoke Google consent or disconnect other "
+                                "agents."
+                            )[:119]
+                            + "…",
+                        ),
+                        NamespaceToolSummary(
                             name="list",
                             description=(
-                                "List Google account profiles, configured application and service "
-                                "IDs, maximum permissions, and safe authorization status. Build "
-                                "begin suggestedSelections as applicationId → serviceId → "
-                                "none|read|write."
+                                "List this agent’s Google accounts, application groups, limits and "
+                                "account-specific authorization status. Suggestions name "
+                                "application IDs and offered group IDs; only the account owner can "
+                                "grant access."
                             )[:119]
                             + "…",
                         ),
@@ -368,12 +377,6 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
                             description=(
                                 "Begin human-approved reauthorization for one configured Google "
                                 "application."
-                            ),
-                        ),
-                        NamespaceToolSummary(
-                            name="revoke",
-                            description=(
-                                "Revoke and remove one configured Google application authorization."
                             ),
                         ),
                         NamespaceToolSummary(
@@ -412,7 +415,7 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertEqual(rendered.displayed_count, 4)
         self.assertIn("  controller_host_probe", rendered.orientation)
         self.assertIn("  list", rendered.orientation)
-        self.assertIn("  revoke", rendered.orientation)
+        self.assertIn("  disconnect", rendered.orientation)
         self.assertIn("  read_thing", rendered.orientation)
         self.assertIn("  write_thing", rendered.orientation)
         self.assertLessEqual(rendered.utf8_byte_count, 2_000)
@@ -436,7 +439,7 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             "  controller_host_probe",
             'Namespace: "oauth_authorization"',
             "  list",
-            "  revoke",
+            "  disconnect",
             'Namespace: "orientation-unavailable"',
             'Namespace: "upstream-mock"',
             "  read_thing",

@@ -28,7 +28,8 @@ def encoded_bundle(paths: tuple[str, ...] = ("example-12345678.ts",), source: st
             }
             for index, path in enumerate(paths)
         ],
-        "manifest": {"definitionFingerprint": fingerprint, "generatorVersion": "test", "namespaces": [], "tools": []},
+        "manifest": {"definitionFingerprint": fingerprint, "generatorVersion": "2", "namespaces": [], "sdkContractVersion": "1", "tools": []},
+        "nativeTools": [],
     }
     content = json.dumps(bundle, separators=(",", ":")).encode()
     return content, CatalogPublicationIdentity(
@@ -64,6 +65,26 @@ class CatalogModulePublicationIntegrationTests(unittest.TestCase):
             with pytest.raises(ValueError, match="path"):
                 publish_catalog_bundle(unsafe_content, unsafe_identity, root=root)
             assert not (root / identity.definition_fingerprint).exists()
+
+    def test_rejects_an_incompatible_internal_bundle_version(self) -> None:
+        content, _identity = encoded_bundle()
+        payload = json.loads(content)
+        payload["manifest"]["generatorVersion"] = "1"
+        incompatible_content = json.dumps(payload, separators=(",", ":")).encode()
+        incompatible_identity = CatalogPublicationIdentity(
+            definition_fingerprint="a" * 64,
+            bundle_sha256=f"sha256:{hashlib.sha256(incompatible_content).hexdigest()}",
+            bundle_byte_length=len(incompatible_content),
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            pytest.raises(ValueError, match="generator version"),
+        ):
+            publish_catalog_bundle(
+                incompatible_content,
+                incompatible_identity,
+                root=Path(directory),
+            )
 
     def test_corrupt_existing_source_is_rejected_not_repaired(self) -> None:
         content, identity = encoded_bundle()
