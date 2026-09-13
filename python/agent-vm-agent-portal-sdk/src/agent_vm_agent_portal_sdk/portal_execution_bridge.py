@@ -1,6 +1,7 @@
 """Trusted callback boundary for guest requests, independent of any framework."""
 
 import asyncio
+import secrets
 import typing as t
 from collections.abc import Mapping
 
@@ -48,10 +49,13 @@ class PortalExecutionBridge:
         caller_ids: dict[str, str] = {}
         try:
             if incoming.operation == "call":
+                # Guest correlation IDs may be reused after settlement; they cannot
+                # make a later independent request reuse an earlier approval.
+                request_identity = secrets.token_hex(16)
                 calls = t.cast("list[dict[str, object]]", request["calls"])
                 for call in calls:
                     caller_id = t.cast("str", call["id"])
-                    qualified_id = self.scope.qualify_call_id(caller_id)
+                    qualified_id = self.scope.qualify_call_id(request_identity, caller_id)
                     caller_ids[qualified_id] = caller_id
                     call["id"] = qualified_id
             task = self.scope.admit(lambda: self._invoke(incoming.operation, request))

@@ -70,12 +70,13 @@ def test_call_identity_is_stable_only_inside_its_originating_scope() -> None:
     async def scenario() -> None:
         first = PortalInvocationScope()
         second = PortalInvocationScope()
-        assert first.qualify_call_id("item") == first.qualify_call_id("item")
-        assert first.qualify_call_id("item") != second.qualify_call_id("item")
-        assert first.qualify_call_id("item") != first.qualify_call_id("other")
+        assert first.qualify_call_id("request-a", "item") == first.qualify_call_id("request-a", "item")
+        assert first.qualify_call_id("request-a", "item") != second.qualify_call_id("request-a", "item")
+        assert first.qualify_call_id("request-a", "item") != first.qualify_call_id("request-a", "other")
+        assert first.qualify_call_id("request-a", "item") != first.qualify_call_id("request-b", "item")
         first.close()
         with pytest.raises(PortalScopeClosedError):
-            first.qualify_call_id("item")
+            first.qualify_call_id("request-a", "item")
         second.close()
 
     asyncio.run(scenario())

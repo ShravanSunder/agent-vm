@@ -53,7 +53,7 @@ not new framework integrations promised by this change.
 Reuse the published `@agent-vm/agent-portal-sdk` package, its `tool-portal` CLI,
 the Python `agent-vm-agent-portal-sdk`, portable Portal contracts, managed
 Gateway Tool Portal, and the Hermes adapter's existing execution and instruction
-seams. Source snapshot: `origin/master` at `b4647ae2`.
+seams. The foundation includes the configured Tool VM CLI destination.
 
 The permitted change is the reusable package interface and its automatic Tool
 VM communication/integration. It may extend SDK transports, execution-context
@@ -67,7 +67,7 @@ Preserve:
 - Tool VM's arbitrary direct code execution; Portal rules are not VM containment;
 - existing credentialed-runtime, OAuth, lease-authority, and host boundaries;
 - the existing instruction-injection lifecycle rather than a new prompt engine;
-- other agents' changes and the separate PR A remediation lane.
+- unrelated work and existing capability implementations.
 
 ## Negative space and complexity limit
 
@@ -77,9 +77,8 @@ program replay, general host proxy, or public admin endpoint. No Hermes fork or
 upstream distribution upgrade is implicitly authorized. No deployment secret,
 egress, or privileged configuration edits occur during this design cycle.
 
-PR A's Tool VM configured-CLI target is a destination prerequisite, not a reason
-to copy its implementation into this branch. A missing prerequisite must remain
-explicit; the other agent's repair work is not subsumed here.
+Reuse the existing Tool VM configured-CLI target as a destination. Composition
+does not introduce a second execution path or redefine that target's policy.
 
 ## Outcome evidence
 

@@ -242,8 +242,8 @@ def test_credit_reader_progresses_while_guest_request_output_is_blocked() -> Non
         asyncio.run(scenario(f"{directory}/portal.sock"))
 
 
-def test_request_that_cannot_fit_remaining_transfer_budget_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(relay_module, "MAX_RELAY_TRANSFER_BYTES", relay_module.RELAY_CONTROL_RESERVE_BYTES + 256)
+def test_request_that_cannot_fit_live_capacity_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(relay_module, "MAX_RELAY_RETAINED_BYTES", relay_module.RELAY_CONTROL_RESERVE_BYTES + 256)
 
     async def scenario(socket_path: str) -> None:
         async def send(_message: dict[str, object]) -> None:

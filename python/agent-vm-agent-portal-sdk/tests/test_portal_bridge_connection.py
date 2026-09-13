@@ -126,7 +126,7 @@ def test_failed_response_write_closes_process_and_wakes_reader() -> None:
 
 
 def test_output_budget_exhaustion_rejects_before_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(connection_module, "_TOTAL_TRANSFER_BYTES", 65_536)
+    monkeypatch.setattr(connection_module, "_MAX_RETAINED_BYTES", 65_536)
 
     async def scenario() -> None:
         effects: list[str] = []
@@ -164,7 +164,7 @@ def test_output_budget_exhaustion_rejects_before_dispatch(monkeypatch: pytest.Mo
 
 
 def test_request_traffic_cannot_consume_reserved_control_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(connection_module, "_TOTAL_TRANSFER_BYTES", 9000)
+    monkeypatch.setattr(connection_module, "_MAX_RETAINED_BYTES", 9000)
 
     async def scenario() -> None:
         effects: list[str] = []
@@ -261,7 +261,7 @@ def test_host_advertises_credit_after_ready_and_request_completion() -> None:
             assert replenished_credit["requests"] == 16
             replenished_bytes = replenished_credit["bytes"]
             assert isinstance(replenished_bytes, int)
-            assert replenished_bytes > reduced_bytes
+            assert replenished_bytes == initial_bytes
         finally:
             await connection.close()
             await asyncio.gather(pump, return_exceptions=True)

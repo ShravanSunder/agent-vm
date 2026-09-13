@@ -10,7 +10,7 @@ MAX_RELAY_MESSAGE_BYTES = 1024 * 1024
 MAX_RELAY_HEADER_BYTES = 8 * 1024
 MAX_RELAY_BUFFER_BYTES = MAX_RELAY_MESSAGE_BYTES + MAX_RELAY_HEADER_BYTES
 MAX_RELAY_PENDING_REQUESTS = 16
-MAX_RELAY_TRANSFER_BYTES = 64 * 1024 * 1024
+MAX_RELAY_RETAINED_BYTES = 64 * 1024 * 1024
 RELAY_CONTROL_RESERVE_BYTES = 8 * 1024
 RELAY_STREAM_CHUNK_BYTES = 64 * 1024
 
@@ -81,7 +81,7 @@ class RelayClose(_RelayModel):
 class RelayCredit(_RelayModel):
     kind: t.Literal["credit"]
     requests: int = Field(ge=0, le=MAX_RELAY_PENDING_REQUESTS)
-    bytes: int = Field(ge=0, le=MAX_RELAY_TRANSFER_BYTES)
+    bytes: int = Field(ge=0, le=MAX_RELAY_RETAINED_BYTES)
 
 
 class RelayArtifactChunk(_RelayModel):

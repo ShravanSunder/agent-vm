@@ -72,9 +72,9 @@ destination comes from configuration, not a guest-selected host. A configured
 Tool VM target MAY return work to the same Tool VM only through normal Portal
 admission; direct code execution remains a separate surface.
 
-The current branch's absence of PR A's `tool_vm` configured-CLI target MUST NOT
-be concealed by a fake target, direct-shell substitute, or copied repair lane.
-Its integration proof requires the landed prerequisite.
+The existing `tool_vm` configured-CLI target MUST be reused. Its integration
+proof must traverse normal Portal admission and routing, not a direct-shell
+substitute.
 
 ## R4 — Human approval remains usable from code (U4, U5, U6)
 
@@ -163,7 +163,7 @@ an approval decision in a guest transport envelope is invalid.
 - V2: real Tool VM-origin programs compose MCP and configured-CLI calls through
   real Portal routing; observe returned data and the actual destination effect.
   Include a result-dependent second call and parallel calls with reversed
-  completion order. Tool VM destination coverage requires PR A's landed target.
+  completion order, including the existing configured Tool VM destination.
 - V3: real managed human-approval interaction from an SDK call; approved,
   denied, expired, cancelled, and unavailable route cases; concurrent
   conversations; exact protected-item retry and no repeated successful effect.

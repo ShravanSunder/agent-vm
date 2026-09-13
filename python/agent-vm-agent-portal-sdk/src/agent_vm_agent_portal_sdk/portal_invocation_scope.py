@@ -68,11 +68,11 @@ class PortalInvocationScope:
         registered.set()
         return operation
 
-    def qualify_call_id(self, caller_item_id: str) -> str:
+    def qualify_call_id(self, request_identity: str, caller_item_id: str) -> str:
         self._require_active()
-        if not caller_item_id:
-            raise ValueError("Portal call item ID must not be empty.")
-        payload = json.dumps([self._nonce, caller_item_id], ensure_ascii=False, separators=(",", ":"))
+        if not request_identity or not caller_item_id:
+            raise ValueError("Portal request and call item identities must not be empty.")
+        payload = json.dumps([self._nonce, request_identity, caller_item_id], ensure_ascii=False, separators=(",", ":"))
         return f"bridge-{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
     def close(self) -> None:

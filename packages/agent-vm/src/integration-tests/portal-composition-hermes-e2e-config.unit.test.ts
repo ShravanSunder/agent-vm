@@ -56,7 +56,7 @@ describe('portal composition Hermes E2E fixture config', () => {
 		});
 		const namespace =
 			config.toolPortalConfig.profiles.main?.namespaces['portal_composition_execution'];
-		if (namespace?.backend.kind !== 'controller_execution') {
+		if (namespace?.backend.kind !== 'controller_execution' || 'source' in namespace.calls) {
 			throw new Error('Expected the fixture controller-execution namespace.');
 		}
 		const operation = namespace.backend.operations.credentialed_effect;
@@ -131,7 +131,7 @@ describe('portal composition Hermes E2E fixture config', () => {
 			kind: 'configured_cli',
 			mandatoryArgvPrefix: [
 				'-c',
-				'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "tool-vm:%s" "$2"',
+				'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "%s\\n" "$2" >> portal-composition-tool-vm-calls.txt; printf "tool-vm:%s" "$2"',
 				'--',
 			],
 			suggestCalls: {

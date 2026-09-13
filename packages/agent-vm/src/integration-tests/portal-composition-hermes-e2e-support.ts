@@ -134,7 +134,7 @@ export async function startPortalCompositionModelServer(options: {
 					'connect_tool_portal()',
 					'connectToolPortal()',
 					'/agent-vm/tool-portal.md',
-					'the endpoint expires when it ends',
+					'for the active foreground invocation; endpoint expires afterward.',
 				]) {
 					if (!instructions.includes(required)) {
 						throw new Error(`Hermes omitted composition guidance before execution: ${required}`);

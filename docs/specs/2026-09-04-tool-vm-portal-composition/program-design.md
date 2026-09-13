@@ -34,10 +34,10 @@ SDK execution bridge                          └─ tool-portal CLI
 existing managed Portal client ──► Tool Portal capability core
                                       ├─ MCP provider
                                       └─ configured CLI destination
-                                         host / credentialed VM / Tool VM*
+                                         host / credentialed VM / Tool VM
 
-* Tool VM configured-CLI destination depends on PR A's landed target.
-  The composition program never moves to any destination above.
+The configured Tool VM destination already exists.
+The composition program never moves to any destination above.
 ```
 
 The two directions share the existing Gateway-to-Tool-VM SSH connection but use
@@ -47,7 +47,9 @@ frames. This prevents ordinary printed text from becoming a tool request.
 
 ## What exists and what changes
 
-Source baseline is Agent VM `b4647ae2`; Hermes is pinned to 0.20.6,
+The table compares the pre-composition baseline at Agent VM `b4647ae2`
+with the proposed path. The current foundation also includes the configured
+Tool VM CLI destination. Hermes is pinned to 0.20.6,
 `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
 
 | Edge | Current source / behavior | Target delta |
@@ -57,7 +59,7 @@ Source baseline is Agent VM `b4647ae2`; Hermes is pinned to 0.20.6,
 | Guest code calls Portal SDK | Existing SDKs require manually supplied HTTP/stdio transport; no managed guest endpoint | Added local transport in existing SDKs and CLI, backed by the guest relay |
 | Bridge starts relay | No predecessor | Added SDK bridge uses lower-level `sandbox.process`/`sandbox.stream`, not blocking BaseEnvironment command execution |
 | Requests cross VM boundary | Strict SSH `openProcessChannel` already exposes stdout/stderr callbacks and repeated stdin writes | Reused process transport with explicit auxiliary relay I/O profile; ordinary process limits unchanged |
-| Trusted caller reaches Portal | Existing Python GatewayRuntimeClient supplies protected context; operation identity uses caller item ID | Bridge supplies frozen context and invocation-qualified item IDs; caller-visible result IDs are restored, backend arguments unchanged |
+| Trusted caller reaches Portal | Existing Python GatewayRuntimeClient supplies protected context; operation identity uses caller item ID | Bridge supplies frozen context and invocation/request-qualified item IDs; caller-visible result IDs are restored, backend arguments unchanged |
 | Portal approval | Existing `gateway_approval_bridge.py:126–220` calls presenter/decision/exact retry | Intentionally unchanged authority and algorithm; callbacks close over originating conversation |
 | Cancellation reaches Portal | UDS server has AbortSignal, private projection drops it (`gateway-runtime-private-uds-dispatcher.ts:161–192`) | Carry signal through existing managed Portal invocation/projection into capability core |
 | Cancellation reaches an admitted controller CLI | `controller-execution-gateway-control-adapter.ts:690–713` waits for the result without forwarding cancellation; gateway-origin cancel is refused by admission classification | Add operation-scoped cancellation on the existing control channel, with controller-owned admission/lifetime state and existing executor signals |
@@ -309,10 +311,12 @@ encoded bytes before sending a result; oversized results become explicit
 transport failures with retained dispatch certainty, never truncation of JSON.
 
 The auxiliary relay process needs an explicit streaming I/O profile on the
-existing managed process interface. Its finite total transfer budget is 64 MiB
-per direction per invocation; deadline is the originating invocation deadline.
-This profile is available only on the trusted managed process surface and does
-not grant Portal authority. Normal shell/process defaults remain unchanged.
+existing managed process interface. It bounds retained bytes, records, and
+pending work rather than cumulative bytes transferred. Consumed data releases
+capacity, so sequential composition can continue within the originating
+invocation deadline. This profile is available only on the trusted managed
+process surface and does not grant Portal authority. Normal shell/process
+defaults remain unchanged.
 
 This is required because current strict SSH closes after 1 MiB cumulative output
 and the process stdin runtime retains only 64 writes / 16 MiB. Merely enlarging
@@ -337,17 +341,18 @@ SSH channel, not guest application processing or a Portal effect.
 The bridge has exactly one stdin writer and awaits each write result before
 submitting the next sequence. Gateway Runtime retains its per-stream `writeTail`
 serialization and owns `nextWriteSequence`, `acknowledgedThrough`,
-`evictedThrough`, total bytes, and at most 64 retained records. Within that
+`evictedThrough`, retained bytes, and at most 64 retained records. Within that
 serialized operation it validates the entire request before mutation:
 
 - acknowledgment must be monotone, below `nextWriteSequence`, and cover only
   records known written; a future acknowledgment is rejected;
-- the next new sequence writes once; it increments sequence/bytes only on
-  successful channel acceptance;
+- the next new sequence writes once; it advances the sequence and charges
+  retained bytes only on successful channel acceptance;
 - an identical retained duplicate returns `already-written` without writing;
   a different digest/content for that sequence is rejected;
 - before adding record 65, evict oldest records only through the acknowledged
-  watermark; retain the scalar `evictedThrough` after deletion;
+  watermark, releasing their retained-byte charge; retain the scalar
+  `evictedThrough` after deletion;
 - any evicted, skipped, or invalid sequence is rejected without writing; a
   concurrent out-of-order arrival is rejected, not queued waiting for a gap;
 - a channel write of uncertain completion records ambiguity and stops relay
@@ -380,14 +385,26 @@ does not change. These read/write/profile variants belong to the canonical
 private process schemas and their Python/TS projections, not the guest wire.
 
 Before a guest request enters Portal, the bridge reserves a pending slot,
-request bytes, and enough remaining output credit for one maximum result
-message; artifact credit includes the known requested range and base64 overhead.
-At insufficient capacity it returns overload without Portal dispatch. Unused
-reservation credit is released at completion. Transfer totals never reset as
-acknowledged buffers are released. A reserved control budget of 8 KiB remains
-available for cancellation/close. Exhaustion stops admission and drains only
-already-reserved replies; a peer exceeding its credit closes the scope. If an
-already-dispatched response is lost at a hard cap, its effect remains uncertain.
+retained request bytes, and live capacity for one maximum result message;
+artifact reservations include the requested range and base64 overhead.
+At insufficient live capacity it returns overload without Portal dispatch.
+Bytes remain charged while retained; consumption, acknowledged eviction, and
+request settlement release the corresponding capacity. Credits advertise this
+reusable capacity, not a lifetime allowance. A reserved control budget of 8 KiB
+remains available for cancellation/close. Saturation pauses admission while
+already-admitted work drains; a peer exceeding its credit closes the scope.
+If an already-dispatched response is lost at a hard cap, its effect remains
+uncertain. Neither the relay nor its auxiliary process rejects a request merely
+because earlier completed requests transferred data.
+
+```text
+Request admitted → reserve live capacity → deliver/consume → release capacity
+                          ↑                                      │
+                          └──── reusable by the next request ────┘
+
+Still bounded: messages, buffers, pending calls, and invocation lifetime.
+No cumulative byte quota: completed transfers do not consume future capacity.
+```
 
 No automatic relay restart/replay occurs within a scope. The next independently
 authorized invocation starts fresh. Bounds are transport/resource guarantees,
@@ -642,17 +659,32 @@ cancellation bounds later work but does not retroactively make it undispatched.
 Portal checks the signal before reservation/arming/dispatch where applicable,
 while existing controller freshness and consumption checks remain authoritative.
 
-To prevent an approved-but-unretried item from being reused by a successor
-scope, the bridge gives Portal a scope-qualified call ID, derived from a fresh
-trusted-side invocation nonce and caller item ID. Existing `deterministicOperationId`
-uses call ID plus principal/revision/surface, not conversational correlation
+To prevent both successor-scope reuse and collisions between independent calls,
+the bridge gives Portal a qualified call ID derived from the trusted-side
+invocation nonce, distinct admitted bridge-request identity, and caller item ID.
+The existing relay already assigns channel-wide request identities across guest
+connections; item IDs need be unique only within their own request. Each new
+request has a distinct identity even if another client or function repeats its
+item IDs and arguments. No additional authority registry is introduced.
+Existing `deterministicOperationId` uses call ID plus principal/revision/surface,
+not conversational correlation
 (`tool-portal-service.ts:628`), so correlation alone is insufficient. Encoding
 `bridge-` plus the SHA-256 hex digest of the canonical tuple produces a fixed-size
-valid call ID (the current RequestIdSchema has no length maximum), stable for exact
-retry within the scope and different across scopes. Arguments, name, namespace,
-and policy are unchanged. Map result item IDs back to caller IDs; leave opaque
+valid call ID (the current RequestIdSchema has no length maximum), stable for the
+trusted approval retry of that request and distinct for independent requests
+and scopes. Arguments, name, namespace, and policy are unchanged. Map result
+item IDs back to caller IDs; leave opaque
 Portal operation IDs intact. Do not expose the internal call-ID mapping to the
 guest or preserve it after closure.
+
+```text
+Same invocation, two independent requests using item "call-1"
+  request A + call-1 → operation A → approval retry still operation A
+  request B + call-1 → operation B → approval retry still operation B
+
+Unchanged: caller-facing item IDs, arguments, Portal policy and approval owner.
+Changed: internal qualification includes the request, not only the invocation.
+```
 
 If approval was recorded but retry was not admitted, it is not consumed by a
 fake execution or reclassified as denied: the controller keeps its existing
@@ -733,8 +765,8 @@ with the invocation. Describe what is installed separately from what is live.
 | R1 / C1–C2, C6 | Existing clients, local transports, CLI | Portable schema parity; real guest Python/TS/CLI calls and result-dependent composition |
 | R2 / C4 | Image overlay, middleware scope, launch injection | Both architectures' imports from work/tmp directories; helper mismatch and missing context |
 | R3 / C1 | Fixed-context trusted dispatch to existing Portal | Real MCP and host/credentialed/Tool VM destination effects; forged identity and hidden/denied calls |
-| R4 / C3 | Existing approval helper + scope admission gate and qualified call IDs | Barriers after presentation/before decision/after decision/before backend dispatch; both close-race winners; no successor approval reuse; real native approval while guest awaits |
-| R5 / C2, C4–C5 | Bounded framing, explicit write acknowledgments/consuming reads, operation-owned controller cancellation, artifact chunks | More than 64 writes; lost/duplicate acknowledgment; evicted/skipped sequence rejection with byte-order inspection; stalled-reader pause/resume; reordered replies; saturation; post-effect disconnect; multi-chunk artifacts; queued/running cancellation over the real control channel, wrong-owner rejection, independent-call preservation and host process exit before natural timeout |
+| R4 / C3 | Existing approval helper + scope admission gate and request-qualified call IDs | Independent clients using identical item IDs and payloads receive distinct approvals/outcomes; each exact retry retains its identity; barriers after presentation/before decision/after decision/before backend dispatch; both close-race winners; no successor approval reuse; real native approval while guest awaits |
+| R5 / C2, C4–C5 | Bounded framing, reusable live-capacity credits, explicit write acknowledgments/consuming reads, operation-owned controller cancellation, artifact chunks | Sequential transfers beyond 64 MiB with bounded live occupancy and working cancellation; more than 64 writes; lost/duplicate acknowledgment; evicted/skipped sequence rejection with byte-order inspection; stalled-reader pause/resume; reordered replies; saturation; post-effect disconnect; multi-chunk artifacts; queued/running cancellation over the real control channel, wrong-owner rejection, independent-call preservation and host process exit before natural timeout |
 | R6 / C4 | Existing orientation and isolation boundaries | Model-request inspection, package-only consumer without Hermes, no secret/authority leakage |
 
 ```text
@@ -755,5 +787,5 @@ Unit proof covers codecs, scope state, write-window guards, and canonical
 projections. Integration proof covers real local sockets/stream adapters with
 substituted VM boundaries. Neither replaces the real-VM path above. A local
 deterministic MCP server proves MCP transport, not vendor availability. Beta
-remains separate deployment evidence. PR A integration waits for its landed
-target; this design neither copies it nor claims it tested.
+remains separate deployment evidence. Tool VM destination proof exercises the
+existing configured-CLI target through Portal, not a substitute execution path.

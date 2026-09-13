@@ -10,7 +10,7 @@ from .contracts import PORTABLE_CONTRACT_ADAPTERS
 from .portal_execution_bridge import PortalExecutionBridge
 from .portal_relay_protocol import (
     MAX_RELAY_PENDING_REQUESTS,
-    MAX_RELAY_TRANSFER_BYTES,
+    MAX_RELAY_RETAINED_BYTES,
     RELAY_CONTROL_RESERVE_BYTES,
     RELAY_STREAM_CHUNK_BYTES,
     PortalRelayDecoder,
@@ -21,7 +21,7 @@ from .portal_relay_protocol import (
 
 _MAX_CHUNK_BYTES = RELAY_STREAM_CHUNK_BYTES
 _MAX_PENDING_REQUESTS = MAX_RELAY_PENDING_REQUESTS
-_TOTAL_TRANSFER_BYTES = MAX_RELAY_TRANSFER_BYTES
+_MAX_RETAINED_BYTES = MAX_RELAY_RETAINED_BYTES
 _CONTROL_RESERVE_BYTES = RELAY_CONTROL_RESERVE_BYTES
 type StreamPortalArtifact = t.Callable[[Mapping[str, object], t.Callable[[dict[str, object]], t.Awaitable[None]]], t.Awaitable[None]]
 
@@ -48,8 +48,9 @@ class PortalBridgeConnection:
         self._ready = asyncio.get_running_loop().create_future()
         self._closed = False
         self._cleanup_task: asyncio.Task[None] | None = None
-        self._sent_bytes = 0
-        self._received_bytes = 0
+        self._pending_output_bytes = 0
+        self._pending_control_bytes = 0
+        self._request_bytes: dict[str, int] = {}
         self._reservations: dict[str, int] = {}
 
     async def wait_ready(self) -> None:
@@ -58,19 +59,27 @@ class PortalBridgeConnection:
 
     async def _send(self, message: dict[str, object]) -> None:
         frame = encode_relay_frame(message)
-        async with self._write_lock:
-            if self._closed:
-                raise PortalRelayProtocolError("Portal bridge connection closed.")
-            if self._sent_bytes + len(frame) > _TOTAL_TRANSFER_BYTES:
-                raise PortalRelayProtocolError("Portal response transfer budget exhausted.")
-            request_id = message.get("requestId")
-            if isinstance(request_id, str) and request_id in self._reservations:
-                if len(frame) > self._reservations[request_id]:
-                    raise PortalRelayProtocolError("Portal response exceeded reserved capacity.")
-                self._reservations[request_id] -= len(frame)
-            self._sent_bytes += len(frame)
-            for offset in range(0, len(frame), _MAX_CHUNK_BYTES):
-                await self._process.write(frame[offset : offset + _MAX_CHUNK_BYTES])
+        request_id = message.get("requestId")
+        reserved = isinstance(request_id, str) and request_id in self._reservations
+        if reserved:
+            if len(frame) > self._reservations[request_id]:
+                raise PortalRelayProtocolError("Portal response exceeded reserved capacity.")
+            self._reservations[request_id] -= len(frame)
+        elif self._pending_control_bytes + len(frame) > _CONTROL_RESERVE_BYTES:
+            raise PortalRelayProtocolError("Portal control capacity exceeded.")
+        self._pending_output_bytes += len(frame)
+        if not reserved:
+            self._pending_control_bytes += len(frame)
+        try:
+            async with self._write_lock:
+                if self._closed:
+                    raise PortalRelayProtocolError("Portal bridge connection closed.")
+                for offset in range(0, len(frame), _MAX_CHUNK_BYTES):
+                    await self._process.write(frame[offset : offset + _MAX_CHUNK_BYTES])
+        finally:
+            self._pending_output_bytes -= len(frame)
+            if not reserved:
+                self._pending_control_bytes -= len(frame)
 
     async def _respond(self, message: dict[str, object]) -> None:
         self._started_ids.add(str(message["requestId"]))
@@ -81,12 +90,8 @@ class PortalBridgeConnection:
 
     def _available_credit(self, *, next_credit_frame_bytes: int = 0) -> tuple[int, int]:
         requests = max(0, _MAX_PENDING_REQUESTS - len(self._requests))
-        request_bytes = max(0, _TOTAL_TRANSFER_BYTES - _CONTROL_RESERVE_BYTES - self._received_bytes)
-        response_bytes = max(
-            0,
-            _TOTAL_TRANSFER_BYTES - _CONTROL_RESERVE_BYTES - self._sent_bytes - sum(self._reservations.values()) - next_credit_frame_bytes,
-        )
-        return requests, min(request_bytes, response_bytes)
+        retained_bytes = sum(self._request_bytes.values()) + sum(self._reservations.values()) + self._pending_output_bytes
+        return requests, max(0, _MAX_RETAINED_BYTES - _CONTROL_RESERVE_BYTES - retained_bytes - next_credit_frame_bytes)
 
     async def _advertise_credit(self) -> None:
         if self._closed or not self._ready.done():
@@ -149,6 +154,7 @@ class PortalBridgeConnection:
                 self._requests_by_id.pop(request_id)
                 self._started_ids.discard(request_id)
                 self._reservations.pop(request_id, None)
+                self._request_bytes.pop(request_id, None)
                 if self._artifact_request_id == request_id:
                     self._artifact_request_id = None
         if not task.cancelled() and task.exception() is not None:
@@ -163,9 +169,6 @@ class PortalBridgeConnection:
         decoder = PortalRelayDecoder()
         try:
             while not self._closed and (chunk := await self._process.read()):
-                self._received_bytes += len(chunk)
-                if self._received_bytes > _TOTAL_TRANSFER_BYTES:
-                    raise PortalRelayProtocolError("Portal request transfer budget exhausted.")
                 for message in decoder.feed(chunk):
                     await self._receive(message)
             self._fail_readiness_if_pending()
@@ -213,21 +216,19 @@ class PortalBridgeConnection:
         request_id = str(message["requestId"])
         if request_id in self._requests_by_id:
             raise PortalRelayProtocolError("Duplicate relay request identity.")
-        if self._received_bytes > _TOTAL_TRANSFER_BYTES - _CONTROL_RESERVE_BYTES:
+        request_bytes = len(encode_relay_frame(message))
+        if request_bytes > _MAX_RETAINED_BYTES - _CONTROL_RESERVE_BYTES:
             await self._send(
                 {"kind": "error", "requestId": request_id, "code": "relay-credit-exhausted", "dispatch": "not-dispatched"},
             )
             return
         reservation = relay_response_reservation_bytes(message)
         artifact_busy = message.get("operation") == "artifact-read" and self._artifact_request_id is not None
-        if (
-            artifact_busy
-            or len(self._requests) >= _MAX_PENDING_REQUESTS
-            or self._sent_bytes + sum(self._reservations.values()) + reservation > _TOTAL_TRANSFER_BYTES - _CONTROL_RESERVE_BYTES
-        ):
+        if artifact_busy or len(self._requests) >= _MAX_PENDING_REQUESTS or request_bytes + reservation > self._available_credit()[1]:
             await self._send({"kind": "error", "requestId": message["requestId"], "code": "pending-request-limit-exceeded", "dispatch": "not-dispatched"})
             return
         self._reservations[request_id] = reservation
+        self._request_bytes[request_id] = request_bytes
         if message.get("operation") == "artifact-read":
             self._artifact_request_id = request_id
         task = asyncio.create_task(self._respond(message))

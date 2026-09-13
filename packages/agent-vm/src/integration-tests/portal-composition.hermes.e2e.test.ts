@@ -407,6 +407,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			.parse(JSON.parse(executeCodeResult ?? 'null'));
 		const compositionOutput: unknown = JSON.parse(executionEnvelope.output);
 		expect(compositionOutput).toMatchObject({
+			capacityReuse: { artifactBytes: 70 * 256 * 3_840, independentOperationCount: 3 },
 			toolVmConfiguredCli: {
 				effect: resultDerivedValue,
 				result: {

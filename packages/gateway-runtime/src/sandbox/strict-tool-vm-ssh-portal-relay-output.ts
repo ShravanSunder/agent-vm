@@ -12,7 +12,6 @@ export const PORTAL_RELAY_STREAM_CHUNK_BYTES = 64 * 1_024;
 export const PORTAL_RELAY_OUTPUT_RESUME_BYTES = 1 * 1_024 * 1_024;
 export const PORTAL_RELAY_OUTPUT_PAUSE_BYTES = 3 * 1_024 * 1_024;
 export const PORTAL_RELAY_OUTPUT_HARD_CAP_BYTES = 4 * 1_024 * 1_024;
-export const PORTAL_RELAY_TOTAL_TRANSFER_BYTES = 64 * 1_024 * 1_024;
 
 interface RelayOutputChunk {
 	bytes: Uint8Array;
@@ -73,7 +72,6 @@ export function createStrictToolVmSshPortalRelayOutput(options: {
 	};
 	let terminal = false;
 	let bufferedOutputBytes = 0;
-	let totalOutputBytes = 0;
 
 	function stateFor(stream: SandboxStreamHandle): {
 		readonly channel: 'stderr' | 'stdout';
@@ -186,17 +184,12 @@ export function createStrictToolVmSshPortalRelayOutput(options: {
 		const state = states[channel];
 		const nextBufferedBytes = state.bufferedBytes + incomingBytes.byteLength;
 		const nextBufferedOutputBytes = bufferedOutputBytes + incomingBytes.byteLength;
-		const nextTotalBytes = totalOutputBytes + incomingBytes.byteLength;
-		if (
-			nextBufferedOutputBytes > PORTAL_RELAY_OUTPUT_HARD_CAP_BYTES ||
-			nextTotalBytes > PORTAL_RELAY_TOTAL_TRANSFER_BYTES
-		) {
+		if (nextBufferedOutputBytes > PORTAL_RELAY_OUTPUT_HARD_CAP_BYTES) {
 			throw new Error('Portal relay output capacity was exhausted.');
 		}
 		state.chunks.push({ bytes: incomingBytes.slice(), sequence: state.nextSequence++ });
 		state.bufferedBytes = nextBufferedBytes;
 		bufferedOutputBytes = nextBufferedOutputBytes;
-		totalOutputBytes = nextTotalBytes;
 		if (!state.paused && state.bufferedBytes >= PORTAL_RELAY_OUTPUT_PAUSE_BYTES) {
 			state.paused = true;
 			options.pauseOutput(channel);

@@ -45,6 +45,8 @@ function binaryChunk(bytes: Uint8Array): {
 
 class FakeProcessChannel implements StrictToolVmSshProcessChannel {
 	readonly writes: Uint8Array[] = [];
+	retainWrittenBytes = true;
+	writeCallCount = 0;
 	cancelRequestCount = 0;
 	endInputCount = 0;
 	throwOnCancellation = false;
@@ -79,7 +81,8 @@ class FakeProcessChannel implements StrictToolVmSshProcessChannel {
 	}
 
 	async write(bytes: Uint8Array): Promise<void> {
-		this.writes.push(bytes.slice());
+		this.writeCallCount += 1;
+		if (this.retainWrittenBytes) this.writes.push(bytes.slice());
 		if (this.throwOnWrite) throw new Error('channel write failed');
 	}
 }
@@ -710,13 +713,14 @@ describe('strict Tool VM SSH process runtime', () => {
 		expect(fixture.getOpenRecord().channel.writes).toHaveLength(1);
 	});
 
-	it('enforces the fixed 64 MiB relay stdin transfer total independently of standard limits', async () => {
+	it('reuses acknowledged relay stdin capacity beyond 64 MiB and still rejects replay', async () => {
 		const fixture = createRuntimeFixture();
 		const started = await fixture.runtime.start({
 			...defaultStartRequest,
 			ioProfile: 'portal-relay',
 		});
 		const stdin = streamFor(started.streams, 'stdin');
+		fixture.getOpenRecord().channel.retainWrittenBytes = false;
 		const chunk = Buffer.alloc(64 * 1_024, 1);
 		const chunkRequest = {
 			content: binaryChunk(chunk),
@@ -725,7 +729,7 @@ describe('strict Tool VM SSH process runtime', () => {
 		};
 
 		for (let sequence = 0; sequence < 1_024; sequence += 1) {
-			// oxlint-disable-next-line no-await-in-loop -- The cumulative limit proof requires the single-writer acknowledgment order.
+			// oxlint-disable-next-line no-await-in-loop -- The reuse proof requires the single-writer acknowledgment order.
 			await fixture.runtime.write({
 				...chunkRequest,
 				acknowledgedThrough: sequence - 1,
@@ -741,8 +745,15 @@ describe('strict Tool VM SSH process runtime', () => {
 				sequence: 1_024,
 				stream: stdin,
 			}),
-		).rejects.toThrow(/written byte limit/i);
-		expect(fixture.getOpenRecord().channel.writes).toHaveLength(1_024);
+		).resolves.toMatchObject({ kind: 'written' });
+		await expect(
+			fixture.runtime.write({
+				...chunkRequest,
+				acknowledgedThrough: 1_024,
+				sequence: 0,
+			}),
+		).rejects.toThrow(/evicted/i);
+		expect(fixture.getOpenRecord().channel.writeCallCount).toBe(1_025);
 	});
 
 	it('uses consuming relay cursors and waits without interpreting timeout as EOF', async () => {
@@ -841,7 +852,7 @@ describe('strict Tool VM SSH process runtime', () => {
 		});
 	});
 
-	it('closes relay output after the fixed 64 MiB cumulative transfer total', async () => {
+	it('reuses consumed relay output beyond 64 MiB and preserves cancellation', async () => {
 		const fixture = createRuntimeFixture();
 		const started = await fixture.runtime.start({
 			...defaultStartRequest,
@@ -859,11 +870,12 @@ describe('strict Tool VM SSH process runtime', () => {
 		}
 		fixture.getOpenRecord().request.onStdout(Buffer.from('overflow'));
 
+		expect(fixture.getOpenRecord().channel.cancelRequestCount).toBe(0);
+		expect(fixture.runtime.status({ process: started.process })).toMatchObject({ kind: 'running' });
+		const continued = await fixture.runtime.read({ cursor, maxBytes: 64 * 1_024, stream: stdout });
+		expect(Buffer.from(continued.chunk.contentBase64, 'base64').toString('utf8')).toBe('overflow');
+		fixture.runtime.cancel({ process: started.process });
 		expect(fixture.getOpenRecord().channel.cancelRequestCount).toBe(1);
-		expect(fixture.runtime.status({ process: started.process })).toMatchObject({
-			kind: 'terminal',
-			outcome: { kind: 'ambiguous' },
-		});
 	});
 
 	it('retains bounded terminal tombstones and evicts the oldest to free process capacity', async () => {

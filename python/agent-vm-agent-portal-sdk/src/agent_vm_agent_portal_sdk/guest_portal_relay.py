@@ -8,7 +8,7 @@ from pathlib import Path
 from .portal_relay_protocol import (
     MAX_RELAY_MESSAGE_BYTES,
     MAX_RELAY_PENDING_REQUESTS,
-    MAX_RELAY_TRANSFER_BYTES,
+    MAX_RELAY_RETAINED_BYTES,
     RELAY_CONTROL_RESERVE_BYTES,
     PortalRelayDecoder,
     PortalRelayProtocolError,
@@ -52,6 +52,7 @@ class GuestPortalRelay:
         self._tasks: set[asyncio.Task[None]] = set()
         self._requests: dict[str, tuple[_GuestPeer, str, int]] = {}
         self._waiting: dict[tuple[_GuestPeer, str], dict[str, object]] = {}
+        self._waiting_bytes: dict[tuple[_GuestPeer, str], int] = {}
         self._next_id = 0
         self._closed = False
         self._outgoing_bytes = 0
@@ -61,9 +62,11 @@ class GuestPortalRelay:
         self._failure_close_task: asyncio.Task[None] | None = None
         self._host_credit_requests = 0
         self._host_credit_bytes = 0
-        self._sent_request_bytes = 0
-        self._received_host_bytes = 0
-        self._sent_control_bytes = 0
+        self._pending_request_bytes = 0
+        self._pending_control_bytes = 0
+
+    def _retained_data_bytes(self) -> int:
+        return self._outgoing_bytes + self._pending_request_bytes + sum(self._waiting_bytes.values()) + sum(item[2] for item in self._requests.values())
 
     async def start(self) -> None:
         if self._server is not None or self._closed:
@@ -95,6 +98,7 @@ class GuestPortalRelay:
             for guest_id, request_id in cancellations:
                 if request_id is None:
                     self._waiting.pop((peer, guest_id), None)
+                    self._waiting_bytes.pop((peer, guest_id), None)
                 else:
                     self._requests.pop(request_id, None)
                     if not self._closed:
@@ -132,6 +136,7 @@ class GuestPortalRelay:
             if host_id is None:
                 peer.requests.pop(request_id)
                 self._waiting.pop((peer, request_id), None)
+                self._waiting_bytes.pop((peer, request_id), None)
                 self._queue_response(
                     peer,
                     {"kind": "error", "requestId": request_id, "code": "cancelled", "dispatch": "not-dispatched"},
@@ -141,11 +146,16 @@ class GuestPortalRelay:
             return
         if kind != "request" or request_id in peer.requests:
             raise PortalRelayProtocolError("Invalid or duplicate guest request.")
-        if len(self._requests) + len(self._waiting) >= MAX_RELAY_PENDING_REQUESTS:
+        request_bytes = len(encode_relay_frame(message))
+        if (
+            len(self._requests) + len(self._waiting) >= MAX_RELAY_PENDING_REQUESTS
+            or self._retained_data_bytes() + request_bytes > MAX_RELAY_RETAINED_BYTES - RELAY_CONTROL_RESERVE_BYTES
+        ):
             await peer.send({"kind": "error", "requestId": request_id, "code": "pending-request-limit-exceeded", "dispatch": "not-dispatched"})
             return
         peer.requests[request_id] = None
         self._waiting[(peer, request_id)] = message
+        self._waiting_bytes[(peer, request_id)] = request_bytes
         self._schedule_waiting_drain()
 
     def _schedule_waiting_drain(self) -> None:
@@ -171,14 +181,13 @@ class GuestPortalRelay:
                     forwarded = {**message, "requestId": str(self._next_id + 1)}
                     frame = encode_relay_frame(forwarded)
                     reservation = relay_response_reservation_bytes(forwarded)
-                    required_credit = max(len(frame), reservation)
-                    pending_reservations = sum(item[2] for item in self._requests.values())
-                    request_capacity = MAX_RELAY_TRANSFER_BYTES - RELAY_CONTROL_RESERVE_BYTES - self._sent_request_bytes
-                    response_capacity = MAX_RELAY_TRANSFER_BYTES - RELAY_CONTROL_RESERVE_BYTES - self._received_host_bytes - pending_reservations
-                    maximum_future_response_capacity = MAX_RELAY_TRANSFER_BYTES - RELAY_CONTROL_RESERVE_BYTES - self._received_host_bytes
-                    if len(frame) > request_capacity or reservation > maximum_future_response_capacity:
+                    required_credit = len(frame) + reservation
+                    maximum_capacity = MAX_RELAY_RETAINED_BYTES - RELAY_CONTROL_RESERVE_BYTES
+                    available_capacity = maximum_capacity - self._retained_data_bytes() + self._waiting_bytes[key]
+                    if required_credit > maximum_capacity:
                         peer, guest_id = key
                         self._waiting.pop(key)
+                        self._waiting_bytes.pop(key)
                         peer.requests.pop(guest_id, None)
                         self._queue_response(
                             peer,
@@ -193,7 +202,7 @@ class GuestPortalRelay:
                         break
                     if self._host_credit_requests <= 0:
                         continue
-                    if required_credit <= self._host_credit_bytes and len(frame) <= request_capacity and reservation <= response_capacity:
+                    if required_credit <= min(self._host_credit_bytes, available_capacity):
                         selected = key, forwarded, frame, reservation
                         break
                 if rejected_impossible_request:
@@ -202,28 +211,34 @@ class GuestPortalRelay:
                     return
                 (peer, guest_id), forwarded, frame, reservation = selected
                 self._waiting.pop((peer, guest_id))
+                self._waiting_bytes.pop((peer, guest_id))
                 self._next_id += 1
                 host_id = str(forwarded["requestId"])
                 peer.requests[guest_id] = host_id
                 self._requests[host_id] = (peer, guest_id, reservation)
                 self._host_credit_requests -= 1
-                self._host_credit_bytes -= max(len(frame), reservation)
-                self._sent_request_bytes += len(frame)
-                await self._send_to_host(forwarded)
+                self._host_credit_bytes -= len(frame) + reservation
+                self._pending_request_bytes += len(frame)
+                try:
+                    await self._send_to_host(forwarded)
+                finally:
+                    self._pending_request_bytes -= len(frame)
 
     async def _send_control(self, message: dict[str, object]) -> None:
         frame = encode_relay_frame(message)
-        if self._sent_control_bytes + len(frame) > RELAY_CONTROL_RESERVE_BYTES:
+        if self._pending_control_bytes + len(frame) > RELAY_CONTROL_RESERVE_BYTES:
             raise PortalRelayProtocolError("Guest relay control capacity exceeded.")
-        self._sent_control_bytes += len(frame)
-        await self._send_to_host(message)
+        self._pending_control_bytes += len(frame)
+        try:
+            await self._send_to_host(message)
+        finally:
+            self._pending_control_bytes -= len(frame)
 
     async def receive_from_host(self, message: dict[str, object]) -> None:
         # Apply the same strict schema when called directly by an embedding host.
         host_frame = encode_relay_frame(message)
         if self._closed:
             return
-        self._received_host_bytes += len(host_frame)
         if message["kind"] == "close":
             await self.close()
             return
@@ -246,15 +261,22 @@ class GuestPortalRelay:
         if message["kind"] not in {"result", "error", "artifact-chunk", "artifact-end"}:
             raise PortalRelayProtocolError("Invalid host response kind.")
         peer, guest_id, reservation = binding
-        self._requests[host_id] = (peer, guest_id, max(0, reservation - len(host_frame)))
+        if len(host_frame) > reservation:
+            raise PortalRelayProtocolError("Host response exceeded its live reservation.")
+        self._requests[host_id] = (peer, guest_id, reservation - len(host_frame))
         self._queue_response(peer, {**message, "requestId": guest_id})
         if message["kind"] != "artifact-chunk":
             self._requests.pop(host_id, None)
             peer.requests.pop(guest_id, None)
+            self._schedule_waiting_drain()
 
     def _queue_response(self, peer: _GuestPeer, message: dict[str, object]) -> None:
         frame = encode_relay_frame(message)
-        if self._outgoing_bytes + len(frame) > _MAX_OUTGOING_BYTES or len(self._outgoing) >= _MAX_OUTGOING_FRAMES:
+        if (
+            self._outgoing_bytes + len(frame) > _MAX_OUTGOING_BYTES
+            or self._retained_data_bytes() + len(frame) > MAX_RELAY_RETAINED_BYTES - RELAY_CONTROL_RESERVE_BYTES
+            or len(self._outgoing) >= _MAX_OUTGOING_FRAMES
+        ):
             peer.writer.transport.abort()
             raise PortalRelayProtocolError("Guest relay response capacity exceeded.")
         self._outgoing_bytes += len(frame)
@@ -270,6 +292,7 @@ class GuestPortalRelay:
             self._outgoing_bytes -= len(frame)
             if not completed.cancelled() and completed.exception() is not None:
                 peer.writer.transport.abort()
+            self._schedule_waiting_drain()
 
         task.add_done_callback(finished)
 
@@ -288,3 +311,4 @@ class GuestPortalRelay:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._requests.clear()
         self._waiting.clear()
+        self._waiting_bytes.clear()

@@ -326,7 +326,7 @@ export function buildPortalCompositionFixtureConfig(
 									kind: 'configured_cli',
 									mandatoryArgvPrefix: [
 										'-c',
-										'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "tool-vm:%s" "$2"',
+										'test "$1" = "write-tool-vm-effect" || exit 64; printf %s "$2" > portal-composition-tool-vm-effect.txt; printf "%s\\n" "$2" >> portal-composition-tool-vm-calls.txt; printf "tool-vm:%s" "$2"',
 										'--',
 									],
 									output: {

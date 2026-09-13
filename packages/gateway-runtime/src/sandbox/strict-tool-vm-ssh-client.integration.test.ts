@@ -929,7 +929,7 @@ describe('strict Tool VM SSH client', () => {
 		expect(fixture.sshTransport.channel.stderr.resumeCallCount).toBe(1);
 	});
 
-	it('uses fixed relay transfer bounds without changing standard channel limits', async () => {
+	it('uses fixed relay write bounds without changing standard channel limits', async () => {
 		const fixture = createStrictSshFixture();
 		const stdoutChunks: Uint8Array[] = [];
 		fixture.sshTransport.onExec = (_command, callback) => {
@@ -952,6 +952,40 @@ describe('strict Tool VM SSH client', () => {
 
 		expect(stdoutChunks).toEqual([beyondStandardLimit]);
 		await expect(oversizedRelayWrite).rejects.toThrow(/write byte limit/i);
+	});
+
+	it('streams relay output beyond 64 MiB while preserving channel cancellation', async () => {
+		const fixture = createStrictSshFixture();
+		let stdoutBytes = 0;
+		let stderrBytes = 0;
+		const terminalEvents: StrictToolVmSshProcessTerminalEvent[] = [];
+		fixture.sshTransport.onExec = (_command, callback) => {
+			callback(undefined, fixture.sshTransport.channel as unknown as ClientChannel);
+		};
+		await connectFixture(fixture);
+		const channel = await fixture.client.openProcessChannel({
+			argv: ['/usr/bin/cat'],
+			cwd: '',
+			ioProfile: 'portal-relay',
+			onStderr: (bytes) => {
+				stderrBytes += bytes.byteLength;
+			},
+			onStdout: (bytes) => {
+				stdoutBytes += bytes.byteLength;
+			},
+			onTerminal: (event) => terminalEvents.push(event),
+		});
+		const chunk = Buffer.alloc(64 * 1_024, 1);
+		for (let index = 0; index < 1_025; index += 1) {
+			fixture.sshTransport.channel.emit('data', chunk);
+			fixture.sshTransport.channel.stderr.emit('data', chunk);
+		}
+		expect(stdoutBytes).toBe(1_025 * chunk.byteLength);
+		expect(stderrBytes).toBe(stdoutBytes);
+		expect(terminalEvents).toEqual([]);
+		expect(fixture.sshTransport.channel.closeCallCount).toBe(0);
+		channel.requestCancellation();
+		expect(fixture.sshTransport.channel.closeCallCount).toBe(1);
 	});
 
 	it('opens a direct shell process with guest cwd, native environment, PTY, and resize', async () => {

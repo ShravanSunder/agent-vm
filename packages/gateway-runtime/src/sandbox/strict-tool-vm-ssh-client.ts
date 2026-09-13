@@ -910,14 +910,19 @@ export function createStrictToolVmSshClient(
 					);
 					closeChannelOnce();
 				};
-				const deliverBoundedOutput = (output: {
+				const deliverProcessOutput = (output: {
 					readonly bytes: Buffer;
 					readonly currentBytes: number;
 					readonly maximumBytes: number;
 					readonly onOutput: (bytes: Uint8Array) => void;
 				}): number => {
 					if (terminalObserved) return output.currentBytes;
-					const nextBytes = output.currentBytes + output.bytes.byteLength;
+					// Relay retention and pause/resume belong to the consuming runtime.
+					// Completed transfers must not spend a lifetime output allowance.
+					const nextBytes =
+						request.ioProfile === 'portal-relay'
+							? 0
+							: output.currentBytes + output.bytes.byteLength;
 					if (nextBytes > output.maximumBytes) {
 						observeTerminal({ kind: 'ambiguous' });
 						closeChannelOnce();
@@ -933,24 +938,18 @@ export function createStrictToolVmSshClient(
 					return nextBytes;
 				};
 				openedChannel.on('data', (chunk: Buffer): void => {
-					stdoutBytes = deliverBoundedOutput({
+					stdoutBytes = deliverProcessOutput({
 						bytes: chunk,
 						currentBytes: stdoutBytes,
-						maximumBytes:
-							request.ioProfile === 'portal-relay'
-								? 64 * 1_024 * 1_024
-								: options.limits.maxStdoutBytes,
+						maximumBytes: options.limits.maxStdoutBytes,
 						onOutput: request.onStdout,
 					});
 				});
 				openedChannel.stderr.on('data', (chunk: Buffer): void => {
-					stderrBytes = deliverBoundedOutput({
+					stderrBytes = deliverProcessOutput({
 						bytes: chunk,
 						currentBytes: stderrBytes,
-						maximumBytes:
-							request.ioProfile === 'portal-relay'
-								? 64 * 1_024 * 1_024
-								: options.limits.maxStderrBytes,
+						maximumBytes: options.limits.maxStderrBytes,
 						onOutput: request.onStderr,
 					});
 				});

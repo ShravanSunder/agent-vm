@@ -50,6 +50,9 @@ The trusted bridge validates public Portal requests, supplies frozen authority,
 and uses the existing human approval presenter and exact-item retry. Guest code
 cannot supply an agent/profile override or approval decision. Invocation-scoped
 call IDs prevent an unused approval from transferring into a successor scope.
+Each admitted request also gets a trusted identity, so independent calls that
+reuse an item ID cannot share approval identity; exact approval retries keep
+their original identity.
 
 ## Failure and lifetime
 
@@ -66,6 +69,8 @@ does not become an ordinary-command fallback.
 
 Independent calls correlate by ID. Frames, pending requests, artifacts, and
 process streams have finite bounds; control traffic retains reserved capacity.
+Consumed data and acknowledged write records release capacity for subsequent
+calls. The relay limits retained data rather than cumulative bytes transferred.
 Artifact ranges are authorized and streamed in 64 KiB chunks, then reconstructed
 by the guest client. Transport loss is distinct from a Portal result: a possibly
 dispatched effect is uncertain, not safe to replay. Cancellation is not rollback.

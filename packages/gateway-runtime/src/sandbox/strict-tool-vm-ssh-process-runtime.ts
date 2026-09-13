@@ -32,7 +32,6 @@ import type {
 import {
 	createStrictToolVmSshPortalRelayOutput,
 	PORTAL_RELAY_STREAM_CHUNK_BYTES,
-	PORTAL_RELAY_TOTAL_TRANSFER_BYTES,
 	type StrictToolVmSshPortalRelayOutput,
 } from './strict-tool-vm-ssh-portal-relay-output.js';
 import {
@@ -148,6 +147,7 @@ interface ProcessRecord {
 	readonly portalRelayOutput?: StrictToolVmSshPortalRelayOutput;
 	readonly process: SandboxProcessHandle;
 	readonly retainedWrites: Map<number, RetainedWrite>;
+	retainedWriteBytes: number;
 	runtimeDeadline?: { readonly cancel: () => void };
 	readonly streams: readonly [SandboxStreamHandle, SandboxStreamHandle, SandboxStreamHandle];
 	terminalExitCode?: number;
@@ -553,6 +553,7 @@ export function createStrictToolVmSshProcessRuntime(
 				process,
 				relayWriteAmbiguous: false,
 				retainedWrites: new Map(),
+				retainedWriteBytes: 0,
 				streams,
 				totalWrittenBytes: 0,
 				waiters: new Set(),
@@ -818,11 +819,19 @@ export function createStrictToolVmSshProcessRuntime(
 			if (record.retainedWrites.size - evictableSequences.length >= maximumWriteRecords) {
 				throw new Error('Process write record limit exceeded.');
 			}
+			const evictableBytes = evictableSequences.reduce(
+				(total, sequence) => total + (record.retainedWrites.get(sequence)?.bytes.byteLength ?? 0),
+				0,
+			);
+			const writtenByteCharge =
+				record.ioProfile === 'portal-relay'
+					? record.retainedWriteBytes - evictableBytes
+					: record.totalWrittenBytes;
 			const maximumWrittenBytes =
 				record.ioProfile === 'portal-relay'
-					? PORTAL_RELAY_TOTAL_TRANSFER_BYTES
+					? maximumWriteRecords * PORTAL_RELAY_STREAM_CHUNK_BYTES
 					: options.limits.maximumWrittenBytesPerProcess;
-			if (record.totalWrittenBytes + bytes.byteLength > maximumWrittenBytes) {
+			if (writtenByteCharge + bytes.byteLength > maximumWrittenBytes) {
 				throw new Error('Per-process written byte limit exceeded.');
 			}
 			if (record.channel === undefined) throw new Error('Process channel is not ready.');
@@ -832,6 +841,7 @@ export function createStrictToolVmSshProcessRuntime(
 					record.retainedWrites.delete(sequence);
 					record.evictedThrough = sequence;
 				}
+				record.retainedWriteBytes -= evictableBytes;
 			}
 			try {
 				await record.channel.write(bytes);
@@ -842,6 +852,7 @@ export function createStrictToolVmSshProcessRuntime(
 					contentDigest: request.contentDigest,
 					outcome: 'ambiguous',
 				});
+				record.retainedWriteBytes += bytes.byteLength;
 				throw new Error('Process write outcome is ambiguous and retry is forbidden.');
 			}
 			record.retainedWrites.set(request.sequence, {
@@ -850,7 +861,8 @@ export function createStrictToolVmSshProcessRuntime(
 				outcome: 'written',
 			});
 			record.nextWriteSequence += 1;
-			record.totalWrittenBytes += bytes.byteLength;
+			record.retainedWriteBytes += bytes.byteLength;
+			if (record.ioProfile === 'standard') record.totalWrittenBytes += bytes.byteLength;
 			return {
 				bytesWritten: bytes.byteLength,
 				kind: 'written',

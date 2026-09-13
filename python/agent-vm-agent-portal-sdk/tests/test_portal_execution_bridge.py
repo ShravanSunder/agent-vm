@@ -85,3 +85,54 @@ def test_bridge_qualifies_call_ids_but_preserves_arguments_and_caller_result_ids
         bridge.close()
 
     asyncio.run(scenario())
+
+
+def test_independent_requests_cannot_reuse_qualified_item_identity() -> None:
+    async def scenario() -> None:
+        forwarded_ids: list[str] = []
+
+        async def invoke(_operation: str, request: Mapping[str, object]) -> BaseModel:
+            calls = t.cast("list[dict[str, object]]", request["calls"])
+            forwarded_id = t.cast("str", calls[0]["id"])
+            forwarded_ids.append(forwarded_id)
+            assert calls[0]["arguments"] == {"path": "data.json"}
+            result = PORTABLE_CONTRACT_ADAPTERS["portal.call.result"].validate_python(
+                {
+                    "ok": True,
+                    "items": [
+                        {
+                            "id": forwarded_id,
+                            "status": "ok",
+                            "operationId": forwarded_id,
+                            "owningGeneration": "generation",
+                            "outcome": {"kind": "completed", "certainty": "proven", "completion": "succeeded", "retryClass": "forbidden"},
+                            "value": {"read": True},
+                        },
+                    ],
+                },
+            )
+            assert isinstance(result, BaseModel)
+            return result
+
+        bridge = PortalExecutionBridge(invoke=invoke)
+        message = {
+            "kind": "request",
+            "requestId": "reused-guest-correlation",
+            "operation": "call",
+            "request": {"calls": [{"id": "call-1", "namespace": "files", "name": "read", "arguments": {"path": "data.json"}}]},
+        }
+        try:
+            first = await bridge.execute(message)
+            second = await bridge.execute(message)
+            concurrent = await asyncio.gather(
+                bridge.execute({**message, "requestId": "peer-a"}),
+                bridge.execute({**message, "requestId": "peer-b"}),
+            )
+            assert len(set(forwarded_ids)) == 4
+            for response in (first, second, *concurrent):
+                payload = t.cast("dict[str, object]", response["result"])
+                assert t.cast("list[dict[str, object]]", payload["items"])[0]["id"] == "call-1"
+        finally:
+            bridge.close()
+
+    asyncio.run(scenario())
