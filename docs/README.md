@@ -12,6 +12,7 @@ directory is the deeper map for the Hermes-only controller and runtime.
 | Configure a Hermes managed Gateway | [reference/configuration/system-json.md](reference/configuration/system-json.md) |
 | Understand state, cache, and backup boundaries | [architecture/storage-model.md](architecture/storage-model.md) |
 | Understand reusable credentialed CLI runtimes | [architecture/credentialed-runtimes.md](architecture/credentialed-runtimes.md) |
+| Compose Tool Portal calls from Tool VM code | [architecture/tool-vm-portal-composition.md](architecture/tool-vm-portal-composition.md) |
 | Understand Google account policy and RealFS file delivery | [specs/2026-09-04-agent-account-and-tool-permissions/program-design.md](specs/2026-09-04-agent-account-and-tool-permissions/program-design.md) and [file delivery](specs/2026-09-04-agent-account-and-tool-permissions/file-delivery.md) |
 | Understand VM provider and package boundaries | [architecture/overview.md#package-dependency-graph](architecture/overview.md#package-dependency-graph) |
 | Understand Gondolin rootfs/VFS performance knobs | [reference/gondolin/vfs-rootfs-performance.md](reference/gondolin/vfs-rootfs-performance.md) |
@@ -29,6 +30,7 @@ docs/
   architecture/
     overview.md
     credentialed-runtimes.md
+    tool-vm-portal-composition.md
     storage-model.md
     storage-matrix.md
   subsystems/

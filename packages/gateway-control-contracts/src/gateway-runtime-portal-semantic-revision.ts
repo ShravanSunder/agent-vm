@@ -224,6 +224,7 @@ export interface ManagedFrameworkAgentProjectionInput {
 export interface ManagedAgentProjectionInput {
 	readonly agentId: string;
 	readonly frameworkIdentity: GatewayRuntimeFrameworkIdentity;
+	readonly toolPortalCatalogMode?: 'compact' | 'catalog';
 	readonly toolPortalNamespaces: readonly EffectiveNamespaceDiscovery[];
 	readonly toolPortalProfileId: string;
 }
@@ -588,6 +589,9 @@ function assertExactManagedAgentProjectionInputs(props: {
 		}
 		const profileSurfaceEligibility =
 			props.surfaceEligibilityByProfile[projection.toolPortalProfileId];
+		if ((projection.toolPortalCatalogMode ?? 'compact') !== (profile.catalogMode ?? 'compact')) {
+			throw new Error('Managed Agent Projection catalog presentation must match its profile.');
+		}
 		const expectedNamespaces = Object.entries(profile.namespaces)
 			.filter(([namespaceName]) =>
 				profileSurfaceEligibility?.[namespaceName]?.includes('protected_uds'),
@@ -698,6 +702,9 @@ export function assertGatewayRuntimePortalSemanticSnapshotMatchesInputs(
 		agentProjections: Object.values(props.semanticSnapshot.agentProjections).map((projection) => ({
 			agentId: projection.agentId,
 			frameworkIdentity: projection.frameworkIdentity,
+			...(projection.toolPortalCatalogMode === undefined
+				? {}
+				: { toolPortalCatalogMode: projection.toolPortalCatalogMode }),
 			toolPortalNamespaces: projection.toolPortalNamespaces,
 			toolPortalProfileId: projection.toolPortalProfileId,
 		})),

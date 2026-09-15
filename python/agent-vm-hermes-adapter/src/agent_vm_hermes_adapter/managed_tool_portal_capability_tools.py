@@ -2,6 +2,7 @@
 
 import threading
 import typing as t
+import uuid
 
 from agent_vm_agent_portal_sdk.contracts import (
     PORTABLE_CONTRACT_ADAPTERS,
@@ -20,6 +21,12 @@ from .managed_profile_adapter import (
     build_managed_trusted_context,
 )
 from .managed_tool_portal.cache import PluginStateCache
+from .managed_tool_portal.catalog import (
+    ManagedCatalogCoordinator,
+    ManagedCatalogTurnBindings,
+    ManagedNativeCatalogTool,
+)
+from .managed_tool_portal.execution_middleware import HermesToolExecutionMiddleware
 from .managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalPresenter,
     HermesGatewayApprovalRouteStore,
@@ -73,6 +80,8 @@ class _ManagedToolPortalPluginRuntime:
         "gateway_epoch",
         "approval_presenter",
         "approval_routes",
+        "catalog_coordinator",
+        "catalog_turn_bindings",
     )
 
     def __init__(
@@ -85,6 +94,8 @@ class _ManagedToolPortalPluginRuntime:
         inventory_coordinator: InventoryCoordinator,
         injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
         gateway_epoch: str,
+        catalog_coordinator: ManagedCatalogCoordinator | None = None,
+        catalog_turn_bindings: ManagedCatalogTurnBindings | None = None,
     ) -> None:
         self.adapter = adapter
         self.current_projection = current_projection
@@ -93,6 +104,8 @@ class _ManagedToolPortalPluginRuntime:
         self.inventory_coordinator = inventory_coordinator
         self.injection_state_cache = injection_state_cache
         self.gateway_epoch = gateway_epoch
+        self.catalog_coordinator = catalog_coordinator
+        self.catalog_turn_bindings = catalog_turn_bindings
         self.approval_routes = HermesGatewayApprovalRouteStore()
         self.approval_presenter = HermesGatewayApprovalPresenter(self.approval_routes)
 
@@ -270,6 +283,70 @@ class _ToolHandler:
         )
 
 
+class _CatalogToolHandler:
+    def __init__(
+        self,
+        runtime: _ManagedToolPortalPluginRuntime,
+        descriptor: ManagedNativeCatalogTool,
+    ) -> None:
+        self._runtime = runtime
+        self._descriptor = descriptor
+
+    def __call__(
+        self,
+        args: object,
+        *,
+        task_id: object = None,
+        session_id: object = None,
+        user_task: object = None,
+    ) -> str:
+        del task_id, user_task
+        if not isinstance(args, dict) or not all(isinstance(key, str) for key in args):
+            raise TypeError("Managed catalog tool arguments must be an object.")
+        projection = self._runtime.current_projection()
+        profile_name = _projection_profile_name(projection)
+        client = self._runtime.adapter.gateway_runtime_client_for_profile(profile_name)
+        normalized_session_id = session_id if isinstance(session_id, str) and session_id else None
+        trusted_context = _safe_model_dump(
+            build_managed_trusted_context(projection, session_id=normalized_session_id)
+        )
+        request = {
+            "requestId": f"hermes-native-{uuid.uuid4()}",
+            "calls": [
+                {
+                    "arguments": dict(args),
+                    "id": f"native-{uuid.uuid4()}",
+                    "namespace": self._descriptor.namespace,
+                    "name": self._descriptor.tool_name,
+                }
+            ],
+        }
+        with self._runtime.telemetry.observe_tool_operation("tool_portal_call"):
+            initial_result = self._runtime.adapter.run_gateway_runtime_coroutine(
+                client.portal.call(request, trusted_context=trusted_context)
+            )
+            if not _result_requires_approval(initial_result):
+                return _result_json(initial_result)
+            result = self._runtime.adapter.run_gateway_runtime_coroutine(
+                execute_portal_call_with_approval(
+                    request,
+                    call_portal=lambda retry_request: client.portal.call(
+                        retry_request, trusted_context=trusted_context
+                    ),
+                    decide_approval=lambda decision_request: client.approvals.decide(
+                        decision_request, trusted_context=trusted_context
+                    ),
+                    initial_result=initial_result,
+                    present_approval=lambda presentation_request: (
+                        self._runtime.approval_presenter.present(
+                            normalized_session_id or "", presentation_request
+                        )
+                    ),
+                )
+            )
+            return _result_json(result)
+
+
 _CONFIGURATION_LOCK = threading.Lock()
 _configured_runtime: _ManagedToolPortalPluginRuntime | None = None
 
@@ -282,6 +359,8 @@ def configure_managed_tool_portal_plugin(
     inventory_coordinator: InventoryCoordinator,
     injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
     gateway_epoch: str,
+    catalog_coordinator: ManagedCatalogCoordinator | None = None,
+    catalog_turn_bindings: ManagedCatalogTurnBindings | None = None,
 ) -> None:
     """Bind the installed plugin to the bootstrap-owned managed runtime."""
     global _configured_runtime
@@ -299,6 +378,8 @@ def configure_managed_tool_portal_plugin(
             inventory_coordinator=inventory_coordinator,
             injection_state_cache=injection_state_cache,
             gateway_epoch=gateway_epoch,
+            catalog_coordinator=catalog_coordinator,
+            catalog_turn_bindings=catalog_turn_bindings,
         )
 
 
@@ -309,6 +390,8 @@ def clear_managed_tool_portal_plugin_configuration() -> None:
         runtime = _configured_runtime
         _configured_runtime = None
     if runtime is not None:
+        if runtime.catalog_turn_bindings is not None:
+            runtime.catalog_turn_bindings.close()
         runtime.approval_routes.close()
         runtime.framework_observability.shutdown()
 
@@ -329,7 +412,18 @@ def register(context: object) -> None:
         raise TypeError("Hermes plugin registration requires a compatible PluginContext")
     runtime = _require_configured_runtime()
     register_managed_tool_portal_hooks(context, runtime)
-    for tool_name in MANAGED_TOOL_PORTAL_TOOL_NAMES:
+    context.register_middleware("tool_execution", HermesToolExecutionMiddleware(runtime))
+    has_catalog_profiles = any(
+        projection.tool_portal_catalog_mode == "catalog" for projection in runtime.adapter.profiles
+    )
+    projection = runtime.current_projection() if has_catalog_profiles else None
+    catalog_mode = (
+        "compact" if projection is None else projection.tool_portal_catalog_mode or "compact"
+    )
+    tool_names = (
+        ("tool_portal_file",) if catalog_mode == "catalog" else MANAGED_TOOL_PORTAL_TOOL_NAMES
+    )
+    for tool_name in tool_names:
         context.register_tool(
             name=tool_name,
             toolset=_MANAGED_TOOL_PORTAL_TOOLSET,
@@ -338,3 +432,27 @@ def register(context: object) -> None:
             description=_description_for_tool(tool_name),
             emoji="🧰",
         )
+    if catalog_mode == "catalog":
+        if projection is None:
+            raise RuntimeError("Managed catalog mode requires an exact profile projection.")
+        coordinator = runtime.catalog_coordinator
+        catalog = (
+            None
+            if coordinator is None
+            else coordinator.read_profile(_projection_profile_name(projection))
+        )
+        if catalog is None:
+            raise RuntimeError("Managed catalog mode requires complete profile preparation.")
+        for descriptor in catalog.native_tools:
+            context.register_tool(
+                name=descriptor.registered_name,
+                toolset=_MANAGED_TOOL_PORTAL_TOOLSET,
+                schema={
+                    "name": descriptor.registered_name,
+                    "description": descriptor.description,
+                    "parameters": descriptor.input_schema,
+                },
+                handler=_CatalogToolHandler(runtime, descriptor),
+                description=descriptor.description,
+                emoji="🧰",
+            )

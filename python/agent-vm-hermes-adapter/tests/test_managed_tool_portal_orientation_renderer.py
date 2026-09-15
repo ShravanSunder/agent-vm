@@ -1,5 +1,6 @@
 import unittest
 
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import PreparedCatalogManifest
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceAvailability,
     NamespaceInventory,
@@ -7,7 +8,10 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
     OrientationRenderFailure,
     RenderedOrientation,
 )
-from agent_vm_hermes_adapter.managed_tool_portal.renderer import render_orientation
+from agent_vm_hermes_adapter.managed_tool_portal.renderer import (
+    render_catalog_guidance,
+    render_orientation,
+)
 
 
 def _inventory(*names: str) -> NamespaceInventory:
@@ -16,6 +20,36 @@ def _inventory(*names: str) -> NamespaceInventory:
         namespaces=tuple(
             NamespaceAvailability(namespace=name, status="available") for name in names
         ),
+    )
+
+
+def _catalog_manifest(*names: str) -> PreparedCatalogManifest:
+    fingerprint = "a" * 64
+    return PreparedCatalogManifest.model_validate(
+        {
+            "bundleByteLength": 1,
+            "bundleSha256": f"sha256:{'b' * 64}",
+            "definitionFingerprint": fingerprint,
+            "files": [
+                {
+                    "byteLength": 0,
+                    "namespace": name,
+                    "path": f"{name}-{index:08x}.ts",
+                    "sha256": "c" * 64,
+                }
+                for index, name in enumerate(names)
+            ],
+            "generatorVersion": "2",
+            "namespaces": [
+                {
+                    "exportedFactoryName": f"bindNamespace{index:02d}Tools",
+                    "modulePath": f"{name}-{index:08x}.ts",
+                    "namespace": name,
+                }
+                for index, name in enumerate(names)
+            ],
+            "sdkContractVersion": "1",
+        }
     )
 
 
@@ -36,6 +70,57 @@ def _require_failure(
 
 
 class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
+    def test_catalog_guidance_fits_realistic_three_namespace_imports_and_generic_clients(
+        self,
+    ) -> None:
+        names = ("upstream_mock", "portal_composition_execution", "artifact")
+
+        guidance = render_catalog_guidance(
+            _inventory(*names),
+            _catalog_manifest(*names),
+            changed_fingerprint=True,
+            catalog_mode="catalog",
+        )
+
+        self.assertIn("Python connect_tool_portal()", guidance)
+        self.assertIn("TypeScript connectToolPortal()", guidance)
+        self.assertIn("tool-portal CLI", guidance)
+        self.assertIn("wait for human approval", guidance)
+        self.assertIn("active foreground invocation", guidance)
+        self.assertIn("Generated Tool Portal TypeScript imports for this Gateway epoch", guidance)
+        self.assertIn("/run/agent-vm/tool-portal-sdk/" + "a" * 64 + "/manifest.json", guidance)
+        for index, name in enumerate(names):
+            self.assertIn(f"bindNamespace{index:02d}Tools", guidance)
+            self.assertIn(f"/{name}-{index:08x}.ts", guidance)
+        self.assertNotIn("namespace imports omitted", guidance)
+        self.assertNotIn("tool_portal_list, tool_portal_search", guidance)
+        self.assertIn("tool_portal_file remains available", guidance)
+        self.assertLessEqual(len(guidance.encode("utf-8")), 2_000)
+
+    def test_catalog_guidance_uses_a_complete_import_prefix_and_manifest_fallback(self) -> None:
+        names = tuple(f"namespace_{index:02d}_" + "x" * 30 for index in range(40))
+
+        guidance = render_catalog_guidance(
+            _inventory(*names),
+            _catalog_manifest(*names),
+            changed_fingerprint=True,
+            catalog_mode="catalog",
+        )
+
+        displayed_factories = [
+            index for index in range(40) if f"bindNamespace{index:02d}Tools" in guidance
+        ]
+        self.assertGreater(len(displayed_factories), 0)
+        self.assertLess(len(displayed_factories), len(names))
+        self.assertEqual(displayed_factories, list(range(len(displayed_factories))))
+        self.assertIn(
+            f"{len(names) - len(displayed_factories)} namespace imports omitted",
+            guidance,
+        )
+        self.assertIn("Complete manifest:", guidance)
+        self.assertIn("Python connect_tool_portal()", guidance)
+        self.assertLessEqual(len(guidance.encode("utf-8")), 2_000)
+
     def test_renderer_is_deterministic_and_uses_canonical_namespace_json(self) -> None:
         inventory = NamespaceInventory(
             inventory_id="inventory-a",
@@ -127,6 +212,18 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
         self.assertIn("- (none admitted)", rendered.orientation)
         self.assertNotIn("example", rendered.orientation)
 
+    def test_describes_bounded_tool_vm_composition_without_claiming_a_live_endpoint(self) -> None:
+        rendered = _require_rendered(render_orientation(_inventory("filesystem")))
+
+        self.assertIn("Python connect_tool_portal()", rendered.orientation)
+        self.assertIn("TypeScript connectToolPortal()", rendered.orientation)
+        self.assertIn("tool-portal CLI", rendered.orientation)
+        self.assertIn("active foreground invocation", rendered.orientation)
+        self.assertIn("wait for human approval", rendered.orientation)
+        self.assertIn("do not replay uncertain effects", rendered.orientation)
+        self.assertIn("/agent-vm/tool-portal.md", rendered.orientation)
+        self.assertLessEqual(rendered.utf8_byte_count, 2_000)
+
     def test_names_are_sorted_and_limited_to_twenty_with_exact_omitted_count(self) -> None:
         inventory = _inventory(*[f"namespace-{index:02d}" for index in range(25, -1, -1)])
 
@@ -216,6 +313,142 @@ class ManagedToolPortalOrientationRendererTests(unittest.TestCase):
             "  begin\n    Start a human authorization ceremony.",
             rendered.orientation,
         )
+
+    def test_four_namespace_runtime_inventory_retains_proven_child_examples(self) -> None:
+        inventory = NamespaceInventory(
+            inventory_id="inventory-runtime-e2e",
+            namespaces=(
+                NamespaceAvailability(
+                    namespace="controller_execution",
+                    status="available",
+                    summary="Controller-owned orientation E2E operations",
+                    tools=(
+                        NamespaceToolSummary(
+                            name="controller_host_probe",
+                            description=(
+                                "Run the fixed read-only controller host availability probe."
+                            ),
+                        ),
+                    ),
+                ),
+                NamespaceAvailability(
+                    namespace="oauth_authorization",
+                    status="available",
+                    summary=(
+                        "Set up Google account authorization. OAuth consent does not replace "
+                        "Tool Portal approval."
+                    ),
+                    tools=(
+                        NamespaceToolSummary(
+                            name="begin",
+                            description=(
+                                "Ask the account owner to connect a Google account for this agent "
+                                "and application."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="cancel",
+                            description=(
+                                "Cancel a pending Google authorization ceremony owned by this "
+                                "agent."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="disconnect",
+                            description=(
+                                "Ask the owner to disconnect this agent’s account authorization "
+                                "locally. Does not revoke Google consent or disconnect other "
+                                "agents."
+                            )[:119]
+                            + "…",
+                        ),
+                        NamespaceToolSummary(
+                            name="list",
+                            description=(
+                                "List this agent’s Google accounts, application groups, limits and "
+                                "account-specific authorization status. Suggestions name "
+                                "application IDs and offered group IDs; only the account owner can "
+                                "grant access."
+                            )[:119]
+                            + "…",
+                        ),
+                        NamespaceToolSummary(
+                            name="reauthorize",
+                            description=(
+                                "Begin human-approved reauthorization for one configured Google "
+                                "application."
+                            ),
+                        ),
+                        NamespaceToolSummary(
+                            name="status",
+                            description=(
+                                "Check the safe status of a pending Google authorization ceremony."
+                            ),
+                        ),
+                    ),
+                ),
+                NamespaceAvailability(
+                    namespace="orientation-unavailable",
+                    status="unavailable",
+                    summary="Unavailable orientation E2E upstream",
+                ),
+                NamespaceAvailability(
+                    namespace="upstream-mock",
+                    status="available",
+                    summary="Available orientation E2E upstream",
+                    tools=(
+                        NamespaceToolSummary(
+                            name="read_thing",
+                            description="Reads a mock record.",
+                        ),
+                        NamespaceToolSummary(
+                            name="write_thing",
+                            description="Writes a mock record.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        rendered = _require_rendered(render_orientation(inventory))
+
+        self.assertEqual(rendered.displayed_count, 4)
+        self.assertIn("  controller_host_probe", rendered.orientation)
+        self.assertIn("  list", rendered.orientation)
+        self.assertIn("  disconnect", rendered.orientation)
+        self.assertIn("  read_thing", rendered.orientation)
+        self.assertIn("  write_thing", rendered.orientation)
+        self.assertLessEqual(rendered.utf8_byte_count, 2_000)
+
+        compact_with_generated_catalog = render_catalog_guidance(
+            inventory,
+            _catalog_manifest(
+                "controller_execution",
+                "oauth_authorization",
+                "orientation-unavailable",
+                "upstream-mock",
+            ),
+            changed_fingerprint=True,
+            catalog_mode="compact",
+        )
+
+        self.assertEqual(compact_with_generated_catalog, rendered.orientation)
+        for required_text in (
+            'Namespace: "controller_execution"',
+            'Summary: "Controller-owned orientation E2E operations"',
+            "  controller_host_probe",
+            'Namespace: "oauth_authorization"',
+            "  list",
+            "  disconnect",
+            'Namespace: "orientation-unavailable"',
+            'Namespace: "upstream-mock"',
+            "  read_thing",
+            "  write_thing",
+            "Python connect_tool_portal()",
+            "/agent-vm/tool-portal.md",
+        ):
+            self.assertIn(required_text, compact_with_generated_catalog)
+        self.assertLessEqual(len(compact_with_generated_catalog.encode("utf-8")), 2_000)
 
     def test_reports_additional_tools_when_the_inventory_probe_has_a_next_page(self) -> None:
         rendered = _require_rendered(

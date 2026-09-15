@@ -215,6 +215,7 @@ class _Runtime:
         injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker] | None = None,
     ) -> None:
         self.adapter = _AdapterStub()
+        self.catalog_turn_bindings = None
         self.selected_projection = (
             _projection() if selected_projection is None else selected_projection
         )

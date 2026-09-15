@@ -42,6 +42,7 @@ export interface McpPortalEffectiveConfigProps {
 	readonly authoredConfigDir: string;
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
+	readonly managedVmImageSelections?: readonly ManagedVmImageSelection[];
 	readonly managedVmImages?: ManagedVmImageCapability;
 	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
@@ -56,12 +57,18 @@ export interface McpPortalEffectiveConfigFromConfigProps {
 	readonly declaredAgentIds?: readonly string[];
 	readonly effectiveHostConfigDir: string;
 	readonly mcpConfig: McpConfig;
+	readonly managedVmImageSelections?: readonly ManagedVmImageSelection[];
 	readonly managedVmImages?: ManagedVmImageCapability;
 	readonly sharedImageCacheDir?: string;
 	readonly secretResolver: SecretResolver;
 	readonly toolPortalConfig: ToolPortalConfig;
 	readonly workspaceGitPushAgentEligibility?: WorkspaceGitPushAgentEligibility;
 	readonly zoneId: string;
+}
+
+export interface ManagedVmImageSelection {
+	readonly recipePath: string;
+	readonly selectionRecordPath: string;
 }
 
 export interface WorkspaceGitPushAgentEligibility {
@@ -130,6 +137,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 	readonly zoneId: string;
 	readonly authoredConfigDir: string | undefined;
 	readonly effectiveHostConfigDir: string;
+	readonly managedVmImageSelections: readonly ManagedVmImageSelection[] | undefined;
 	readonly managedVmImages: ManagedVmImageCapability | undefined;
 	readonly mcpConfig: McpConfig;
 	readonly sharedImageCacheDir: string | undefined;
@@ -202,6 +210,12 @@ async function prepareConfiguredCliManagedVmImages(props: {
 		string,
 		Promise<{ readonly fingerprint: string; readonly imageReference: string }>
 	>();
+	const imageSelectionRecordPathByRecipePath = new Map(
+		(props.managedVmImageSelections ?? []).map((selection) => [
+			path.resolve(selection.recipePath),
+			selection.selectionRecordPath,
+		]),
+	);
 	await Promise.all(
 		ephemeralTargets.map(async (target): Promise<void> => {
 			if (authoredConfigDir === undefined || managedVmImages === undefined) {
@@ -213,9 +227,11 @@ async function prepareConfiguredCliManagedVmImages(props: {
 				if (props.sharedImageCacheDir === undefined) {
 					throw new Error('Tool Portal shared Managed VM image cache is unavailable.');
 				}
+				const selectionRecordPath = imageSelectionRecordPathByRecipePath.get(recipePath);
 				preparedImage = managedVmImages.prepareImage({
 					artifactCacheDirectory: props.sharedImageCacheDir,
 					recipePath,
+					...(selectionRecordPath === undefined ? {} : { selectionRecordPath }),
 				});
 				preparedImagesByRecipePath.set(recipePath, preparedImage);
 			}
@@ -240,6 +256,7 @@ async function prepareConfiguredCliManagedVmImages(props: {
 				return [
 					profileId,
 					{
+						...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 						namespaces: Object.fromEntries(
 							Object.entries(profile.namespaces).map(([namespace, namespacePolicy]) => [
 								namespace,
@@ -633,7 +650,9 @@ function assertManagedToolPortalConfig(props: {
 		);
 	}
 	for (const [profileId, profile] of Object.entries(props.toolPortalConfig.profiles)) {
-		for (const [namespaceId, namespacePolicy] of Object.entries(profile.namespaces)) {
+		for (const [namespaceId, namespacePolicy] of Object.entries<
+			(typeof profile.namespaces)[string]
+		>(profile.namespaces)) {
 			if (namespacePolicy.backend.kind !== 'controller_execution') {
 				continue;
 			}
@@ -660,22 +679,26 @@ function selectorEffectivelyAllowsAnyTool(selector: ToolPortalNamespacePolicy['t
 export function managedToolPortalRequiresApprovalAccess(config: ToolPortalConfig): boolean {
 	if (config.mode !== 'managed') return false;
 	return Object.values(config.profiles).some((profile) =>
-		Object.values(profile.namespaces).some((namespacePolicy) => {
-			if ('source' in namespacePolicy.calls)
-				return selectorEffectivelyAllowsAnyTool(namespacePolicy.tools);
-			if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
-			if (namespacePolicy.backend.kind !== 'controller_execution') return false;
-			const calls = namespacePolicy.calls;
-			return Object.entries(namespacePolicy.backend.operations).some(
-				([operationName, operation]) =>
-					operation.kind === 'configured_cli' &&
-					(isControllerToolVmConfiguredCliOperation(operation)
-						? operation.suggestCalls.suggestRequiresApproval.length > 0
-						: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
-					selectorAllowsTool(namespacePolicy.tools, operationName) &&
-					selectorAllowsTool(calls.withoutApproval, operationName),
-			);
-		}),
+		Object.values<(typeof profile.namespaces)[string]>(profile.namespaces).some(
+			(namespacePolicy) => {
+				if ('source' in namespacePolicy.calls)
+					return selectorEffectivelyAllowsAnyTool(namespacePolicy.tools);
+				if (selectorEffectivelyAllowsAnyTool(namespacePolicy.calls.requiresApproval)) return true;
+				if (namespacePolicy.backend.kind !== 'controller_execution') return false;
+				const calls = namespacePolicy.calls;
+				return Object.entries<(typeof namespacePolicy.backend.operations)[string]>(
+					namespacePolicy.backend.operations,
+				).some(
+					([operationName, operation]) =>
+						operation.kind === 'configured_cli' &&
+						(isControllerToolVmConfiguredCliOperation(operation)
+							? operation.suggestCalls.suggestRequiresApproval.length > 0
+							: !('source' in operation.calls) && operation.calls.requiresApproval.length > 0) &&
+						selectorAllowsTool(namespacePolicy.tools, operationName) &&
+						selectorAllowsTool(calls.withoutApproval, operationName),
+				);
+			},
+		),
 	);
 }
 
@@ -864,6 +887,7 @@ async function buildEffectivePlanFromConfig(
 		zoneId: props.zoneId,
 		authoredConfigDir: props.authoredConfigDir,
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
+		managedVmImageSelections: props.managedVmImageSelections,
 		managedVmImages: props.managedVmImages,
 		mcpConfig: props.mcpConfig,
 		sharedImageCacheDir: props.sharedImageCacheDir,
@@ -903,6 +927,9 @@ async function buildEffectivePlan(
 		approvalAccessConfigured: props.approvalAccessConfigured,
 		authoredConfigDir: props.authoredConfigDir,
 		effectiveHostConfigDir: props.effectiveHostConfigDir,
+		...(props.managedVmImageSelections === undefined
+			? {}
+			: { managedVmImageSelections: props.managedVmImageSelections }),
 		...(props.sharedImageCacheDir === undefined
 			? {}
 			: { sharedImageCacheDir: props.sharedImageCacheDir }),

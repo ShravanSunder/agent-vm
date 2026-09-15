@@ -111,6 +111,19 @@ const validSandboxRunnerBackend = {
 } as const;
 
 describe('tool portal config contract', () => {
+	it('preserves managed catalog presentation through preparation and runtime projections', () => {
+		const authored = toolPortalConfigSchema.parse({
+			mode: 'managed',
+			schemaVersion: 1,
+			agents: { agent: { profile: 'tools' } },
+			profiles: { tools: { catalogMode: 'catalog', namespaces: {} } },
+		});
+		const prepared = preparedManagedToolPortalConfigSchema.parse(authored);
+		const effective = createEffectiveManagedToolPortalConfig(prepared);
+		const runtime = createGatewayRuntimeManagedToolPortalConfig(effective);
+		expect(runtime.profiles.tools?.catalogMode).toBe('catalog');
+		expect(effective.profiles.tools?.catalogMode).toBe('catalog');
+	});
 	it('accepts discovery summaries only on non-MCP managed namespaces', () => {
 		const nonMcpConfig = {
 			...validManagedToolPortalConfig,

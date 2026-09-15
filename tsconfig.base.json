@@ -27,6 +27,9 @@
 		"types": ["node"],
 		"paths": {
 			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
+			"@agent-vm/agent-portal-sdk/generated-tools": [
+				"./packages/agent-portal-sdk/src/generated-tools/index.ts"
+			],
 			"@agent-vm/agent-portal-sdk/gateway-runtime-client": [
 				"./packages/agent-portal-sdk/src/gateway-runtime-client/index.ts"
 			],
@@ -91,6 +94,9 @@
 			],
 			"@agent-vm/managed-vm": ["./packages/managed-vm/src/index.ts"],
 			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
+			"@agent-vm/mcp-portal/catalog-typescript": [
+				"./packages/mcp-portal/src/catalog-typescript/index.ts"
+			],
 			"@agent-vm/mcp-portal/core": ["./packages/mcp-portal/src/core/index.ts"],
 			"@agent-vm/mcp-portal/mcp-proxy": ["./packages/mcp-portal/src/mcp-proxy/index.ts"],
 			"@agent-vm/mcp-portal/mcp-provider-backend": [

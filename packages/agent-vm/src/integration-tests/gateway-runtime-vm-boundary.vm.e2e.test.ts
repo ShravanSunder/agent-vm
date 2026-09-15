@@ -144,6 +144,7 @@ assert.ok(packageBinPath.endsWith('/gateway-runtime/dist/bin/gateway-runtime.js'
 
 const runtimeRoot = '/run/agent-vm/gateway-runtime';
 const socketAddress = path.join(runtimeRoot, 'managed-plugin.sock');
+const serviceBootstrapProbePath = path.join(runtimeRoot, 'service-bootstrap-probe.mjs');
 const forbiddenProjectionRoots = [
 	'/work',
 	'/workspace',
@@ -215,6 +216,11 @@ const attachment = {
 const mainProjection = semanticSnapshot.agentProjections.main;
 assert.ok(mainProjection, 'Gateway runtime VM proof is missing the main projection.');
 await writeFile(mcpConfigPath, JSON.stringify(mcpConfig), { mode: 0o600 });
+await writeFile(
+	serviceBootstrapProbePath,
+	"process.stderr.write('gateway-runtime-service-stage:node-bootstrap\\n');\n",
+	{ mode: 0o600 },
+);
 await writeFile(serviceConfigPath, JSON.stringify({
 	artifactLimits: {
 		maximumArtifactBytes: 1024,
@@ -269,6 +275,12 @@ await writeFile(serviceConfigPath, JSON.stringify({
 await Promise.all([chmod(mcpConfigPath, 0o600), chmod(serviceConfigPath, 0o600)]);
 
 const serviceProcess = spawn(packageBinPath, ['--config', serviceConfigPath], {
+	env: {
+		...process.env,
+		NODE_OPTIONS: [process.env.NODE_OPTIONS, '--import=' + serviceBootstrapProbePath]
+			.filter((value) => value !== undefined && value.length > 0)
+			.join(' '),
+	},
 	stdio: ['ignore', 'pipe', 'pipe'],
 });
 reportProbeStage('service-spawned');
@@ -278,6 +290,43 @@ let serviceStdout = '';
 let serviceStderr = '';
 serviceProcess.stdout.on('data', (chunk) => { serviceStdout += chunk; });
 serviceProcess.stderr.on('data', (chunk) => { serviceStderr += chunk; });
+
+async function inspectOptionalPath(filePath) {
+	try {
+		const status = await lstat(filePath);
+		return {
+			exists: true,
+			kind: status.isSocket() ? 'socket' : status.isFile() ? 'file' : status.isDirectory() ? 'directory' : 'other',
+			mode: status.mode & 0o777,
+		};
+	} catch (error) {
+		return { exists: false, errorCode: error?.code };
+	}
+}
+
+async function collectServiceTimeoutDiagnostics() {
+	const processId = serviceProcess.pid;
+	const processStatus = processId === undefined
+		? 'pid-unavailable'
+		: await readFile('/proc/' + processId + '/status', 'utf8')
+			.then((value) => value
+				.split('\n')
+				.filter((line) => /^(State|Threads|voluntary_ctxt_switches|nonvoluntary_ctxt_switches):/u.test(line))
+				.join(';'))
+			.catch((error) => 'unavailable:' + error?.code);
+	const processWaitChannel = processId === undefined
+		? 'pid-unavailable'
+		: await readFile('/proc/' + processId + '/wchan', 'utf8')
+			.then((value) => value.trim())
+			.catch((error) => 'unavailable:' + error?.code);
+	return {
+		fatalEvidence: await inspectOptionalPath(path.join(runtimeRoot, 'tool-portal.fatal.json')),
+		processStatus,
+		processWaitChannel,
+		readinessEvidence: await inspectOptionalPath(path.join(runtimeRoot, 'tool-portal.readiness.json')),
+		udsSocket: await inspectOptionalPath(socketAddress),
+	};
+}
 
 async function waitForServiceLine(kind) {
 	const parse = () => serviceStdout
@@ -294,9 +343,12 @@ async function waitForServiceLine(kind) {
 			serviceProcess.stdout.off('data', onData);
 			serviceProcess.off('exit', onExit);
 		};
-		const onAbort = () => {
+		const onAbort = async () => {
 			cleanup();
-			reject(new Error('Timed out waiting for Gateway runtime ' + kind + '. exitCode: ' + serviceProcess.exitCode + ', signal: ' + serviceProcess.signalCode + '. stdout: ' + serviceStdout.slice(-4096) + '. stderr: ' + serviceStderr.slice(-4096)));
+			const diagnostics = await collectServiceTimeoutDiagnostics().catch((error) => ({
+				diagnosticCollectionError: error?.code ?? String(error),
+			}));
+			reject(new Error('Timed out waiting for Gateway runtime ' + kind + '. exitCode: ' + serviceProcess.exitCode + ', signal: ' + serviceProcess.signalCode + '. diagnostics: ' + JSON.stringify(diagnostics) + '. stdout: ' + serviceStdout.slice(-4096) + '. stderr: ' + serviceStderr.slice(-4096)));
 		};
 		const onData = () => {
 			const value = parse();
@@ -394,7 +446,7 @@ try {
 		});
 	}
 	assert.equal(serviceProcess.exitCode, 0);
-	assert.equal(serviceStderr, '');
+	assert.equal(serviceStderr, 'gateway-runtime-service-stage:node-bootstrap\n');
 } finally {
 	await Promise.allSettled([
 		activeClient?.disconnect(),

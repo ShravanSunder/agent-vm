@@ -22,6 +22,7 @@ import {
 	type ToolPortalMcpTransport,
 } from '../tool-portal-mcp-client/index.js';
 import { createNodeToolPortalMcpTransport } from '../tool-portal-mcp-client/node-tool-portal-mcp-transport.js';
+import { createLocalToolPortalTransport } from '../tool-vm-relay/local-transport.js';
 import type { ToolPortalCommand } from './tool-portal-cli-parser.js';
 
 const canonicalResultGraceAfterInterruptMilliseconds = 250;
@@ -53,6 +54,12 @@ async function createCliTransport(
 	command: ToolPortalCommand,
 	environment: NodeJS.ProcessEnv,
 ): Promise<ToolPortalCliTransportResult> {
+	if (command.transport.kind === 'managed') {
+		if (command.operation === 'call' && command.approvalTokenEnvironmentName !== undefined) {
+			throw new Error('Managed Portal does not accept standalone approval-token options.');
+		}
+		return { authorization: undefined, transport: createLocalToolPortalTransport({ environment }) };
+	}
 	if (command.transport.kind === 'http') {
 		const authorization = environment[command.transport.authorizationEnvironmentName];
 		if (authorization === undefined || authorization.length === 0) {

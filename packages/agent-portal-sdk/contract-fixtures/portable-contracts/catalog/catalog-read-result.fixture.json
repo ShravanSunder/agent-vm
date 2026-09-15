@@ -1,0 +1,12 @@
+{
+	"caseId": "catalog-read-result-unavailable",
+	"expectation": {
+		"canonicalJson": "{\"kind\":\"unavailable\",\"reason\":\"catalog-source-unavailable\"}",
+		"kind": "accepted",
+		"normalized": { "kind": "unavailable", "reason": "catalog-source-unavailable" },
+		"refinementIdentities": []
+	},
+	"input": { "kind": "unavailable", "reason": "catalog-source-unavailable" },
+	"schemaId": "portal.catalog.read-result",
+	"tags": ["catalog", "accepted"]
+}

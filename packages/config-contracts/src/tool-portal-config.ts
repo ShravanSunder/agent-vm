@@ -306,6 +306,7 @@ export function toolPortalNamespaceAllowsOperation(
 
 export const toolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), toolPortalNamespacePolicySchema).default({}),
 		oauthApplications: z
 			.partialRecord(
@@ -507,6 +508,7 @@ const preparedToolPortalNamespacePolicySchema = z
 
 const preparedToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), preparedToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -618,6 +620,7 @@ const effectiveToolPortalNamespacePolicySchema = z
 
 const effectiveToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), effectiveToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -649,6 +652,7 @@ const gatewayRuntimeToolPortalNamespacePolicySchema = z
 
 const gatewayRuntimeToolPortalProfileDefinitionSchema = z
 	.object({
+		catalogMode: z.enum(['compact', 'catalog']).optional(),
 		namespaces: z.record(z.string().min(1), gatewayRuntimeToolPortalNamespacePolicySchema),
 	})
 	.strict();
@@ -740,6 +744,7 @@ export function createEffectiveManagedToolPortalConfig(
 			Object.entries(config.profiles).map(([profileId, profile]) => [
 				profileId,
 				{
+					...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 					namespaces: Object.fromEntries(
 						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 							namespaceId,
@@ -795,6 +800,7 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 			Object.entries(config.profiles).map(([profileId, profile]) => [
 				profileId,
 				{
+					...(profile.catalogMode === undefined ? {} : { catalogMode: profile.catalogMode }),
 					namespaces: Object.fromEntries(
 						Object.entries(profile.namespaces).map(([namespaceId, namespacePolicy]) => [
 							namespaceId,

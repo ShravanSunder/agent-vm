@@ -93,6 +93,13 @@ authority.
 
 → Deep dive: [subsystems/mcp-portal.md](../subsystems/mcp-portal.md)
 
+Tool VM code can compose the same Portal operations through the installed
+Python/TypeScript SDKs and CLI. A per-invocation relay carries only public Portal
+requests over existing SSH process streams; trusted identity and approval stay
+beside Hermes. Composition remains in Tool VM, independent of call destination.
+
+→ Execution path: [tool-vm-portal-composition.md](tool-vm-portal-composition.md)
+
 ### Credentialed Managed Runtimes
 
 A Tool Portal `controller_execution` configured CLI may target a reusable

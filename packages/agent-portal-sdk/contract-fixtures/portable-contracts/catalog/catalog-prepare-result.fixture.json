@@ -1,0 +1,12 @@
+{
+	"caseId": "catalog-prepare-result-incomplete",
+	"expectation": {
+		"canonicalJson": "{\"diagnostics\":[],\"kind\":\"incomplete\",\"reason\":\"catalog-incomplete\"}",
+		"kind": "accepted",
+		"normalized": { "diagnostics": [], "kind": "incomplete", "reason": "catalog-incomplete" },
+		"refinementIdentities": ["sandbox.path.work-relative"]
+	},
+	"input": { "diagnostics": [], "kind": "incomplete", "reason": "catalog-incomplete" },
+	"schemaId": "portal.catalog.prepare-result",
+	"tags": ["catalog", "accepted"]
+}

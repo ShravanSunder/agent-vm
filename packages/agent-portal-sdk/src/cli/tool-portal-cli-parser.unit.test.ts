@@ -16,6 +16,13 @@ function parseToolPortalArguments(arguments_: readonly string[]): unknown {
 }
 
 describe('Tool Portal Optique CLI parser', () => {
+	it('selects managed execution context when transport options are omitted', () => {
+		expect(parseToolPortalArguments(['list', '--input-json', '{}'])).toEqual({
+			inputJson: '{}',
+			operation: 'list',
+			transport: { kind: 'managed' },
+		});
+	});
 	it('keeps parser construction free of transport and operation effects', async () => {
 		const parserSource = await readFile(
 			new URL('./tool-portal-cli-parser.ts', import.meta.url),

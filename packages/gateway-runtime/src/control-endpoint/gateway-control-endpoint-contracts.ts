@@ -35,6 +35,15 @@ export class GatewayControlAcceptedSessionObserverOverflowError extends Error {
 	}
 }
 
+export class GatewayControlCommandCancelledBeforeDispatchError extends Error {
+	readonly code = 'gateway_control_cancelled_before_dispatch';
+
+	constructor() {
+		super('gateway control command was cancelled before dispatch');
+		this.name = 'GatewayControlCommandCancelledBeforeDispatchError';
+	}
+}
+
 export type GatewayControlNonceState = 'issued' | 'consuming' | 'accepted' | 'failed' | 'expired';
 
 export type GatewayControlReadyRejectionReason =
@@ -137,6 +146,9 @@ export interface PendingGatewayControlCommandResult {
 export interface GatewayControlEmitApplicationMessageOptions {
 	readonly admissionPrincipal?: string;
 	readonly commandResultTimeoutMs?: number;
+	readonly onAdmissionReceipt?: (session: GatewayControlAcceptedSession) => void;
+	readonly requiredAcceptedSession?: GatewayControlAcceptedSession;
+	readonly signal?: AbortSignal;
 }
 
 export interface GatewayControlApplicationMessageIntent {

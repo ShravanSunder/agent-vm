@@ -3,12 +3,14 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { hashCallArguments } from '../portal-auth/hmac-token.js';
+import type { PortalCatalogSnapshot } from '../portal-session.js';
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
 	createPortalCore,
 	collectPortalCoreResult,
 	listPortalCoreToolDescriptors,
+	preparePortalCatalogSnapshot,
 	type PortalCoreEvent,
 } from './portal-core.js';
 import type { PortalApprovalCallDecision, PortalApprovalEvaluation } from './portal-tools.js';
@@ -1425,6 +1427,129 @@ describe('portal core event stream', () => {
 			}),
 		]);
 
+		await core.close();
+	});
+
+	it('prepares deterministic collision-safe catalog descriptors with exact input schemas', () => {
+		const catalog: PortalCatalogSnapshot = {
+			agentScopeId: 'agent-scope-a',
+			discoveryFailures: [],
+			generatedAt: '2026-09-13T00:00:00.000Z',
+			sourceHash: 'source-a',
+			tools: [
+				{
+					inputSchema: {
+						additionalProperties: false,
+						properties: { issue_id: { type: 'string' } },
+						required: ['issue_id'],
+						type: 'object',
+					},
+					namespace: 'foo-bar',
+					outputSchema: { properties: { secret: { type: 'string' } }, type: 'object' },
+					toolName: 'find.issue',
+				},
+				{
+					inputSchema: { properties: {}, type: 'object' },
+					namespace: 'foo_bar',
+					toolName: 'find_issue',
+				},
+			],
+		};
+
+		const first = preparePortalCatalogSnapshot(catalog);
+		const second = preparePortalCatalogSnapshot(catalog);
+
+		expect(second).toEqual(first);
+		expect(first.tools.map((tool) => tool.descriptor.name)).toHaveLength(2);
+		expect(new Set(first.tools.map((tool) => tool.descriptor.name)).size).toBe(2);
+		expect(first.tools[0]?.descriptor).toMatchObject({
+			inputSchema: catalog.tools[0]?.inputSchema,
+			name: expect.stringMatching(/^foo-bar__find_issue__[a-f0-9]{10}$/u),
+		});
+		expect(first.tools[0]?.descriptor).not.toHaveProperty('outputSchema');
+	});
+
+	it('refuses an incomplete catalog snapshot with bounded namespace diagnostics', () => {
+		expect(() =>
+			preparePortalCatalogSnapshot({
+				agentScopeId: 'agent-scope-a',
+				discoveryFailures: [
+					{ kind: 'upstream_discovery_failed', message: 'sensitive detail', namespace: 'github' },
+				],
+				generatedAt: '2026-09-13T00:00:00.000Z',
+				sourceHash: 'source-a',
+				tools: [],
+			}),
+		).toThrow(/catalog preparation failed.*github/u);
+	});
+
+	it('uses unambiguous identity hashing across separator and Unicode normalization collisions', () => {
+		const prepared = preparePortalCatalogSnapshot({
+			agentScopeId: 'agent-scope-a',
+			discoveryFailures: [],
+			generatedAt: '2026-09-13T00:00:00.000Z',
+			sourceHash: 'source-a',
+			tools: [
+				{ inputSchema: { type: 'object' }, namespace: 'a\0', toolName: 'b' },
+				{ inputSchema: { type: 'object' }, namespace: 'a', toolName: '\0b' },
+				{ inputSchema: { type: 'object' }, namespace: '\u00e9', toolName: 'lookup' },
+				{ inputSchema: { type: 'object' }, namespace: 'e\u0301', toolName: 'lookup' },
+			],
+		});
+
+		expect(prepared.tools.map((tool) => tool.descriptor.name)).toHaveLength(4);
+		expect(new Set(prepared.tools.map((tool) => tool.descriptor.name)).size).toBe(4);
+		expect(prepared.tools[0]?.descriptor.name.split('__').at(-1)).not.toBe(
+			prepared.tools[1]?.descriptor.name.split('__').at(-1),
+		);
+		expect(prepared.tools[2]?.descriptor.name.split('__').at(-1)).not.toBe(
+			prepared.tools[3]?.descriptor.name.split('__').at(-1),
+		);
+	});
+
+	it('refuses duplicate authorized provider tool identities instead of overwriting routing', () => {
+		expect(() =>
+			preparePortalCatalogSnapshot({
+				agentScopeId: 'agent-scope-a',
+				discoveryFailures: [],
+				generatedAt: '2026-09-13T00:00:00.000Z',
+				sourceHash: 'source-a',
+				tools: [
+					{ inputSchema: { type: 'object' }, namespace: 'github', toolName: 'get_issue' },
+					{ inputSchema: { type: 'object' }, namespace: 'github', toolName: 'get_issue' },
+				],
+			}),
+		).toThrow(/catalog preparation failed.*github/u);
+	});
+
+	it('fails authenticated catalog preparation when a provider discovers duplicate tool names', async () => {
+		const core = createPortalCore({
+			accessPolicy: {
+				defaultPolicy: 'deny-all',
+				enabledNamespacesByAgent: { 'agent-a': ['github'] },
+				hiddenToolsByAgent: {},
+			},
+			approval: allowApproval,
+			catalogTtlMs: 60_000,
+			runtime: {
+				callUpstreamTool: vi.fn(),
+				closeAgentScope: vi.fn(),
+				listTools: vi.fn(
+					async (): Promise<readonly Tool[]> => [
+						{ inputSchema: { type: 'object' }, name: 'get_issue' },
+						{ inputSchema: { type: 'object' }, name: 'get_issue' },
+					],
+				),
+			},
+			upstreamNamespaces: ['github'],
+		});
+		const scope = core.createAgentScope({
+			agentId: 'agent-a',
+			agentScopeId: 'agent-scope-a',
+			source: 'mcp-proxy-bearer',
+		});
+
+		await expect(core.prepareCatalog(scope)).rejects.toThrow(/catalog preparation failed.*github/u);
 		await core.close();
 	});
 });

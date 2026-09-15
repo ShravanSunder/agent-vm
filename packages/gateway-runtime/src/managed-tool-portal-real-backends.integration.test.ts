@@ -460,6 +460,7 @@ describe('Gateway runtime managed Tool Portal real backend composition', () => {
 					managedPluginAttachment: {
 						clientKind: 'hermes-managed-plugin',
 						configuredAgentIds: [trustedContext.principal.agentId],
+						gatewayEpoch: 'gateway-epoch-a',
 						projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 					},
 					semanticSnapshot,

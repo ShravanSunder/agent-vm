@@ -48,8 +48,12 @@ export function compileToolPortalNamespaceDiscoveryByProfile(props: {
 	}
 
 	const discoveryByProfile = Object.fromEntries(
-		Object.entries(props.toolPortalConfig.profiles).map(([profileId, profile]) => {
-			const namespaceDiscovery = Object.entries(profile.namespaces)
+		Object.entries<(typeof props.toolPortalConfig.profiles)[string]>(
+			props.toolPortalConfig.profiles,
+		).map(([profileId, profile]) => {
+			const namespaceDiscovery = Object.entries<(typeof profile.namespaces)[string]>(
+				profile.namespaces,
+			)
 				.map(([namespace, namespacePolicy]): ToolPortalEffectiveNamespaceDiscovery => {
 					if ('discovery' in namespacePolicy) {
 						return toolPortalEffectiveNamespaceDiscoverySchema.parse({

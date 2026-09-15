@@ -216,6 +216,7 @@ describe('beta tarball sync planning', () => {
 			listStaleLocalOverlayFileNames({
 				existingFileNames: [
 					'agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz',
+					'agent_vm_agent_portal_sdk-0.0.81-py3-none-any.whl',
 					'agent-vm-mcp-portal-0.0.82-oldhash.tgz',
 					'agent-vm-local-packages-tool-vm-oldhash.json',
 					'README.md',
@@ -223,6 +224,7 @@ describe('beta tarball sync planning', () => {
 				packageEntries: plan.toolVmPackages,
 			}),
 		).toEqual([
+			'agent_vm_agent_portal_sdk-0.0.81-py3-none-any.whl',
 			'agent-vm-mcp-portal-0.0.82-oldhash.tgz',
 			'agent-vm-local-packages-tool-vm-oldhash.json',
 		]);
@@ -287,6 +289,10 @@ describe('beta tarball deployment artifact refresh', () => {
 					from: 'local-agent-vm/agent-vm-mcp-portal-0.0.110-oldhash00.tgz',
 					to: '/tmp/agent-vm-mcp-portal-0.0.110-oldhash00.tgz',
 				},
+				{
+					from: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.109-py3-none-any.whl',
+					to: '/tmp/agent_vm_agent_portal_sdk-0.0.109-py3-none-any.whl',
+				},
 			],
 			runAfterBase: ['rm -f /tmp/agent-vm-mcp-portal-0.0.110-oldhash00.tgz'],
 		});
@@ -299,6 +305,14 @@ describe('beta tarball deployment artifact refresh', () => {
 				'agent-vm-mcp-portal-0.0.110-oldhash00.tgz',
 			),
 			'stale tool package',
+		);
+		await writeFile(
+			path.join(
+				toolVmOverlayDirectory,
+				'local-agent-vm',
+				'agent_vm_agent_portal_sdk-0.0.109-py3-none-any.whl',
+			),
+			'stale Tool VM Python SDK wheel',
 		);
 		await Promise.all([
 			writeFile(
@@ -371,6 +385,7 @@ describe('beta tarball deployment artifact refresh', () => {
 		};
 		const hermesLocalFileNames = await readdir(path.join(hermesImageDirectory, 'local-agent-vm'));
 		const toolVmLocalFileNames = await readdir(path.join(toolVmOverlayDirectory, 'local-agent-vm'));
+		expect(toolVmLocalFileNames).toContain(path.basename(agentPortalSdkWheelPath));
 		expect(packageJson).toContain(
 			'../agent-vm/tmp/beta-tarballs-newhash01/agent-vm-agent-vm-0.0.110.tgz',
 		);
@@ -381,8 +396,15 @@ describe('beta tarball deployment artifact refresh', () => {
 		expect(workspaceYaml).not.toContain('patchedDependencies:');
 		expect(toolVmOverlayJson).toContain('local-agent-vm/agent-vm-mcp-portal-0.0.110-newhash01.tgz');
 		expect(toolVmOverlayJson).not.toContain('oldhash00');
+		expect(toolVmOverlayJson).toContain(
+			'local-agent-vm/agent_vm_agent_portal_sdk-0.0.110-py3-none-any.whl',
+		);
+		expect(toolVmOverlayJson).not.toContain('agent_vm_agent_portal_sdk-0.0.109');
 		expect(toolVmLocalFileNames).toContain('agent-vm-mcp-portal-0.0.110-newhash01.tgz');
 		expect(toolVmLocalFileNames).not.toContain('agent-vm-mcp-portal-0.0.110-oldhash00.tgz');
+		expect(toolVmLocalFileNames).not.toContain(
+			'agent_vm_agent_portal_sdk-0.0.109-py3-none-any.whl',
+		);
 		expect(hermesDockerfile).toContain('/usr/local/bin/agent-vm-hermes-gateway');
 		expect(hermesDockerfile).toContain('/usr/local/bin/agent-vm-gateway-runtime');
 		expect(hermesDockerfile).toContain(
@@ -416,19 +438,25 @@ describe('Tool VM overlay rendering', () => {
 			existingOverlay: {
 				copy: [
 					{ from: 'local-agent-vm/agent-vm-mcp-portal-0.0.81-oldhash.tgz', to: '/tmp/old.tgz' },
+					{
+						from: 'local-agent-vm/agent_vm_agent_portal_sdk-0.0.81-py3-none-any.whl',
+						to: '/tmp/agent_vm_agent_portal_sdk-0.0.81-py3-none-any.whl',
+					},
 				],
 				runAfterBase: ['echo keep', 'rm -f /tmp/agent-vm-mcp-portal-0.0.81-oldhash.tgz'],
 			},
 			plan,
+			portalSdkWheelFileName: 'agent_vm_agent_portal_sdk-0.0.82-py3-none-any.whl',
 		});
 		const overlayJson = JSON.stringify(overlay, null, 2);
 
-		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual(
-			TOOL_VM_TARBALL_PACKAGE_NAMES.map(
+		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual([
+			...TOOL_VM_TARBALL_PACKAGE_NAMES.map(
 				(packageName) =>
 					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
 			),
-		);
+			'local-agent-vm/agent_vm_agent_portal_sdk-0.0.82-py3-none-any.whl',
+		]);
 		expect(overlay.runAfterBase).toEqual([
 			'echo keep',
 			'mkdir -p /opt/agent-vm/local-packages',
@@ -450,6 +478,7 @@ describe('Tool VM overlay rendering', () => {
 		expect(overlayJson).toContain('@agent-vm/agent-portal-sdk');
 		expect(overlayJson).toContain('file:/tmp/agent-vm-agent-portal-sdk-0.0.82-abc123ef.tgz');
 		expect(overlayJson).not.toContain('0.0.81-oldhash');
+		expect(overlayJson).not.toContain('agent_vm_agent_portal_sdk-0.0.81');
 		expect(overlayJson).not.toContain('@earendil-works/gondolin@0.12.0');
 		expect(overlayJson).not.toContain('.patch');
 	});

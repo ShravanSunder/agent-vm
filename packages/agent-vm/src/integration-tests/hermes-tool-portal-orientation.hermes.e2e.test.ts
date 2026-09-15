@@ -70,8 +70,7 @@ const oauthDisconnectPrompt = 'disconnect-google-authorization-requires-approval
 const oauthDisconnectSuccessMarker = 'hermes-oauth-disconnect-approval-required';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
-const orientationMarker =
-	'Tool Portal exposes profile-authorized capabilities and operation files:';
+const orientationMarker = 'Profile-authorized Portal tools:';
 const operationNames = [
 	'tool_portal_list',
 	'tool_portal_search',

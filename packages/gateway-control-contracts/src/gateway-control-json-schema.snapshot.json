@@ -2260,6 +2260,11 @@
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
+																					},
+																					"turnId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
 																					}
 																				},
 																				"additionalProperties": false
@@ -2601,6 +2606,11 @@
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
+																					},
+																					"turnId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
 																					}
 																				},
 																				"additionalProperties": false
@@ -2919,6 +2929,11 @@
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
+																					},
+																					"turnId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
 																					}
 																				},
 																				"additionalProperties": false
@@ -3234,6 +3249,11 @@
 																						"maxLength": 256
 																					},
 																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"turnId": {
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
@@ -3579,6 +3599,11 @@
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
+																					},
+																					"turnId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
 																					}
 																				},
 																				"additionalProperties": false
@@ -3900,6 +3925,11 @@
 																						"maxLength": 256
 																					},
 																					"toolCallId": {
+																						"type": "string",
+																						"minLength": 1,
+																						"maxLength": 256
+																					},
+																					"turnId": {
 																						"type": "string",
 																						"minLength": 1,
 																						"maxLength": 256
@@ -4367,6 +4397,11 @@
 																		"maxLength": 256
 																	},
 																	"toolCallId": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	},
+																	"turnId": {
 																		"type": "string",
 																		"minLength": 1,
 																		"maxLength": 256
@@ -5330,6 +5365,11 @@
 																"type": "string",
 																"minLength": 1,
 																"maxLength": 256
+															},
+															"turnId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
 															}
 														},
 														"additionalProperties": false
@@ -5766,6 +5806,99 @@
 												"format": "uuid",
 												"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
 											},
+											"adapterEvidence": {
+												"type": "object",
+												"properties": {
+													"agentAuthority": {
+														"type": "object",
+														"properties": {
+															"algorithm": {
+																"type": "string",
+																"const": "hmac-sha256"
+															},
+															"digest": {
+																"type": "string",
+																"minLength": 32
+															},
+															"keyId": {
+																"type": "string",
+																"minLength": 1
+															}
+														},
+														"required": ["algorithm", "digest", "keyId"],
+														"additionalProperties": false
+													},
+													"principal": {
+														"type": "object",
+														"properties": {
+															"agentId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"frameworkIdentity": {
+																"readOnly": true,
+																"type": "object",
+																"properties": {
+																	"kind": {
+																		"type": "string",
+																		"const": "hermes"
+																	},
+																	"profileName": {
+																		"type": "string",
+																		"minLength": 1,
+																		"maxLength": 256
+																	}
+																},
+																"required": ["kind", "profileName"],
+																"additionalProperties": false
+															},
+															"profileAssignmentRevision": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															},
+															"toolPortalProfileId": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 256
+															}
+														},
+														"required": [
+															"agentId",
+															"frameworkIdentity",
+															"profileAssignmentRevision",
+															"toolPortalProfileId"
+														],
+														"additionalProperties": false
+													},
+													"proof": {
+														"type": "object",
+														"properties": {
+															"algorithm": {
+																"type": "string",
+																"const": "hmac-sha256"
+															},
+															"digest": {
+																"type": "string",
+																"minLength": 32
+															}
+														},
+														"required": ["algorithm", "digest"],
+														"additionalProperties": false
+													},
+													"purpose": {
+														"type": "string",
+														"const": "tool_portal_controller_execution"
+													},
+													"zoneId": {
+														"type": "string",
+														"minLength": 1
+													}
+												},
+												"required": ["agentAuthority", "principal", "proof", "purpose", "zoneId"],
+												"additionalProperties": false
+											},
 											"initiatedBy": {
 												"type": "string",
 												"const": "gateway"
@@ -5775,7 +5908,7 @@
 												"enum": ["caller_cancelled", "gateway_shutdown", "operation_failed"]
 											}
 										},
-										"required": ["activeOperationId", "initiatedBy", "reason"],
+										"required": ["activeOperationId", "adapterEvidence", "initiatedBy", "reason"],
 										"additionalProperties": false
 									},
 									{
@@ -11132,6 +11265,11 @@
 																								"maxLength": 256
 																							},
 																							"toolCallId": {
+																								"type": "string",
+																								"minLength": 1,
+																								"maxLength": 256
+																							},
+																							"turnId": {
 																								"type": "string",
 																								"minLength": 1,
 																								"maxLength": 256

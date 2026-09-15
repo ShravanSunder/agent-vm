@@ -51,6 +51,7 @@ const agentOverrideSchema = z.string().regex(/^[^=]+=[^=]+$/u, {
 	message: 'Expected <agentId>=<profile>.',
 });
 const agentOverridesSchema = z.array(agentOverrideSchema).default([]);
+const catalogModeSchema = z.enum(['compact', 'catalog']).default('compact');
 
 export function projectZodScalarPresence<TSchema extends ZodOptional<z.ZodType>, TState>(
 	schema: TSchema,
@@ -168,6 +169,16 @@ const serveCommandParser = command(
 				zod(agentOverridesSchema.unwrap().element, {
 					metavar: 'AGENT=PROFILE',
 					placeholder: 'agent=profile',
+				}),
+			),
+		),
+		catalogMode: projectZodScalarPresence(
+			catalogModeSchema,
+			option(
+				'--catalog-mode',
+				zod(catalogModeSchema, {
+					metavar: 'MODE',
+					placeholder: catalogModeSchema.parse(undefined),
 				}),
 			),
 		),

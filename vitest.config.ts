@@ -36,6 +36,12 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-vm/agent-portal-sdk/generated-tools': repoPath(
+				'packages/agent-portal-sdk/src/generated-tools/index.ts',
+			),
+			'@agent-vm/mcp-portal/catalog-typescript': repoPath(
+				'packages/mcp-portal/src/catalog-typescript/index.ts',
+			),
 			'@agent-vm/agent-portal-sdk/contracts': repoPath(
 				'packages/agent-portal-sdk/src/contracts/index.ts',
 			),

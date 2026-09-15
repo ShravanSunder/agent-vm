@@ -72,6 +72,19 @@ export interface PortalSessionManager {
 	readonly invalidateSession: (identity: PortalAgentIdentity) => Promise<void>;
 }
 
+export class PortalCatalogPreparationError extends Error {
+	readonly failedNamespaces: readonly string[];
+
+	constructor(failures: readonly PortalDiscoveryFailure[]) {
+		const failedNamespaces = [...new Set(failures.map((failure) => failure.namespace))].toSorted();
+		super(
+			`MCP Portal catalog preparation failed for namespace(s): ${failedNamespaces.join(', ')}. Run live MCP validation or use compact mode for partial discovery diagnostics.`,
+		);
+		this.name = 'PortalCatalogPreparationError';
+		this.failedNamespaces = failedNamespaces;
+	}
+}
+
 interface CachedPortalSession {
 	readonly expiresAt: number;
 	readonly session: PortalSession;
@@ -220,6 +233,15 @@ export function createPortalSessionManager(
 
 			const generation = generationForScope(key);
 			const session = await buildSession(identity);
+			if (cached !== undefined && session.catalog.discoveryFailures.length > 0) {
+				return {
+					...cached.session,
+					catalog: {
+						...cached.session.catalog,
+						discoveryFailures: session.catalog.discoveryFailures,
+					},
+				};
+			}
 			if (
 				generationForScope(key) === generation &&
 				session.catalog.discoveryFailures.length === 0

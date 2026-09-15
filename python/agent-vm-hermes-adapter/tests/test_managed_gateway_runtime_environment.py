@@ -3,14 +3,17 @@ import base64
 import concurrent.futures
 import io
 import os
+import subprocess
 import threading
 import typing as t
 import unittest
 from collections.abc import Awaitable, Mapping
 from unittest.mock import patch
 
+from agent_vm_agent_portal_sdk.gateway_portal_session import GatewayPortalSessionConfig
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from pydantic import BaseModel, ConfigDict
+from tools.environments.base import BaseEnvironment
 
 from agent_vm_hermes_adapter.managed_gateway_runtime_environment import (
     HermesGatewayRuntimeEnvironment,
@@ -18,8 +21,12 @@ from agent_vm_hermes_adapter.managed_gateway_runtime_environment import (
     HermesGatewayRuntimeOutcomeError,
 )
 from agent_vm_hermes_adapter.managed_profile_adapter import (
+    CanonicalManagedAgentProjection,
     HermesManagedAdapter,
     HermesManagedAdapterConfig,
+)
+from agent_vm_hermes_adapter.managed_tool_portal.execution_middleware import (
+    HermesToolExecutionMiddleware,
 )
 
 PROJECTION_COHORT_DIGEST = (
@@ -29,6 +36,40 @@ PROJECTION_COHORT_DIGEST = (
 
 class PortableResult(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+def run_local_snapshot_bash(
+    cmd_string: str,
+    *,
+    login: bool = False,
+    timeout: int = 120,
+    stdin_data: str | None = None,
+) -> subprocess.Popen[str]:
+    del timeout
+    command = ["bash", *(["-l"] if login else []), "-c", cmd_string]
+    return subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+class LocalSnapshotHermesEnvironment(HermesGatewayRuntimeEnvironment):
+    """Exercise the pinned BaseEnvironment snapshot with the adapter exclusion hook."""
+
+    def __init__(self) -> None:
+        BaseEnvironment.__init__(self, cwd="/tmp", timeout=10)
+        self.init_session()
+
+    @t.override
+    def cleanup(self) -> None:
+        for path in (self._snapshot_path, self._cwd_file):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
 
 class FakeOperationCallable(t.Protocol):
@@ -238,6 +279,46 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
     _adapter: HermesManagedAdapter | None = None
     _factory: HermesGatewayRuntimeEnvironmentFactory | None = None
 
+    def test_invocation_environment_does_not_leak_through_stock_shell_snapshot(self) -> None:
+        environment_names = (
+            "AGENT_VM_TOOL_PORTAL_SOCKET",
+            "AGENT_VM_TOOL_PORTAL_SDK_MANIFEST",
+        )
+        with (
+            patch("agent.secret_scope.is_multiplex_active", return_value=True),
+            patch.object(
+                LocalSnapshotHermesEnvironment, "_run_bash", side_effect=run_local_snapshot_bash
+            ),
+            patch.dict(
+                os.environ,
+                {
+                    environment_names[0]: "/tmp/invocation-a/socket",
+                    environment_names[1]: "/tmp/invocation-a/manifest.json",
+                },
+                clear=False,
+            ),
+        ):
+            environment = LocalSnapshotHermesEnvironment()
+            try:
+                command = (
+                    f'printf "%s|%s" "${{{environment_names[0]}}}" "${{{environment_names[1]}}}"'
+                )
+                first = environment.execute(command)
+                os.environ[environment_names[0]] = "/tmp/invocation-b/socket"
+                os.environ[environment_names[1]] = "/tmp/invocation-b/manifest.json"
+                second = environment.execute(command)
+            finally:
+                environment.cleanup()
+
+        self.assertEqual(
+            first["output"],
+            "/tmp/invocation-a/socket|/tmp/invocation-a/manifest.json",
+        )
+        self.assertEqual(
+            second["output"],
+            "/tmp/invocation-b/socket|/tmp/invocation-b/manifest.json",
+        )
+
     @property
     def client(self) -> FakeGatewayRuntimeClient:
         if self._client is None:
@@ -349,6 +430,324 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
 
         environment.cleanup()
         self.assertEqual(self.client.sandbox.environment.calls[-1][0], "close")
+
+    def test_foreground_invocation_injects_only_its_portal_socket_into_launched_command(
+        self,
+    ) -> None:
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+        original_trusted_context = dict(environment._trusted_context)
+        opened_configs: list[GatewayPortalSessionConfig] = []
+        session_close_calls: list[str] = []
+
+        class FakePortalSession:
+            socket_path = "/tmp/agent-vm-portal-test/p.sock"
+            catalog_manifest_path = None
+
+            def __init__(
+                self,
+                *,
+                client: object,
+                config: GatewayPortalSessionConfig,
+                present_approval: object,
+            ) -> None:
+                del client, present_approval
+                opened_configs.append(config)
+
+            async def open(self) -> None:
+                return None
+
+            async def close(self) -> None:
+                session_close_calls.append("closed")
+
+        class ApprovalPresenter:
+            async def present(self, session_id: str, request: BaseModel) -> BaseModel:
+                del session_id, request
+                return PortableResult()
+
+        class Runtime:
+            adapter = self.adapter
+            approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
+
+            @staticmethod
+            def current_projection() -> CanonicalManagedAgentProjection:
+                return self.adapter.projection_for_profile("researcher")
+
+        def continue_execution(args: dict[str, object]) -> int:
+            del args
+            process = environment._run_bash("printf scoped", timeout=30)
+            return process.wait(timeout=2)
+
+        with (
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware.GatewayPortalSession",
+                FakePortalSession,
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware.monotonic",
+                side_effect=(100.0, 115.0),
+            ),
+            patch(
+                "tools.code_execution_tool._load_config",
+                return_value={},
+            ),
+        ):
+            result = HermesToolExecutionMiddleware(Runtime())(
+                tool_name="execute_code",
+                args={"code": "print('scoped')"},
+                original_args={"code": "print('scoped')"},
+                task_id="task-a",
+                session_id="real-session-a",
+                tool_call_id="tool-call-a",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=continue_execution,
+            )
+
+        self.assertEqual(result, 0)
+        start_calls = [call for call in self.client.sandbox.execution.calls if call[0] == "start"]
+        command = start_calls[-1][1]["command"]
+        self.assertEqual(
+            command,
+            "AGENT_VM_TOOL_PORTAL_SOCKET=/tmp/agent-vm-portal-test/p.sock bash -c 'printf scoped'",
+        )
+        self.assertEqual(start_calls[-1][1]["timeoutMs"], 30_000)
+        self.assertEqual(environment._trusted_context, original_trusted_context)
+        self.assertEqual(len(opened_configs), 1)
+        portal_context = opened_configs[0].portal_context
+        correlation = portal_context["correlation"]
+        if not isinstance(correlation, Mapping):
+            self.fail("Portal invocation correlation must be a mapping")
+        self.assertEqual(correlation["sessionId"], "real-session-a")
+        self.assertEqual(opened_configs[0].maximum_runtime_ms, 285_000)
+        self.assertEqual(session_close_calls, ["closed"])
+        environment.cleanup()
+
+    def test_relay_open_failure_preserves_repeated_ordinary_execution_without_reopening(
+        self,
+    ) -> None:
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+        session_open_calls: list[str] = []
+        session_close_calls: list[str] = []
+
+        class FailingPortalSession:
+            socket_path = "/tmp/never-published/p.sock"
+            catalog_manifest_path = None
+
+            def __init__(
+                self,
+                *,
+                client: object,
+                config: GatewayPortalSessionConfig,
+                present_approval: object,
+            ) -> None:
+                del client, config, present_approval
+
+            async def open(self) -> None:
+                session_open_calls.append("opened")
+                raise RuntimeError("relay-open-secret-canary")
+
+            async def close(self) -> None:
+                session_close_calls.append("closed")
+                raise RuntimeError("relay-cleanup-secret-canary")
+
+        class ApprovalPresenter:
+            async def present(self, session_id: str, request: BaseModel) -> BaseModel:
+                del session_id, request
+                return PortableResult()
+
+        class Runtime:
+            adapter = self.adapter
+            approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
+
+            @staticmethod
+            def current_projection() -> CanonicalManagedAgentProjection:
+                return self.adapter.projection_for_profile("researcher")
+
+        def continue_execution(args: dict[str, object]) -> tuple[int, int]:
+            del args
+            first = environment._run_bash("printf first", timeout=30)
+            second = environment._run_bash("printf second", timeout=30)
+            return first.wait(timeout=2), second.wait(timeout=2)
+
+        with (
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware.GatewayPortalSession",
+                FailingPortalSession,
+            ),
+            self.assertLogs(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware",
+                level="WARNING",
+            ) as captured_logs,
+        ):
+            result = HermesToolExecutionMiddleware(Runtime())(
+                tool_name="terminal",
+                args={"command": "printf ordinary", "timeout": 30},
+                original_args={"command": "printf ordinary", "timeout": 30},
+                task_id="task-a",
+                session_id="real-session-a",
+                tool_call_id="tool-call-a",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=continue_execution,
+            )
+
+        self.assertEqual(result, (0, 0))
+        self.assertEqual(session_open_calls, ["opened"])
+        self.assertEqual(session_close_calls, ["closed"])
+        direct_commands = [
+            call[1]["command"]
+            for call in self.client.sandbox.execution.calls
+            if call[0] == "start"
+            and call[1].get("command") in {"bash -c 'printf first'", "bash -c 'printf second'"}
+        ]
+        self.assertEqual(direct_commands, ["bash -c 'printf first'", "bash -c 'printf second'"])
+        self.assertEqual(len(captured_logs.records), 1)
+        self.assertIn("ordinary execution continues", captured_logs.output[0])
+        self.assertIn("cleanup=RuntimeError", captured_logs.output[0])
+        self.assertNotIn("relay-open-secret-canary", captured_logs.output[0])
+        self.assertNotIn("relay-cleanup-secret-canary", captured_logs.output[0])
+        environment.cleanup()
+
+    def test_deadline_expiring_during_relay_open_does_not_launch_ordinary_execution(
+        self,
+    ) -> None:
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+        session_close_calls: list[str] = []
+
+        class FailingPortalSession:
+            socket_path = "/tmp/never-published/p.sock"
+            catalog_manifest_path = None
+
+            def __init__(self, **session_arguments: object) -> None:
+                del session_arguments
+
+            async def open(self) -> None:
+                raise RuntimeError("relay-open-after-deadline")
+
+            async def close(self) -> None:
+                session_close_calls.append("closed")
+
+        class ApprovalPresenter:
+            async def present(self, session_id: str, request: BaseModel) -> BaseModel:
+                del session_id, request
+                return PortableResult()
+
+        class Runtime:
+            adapter = self.adapter
+            approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
+
+            @staticmethod
+            def current_projection() -> CanonicalManagedAgentProjection:
+                return self.adapter.projection_for_profile("researcher")
+
+        def continue_execution(args: dict[str, object]) -> None:
+            del args
+            _ = environment._run_bash("printf forbidden-after-deadline", timeout=30)
+
+        with (
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware.GatewayPortalSession",
+                FailingPortalSession,
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal.execution_middleware.monotonic",
+                side_effect=(100.0, 101.0, 131.0),
+            ),
+            self.assertRaisesRegex(RuntimeError, "deadline expired"),
+        ):
+            HermesToolExecutionMiddleware(Runtime())(
+                tool_name="terminal",
+                args={"command": "printf forbidden-after-deadline", "timeout": 30},
+                original_args={"command": "printf forbidden-after-deadline", "timeout": 30},
+                task_id="task-a",
+                session_id="real-session-a",
+                tool_call_id="tool-call-a",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=continue_execution,
+            )
+
+        self.assertEqual(session_close_calls, ["closed"])
+        direct_commands = [
+            call[1].get("command")
+            for call in self.client.sandbox.execution.calls
+            if call[0] == "start"
+        ]
+        self.assertNotIn("bash -c 'printf forbidden-after-deadline'", direct_commands)
+        environment.cleanup()
+
+    def test_wrong_projection_is_not_treated_as_relay_unavailability(self) -> None:
+        environment = self.factory.create(
+            profile_name="researcher",
+            task_id="session-researcher",
+            cwd="/work",
+            timeout=60,
+        )
+
+        class ApprovalPresenter:
+            async def present(self, session_id: str, request: BaseModel) -> BaseModel:
+                del session_id, request
+                return PortableResult()
+
+        class Runtime:
+            adapter = self.adapter
+            approval_presenter = ApprovalPresenter()
+            catalog_turn_bindings = None
+
+            @staticmethod
+            def current_projection() -> CanonicalManagedAgentProjection:
+                return self.adapter.projection_for_profile("reviewer")
+
+        def continue_execution(args: dict[str, object]) -> None:
+            del args
+            _ = environment._run_bash("printf forbidden", timeout=30)
+
+        with self.assertRaisesRegex(Exception, "projection"):
+            HermesToolExecutionMiddleware(Runtime())(
+                tool_name="terminal",
+                args={"command": "printf forbidden", "timeout": 30},
+                original_args={"command": "printf forbidden", "timeout": 30},
+                task_id="task-a",
+                session_id="real-session-a",
+                tool_call_id="tool-call-a",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=continue_execution,
+            )
+
+        direct_commands = [
+            call[1].get("command")
+            for call in self.client.sandbox.execution.calls
+            if call[0] == "start"
+        ]
+        self.assertNotIn("bash -c 'printf forbidden'", direct_commands)
+        environment.cleanup()
 
     def test_writes_and_closes_standard_input_before_waiting_for_completion(self) -> None:
         environment = self.factory.create(
@@ -500,7 +899,7 @@ class HermesGatewayRuntimeEnvironmentTests(unittest.TestCase):
         finally:
             os.close(stdout_read_fd)
             # Submission may raise before assigning the future.
-            if stream_read_future is not None:  # ty: ignore[redundant-condition-strict]
+            if stream_read_future is not None:
                 self.assertIsNone(stream_read_future.result(timeout=2))
             try:
                 os.close(stdout_write_fd)

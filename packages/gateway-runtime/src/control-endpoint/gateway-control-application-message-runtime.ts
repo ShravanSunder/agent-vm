@@ -30,7 +30,10 @@ import {
 	createGatewayControlSessionAdmissionRuntime,
 	measureGatewayControlApplicationMessageBytes,
 } from './gateway-control-admission-runtime.js';
-import { GatewayControlSessionUnavailableError } from './gateway-control-endpoint-contracts.js';
+import {
+	GatewayControlCommandCancelledBeforeDispatchError,
+	GatewayControlSessionUnavailableError,
+} from './gateway-control-endpoint-contracts.js';
 import type {
 	GatewayControlAcceptedSession,
 	GatewayControlApplicationMessageHandler,
@@ -113,6 +116,12 @@ export function createGatewayControlApplicationMessageRuntime(
 		if (session === undefined || socket === undefined || !socket.connected) {
 			throw new GatewayControlSessionUnavailableError();
 		}
+		if (
+			optionsForEgress.emitOptions?.requiredAcceptedSession !== undefined &&
+			optionsForEgress.emitOptions.requiredAcceptedSession !== session
+		) {
+			throw new Error('gateway control required accepted session is no longer current');
+		}
 		const previewEnvelope = ControlEnvelopeSchema.parse(
 			optionsForEgress.intent.buildEnvelope({
 				acceptedSession: session,
@@ -147,6 +156,9 @@ export function createGatewayControlApplicationMessageRuntime(
 				? {}
 				: { coalesceKey: optionsForEgress.classification.coalesceKey }),
 			execute: async () => {
+				if (optionsForEgress.emitOptions?.signal?.aborted === true) {
+					throw new GatewayControlCommandCancelledBeforeDispatchError();
+				}
 				if (
 					ports.getAcceptedSession() !== session ||
 					ports.getAcceptedSocket() !== socket ||
@@ -177,6 +189,7 @@ export function createGatewayControlApplicationMessageRuntime(
 						.timeout(CONTROL_SESSION_TIMING_MS.commandAckTimeout)
 						.emitWithAck('control:message', envelope, optionsForEgress.intent.payload);
 					assertControlMessageReceiptAccepted(receiptPayload);
+					optionsForEgress.emitOptions?.onAdmissionReceipt?.(session);
 					applicationResult = receiptPayload;
 					ports.recordLastSeenPeerSequence(sequence);
 					if (commandResultPromise !== undefined) {

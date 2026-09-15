@@ -219,7 +219,15 @@ describe('Gateway control admission executor', () => {
 			status: 'closed',
 		});
 		expect(cancellations).toEqual(['attachment-replaced']);
+		let cleanupSettled = false;
+		void result.cleanup.then(() => {
+			cleanupSettled = true;
+		});
+		await flushMicrotasks();
+		expect(cleanupSettled).toBe(false);
+		expect(executor.diagnostics().activeByClass.safety).toBe(1);
 		blocked.resolve();
+		await result.cleanup;
 		await flushMicrotasks();
 		expect(completedExecutions).toBe(1);
 		expect(executor.diagnostics()).toMatchObject({

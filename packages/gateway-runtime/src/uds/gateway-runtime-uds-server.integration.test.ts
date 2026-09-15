@@ -15,6 +15,7 @@ import {
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createGatewayRuntimePrivateUdsDispatcher } from '../production/gateway-runtime-private-uds-dispatcher.js';
 import { createGatewayRuntimePaths, type GatewayRuntimePaths } from './gateway-runtime-paths.js';
 import {
 	GatewayRuntimeUdsServerError,
@@ -47,6 +48,10 @@ const SERVER_AUTHORITY = {
 
 const temporaryRoots: string[] = [];
 const runningServers: GatewayRuntimeUdsServer[] = [];
+
+async function rejectUnexpectedTestOperation(): Promise<never> {
+	throw new Error('Unexpected test operation.');
+}
 
 function failOnAttachmentObserverError(error: unknown): never {
 	throw error;
@@ -105,6 +110,7 @@ async function startTestServer(
 		};
 		readonly maxConnections?: number;
 		readonly maxPendingRequestsPerConnection?: number;
+		readonly onConnectionClosed?: (connectionId: string) => void;
 		readonly paths?: GatewayRuntimePaths;
 	} = {},
 ): Promise<GatewayRuntimeUdsServer> {
@@ -119,6 +125,9 @@ async function startTestServer(
 			maxConnections: props.maxConnections ?? 4,
 			maxPendingRequestsPerConnection: props.maxPendingRequestsPerConnection ?? 4,
 		},
+		...(props.onConnectionClosed === undefined
+			? {}
+			: { onConnectionClosed: props.onConnectionClosed }),
 		paths,
 		resolveOperationGroup,
 	});
@@ -183,6 +192,72 @@ afterEach(async (): Promise<void> => {
 });
 
 describe('production Gateway runtime private UDS server', () => {
+	it('dispatches a validated catalog preparation request through the authenticated private socket', async () => {
+		const catalogInvocations: unknown[] = [];
+		const closedConnectionIds: string[] = [];
+		const connectionClosed = Promise.withResolvers<string>();
+		const dispatcher = createGatewayRuntimePrivateUdsDispatcher({
+			approvalOperations: { decide: rejectUnexpectedTestOperation },
+			artifactOperations: { read: rejectUnexpectedTestOperation },
+			catalogOperations: {
+				offer: rejectUnexpectedTestOperation,
+				prepare: async (invocation) => {
+					catalogInvocations.push(invocation);
+					return { diagnostics: [], kind: 'incomplete', reason: 'catalog-incomplete' };
+				},
+				read: rejectUnexpectedTestOperation,
+				release: rejectUnexpectedTestOperation,
+			},
+			portalOperations: {
+				call: rejectUnexpectedTestOperation,
+				describe: rejectUnexpectedTestOperation,
+				list: rejectUnexpectedTestOperation,
+				search: rejectUnexpectedTestOperation,
+			},
+			sandboxDispatch: rejectUnexpectedTestOperation,
+		});
+		const server = await startTestServer({
+			dispatch: dispatcher.dispatch,
+			onConnectionClosed: (connectionId) => {
+				closedConnectionIds.push(connectionId);
+				connectionClosed.resolve(connectionId);
+			},
+		});
+		const client = createClient(server.readiness.socketPath);
+		const trustedContext = {
+			correlation: { sessionId: 'session-1', turnId: 'turn-1' },
+			principal: {
+				agentId: 'main',
+				frameworkIdentity: { kind: 'hermes', profileName: 'main' },
+				profileAssignmentRevision: 'assignment-1',
+				toolPortalProfileId: 'profile-1',
+			},
+		};
+
+		await client.connect();
+		const result = await client.request('portal.catalog.prepare', {
+			publicRequest: {},
+			trustedContext,
+		});
+
+		expect(result).toEqual({ diagnostics: [], kind: 'incomplete', reason: 'catalog-incomplete' });
+		expect(catalogInvocations).toEqual([
+			expect.objectContaining({ publicRequest: {}, trustedContext }),
+		]);
+		await client.disconnect();
+		await Promise.race([
+			connectionClosed.promise,
+			new Promise<never>((_resolve, reject) =>
+				AbortSignal.timeout(PROTOCOL_WAIT_MILLISECONDS).addEventListener(
+					'abort',
+					() => reject(new Error('Timed out waiting for catalog connection retirement.')),
+					{ once: true },
+				),
+			),
+		]);
+		expect(closedConnectionIds).toHaveLength(1);
+	});
+
 	it('reports immutable accepted and lost current attachment snapshots exactly once', async () => {
 		// Arrange
 		const server = await startTestServer();
@@ -580,6 +655,146 @@ describe('production Gateway runtime private UDS server', () => {
 			expect(dispatchSignals.get('portal.sibling')?.aborted).toBe(false);
 		} finally {
 			await client.disconnect();
+		}
+	});
+
+	it('settles Portal cancellation before cleanup without releasing its capacity or replying twice', async () => {
+		// Arrange: both dispatches stay held independently of their caller responses.
+		const started = Promise.withResolvers<void>();
+		const siblingStarted = Promise.withResolvers<void>();
+		const heldCleanup = Promise.withResolvers<unknown>();
+		const siblingCleanup = Promise.withResolvers<unknown>();
+		const server = await startTestServer({
+			maxPendingRequestsPerConnection: 2,
+			dispatch: async ({ method }): Promise<unknown> => {
+				if (method === 'portal.held') {
+					started.resolve();
+					return await heldCleanup.promise;
+				}
+				if (method === 'portal.sibling') {
+					siblingStarted.resolve();
+					return await siblingCleanup.promise;
+				}
+				return { kind: 'independent-result' };
+			},
+		});
+		const socket = await connectRawSocket(server.readiness.socketPath);
+		const observed: GatewayRuntimeJsonRpcMessage[] = [];
+		const decoder = new GatewayRuntimeFrameDecoder();
+		socket.on('data', (chunk: Buffer) => observed.push(...decoder.push(chunk)));
+		const request = (id: string, method: string): Promise<GatewayRuntimeJsonRpcMessage> =>
+			sendRawRequest({ socket, message: { id, jsonrpc: '2.0', method, params: {} } });
+		await sendRawRequest({
+			socket,
+			message: {
+				id: 'handshake',
+				jsonrpc: '2.0',
+				method: 'managed-plugin.handshake',
+				params: CURRENT_ATTACHMENT,
+			},
+		});
+		const cancelledResponse = request('held', 'portal.held');
+		const siblingResponse = request('sibling', 'portal.sibling');
+		await Promise.all([started.promise, siblingStarted.promise]);
+		try {
+			// Act: notification must settle the reply while cleanup remains blocked.
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'held' },
+				}),
+			);
+			const reply = await waitForPressureSafetyProof(
+				cancelledResponse,
+				'request-local cancellation reply',
+			);
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'held' },
+				}),
+			);
+			// Assert: no fabricated non-dispatch, no freed cleanup slot, no lost sibling.
+			expect(reply).toMatchObject({
+				id: 'held',
+				error: { code: -32_800, data: { code: 'request-cancelled' } },
+			});
+			expect(await request('over-capacity', 'portal.next')).toMatchObject({
+				error: { data: { code: 'pending-request-limit-exceeded' } },
+			});
+			siblingCleanup.resolve({ kind: 'sibling-complete' });
+			expect(await siblingResponse).toMatchObject({ result: { kind: 'sibling-complete' } });
+			heldCleanup.resolve({ kind: 'late-result' });
+			expect(await request('after-cleanup', 'portal.next')).toMatchObject({
+				result: { kind: 'independent-result' },
+			});
+			expect(observed.filter((message) => message['id'] === 'held')).toHaveLength(1);
+		} finally {
+			heldCleanup.resolve({ kind: 'cleanup' });
+			siblingCleanup.resolve({ kind: 'cleanup' });
+			await Promise.allSettled([cancelledResponse, siblingResponse]);
+			socket.destroy();
+		}
+	});
+
+	it('preserves non-Portal cancellation settlement until its dispatcher completes', async () => {
+		// Arrange: sandbox terminal has its existing result/cleanup contract.
+		const started = Promise.withResolvers<void>();
+		const cleanup = Promise.withResolvers<unknown>();
+		const server = await startTestServer({
+			dispatch: async ({ method }): Promise<unknown> => {
+				if (method === 'sandbox.terminal.attach') {
+					started.resolve();
+					return await cleanup.promise;
+				}
+				return { kind: 'barrier' };
+			},
+		});
+		const socket = await connectRawSocket(server.readiness.socketPath);
+		await sendRawRequest({
+			socket,
+			message: {
+				id: 'handshake',
+				jsonrpc: '2.0',
+				method: 'managed-plugin.handshake',
+				params: CURRENT_ATTACHMENT,
+			},
+		});
+		let receivedTerminalReply = false;
+		const terminal = sendRawRequest({
+			socket,
+			message: { id: 'terminal', jsonrpc: '2.0', method: 'sandbox.terminal.attach', params: {} },
+		});
+		void terminal.then(
+			() => {
+				receivedTerminalReply = true;
+			},
+			() => undefined,
+		);
+		await started.promise;
+		try {
+			// Act: subsequent reply proves the earlier cancellation was processed.
+			socket.write(
+				encodeGatewayRuntimeFrame({
+					jsonrpc: '2.0',
+					method: GATEWAY_RUNTIME_REQUEST_CANCEL_NOTIFICATION_METHOD,
+					params: { requestId: 'terminal' },
+				}),
+			);
+			await sendRawRequest({
+				socket,
+				message: { id: 'barrier', jsonrpc: '2.0', method: 'portal.list', params: {} },
+			});
+			// Assert: ordinary cancellation did not gain the Portal-only early error.
+			expect(receivedTerminalReply).toBe(false);
+			cleanup.resolve({ kind: 'terminal-finished' });
+			expect(await terminal).toMatchObject({ result: { kind: 'terminal-finished' } });
+		} finally {
+			cleanup.resolve({ kind: 'cleanup' });
+			await Promise.allSettled([terminal]);
+			socket.destroy();
 		}
 	});
 

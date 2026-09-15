@@ -38,17 +38,26 @@ export type GatewayControlAdmissionSubmissionResult =
 
 export interface GatewayControlAdmissionSubmission {
 	readonly admission: GatewayControlAdmissionSubmissionResult;
+	readonly cleanup: Promise<void>;
 	readonly completion: Promise<GatewayControlAdmissionExecutionResult>;
 }
 
 export interface GatewayControlAdmissionExecutionRequest<TPayload> {
 	readonly byteLength: number;
+	readonly cancellableOperation?: {
+		readonly activeOperationId: string;
+		readonly attachmentGeneration: number;
+		readonly connectionId: string;
+		readonly sessionId: string;
+		readonly stablePrincipal: string;
+	};
 	readonly coalesceKey?: string;
-	readonly execute: () => Promise<void>;
+	readonly execute: (context: { readonly cancellationSignal?: AbortSignal }) => Promise<void>;
 	readonly id: string;
 	readonly messageClass: GatewayControlAdmissionClass;
 	readonly onCancel?: (reason: string) => void;
 	readonly payload: TPayload;
+	readonly retainProcessAdmissionUntilCleanup?: boolean;
 	readonly stablePrincipal?: string;
 }
 
@@ -65,10 +74,11 @@ export interface GatewayControlAdmissionExecutor<TPayload> {
 
 interface PendingGatewayControlAdmissionExecution<TPayload> {
 	readonly admissionGeneration: number;
-	readonly execute: () => Promise<void>;
+	readonly execute: (context: { readonly cancellationSignal?: AbortSignal }) => Promise<void>;
 	readonly onCancel?: (reason: string) => void;
 	readonly payload: TPayload;
 	readonly reject: (error: unknown) => void;
+	readonly resolveCleanup: () => void;
 	readonly resolve: (result: GatewayControlAdmissionExecutionResult) => void;
 	settled: boolean;
 }
@@ -153,13 +163,14 @@ export function createGatewayControlAdmissionExecutor<TPayload>(
 			void (async (): Promise<void> => {
 				let executionError: unknown;
 				try {
-					await work.execute();
+					await work.execute({});
 				} catch (error) {
 					executionError = error;
 				} finally {
 					scheduler.complete(completionToken);
 					activeByClass[messageClass] -= 1;
 					activeWork.delete(work);
+					work.resolveCleanup();
 					schedulePump();
 				}
 				if (work.settled || work.admissionGeneration !== admissionGeneration) {
@@ -187,6 +198,7 @@ export function createGatewayControlAdmissionExecutor<TPayload>(
 				if (!work.settled) {
 					work.settled = true;
 					work.onCancel?.(reason);
+					work.resolveCleanup();
 					work.resolve({ reason, status: 'closed' });
 				}
 			}
@@ -205,8 +217,16 @@ export function createGatewayControlAdmissionExecutor<TPayload>(
 		submit: (request) => {
 			if (closedReason !== undefined) {
 				const closed = { reason: closedReason, status: 'closed' } as const;
-				return { admission: closed, completion: Promise.resolve(closed) };
+				return {
+					admission: closed,
+					cleanup: Promise.resolve(),
+					completion: Promise.resolve(closed),
+				};
 			}
+			let resolveCleanup!: () => void;
+			const cleanup = new Promise<void>((resolve) => {
+				resolveCleanup = resolve;
+			});
 			let resolveCompletion!: (result: GatewayControlAdmissionExecutionResult) => void;
 			let rejectCompletion!: (error: unknown) => void;
 			const completion = new Promise<GatewayControlAdmissionExecutionResult>((resolve, reject) => {
@@ -219,6 +239,7 @@ export function createGatewayControlAdmissionExecutor<TPayload>(
 				...(request.onCancel === undefined ? {} : { onCancel: request.onCancel }),
 				payload: request.payload,
 				reject: rejectCompletion,
+				resolveCleanup,
 				resolve: resolveCompletion,
 				settled: false,
 			} satisfies PendingGatewayControlAdmissionExecution<TPayload>;
@@ -226,21 +247,23 @@ export function createGatewayControlAdmissionExecutor<TPayload>(
 			switch (result.status) {
 				case 'admitted':
 					schedulePump();
-					return { admission: { status: 'admitted' }, completion };
+					return { admission: { status: 'admitted' }, cleanup, completion };
 				case 'replaced':
 					if (!result.replacedMessage.payload.settled) {
 						result.replacedMessage.payload.settled = true;
 						result.replacedMessage.payload.onCancel?.('replaced');
+						result.replacedMessage.payload.resolveCleanup();
 						result.replacedMessage.payload.resolve({ status: 'replaced' });
 					}
 					schedulePump();
-					return { admission: { status: 'replaced' }, completion };
+					return { admission: { status: 'replaced' }, cleanup, completion };
 				case 'dropped':
 				case 'fence':
 				case 'refused':
 				case 'shed':
+					resolveCleanup();
 					resolveCompletion(result);
-					return { admission: result, completion };
+					return { admission: result, cleanup, completion };
 			}
 			throw new Error('unsupported gateway control admission result');
 		},

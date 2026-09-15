@@ -452,6 +452,18 @@ export function resolveGatewayControlInboundStablePrincipal(options: {
 			status: 'accepted',
 		};
 	}
+	if (
+		options.message.operation === 'operation_cancel' &&
+		options.message.payload.initiatedBy === 'gateway'
+	) {
+		return {
+			stablePrincipal: options.callerContexts.validateRegistrationForSession({
+				payload: { adapterEvidence: options.message.payload.adapterEvidence },
+				session,
+			}).stablePrincipal,
+			status: 'accepted',
+		};
+	}
 	let callerContextId: string | undefined;
 	switch (options.message.operation) {
 		case 'lease_create':
@@ -937,6 +949,10 @@ function controllerExecutionApprovalReservation(
 	}
 }
 
+function isAborted(signal: AbortSignal | undefined): boolean {
+	return signal?.aborted === true;
+}
+
 async function executeToolPortalControllerExecution(options: {
 	readonly actions: GatewayControlControllerExecutionOperations | undefined;
 	readonly approvalLedger: GatewayControlApprovalLedgerOperations | undefined;
@@ -949,6 +965,7 @@ async function executeToolPortalControllerExecution(options: {
 	readonly propagateMutationFailure?: boolean;
 	readonly responseToMessageId: string;
 	readonly session: GatewayControlCallerContextSessionRef;
+	readonly signal?: AbortSignal;
 }): Promise<GatewayControlCommandResultPayload> {
 	if (options.actions === undefined) {
 		const callerContextRef = controllerExecutionCallerContextRef(options.payload);
@@ -1003,6 +1020,12 @@ async function executeToolPortalControllerExecution(options: {
 		});
 	}
 	try {
+		if (isAborted(options.signal)) {
+			throw new ConfiguredControllerExecutionError(
+				'cancelled',
+				'Configured controller execution was cancelled before authorization.',
+			);
+		}
 		const authorization = await options.actions.authorizeControllerExecution({
 			callerContext,
 			createdAtMs: options.createdAtMs,
@@ -1010,6 +1033,12 @@ async function executeToolPortalControllerExecution(options: {
 			payload: options.payload,
 			session: options.session,
 		});
+		if (isAborted(options.signal)) {
+			throw new ConfiguredControllerExecutionError(
+				'cancelled',
+				'Configured controller execution was cancelled during authorization.',
+			);
+		}
 		if (!authorization.authorized) {
 			return commandResultPayload({
 				error: {
@@ -1038,6 +1067,12 @@ async function executeToolPortalControllerExecution(options: {
 				authorityContext: options.approvalAuthorityContext,
 				reservation: approvalReservation,
 			});
+			if (isAborted(options.signal)) {
+				throw new ConfiguredControllerExecutionError(
+					'cancelled',
+					'Configured controller execution was cancelled while approval was armed.',
+				);
+			}
 			if (armResult.kind === 'not-dispatched') {
 				return commandResultPayload({
 					error: {
@@ -1098,6 +1133,12 @@ async function executeToolPortalControllerExecution(options: {
 					payload: options.payload,
 					session: options.session,
 				});
+				if (isAborted(options.signal)) {
+					throw new ConfiguredControllerExecutionError(
+						'cancelled',
+						'Configured controller execution was cancelled during final authorization.',
+					);
+				}
 				if (!finalAuthorization.authorized) {
 					return commandResultPayload({
 						error: {
@@ -1157,7 +1198,10 @@ async function executeToolPortalControllerExecution(options: {
 					expiresAtMs: options.expiresAtMs,
 					payload: options.payload,
 					session: options.session,
-					signal: commandCancellation.signal,
+					signal:
+						options.signal === undefined
+							? commandCancellation.signal
+							: AbortSignal.any([commandCancellation.signal, options.signal]),
 				});
 			} finally {
 				if (expiryTimer !== undefined) clearTimeout(expiryTimer);
@@ -1728,7 +1772,7 @@ export function createGatewayControlDomainHandler(
 				payload: parseGatewaySemanticJsonValue(normalizedPayload),
 			};
 		},
-		handle: async ({ attachmentGeneration, envelope, payload }) => {
+		handle: async ({ attachmentGeneration, cancellationSignal, envelope, payload }) => {
 			const message = GatewayControlRpcMessageSchema.parse(payload);
 			const callerContextSession = callerContextSessionFromEnvelope(envelope);
 			if (message.kind === 'heartbeat') {
@@ -2264,6 +2308,7 @@ export function createGatewayControlDomainHandler(
 							payload: message.payload,
 							responseToMessageId: envelope.messageId,
 							session: callerContextSession,
+							...(cancellationSignal === undefined ? {} : { signal: cancellationSignal }),
 						}),
 					});
 				case 'operation_cancel':

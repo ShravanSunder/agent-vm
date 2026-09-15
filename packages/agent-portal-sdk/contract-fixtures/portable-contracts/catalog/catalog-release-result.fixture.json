@@ -1,0 +1,12 @@
+{
+	"caseId": "catalog-release-result-accepted",
+	"expectation": {
+		"canonicalJson": "{\"kind\":\"released\"}",
+		"kind": "accepted",
+		"normalized": { "kind": "released" },
+		"refinementIdentities": []
+	},
+	"input": { "kind": "released" },
+	"schemaId": "portal.catalog.release-result",
+	"tags": ["catalog", "accepted"]
+}

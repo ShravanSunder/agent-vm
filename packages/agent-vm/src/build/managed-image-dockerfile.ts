@@ -16,6 +16,12 @@ import {
 	packageOverridesSchema,
 	resolveEffectivePackageOverrides,
 } from './package-overrides.js';
+import {
+	managedToolPortalGuide,
+	managedToolPortalGuideFileName,
+	managedToolVmLoginProfile,
+	managedToolVmLoginProfileFileName,
+} from './managed-image-tool-portal-guide.js';
 
 const managedMcpPortalPackageName = '@agent-vm/mcp-portal';
 const managedPnpmHomePath = '/pnpm';
@@ -165,6 +171,7 @@ function renderManagedDockerfile(props: {
 	readonly overlay: ManagedImageOverlay;
 	readonly directNpmPackages: readonly ManagedDockerfilePackagePlanEntry[];
 	readonly mcpPortalPackageSpec?: string;
+	readonly portalSdkPackageSpec?: string;
 }): string {
 	const lines = [
 		`FROM ${props.baseImage.repository}:${props.baseImage.tag}`,
@@ -180,6 +187,13 @@ function renderManagedDockerfile(props: {
 	}
 	if (props.base === 'tool-vm') {
 		lines.push('RUN rm -rf /scratch && install -d -m 0755 /work /workspace');
+		lines.push('RUN install -d -m 0755 /agent-vm');
+		lines.push(`COPY ${managedToolPortalGuideFileName} /agent-vm/tool-portal.md`);
+		lines.push(
+			`COPY ${managedToolVmLoginProfileFileName} /etc/profile.d/agent-vm-tools.sh`,
+		);
+		lines.push('RUN uv venv /opt/agent-vm-tools');
+		lines.push('ENV PATH=/opt/agent-vm-tools/bin:${PATH}');
 		lines.push(renderGitHubCliStableAptInstallCommand());
 	}
 	if (props.base === 'tool-vm' || props.directNpmPackages.length > 0) {
@@ -203,8 +217,23 @@ function renderManagedDockerfile(props: {
 	for (const copy of props.overlay.copy) {
 		lines.push(`COPY overlay/${copy.from} ${copy.to}`);
 	}
+	if (props.base === 'tool-vm' && props.portalSdkPackageSpec !== undefined) {
+		const version = props.portalSdkPackageSpec.slice(props.portalSdkPackageSpec.lastIndexOf('@') + 1);
+		const localWheel = props.overlay.copy.find((copy) => /agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(copy.from));
+		lines.push('RUN uv pip install --python /opt/agent-vm-tools/bin/python ' + shellJoin([localWheel?.to ?? `agent-vm-agent-portal-sdk==${version}`]));
+		if (!hasLocalAgentVmPackageOverlay(props.overlay)) {
+			lines.push('RUN pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts ' + shellJoin([props.portalSdkPackageSpec]));
+		}
+	}
 	for (const command of props.overlay.runAfterBase) {
 		lines.push(`RUN ${command}`);
+	}
+	if (props.base === 'tool-vm') {
+		const packageRoot = hasLocalAgentVmPackageOverlay(props.overlay) ? '/opt/agent-vm/local-packages' : '/opt/agent-vm/portal-packages';
+		const toolPortalExecutable = `${packageRoot}/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js`;
+		lines.push(
+			`RUN ln -sfnT ${packageRoot}/node_modules /node_modules && test -x ${toolPortalExecutable} && test "$(head -n 1 ${toolPortalExecutable})" = "#!/usr/bin/env node" && ln -sfn ${toolPortalExecutable} /pnpm/tool-portal`,
+		);
 	}
 	lines.push('');
 	return lines.join('\n');
@@ -248,6 +277,7 @@ export async function generateManagedDockerfile(
 		options.base === 'tool-vm' && !usesLocalAgentVmPackageOverlay
 			? await resolveManagedPackageSpec(managedMcpPortalPackageName)
 			: undefined;
+	const portalSdkPackageSpec = options.base === 'tool-vm' ? await resolveManagedPackageSpec('@agent-vm/agent-portal-sdk') : undefined;
 	const mcpPortalPackagePlan =
 		options.base === 'tool-vm' && usesLocalAgentVmPackageOverlay
 			? ({
@@ -277,6 +307,18 @@ export async function generateManagedDockerfile(
 		await fs.copyFile(sourcePath, targetPath);
 	}
 	const dockerfilePath = path.join(options.outputDirectory, 'Dockerfile');
+	if (options.base === 'tool-vm') {
+		await fs.writeFile(
+			path.join(options.outputDirectory, managedToolPortalGuideFileName),
+			managedToolPortalGuide,
+			'utf8',
+		);
+		await fs.writeFile(
+			path.join(options.outputDirectory, managedToolVmLoginProfileFileName),
+			managedToolVmLoginProfile,
+			'utf8',
+		);
+	}
 	await fs.writeFile(
 		dockerfilePath,
 		renderManagedDockerfile({
@@ -284,6 +326,7 @@ export async function generateManagedDockerfile(
 			baseImage,
 			directNpmPackages,
 			...(mcpPortalPackageSpec === undefined ? {} : { mcpPortalPackageSpec }),
+			...(portalSdkPackageSpec === undefined ? {} : { portalSdkPackageSpec }),
 			overlay,
 		}),
 		'utf8',

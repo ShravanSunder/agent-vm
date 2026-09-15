@@ -125,6 +125,15 @@ function createStandaloneBackend(): {
 	readonly port: ToolPortalStandaloneMcpBackendPort;
 } {
 	const callInvocations: Parameters<ToolPortalStandaloneMcpBackendPort['call']>[] = [];
+	const capabilitySummary = {
+		description: 'Fixture capability for github.',
+		descriptionTruncated: false,
+		input: { optional: [], propertyCount: 0, required: [], type: 'object' as const },
+		name: 'get_issue',
+		namespace: 'github',
+		safety: {},
+		toolRef: 'github:get_issue',
+	};
 	const port = {
 		backendKind: 'mcp_provider',
 		call: async (request, options): Promise<PortalCallResult> => {
@@ -168,7 +177,7 @@ function createStandaloneBackend(): {
 			items: request.requests.map(({ id }) => ({
 				id,
 				status: 'ok',
-				value: { namespaces: ['github'], tools: [] },
+				value: { namespaces: ['github'], tools: [capabilitySummary] },
 			})),
 			ok: true,
 		}),

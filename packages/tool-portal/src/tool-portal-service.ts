@@ -18,6 +18,7 @@ import {
 	PortalSearchResultSchema,
 	type PortalSearchRequest,
 	type PortalSearchResult,
+	type SafeDiagnostic,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
@@ -60,6 +61,7 @@ import {
 	type OAuthToolRequirement,
 } from '@agent-vm/oauth-broker-contracts';
 
+import { prepareManagedCatalogDefinitions } from './managed-catalog-preparation.js';
 import type {
 	StandaloneToolPortalApprovalArmResult,
 	StandaloneToolPortalApprovalCoordinator,
@@ -199,7 +201,7 @@ export interface ToolPortalOAuthAvailabilityPort {
 	}) => Promise<OAuthToolAvailabilityBatchResult>;
 }
 
-export interface ToolPortalCapabilityCore<TMode extends ToolPortalServiceMode = 'managed'> {
+export type ToolPortalCapabilityCore<TMode extends ToolPortalServiceMode = 'managed'> = {
 	readonly semanticSnapshot: ToolPortalSemanticSnapshot<TMode>;
 	readonly call: (
 		request: PortalCallRequest,
@@ -217,7 +219,24 @@ export interface ToolPortalCapabilityCore<TMode extends ToolPortalServiceMode = 
 		request: PortalSearchRequest,
 		options: ToolPortalInvocationOptionsForMode<TMode>,
 	) => Promise<PortalSearchResult>;
+} & (TMode extends 'managed'
+	? {
+			readonly prepareCatalog: (
+				options: ToolPortalInvocationOptionsForMode<'managed'>,
+			) => Promise<ToolPortalCatalogPreparationResult>;
+		}
+	: {});
+
+export interface ToolPortalCatalogDefinition {
+	readonly description: string;
+	readonly inputSchema: Readonly<Record<string, import('@agent-vm/agent-portal-sdk').JsonValue>>;
+	readonly name: string;
+	readonly namespace: string;
 }
+
+export type ToolPortalCatalogPreparationResult =
+	| { readonly kind: 'complete'; readonly tools: readonly ToolPortalCatalogDefinition[] }
+	| { readonly diagnostics: readonly SafeDiagnostic[]; readonly kind: 'incomplete' };
 
 export interface ToolPortalService<TMode extends ToolPortalServiceMode> {
 	readonly capabilityCore: ToolPortalCapabilityCore<TMode>;
@@ -921,6 +940,13 @@ export function createManagedToolPortalCapabilityCore(
 								},
 							},
 				),
+			});
+		},
+		prepareCatalog: async (options) => {
+			const invocation = invocationState(options);
+			return await prepareManagedCatalogDefinitions({
+				entries: invocation.entries,
+				operationOptions: invocation.operationOptions,
 			});
 		},
 		search: async (request, options) => {

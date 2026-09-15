@@ -57,6 +57,7 @@ function deriveManagedAgentProjectionInput(props: {
 		.toSorted((left, right) => compareUnicodeCodePointStrings(left.namespace, right.namespace));
 	return {
 		...props.frameworkAgentProjection,
+		toolPortalCatalogMode: profile.catalogMode ?? 'compact',
 		toolPortalNamespaces,
 	};
 }

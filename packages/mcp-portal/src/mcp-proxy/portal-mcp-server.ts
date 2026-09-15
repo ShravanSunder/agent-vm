@@ -13,6 +13,7 @@ import type {
 	PortalCoreToolDescriptor,
 	PortalCoreResult,
 	PortalCoreToolName,
+	PreparedPortalCatalog,
 } from '../core/portal-core.js';
 import { portalToolInputSchemas } from '../core/portal-tools.js';
 import { redactThrownError } from '../upstream-response-middleware.js';
@@ -27,6 +28,9 @@ export const portalMcpToolNames = [
 export type PortalMcpToolName = (typeof portalMcpToolNames)[number];
 
 const portalMcpToolNameSet = new Set<string>(portalMcpToolNames);
+const standalonePortalApprovalMetaKey = 'agent-vm/tool-portal-approval-token';
+
+export type PortalCatalogMode = 'catalog' | 'compact';
 
 function isPortalCoreToolName(value: string): value is PortalCoreToolName {
 	return portalMcpToolNameSet.has(value);
@@ -191,32 +195,72 @@ export async function emitMcpProgress(props: {
 }
 
 export function createPortalMcpServer(props: {
+	readonly catalog?: PreparedPortalCatalog;
+	readonly catalogMode?: PortalCatalogMode;
 	readonly core: PortalCore;
 	readonly scope: PortalAgentScope;
 }): Server {
+	const catalogMode = props.catalogMode ?? 'compact';
+	if (catalogMode === 'catalog' && props.catalog === undefined) {
+		throw new Error('Catalog mode requires a complete prepared MCP Portal catalog.');
+	}
+	const catalogToolsByName = new Map(
+		(props.catalog?.tools ?? []).map((tool) => [tool.descriptor.name, tool]),
+	);
 	const server = new Server(
 		{ name: 'mcp-portal', version: '1.0.0' },
 		{ capabilities: { tools: { listChanged: false } } },
 	);
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools: listPortalMcpTools(props.core.describeTools(props.scope)),
+		tools:
+			catalogMode === 'catalog'
+				? (props.catalog?.tools.map((tool) => tool.descriptor) ?? [])
+				: listPortalMcpTools(props.core.describeTools(props.scope)),
 	}));
 
 	server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-		if (!isPortalCoreToolName(request.params.name)) {
+		const catalogTool = catalogToolsByName.get(request.params.name);
+		if (catalogMode === 'compact' && !isPortalCoreToolName(request.params.name)) {
 			return {
 				content: [{ text: `Unknown MCP Portal tool: ${request.params.name}`, type: 'text' }],
 				isError: true,
 			};
 		}
+		if (catalogMode === 'catalog' && catalogTool === undefined) {
+			return {
+				content: [
+					{ text: `Unknown MCP Portal catalog tool: ${request.params.name}`, type: 'text' },
+				],
+				isError: true,
+			};
+		}
 		try {
+			const coreToolName: PortalCoreToolName =
+				catalogTool === undefined && isPortalCoreToolName(request.params.name)
+					? request.params.name
+					: 'mcp_portal_call';
+			const approvalToken = request.params['_meta']?.[standalonePortalApprovalMetaKey];
+			const input =
+				catalogTool === undefined
+					? (request.params.arguments ?? {})
+					: {
+							calls: [
+								{
+									arguments: request.params.arguments ?? {},
+									id: 'catalog-call',
+									namespace: catalogTool.namespace,
+									toolName: catalogTool.toolName,
+								},
+							],
+							...(typeof approvalToken === 'string' ? { portalApprovalToken: approvalToken } : {}),
+						};
 			const result = await props.core.collectPortalCoreResult(
 				props.core.callStream({
-					input: request.params.arguments ?? {},
+					input,
 					scope: props.scope,
 					signal: extra.signal,
-					toolName: request.params.name,
+					toolName: coreToolName,
 				}),
 				{
 					onEvent: async (event) => {

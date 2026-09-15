@@ -502,6 +502,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				managedPluginAttachment: {
 					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
+					gatewayEpoch: 'gateway-epoch-a',
 					projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 				},
 				semanticSnapshot,
@@ -571,6 +572,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 			expect(Object.keys(composition).toSorted()).toEqual([
 				'artifactStore',
 				'capabilityCore',
+				'preparedCatalogSourceCache',
 				'privateUdsProjection',
 				'registerArtifactAuthority',
 				'retireArtifactAuthority',
@@ -675,6 +677,7 @@ describe('Gateway runtime managed Tool Portal production composition', () => {
 				managedPluginAttachment: {
 					clientKind: 'hermes-managed-plugin',
 					configuredAgentIds: ['agent-a'],
+					gatewayEpoch: 'gateway-epoch-a',
 					projectionCohortDigest: semanticSnapshot.projectionCohortDigest,
 				},
 				semanticSnapshot,

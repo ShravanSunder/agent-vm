@@ -1,0 +1,12 @@
+{
+	"caseId": "catalog-prepare-request-accepted",
+	"expectation": {
+		"canonicalJson": "{}",
+		"kind": "accepted",
+		"normalized": {},
+		"refinementIdentities": []
+	},
+	"input": {},
+	"schemaId": "portal.catalog.prepare-request",
+	"tags": ["catalog", "accepted"]
+}

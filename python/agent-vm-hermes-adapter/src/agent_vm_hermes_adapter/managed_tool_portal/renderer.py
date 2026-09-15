@@ -1,7 +1,10 @@
 """Deterministic bounded renderer for the managed Tool Portal orientation."""
 
+import typing as t
+
 from agent_vm_agent_portal_sdk import encode_canonical_json
 
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import PreparedCatalogManifest
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     NamespaceInventory,
     OrientationRenderFailure,
@@ -11,26 +14,28 @@ from agent_vm_hermes_adapter.managed_tool_portal.models import (
 MAX_ORIENTATION_UTF8_BYTES = 2_000
 MAX_DISPLAYED_NAMESPACE_COUNT = 20
 
-_ORIENTATION_INTRODUCTION = (
-    "Tool Portal exposes profile-authorized capabilities and operation files:"
-)
+_ORIENTATION_INTRODUCTION = "Profile-authorized Portal tools:"
 _OPERATION_LINES = (
-    "- tool_portal_list: List authorized capabilities and compact summaries.",
-    "- tool_portal_search: Search authorized capabilities by intent.",
-    "- tool_portal_describe: Retrieve exact schemas for selected capabilities.",
-    "- tool_portal_call: Validate and call an authorized capability.",
-    "- tool_portal_file: Explicitly attach a selected file to the current conversation.",
+    "- tool_portal_list, tool_portal_search, tool_portal_describe, tool_portal_call, "
+    "tool_portal_file.",
+)
+_CATALOG_OPERATION_LINES = (
+    "- Profile-authorized capabilities are registered as individual native tools; "
+    "tool_portal_file remains available for attachment delivery.",
+)
+_COMPOSITION_LINES = (
+    "Python connect_tool_portal(), TypeScript connectToolPortal(), and "
+    "tool-portal CLI auto-connect "
+    "for the active foreground invocation; endpoint expires afterward.",
+    "Inspect/compose; wait for human approval. Uncertain transport: do not replay "
+    "uncertain effects. Guide: /agent-vm/tool-portal.md",
 )
 _WORKFLOW_LINE = (
-    "Workflow: list or search, describe the exact capability schema, then call it.\n"
-    "For admitted file-producing Gog commands, specify a relative --out or --out-dir; "
-    "The command runs inside its operation folder. "
-    "Use the actual reported filename or list that folder. "
-    "File inputs are relative to /work in your Tool VM, not a terminal's changed cwd. "
-    "Published /agent-vm/files paths are read-only and open with ordinary file tools. "
-    "They expire at expiresAtMs or when this Tool VM closes, whichever comes first. "
-    "Reads do not extend the one-hour lifetime; copy wanted files into /workspace before expiry. "
-    "Check exitCode separately: file availability does not prove Gog succeeded."
+    "Workflow: discover, describe, call, inspect.\n"
+    "Gog files: relative --out/--out-dir uses an operation folder; use reported names or "
+    "list it. Inputs start at /work, not terminal cwd. /agent-vm/files is read-only to ordinary "
+    "tools; expiresAtMs or Tool VM close ends access; reads do not extend one hour. Copy to "
+    "/workspace; check exitCode—a file does not prove success."
 )
 
 
@@ -45,11 +50,13 @@ def _candidate_orientation(
     *,
     displayed_count: int,
     displayed_tool_counts: tuple[int, ...],
+    catalog_mode: t.Literal["compact", "catalog"],
 ) -> str:
     total_count = len(inventory.namespaces)
     omitted_count = total_count - displayed_count
     sorted_namespaces = tuple(sorted(inventory.namespaces, key=lambda item: item.namespace))
-    lines = [_ORIENTATION_INTRODUCTION, *_OPERATION_LINES]
+    operation_lines = _CATALOG_OPERATION_LINES if catalog_mode == "catalog" else _OPERATION_LINES
+    lines = [_ORIENTATION_INTRODUCTION, *operation_lines, *_COMPOSITION_LINES]
     lines.append(
         f"Namespace availability for this profile (showing {displayed_count} of {total_count}):"
     )
@@ -68,11 +75,18 @@ def _candidate_orientation(
                     if tool.description is not None:
                         lines.append(f"    {_orientation_child_text(tool.description)}")
             if displayed_tool_count < len(item.tools) or item.has_more_tools:
-                lines.append("  Additional tools are available through list/search.")
+                lines.append(
+                    "  Additional tools are available through "
+                    + ("SDK or CLI discovery." if catalog_mode == "catalog" else "list/search.")
+                )
     if omitted_count > 0:
         lines.append(
-            f"{omitted_count} namespace names omitted; use tool_portal_list "
-            "or tool_portal_search to discover them."
+            f"{omitted_count} namespace names omitted; use "
+            + (
+                "SDK or CLI discovery to inspect them."
+                if catalog_mode == "catalog"
+                else "tool_portal_list or tool_portal_search to discover them."
+            )
         )
     lines.append(_WORKFLOW_LINE)
     return "\n".join(lines)
@@ -82,6 +96,7 @@ def render_orientation(
     inventory: NamespaceInventory,
     *,
     max_utf8_bytes: int = MAX_ORIENTATION_UTF8_BYTES,
+    catalog_mode: t.Literal["compact", "catalog"] = "compact",
 ) -> RenderedOrientation | OrientationRenderFailure:
     """Render the greatest complete namespace prefix within the byte budget."""
     if max_utf8_bytes < 1:
@@ -95,6 +110,7 @@ def render_orientation(
             inventory,
             displayed_count=displayed_count,
             displayed_tool_counts=(0,) * displayed_count,
+            catalog_mode=catalog_mode,
         )
         utf8_byte_count = len(orientation.encode("utf-8"))
         if utf8_byte_count <= max_utf8_bytes:
@@ -104,22 +120,35 @@ def render_orientation(
     if selected_displayed_count is not None:
         displayed_tool_counts = [0] * selected_displayed_count
         sorted_namespaces = tuple(sorted(inventory.namespaces, key=lambda item: item.namespace))
-        for namespace_index, namespace in enumerate(sorted_namespaces[:selected_displayed_count]):
-            for tool_count in range(1, len(namespace.tools) + 1):
+        displayed_namespaces = sorted_namespaces[:selected_displayed_count]
+        blocked_namespace_indexes: set[int] = set()
+        maximum_tool_count = max(
+            (len(namespace.tools) for namespace in displayed_namespaces),
+            default=0,
+        )
+        for tool_index in range(maximum_tool_count):
+            for namespace_index, namespace in enumerate(displayed_namespaces):
+                if namespace_index in blocked_namespace_indexes or tool_index >= len(
+                    namespace.tools
+                ):
+                    continue
                 candidate_counts = list(displayed_tool_counts)
-                candidate_counts[namespace_index] = tool_count
+                candidate_counts[namespace_index] = tool_index + 1
                 candidate = _candidate_orientation(
                     inventory,
                     displayed_count=selected_displayed_count,
                     displayed_tool_counts=tuple(candidate_counts),
+                    catalog_mode=catalog_mode,
                 )
                 if len(candidate.encode("utf-8")) > max_utf8_bytes:
-                    break
+                    blocked_namespace_indexes.add(namespace_index)
+                    continue
                 displayed_tool_counts = candidate_counts
         orientation = _candidate_orientation(
             inventory,
             displayed_count=selected_displayed_count,
             displayed_tool_counts=tuple(displayed_tool_counts),
+            catalog_mode=catalog_mode,
         )
         return RenderedOrientation(
             inventory_id=inventory.inventory_id,
@@ -134,6 +163,7 @@ def render_orientation(
         inventory,
         displayed_count=0,
         displayed_tool_counts=(),
+        catalog_mode=catalog_mode,
     )
     return OrientationRenderFailure(
         inventory_id=inventory.inventory_id,
@@ -141,3 +171,75 @@ def render_orientation(
         total_count=total_count,
         omitted_count=total_count,
     )
+
+
+def render_catalog_guidance(
+    inventory: NamespaceInventory,
+    manifest: PreparedCatalogManifest,
+    *,
+    changed_fingerprint: bool,
+    catalog_mode: t.Literal["compact", "catalog"] = "compact",
+) -> str:
+    """Fit the largest complete static-import prefix after essential guidance."""
+    del changed_fingerprint
+    publication_root = f"/run/agent-vm/tool-portal-sdk/{manifest.definition_fingerprint}"
+    import_lines = tuple(
+        (
+            f"- import {{ {namespace.exported_factory_name} }} from "
+            f"'{publication_root}/{namespace.module_path}';"
+        )
+        for namespace in manifest.namespaces
+    )
+    if catalog_mode == "compact":
+        compact_orientation = render_orientation(inventory, catalog_mode="compact")
+        if not isinstance(compact_orientation, RenderedOrientation):
+            raise RuntimeError("Essential compact Tool Portal guidance exceeds its byte budget.")
+        for displayed_import_count in range(len(import_lines), -1, -1):
+            omitted_import_count = len(import_lines) - displayed_import_count
+            suffix_lines = [
+                "Generated Tool Portal TypeScript imports for this Gateway epoch:",
+                "- import { connectToolPortal } from '@agent-vm/agent-portal-sdk';",
+                *import_lines[:displayed_import_count],
+                *(
+                    (
+                        f"- {omitted_import_count} namespace imports omitted; read the complete "
+                        "local manifest before choosing another static import.",
+                    )
+                    if omitted_import_count > 0
+                    else ()
+                ),
+                f"- Complete manifest: {publication_root}/manifest.json",
+            ]
+            candidate = f"{compact_orientation.orientation}\n{'\n'.join(suffix_lines)}"
+            if len(candidate.encode("utf-8")) <= MAX_ORIENTATION_UTF8_BYTES:
+                return candidate
+        return compact_orientation.orientation
+
+    for displayed_import_count in range(len(import_lines), -1, -1):
+        omitted_import_count = len(import_lines) - displayed_import_count
+        guidance_lines = [
+            "Generated Tool Portal TypeScript imports for this Gateway epoch:",
+            "- import { connectToolPortal } from '@agent-vm/agent-portal-sdk';",
+            *import_lines[:displayed_import_count],
+            *(
+                (
+                    f"- {omitted_import_count} namespace imports omitted; read the complete "
+                    "local manifest before choosing another static import.",
+                )
+                if omitted_import_count > 0
+                else ()
+            ),
+            f"- Complete manifest: {publication_root}/manifest.json",
+        ]
+        guidance = "\n".join(guidance_lines)
+        remaining_bytes = MAX_ORIENTATION_UTF8_BYTES - len(guidance.encode("utf-8")) - 1
+        if remaining_bytes < 1:
+            continue
+        rendered = render_orientation(
+            inventory,
+            max_utf8_bytes=remaining_bytes,
+            catalog_mode=catalog_mode,
+        )
+        if isinstance(rendered, RenderedOrientation):
+            return f"{rendered.orientation}\n{guidance}"
+    raise RuntimeError("Essential generated Tool Portal guidance exceeds its byte budget.")

@@ -138,6 +138,7 @@ import {
 } from './managed-gateway-runtime-input-builders.js';
 import {
 	preflightMcpPortalEffectiveConfig,
+	type ManagedVmImageSelection,
 	writeMcpPortalEffectiveConfig,
 } from './mcp-portal-effective-config.js';
 
@@ -1082,6 +1083,7 @@ function applyRuntimeMcpPortalMaterialization(props: {
 async function buildRuntimeMcpPortalMaterialization(props: {
 	readonly controlSessionMaterial: GatewayControlSessionMaterial | undefined;
 	readonly generatedDir: string;
+	readonly managedVmImageSelections: readonly ManagedVmImageSelection[];
 	readonly managedVmImages: GatewayManagerDependencies['managedVmImages'];
 	readonly mode: 'preflight' | 'write';
 	readonly secretResolver: StartGatewayZoneOptions['secretResolver'];
@@ -1104,6 +1106,7 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		approvalAccessConfigured: zone.approvalAccess !== undefined,
 		authoredConfigDir: zone.toolPortal.configDir,
 		effectiveHostConfigDir,
+		managedVmImageSelections: props.managedVmImageSelections,
 		managedVmImages: props.managedVmImages,
 		sharedImageCacheDir: props.sharedImageCacheDir,
 		allowedRawEnvSecretNames: [],
@@ -1165,6 +1168,22 @@ async function buildRuntimeMcpPortalMaterialization(props: {
 		mode: 'runtime',
 		portalAdmission,
 	};
+}
+
+function configuredToolVmImageSelections(options: {
+	readonly generatedDir: string;
+	readonly systemConfig: StartGatewayZoneOptions['systemConfig'];
+}): readonly ManagedVmImageSelection[] {
+	return Object.entries(options.systemConfig.imageProfiles.toolVms).map(
+		([profileName, imageProfile]) => ({
+			recipePath: imageProfile.buildConfig,
+			selectionRecordPath: configuredImageSelectionRecordPath({
+				deploymentGeneratedDir: options.generatedDir,
+				family: 'toolVm',
+				profileName,
+			}),
+		}),
+	);
 }
 
 async function buildGatewayImageForZone(
@@ -1250,6 +1269,10 @@ async function preflightGatewayZoneStartPrerequisites(
 		buildRuntimeMcpPortalMaterialization({
 			controlSessionMaterial,
 			generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
+			managedVmImageSelections: configuredToolVmImageSelections({
+				generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
+				systemConfig: options.systemConfig,
+			}),
 			managedVmImages: dependencies.managedVmImages,
 			mode: 'preflight',
 			secretResolver: cachingSecretResolver.resolver,
@@ -1429,6 +1452,10 @@ async function startGatewayZoneImplementation(
 			await buildRuntimeMcpPortalMaterialization({
 				controlSessionMaterial,
 				generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
+				managedVmImageSelections: configuredToolVmImageSelections({
+					generatedDir: deploymentGeneratedDirForStorageRoot(options.systemConfig.storageRootDir),
+					systemConfig: options.systemConfig,
+				}),
 				managedVmImages: dependencies.managedVmImages,
 				mode: 'write',
 				secretResolver: startupSecretResolver,

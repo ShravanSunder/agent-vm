@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/agent-portal-sdk",
-	"version": "0.0.150",
+	"version": "0.0.151",
 	"description": "Portal-neutral Zod contracts and helpers for agent-facing capability surfaces.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -25,6 +25,10 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
+		"./generated-tools": {
+			"types": "./dist/generated-tools/index.d.ts",
+			"import": "./dist/generated-tools/index.js"
+		},
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"

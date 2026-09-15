@@ -17,6 +17,8 @@ import {
 	SandboxOperationControlResultSchema,
 	SandboxBinaryChunkSchema,
 	SandboxProcessStartRequestSchema,
+	SandboxStreamReadRequestSchema,
+	SandboxStreamWriteRequestSchema,
 	SandboxStreamHandleSchema,
 	SandboxWorkRelativePathSchema,
 } from './index.js';
@@ -108,6 +110,54 @@ describe('canonical Agent Portal contracts', () => {
 		};
 
 		expect(schema.parse(request)).toEqual(request);
+	});
+
+	it('defaults process starts to standard I/O and admits only the fixed relay profile', () => {
+		const standardRequest = {
+			command: 'cat',
+			environment: environmentHandle,
+			maxRuntimeMs: 1_000,
+			retainOutputBytes: 1_024,
+		};
+		const relayRequest = { ...standardRequest, ioProfile: 'portal-relay' as const };
+
+		expect(SandboxProcessStartRequestSchema.parse(standardRequest)).toEqual(standardRequest);
+		expect(SandboxProcessStartRequestSchema.parse(relayRequest)).toEqual(relayRequest);
+		expect(
+			SandboxProcessStartRequestSchema.safeParse({ ...standardRequest, ioProfile: 'unbounded' })
+				.success,
+		).toBe(false);
+	});
+
+	it('admits relay acknowledgments and bounded waits without requiring them for standard calls', () => {
+		const stream = {
+			channel: 'stdin' as const,
+			handleId: 'stream-1',
+			kind: 'stream' as const,
+			owningGeneration: 'generation-1',
+		};
+		const content = { byteLength: 0, contentBase64: '', encoding: 'base64' as const };
+		const contentDigest = `sha256:${'0'.repeat(64)}`;
+
+		expect(
+			SandboxStreamWriteRequestSchema.parse({ content, contentDigest, sequence: 0, stream }),
+		).not.toHaveProperty('acknowledgedThrough');
+		expect(
+			SandboxStreamWriteRequestSchema.parse({
+				acknowledgedThrough: -1,
+				content,
+				contentDigest,
+				sequence: 0,
+				stream,
+			}),
+		).toHaveProperty('acknowledgedThrough', -1);
+		expect(
+			SandboxStreamReadRequestSchema.parse({
+				maxBytes: 64 * 1_024,
+				stream: { ...stream, channel: 'stdout' },
+				waitMs: 250,
+			}),
+		).toHaveProperty('waitMs', 250);
 	});
 
 	it.each([

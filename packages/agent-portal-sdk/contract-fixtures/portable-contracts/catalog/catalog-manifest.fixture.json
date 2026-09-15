@@ -1,0 +1,28 @@
+{
+	"caseId": "catalog-manifest-accepted",
+	"expectation": {
+		"canonicalJson": "{\"bundleByteLength\":1,\"bundleSha256\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"definitionFingerprint\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"files\":[],\"generatorVersion\":\"1\",\"namespaces\":[],\"sdkContractVersion\":\"1\"}",
+		"kind": "accepted",
+		"normalized": {
+			"bundleByteLength": 1,
+			"bundleSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"files": [],
+			"generatorVersion": "1",
+			"namespaces": [],
+			"sdkContractVersion": "1"
+		},
+		"refinementIdentities": ["sandbox.path.work-relative"]
+	},
+	"input": {
+		"bundleByteLength": 1,
+		"bundleSha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"files": [],
+		"generatorVersion": "1",
+		"namespaces": [],
+		"sdkContractVersion": "1"
+	},
+	"schemaId": "portal.catalog.manifest",
+	"tags": ["catalog", "accepted"]
+}

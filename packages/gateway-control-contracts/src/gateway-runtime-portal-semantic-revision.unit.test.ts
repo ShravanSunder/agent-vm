@@ -175,6 +175,7 @@ describe('Gateway Runtime portal semantic revision', () => {
 				frameworkIdentity: { kind: 'hermes' as const, profileName: 'renamed' },
 			},
 			{ ...baselineInput, toolPortalProfileId: 'reviewer-profile' },
+			{ ...baselineInput, toolPortalCatalogMode: 'catalog' as const },
 		]) {
 			const revision = deriveManagedAgentProjection(changedProjection).profileAssignmentRevision;
 			expect(revision).not.toBe(baselineProjection.profileAssignmentRevision);

@@ -40,6 +40,12 @@ export interface GatewayRuntimeControlCommandRequest {
 	readonly expiresAtMs?: number;
 	readonly idempotencyKey?: string;
 	readonly message: GatewayRuntimeControlCommand;
+	readonly onAdmissionReceipt?: (receipt: {
+		readonly acceptedSession: GatewayControlAcceptedSession;
+		readonly messageId: string;
+	}) => void;
+	readonly requiredAcceptedSession?: GatewayControlAcceptedSession;
+	readonly signal?: AbortSignal;
 }
 
 export interface GatewayRuntimeControlCommandResponse {
@@ -130,6 +136,16 @@ export function createGatewayRuntimeControlCommandClient(
 					commandResultTimeoutMs:
 						request.commandResultTimeoutMs ??
 						gatewayControlCommandExecutionTimeoutMsByOperation[message.operation],
+					...(request.onAdmissionReceipt === undefined
+						? {}
+						: {
+								onAdmissionReceipt: (session: GatewayControlAcceptedSession): void =>
+									request.onAdmissionReceipt?.({ acceptedSession: session, messageId }),
+							}),
+					...(request.requiredAcceptedSession === undefined
+						? {}
+						: { requiredAcceptedSession: request.requiredAcceptedSession }),
+					...(request.signal === undefined ? {} : { signal: request.signal }),
 				},
 			);
 			if (acceptedSession === undefined) {

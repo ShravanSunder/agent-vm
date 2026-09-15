@@ -1,5 +1,7 @@
 import type { z } from 'zod';
 
+export * from '../catalog-surface/index.js';
+
 import {
 	SandboxRetainedResultLookupRequestSchema,
 	SandboxRetainedResultLookupResultSchema,

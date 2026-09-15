@@ -1,6 +1,6 @@
 {
 	"name": "@agent-vm/mcp-portal",
-	"version": "0.0.150",
+	"version": "0.0.151",
 	"description": "Agent-scoped MCP Portal server and TypeScript helpers for composable upstream MCP tools.",
 	"homepage": "https://github.com/ShravanSunder/agent-vm#readme",
 	"bugs": {
@@ -23,6 +23,10 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
+		"./catalog-typescript": {
+			"types": "./dist/catalog-typescript/index.d.ts",
+			"import": "./dist/catalog-typescript/index.js"
+		},
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
@@ -87,6 +91,8 @@
 		"@optique/run": "^1.2.0",
 		"@optique/zod": "^1.2.0",
 		"hono": "4.12.34",
+		"json-schema-to-typescript": "16.0.0",
+		"typescript": "6.0.3",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

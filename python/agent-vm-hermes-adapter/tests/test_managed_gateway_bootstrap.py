@@ -30,6 +30,11 @@ from agent_vm_hermes_adapter.managed_profile_adapter import (
     HermesManagedAdapterConfig,
 )
 from agent_vm_hermes_adapter.managed_tool_portal.cache import PluginStateCache
+from agent_vm_hermes_adapter.managed_tool_portal.catalog import (
+    ManagedCatalogCoordinator,
+    ManagedCatalogTurnBindings,
+)
+from agent_vm_hermes_adapter.managed_tool_portal.hermes_hooks import RegisteredMiddleware
 from agent_vm_hermes_adapter.managed_tool_portal.models import (
     EvictionReason,
     InjectionCacheKey,
@@ -226,7 +231,16 @@ class FakeTerminalToolModule:
 class FakeHermesPluginContext:
     def __init__(self) -> None:
         self.registered_hook_names: list[str] = []
+        self.registered_middleware_names: list[str] = []
         self.registered_tool_names: list[str] = []
+
+    def register_middleware(
+        self,
+        middleware_name: str,
+        callback: RegisteredMiddleware,
+    ) -> None:
+        del callback
+        self.registered_middleware_names.append(middleware_name)
 
     def register_hook(
         self,
@@ -273,6 +287,7 @@ class FakeManagedEnvironment:
         self.cleanup_calls = 0
         self.cleanup_error: Exception | None = None
         self.retired = False
+        self.execute_calls: list[tuple[str, dict[str, object]]] = []
 
     def bind_cache_identity(self, cache_identity: str) -> None:
         self.bound_cache_identity = cache_identity
@@ -292,7 +307,7 @@ class FakeManagedEnvironment:
         self.retired = True
 
     def execute(self, command: str, **kwargs: object) -> dict[str, object]:
-        del command, kwargs
+        self.execute_calls.append((command, dict(kwargs)))
         return {"output": "", "returncode": 0}
 
 
@@ -897,6 +912,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 os.environ,
                 {
                     "TERMINAL_ENV": "local",
+                    "TERMINAL_CWD": "/previous/gateway/cwd",
                     "TERMINAL_SSH_HOST": "previous-host",
                     "TERMINAL_SSH_USER": "previous-user",
                 },
@@ -929,6 +945,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             hooks.install()
             try:
                 self.assertEqual(os.environ["TERMINAL_ENV"], "ssh")
+                self.assertEqual(os.environ["TERMINAL_CWD"], "/work")
                 self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "managed-tool-vm.invalid")
                 self.assertEqual(os.environ["TERMINAL_SSH_USER"], "agent-vm-managed")
                 result = stock_terminal_tool.terminal_tool(
@@ -942,6 +959,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter.close(disconnect_gateway_runtime=False)
 
             self.assertEqual(os.environ["TERMINAL_ENV"], "local")
+            self.assertEqual(os.environ["TERMINAL_CWD"], "/previous/gateway/cwd")
             self.assertEqual(os.environ["TERMINAL_SSH_HOST"], "previous-host")
             self.assertEqual(os.environ["TERMINAL_SSH_USER"], "previous-user")
 
@@ -999,6 +1017,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter.close(disconnect_gateway_runtime=False)
 
         self.assertEqual(json.loads(result)["exit_code"], 0)
+        self.assertEqual(len(managed_environment.execute_calls), 1)
+        command, execute_options = managed_environment.execute_calls[0]
+        self.assertEqual(command, "printf managed")
+        self.assertEqual(execute_options["cwd"], "/work")
         local_environment.assert_not_called()
         ssh_environment.assert_not_called()
 
@@ -1423,6 +1445,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
                 injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
                 gateway_epoch: str,
+                catalog_coordinator: ManagedCatalogCoordinator,
+                catalog_turn_bindings: ManagedCatalogTurnBindings,
             ) -> None:
                 events.append("managed-runtime")
                 original_configure(
@@ -1432,6 +1456,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     inventory_coordinator=inventory_coordinator,
                     injection_state_cache=injection_state_cache,
                     gateway_epoch=gateway_epoch,
+                    catalog_coordinator=catalog_coordinator,
+                    catalog_turn_bindings=catalog_turn_bindings,
                 )
 
             with (
@@ -1546,6 +1572,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             inventory_coordinator: managed_gateway_bootstrap.InventoryCoordinator,
             injection_state_cache: PluginStateCache[InjectionCacheKey, InjectionMarker],
             gateway_epoch: str,
+            catalog_coordinator: ManagedCatalogCoordinator,
+            catalog_turn_bindings: ManagedCatalogTurnBindings,
         ) -> None:
             events.append("configure")
             original_configure(
@@ -1555,6 +1583,8 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 inventory_coordinator=inventory_coordinator,
                 injection_state_cache=injection_state_cache,
                 gateway_epoch=gateway_epoch,
+                catalog_coordinator=catalog_coordinator,
+                catalog_turn_bindings=catalog_turn_bindings,
             )
 
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -5,6 +5,7 @@ export default defineConfig({
 	dts: true,
 	entry: [
 		'src/index.ts',
+		'src/catalog-typescript/index.ts',
 		'src/core/index.ts',
 		'src/mcp-proxy/index.ts',
 		'src/mcp-provider-backend/index.ts',
