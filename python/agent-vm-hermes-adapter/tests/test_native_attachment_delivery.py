@@ -59,7 +59,7 @@ class Gateway:
     def _is_user_authorized(self, _source: object) -> bool:
         return True
 
-    def _adapter_for_source(self, _source: object) -> Adapter:
+    def _delivery_adapter_for(self, _source: object) -> Adapter:
         return self.adapter
 
     def _session_key_for_source(self, _source: object) -> str:

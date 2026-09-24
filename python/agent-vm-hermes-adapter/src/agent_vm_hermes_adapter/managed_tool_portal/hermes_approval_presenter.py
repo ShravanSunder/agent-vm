@@ -41,7 +41,7 @@ class HermesApprovalSessionStore(t.Protocol):
 
 @t.runtime_checkable
 class HermesApprovalGateway(t.Protocol):
-    def _adapter_for_source(
+    def _delivery_adapter_for(
         self,
         source: HermesApprovalSessionSource,
     ) -> HermesApprovalPlatformAdapter | None: ...
@@ -137,7 +137,7 @@ class HermesGatewayApprovalRouteStore:
         if not gateway._is_user_authorized(source):
             self._observe_capture("actor-not-authorized")
             return None
-        adapter = gateway._adapter_for_source(source)
+        adapter = gateway._delivery_adapter_for(source)
         if adapter is None:
             self._observe_capture("adapter-unavailable")
             return None

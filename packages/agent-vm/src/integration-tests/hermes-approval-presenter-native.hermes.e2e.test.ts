@@ -35,6 +35,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter impor
 )
 from gateway.config import PlatformConfig
 from gateway.platforms.api_server import APIServerAdapter
+from gateway.run import GatewayRunner
 from gateway.session_context import clear_session_vars, set_session_vars
 from pydantic import BaseModel
 from tools.approval import register_gateway_notify, unregister_gateway_notify
@@ -87,7 +88,7 @@ class Gateway:
         self.adapter = adapter
         self.authorized = authorized
 
-    def _adapter_for_source(self, source):
+    def _delivery_adapter_for(self, source):
         assert source is source_fixture
         return self.adapter
 
@@ -124,6 +125,7 @@ def presentation_request(challenge_id):
 
 
 source_fixture = Source()
+assert callable(getattr(GatewayRunner, "_delivery_adapter_for", None))
 adapter = Adapter()
 routes = HermesGatewayApprovalRouteStore()
 gateway_loop = asyncio.new_event_loop()

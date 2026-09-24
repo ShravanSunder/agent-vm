@@ -225,7 +225,7 @@ class _Gateway:
     def _is_user_authorized(self, source: object) -> bool:
         return source is _SOURCE
 
-    def _adapter_for_source(self, source: object) -> DiscordAdapter | None:
+    def _delivery_adapter_for(self, source: object) -> DiscordAdapter | None:
         return self._sender if source is _SOURCE else None
 
     def _session_key_for_source(self, source: object) -> str:

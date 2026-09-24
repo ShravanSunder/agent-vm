@@ -68,7 +68,7 @@ class FakeGateway:
         self.adapter = FakeAdapter()
         self.authorized = authorized
 
-    def _adapter_for_source(self, source: object) -> FakeAdapter | None:
+    def _delivery_adapter_for(self, source: object) -> FakeAdapter | None:
         del source
         return self.adapter
 
