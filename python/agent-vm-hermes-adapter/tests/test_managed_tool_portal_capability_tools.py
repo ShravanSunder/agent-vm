@@ -807,6 +807,7 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
 
         self.assertEqual(json.loads(result)["items"][0]["value"], {"effectCount": 1})
         self.assertIn(("present", "bridge-entered"), telemetry.approval_observations)
+        self.assertIn(("initial-call", "approval-required"), telemetry.approval_observations)
         self.assertEqual(len(client.portal.calls), 2)
         self.assertEqual(
             [call[0]["calls"] for call in client.portal.calls],
@@ -887,7 +888,96 @@ class ManagedToolPortalCapabilityToolsTests(unittest.TestCase):
             adapter.close(disconnect_gateway_runtime=False)
 
         self.assertEqual(json.loads(result)["items"][0]["error"]["code"], "provider_unavailable")
+        self.assertIn(("initial-call", "approval-required"), telemetry.approval_observations)
         self.assertIn(("present", "bridge-entered"), telemetry.approval_observations)
+
+    def test_initial_portal_call_result_diagnostic_is_closed_and_content_free(self) -> None:
+        secret_canary = "sensitive portal failure message"
+        for status, expected_reason, result_value in (
+            (
+                "ok",
+                "ok",
+                {
+                    "items": [
+                        {
+                            "id": "call-canary",
+                            "operationId": "operation-canary",
+                            "outcome": {
+                                "certainty": "proven",
+                                "completion": "succeeded",
+                                "kind": "completed",
+                                "retryClass": "forbidden",
+                            },
+                            "owningGeneration": "generation-canary",
+                            "status": "ok",
+                            "value": {"message": secret_canary},
+                        }
+                    ],
+                    "ok": True,
+                },
+            ),
+            (
+                "error",
+                "error-timeout",
+                {
+                    "items": [
+                        {
+                            "error": {"code": "timeout", "message": secret_canary},
+                            "id": "call-canary",
+                            "operationId": "operation-canary",
+                            "outcome": {
+                                "certainty": "proven",
+                                "kind": "not-dispatched",
+                                "retryClass": "safe-before-dispatch",
+                            },
+                            "owningGeneration": "generation-canary",
+                            "status": "error",
+                        }
+                    ],
+                    "ok": False,
+                },
+            ),
+        ):
+            with self.subTest(status=status):
+                client = FakeGatewayRuntimeClient()
+                adapter = HermesManagedAdapter(
+                    config=HermesManagedAdapterConfig(
+                        profiles=(build_projection(agent_id="researcher"),),
+                        projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                        protected_hermes_home="/home/hermes/.hermes",
+                    ),
+                    gateway_runtime_client=client,
+                )
+                projection = adapter.projection_for_profile("researcher")
+                telemetry = FakeToolOperationTelemetry()
+                configure_plugin_for_profile(adapter, [projection], telemetry)
+                context = FakeHermesPluginContext()
+                register(context)
+                typed_result = portable_model("portal.call.result", result_value)
+
+                async def return_result(
+                    _request: dict[str, object],
+                    *,
+                    trusted_context: dict[str, object],
+                ) -> BaseModel:
+                    del trusted_context
+                    return typed_result
+
+                try:
+                    with patch.object(client.portal, "call", new=return_result):
+                        serialized_result = context.handler_for("tool_portal_call")(
+                            valid_request_for("tool_portal_call")
+                        )
+                finally:
+                    adapter.close(disconnect_gateway_runtime=False)
+                    clear_managed_tool_portal_plugin_configuration()
+
+                self.assertEqual(json.loads(serialized_result), result_value)
+                self.assertIn(
+                    ("initial-call", expected_reason),
+                    telemetry.approval_observations,
+                )
+                self.assertNotIn(secret_canary, repr(telemetry.approval_observations))
 
     def test_denied_native_presentation_records_zero_retry_effects(self) -> None:
         client = ApprovalJourneyGatewayRuntimeClient()

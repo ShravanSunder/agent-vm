@@ -1,5 +1,7 @@
 import asyncio
-from unittest.mock import patch
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
@@ -10,6 +12,35 @@ from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter impor
     HermesGatewayApprovalRoute,
     HermesGatewayApprovalRouteStore,
 )
+
+
+class FakeClarifyGatewayModule(ModuleType):
+    def __init__(self, *, response: str | None) -> None:
+        super().__init__("tools.clarify_gateway")
+        self.registered_ids: list[str] = []
+        self.pending_ids: set[str] = set()
+        self.wait_timeouts: list[float] = []
+        self.response = response
+
+    def register(
+        self,
+        clarify_id: str,
+        session_key: str,
+        question: str,
+        choices: list[str] | None,
+        multi_select: bool = False,
+    ) -> None:
+        del session_key, question, choices, multi_select
+        self.registered_ids.append(clarify_id)
+        self.pending_ids.add(clarify_id)
+
+    def resolve_gateway_clarify(self, clarify_id: str, _response: str) -> bool:
+        return clarify_id in self.pending_ids
+
+    def wait_for_response(self, clarify_id: str, timeout: float) -> str | None:
+        self.wait_timeouts.append(timeout)
+        self.pending_ids.discard(clarify_id)
+        return self.response
 
 
 class FakeSource:
@@ -71,13 +102,13 @@ class RaisingApprovalDiagnostics:
         raise RuntimeError("secret-shaped diagnostics failure")
 
 
-def _presentation_request() -> BaseModel:
+def _presentation_request(*, expires_at: str = "2099-08-20T21:00:00.000Z") -> BaseModel:
     request = PORTABLE_CONTRACT_ADAPTERS["gateway.approval.presentation-request"].validate_python(
         {
             "allowedDecisions": ["approve", "deny"],
             "challengeId": "11111111-1111-4111-8111-111111111111",
             "display": {"argumentsPreview": '{"path":"README.md"}'},
-            "expiresAt": "2099-08-20T21:00:00.000Z",
+            "expiresAt": expires_at,
             "itemId": "call-a",
             "name": "write",
             "namespace": "files",
@@ -173,6 +204,83 @@ def test_presenter_is_unavailable_without_the_originating_session_route() -> Non
         ("present", "presenter-entered"),
         ("present", "presenter-missing"),
     ]
+
+
+def test_expired_challenge_cancels_without_registering_or_sending_native_clarify() -> None:
+    routes = HermesGatewayApprovalRouteStore()
+    clarify_module = FakeClarifyGatewayModule(response=None)
+
+    async def exercise() -> BaseModel:
+        captured = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=FakeSource(profile="researcher"),
+        )
+        assert captured is not None
+        presenter = HermesGatewayApprovalPresenter(routes)
+        return await presenter.present(
+            "session-a",
+            _presentation_request(expires_at="2000-01-01T00:00:00.000Z"),
+        )
+
+    with (
+        patch.dict(sys.modules, {"tools.clarify_gateway": clarify_module}),
+        patch.object(
+            FakeAdapter,
+            "send_clarify",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(success=True),
+        ) as send_clarify,
+    ):
+        outcome = asyncio.run(exercise())
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "cancelled",
+        "reason": "challenge-expired",
+    }
+    assert clarify_module.registered_ids == []
+    assert clarify_module.pending_ids == set()
+    assert clarify_module.wait_timeouts == []
+    send_clarify.assert_not_called()
+
+
+def test_challenge_expiring_during_send_cleans_entry_without_using_native_response() -> None:
+    routes = HermesGatewayApprovalRouteStore()
+    clarify_module = FakeClarifyGatewayModule(response="Approve")
+
+    async def exercise() -> BaseModel:
+        captured = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=FakeSource(profile="researcher"),
+        )
+        assert captured is not None
+        presenter = HermesGatewayApprovalPresenter(routes)
+        return await presenter.present("session-a", _presentation_request())
+
+    with (
+        patch.dict(sys.modules, {"tools.clarify_gateway": clarify_module}),
+        patch.object(
+            FakeAdapter,
+            "send_clarify",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(success=True),
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_remaining_timeout_seconds",
+            side_effect=[1.0, 0.0, 0.0],
+        ),
+    ):
+        outcome = asyncio.run(exercise())
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "cancelled",
+        "reason": "challenge-expired",
+    }
+    assert len(clarify_module.registered_ids) == 1
+    assert clarify_module.pending_ids == set()
+    assert clarify_module.wait_timeouts == [1]
 
 
 def test_pre_observation_exceptions_keep_the_same_failure_and_only_static_diagnostics() -> None:

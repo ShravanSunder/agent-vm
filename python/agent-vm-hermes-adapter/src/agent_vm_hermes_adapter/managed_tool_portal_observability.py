@@ -483,6 +483,22 @@ def _safe_approval_presentation(
             "session-ended",
             "user-cancelled",
         },
+        "initial-call": {
+            "approval-required",
+            "error-approval-required",
+            "error-cancelled",
+            "error-capability-denied",
+            "error-execution-failed",
+            "error-invalid-request",
+            "error-not-authorized",
+            "error-not-found",
+            "error-other",
+            "error-provider-unavailable",
+            "error-timeout",
+            "error-validation-failed",
+            "ok",
+            "other",
+        },
     }
     if not isinstance(operation, str) or not isinstance(reason, str):
         return None

@@ -226,10 +226,32 @@ def _remaining_timeout_seconds(expires_at: object) -> float:
     return max(0.0, (expiry - dt.datetime.now(dt.UTC)).total_seconds())
 
 
+def _is_api_server_run() -> bool:
+    try:
+        from gateway.session_context import get_session_env
+    except ModuleNotFoundError:
+        return False
+    return get_session_env("HERMES_SESSION_PLATFORM", "") == "api_server"
+
+
+def _wait_for_api_run_response(request: dict[str, object]) -> str:
+    from tools.approval import request_elicitation_consent
+
+    question = _presentation_question(request)
+    return request_elicitation_consent(
+        question,
+        question,
+        surface="agent-vm-tool-portal",
+    )
+
+
 def _send_and_wait_for_native_response(
     route: HermesGatewayApprovalRoute,
     request: dict[str, object],
 ) -> str | None:
+    if _remaining_timeout_seconds(request.get("expiresAt")) <= 0:
+        return None
+
     from tools.clarify_gateway import (
         register,
         resolve_gateway_clarify,
@@ -263,9 +285,14 @@ def _send_and_wait_for_native_response(
         _ = resolve_gateway_clarify(clarify_id, "")
         _ = wait_for_response(clarify_id, 1)
         return None
+    remaining_timeout_seconds = _remaining_timeout_seconds(request.get("expiresAt"))
+    if remaining_timeout_seconds <= 0:
+        _ = resolve_gateway_clarify(clarify_id, "")
+        _ = wait_for_response(clarify_id, 1)
+        return None
     return wait_for_response(
         clarify_id,
-        _remaining_timeout_seconds(request.get("expiresAt")),
+        remaining_timeout_seconds,
     )
 
 
@@ -275,6 +302,33 @@ class HermesGatewayApprovalPresenter:
 
     async def present(self, session_id: str, request: BaseModel) -> BaseModel:
         self._routes.observe_presentation("presenter-entered")
+        if _is_api_server_run():
+            request_mapping = request.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            )
+            if not isinstance(request_mapping, dict):
+                raise TypeError("Hermes approval request did not produce a JSON object.")
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
+            response = await asyncio.to_thread(_wait_for_api_run_response, request_mapping)
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
+            if response == "accept":
+                self._routes.observe_presentation("approved")
+                return _approval_outcome({"kind": "approved"})
+            if response == "decline":
+                self._routes.observe_presentation("denied")
+                return _approval_outcome({"kind": "denied"})
+            self._routes.observe_presentation("user-cancelled")
+            return _approval_outcome({"kind": "cancelled", "reason": "user-cancelled"})
         try:
             route = self._routes.read_by_session_id(session_id)
         except Exception:
@@ -304,6 +358,11 @@ class HermesGatewayApprovalPresenter:
             self._routes.observe_presentation("native-send-raised")
             raise
         if response is None:
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
             self._routes.observe_presentation("presentation-failed")
             return _approval_outcome(
                 {"kind": "unavailable", "reason": "presentation-failed"},

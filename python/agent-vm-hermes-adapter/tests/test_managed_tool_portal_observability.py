@@ -320,8 +320,20 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
             "native-send-raised",
         ):
             telemetry.observe_approval_presentation(operation="present", reason=reason)
+        for reason in (
+            "approval-required",
+            "error-timeout",
+            "error-other",
+            "ok",
+            "other",
+        ):
+            telemetry.observe_approval_presentation(operation="initial-call", reason=reason)
         telemetry.observe_approval_presentation(
             operation=secret_canary,
+            reason=secret_canary,
+        )
+        telemetry.observe_approval_presentation(
+            operation="initial-call",
             reason=secret_canary,
         )
 
@@ -332,6 +344,11 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
             ("present", "route-lookup-raised"),
             ("present", "request-encoding-raised"),
             ("present", "native-send-raised"),
+            ("initial-call", "approval-required"),
+            ("initial-call", "error-timeout"),
+            ("initial-call", "error-other"),
+            ("initial-call", "ok"),
+            ("initial-call", "other"),
         )
         expected_attributes = [
             {

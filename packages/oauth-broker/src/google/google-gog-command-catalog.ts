@@ -264,6 +264,9 @@ const descriptors: readonly GogCommandDescriptorInput[] = [
 		effects: ['read', 'write'],
 		minimum: 2,
 		maximum: 2,
+		// Pinned gogcli refuses destructive deletion without this root confirmation flag
+		// in a noninteractive Tool VM. The account's Write policy still owns Ask/Allow.
+		flags: [{ name: '--force', aliases: [], kind: 'switch', required: true }],
 	}),
 	operation({
 		path: ['contacts', 'list'],

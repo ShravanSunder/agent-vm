@@ -42,6 +42,7 @@ function canonicalHttpsOriginSchema(
 		.min(1)
 		.max(2048)
 		.refine((value) => {
+			if (!/^https:\/\/[^/?#\\\s]+\/?$/iu.test(value)) return false;
 			try {
 				const url = new URL(value);
 				return (

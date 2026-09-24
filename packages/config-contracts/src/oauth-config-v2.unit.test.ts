@@ -96,7 +96,11 @@ describe('OAuth version-3 ownership and application configuration', () => {
 			'https://unrelated.example.net:18900',
 			'https://user@unrelated.example.net',
 			'https://unrelated.example.net/path',
+			'https://unrelated.example.net/a/..',
+			'https://unrelated.example.net/%2e',
 			'https://unrelated.example.net/?query=yes',
+			'https://unrelated.example.net/?',
+			'https://unrelated.example.net/#',
 		]) {
 			expect(
 				oauthConfigSchema.safeParse({

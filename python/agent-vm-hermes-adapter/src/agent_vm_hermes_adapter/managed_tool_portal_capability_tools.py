@@ -67,6 +67,18 @@ _REQUEST_SCHEMA_ID_BY_TOOL_NAME: dict[ManagedToolName, str] = {
     "tool_portal_describe": "portal.describe.request",
     "tool_portal_call": "portal.call.request",
 }
+_PORTAL_CALL_ERROR_DIAGNOSTIC_REASONS = {
+    "invalid_request": "error-invalid-request",
+    "not_found": "error-not-found",
+    "not_authorized": "error-not-authorized",
+    "approval_required": "error-approval-required",
+    "capability_denied": "error-capability-denied",
+    "validation_failed": "error-validation-failed",
+    "provider_unavailable": "error-provider-unavailable",
+    "execution_failed": "error-execution-failed",
+    "cancelled": "error-cancelled",
+    "timeout": "error-timeout",
+}
 
 
 class _ManagedToolPortalPluginRuntime:
@@ -188,6 +200,38 @@ def _result_requires_approval(result: BaseModel) -> bool:
     )
 
 
+def _initial_portal_call_result_reason(result: BaseModel) -> str:
+    items = _safe_model_dump(result).get("items")
+    if not isinstance(items, list):
+        return "other"
+    if any(isinstance(item, dict) and item.get("status") == "approval_required" for item in items):
+        return "approval-required"
+    for item in items:
+        if not isinstance(item, dict) or item.get("status") != "error":
+            continue
+        error = item.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        if not isinstance(code, str):
+            return "error-other"
+        return _PORTAL_CALL_ERROR_DIAGNOSTIC_REASONS.get(code, "error-other")
+    if items and all(isinstance(item, dict) and item.get("status") == "ok" for item in items):
+        return "ok"
+    return "other"
+
+
+def _observe_initial_portal_call_result(
+    runtime: _ManagedToolPortalPluginRuntime,
+    result: BaseModel,
+) -> None:
+    try:
+        runtime.telemetry.observe_approval_presentation(
+            operation="initial-call",
+            reason=_initial_portal_call_result_reason(result),
+        )
+    except Exception:
+        pass
+
+
 def _invoke(
     runtime: _ManagedToolPortalPluginRuntime,
     tool_name: ManagedToolName,
@@ -236,6 +280,7 @@ def _invoke(
                     trusted_context=trusted_context,
                 )
             )
+            _observe_initial_portal_call_result(runtime, initial_result)
             if not _result_requires_approval(initial_result):
                 return _result_json(initial_result)
             runtime.approval_routes.observe_presentation("bridge-entered")
@@ -326,6 +371,7 @@ class _CatalogToolHandler:
             initial_result = self._runtime.adapter.run_gateway_runtime_coroutine(
                 client.portal.call(request, trusted_context=trusted_context)
             )
+            _observe_initial_portal_call_result(self._runtime, initial_result)
             if not _result_requires_approval(initial_result):
                 return _result_json(initial_result)
             self._runtime.approval_routes.observe_presentation("bridge-entered")
