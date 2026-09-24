@@ -1,5 +1,5 @@
 {
-	// Pair this illustrative document with oauth-v2.config.jsonc. The two agents
+	// Pair this illustrative document with oauth-v3.config.jsonc. The two agents
 	// use complete profiles with the same commands but different defaults. Accounts
 	// remain independent; applications reference the sibling OAuth registrations.
 	"schemaVersion": 1,

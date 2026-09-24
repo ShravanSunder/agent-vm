@@ -155,7 +155,6 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 			},
 			keyEncryptionKey: wrappingKey,
 			keyEncryptionKeyVersion: 1,
-			verifySession: async (identity) => ({ kind: 'verified', identity }),
 			containPolicyMaterial: async () => 'contained',
 			isAdmissionOpen: () => true,
 		});
@@ -415,11 +414,12 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 			},
 		}).services;
 		const preview = await fixture.policyService.previewPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: opened.contextId,
 			browserBindingSecret: opened.browserBindingSecret,
 			csrfToken: opened.csrfToken,
 			identity: facadeIdentity,
-			origin: 'https://auth.claw.askluna.xyz:18900',
+			origin: 'https://permissions.example.test',
 			expectedConfigRevision: 'config-1',
 			expectedOverrideRevision: opened.view.snapshot.overrideRevision,
 			services,
@@ -427,11 +427,12 @@ describe('real broker, account policy, Portal preflight and durable approvals', 
 		if (preview.kind !== 'preview') throw new Error('Expected preview.');
 		expect(
 			await fixture.policyService.confirmPolicyChange({
+				authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 				contextId: preview.contextId,
 				browserBindingSecret: opened.browserBindingSecret,
 				csrfToken: preview.csrfToken,
 				identity: facadeIdentity,
-				origin: 'https://auth.claw.askluna.xyz:18900',
+				origin: 'https://permissions.example.test',
 			}),
 		).toMatchObject({ kind: 'applied' });
 	}

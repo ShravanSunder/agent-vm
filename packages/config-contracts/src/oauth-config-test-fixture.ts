@@ -24,31 +24,25 @@ function createGoogleApplicationConfig(
 const syntheticConfig = {
 	browser: {
 		identity: {
-			kind: 'clerk' as const,
+			kind: 'cloudflare-access' as const,
 			issuer: 'https://identity.example.test',
-			fixedLoginReturnOrigin: 'https://auth.claw.askluna.xyz:18900',
-			hostedSignInUrl: 'https://identity.example.test/sign-in',
-			publishableKey: `pk_test_${Buffer.from('identity.example.test$').toString('base64')}`,
-			secretKey: { ref: 'op://agent-vm-testing/clerk/secret-key', source: '1password' as const },
+			audience: 'synthetic-access-application',
 		},
 		listener: {
-			certificatePath: '/tmp/oauth-test/tls.crt',
-			kind: 'tailscale_https' as const,
-			port: 18900 as const,
-			privateKeyPath: '/tmp/oauth-test/tls.key',
+			kind: 'loopback_http' as const,
+			port: 18_900,
 		},
-		network: { admittedTailnetLogins: ['network-person@example.test'] },
-		publicBaseUrl: 'https://auth.claw.askluna.xyz:18900',
+		publicBaseUrl: 'https://permissions.example.test',
 	},
 	owners: {
 		owner: {
 			label: 'Test owner',
-			clerkUserId: 'user_test_owner',
+			subject: 'user_test_owner',
 			allowedAgentIds: ['sun', 'ember'],
 		},
 	},
 	policyEditors: {
-		editor: { clerkUserId: 'user_test_owner', editableAgentIds: ['sun', 'ember'] },
+		editor: { subject: 'user_test_owner', editableAgentIds: ['sun', 'ember'] },
 	},
 	providers: {
 		google: {
@@ -63,7 +57,7 @@ const syntheticConfig = {
 			projects: { 'synthetic-project': { publishingStatus: 'testing' as const } },
 		},
 	},
-	schemaVersion: 2 as const,
+	schemaVersion: 3 as const,
 	storage: {
 		keyEncryptionKey: {
 			ref: 'op://agent-vm-testing/oauth/wrapping-key',

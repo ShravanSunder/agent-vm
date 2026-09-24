@@ -1749,9 +1749,12 @@ async function startControllerRuntimeWithOwnershipLock(
 		);
 		const oauthRuntimeToStart = preparedOAuthRuntime;
 		if (oauthRuntimeToStart !== undefined) {
-			await runTaskStep(`OAuth HTTPS on :${oauthRuntimeToStart.port}`, async () => {
-				oauthServerRef.current = await oauthRuntimeToStart.startHttpsListener();
-			});
+			await runTaskStep(
+				`OAuth loopback HTTP on 127.0.0.1:${oauthRuntimeToStart.port}`,
+				async () => {
+					oauthServerRef.current = await oauthRuntimeToStart.startHttpListener();
+				},
+			);
 		}
 	} catch (error) {
 		try {

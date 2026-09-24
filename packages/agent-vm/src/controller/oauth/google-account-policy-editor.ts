@@ -14,7 +14,6 @@ import {
 	oauthApplicationIdSchema,
 	oauthBrowserSessionIdentitySchema,
 	type GoogleAccountPolicySnapshot,
-	type OAuthBrowserIdentityVerification,
 	type OAuthBrowserSessionIdentity,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
@@ -35,6 +34,7 @@ const editorOpenSchema = z
 const opaqueSecretSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
 const editorFormSchema = z
 	.object({
+		authenticationExpiresAtMs: z.number().int().positive(),
 		contextId: opaqueSecretSchema,
 		browserBindingSecret: opaqueSecretSchema,
 		csrfToken: opaqueSecretSchema,
@@ -115,14 +115,12 @@ export interface GoogleAccountPolicyEditor {
 }
 export interface GoogleAccountPolicyEditorProps {
 	readonly runAuthorityCommit?: <TResult>(commit: () => TResult) => Promise<TResult>;
+	readonly isAdmissionOpen: () => boolean;
 	readonly catalog: OAuthCredentialCatalog;
 	readonly readAccountPolicyView: GooglePermissionPolicyService['readAccountPolicyView'];
 	readonly keyEncryptionKey: OAuthKeyEncryptionKey;
 	readonly keyEncryptionKeyVersion: number;
 	readonly websiteOrigin: string;
-	readonly verifySession: (
-		identity: OAuthBrowserSessionIdentity,
-	) => Promise<OAuthBrowserIdentityVerification>;
 	readonly containPolicyMaterial: (
 		target: GooglePolicyContainmentTarget,
 	) => Promise<'contained' | 'pending' | 'failed'>;
@@ -188,14 +186,6 @@ export function createGoogleAccountPolicyEditor(
 			keyEncryptionKey: props.keyEncryptionKey,
 			keyEncryptionKeyVersion: props.keyEncryptionKeyVersion,
 		});
-	const verifiedSession = async (identity: OAuthBrowserSessionIdentity): Promise<boolean> => {
-		try {
-			const result = await props.verifySession(identity);
-			return result.kind === 'verified' && isDeepStrictEqual(result.identity, identity);
-		} catch {
-			return false;
-		}
-	};
 	const prune = (): void => {
 		for (const [id, context] of contexts) if (context.expiresAtMs <= now()) contexts.delete(id);
 	};
@@ -259,7 +249,7 @@ export function createGoogleAccountPolicyEditor(
 				phase: 'checking',
 			};
 			contexts.set(contextId, context);
-			if (!(await verifiedSession(parsed.data.identity)) || contexts.get(contextId) !== context) {
+			if (contexts.get(contextId) !== context) {
 				contexts.delete(contextId);
 				return { kind: 'denied' };
 			}
@@ -285,10 +275,6 @@ export function createGoogleAccountPolicyEditor(
 			const context = matchingContext(input);
 			if (context === undefined || context.phase !== 'editing') return { kind: 'denied' };
 			context.phase = 'checking';
-			if (!(await verifiedSession(input.identity))) {
-				contexts.delete(input.contextId);
-				return { kind: 'denied' };
-			}
 			if (contexts.get(input.contextId) !== context) return { kind: 'denied' };
 			const view = currentView(context);
 			if (view.kind !== 'ready') {
@@ -331,10 +317,6 @@ export function createGoogleAccountPolicyEditor(
 			)
 				return { kind: 'denied' };
 			context.phase = 'checking';
-			if (!(await verifiedSession(input.identity))) {
-				contexts.delete(input.contextId);
-				return { kind: 'denied' };
-			}
 			if (contexts.get(input.contextId) !== context) return { kind: 'denied' };
 			contexts.delete(input.contextId);
 			const view = currentView(context);
@@ -353,17 +335,33 @@ export function createGoogleAccountPolicyEditor(
 			});
 			let saved: ReturnType<OAuthCredentialCatalog['saveAccountPolicy']>;
 			try {
-				const commit = (): ReturnType<OAuthCredentialCatalog['saveAccountPolicy']> =>
-					props.catalog.saveAccountPolicy({
-						before,
-						after,
-						envelope: encrypt(after),
-						expectedDefaultsRevision: view.defaultsRevision,
-					});
-				saved =
+				const commit = ():
+					| { readonly kind: 'admission-closed' }
+					| { readonly kind: 'expired' }
+					| {
+							readonly kind: 'saved';
+							readonly result: ReturnType<OAuthCredentialCatalog['saveAccountPolicy']>;
+					  } => {
+					if (!props.isAdmissionOpen()) return { kind: 'admission-closed' };
+					if (input.authenticationExpiresAtMs <= now() || context.expiresAtMs <= now())
+						return { kind: 'expired' };
+					return {
+						kind: 'saved',
+						result: props.catalog.saveAccountPolicy({
+							before,
+							after,
+							envelope: encrypt(after),
+							expectedDefaultsRevision: view.defaultsRevision,
+						}),
+					};
+				};
+				const attempt =
 					props.runAuthorityCommit === undefined
 						? commit()
 						: await props.runAuthorityCommit(commit);
+				if (attempt.kind === 'admission-closed') return { kind: 'denied' };
+				if (attempt.kind === 'expired') return { kind: 'expired' };
+				saved = attempt.result;
 			} catch {
 				return { kind: 'unavailable' };
 			}

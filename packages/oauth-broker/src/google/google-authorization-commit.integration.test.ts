@@ -51,6 +51,8 @@ describe('confirmed Google authorization commit', () => {
 		readonly committer: ReturnType<typeof createGoogleAuthorizationCommitter>;
 		readonly containAuthorizationMaterial: Mock<ContainmentCallback>;
 		readonly fixture: ReturnType<typeof createCallbackTestFixture>;
+		readonly authorityGate: { beforeCommit?: (() => void) | undefined };
+		readonly now: { value: number };
 		readonly session: Extract<
 			OAuthCompletionSession<GoogleProviderAuthorization>,
 			{ kind: 'committing' }
@@ -98,7 +100,13 @@ describe('confirmed Google authorization commit', () => {
 		const containAuthorizationMaterial = vi.fn<ContainmentCallback>(
 			async () => props.containment ?? 'contained',
 		);
+		const now = { value: 1_000 };
+		const authorityGate: { beforeCommit?: (() => void) | undefined } = {};
 		const committer = createGoogleAuthorizationCommitter({
+			runAuthorityCommit: async (commit) => {
+				authorityGate.beforeCommit?.();
+				return commit();
+			},
 			catalog,
 			config: fixture.config,
 			configRevision: 'test-config',
@@ -121,18 +129,29 @@ describe('confirmed Google authorization commit', () => {
 			}),
 			keyEncryptionKey: wrappingKey,
 			keyEncryptionKeyVersion: 1,
-			now: () => 1_000,
+			now: () => now.value,
 			isAdmissionOpen: () => true,
 			containAuthorizationMaterial,
 		});
-		return { committer, containAuthorizationMaterial, fixture, session: claim.session };
+		return {
+			committer,
+			containAuthorizationMaterial,
+			fixture,
+			authorityGate,
+			now,
+			session: claim.session,
+		};
 	}
 
 	it('joins real callback confirmation to an independently encrypted grant, inherit policy and history', async () => {
 		// Arrange
 		const { committer, session, containAuthorizationMaterial } = await arrange();
 		// Act
-		const result = await committer.commitConfirmedGrant({ session, accountAlias: 'My mailbox' });
+		const result = await committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 1_000_000,
+			session,
+			accountAlias: 'My mailbox',
+		});
 		// Assert
 		expect(result.kind).toBe('committed');
 		if (result.kind !== 'committed') throw new Error('Expected committed authorization.');
@@ -150,9 +169,15 @@ describe('confirmed Google authorization commit', () => {
 		expect(catalog.getPolicy(authorization.authorizationId)?.state).toBe('active');
 		expect(catalog.listAuthorizationHistory(authorization.authorizationId)).toHaveLength(2);
 		expect(containAuthorizationMaterial).not.toHaveBeenCalled();
-		expect((await committer.commitConfirmedGrant({ session, accountAlias: 'changed' })).kind).toBe(
-			'duplicate-authorization',
-		);
+		expect(
+			(
+				await committer.commitConfirmedGrant({
+					authenticationExpiresAtMs: 1_000_000,
+					session,
+					accountAlias: 'changed',
+				})
+			).kind,
+		).toBe('duplicate-authorization');
 	});
 
 	it('commits two agents for one account with distinct credentials and provider payloads', async () => {
@@ -161,10 +186,12 @@ describe('confirmed Google authorization commit', () => {
 		const second = await arrange({ agentId: 'ember' });
 		// Act
 		const sun = await first.committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 1_000_000,
 			session: first.session,
 			accountAlias: 'Sun mailbox',
 		});
 		const ember = await second.committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 1_000_000,
 			session: second.session,
 			accountAlias: 'Ember mailbox',
 		});
@@ -196,6 +223,7 @@ describe('confirmed Google authorization commit', () => {
 			const beforePolicy = catalog.getPolicy(existing.authorizationId);
 			// Act
 			const result = await committer.commitConfirmedGrant({
+				authenticationExpiresAtMs: 1_000_000,
 				session,
 				accountAlias: 'Updated alias',
 			});
@@ -241,7 +269,11 @@ describe('confirmed Google authorization commit', () => {
 			return 'contained';
 		});
 		// Act
-		const result = await committer.commitConfirmedGrant({ session, accountAlias: 'My mailbox' });
+		const result = await committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 1_000_000,
+			session,
+			accountAlias: 'My mailbox',
+		});
 		// Assert
 		expect(result.kind).toBe('stale-authorization');
 		expect(catalog.getAuthorization(existing.authorizationId)?.accessState).toBe('disconnecting');
@@ -271,6 +303,7 @@ describe('confirmed Google authorization commit', () => {
 				};
 			// Act
 			const result = await committer.commitConfirmedGrant({
+				authenticationExpiresAtMs: 1_000_000,
 				session: candidate,
 				accountAlias: 'My mailbox',
 			});
@@ -281,4 +314,38 @@ describe('confirmed Google authorization commit', () => {
 			);
 		},
 	);
+
+	it('returns authorization denial without committing when authentication expires inside the authority lock', async () => {
+		const input = await arrange();
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = 200_001;
+		};
+
+		const result = await input.committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 200_000,
+			session: input.session,
+			accountAlias: 'My mailbox',
+		});
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(catalog.listAuthorizationsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+		expect(input.containAuthorizationMaterial).not.toHaveBeenCalled();
+	});
+
+	it('returns authorization denial without committing when the completion context expires inside the authority lock', async () => {
+		const input = await arrange();
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = input.session.expiresAtMs;
+		};
+
+		const result = await input.committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 1_000_000,
+			session: input.session,
+			accountAlias: 'My mailbox',
+		});
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(catalog.listAuthorizationsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+		expect(input.containAuthorizationMaterial).not.toHaveBeenCalled();
+	});
 });

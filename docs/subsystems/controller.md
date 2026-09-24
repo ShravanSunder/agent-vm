@@ -68,10 +68,10 @@ untrusted code.
 ```
 
 When one selected Hermes zone has `oauth.config.jsonc`, startup also opens and
-validates that zone's version-2 controller-only OAuth catalog, resolves its
-1Password KEK and Google Web clients, prepares Clerk human-session verification
-and the account-specific Google policy defaults, verifies tailscaled LocalAPI,
-binds the controller API, and then binds direct tailnet HTTPS on `18900` before
+validates that zone's version-3 controller-only OAuth catalog, resolves its
+1Password KEK and Google Web clients, prepares Cloudflare Access assertion verification
+and the account-specific Google policy defaults, binds the controller API, and then
+binds the permissions website to configured loopback HTTP before
 admitting the Gateway. Known legacy or unknown nonempty catalogs fail with an
 explicit offline-cutover requirement before any write migration. Failure closes
 both listeners and the catalog before the ownership lock is released.
@@ -95,7 +95,7 @@ both listeners and the catalog before the ownership lock is released.
 The `stopController` operation (exposed via `POST /stop-controller`) follows the same sequence but triggers the HTTP server close on a 100ms delay so the response can flush before the socket drops.
 
 OAuth-enabled shutdown first invalidates pending browser ceremonies and closes the
-tailnet HTTPS listener. Credentialed runtimes and zones are then contained before
+loopback HTTP listener behind the Access-protected public HTTPS Tunnel. Credentialed runtimes and zones are then contained before
 the SQLite catalog closes. Both shutdown entry points own that order.
 
 Offline cleanup is the broken-controller path. `agent-vm controller cleanup --config <system-config> --zone <zone>` first acquires the same deployment-wide ownership lock held for the controller's full lifetime, then refuses to run while the configured controller health endpoint is reachable. `--force` skips only that advisory health probe; it never bypasses the ownership lock or exact-evidence validation. The lock is mutual exclusion, not destruction evidence.
@@ -160,7 +160,7 @@ for the full ownership, admission, credential-memory, COW, and retirement model.
 For managed Google calls, the controller resolves the trusted agent, opaque
 account, application, finite Gog command effects, authenticated account override,
 active config defaults, current authorization, scopes, and exact approval binding
-again before dispatch. The browser uses Clerk only for verified human identity;
+again before dispatch. The browser uses Cloudflare Access only for verified human identity;
 Google credentials remain controller-owned. `oauth_authorization.disconnect` is a
 local, owner-confirmed fence and containment flow, not provider revocation.
 

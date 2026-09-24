@@ -25,8 +25,7 @@ const providerGrantSchema = z
 type ProviderGrant = z.infer<typeof providerGrantSchema>;
 const identity = {
 	issuer: 'https://identity.example.test',
-	userId: 'test-owner',
-	sessionId: 'test-session',
+	subject: 'test-owner',
 };
 
 function requireCreatedCompletion(
@@ -75,7 +74,7 @@ function createAuthorizingTransaction(
 			'gmail-app': ['gmail.read'],
 		}),
 		confirmedScopes: [oauthScopeSchema.parse('gmail.readonly')],
-		redirectUri: 'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
+		redirectUri: 'https://permissions.example.test/oauth/google/callback',
 		remainingApplications: [],
 		transactionId: boundTransaction.transactionId,
 	});
@@ -101,7 +100,7 @@ describe('OAuth transaction store', () => {
 	});
 
 	it.each([
-		['identity', { identity: { ...identity, userId: 'another-owner' } }, 'identity-mismatch'],
+		['identity', { identity: { ...identity, subject: 'another-owner' } }, 'identity-mismatch'],
 		['state', { oauthState: 'z'.repeat(43) }, 'invalid-state'],
 		[
 			'redirect',

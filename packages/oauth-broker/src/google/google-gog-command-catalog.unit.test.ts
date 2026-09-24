@@ -143,6 +143,30 @@ describe('pinned Google Gog command inventory', () => {
 		});
 	});
 
+	it('requires pinned gogcli noninteractive confirmation for Calendar event deletion', () => {
+		expect(
+			resolveGoogleGogOperation(['calendar', 'delete', 'primary', 'event-id', '--force']),
+		).toMatchObject({
+			kind: 'oauth',
+			operationId: 'calendar.delete',
+			requirements: [{ serviceId: 'calendar', effects: ['read', 'write'] }],
+		});
+		expect(resolveGoogleGogOperation(['calendar', 'delete', 'primary', 'event-id'])).toEqual({
+			kind: 'denied',
+		});
+		expect(
+			resolveGoogleGogOperation([
+				'calendar',
+				'create',
+				'primary',
+				'--summary=test',
+				'--from=2026-09-05T10:00:00Z',
+				'--to=2026-09-05T11:00:00Z',
+				'--force',
+			]),
+		).toEqual({ kind: 'denied' });
+	});
+
 	it.each(
 		[
 			['gmail', 'search', 'query', '--from-contact=someone'],

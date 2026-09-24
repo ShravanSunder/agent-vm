@@ -28,15 +28,10 @@ describe('owner account policy preview, save and containment', () => {
 			{ kind: 'opened' }
 		>;
 		readonly compiled: ReturnType<typeof compileOAuthPolicy>;
-		readonly verifySession: ReturnType<
-			typeof vi.fn<
-				(
-					identity: typeof facadeIdentity,
-				) => Promise<{ kind: 'verified'; identity: typeof facadeIdentity } | { kind: 'signed-out' }>
-			>
-		>;
 		readonly contain: ReturnType<typeof vi.fn<() => Promise<'contained' | 'pending' | 'failed'>>>;
 		readonly now: { value: number };
+		readonly admission: { value: boolean };
+		readonly authorityGate: { beforeCommit?: (() => void) | undefined };
 	}> {
 		let subjectSequence = 0;
 		fixture = await createBrokerFacadeFixture({
@@ -64,24 +59,24 @@ describe('owner account policy preview, save and containment', () => {
 			snapshot: compiled.defaultsSnapshot,
 		});
 		const now = { value: 1_000 };
-		const verifySession = vi.fn<
-			(
-				identity: typeof facadeIdentity,
-			) => Promise<{ kind: 'verified'; identity: typeof facadeIdentity } | { kind: 'signed-out' }>
-		>(async (identity) => ({ kind: 'verified', identity }));
+		const admission = { value: true };
+		const authorityGate: { beforeCommit?: (() => void) | undefined } = {};
 		const contain = vi.fn<() => Promise<'contained' | 'pending' | 'failed'>>(
 			async () => 'contained',
 		);
 		const reader = createGooglePermissionPolicyService({
+			runAuthorityCommit: async (commit) => {
+				authorityGate.beforeCommit?.();
+				return commit();
+			},
 			catalog: fixture.catalog,
 			compiled,
 			configRevision: 'config-1',
 			keyEncryptionKey: wrappingKey,
 			keyEncryptionKeyVersion: 1,
-			verifySession,
 			containPolicyMaterial: contain,
 			now: () => now.value,
-			isAdmissionOpen: () => true,
+			isAdmissionOpen: () => admission.value,
 			clientBindingRevisionsByApplication: {
 				'gmail-app': 'client-binding-1',
 				'workspace-app': 'client-binding-2',
@@ -96,7 +91,7 @@ describe('owner account policy preview, save and containment', () => {
 			identity: facadeIdentity,
 		});
 		if (opened.kind !== 'opened') throw new Error('Expected editable owner context.');
-		return { reader, editor, opened, compiled, verifySession, contain, now };
+		return { reader, editor, opened, compiled, contain, now, admission, authorityGate };
 	}
 	function desiredReadDeny(
 		snapshot: ReturnType<typeof googleAccountPolicySnapshotSchema.parse>,
@@ -122,6 +117,7 @@ describe('owner account policy preview, save and containment', () => {
 		};
 		// Act
 		const saved = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: draft.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: draft.csrfToken,
@@ -147,6 +143,7 @@ describe('owner account policy preview, save and containment', () => {
 		Extract<Awaited<ReturnType<typeof input.editor.previewPolicyChange>>, { kind: 'preview' }>
 	> {
 		const result = await input.editor.previewPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: input.opened.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: input.opened.csrfToken,
@@ -175,6 +172,7 @@ describe('owner account policy preview, save and containment', () => {
 			'ready',
 		);
 		const confirmation = {
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: draft.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: draft.csrfToken,
@@ -202,11 +200,101 @@ describe('owner account policy preview, save and containment', () => {
 		);
 		expect(fixture.providerRequests).toHaveLength(requestCount);
 	});
+	it('allows only one of two concurrent policy confirmations to commit', async () => {
+		const input = await arrange();
+		const draft = await preview(input);
+		const confirmation = {
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
+			contextId: draft.contextId,
+			browserBindingSecret: input.opened.browserBindingSecret,
+			csrfToken: draft.csrfToken,
+			identity: facadeIdentity,
+			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
+		};
+
+		const results = await Promise.all([
+			input.editor.confirmPolicyChange(confirmation),
+			input.editor.confirmPolicyChange(confirmation),
+		]);
+
+		expect(results.map((result) => result.kind).toSorted()).toEqual(['applied', 'denied']);
+		expect(input.contain).toHaveBeenCalledOnce();
+	});
+	it('denies without mutation when admission closes inside the serialized commit', async () => {
+		const input = await arrange();
+		const draft = await preview(input);
+		input.authorityGate.beforeCommit = () => {
+			input.admission.value = false;
+		};
+
+		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
+			contextId: draft.contextId,
+			browserBindingSecret: input.opened.browserBindingSecret,
+			csrfToken: draft.csrfToken,
+			identity: facadeIdentity,
+			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
+		});
+
+		expect(result).toEqual({ kind: 'denied' });
+		expect(input.contain).not.toHaveBeenCalled();
+		expect(fixture?.catalog.getPolicy(input.opened.view.snapshot.authorizationId)).toMatchObject({
+			overrideRevision: 1,
+			state: 'active',
+		});
+	});
+	it('returns expired when browser authority expires inside the serialized commit', async () => {
+		const input = await arrange();
+		const draft = await preview(input);
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = 200_001;
+		};
+
+		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: 200_000,
+			contextId: draft.contextId,
+			browserBindingSecret: input.opened.browserBindingSecret,
+			csrfToken: draft.csrfToken,
+			identity: facadeIdentity,
+			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
+		});
+
+		expect(result).toEqual({ kind: 'expired' });
+		expect(input.contain).not.toHaveBeenCalled();
+		expect(fixture?.catalog.getPolicy(input.opened.view.snapshot.authorizationId)).toMatchObject({
+			overrideRevision: 1,
+			state: 'active',
+		});
+	});
+	it('returns expired when the policy context expires inside the serialized commit', async () => {
+		const input = await arrange();
+		const draft = await preview(input);
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = 601_000;
+		};
+
+		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: 1_000_000,
+			contextId: draft.contextId,
+			browserBindingSecret: input.opened.browserBindingSecret,
+			csrfToken: draft.csrfToken,
+			identity: facadeIdentity,
+			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
+		});
+
+		expect(result).toEqual({ kind: 'expired' });
+		expect(input.contain).not.toHaveBeenCalled();
+		expect(fixture?.catalog.getPolicy(input.opened.view.snapshot.authorizationId)).toMatchObject({
+			overrideRevision: 1,
+			state: 'active',
+		});
+	});
 	it('rejects forged origin, session, browser secret and CSRF without changing policy', async () => {
 		// Arrange
 		const input = await arrange();
 		const draft = await preview(input);
 		const valid = {
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: draft.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: draft.csrfToken,
@@ -216,7 +304,7 @@ describe('owner account policy preview, save and containment', () => {
 		// Act / Assert
 		for (const forged of [
 			{ origin: 'https://attacker.example.test' },
-			{ identity: { ...facadeIdentity, sessionId: 'another-session' } },
+			{ identity: { ...facadeIdentity, subject: 'another-subject' } },
 			{ csrfToken: 'x'.repeat(43) },
 			{ browserBindingSecret: 'x'.repeat(43) },
 		]) {
@@ -228,26 +316,6 @@ describe('owner account policy preview, save and containment', () => {
 		expect(input.contain).not.toHaveBeenCalled();
 		expect(await input.editor.confirmPolicyChange(valid)).toMatchObject({ kind: 'applied' });
 	});
-	it('rechecks editor admission after the live session lookup before saving', async () => {
-		// Arrange
-		const input = await arrange();
-		const draft = await preview(input);
-		input.verifySession.mockImplementationOnce(async (identity) => {
-			input.compiled.oauthConfig.policyEditors = {};
-			return { kind: 'verified', identity };
-		});
-		// Act
-		const result = await input.editor.confirmPolicyChange({
-			contextId: draft.contextId,
-			browserBindingSecret: input.opened.browserBindingSecret,
-			csrfToken: draft.csrfToken,
-			identity: facadeIdentity,
-			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
-		});
-		// Assert
-		expect(result).toEqual({ kind: 'denied' });
-		expect(input.contain).not.toHaveBeenCalled();
-	});
 	it('never activates a saved policy when containment is unconfirmed', async () => {
 		// Arrange
 		const input = await arrange();
@@ -255,6 +323,7 @@ describe('owner account policy preview, save and containment', () => {
 		const draft = await preview(input);
 		// Act
 		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: draft.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: draft.csrfToken,
@@ -284,6 +353,7 @@ describe('owner account policy preview, save and containment', () => {
 		};
 		// Act
 		const result = await input.editor.previewPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: input.opened.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: input.opened.csrfToken,
@@ -297,26 +367,6 @@ describe('owner account policy preview, save and containment', () => {
 		expect(result).toEqual({ kind: 'above-maximum' });
 		expect(input.contain).not.toHaveBeenCalled();
 	});
-	it('rejects an expired confirmation after asynchronous session verification', async () => {
-		// Arrange
-		const input = await arrange();
-		const draft = await preview(input);
-		input.verifySession.mockImplementationOnce(async (identity) => {
-			input.now.value = input.opened.expiresAtMs;
-			return { kind: 'verified', identity };
-		});
-		// Act / Assert
-		expect(
-			await input.editor.confirmPolicyChange({
-				contextId: draft.contextId,
-				browserBindingSecret: input.opened.browserBindingSecret,
-				csrfToken: draft.csrfToken,
-				identity: facadeIdentity,
-				origin: input.compiled.oauthConfig.browser.publicBaseUrl,
-			}),
-		).toEqual({ kind: 'expired' });
-		expect(input.contain).not.toHaveBeenCalled();
-	});
 	it('keeps the row fenced and records failure when runtime containment throws', async () => {
 		// Arrange
 		const input = await arrange();
@@ -324,6 +374,7 @@ describe('owner account policy preview, save and containment', () => {
 		const draft = await preview(input);
 		// Act
 		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: draft.contextId,
 			browserBindingSecret: input.opened.browserBindingSecret,
 			csrfToken: draft.csrfToken,
@@ -342,55 +393,5 @@ describe('owner account policy preview, save and containment', () => {
 				expect.objectContaining({ kind: 'policy-containment-failed', state: 'applying' }),
 			]),
 		);
-	});
-	it('rejects a second confirmation while the first is checking the session', async () => {
-		// Arrange
-		const input = await arrange();
-		const draft = await preview(input);
-		const verification = Promise.withResolvers<{
-			kind: 'verified';
-			identity: typeof facadeIdentity;
-		}>();
-		input.verifySession.mockReturnValueOnce(verification.promise);
-		const request = {
-			contextId: draft.contextId,
-			browserBindingSecret: input.opened.browserBindingSecret,
-			csrfToken: draft.csrfToken,
-			identity: facadeIdentity,
-			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
-		};
-		// Act
-		const first = input.editor.confirmPolicyChange(request);
-		const second = await input.editor.confirmPolicyChange(request);
-		verification.resolve({ kind: 'verified', identity: facadeIdentity });
-		// Assert
-		expect(second).toEqual({ kind: 'denied' });
-		expect(await first).toMatchObject({ kind: 'applied' });
-		expect(input.contain).toHaveBeenCalledTimes(1);
-	});
-	it('does not revive an in-flight preview after browser contexts are cleared', async () => {
-		// Arrange
-		const input = await arrange();
-		const verification = Promise.withResolvers<{
-			kind: 'verified';
-			identity: typeof facadeIdentity;
-		}>();
-		input.verifySession.mockReturnValueOnce(verification.promise);
-		// Act
-		const attempt = input.editor.previewPolicyChange({
-			contextId: input.opened.contextId,
-			browserBindingSecret: input.opened.browserBindingSecret,
-			csrfToken: input.opened.csrfToken,
-			identity: facadeIdentity,
-			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
-			expectedConfigRevision: 'config-1',
-			expectedOverrideRevision: 1,
-			services: desiredReadDeny(input.opened.view.snapshot),
-		});
-		input.editor.clear();
-		verification.resolve({ kind: 'verified', identity: facadeIdentity });
-		// Assert
-		expect(await attempt).toEqual({ kind: 'denied' });
-		expect(input.contain).not.toHaveBeenCalled();
 	});
 });

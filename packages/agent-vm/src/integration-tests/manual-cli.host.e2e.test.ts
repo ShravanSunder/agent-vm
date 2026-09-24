@@ -74,7 +74,8 @@ describe('smoke: agent-vm manual CLI', () => {
 			'already-open descriptors or cached bytes are not forcibly revoked',
 		);
 		const layout = await readText(targetDir, 'docs/manual/layout.md');
-		expect(layout).toContain('Clerk is human login only and never supplies Gog tokens');
+		expect(layout).toContain('Access login is human identity only and never supplies Gog tokens');
+		expect(layout).toContain('route only to the configured loopback HTTP listener');
 		expect(layout).toContain('Explicit website account overrides win independently');
 		expect(layout).toContain('all-supported catalog preset');
 		expect(layout).toContain('profiles.<profile>.oauthApplications.<applicationId>');

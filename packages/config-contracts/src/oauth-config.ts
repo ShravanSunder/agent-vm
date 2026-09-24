@@ -1,9 +1,6 @@
-import path from 'node:path';
-
 import { googleCatalogFamilyIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import { clerkBrowserIdentityConfigSchema } from './clerk-browser-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
 
 export const googleOAuthApplicationIds = ['workspace-app', 'gmail-app', 'youtube-app'] as const;
@@ -26,14 +23,6 @@ const uniqueAgentIdsSchema = z
 	.max(128)
 	.readonly()
 	.refine((ids) => new Set(ids).size === ids.length, 'Agent identifiers must be unique.');
-const controllerOwnedAbsolutePathSchema = z
-	.string()
-	.min(1)
-	.max(4096)
-	.refine(
-		(value) => path.isAbsolute(value) && !value.includes('\0'),
-		'OAuth controller paths must be absolute and contain no NUL bytes.',
-	);
 const onePasswordOAuthSecretSchema = z
 	.object({
 		ref: z
@@ -45,19 +34,43 @@ const onePasswordOAuthSecretSchema = z
 	})
 	.strict();
 
-export const oauthBrowserPublicBaseUrlSchema = z.url().refine((value) => {
-	const url = new URL(value);
-	return (
-		url.protocol === 'https:' &&
-		url.hostname === 'auth.claw.askluna.xyz' &&
-		url.username.length === 0 &&
-		url.password.length === 0 &&
-		url.port === '18900' &&
-		url.pathname === '/' &&
-		url.search.length === 0 &&
-		url.hash.length === 0
-	);
-}, 'OAuth publicBaseUrl must be the auth.claw.askluna.xyz HTTPS origin on port 18900 without credentials, path, query, or fragment.');
+function canonicalHttpsOriginSchema(
+	label: string,
+): z.ZodPipe<z.ZodString, z.ZodTransform<string, string>> {
+	return z
+		.string()
+		.min(1)
+		.max(2048)
+		.refine((value) => {
+			if (!/^https:\/\/[^/?#\\\s]+\/?$/iu.test(value)) return false;
+			try {
+				const url = new URL(value);
+				return (
+					url.protocol === 'https:' &&
+					url.hostname.length > 0 &&
+					url.username.length === 0 &&
+					url.password.length === 0 &&
+					url.port === '' &&
+					url.pathname === '/' &&
+					url.search.length === 0 &&
+					url.hash.length === 0
+				);
+			} catch {
+				return false;
+			}
+		}, `${label} must be a standard HTTPS origin without credentials, path, query, fragment, or nondefault port.`)
+		.transform((value) => new URL(value).origin);
+}
+
+export const oauthBrowserPublicBaseUrlSchema = canonicalHttpsOriginSchema('OAuth publicBaseUrl');
+export const cloudflareAccessIssuerSchema = canonicalHttpsOriginSchema('Cloudflare Access issuer');
+export const cloudflareAccessBrowserIdentityConfigSchema = z
+	.object({
+		kind: z.literal('cloudflare-access'),
+		issuer: cloudflareAccessIssuerSchema,
+		audience: z.string().min(1).max(2048),
+	})
+	.strict();
 
 export const googleOAuthApplicationConfigSchema = z
 	.object({
@@ -99,54 +112,26 @@ export const resolvedOAuthAgentConfigSchema = z
 export const oauthOwnerConfigSchema = z
 	.object({
 		label: z.string().min(1).max(160),
-		clerkUserId: z.string().min(1).max(256),
+		subject: z.string().min(1).max(256),
 		allowedAgentIds: uniqueAgentIdsSchema,
 	})
 	.strict();
 export const oauthPolicyEditorConfigSchema = z
 	.object({
-		clerkUserId: z.string().min(1).max(256),
+		subject: z.string().min(1).max(256),
 		editableAgentIds: uniqueAgentIdsSchema,
 	})
 	.strict();
-
-const tailnetLoginSchema = z
-	.string()
-	.min(1)
-	.max(320)
-	.refine(
-		(login) =>
-			Array.from(login).every((character) => {
-				const point = character.codePointAt(0);
-				return point !== undefined && point >= 0x20 && point !== 0x7f && !/^\s$/u.test(character);
-			}),
-		'Tailnet logins must not contain whitespace or control bytes.',
-	);
 
 export const oauthConfigSchema = z
 	.object({
 		browser: z
 			.object({
-				identity: clerkBrowserIdentityConfigSchema,
+				identity: cloudflareAccessBrowserIdentityConfigSchema,
 				listener: z
 					.object({
-						certificatePath: controllerOwnedAbsolutePathSchema,
-						kind: z.literal('tailscale_https'),
-						port: z.literal(18900),
-						privateKeyPath: controllerOwnedAbsolutePathSchema,
-					})
-					.strict(),
-				network: z
-					.object({
-						admittedTailnetLogins: z
-							.array(tailnetLoginSchema)
-							.min(1)
-							.max(128)
-							.readonly()
-							.refine(
-								(logins) => new Set(logins).size === logins.length,
-								'Tailnet logins must be unique.',
-							),
+						kind: z.literal('loopback_http'),
+						port: z.number().int().min(1).max(65_535),
 					})
 					.strict(),
 				publicBaseUrl: oauthBrowserPublicBaseUrlSchema,
@@ -186,22 +171,12 @@ export const oauthConfigSchema = z
 					.strict(),
 			})
 			.strict(),
-		schemaVersion: z.literal(2),
+		schemaVersion: z.literal(3),
 		storage: z.object({ keyEncryptionKey: onePasswordOAuthSecretSchema }).strict(),
 		zoneId: namedIdSchema,
 	})
 	.strict()
 	.superRefine((config, context) => {
-		if (
-			config.browser.identity.fixedLoginReturnOrigin !==
-			new URL(config.browser.publicBaseUrl).origin
-		) {
-			context.addIssue({
-				code: 'custom',
-				message: 'Clerk return origin must equal the configured OAuth website origin.',
-				path: ['browser', 'identity', 'fixedLoginReturnOrigin'],
-			});
-		}
 		const clientReferences = new Set<string>();
 		const families = new Set<string>();
 		for (const applicationId of googleOAuthApplicationIds) {
@@ -232,23 +207,23 @@ export const oauthConfigSchema = z
 		}
 		const ownerIdentities = new Set<string>();
 		for (const [ownerId, owner] of Object.entries(config.owners)) {
-			if (ownerIdentities.has(owner.clerkUserId))
+			if (ownerIdentities.has(owner.subject))
 				context.addIssue({
 					code: 'custom',
-					message: 'Clerk owner identities must be unique.',
-					path: ['owners', ownerId, 'clerkUserId'],
+					message: 'Browser owner subjects must be unique.',
+					path: ['owners', ownerId, 'subject'],
 				});
-			ownerIdentities.add(owner.clerkUserId);
+			ownerIdentities.add(owner.subject);
 		}
 		const editorIdentities = new Set<string>();
 		for (const [editorId, editor] of Object.entries(config.policyEditors)) {
-			if (editorIdentities.has(editor.clerkUserId))
+			if (editorIdentities.has(editor.subject))
 				context.addIssue({
 					code: 'custom',
-					message: 'Clerk editor identities must be unique.',
-					path: ['policyEditors', editorId, 'clerkUserId'],
+					message: 'Browser editor subjects must be unique.',
+					path: ['policyEditors', editorId, 'subject'],
 				});
-			editorIdentities.add(editor.clerkUserId);
+			editorIdentities.add(editor.subject);
 		}
 	});
 export type OAuthConfig = z.infer<typeof oauthConfigSchema>;

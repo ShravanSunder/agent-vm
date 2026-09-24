@@ -111,7 +111,7 @@ describe('profile-owned OAuth config through the built CLI', () => {
 		const oauthPath = path.join(configRoot, 'oauth.config.jsonc');
 		const portalPath = path.join(configRoot, 'tool-portal.config.jsonc');
 		const oauthText = editConfig(
-			await readFile(path.join(examplesRoot, 'oauth-v2.config.jsonc'), 'utf8'),
+			await readFile(path.join(examplesRoot, 'oauth-v3.config.jsonc'), 'utf8'),
 			[
 				{ path: ['zoneId'], value: 'sun' },
 				{ path: ['owners', 'example-owner', 'allowedAgentIds'], value: ['main'] },

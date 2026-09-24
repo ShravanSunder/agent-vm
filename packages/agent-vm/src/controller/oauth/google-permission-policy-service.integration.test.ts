@@ -70,7 +70,6 @@ describe('host account policy and activity resolution', () => {
 			},
 			keyEncryptionKey: wrappingKey,
 			keyEncryptionKeyVersion: 1,
-			verifySession: async (identity) => ({ kind: 'verified', identity }),
 			containPolicyMaterial: async () => 'contained',
 			isAdmissionOpen: () => true,
 		});
@@ -156,11 +155,11 @@ describe('host account policy and activity resolution', () => {
 		const { service, target, compiled } = await arrange();
 		compiled.oauthConfig.owners.other = {
 			label: 'Other owner',
-			clerkUserId: 'other-owner',
+			subject: 'other-owner',
 			allowedAgentIds: ['sun'],
 		};
 		compiled.oauthConfig.policyEditors.other = {
-			clerkUserId: 'other-owner',
+			subject: 'other-owner',
 			editableAgentIds: ['sun'],
 		};
 		if (fixture === undefined) throw new Error('Expected fixture.');
@@ -169,7 +168,7 @@ describe('host account policy and activity resolution', () => {
 		expect(
 			service.readAccountPolicyView({
 				...target,
-				identity: { ...facadeIdentity, userId: 'other-owner' },
+				identity: { ...facadeIdentity, subject: 'other-owner' },
 			}),
 		).toEqual({ kind: 'denied' });
 		expect(history).not.toHaveBeenCalled();
@@ -272,6 +271,7 @@ describe('host account policy and activity resolution', () => {
 		const opened = await askService.openPolicyEditor({ ...target, identity: facadeIdentity });
 		if (opened.kind !== 'opened') throw new Error('Expected editable account.');
 		const preview = await askService.previewPolicyChange({
+			authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 			contextId: opened.contextId,
 			browserBindingSecret: opened.browserBindingSecret,
 			csrfToken: opened.csrfToken,
@@ -287,6 +287,7 @@ describe('host account policy and activity resolution', () => {
 		if (preview.kind !== 'preview') throw new Error('Expected policy preview.');
 		expect(
 			await askService.confirmPolicyChange({
+				authenticationExpiresAtMs: Number.MAX_SAFE_INTEGER,
 				contextId: preview.contextId,
 				browserBindingSecret: opened.browserBindingSecret,
 				csrfToken: preview.csrfToken,

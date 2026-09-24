@@ -5,6 +5,7 @@ import {
 	createBrokerFacadeFixture,
 	facadeApplicationId,
 	facadeIdentity,
+	prepareBrokerConsent,
 } from './google-broker-facade-test-fixture.js';
 
 describe('account-based Google broker facade', () => {
@@ -103,6 +104,72 @@ describe('account-based Google broker facade', () => {
 		});
 		expect(JSON.stringify(listing)).not.toContain('synthetic-refresh');
 	});
+	it('allows only one of two concurrent browser confirmations to commit', async () => {
+		fixture = await createBrokerFacadeFixture();
+		const prepared = await prepareBrokerConsent(fixture);
+		const callback = await fixture.exchangeRedirect(prepared.redirect);
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+
+		const results = await Promise.all([
+			fixture.confirm(callback.confirmation),
+			fixture.confirm(callback.confirmation),
+		]);
+
+		expect(results.map((result) => result.kind).toSorted()).toEqual([
+			'authorization-denied',
+			'completed',
+		]);
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+	});
+	it('returns authorization denial when authentication expires inside the serialized commit', async () => {
+		let currentTimeMs = 1_000;
+		let expireInsideCommit = false;
+		fixture = await createBrokerFacadeFixture({
+			now: () => currentTimeMs,
+			runAuthorityCommit: async (commit) => {
+				if (expireInsideCommit) currentTimeMs = 200_001;
+				return commit();
+			},
+		});
+		const prepared = await prepareBrokerConsent(fixture);
+		const callback = await fixture.exchangeRedirect(prepared.redirect);
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+		expireInsideCommit = true;
+
+		const result = await fixture.broker.confirmAccount({
+			authenticationExpiresAtMs: 200_000,
+			identity: facadeIdentity,
+			completionSessionId: callback.confirmation.completionSessionId,
+			browserBindingSecret: callback.confirmation.browserBindingSecret,
+			csrfToken: callback.confirmation.csrfToken,
+			accountAlias: 'My mailbox',
+		});
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+	});
+	it('returns authorization denial when the completion context expires inside the serialized commit', async () => {
+		let currentTimeMs = 1_000;
+		let expireInsideCommit = false;
+		fixture = await createBrokerFacadeFixture({
+			now: () => currentTimeMs,
+			runAuthorityCommit: async (commit) => {
+				if (expireInsideCommit) currentTimeMs = 301_000;
+				return commit();
+			},
+		});
+		const prepared = await prepareBrokerConsent(fixture);
+		const callback = await fixture.exchangeRedirect(prepared.redirect);
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+		expireInsideCommit = true;
+
+		const result = await fixture.confirm(callback.confirmation);
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+	});
 
 	it('requires owner confirmation for local disconnect and preserves the other agent grant', async () => {
 		// Arrange
@@ -128,6 +195,7 @@ describe('account-based Google broker facade', () => {
 		});
 		// Act
 		const result = await fixture.broker.confirmDisconnect({
+			authenticationExpiresAtMs: 1_000_000,
 			identity: facadeIdentity,
 			transactionId: page.transactionId,
 			browserBindingSecret: page.browserBindingSecret,
@@ -183,7 +251,7 @@ describe('account-based Google broker facade', () => {
 		).toBe('sun');
 	});
 
-	it('rejects wrong humans, sessions, and above-ceiling selections before Google exchange', async () => {
+	it('rejects wrong humans and above-ceiling selections before Google exchange', async () => {
 		// Arrange
 		fixture = await createBrokerFacadeFixture();
 		const begun = await fixture.broker.executeAuthorizationAction({
@@ -193,7 +261,7 @@ describe('account-based Google broker facade', () => {
 		if (begun.kind !== 'authorization-begun') throw new Error('Expected ceremony.');
 		expect(() =>
 			fixture?.broker.getPermissionPage({
-				identity: { ...facadeIdentity, userId: 'other' },
+				identity: { ...facadeIdentity, subject: 'other' },
 				transactionId: begun.transactionId,
 			}),
 		).toThrow();
@@ -204,7 +272,7 @@ describe('account-based Google broker facade', () => {
 		// Act / Assert
 		expect(() =>
 			fixture?.broker.submitPermissions({
-				identity: { ...facadeIdentity, sessionId: 'other' },
+				identity: { ...facadeIdentity, subject: 'other' },
 				transactionId: page.transactionId,
 				browserBindingSecret: page.browserBindingSecret,
 				csrfToken: page.csrfToken,

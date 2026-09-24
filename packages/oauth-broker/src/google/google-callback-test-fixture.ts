@@ -26,7 +26,7 @@ import {
 	type GoogleProviderAuthorizationCallback,
 } from './google-provider-authorization-callback.js';
 
-export const callbackIdentity = { ...owner, sessionId: 'test-session' };
+export const callbackIdentity = { issuer: owner.issuer, subject: owner.userId };
 export const callbackApplicationId = oauthApplicationIdSchema.parse('gmail-app');
 
 type CallbackRequest = Parameters<
@@ -60,7 +60,7 @@ export function createCallbackTestFixture(
 	let timeMs = 1_000;
 	let admissionOpen = true;
 	const compilerInput = createOAuthPolicyCompilerTestInput();
-	compilerInput.oauthConfig.owners.owner.clerkUserId = owner.userId;
+	compilerInput.oauthConfig.owners.owner.subject = owner.userId;
 	const config = compileOAuthPolicy(compilerInput).oauthConfig;
 	const permissionPolicy = createGoogleOAuthPermissionPolicy({
 		config,

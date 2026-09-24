@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import type { OAuthConfig } from '@agent-vm/config-contracts';
 import { createGoogleOAuthBrokerService } from '@agent-vm/oauth-broker/google';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,36 +14,12 @@ import {
 } from './controller-oauth-runtime.js';
 
 let testRoot: string;
-
 beforeEach(async () => {
-	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-controller-oauth-runtime-'));
+	testRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-access-runtime-'));
 });
-
 afterEach(async () => {
 	await rm(testRoot, { force: true, recursive: true });
 });
-
-function oauthConfig(): unknown {
-	const input = createOAuthPolicyCompilerTestInput().oauthConfig;
-	return {
-		...input,
-		zoneId: 'apollofam',
-		owners: {
-			owner: { ...input.owners.owner, allowedAgentIds: ['sun'] },
-		},
-		policyEditors: {
-			editor: { ...input.policyEditors.editor, editableAgentIds: ['sun'] },
-		},
-		browser: {
-			...input.browser,
-			listener: {
-				...input.browser.listener,
-				certificatePath: path.join(testRoot, 'tls.crt'),
-				privateKeyPath: path.join(testRoot, 'tls.key'),
-			},
-		},
-	};
-}
 
 function toolPortalConfig(): unknown {
 	const input = createOAuthPolicyCompilerTestInput().toolPortalConfig;
@@ -53,15 +30,6 @@ function toolPortalConfig(): unknown {
 		profiles: {
 			shared: {
 				...input.profiles.shared,
-				oauthApplications: {
-					'gmail-app': {
-						...input.profiles.shared.oauthApplications['gmail-app'],
-						policyDefaults: {
-							kind: 'explicit',
-							services: { gmail: { read: 'allow', write: 'deny' } },
-						},
-					},
-				},
 				namespaces: {
 					...input.profiles.shared.namespaces,
 					google: {
@@ -89,6 +57,16 @@ function toolPortalConfig(): unknown {
 	};
 }
 
+function runtimeOAuthConfig(): OAuthConfig {
+	const oauth = createOAuthPolicyCompilerTestInput().oauthConfig;
+	return {
+		...oauth,
+		zoneId: 'apollofam',
+		owners: { owner: { ...oauth.owners.owner, allowedAgentIds: ['sun'] } },
+		policyEditors: { editor: { ...oauth.policyEditors.editor, editableAgentIds: ['sun'] } },
+	};
+}
+
 function systemConfig(configDirectory: string): ControllerOAuthSystemConfig {
 	return {
 		controllerStateDir: path.join(testRoot, 'controller-state'),
@@ -104,15 +82,14 @@ function systemConfig(configDirectory: string): ControllerOAuthSystemConfig {
 	};
 }
 
-function secretResolver(options: { readonly duplicateClientIds?: boolean } = {}): SecretResolver {
-	const callbackUrl = 'https://auth.claw.askluna.xyz:18900/oauth/google/callback';
-	const resolve = vi.fn(async (reference: SecretRef) => {
-		if (reference.source === '1password' && reference.ref.includes('wrapping-key')) {
+function secretResolver(
+	callbackUrl: string,
+	options: { readonly duplicateClientIds?: boolean } = {},
+): SecretResolver {
+	const resolve = async (reference: SecretRef): Promise<string> => {
+		if (reference.source === '1password' && reference.ref.includes('wrapping-key'))
 			return Buffer.alloc(32, 41).toString('base64url');
-		}
-		if (reference.source === '1password' && reference.ref.includes('/clerk/'))
-			return 'sk_test_fixture_only';
-		const applicationIdentity = options.duplicateClientIds
+		const identity = options.duplicateClientIds
 			? 'shared'
 			: reference.source === '1password' && reference.ref.includes('gmail')
 				? 'gmail'
@@ -123,13 +100,13 @@ function secretResolver(options: { readonly duplicateClientIds?: boolean } = {})
 			web: {
 				project_id: 'synthetic-project',
 				auth_uri: 'https://accounts.google.com/o/oauth2/v2/auth',
-				client_id: `${applicationIdentity}-client-id`,
-				client_secret: `${applicationIdentity}-client-secret`,
+				client_id: `${identity}-client-id`,
+				client_secret: `${identity}-client-secret`,
 				redirect_uris: [callbackUrl],
 				token_uri: 'https://oauth2.googleapis.com/token',
 			},
 		});
-	});
+	};
 	return {
 		resolve,
 		resolveAll: async (references) =>
@@ -144,43 +121,48 @@ function secretResolver(options: { readonly duplicateClientIds?: boolean } = {})
 	};
 }
 
-describe('controller OAuth runtime composition', () => {
-	it('serializes publication with authority commits and drains publication before close', async () => {
-		// Arrange: real runtime/SQLite composition, fake provider and browser edges.
+describe('controller Access OAuth runtime composition', () => {
+	it('composes schema-v3 config, configured public origin, loopback listener port, and serialized authority publication', async () => {
 		const configDirectory = path.join(testRoot, 'config');
 		await mkdir(configDirectory);
-		await writeFile(
-			path.join(configDirectory, 'oauth.config.jsonc'),
-			JSON.stringify(oauthConfig()),
-		);
+		const oauth = createOAuthPolicyCompilerTestInput().oauthConfig;
+		const configured = {
+			...oauth,
+			zoneId: 'apollofam',
+			owners: { owner: { ...oauth.owners.owner, allowedAgentIds: ['sun'] } },
+			policyEditors: { editor: { ...oauth.policyEditors.editor, editableAgentIds: ['sun'] } },
+			browser: {
+				...oauth.browser,
+				publicBaseUrl: 'https://household.example.test',
+				listener: { kind: 'loopback_http', port: 19_123 },
+			},
+		};
+		await writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(configured));
 		await writeFile(
 			path.join(configDirectory, 'tool-portal.config.jsonc'),
 			JSON.stringify(toolPortalConfig()),
 		);
 		let runCommit: Parameters<typeof createGoogleOAuthBrokerService>[0]['runAuthorityCommit'];
 		const prepared = await prepareControllerOAuthRuntime({
-			createBrokerService: (brokerProps) => {
-				runCommit = brokerProps.runAuthorityCommit;
-				return createGoogleOAuthBrokerService(brokerProps);
+			createBrokerService: (props) => {
+				runCommit = props.runAuthorityCommit;
+				return createGoogleOAuthBrokerService(props);
 			},
 			loadApprovalAssets: async () => ({
 				files: {},
-				manifest: {
-					css: 'oauth.css',
-					javascript: 'oauth.js',
-					onboarding: 'onboarding.3333333333333333.js',
-				},
+				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
 			}),
-			secretResolver: secretResolver(),
+			secretResolver: secretResolver('https://household.example.test/oauth/google/callback'),
 			selectedZoneIds: ['apollofam'],
 			systemConfig: systemConfig(configDirectory),
-			tailscaleLocalApiTransport: {
-				getJson: async () => ({ Self: { TailscaleIPs: ['100.100.100.10'] } }),
-			},
 		});
 		if (prepared === undefined || runCommit === undefined)
-			throw new Error('Expected publication guard.');
+			throw new Error('Expected prepared OAuth runtime.');
 		try {
+			expect(prepared.port).toBe(19_123);
+			expect(() => prepared.activateAfterRuntimeCleanup()).toThrow(
+				/OAuth admission requires installed containment handlers/u,
+			);
 			prepared.setContainmentHandlers({
 				authorization: async () => 'contained',
 				policy: async () => 'contained',
@@ -194,49 +176,45 @@ describe('controller OAuth runtime composition', () => {
 				await release.promise;
 			});
 			await entered.promise;
-			// Act
 			const commit = runCommit(() => {
 				committed = true;
 				return 'committed';
 			});
 			await Promise.resolve();
-			// Assert
 			expect(committed).toBe(false);
 			release.resolve();
 			await publishing;
 			expect(await commit).toBe('committed');
-			expect(committed).toBe(true);
-			await expect(prepared.withPublicationGuard(async () => 'after-commit')).resolves.toBe(
-				'after-commit',
-			);
-			const finalPublicationEntered = Promise.withResolvers<void>();
-			const finishPublication = Promise.withResolvers<void>();
-			const finalPublication = prepared.withPublicationGuard(async () => {
-				finalPublicationEntered.resolve();
-				await finishPublication.promise;
+			const closeEntered = Promise.withResolvers<void>();
+			const releaseClose = Promise.withResolvers<void>();
+			const guardedPublication = prepared.withPublicationGuard(async () => {
+				closeEntered.resolve();
+				await releaseClose.promise;
 			});
-			await finalPublicationEntered.promise;
-			let closed = false;
+			await closeEntered.promise;
+			let closeCompleted = false;
 			const closing = prepared.close().then(() => {
-				closed = true;
+				closeCompleted = true;
 			});
-			try {
-				await new Promise<void>((resolve) => setImmediate(resolve));
-				expect(closed).toBe(false);
-			} finally {
-				finishPublication.resolve();
-				await finalPublication;
-				await closing;
-			}
+			await Promise.resolve();
+			expect(closeCompleted).toBe(false);
+			releaseClose.resolve();
+			await Promise.all([guardedPublication, closing]);
+			expect(closeCompleted).toBe(true);
 		} finally {
+			await prepared.close();
 			await prepared.close();
 		}
 	});
-	it('rejects an OAuth listener port inside the Managed runtime TCP pool before secrets resolve', async () => {
-		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
-		await mkdir(configDirectory, { recursive: true });
+
+	it('rejects a loopback listener port inside the managed runtime TCP pool before resolving secrets', async () => {
+		const configDirectory = path.join(testRoot, 'config');
+		await mkdir(configDirectory);
 		await Promise.all([
-			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(
+				path.join(configDirectory, 'oauth.config.jsonc'),
+				JSON.stringify(runtimeOAuthConfig()),
+			),
 			writeFile(
 				path.join(configDirectory, 'tool-portal.config.jsonc'),
 				JSON.stringify(toolPortalConfig()),
@@ -261,161 +239,124 @@ describe('controller OAuth runtime composition', () => {
 		).rejects.toThrow(/OAuth listener port 18900 collides/u);
 	});
 
-	it('rejects distinct references that resolve to one Google client ID', async () => {
-		// Arrange
-		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
-		await mkdir(configDirectory, { recursive: true });
+	it('rejects distinct application references that resolve to one Google client ID', async () => {
+		const configDirectory = path.join(testRoot, 'config');
+		await mkdir(configDirectory);
+		const oauth = runtimeOAuthConfig();
 		await Promise.all([
-			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauth)),
 			writeFile(
 				path.join(configDirectory, 'tool-portal.config.jsonc'),
 				JSON.stringify(toolPortalConfig()),
 			),
 		]);
-		const localApiGetJson = vi.fn(async (requestPath: string) => {
-			if (requestPath === '/localapi/v0/status') {
-				return { Self: { TailscaleIPs: ['100.100.100.10'] } };
-			}
-			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
-		});
 
-		// Act / Assert
 		await expect(
 			prepareControllerOAuthRuntime({
 				loadApprovalAssets: async () => ({
-					files: {
-						'oauth.1111111111111111.css': new Uint8Array(),
-						'oauth.2222222222222222.js': new Uint8Array(),
-					},
+					files: {},
 					manifest: {
 						css: 'oauth.1111111111111111.css',
 						javascript: 'oauth.2222222222222222.js',
-						onboarding: 'onboarding.3333333333333333.js',
 					},
 				}),
-				secretResolver: secretResolver({ duplicateClientIds: true }),
+				secretResolver: secretResolver(oauth.browser.publicBaseUrl + '/oauth/google/callback', {
+					duplicateClientIds: true,
+				}),
 				selectedZoneIds: ['apollofam'],
 				systemConfig: systemConfig(configDirectory),
-				tailscaleLocalApiTransport: { getJson: localApiGetJson },
 			}),
 		).rejects.toThrow(/distinct Google Web OAuth client IDs/u);
 	});
 
-	it('drains the broker and clears the KEK when preparation fails after broker creation', async () => {
-		// Arrange
-		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
-		await mkdir(configDirectory, { recursive: true });
+	it('drains the broker and zeroes the KEK when HTTP application composition fails', async () => {
+		const configDirectory = path.join(testRoot, 'config');
+		await mkdir(configDirectory);
+		const configured = runtimeOAuthConfig();
 		await Promise.all([
-			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(configured)),
 			writeFile(
 				path.join(configDirectory, 'tool-portal.config.jsonc'),
 				JSON.stringify(toolPortalConfig()),
 			),
 		]);
-		const localApiGetJson = vi.fn(async (requestPath: string) => {
-			if (requestPath === '/localapi/v0/status') {
-				return { Self: { TailscaleIPs: ['100.100.100.10'] } };
-			}
-			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
-		});
-		const preparationFailure = new Error('approval application composition failed');
+		const preparationFailure = new Error('HTTP application composition failed');
 		const closeBroker = vi.fn();
 		let capturedKeyEncryptionKey: Uint8Array | undefined;
 
-		// Act / Assert
 		await expect(
 			prepareControllerOAuthRuntime({
-				createBrokerService: (brokerProps) => {
-					capturedKeyEncryptionKey = brokerProps.keyEncryptionKey;
-					const brokerService = createGoogleOAuthBrokerService(brokerProps);
+				createBrokerService: (props) => {
+					capturedKeyEncryptionKey = props.keyEncryptionKey;
+					const broker = createGoogleOAuthBrokerService(props);
 					return {
-						...brokerService,
+						...broker,
 						close: async () => {
 							closeBroker();
-							await brokerService.close();
+							await broker.close();
 						},
 					};
 				},
-				createHttpsApp: () => {
+				createHttpApp: () => {
 					throw preparationFailure;
 				},
 				loadApprovalAssets: async () => ({
 					files: {},
 					manifest: {
-						css: 'oauth.css',
-						javascript: 'oauth.js',
-						onboarding: 'onboarding.3333333333333333.js',
+						css: 'oauth.1111111111111111.css',
+						javascript: 'oauth.2222222222222222.js',
 					},
 				}),
-				secretResolver: secretResolver(),
+				secretResolver: secretResolver(`${configured.browser.publicBaseUrl}/oauth/google/callback`),
 				selectedZoneIds: ['apollofam'],
 				systemConfig: systemConfig(configDirectory),
-				tailscaleLocalApiTransport: { getJson: localApiGetJson },
 			}),
 		).rejects.toBe(preparationFailure);
 		expect(closeBroker).toHaveBeenCalledOnce();
 		expect(capturedKeyEncryptionKey).toBeDefined();
 		expect(capturedKeyEncryptionKey?.every((byte) => byte === 0)).toBe(true);
-
-		const retry = await prepareControllerOAuthRuntime({
+		const retried = await prepareControllerOAuthRuntime({
 			loadApprovalAssets: async () => ({
 				files: {},
-				manifest: {
-					css: 'oauth.css',
-					javascript: 'oauth.js',
-					onboarding: 'onboarding.3333333333333333.js',
-				},
+				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
 			}),
-			secretResolver: secretResolver(),
+			secretResolver: secretResolver(`${configured.browser.publicBaseUrl}/oauth/google/callback`),
 			selectedZoneIds: ['apollofam'],
 			systemConfig: systemConfig(configDirectory),
-			tailscaleLocalApiTransport: { getJson: localApiGetJson },
 		});
-		if (retry === undefined) throw new Error('Expected OAuth runtime retry to succeed.');
-		await retry.close();
+		if (retried === undefined)
+			throw new Error('Expected successful retry after failed preparation.');
+		await retried.close();
 	});
 
-	it('loads the zone config pair, resolves 1Password material, and opens the durable catalog', async () => {
-		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
-		await mkdir(configDirectory, { recursive: true });
+	it('keeps catalog operations closed until activation and zeroes the KEK on close', async () => {
+		const configDirectory = path.join(testRoot, 'config');
+		await mkdir(configDirectory);
+		const configured = runtimeOAuthConfig();
 		await Promise.all([
-			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(oauthConfig())),
+			writeFile(path.join(configDirectory, 'oauth.config.jsonc'), JSON.stringify(configured)),
 			writeFile(
 				path.join(configDirectory, 'tool-portal.config.jsonc'),
 				JSON.stringify(toolPortalConfig()),
 			),
 		]);
-		const localApiGetJson = vi.fn(async (requestPath: string) => {
-			if (requestPath === '/localapi/v0/status') {
-				return { Self: { TailscaleIPs: ['100.100.100.10'] } };
-			}
-			throw new Error(`Unexpected LocalAPI request: ${requestPath}`);
-		});
 		let capturedKeyEncryptionKey: Uint8Array | undefined;
-
 		const prepared = await prepareControllerOAuthRuntime({
-			createBrokerService: (brokerProps) => {
-				capturedKeyEncryptionKey = brokerProps.keyEncryptionKey;
-				return createGoogleOAuthBrokerService(brokerProps);
+			createBrokerService: (props) => {
+				capturedKeyEncryptionKey = props.keyEncryptionKey;
+				return createGoogleOAuthBrokerService(props);
 			},
 			loadApprovalAssets: async () => ({
-				files: {
-					'oauth.1111111111111111.css': new Uint8Array(),
-					'oauth.2222222222222222.js': new Uint8Array(),
-				},
+				files: {},
 				manifest: {
 					css: 'oauth.1111111111111111.css',
 					javascript: 'oauth.2222222222222222.js',
-					onboarding: 'onboarding.3333333333333333.js',
 				},
 			}),
-			secretResolver: secretResolver(),
+			secretResolver: secretResolver(`${configured.browser.publicBaseUrl}/oauth/google/callback`),
 			selectedZoneIds: ['apollofam'],
 			systemConfig: systemConfig(configDirectory),
-			tailscaleLocalApiTransport: { getJson: localApiGetJson },
 		});
-
-		expect(prepared).toMatchObject({ port: 18_900, zoneId: 'apollofam' });
 		if (prepared === undefined) throw new Error('Expected prepared OAuth runtime.');
 		await expect(
 			prepared.brokerService.executeAuthorizationAction({
@@ -423,7 +364,6 @@ describe('controller OAuth runtime composition', () => {
 				request: { actionId: 'oauth_authorization.list' },
 			}),
 		).rejects.toThrow(/admission/u);
-		expect(() => prepared.activateAfterRuntimeCleanup()).toThrow(/containment handlers/u);
 		prepared.setContainmentHandlers({
 			authorization: async () => 'contained',
 			policy: async () => 'contained',
@@ -448,14 +388,12 @@ describe('controller OAuth runtime composition', () => {
 			),
 		).resolves.toBeUndefined();
 		await prepared.close();
-		await prepared.close();
-		expect(capturedKeyEncryptionKey).toBeDefined();
 		expect(capturedKeyEncryptionKey?.every((byte) => byte === 0)).toBe(true);
 	});
 
-	it('remains disabled when the selected Hermes zone has no OAuth config', async () => {
-		const configDirectory = path.join(testRoot, 'config', 'gateways', 'apollofam');
-		await mkdir(configDirectory, { recursive: true });
+	it('remains disabled when a selected managed zone does not require or define OAuth', async () => {
+		const configDirectory = path.join(testRoot, 'config');
+		await mkdir(configDirectory);
 		await writeFile(
 			path.join(configDirectory, 'tool-portal.config.jsonc'),
 			JSON.stringify({
@@ -468,10 +406,9 @@ describe('controller OAuth runtime composition', () => {
 
 		await expect(
 			prepareControllerOAuthRuntime({
-				secretResolver: secretResolver(),
+				secretResolver: secretResolver('https://unused.example.test/oauth/google/callback'),
 				selectedZoneIds: ['apollofam'],
 				systemConfig: systemConfig(configDirectory),
-				tailscaleLocalApiTransport: { getJson: vi.fn() },
 			}),
 		).resolves.toBeUndefined();
 	});

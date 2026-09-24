@@ -2,7 +2,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 import { z } from 'zod';
 
 const waitingForAccessPropsSchema = z.object({
-	emailAddress: z.string().email(),
+	emailAddress: z.string().email().optional(),
 	stylesheet: z.string().regex(/^oauth\.[a-f0-9]{16}\.css$/u),
 });
 
@@ -23,7 +23,9 @@ export function renderWaitingForAccessPage(
 				<body>
 					<main class="page-shell onboarding-shell">
 						<header class="page-header">
-							<p class="eyebrow">Signed in as {props.emailAddress}</p>
+							<p class="eyebrow">
+								Signed in as {props.emailAddress ?? 'Authenticated Access user'}
+							</p>
 							<h1>Waiting for access</h1>
 							<p>
 								You’re signed in. Your household administrator still needs to set up your access.

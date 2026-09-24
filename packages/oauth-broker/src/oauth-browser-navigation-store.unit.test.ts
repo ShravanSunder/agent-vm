@@ -4,8 +4,7 @@ import { createOAuthBrowserNavigationStore } from './oauth-browser-navigation-st
 
 const identity = {
 	issuer: 'https://identity.example.test',
-	userId: 'owner-one',
-	sessionId: 'session-one',
+	subject: 'owner-one',
 };
 describe('bounded post-login navigation context', () => {
 	it('requires the browser secret and never renews the fixed expiry on reads', () => {
@@ -20,18 +19,25 @@ describe('bounded post-login navigation context', () => {
 		now = created.expiresAtMs;
 		expect(store.read(created)).toBeUndefined();
 	});
-	it('cancels only the matching person and browser session', () => {
+	it('cancels only the matching person while allowing same-principal renewal', () => {
 		const store = createOAuthBrowserNavigationStore();
 		const first = store.create({ identity, target: { kind: 'agents' } });
-		const second = store.create({
-			identity: { ...identity, sessionId: 'session-two' },
+		const renewed = store.create({
+			identity: { ...identity },
 			target: { kind: 'agents' },
 		});
-		if (first.kind !== 'created' || second.kind !== 'created')
+		const otherPerson = store.create({
+			identity: { ...identity, subject: 'owner-two' },
+			target: { kind: 'agents' },
+		});
+		if (first.kind !== 'created' || renewed.kind !== 'created' || otherPerson.kind !== 'created')
 			throw new Error('Expected contexts.');
 		store.cancelSession(identity);
 		expect(store.read(first)).toBeUndefined();
-		expect(store.read(second)).toBeDefined();
+		expect(store.read(renewed)).toBeUndefined();
+		expect(store.read(otherPerson)).toMatchObject({
+			identity: { ...identity, subject: 'owner-two' },
+		});
 	});
 	it('fails bounded capacity without evicting another active browser', () => {
 		const store = createOAuthBrowserNavigationStore({ capacity: 1 });

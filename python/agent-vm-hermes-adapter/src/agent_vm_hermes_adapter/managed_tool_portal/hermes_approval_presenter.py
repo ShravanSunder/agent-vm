@@ -51,6 +51,16 @@ class HermesApprovalGateway(t.Protocol):
     def _session_key_for_source(self, source: HermesApprovalSessionSource) -> str: ...
 
 
+@t.runtime_checkable
+class HermesApprovalDiagnostics(t.Protocol):
+    def observe_approval_presentation(
+        self,
+        *,
+        operation: object,
+        reason: object,
+    ) -> None: ...
+
+
 class HermesGatewayApprovalRoute:
     """Bounded session route; native actor identity never leaves Hermes."""
 
@@ -82,10 +92,33 @@ class HermesGatewayApprovalRoute:
 
 
 class HermesGatewayApprovalRouteStore:
-    def __init__(self) -> None:
+    def __init__(self, *, diagnostics: HermesApprovalDiagnostics | None = None) -> None:
         self._lock = threading.Lock()
         self._routes_by_session_key: dict[str, HermesGatewayApprovalRoute] = {}
         self._session_keys_by_session_id: dict[str, str] = {}
+        self._diagnostics = diagnostics
+
+    def observe_presentation(self, reason: str) -> None:
+        try:
+            if self._diagnostics is None:
+                return
+            self._diagnostics.observe_approval_presentation(
+                operation="present",
+                reason=reason,
+            )
+        except Exception:
+            pass
+
+    def _observe_capture(self, reason: str) -> None:
+        try:
+            if self._diagnostics is None:
+                return
+            self._diagnostics.observe_approval_presentation(
+                operation="capture",
+                reason=reason,
+            )
+        except Exception:
+            pass
 
     def capture(
         self,
@@ -99,18 +132,23 @@ class HermesGatewayApprovalRouteStore:
             or not isinstance(session_store, HermesApprovalSessionStore)
             or not isinstance(source, HermesApprovalSessionSource)
         ):
+            self._observe_capture("invalid-boundary")
             return None
         if not gateway._is_user_authorized(source):
+            self._observe_capture("actor-not-authorized")
             return None
         adapter = gateway._adapter_for_source(source)
         if adapter is None:
+            self._observe_capture("adapter-unavailable")
             return None
         session_key = gateway._session_key_for_source(source)
         if not session_key:
+            self._observe_capture("session-key-unavailable")
             return None
         try:
             gateway_loop = asyncio.get_running_loop()
         except RuntimeError:
+            self._observe_capture("event-loop-unavailable")
             return None
         route = HermesGatewayApprovalRoute(
             adapter=adapter,
@@ -125,6 +163,7 @@ class HermesGatewayApprovalRouteStore:
             current_session_id = session_store.peek_session_id(session_key)
             if current_session_id:
                 self._session_keys_by_session_id[current_session_id] = session_key
+        self._observe_capture("captured")
         return route
 
     def read_by_session_id(self, session_id: str) -> HermesGatewayApprovalRoute | None:
@@ -187,10 +226,32 @@ def _remaining_timeout_seconds(expires_at: object) -> float:
     return max(0.0, (expiry - dt.datetime.now(dt.UTC)).total_seconds())
 
 
+def _is_api_server_run() -> bool:
+    try:
+        from gateway.session_context import get_session_env
+    except ModuleNotFoundError:
+        return False
+    return get_session_env("HERMES_SESSION_PLATFORM", "") == "api_server"
+
+
+def _wait_for_api_run_response(request: dict[str, object]) -> str:
+    from tools.approval import request_elicitation_consent
+
+    question = _presentation_question(request)
+    return request_elicitation_consent(
+        question,
+        question,
+        surface="agent-vm-tool-portal",
+    )
+
+
 def _send_and_wait_for_native_response(
     route: HermesGatewayApprovalRoute,
     request: dict[str, object],
 ) -> str | None:
+    if _remaining_timeout_seconds(request.get("expiresAt")) <= 0:
+        return None
+
     from tools.clarify_gateway import (
         register,
         resolve_gateway_clarify,
@@ -224,9 +285,14 @@ def _send_and_wait_for_native_response(
         _ = resolve_gateway_clarify(clarify_id, "")
         _ = wait_for_response(clarify_id, 1)
         return None
+    remaining_timeout_seconds = _remaining_timeout_seconds(request.get("expiresAt"))
+    if remaining_timeout_seconds <= 0:
+        _ = resolve_gateway_clarify(clarify_id, "")
+        _ = wait_for_response(clarify_id, 1)
+        return None
     return wait_for_response(
         clarify_id,
-        _remaining_timeout_seconds(request.get("expiresAt")),
+        remaining_timeout_seconds,
     )
 
 
@@ -235,37 +301,97 @@ class HermesGatewayApprovalPresenter:
         self._routes = routes
 
     async def present(self, session_id: str, request: BaseModel) -> BaseModel:
-        route = self._routes.read_by_session_id(session_id)
+        self._routes.observe_presentation("presenter-entered")
+        if _is_api_server_run():
+            try:
+                request_mapping = request.model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                )
+                if not isinstance(request_mapping, dict):
+                    raise TypeError("Hermes approval request did not produce a JSON object.")
+            except Exception:
+                self._routes.observe_presentation("request-encoding-raised")
+                raise
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
+            try:
+                response = await asyncio.to_thread(_wait_for_api_run_response, request_mapping)
+            except Exception:
+                self._routes.observe_presentation("native-send-raised")
+                raise
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
+            if response == "accept":
+                self._routes.observe_presentation("approved")
+                return _approval_outcome({"kind": "approved"})
+            if response == "decline":
+                self._routes.observe_presentation("denied")
+                return _approval_outcome({"kind": "denied"})
+            self._routes.observe_presentation("user-cancelled")
+            return _approval_outcome({"kind": "cancelled", "reason": "user-cancelled"})
+        try:
+            route = self._routes.read_by_session_id(session_id)
+        except Exception:
+            self._routes.observe_presentation("route-lookup-raised")
+            raise
         if route is None:
+            self._routes.observe_presentation("presenter-missing")
             return _approval_outcome({"kind": "unavailable", "reason": "presenter-missing"})
-        request_mapping = request.model_dump(
-            by_alias=True,
-            exclude_none=True,
-            mode="json",
-        )
-        if not isinstance(request_mapping, dict):
-            raise TypeError("Hermes approval request did not produce a JSON object.")
-        response = await asyncio.to_thread(
-            _send_and_wait_for_native_response,
-            route,
-            request_mapping,
-        )
+        try:
+            request_mapping = request.model_dump(
+                by_alias=True,
+                exclude_none=True,
+                mode="json",
+            )
+            if not isinstance(request_mapping, dict):
+                raise TypeError("Hermes approval request did not produce a JSON object.")
+        except Exception:
+            self._routes.observe_presentation("request-encoding-raised")
+            raise
+        try:
+            response = await asyncio.to_thread(
+                _send_and_wait_for_native_response,
+                route,
+                request_mapping,
+            )
+        except Exception:
+            self._routes.observe_presentation("native-send-raised")
+            raise
         if response is None:
+            if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+                self._routes.observe_presentation("challenge-expired")
+                return _approval_outcome(
+                    {"kind": "cancelled", "reason": "challenge-expired"},
+                )
+            self._routes.observe_presentation("presentation-failed")
             return _approval_outcome(
                 {"kind": "unavailable", "reason": "presentation-failed"},
             )
-        if response.casefold() == "approve":
-            return _approval_outcome({"kind": "approved"})
-        if response.casefold() == "deny":
-            return _approval_outcome({"kind": "denied"})
-        if self._routes.read_by_session_id(session_id) is None:
-            return _approval_outcome(
-                {"kind": "cancelled", "reason": "session-ended"},
-            )
         if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+            self._routes.observe_presentation("challenge-expired")
             return _approval_outcome(
                 {"kind": "cancelled", "reason": "challenge-expired"},
             )
+        if response.casefold() == "approve":
+            self._routes.observe_presentation("approved")
+            return _approval_outcome({"kind": "approved"})
+        if response.casefold() == "deny":
+            self._routes.observe_presentation("denied")
+            return _approval_outcome({"kind": "denied"})
+        if self._routes.read_by_session_id(session_id) is None:
+            self._routes.observe_presentation("session-ended")
+            return _approval_outcome(
+                {"kind": "cancelled", "reason": "session-ended"},
+            )
+        self._routes.observe_presentation("user-cancelled")
         return _approval_outcome(
             {"kind": "cancelled", "reason": "user-cancelled"},
         )

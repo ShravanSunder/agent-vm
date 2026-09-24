@@ -118,8 +118,13 @@ describe('manual templates', () => {
 		expect(layout).not.toContain('extra per-agent OAuth maximum');
 		expect(layout).toContain('Waiting for access');
 		expect(layout).toContain('Google resource consent to the application');
-		expect(layout).toContain('<website-origin>/oauth/auth/invite');
-		expect(layout).toContain('invitation email must match the verified Google sign-in email');
+		expect(layout).toContain('Cloudflare Access self-hosted application');
+		expect(layout).toContain('Google as the identity provider with Instant Authentication');
+		expect(layout).toContain(
+			'Access application session duration to at least the longest ten-minute ceremony bound; 24 hours is recommended',
+		);
+		expect(layout).toContain('route only to the configured loopback HTTP listener');
+		expect(layout).not.toContain('/oauth/auth/invite');
 		expect(layout).toContain('separate agent/account/application connections');
 		expect(layout).toContain('writes are not universally forced to Ask');
 		expect(layout).toContain('Hermes gateway VMs mount zoneFilesDir at /zone');

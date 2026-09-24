@@ -53,7 +53,7 @@ describe('Google callback with dynamic accounts and exact browser identity', () 
 		expect(fixture.exchangeAuthorizationCode).toHaveBeenCalledOnce();
 	});
 
-	it.each(['userId', 'sessionId', 'issuer'] as const)(
+	it.each(['subject', 'issuer'] as const)(
 		'rejects a changed %s before Google exchange',
 		async (field) => {
 			// Arrange
@@ -64,7 +64,7 @@ describe('Google callback with dynamic accounts and exact browser identity', () 
 				...request,
 				identity: {
 					...callbackIdentity,
-					[field]: field === 'issuer' ? 'https://other.example.test' : 'other',
+					[field]: field === 'issuer' ? 'https://other.example.test' : 'other-subject',
 				},
 			});
 			// Assert
@@ -236,13 +236,13 @@ describe('Google callback with dynamic accounts and exact browser identity', () 
 		expect(() =>
 			fixture.callback.getRetryPage({
 				...request,
-				identity: { ...callbackIdentity, sessionId: 'other' },
+				identity: { ...callbackIdentity, subject: 'other' },
 			}),
 		).toThrow('authority is invalid');
 		expect(() =>
 			fixture.callback.retryApplication({
 				...request,
-				identity: { ...callbackIdentity, sessionId: 'other' },
+				identity: { ...callbackIdentity, subject: 'other' },
 			}),
 		).toThrow();
 		expect(() => fixture.callback.retryApplication({ ...request, csrfToken: 'wrong' })).toThrow();
@@ -370,7 +370,7 @@ describe('Google callback with dynamic accounts and exact browser identity', () 
 			fixture.callback.getConfirmationPage({
 				browserBindingSecret: result.confirmation.browserBindingSecret,
 				completionSessionId: result.confirmation.completionSessionId,
-				identity: { ...callbackIdentity, sessionId: 'wrong-session' },
+				identity: { ...callbackIdentity, subject: 'wrong-subject' },
 			}),
 		).toThrow('authority is invalid');
 	});

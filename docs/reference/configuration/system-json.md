@@ -521,8 +521,8 @@ sibling authored config files in `config/gateways/<zone>/`:
   selectors, and profile-owned OAuth application policy.
 - `oauth.config.jsonc` is optional. When present, it configures the controller-owned
   Google OAuth broker, three fixed application-family bindings, human owners,
-  website policy editors, authorized tailnet logins,
-  Clerk browser identity, the fixed direct HTTPS listener on `18900`, and a
+  website policy editors, Cloudflare Access issuer/audience identity,
+  a configurable loopback HTTP listener, one configurable public HTTPS origin, and a
   1Password KEK. Accounts and agent authorizations are enrolled dynamically and
   never appear as static config slots.
 
@@ -540,7 +540,7 @@ Managed Gog calls carry an opaque `accountId` beside exact admitted argv. The
 Read/Write overrides first and the active profile `policyDefaults` fallback second,
 then intersects the result with current consent, scopes, activity ceiling, and the
 finite command catalog. `Deny`, `Ask`, and `Allow` are all valid for reads and
-writes; write is not hard-coded to Ask. Clerk authenticates the website human only
+writes; write is not hard-coded to Ask. Cloudflare Access authenticates the website human only
 and is never a source of Gog tokens.
 
 ### Profile-owned OAuth application policy

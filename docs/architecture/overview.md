@@ -123,10 +123,9 @@ VM execution bypasses the Tool Portal route.
 
 An optional `oauth.config.jsonc` beside a managed Hermes zone's Tool Portal config
 enables human-owned Google accounts with separate agent/account/application
-authorizations. Clerk authenticates the person using Google identity sign-in only;
-it never supplies Google resource credentials. Tailscale admits the browser's
-network connection but does not establish account ownership. The controller owns
-direct tailnet HTTPS on port `18900`, stores envelope-encrypted credentials and
+authorizations. Cloudflare Access authenticates the person through Google Instant
+Authentication; it never supplies Google resource credentials. Cloudflare Tunnel
+routes only to the controller's loopback HTTP permissions listener. The controller stores envelope-encrypted credentials and
 account policy in controller state, and gives Gog only a short-lived access-token
 placeholder through the authenticated agent's singleton credentialed Managed
 runtime.

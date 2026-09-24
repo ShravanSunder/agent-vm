@@ -26,12 +26,18 @@ import json
 import threading
 from types import SimpleNamespace
 
+from aiohttp import ClientSession, web
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
+from agent_vm_hermes_adapter.managed_gateway_runtime_client_loop import GatewayRuntimeClientLoop
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalPresenter,
     HermesGatewayApprovalRouteStore,
 )
+from gateway.config import PlatformConfig
+from gateway.platforms.api_server import APIServerAdapter
+from gateway.session_context import clear_session_vars, set_session_vars
 from pydantic import BaseModel
+from tools.approval import register_gateway_notify, unregister_gateway_notify
 from tools.clarify_gateway import (
     has_pending,
     register,
@@ -156,6 +162,90 @@ try:
     approved_mapping = approved.model_dump(by_alias=True, exclude_none=True, mode="json")
     denied_mapping = denied.model_dump(by_alias=True, exclude_none=True, mode="json")
 
+    api_requests = []
+    api_request_ready = threading.Event()
+
+    def notify_api_approval(approval_data):
+        assert approval_data["description"].startswith("Approve files.write once?")
+        api_requests.append(approval_data["description"])
+        api_request_ready.set()
+
+    register_gateway_notify("run-approval-e2e", notify_api_approval)
+    portal_loop = GatewayRuntimeClientLoop(SimpleNamespace())
+    try:
+        async def exercise_http_approvals():
+            api_adapter = APIServerAdapter(
+                PlatformConfig(enabled=True, extra={"key": "local-test-key"})
+            )
+            api_adapter._run_statuses["run-approval-e2e"] = {"status": "running"}
+            api_adapter._run_approval_sessions["run-approval-e2e"] = "run-approval-e2e"
+            api_adapter._run_streams["run-approval-e2e"] = asyncio.Queue()
+            app = web.Application()
+            app.router.add_post(
+                "/v1/runs/{run_id}/approval", api_adapter._handle_run_approval
+            )
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            assert site._server is not None
+            port = site._server.sockets[0].getsockname()[1]
+            outcomes = []
+            http_choices = []
+            wrong_key_statuses = []
+            try:
+                async with ClientSession() as client:
+                    for challenge_id, choice in [
+                        ("33333333-3333-4333-8333-333333333333", "once"),
+                        ("44444444-4444-4444-8444-444444444444", "deny"),
+                    ]:
+                        api_request_ready.clear()
+                        api_tokens = set_session_vars(
+                            platform="api_server",
+                            session_key="run-approval-e2e",
+                            session_id="api-session-approval-e2e",
+                            cron_session="",
+                        )
+                        try:
+                            pending = portal_loop.submit(
+                                presenter.present(
+                                    "api-session-approval-e2e",
+                                    presentation_request(challenge_id),
+                                )
+                            )
+                        finally:
+                            clear_session_vars(api_tokens)
+                        assert await asyncio.to_thread(api_request_ready.wait, 5)
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/v1/runs/run-approval-e2e/approval",
+                            headers={"Authorization": "Bearer wrong-local-test-key"},
+                            json={"choice": choice},
+                        ) as response:
+                            wrong_key_statuses.append(response.status)
+                            assert (await response.json())["error"]["code"] == "gateway_auth_failed"
+                        assert pending.done() is False
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/v1/runs/run-approval-e2e/approval",
+                            headers={"Authorization": "Bearer local-test-key"},
+                            json={"choice": choice},
+                        ) as response:
+                            assert response.status == 200
+                            http_choices.append((await response.json())["choice"])
+                        outcome = await asyncio.wrap_future(pending)
+                        outcomes.append(
+                            outcome.model_dump(by_alias=True, exclude_none=True, mode="json")
+                        )
+            finally:
+                await runner.cleanup()
+            return outcomes, http_choices, wrong_key_statuses
+
+        api_outcomes, api_http_choices, api_wrong_key_statuses = asyncio.run(
+            exercise_http_approvals()
+        )
+    finally:
+        portal_loop.close(disconnect=False)
+        unregister_gateway_notify("run-approval-e2e")
+
     register("ordinary-clarify", "routing-key-approval-e2e", "ordinary", ["Continue"])
     routes.clear_by_session_id("session-approval-e2e")
     assert has_pending("routing-key-approval-e2e") is True
@@ -169,6 +259,10 @@ try:
                 "interactions": adapter.interactions,
                 "ordinaryClarifyPreserved": True,
                 "outcomes": [approved_mapping, denied_mapping],
+                "apiRequestCount": len(api_requests),
+                "apiHttpChoices": api_http_choices,
+                "apiOutcomes": api_outcomes,
+                "apiWrongKeyStatuses": api_wrong_key_statuses,
             },
             sort_keys=True,
         )
@@ -180,8 +274,8 @@ finally:
 PY
 `;
 
-describeHermesApprovalPresenterE2e('e2e: pinned Hermes native approval presenter', () => {
-	it('uses Hermes clarify ownership for exact approve and deny interactions', async () => {
+describeHermesApprovalPresenterE2e('e2e: pinned Hermes approval presenter', () => {
+	it('uses native clarify and authenticated HTTP run approval queues', async () => {
 		const repositoryRoot = process.cwd();
 		const result = await execFileAsync(
 			'docker',
@@ -218,6 +312,10 @@ describeHermesApprovalPresenterE2e('e2e: pinned Hermes native approval presenter
 			],
 			ordinaryClarifyPreserved: true,
 			outcomes: [{ kind: 'approved' }, { kind: 'denied' }],
+			apiRequestCount: 2,
+			apiHttpChoices: ['once', 'deny'],
+			apiOutcomes: [{ kind: 'approved' }, { kind: 'denied' }],
+			apiWrongKeyStatuses: [401, 401],
 		});
 	}, 180_000);
 });
