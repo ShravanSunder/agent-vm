@@ -17,8 +17,8 @@ describe('managed VM boot signal tracker', () => {
 		expect(snapshot).toEqual({
 			bootRequestObserved: true,
 			execResponseCount: 1,
-			guestConsoleObserved: true,
 			guestControlFrameCount: 1,
+			qemuOutputObserved: true,
 			vfsReadyObserved: true,
 		});
 		expect(JSON.stringify(snapshot)).not.toMatch(/private|\/data|cmd=|id=/u);

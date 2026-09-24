@@ -1,7 +1,7 @@
 export interface ManagedVmBootSignalSnapshot {
 	readonly bootRequestObserved: boolean;
 	readonly execResponseCount: number;
-	readonly guestConsoleObserved: boolean;
+	readonly qemuOutputObserved: boolean;
 	readonly guestControlFrameCount: number;
 	readonly vfsReadyObserved: boolean;
 }
@@ -17,7 +17,7 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 	let active = true;
 	let bootRequestObserved = false;
 	let execResponseCount = 0;
-	let guestConsoleObserved = false;
+	let qemuOutputObserved = false;
 	let guestControlFrameCount = 0;
 	let vfsReadyObserved = false;
 
@@ -25,7 +25,7 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 		observe(component: string, message: string): void {
 			if (!active) return;
 			if (component === 'qemu') {
-				guestConsoleObserved = true;
+				qemuOutputObserved = true;
 				return;
 			}
 			if (component === 'vfs') {
@@ -44,8 +44,8 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 			return {
 				bootRequestObserved,
 				execResponseCount,
-				guestConsoleObserved,
 				guestControlFrameCount,
+				qemuOutputObserved,
 				vfsReadyObserved,
 			};
 		},
