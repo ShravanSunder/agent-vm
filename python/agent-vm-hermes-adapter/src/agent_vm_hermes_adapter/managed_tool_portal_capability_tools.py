@@ -106,7 +106,7 @@ class _ManagedToolPortalPluginRuntime:
         self.gateway_epoch = gateway_epoch
         self.catalog_coordinator = catalog_coordinator
         self.catalog_turn_bindings = catalog_turn_bindings
-        self.approval_routes = HermesGatewayApprovalRouteStore()
+        self.approval_routes = HermesGatewayApprovalRouteStore(diagnostics=telemetry)
         self.approval_presenter = HermesGatewayApprovalPresenter(self.approval_routes)
 
 
@@ -238,6 +238,7 @@ def _invoke(
             )
             if not _result_requires_approval(initial_result):
                 return _result_json(initial_result)
+            runtime.approval_routes.observe_presentation("bridge-entered")
             operation = execute_portal_call_with_approval(
                 validated_request,
                 call_portal=lambda retry_request: client.portal.call(
@@ -327,6 +328,7 @@ class _CatalogToolHandler:
             )
             if not _result_requires_approval(initial_result):
                 return _result_json(initial_result)
+            self._runtime.approval_routes.observe_presentation("bridge-entered")
             result = self._runtime.adapter.run_gateway_runtime_coroutine(
                 execute_portal_call_with_approval(
                     request,

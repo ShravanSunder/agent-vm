@@ -22,8 +22,7 @@ import type { GoogleOAuthBrokerService } from '@agent-vm/oauth-broker/google';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 
-import type { ClerkBrowserIdentityVerifier } from './clerk-browser-identity-verifier.js';
-import { beginClerkLogin } from './clerk-login-routes.js';
+import type { CloudflareAccessIdentityVerifier } from './cloudflare-access-identity-verifier.js';
 import type {
 	GooglePermissionPolicyService,
 	GoogleAccountPolicyView,
@@ -31,9 +30,12 @@ import type {
 import {
 	oauthNavigationCookieName,
 	oauthNavigationBindingCookieName,
+	beginAccessLogin,
 	createOAuthNavigationCookies,
 	type OAuthBrowserSessionRoutes,
 } from './oauth-browser-session-routes.js';
+
+class BrowserSignInChangedError extends Error {}
 
 const policyContextCookie = 'agent_vm_oauth_policy';
 const policyBindingCookie = 'agent_vm_oauth_policy_binding';
@@ -69,7 +71,7 @@ export function createOAuthAccountPolicyRoutes(props: {
 	readonly broker: GoogleOAuthBrokerService;
 	readonly policy: GooglePermissionPolicyService;
 	readonly browser: OAuthBrowserSessionRoutes;
-	readonly verifier: ClerkBrowserIdentityVerifier;
+	readonly verifier: CloudflareAccessIdentityVerifier;
 	readonly navigation: OAuthBrowserNavigationStore;
 	readonly continuations: OAuthLoginContinuationStore;
 	readonly stylesheet: string;
@@ -80,26 +82,28 @@ export function createOAuthAccountPolicyRoutes(props: {
 			contextId: getCookie(context, oauthNavigationCookieName) ?? '',
 			browserBindingSecret: getCookie(context, oauthNavigationBindingCookieName) ?? '',
 		});
-	const identity = async (
+	const evidence = async (
 		context: Context,
 	): Promise<
-		Extract<
-			Awaited<ReturnType<OAuthBrowserSessionRoutes['readIdentity']>>,
-			{ kind: 'verified' }
-		>['identity']
+		Extract<Awaited<ReturnType<OAuthBrowserSessionRoutes['readIdentity']>>, { kind: 'verified' }>
 	> => {
 		const current = await props.browser.readIdentity(context.req.raw, { kind: 'navigation' });
+		if (current.kind === 'denied') throw new BrowserSignInChangedError();
 		if (current.kind !== 'verified') throw new Error('Browser identity is unavailable.');
-		return current.identity;
+		return current;
 	};
+	const identity = async (
+		context: Context,
+	): Promise<NonNullable<ReturnType<OAuthBrowserNavigationStore['read']>>['identity']> =>
+		(await evidence(context)).identity;
 	const navigateAfterForm = (options: {
 		readonly context: Context;
 		readonly identity: NonNullable<ReturnType<OAuthBrowserNavigationStore['read']>>['identity'];
 		readonly target: OAuthLoginContinuationTarget;
 		readonly destination: string;
 	}): Response => {
-		// The POST already verified this identity. Starting another bootstrap
-		// could redirect an aged Clerk cookie outside this form's CSP origin.
+		// The POST already verified this identity. Preserve the local destination
+		// without relying on replay through the Access edge.
 		const created = props.navigation.create({ identity: options.identity, target: options.target });
 		if (created.kind !== 'created')
 			return options.context.text('Navigation is unavailable. Reload your accounts.', 503);
@@ -162,14 +166,14 @@ export function createOAuthAccountPolicyRoutes(props: {
 	app.get('/oauth/agents', async (context) => {
 		const current = navigation(context);
 		if (current?.target.kind !== 'agents')
-			return beginClerkLogin({
+			return beginAccessLogin({
 				context,
 				target: { kind: 'agents' },
 				continuations: props.continuations,
 			});
 		const owner = await identity(context);
-		const verifiedGoogle = await props.verifier.verifyGoogleIdentity(owner);
-		if (verifiedGoogle.kind !== 'verified')
+		const verifiedHuman = await props.verifier.verifyRequest(context.req.raw);
+		if (verifiedHuman.kind !== 'verified')
 			return context.text('Your signed-in identity could not be verified. Sign in again.', 403);
 		const agents = props.policy.listOwnerAccounts(owner).map((agent) => ({
 			agentId: agent.agentId,
@@ -191,7 +195,11 @@ export function createOAuthAccountPolicyRoutes(props: {
 		return context.html(
 			renderOAuthOwnerIndex({
 				stylesheet: props.stylesheet,
-				model: { agents, csrfToken: current.csrfToken, signedInEmail: verifiedGoogle.emailAddress },
+				model: {
+					agents,
+					csrfToken: current.csrfToken,
+					signedInEmail: verifiedHuman.human.emailAddress ?? 'Authenticated user',
+				},
 			}),
 		);
 	});
@@ -217,7 +225,7 @@ export function createOAuthAccountPolicyRoutes(props: {
 			current.target.accountId !== accountId ||
 			current.target.agentId !== agentId
 		)
-			return beginClerkLogin({ context, target, continuations: props.continuations });
+			return beginAccessLogin({ context, target, continuations: props.continuations });
 		const owner = await identity(context);
 		const applicationId = googleOAuthApplicationIdSchema
 			.and(oauthApplicationIdSchema)
@@ -332,11 +340,13 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const current = navigation(context);
 		if (current === undefined) return context.text('Browser context expired. Sign in again.', 403);
 		const form = await context.req.formData();
+		const currentEvidence = await evidence(context);
 		const common = {
+			authenticationExpiresAtMs: currentEvidence.authenticationExpiresAtMs,
 			contextId,
 			browserBindingSecret: getCookie(context, policyBindingCookie) ?? '',
 			csrfToken: formString(form, 'csrfToken'),
-			identity: await identity(context),
+			identity: currentEvidence.identity,
 			origin: props.config.browser.publicBaseUrl,
 		};
 		if (context.req.param('action') === 'preview') {
@@ -346,6 +356,8 @@ export function createOAuthAccountPolicyRoutes(props: {
 				expectedOverrideRevision: Number(formString(form, 'expectedOverrideRevision')),
 				services: parsePolicyCells(form),
 			});
+			if (result.kind === 'expired')
+				return context.text('Policy editor expired. Reload the account and start again.', 409);
 			if (result.kind !== 'preview')
 				return context.text(
 					`Policy preview rejected (${result.kind}). Reload the account and review its current limits.`,
@@ -376,6 +388,9 @@ export function createOAuthAccountPolicyRoutes(props: {
 				target: { kind: 'agents' },
 				destination: '/oauth/agents',
 			});
+		if (result.kind === 'expired')
+			return context.text('Policy editor expired. Reload the account and start again.', 409);
+		if (result.kind === 'denied') return context.text('Policy change denied. Sign in again.', 403);
 		return context.text(
 			result.kind === 'pending' || result.kind === 'containment-failed'
 				? 'Policy saved. Access remains paused until runtime containment is confirmed. Return to your accounts to check its status.'
@@ -383,9 +398,11 @@ export function createOAuthAccountPolicyRoutes(props: {
 			result.kind === 'pending' || result.kind === 'containment-failed' ? 202 : 409,
 		);
 	});
-	app.onError((_error, context) =>
+	app.onError((error, context) =>
 		context.text(
-			'The account request could not be verified. Reload the page or sign in again.',
+			error instanceof BrowserSignInChangedError
+				? 'Your sign-in changed. Start again.'
+				: 'The account request could not be verified. Reload the page or sign in again.',
 			403,
 		),
 	);

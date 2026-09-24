@@ -42,20 +42,15 @@ import {
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import { createKeyedAsyncLock } from '../credentialed-runtime/keyed-async-lock.js';
+import { createCloudflareAccessIdentityVerifier } from './cloudflare-access-identity-verifier.js';
 import type { GoogleAccountPolicyEditorProps } from './google-account-policy-editor.js';
 import {
 	createGooglePermissionPolicyService,
 	type GooglePermissionPolicyService,
 } from './google-permission-policy-service.js';
-import { createOAuthHttpsApp, startOAuthHttpsServer } from './oauth-https-server.js';
+import { writeOAuthGoogleCallbackFailureDiagnostic } from './oauth-google-callback-diagnostics.js';
+import { createOAuthHttpApp, startOAuthHttpServer } from './oauth-https-server.js';
 import { assertOAuthListenerPortAvailable } from './oauth-listener-port-validation.js';
-import { prepareClerkBrowserIdentity } from './prepare-clerk-browser-identity.js';
-import {
-	createTailscaleLocalApiIdentityResolver,
-	createTailscaleUnixSocketTransport,
-	resolveLocalTailscaleAddress,
-	type TailscaleLocalApiTransport,
-} from './tailscale-local-api-identity-resolver.js';
 
 const oauthConfigFileName = 'oauth.config.jsonc';
 const toolPortalConfigFileName = 'tool-portal.config.jsonc';
@@ -181,13 +176,13 @@ export interface PreparedControllerOAuthRuntime {
 	readonly brokerService: GoogleOAuthBrokerService;
 	readonly policyService: GooglePermissionPolicyService;
 	readonly compiledOAuthPolicy: CompiledOAuthPolicy;
-	readonly port: 18_900;
+	readonly port: number;
 	readonly zoneId: string;
 	close(): Promise<void>;
 	drain(): Promise<void>;
 	setContainmentHandlers(handlers: ControllerOAuthContainmentHandlers): void;
 	activateAfterRuntimeCleanup(): void;
-	startHttpsListener(): Promise<{ close(): Promise<void> }>;
+	startHttpListener(): Promise<{ close(): Promise<void> }>;
 	stopAdmission(): void;
 }
 
@@ -217,12 +212,11 @@ export interface ControllerOAuthSystemConfig {
 
 export async function prepareControllerOAuthRuntime(props: {
 	readonly createBrokerService?: typeof createGoogleOAuthBrokerService;
-	readonly createHttpsApp?: typeof createOAuthHttpsApp;
+	readonly createHttpApp?: typeof createOAuthHttpApp;
 	readonly secretResolver: SecretResolver;
 	readonly selectedZoneIds: readonly string[];
 	readonly systemConfig: ControllerOAuthSystemConfig;
 	readonly loadApprovalAssets?: typeof loadOAuthApprovalAssetBundle;
-	readonly tailscaleLocalApiTransport?: TailscaleLocalApiTransport | undefined;
 }): Promise<PreparedControllerOAuthRuntime | undefined> {
 	const selectedConfiguration = await loadSelectedOAuthConfiguration(props);
 	if (selectedConfiguration === undefined) return undefined;
@@ -242,24 +236,15 @@ export async function prepareControllerOAuthRuntime(props: {
 	let brokerServiceForCleanup: GoogleOAuthBrokerService | undefined;
 	let keyEncryptionKeyForCleanup: OAuthKeyEncryptionKey | undefined;
 	try {
-		const transport = props.tailscaleLocalApiTransport ?? createTailscaleUnixSocketTransport();
-		const [
-			encodedKeyEncryptionKey,
-			clientCredentialsByApplication,
-			assets,
-			bindAddress,
-			browserIdentityVerifier,
-		] = await Promise.all([
+		const [encodedKeyEncryptionKey, clientCredentialsByApplication, assets] = await Promise.all([
 			props.secretResolver.resolve(onePasswordSecretReference(config.storage.keyEncryptionKey)),
 			resolveGoogleClientCredentials({ config, secretResolver: props.secretResolver }),
 			(props.loadApprovalAssets ?? loadOAuthApprovalAssetBundle)(),
-			resolveLocalTailscaleAddress({ transport }),
-			prepareClerkBrowserIdentity({
-				config: config.browser.identity,
-				publicBaseUrl: config.browser.publicBaseUrl,
-				secretResolver: props.secretResolver,
-			}),
 		]);
+		const browserIdentityVerifier = createCloudflareAccessIdentityVerifier({
+			audience: config.browser.identity.audience,
+			issuer: config.browser.identity.issuer,
+		});
 		let containmentHandlers: ControllerOAuthContainmentHandlers | undefined;
 		let admissionOpen = false;
 		let admissionStopped = false;
@@ -293,11 +278,7 @@ export async function prepareControllerOAuthRuntime(props: {
 		const loginContinuations = createOAuthLoginContinuationStore();
 		const publicationLock = createKeyedAsyncLock();
 		const runAuthorityCommit = async <TResult>(commit: () => TResult): Promise<TResult> =>
-			await publicationLock.runExclusive(zoneId, async () => {
-				if (!admissionOpen || admissionStopped)
-					throw new Error('OAuth authority admission is closed.');
-				return commit();
-			});
+			await publicationLock.runExclusive(zoneId, async () => commit());
 		const policyService = createGooglePermissionPolicyService({
 			runAuthorityCommit,
 			catalog,
@@ -307,7 +288,6 @@ export async function prepareControllerOAuthRuntime(props: {
 			keyEncryptionKey,
 			keyEncryptionKeyVersion: 1,
 			isAdmissionOpen: () => admissionOpen && !admissionStopped,
-			verifySession: async (identity) => await browserIdentityVerifier.verifySession(identity),
 			containPolicyMaterial: async (target) =>
 				containmentHandlers === undefined ? 'failed' : await containmentHandlers.policy(target),
 		});
@@ -333,7 +313,7 @@ export async function prepareControllerOAuthRuntime(props: {
 					: await containmentHandlers.authorization(target),
 		});
 		brokerServiceForCleanup = brokerService;
-		const app = (props.createHttpsApp ?? createOAuthHttpsApp)({
+		const app = (props.createHttpApp ?? createOAuthHttpApp)({
 			assets,
 			brokerService,
 			config,
@@ -341,9 +321,9 @@ export async function prepareControllerOAuthRuntime(props: {
 			navigation,
 			loginContinuations,
 			policyService,
+			recordGoogleCallbackFailure: writeOAuthGoogleCallbackFailureDiagnostic,
 			isAdmissionOpen: () => admissionOpen && !admissionStopped,
 			publicBaseUrl: config.browser.publicBaseUrl,
-			tailnetIdentityResolver: createTailscaleLocalApiIdentityResolver({ transport }),
 		});
 		let closePromise: Promise<void> | undefined;
 		const stopAdmission = (): void => {
@@ -451,14 +431,11 @@ export async function prepareControllerOAuthRuntime(props: {
 					throw new Error('OAuth containment handlers must be installed before admission.');
 				containmentHandlers = handlers;
 			},
-			startHttpsListener: async () =>
-				await startOAuthHttpsServer({
+			startHttpListener: async () =>
+				await startOAuthHttpServer({
 					app,
-					bindAddress,
-					certificatePath: config.browser.listener.certificatePath,
+					bindAddress: '127.0.0.1',
 					port: config.browser.listener.port,
-					privateKeyPath: config.browser.listener.privateKeyPath,
-					publicHostname: new URL(config.browser.publicBaseUrl).hostname,
 				}),
 			stopAdmission,
 			zoneId,

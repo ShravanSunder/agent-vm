@@ -145,7 +145,7 @@ function createPreparedOAuthRuntimeStub(events: string[]): PreparedControllerOAu
 		setContainmentHandlers: () => {
 			events.push('oauth-invalidation-handler-set');
 		},
-		startHttpsListener: async () => {
+		startHttpListener: async () => {
 			events.push('oauth-listener-started');
 			return {
 				close: async () => {
@@ -1012,7 +1012,7 @@ describe('startControllerRuntime', () => {
 				prepareControllerOAuthRuntime: async () => ({
 					...preparedOAuthRuntime,
 					close: closeOAuthRuntime,
-					startHttpsListener: async () => {
+					startHttpListener: async () => {
 						startupEvents.push('oauth-listener-start-failed');
 						throw oauthListenerFailure;
 					},
@@ -1542,7 +1542,7 @@ describe('startControllerRuntime', () => {
 			'Resolving 1Password secrets',
 			'Preparing OAuth broker',
 			'Controller API on :18800',
-			'OAuth HTTPS on :18900',
+			'OAuth loopback HTTP on 127.0.0.1:18900',
 			'Starting selected gateway zones',
 		]);
 		expect(startupEvents).toContain('oauth-invalidation-handler-set');

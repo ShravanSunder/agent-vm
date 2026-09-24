@@ -117,6 +117,14 @@ class _Telemetry:
     ) -> None:
         del duration_milliseconds, status, tool_name
 
+    def observe_approval_presentation(
+        self,
+        *,
+        operation: object,
+        reason: object,
+    ) -> None:
+        del operation, reason
+
     def trace_context_provider(self) -> Mapping[str, object] | None:
         return None
 

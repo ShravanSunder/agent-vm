@@ -121,8 +121,7 @@ export function createGoogleAuthorizationViewModels(props: {
 				grant.owner.issuer !== props.config.browser.identity.issuer ||
 				!Object.values(props.config.owners).some(
 					(owner) =>
-						owner.clerkUserId === grant.owner.userId &&
-						owner.allowedAgentIds.includes(grant.agentId),
+						owner.subject === grant.owner.userId && owner.allowedAgentIds.includes(grant.agentId),
 				)
 			)
 				return { kind: 'unavailable' };
@@ -174,7 +173,7 @@ export function createGoogleAuthorizationViewModels(props: {
 			const identity = transaction.identity;
 			const owner = Object.values(props.config.owners).find(
 				(entry) =>
-					entry.clerkUserId === identity?.userId &&
+					entry.subject === identity?.subject &&
 					entry.allowedAgentIds.includes(transaction.agentId),
 			);
 			if (identity?.issuer !== props.config.browser.identity.issuer || owner === undefined)

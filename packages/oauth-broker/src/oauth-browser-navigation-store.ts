@@ -93,8 +93,7 @@ export function createOAuthBrowserNavigationStore(
 			for (const [id, entry] of contexts)
 				if (
 					entry.identity.issuer === identity.issuer &&
-					entry.identity.userId === identity.userId &&
-					entry.identity.sessionId === identity.sessionId
+					entry.identity.subject === identity.subject
 				)
 					contexts.delete(id);
 		},

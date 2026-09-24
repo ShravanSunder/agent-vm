@@ -28,8 +28,7 @@ import { createGoogleOAuthBrokerService } from './google-oauth-broker-service.js
 
 export const facadeIdentity = {
 	issuer: 'https://identity.example.test',
-	userId: 'user_test_owner',
-	sessionId: 'test-session',
+	subject: 'user_test_owner',
 };
 export const facadeApplicationId = oauthApplicationIdSchema.parse('gmail-app');
 interface BrokerFacadeFixture {
@@ -55,6 +54,9 @@ export async function createBrokerFacadeFixture(
 		readonly includeDocuments?: boolean;
 		readonly isAdmissionOpen?: () => boolean;
 		readonly now?: () => number;
+		readonly runAuthorityCommit?: Parameters<
+			typeof createGoogleOAuthBrokerService
+		>[0]['runAuthorityCommit'];
 		readonly transformAdapter?: (adapter: GoogleOAuthAdapter) => GoogleOAuthAdapter;
 		readonly containAuthorizationMaterial?: Parameters<
 			typeof createGoogleOAuthBrokerService
@@ -130,6 +132,9 @@ export async function createBrokerFacadeFixture(
 		},
 	};
 	const broker = createGoogleOAuthBrokerService({
+		...(options.runAuthorityCommit === undefined
+			? {}
+			: { runAuthorityCommit: options.runAuthorityCommit }),
 		catalog,
 		config,
 		configRevision: 'config-1',
@@ -197,6 +202,7 @@ export async function createBrokerFacadeFixture(
 		alias = 'My mailbox',
 	): ReturnType<GoogleOAuthBrokerService['confirmAccount']> =>
 		broker.confirmAccount({
+			authenticationExpiresAtMs: 1_000_000,
 			identity: facadeIdentity,
 			completionSessionId: confirmation.completionSessionId,
 			browserBindingSecret: confirmation.browserBindingSecret,
@@ -235,6 +241,7 @@ export async function createBrokerFacadeFixture(
 		});
 		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
 		const completed = await broker.confirmAccount({
+			authenticationExpiresAtMs: 1_000_000,
 			identity: facadeIdentity,
 			completionSessionId: callback.confirmation.completionSessionId,
 			browserBindingSecret: callback.confirmation.browserBindingSecret,

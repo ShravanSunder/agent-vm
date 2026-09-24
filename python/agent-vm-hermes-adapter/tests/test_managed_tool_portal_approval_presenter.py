@@ -1,11 +1,13 @@
 import asyncio
 from unittest.mock import patch
 
+import pytest
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
 from pydantic import BaseModel
 
 from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
     HermesGatewayApprovalPresenter,
+    HermesGatewayApprovalRoute,
     HermesGatewayApprovalRouteStore,
 )
 
@@ -51,6 +53,22 @@ class FakeGateway:
 class FakeSessionStore:
     def peek_session_id(self, session_key: str) -> str | None:
         return "session-a" if session_key == "routing-key-a" else None
+
+
+class RecordingApprovalDiagnostics:
+    def __init__(self) -> None:
+        self.observations: list[tuple[str, str]] = []
+
+    def observe_approval_presentation(self, *, operation: object, reason: object) -> None:
+        if not isinstance(operation, str) or not isinstance(reason, str):
+            raise AssertionError("diagnostic operation and reason must be strings")
+        self.observations.append((operation, reason))
+
+
+class RaisingApprovalDiagnostics:
+    def observe_approval_presentation(self, *, operation: object, reason: object) -> None:
+        del operation, reason
+        raise RuntimeError("secret-shaped diagnostics failure")
 
 
 def _presentation_request() -> BaseModel:
@@ -140,11 +158,138 @@ def test_presenter_projects_only_approve_and_deny_as_decisions() -> None:
 
 
 def test_presenter_is_unavailable_without_the_originating_session_route() -> None:
-    presenter = HermesGatewayApprovalPresenter(HermesGatewayApprovalRouteStore())
+    diagnostics = RecordingApprovalDiagnostics()
+    presenter = HermesGatewayApprovalPresenter(
+        HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    )
 
     outcome = asyncio.run(presenter.present("missing-session", _presentation_request()))
 
     assert _outcome_mapping(outcome) == {
+        "kind": "unavailable",
+        "reason": "presenter-missing",
+    }
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "presenter-missing"),
+    ]
+
+
+def test_pre_observation_exceptions_keep_the_same_failure_and_only_static_diagnostics() -> None:
+    secret_canary = "Bearer secret-early-presenter-canary"
+    diagnostics = RecordingApprovalDiagnostics()
+    routes = HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    presenter = HermesGatewayApprovalPresenter(routes)
+
+    with patch.object(routes, "read_by_session_id", side_effect=RuntimeError(secret_canary)):
+        with pytest.raises(RuntimeError, match=secret_canary):
+            asyncio.run(presenter.present("session-a", _presentation_request()))
+
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "route-lookup-raised"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+    async def capture_route() -> None:
+        captured = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=FakeSource(profile="researcher"),
+        )
+        assert captured is not None
+
+    asyncio.run(capture_route())
+    diagnostics.observations.clear()
+    request = _presentation_request()
+    with patch.object(type(request), "model_dump", side_effect=RuntimeError(secret_canary)):
+        with pytest.raises(RuntimeError, match=secret_canary):
+            asyncio.run(presenter.present("session-a", request))
+
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "request-encoding-raised"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+    diagnostics.observations.clear()
+    with patch(
+        "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+        "_send_and_wait_for_native_response",
+        side_effect=RuntimeError(secret_canary),
+    ):
+        with pytest.raises(RuntimeError, match=secret_canary):
+            asyncio.run(presenter.present("session-a", _presentation_request()))
+
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "native-send-raised"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+
+def test_route_and_failed_presentation_diagnostics_are_closed_and_content_free() -> None:
+    secret_canary = "Bearer secret-approval-presenter-canary"
+    diagnostics = RecordingApprovalDiagnostics()
+    routes = HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    source = FakeSource(profile=secret_canary, chat_id=secret_canary)
+
+    async def exercise() -> BaseModel:
+        denied = routes.capture(
+            gateway=FakeGateway(authorized=False),
+            session_store=FakeSessionStore(),
+            source=source,
+        )
+        assert denied is None
+        captured = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=source,
+        )
+        assert captured is not None
+        presenter = HermesGatewayApprovalPresenter(routes)
+        with patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_send_and_wait_for_native_response",
+            return_value=None,
+        ):
+            return await presenter.present("session-a", _presentation_request())
+
+    outcome = asyncio.run(exercise())
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "unavailable",
+        "reason": "presentation-failed",
+    }
+    assert diagnostics.observations == [
+        ("capture", "actor-not-authorized"),
+        ("capture", "captured"),
+        ("present", "presenter-entered"),
+        ("present", "presentation-failed"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+
+def test_diagnostic_failure_cannot_change_capture_or_presentation_outcomes() -> None:
+    routes = HermesGatewayApprovalRouteStore(diagnostics=RaisingApprovalDiagnostics())
+
+    async def exercise_capture() -> HermesGatewayApprovalRoute | None:
+        return routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=FakeSource(profile="profile-a", chat_id="chat-a"),
+        )
+
+    route = asyncio.run(exercise_capture())
+    missing_outcome = asyncio.run(
+        HermesGatewayApprovalPresenter(routes).present(
+            "missing-session",
+            _presentation_request(),
+        )
+    )
+
+    assert route is not None
+    assert _outcome_mapping(missing_outcome) == {
         "kind": "unavailable",
         "reason": "presenter-missing",
     }

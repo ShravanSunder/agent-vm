@@ -229,7 +229,6 @@ describe('Gog account policy to RealFS file journey', () => {
 			},
 			keyEncryptionKey: wrappingKey,
 			keyEncryptionKeyVersion: 1,
-			verifySession: async (identity) => ({ kind: 'verified', identity }),
 			containPolicyMaterial: async () => 'contained',
 			isAdmissionOpen: () => true,
 		});
@@ -814,6 +813,7 @@ describe('Gog account policy to RealFS file journey', () => {
 			});
 			expect(
 				await brokerFixture.broker.confirmDisconnect({
+					authenticationExpiresAtMs: 1_000_000,
 					identity: facadeIdentity,
 					transactionId: page.transactionId,
 					browserBindingSecret: page.browserBindingSecret,

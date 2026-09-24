@@ -4,9 +4,10 @@ import typing as t
 import unittest
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 from opentelemetry import trace
+from opentelemetry._logs import SeverityNumber
 from opentelemetry.sdk._logs import ReadableLogRecord
 from opentelemetry.sdk._logs.export import (
     BatchLogRecordProcessor,
@@ -277,6 +278,90 @@ class ManagedToolPortalObservabilityTests(unittest.TestCase):
         self.assertEqual(operation_span.status.status_code, StatusCode.ERROR)
         self.assertEqual(operation_span.events, ())
         self.assertNotIn(raw_error_canary, str(operation_span.attributes))
+
+    def test_approval_diagnostics_admit_only_closed_operation_and_reason_values(self) -> None:
+        logger_provider = MagicMock()
+        meter_provider = MagicMock()
+        secret_canary = "Bearer secret-approval-diagnostic-canary"
+        with (
+            telemetry_environment(
+                OTEL_LOGS_EXPORTER="otlp",
+                OTEL_METRICS_EXPORTER="otlp",
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.LoggerProvider",
+                return_value=logger_provider,
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.MeterProvider",
+                return_value=meter_provider,
+            ),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPLogExporter"),
+            patch("agent_vm_hermes_adapter.managed_tool_portal_observability.OTLPMetricExporter"),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability.BatchLogRecordProcessor"
+            ),
+            patch(
+                "agent_vm_hermes_adapter.managed_tool_portal_observability."
+                "PeriodicExportingMetricReader"
+            ),
+        ):
+            telemetry = create_hermes_tool_portal_telemetry_from_environment()
+
+        telemetry.observe_approval_presentation(
+            operation="capture",
+            reason="captured",
+        )
+        for reason in (
+            "bridge-entered",
+            "presenter-entered",
+            "route-lookup-raised",
+            "request-encoding-raised",
+            "native-send-raised",
+        ):
+            telemetry.observe_approval_presentation(operation="present", reason=reason)
+        telemetry.observe_approval_presentation(
+            operation=secret_canary,
+            reason=secret_canary,
+        )
+
+        expected_observations = (
+            ("capture", "captured"),
+            ("present", "bridge-entered"),
+            ("present", "presenter-entered"),
+            ("present", "route-lookup-raised"),
+            ("present", "request-encoding-raised"),
+            ("present", "native-send-raised"),
+        )
+        expected_attributes = [
+            {
+                "agent_vm.approval.reason": reason,
+                "agent_vm.operation.category": "approval_presenter",
+                "agent_vm.operation.name": operation,
+            }
+            for operation, reason in expected_observations
+        ]
+        self.assertEqual(
+            logger_provider.get_logger.return_value.emit.call_args_list,
+            [
+                call(
+                    event_name="hermes.approval.presenter.observed",
+                    body="hermes.approval.presenter.observed",
+                    attributes=attributes,
+                    severity_number=SeverityNumber.INFO,
+                    severity_text="INFO",
+                )
+                for attributes in expected_attributes
+            ],
+        )
+        meter = meter_provider.get_meter.return_value
+        meter.create_counter.assert_any_call("hermes.approval.presenter_total")
+        self.assertEqual(
+            meter.create_counter.return_value.add.call_args_list,
+            [call(1, attributes) for attributes in expected_attributes],
+        )
+        self.assertNotIn(secret_canary, repr(logger_provider.mock_calls))
+        self.assertNotIn(secret_canary, repr(meter_provider.mock_calls))
 
     def test_turn_duration_caps_metric_value_and_span_timing(self) -> None:
         meter_provider = MagicMock()

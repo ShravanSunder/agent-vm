@@ -123,11 +123,7 @@ export interface ManagedGoogleInvocationRequest {
 }
 export interface GooglePermissionPolicyServiceProps extends Pick<
 	GoogleAccountPolicyEditorProps,
-	| 'verifySession'
-	| 'containPolicyMaterial'
-	| 'keyEncryptionKeyVersion'
-	| 'now'
-	| 'runAuthorityCommit'
+	'containPolicyMaterial' | 'keyEncryptionKeyVersion' | 'now' | 'runAuthorityCommit'
 > {
 	readonly catalog: OAuthCredentialCatalog;
 	readonly compiled: CompiledOAuthPolicy;
@@ -146,11 +142,17 @@ export function createGooglePermissionPolicyService(
 	const operations = new Map(
 		policyCatalog.operations.map((operation) => [operation.operationId, operation]),
 	);
-	const ownerAdmitted = (owner: OAuthStoredAuthorization['owner'], agentId: string): boolean =>
+	const ownerAdmitted = (
+		owner:
+			| OAuthStoredAuthorization['owner']
+			| { readonly issuer: string; readonly subject: string },
+		agentId: string,
+	): boolean =>
 		owner.issuer === config.browser.identity.issuer &&
 		Object.values(config.owners).some(
 			(admission) =>
-				admission.clerkUserId === owner.userId && admission.allowedAgentIds.includes(agentId),
+				admission.subject === ('subject' in owner ? owner.subject : owner.userId) &&
+				admission.allowedAgentIds.includes(agentId),
 		);
 	const defaultsActive = (): boolean =>
 		props.isAdmissionOpen() &&
@@ -381,7 +383,7 @@ export function createGooglePermissionPolicyService(
 						.filter(
 							(authorization) =>
 								authorization.owner.issuer === identity.issuer &&
-								authorization.owner.userId === identity.userId,
+								authorization.owner.userId === identity.subject,
 						);
 					const accounts = new Map<
 						GoogleAccountPolicySnapshot['accountId'],
@@ -429,14 +431,14 @@ export function createGooglePermissionPolicyService(
 				if (
 					authorization === undefined ||
 					authorization.owner.issuer !== parsed.data.identity.issuer ||
-					authorization.owner.userId !== parsed.data.identity.userId
+					authorization.owner.userId !== parsed.data.identity.subject
 				)
 					return { kind: 'denied' };
 				const policy = readPolicy(authorization);
 				if (policy.kind !== 'verified') return { kind: 'unavailable' };
 				const canEdit = Object.values(config.policyEditors).some(
 					(editor) =>
-						editor.clerkUserId === parsed.data.identity.userId &&
+						editor.subject === parsed.data.identity.subject &&
 						editor.editableAgentIds.includes(target.agentId),
 				);
 				let accountAlias = 'Account metadata unavailable';
@@ -460,7 +462,7 @@ export function createGooglePermissionPolicyService(
 					applicationLabel: config.providers.google.applications[applicationId].label,
 					ownerLabel:
 						Object.values(config.owners).find(
-							(owner) => owner.clerkUserId === parsed.data.identity.userId,
+							(owner) => owner.subject === parsed.data.identity.subject,
 						)?.label ?? 'Account owner',
 					activities: (props.compiled.operationIdsByAgent[target.agentId] ?? [])
 						.filter(

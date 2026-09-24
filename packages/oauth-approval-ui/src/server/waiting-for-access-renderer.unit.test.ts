@@ -22,4 +22,12 @@ describe('waiting for access page', () => {
 			}),
 		).toThrow();
 	});
+	it('renders bounded Access identity metadata when the assertion has no email claim', () => {
+		const html = renderWaitingForAccessPage({
+			stylesheet: 'oauth.1111111111111111.css',
+		});
+
+		expect(html).toContain('Signed in as Authenticated Access user');
+		expect(html).toContain('<h1>Waiting for access</h1>');
+	});
 });

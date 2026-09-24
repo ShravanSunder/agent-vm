@@ -1,8 +1,5 @@
-import { timingSafeEqual, X509Certificate } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { createServer } from 'node:https';
-import { isIP } from 'node:net';
-import { createSecureContext } from 'node:tls';
+import { timingSafeEqual } from 'node:crypto';
+import { createServer } from 'node:http';
 
 import type { ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
@@ -30,11 +27,17 @@ import { bodyLimit } from 'hono/body-limit';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import { closeNodeServer, waitForNodeServerListening } from '../http/node-server-lifecycle.js';
-import type { ClerkBrowserIdentityVerifier } from './clerk-browser-identity-verifier.js';
-import { beginClerkLogin } from './clerk-login-routes.js';
+import type { CloudflareAccessIdentityVerifier } from './cloudflare-access-identity-verifier.js';
 import type { GooglePermissionPolicyService } from './google-permission-policy-service.js';
 import { createOAuthAccountPolicyRoutes } from './oauth-account-policy-routes.js';
-import { createOAuthBrowserSessionRoutes } from './oauth-browser-session-routes.js';
+import {
+	beginAccessLogin,
+	createOAuthBrowserSessionRoutes,
+} from './oauth-browser-session-routes.js';
+import {
+	classifyOAuthGoogleCallbackFailureReason,
+	type OAuthGoogleCallbackDiagnosticReason,
+} from './oauth-google-callback-diagnostics.js';
 import { parsePermissionForm, permissionPageModel } from './oauth-permission-form.js';
 
 const transactionIdCookieName = 'agent_vm_oauth_transaction';
@@ -44,29 +47,9 @@ const completionBindingCookieName = 'agent_vm_oauth_completion_binding';
 const oauthCookiePath = '/oauth';
 const oauthCookieMaxAgeSeconds = 10 * 60;
 
-export interface TailnetPeerIdentity {
-	readonly loginName: string;
-}
-
-export interface TailnetIdentityResolver {
-	resolvePeerIdentity(props: {
-		readonly remoteAddress: string;
-		readonly remotePort: number;
-	}): Promise<TailnetPeerIdentity>;
-}
-
 export interface OAuthApprovalAssets {
 	readonly files: Readonly<Record<string, Uint8Array>>;
 	readonly manifest: OAuthApprovalAssetManifest;
-}
-
-export interface OAuthHttpsBindings {
-	readonly incoming: {
-		readonly socket: {
-			readonly remoteAddress?: string | undefined;
-			readonly remotePort?: number | undefined;
-		};
-	};
 }
 
 function setOpaqueCookie(props: {
@@ -169,39 +152,39 @@ function renderPage(props: {
 	});
 }
 
-function isTailscaleAddress(address: string): boolean {
-	if (isIP(address) !== 4) return false;
-	const octets = address.split('.').map(Number);
-	return octets[0] === 100 && (octets[1] ?? -1) >= 64 && (octets[1] ?? 256) <= 127;
-}
-
-export function createOAuthHttpsApp(props: {
+export function createOAuthHttpApp(props: {
 	readonly assets: OAuthApprovalAssets;
 	readonly brokerService: GoogleOAuthBrokerService;
 	readonly config: ResolvedOAuthConfig;
-	readonly browserIdentityVerifier: ClerkBrowserIdentityVerifier;
+	readonly browserIdentityVerifier: CloudflareAccessIdentityVerifier;
 	readonly navigation: OAuthBrowserNavigationStore;
 	readonly loginContinuations: OAuthLoginContinuationStore;
 	readonly policyService: GooglePermissionPolicyService;
+	readonly recordGoogleCallbackFailure: (reason: OAuthGoogleCallbackDiagnosticReason) => void;
 	readonly isAdmissionOpen: () => boolean;
 	readonly now?: () => number;
 	readonly publicBaseUrl: string;
-	readonly tailnetIdentityResolver: TailnetIdentityResolver;
-}): Hono<{ Bindings: OAuthHttpsBindings }> {
-	const app = new Hono<{ Bindings: OAuthHttpsBindings }>();
+}): Hono {
+	const app = new Hono();
 	const expectedOrigin = new URL(props.publicBaseUrl).origin;
 	const now = props.now ?? Date.now;
+	const recordGoogleCallbackFailure = (reason: OAuthGoogleCallbackDiagnosticReason): void => {
+		try {
+			props.recordGoogleCallbackFailure(reason);
+		} catch {
+			// Diagnostics are non-authoritative and cannot change the callback response.
+		}
+	};
 
 	app.use('*', async (context, next) => {
 		securityHeaders(context);
 		if (!props.isAdmissionOpen()) return context.text('Authorization service is not ready.', 503);
-		try {
-			const login = await resolveTailnetLogin(context);
-			if (!props.config.browser.network.admittedTailnetLogins.includes(login))
-				return context.text('Network access denied.', 403);
-		} catch {
-			return context.text('Network identity could not be verified.', 403);
-		}
+		const verified = await props.browserIdentityVerifier.verifyRequest(context.req.raw);
+		if (verified.kind !== 'verified')
+			return context.text(
+				'Browser authentication could not be verified.',
+				verified.kind === 'verification-unavailable' ? 503 : 403,
+			);
 		await next();
 		return;
 	});
@@ -229,26 +212,22 @@ export function createOAuthHttpsApp(props: {
 			stylesheet: props.assets.manifest.css,
 		}),
 	);
-	const requireBrowserIdentity = async (
-		context: Context<{ Bindings: OAuthHttpsBindings }>,
+	const requireBrowserEvidence = async (
+		context: Context,
 		target: { readonly kind: 'transaction' | 'completion'; readonly id: string },
-	): Promise<OAuthBrowserSessionIdentity> => {
+	): Promise<{
+		readonly authenticationExpiresAtMs: number;
+		readonly identity: OAuthBrowserSessionIdentity;
+	}> => {
 		const verified = await browser.readIdentity(context.req.raw, target);
 		if (verified.kind !== 'verified') throw new Error('The bound browser session is unavailable.');
-		return verified.identity;
+		return verified;
 	};
-
-	const resolveTailnetLogin = async (context: {
-		readonly env: OAuthHttpsBindings;
-	}): Promise<string> => {
-		const remoteAddress = context.env.incoming.socket.remoteAddress;
-		const remotePort = context.env.incoming.socket.remotePort;
-		if (remoteAddress === undefined || remotePort === undefined) {
-			throw new Error('OAuth request omitted its socket peer identity.');
-		}
-		return (await props.tailnetIdentityResolver.resolvePeerIdentity({ remoteAddress, remotePort }))
-			.loginName;
-	};
+	const requireBrowserIdentity = async (
+		context: Context,
+		target: { readonly kind: 'transaction' | 'completion'; readonly id: string },
+	): Promise<OAuthBrowserSessionIdentity> =>
+		(await requireBrowserEvidence(context, target)).identity;
 
 	const requireSameOrigin = (origin: string | undefined): void => {
 		if (origin !== expectedOrigin) throw new Error('OAuth form Origin is invalid.');
@@ -274,7 +253,7 @@ export function createOAuthHttpsApp(props: {
 				id: transactionId,
 			});
 			if (verified.kind === 'login-required')
-				return beginClerkLogin({
+				return beginAccessLogin({
 					context,
 					target: { kind: 'authorization', transactionId },
 					continuations: props.loginContinuations,
@@ -410,11 +389,16 @@ export function createOAuthHttpsApp(props: {
 			const browserBindingSecret = getCookie(context, transactionBindingCookieName);
 			if (browserBindingSecret === undefined) throw new Error('Missing browser binding.');
 			const form = await context.req.formData();
+			const evidence = await requireBrowserEvidence(context, {
+				kind: 'transaction',
+				id: transactionId,
+			});
 			const result = await props.brokerService.confirmDisconnect({
+				authenticationExpiresAtMs: evidence.authenticationExpiresAtMs,
 				transactionId,
 				browserBindingSecret,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				identity: await requireBrowserIdentity(context, { kind: 'transaction', id: transactionId }),
+				identity: evidence.identity,
 			});
 			clearCeremonyCookies(context);
 			if (result.kind === 'authorization-disconnected')
@@ -591,6 +575,7 @@ export function createOAuthHttpsApp(props: {
 				transactionId,
 			});
 			if (result.kind === 'failed') {
+				recordGoogleCallbackFailure(classifyOAuthGoogleCallbackFailureReason(result.reason));
 				const expired = result.reason === 'expired';
 				return context.html(
 					renderPage({
@@ -637,6 +622,7 @@ export function createOAuthHttpsApp(props: {
 			});
 			return context.redirect(`/oauth/completions/${result.confirmation.completionSessionId}`, 303);
 		} catch {
+			recordGoogleCallbackFailure('callback-rejected');
 			return context.html(
 				renderPage({
 					assets: props.assets,
@@ -733,12 +719,17 @@ export function createOAuthHttpsApp(props: {
 			if (browserBindingSecret === undefined)
 				throw new Error('OAuth completion binding is missing.');
 			const form = await context.req.formData();
+			const evidence = await requireBrowserEvidence(context, {
+				kind: 'completion',
+				id: completionId,
+			});
 			const result = await props.brokerService.confirmAccount({
 				accountAlias: requireFormString(form, 'accountAlias'),
+				authenticationExpiresAtMs: evidence.authenticationExpiresAtMs,
 				browserBindingSecret,
 				completionSessionId: completionId,
 				csrfToken: requireFormString(form, 'csrfToken'),
-				identity: await requireBrowserIdentity(context, { kind: 'completion', id: completionId }),
+				identity: evidence.identity,
 			});
 			clearCeremonyCookies(context);
 			if (result.kind === 'redirect') {
@@ -800,55 +791,19 @@ export function createOAuthHttpsApp(props: {
 	return app;
 }
 
-export async function startOAuthHttpsServer(props: {
-	readonly app: Hono<{ Bindings: OAuthHttpsBindings }>;
+export async function startOAuthHttpServer(props: {
+	readonly app: Hono;
 	readonly bindAddress: string;
-	readonly certificatePath: string;
 	readonly port: number;
-	readonly privateKeyPath: string;
-	readonly publicHostname: string;
-	readonly now?: (() => number) | undefined;
 }): Promise<{ close(): Promise<void> }> {
-	if (!isTailscaleAddress(props.bindAddress)) {
-		throw new Error('OAuth HTTPS listener must bind an exact Tailscale address.');
-	}
-	const [certificate, privateKey] = await Promise.all([
-		readFile(props.certificatePath, 'utf8'),
-		readFile(props.privateKeyPath, 'utf8'),
-	]);
-	const x509 = new X509Certificate(certificate);
-	if (x509.checkHost(props.publicHostname) === undefined) {
-		throw new Error('OAuth TLS certificate does not cover the configured public hostname.');
-	}
-	const currentTimeMs = (props.now ?? Date.now)();
-	if (currentTimeMs < Date.parse(x509.validFrom) || currentTimeMs > Date.parse(x509.validTo)) {
-		throw new Error('OAuth TLS certificate is not valid at the current time.');
-	}
-	createSecureContext({ cert: certificate, key: privateKey });
-	return await startOAuthTlsListener({
-		app: props.app,
-		bindAddress: props.bindAddress,
-		certificate,
-		port: props.port,
-		privateKey,
-	});
-}
-
-/** Low-level listener lifecycle seam. Callers must validate bind and TLS policy first. */
-export async function startOAuthTlsListener(props: {
-	readonly app: Hono<{ Bindings: OAuthHttpsBindings }>;
-	readonly bindAddress: string;
-	readonly certificate: string;
-	readonly port: number;
-	readonly privateKey: string;
-}): Promise<{ close(): Promise<void> }> {
+	if (props.bindAddress !== '127.0.0.1' && props.bindAddress !== '::1')
+		throw new Error('OAuth HTTP listener must bind an exact loopback address.');
 	const server = serve({
 		createServer,
 		fetch: props.app.fetch,
 		hostname: props.bindAddress,
 		overrideGlobalObjects: false,
 		port: props.port,
-		serverOptions: { cert: props.certificate, key: props.privateKey },
 	});
 	await waitForNodeServerListening(server);
 	return {

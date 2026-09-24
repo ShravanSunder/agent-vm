@@ -1,4 +1,3 @@
-export * from './clerk-browser-config.js';
 export * from './controller-configured-cli.js';
 export * from './google-policy-defaults-config.js';
 export * from './json-config-file.js';

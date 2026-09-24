@@ -63,6 +63,7 @@ export type GoogleAuthorizationCommitResult =
 export interface GoogleAuthorizationCommitter {
 	/** Host-only: the broker has claimed the completion once using a freshly verified session. */
 	commitConfirmedGrant(props: {
+		readonly authenticationExpiresAtMs: number;
 		readonly session: Extract<
 			OAuthCompletionSession<GoogleProviderAuthorization>,
 			{ kind: 'committing' }
@@ -97,6 +98,7 @@ export function createGoogleAuthorizationCommitter(props: {
 	});
 	return {
 		commitConfirmedGrant: async ({
+			authenticationExpiresAtMs,
 			session,
 			accountAlias,
 		}): Promise<GoogleAuthorizationCommitResult> => {
@@ -104,12 +106,12 @@ export function createGoogleAuthorizationCommitter(props: {
 				return { kind: 'unavailable' };
 			if (session.kind !== 'committing' || session.configRevision !== props.configRevision)
 				return { kind: 'configuration-change-required' };
-			const owner = { issuer: session.identity.issuer, userId: session.identity.userId };
+			const owner = { issuer: session.identity.issuer, userId: session.identity.subject };
 			if (
 				owner.issuer !== props.config.browser.identity.issuer ||
 				!Object.values(props.config.owners).some(
 					(admission) =>
-						admission.clerkUserId === owner.userId &&
+						admission.subject === owner.userId &&
 						admission.allowedAgentIds.includes(session.agentId),
 				)
 			)
@@ -292,12 +294,30 @@ export function createGoogleAuthorizationCommitter(props: {
 				materialRevision: `sha256:${randomBytes(32).toString('base64url')}`,
 			});
 			// No await between current-authority checks and the synchronous SQLite CAS.
-			const commit = (): ReturnType<typeof props.catalog.commitEnrollmentGrant> =>
-				target.kind === 'reauthorize'
-					? props.catalog.replaceAuthorization(input)
-					: props.catalog.commitEnrollmentGrant(input);
-			const committed =
+			const commit = ():
+				| { readonly kind: 'authority-denied' }
+				| {
+						readonly kind: 'catalog-result';
+						readonly result: ReturnType<typeof props.catalog.commitEnrollmentGrant>;
+				  } => {
+				if (
+					!props.isAdmissionOpen() ||
+					authenticationExpiresAtMs <= props.now() ||
+					session.expiresAtMs <= props.now()
+				)
+					return { kind: 'authority-denied' };
+				return {
+					kind: 'catalog-result',
+					result:
+						target.kind === 'reauthorize'
+							? props.catalog.replaceAuthorization(input)
+							: props.catalog.commitEnrollmentGrant(input),
+				};
+			};
+			const attempt =
 				props.runAuthorityCommit === undefined ? commit() : await props.runAuthorityCommit(commit);
+			if (attempt.kind === 'authority-denied') return { kind: 'authorization-denied' };
+			const committed = attempt.result;
 			if (committed.kind !== 'committed')
 				return {
 					kind:

@@ -40,7 +40,7 @@ import { getGooglePermissionGroups } from './google-permission-catalog.js';
 
 interface GoogleCallbackBrowserInput {
 	readonly browserBindingSecret: string;
-	/** Supplied only after host-side verification of the active bound Clerk session. */
+	/** Supplied only after host-side verification of the active bound browser principal. */
 	readonly identity: OAuthBrowserSessionIdentity;
 	readonly transactionId: OAuthTransactionId;
 }
@@ -140,7 +140,7 @@ export function createGoogleProviderAuthorizationCallback(props: {
 			transaction.identity.issuer !== props.config.browser.identity.issuer ||
 			!Object.values(props.config.owners).some(
 				(owner) =>
-					owner.clerkUserId === transaction.identity.userId &&
+					owner.subject === transaction.identity.subject &&
 					owner.allowedAgentIds.includes(transaction.agentId),
 			)
 		)
@@ -173,7 +173,7 @@ export function createGoogleProviderAuthorizationCallback(props: {
 			account.zoneId !== props.zoneId ||
 			account.providerId !== 'google' ||
 			account.owner.issuer !== transaction.identity.issuer ||
-			account.owner.userId !== transaction.identity.userId
+			account.owner.userId !== transaction.identity.subject
 		)
 			return 'authorization-denied';
 		if (account.providerSubject !== binding.providerSubject) return 'subject-mismatch';
@@ -237,7 +237,7 @@ export function createGoogleProviderAuthorizationCallback(props: {
 		if (account === undefined) return binding === undefined ? undefined : 'subject-mismatch';
 		if (
 			account.owner.issuer !== transaction.identity.issuer ||
-			account.owner.userId !== transaction.identity.userId
+			account.owner.userId !== transaction.identity.subject
 		)
 			return 'authorization-denied';
 		if (binding !== undefined && binding.accountId !== account.accountId) return 'subject-mismatch';

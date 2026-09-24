@@ -1,42 +1,30 @@
 {
 	// Illustrative only: replace every example.test identity and example-agent-vm
 	// 1Password reference with deployment-owned values before use.
-	"schemaVersion": 2,
+	"schemaVersion": 3,
 	"zoneId": "example-zone",
 	"browser": {
-		"publicBaseUrl": "https://auth.claw.askluna.xyz:18900",
+		"publicBaseUrl": "https://permissions.example.test",
 		"listener": {
-			"kind": "tailscale_https",
-			"port": 18900,
-			"certificatePath": "/var/lib/agent-vm/example-oauth/tls.crt",
-			"privateKeyPath": "/var/lib/agent-vm/example-oauth/tls.key",
-		},
-		"network": {
-			// Network admission is not account ownership.
-			"admittedTailnetLogins": ["person@example.test"],
+			"kind": "loopback_http",
+			"port": 18901,
 		},
 		"identity": {
-			"kind": "clerk",
-			"issuer": "https://identity.example.test",
-			"fixedLoginReturnOrigin": "https://auth.claw.askluna.xyz:18900",
-			"hostedSignInUrl": "https://identity.example.test/sign-in",
-			"publishableKey": "pk_test_aWRlbnRpdHkuZXhhbXBsZS50ZXN0JA==",
-			"secretKey": {
-				"source": "1password",
-				"ref": "op://example-agent-vm/clerk/secret-key",
-			},
+			"kind": "cloudflare-access",
+			"issuer": "https://example.cloudflareaccess.com",
+			"audience": "replace-with-access-application-audience",
 		},
 	},
 	"owners": {
 		"example-owner": {
 			"label": "Example owner",
-			"clerkUserId": "user_example_owner",
+			"subject": "replace-with-access-subject",
 			"allowedAgentIds": ["sun", "ember"],
 		},
 	},
 	"policyEditors": {
 		"example-editor": {
-			"clerkUserId": "user_example_owner",
+			"subject": "replace-with-access-subject",
 			"editableAgentIds": ["sun", "ember"],
 		},
 	},

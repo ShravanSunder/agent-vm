@@ -49,6 +49,8 @@ _OPERATION_CATEGORY = "tool_portal"
 _OPERATION_LOG_NAME = "hermes.tool_portal.operation.completed"
 _OPERATION_COUNTER_NAME = "hermes.tool_portal.operations_total"
 _OPERATION_DURATION_NAME = "hermes.tool_portal.operation.duration"
+_APPROVAL_PRESENTER_LOG_NAME = "hermes.approval.presenter.observed"
+_APPROVAL_PRESENTER_COUNTER_NAME = "hermes.approval.presenter_total"
 _SIGNAL_EXPORTER_ENVIRONMENT_NAMES = (
     "OTEL_TRACES_EXPORTER",
     "OTEL_METRICS_EXPORTER",
@@ -404,6 +406,13 @@ class HermesToolPortalTelemetry(t.Protocol):
         tool_name: object,
     ) -> None: ...
 
+    def observe_approval_presentation(
+        self,
+        *,
+        operation: object,
+        reason: object,
+    ) -> None: ...
+
     def trace_context_provider(self) -> Mapping[str, object] | None: ...
 
     def shutdown(self) -> None: ...
@@ -447,6 +456,41 @@ def _safe_tool_name(value: object) -> str | None:
     return value
 
 
+def _safe_approval_presentation(
+    operation: object,
+    reason: object,
+) -> tuple[str, str] | None:
+    allowed_reasons_by_operation = {
+        "capture": {
+            "actor-not-authorized",
+            "adapter-unavailable",
+            "captured",
+            "event-loop-unavailable",
+            "invalid-boundary",
+            "session-key-unavailable",
+        },
+        "present": {
+            "approved",
+            "bridge-entered",
+            "challenge-expired",
+            "denied",
+            "native-send-raised",
+            "presentation-failed",
+            "presenter-entered",
+            "presenter-missing",
+            "request-encoding-raised",
+            "route-lookup-raised",
+            "session-ended",
+            "user-cancelled",
+        },
+    }
+    if not isinstance(operation, str) or not isinstance(reason, str):
+        return None
+    if reason not in allowed_reasons_by_operation.get(operation, set()):
+        return None
+    return operation, reason
+
+
 def _result_class(status: object) -> str:
     return "success" if status == "ok" else "failure"
 
@@ -477,6 +521,14 @@ class _DisabledHermesToolPortalTelemetry:
         tool_name: object,
     ) -> None:
         del duration_milliseconds, status, tool_name
+
+    def observe_approval_presentation(
+        self,
+        *,
+        operation: object,
+        reason: object,
+    ) -> None:
+        del operation, reason
 
     def trace_context_provider(self) -> Mapping[str, object] | None:
         return None
@@ -525,6 +577,7 @@ class _OtelHermesToolPortalTelemetry:
         self._meter_provider: MeterProvider | None = None
         self._operation_counter = None
         self._operation_duration = None
+        self._approval_presenter_counter = None
         self._framework_counters: dict[str, Counter] = {}
         self._framework_histograms: dict[str, Histogram] = {}
         self._tracer_provider: TracerProvider | None = None
@@ -575,6 +628,7 @@ class _OtelHermesToolPortalTelemetry:
             meter = provider.get_meter(_INSTRUMENTATION_NAME)
             operation_counter = meter.create_counter(_OPERATION_COUNTER_NAME)
             operation_duration = meter.create_histogram(_OPERATION_DURATION_NAME, unit="ms")
+            approval_presenter_counter = meter.create_counter(_APPROVAL_PRESENTER_COUNTER_NAME)
             framework_counters = {
                 metric_name: meter.create_counter(metric_name)
                 for metric_name in (
@@ -602,6 +656,7 @@ class _OtelHermesToolPortalTelemetry:
         self._meter_provider = provider
         self._operation_counter = operation_counter
         self._operation_duration = operation_duration
+        self._approval_presenter_counter = approval_presenter_counter
         self._framework_counters = framework_counters
         self._framework_histograms = framework_histograms
 
@@ -680,6 +735,46 @@ class _OtelHermesToolPortalTelemetry:
             result_class=_result_class(status),
             tool_name=safe_tool_name,
         )
+
+    def observe_approval_presentation(
+        self,
+        *,
+        operation: object,
+        reason: object,
+    ) -> None:
+        safe_observation = _safe_approval_presentation(operation, reason)
+        if safe_observation is None:
+            return
+        safe_operation, safe_reason = safe_observation
+        attributes = {
+            "agent_vm.approval.reason": safe_reason,
+            "agent_vm.operation.category": "approval_presenter",
+            "agent_vm.operation.name": safe_operation,
+        }
+        if self._logger is not None and self._log_record_is_admitted(
+            _APPROVAL_PRESENTER_LOG_NAME,
+            attributes,
+        ):
+            try:
+                self._logger.emit(
+                    event_name=_APPROVAL_PRESENTER_LOG_NAME,
+                    body=_APPROVAL_PRESENTER_LOG_NAME,
+                    attributes=attributes,
+                    severity_number=SeverityNumber.INFO,
+                    severity_text="INFO",
+                )
+            except Exception:
+                pass
+        if self._approval_presenter_counter is not None and self._metric_record_is_admitted(
+            _APPROVAL_PRESENTER_COUNTER_NAME,
+            1,
+            attributes,
+            unit="1",
+        ):
+            try:
+                self._approval_presenter_counter.add(1, attributes)
+            except Exception:
+                pass
 
     def trace_context_provider(self) -> Mapping[str, object] | None:
         if self._tracer is None:

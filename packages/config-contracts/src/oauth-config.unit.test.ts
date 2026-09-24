@@ -16,7 +16,7 @@ describe('OAuth config contract', () => {
 			'youtube-app',
 		]);
 		expect(googleOAuthCallbackUrl(config)).toBe(
-			'https://auth.claw.askluna.xyz:18900/oauth/google/callback',
+			'https://permissions.example.test/oauth/google/callback',
 		);
 	});
 	it('rejects authored Google account identities and arbitrary providers or applications', () => {
@@ -67,13 +67,12 @@ describe('OAuth config contract', () => {
 		expect(() => compileOAuthPolicy(input)).toThrow('ceiling');
 	});
 	it.each([
-		'https://auth.claw.askluna.xyz/path',
-		'https://auth.claw.askluna.xyz',
-		'https://auth.claw.askluna.xyz:18899',
-		'https://auth.claw.askluna.xyz:18900/path',
-		'https://oauth.example.test:18900',
-		'http://auth.claw.askluna.xyz',
-	])('rejects non-origin OAuth public URL %s', (publicBaseUrl) => {
+		'https://permissions.example.test/path',
+		'https://permissions.example.test:18900',
+		'https://user@permissions.example.test',
+		'https://permissions.example.test/?query=yes',
+		'http://permissions.example.test',
+	])('rejects nonstandard OAuth public URL %s', (publicBaseUrl) => {
 		// Arrange
 		const input = createOAuthConfigTestInput();
 		// Act / Assert

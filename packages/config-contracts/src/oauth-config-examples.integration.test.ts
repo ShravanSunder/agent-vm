@@ -10,11 +10,11 @@ const configurationExamplesDirectory = fileURLToPath(
 	new URL('../../../docs/reference/configuration/examples/', import.meta.url),
 );
 
-describe('OAuth v2 configuration examples', () => {
+describe('OAuth v3 configuration examples', () => {
 	it('parses and compiles the checked-in synthetic OAuth and Tool Portal pair', async () => {
 		// Arrange
 		const oauthConfig = await loadJsonConfigFile(
-			`${configurationExamplesDirectory}/oauth-v2.config.jsonc`,
+			`${configurationExamplesDirectory}/oauth-v3.config.jsonc`,
 		);
 		const toolPortalConfig = await loadJsonConfigFile(
 			`${configurationExamplesDirectory}/tool-portal-google-policy.config.jsonc`,

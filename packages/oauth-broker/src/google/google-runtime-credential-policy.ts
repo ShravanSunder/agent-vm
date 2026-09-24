@@ -82,8 +82,7 @@ export function createGoogleRuntimeCredentialPolicy(props: {
 			grant.owner.issuer !== props.config.browser.identity.issuer ||
 			!Object.values(props.config.owners).some(
 				(owner) =>
-					owner.clerkUserId === grant.owner.userId &&
-					owner.allowedAgentIds.includes(request.agentId),
+					owner.subject === grant.owner.userId && owner.allowedAgentIds.includes(request.agentId),
 			) ||
 			grant.clientId !== props.clientCredentialsByApplication[applicationId].web.client_id ||
 			grant.clientBindingRevision !== props.clientBindingRevisionsByApplication[applicationId] ||

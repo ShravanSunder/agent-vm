@@ -226,12 +226,12 @@ describe('Google OAuth broker lifecycle and policy', () => {
 			csrfToken: prepared.page.csrfToken,
 		};
 		// Act / Assert
-		expect(
-			fixture.broker.cancelBrowserTransaction({
+		expect(() =>
+			fixture?.broker.cancelBrowserTransaction({
 				...input,
-				identity: { ...facadeIdentity, sessionId: 'other' },
+				identity: { ...facadeIdentity, subject: 'other' },
 			}),
-		).toBe(false);
+		).toThrow('OAuth browser owner is not admitted.');
 		expect(fixture.broker.cancelBrowserTransaction({ ...input, csrfToken: 'wrong' })).toBe(false);
 		expect(
 			fixture.broker.cancelBrowserTransaction({ ...input, browserBindingSecret: 'wrong' }),

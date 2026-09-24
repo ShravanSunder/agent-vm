@@ -9,18 +9,16 @@ export const oauthBrowserOwnerIdentitySchema = z
 export type OAuthBrowserOwnerIdentity = z.infer<typeof oauthBrowserOwnerIdentitySchema>;
 
 export const oauthBrowserSessionIdentitySchema = oauthBrowserOwnerIdentitySchema
-	.extend({
-		sessionId: z.string().min(1).max(256),
-	})
+	.omit({ userId: true })
+	.extend({ subject: z.string().min(1).max(256) })
 	.strict();
 export type OAuthBrowserSessionIdentity = z.infer<typeof oauthBrowserSessionIdentitySchema>;
 
-export const oauthBrowserIdentityVerificationSchema = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('verified'), identity: oauthBrowserSessionIdentitySchema }).strict(),
-	z.object({ kind: z.literal('signed-out') }).strict(),
-	z.object({ kind: z.literal('identity-mismatch') }).strict(),
-	z.object({ kind: z.literal('verification-unavailable') }).strict(),
-]);
-export type OAuthBrowserIdentityVerification = z.infer<
-	typeof oauthBrowserIdentityVerificationSchema
->;
+export const oauthAuthenticatedHumanSchema = z
+	.object({
+		authenticationExpiresAtMs: z.number().int().positive(),
+		emailAddress: z.string().email().max(320).optional(),
+		identity: oauthBrowserSessionIdentitySchema,
+	})
+	.strict();
+export type OAuthAuthenticatedHuman = z.infer<typeof oauthAuthenticatedHumanSchema>;

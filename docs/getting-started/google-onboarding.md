@@ -1,47 +1,39 @@
-# Invite someone to the permissions website
+# Admit someone to the permissions website
 
-1. Configure the zone's current `oauth.config.jsonc`, Clerk instance, fixed HTTPS
-   website origin, TLS and restricted Tailscale website access. Website login does
-   not grant infrastructure administration or any agent's Google API access.
-2. In Clerk, keep registration restricted/invite-only and Google enabled with
-   identity-only scopes. Keep email addresses and email invitations enabled;
-   disable email-code/password/other-provider sign-in. Do not require unrelated
-   signup fields or organization tasks for this household flow. Do not disable
-   Google's security checks to make a test pass.
-3. Invite the person's Google login email. Set the invitation redirect URL to
-   `<website-origin>/oauth/auth/invite`. Configure the application's sign-in URL
-   as `<website-origin>/oauth/auth/start` and successful return as
-   `<website-origin>/oauth/auth/return`. Admit the website origin and callback
-   `<website-origin>/oauth/auth/callback` in the instance's redirect configuration.
-4. The person opens the invitation, chooses **Continue with Google**, and uses
-   that same Google email. An existing email-only account shows **Connect Google
-   to finish setup** immediately. Clerk automatically links the verified email;
-   there is no account-menu setup step or different-email linking flow.
-5. Configure the enrolled Clerk user ID as the appropriate owner/editor under the
-   existing OAuth policy. An invitation never auto-promotes a person. A person
-   without configured ownership sees **Waiting for access**, not permission
-   pages. After applying the configuration through the normal deployment
-   workflow, ask them to choose **Check access again**. This does not require
-   another invitation and does not grant Google API permissions.
+1. Configure the zone's schema-version-3 `oauth.config.jsonc` with its canonical
+   public HTTPS origin, loopback HTTP listener port, Cloudflare Access team issuer,
+   application audience, owner/editor subjects, Google Web clients, and KEK.
+2. Configure a Cloudflare Access self-hosted application for that public origin.
+   Use Google as the identity provider with Instant Authentication and restrict the
+   Access policy to the intended people. Login identity scopes do not grant Google
+   resource access.
+3. Configure Cloudflare Tunnel to protect the route with Access and forward only to
+   the configured loopback HTTP listener. Do not route the controller administration
+   listener. The Tunnel owns public HTTPS; Agent VM does not require a public-host
+   certificate or expose the internal listener port.
+4. Open `<website-origin>/oauth/auth/start`. Access authenticates at the edge and
+   Agent VM cryptographically verifies `Cf-Access-Jwt-Assertion` for the configured
+   issuer and audience. A valid but unconfigured subject sees **Waiting for access**.
+5. Add that verified Access subject to the appropriate owner/editor configuration
+   through the normal deployment workflow, then ask the person to check access
+   again. Access admission never auto-promotes a person or grants an agent access to
+   a Google account.
 
-Already-delivered invitations pointing at Clerk Account Portal cannot be changed
-by updating application code. Send replacement invitations with the custom URL,
-or direct an already-enrolled person to the website's sign-in URL.
-
-Signing in is not Google resource consent. After login, the person separately
-chooses the agent, Google account and permitted access. That resource account may
-be different from their website login account.
+Signing in is not Google resource consent. After admission, the person separately
+chooses the agent, Google resource account, application, and permissions. The
+resource account may differ from the Google account used for Access login.
 
 ## Verify the deployment
 
-Test a fresh invitation and an existing email-only account on the actual website,
-then cancellation, wrong Google account, expired invitation and session switching.
-Confirm the final destination is our site, not Clerk's default welcome page.
-Inspect that website login requests identity scopes only and creates no broker
-resource grant. Verify allowed website access and denied infrastructure access.
-Local mocked API tests do not establish these hosted-provider outcomes.
+Use an authorized isolated deployment to verify an admitted person and a denied
+person through the real Access Google flow. Exercise same-person Access token
+renewal, different-person return, application/global expiry, native POST recovery,
+logout, callback query preservation, and sanitized Access/Tunnel logs. Confirm that
+only the permissions website is reachable and that controller administration is
+not routed through the Tunnel.
 
-If Google sign-in does not complete, use the same invited email and retry from
-the website. Reopen a valid invitation or request a replacement if it expired.
-Additional-factor/setup errors require checking Clerk settings, not broadening
-owner membership or bypassing the controller's identity checks.
+Then complete a real Google resource-consent journey and separately verify cancel,
+wrong account, expired local ceremony, callback replay, confirmation replay, and
+account/agent isolation. Local signed-JWT and HTTP integration tests prove Agent VM's
+decisions but do not establish Cloudflare redirect, renewal, revocation, or logging
+behavior.

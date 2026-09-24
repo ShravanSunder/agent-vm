@@ -3,39 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { createOAuthLoginContinuationStore } from './oauth-login-continuation-store.js';
 
 const identity = {
-	issuer: 'https://clerk.example.test',
-	userId: 'user_owner',
-	sessionId: 'sess_owner',
+	issuer: 'https://identity.example.test',
+	subject: 'user_owner',
 };
 
 describe('bounded OAuth login continuations', () => {
-	it('pins the person, not the replaced session, before Google sign-in', () => {
-		const store = createOAuthLoginContinuationStore();
-		const created = store.create({ kind: 'agents' });
-		if (created.kind !== 'created') throw new Error('Expected continuation');
-		expect(store.bindExpectedIdentity({ ...created, identity })).toBe(true);
-		expect(store.bindExpectedIdentity({ ...created, identity })).toBe(true);
-		expect(
-			store.bindExpectedIdentity({ ...created, identity: { ...identity, userId: 'other' } }),
-		).toBe(false);
-		expect(store.consume({ ...created, identity: { ...identity, userId: 'other' } })).toEqual({
-			kind: 'identity-mismatch',
-		});
-		expect(
-			store.consume({ ...created, identity: { ...identity, sessionId: 'new-session' } }).kind,
-		).toBe('accepted');
-	});
-	it('cannot bind a missing, expired or wrong-browser continuation', () => {
-		let now = 0;
-		const store = createOAuthLoginContinuationStore({ now: () => now });
-		const created = store.create({ kind: 'agents' });
-		if (created.kind !== 'created') throw new Error('Expected continuation');
-		expect(
-			store.bindExpectedIdentity({ ...created, identity, browserBindingSecret: 'x'.repeat(43) }),
-		).toBe(false);
-		now = created.expiresAtMs;
-		expect(store.bindExpectedIdentity({ ...created, identity })).toBe(false);
-	});
 	it('keeps a server-owned destination out of external login URLs and consumes once', () => {
 		// Arrange
 		const store = createOAuthLoginContinuationStore({ now: () => 1000 });

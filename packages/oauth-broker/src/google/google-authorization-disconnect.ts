@@ -7,12 +7,14 @@ import { type OAuthAuthorizationContainmentTarget } from './google-authorization
 /** A claimed owner confirmation fences SQLite before awaiting runtime containment. */
 export async function disconnectConfirmedGoogleAuthorization(props: {
 	readonly runAuthorityCommit?: <TResult>(commit: () => TResult) => Promise<TResult>;
+	readonly authenticationExpiresAtMs: number;
 	readonly catalog: OAuthCredentialCatalog;
 	readonly transaction: Extract<OAuthCeremonyTransaction, { kind: 'committing-disconnect' }>;
 	readonly containAuthorizationMaterial: (
 		target: OAuthAuthorizationContainmentTarget,
 	) => Promise<'contained' | 'pending' | 'failed'>;
 	readonly isAdmissionOpen: () => boolean;
+	readonly now: () => number;
 	readonly zoneId: string;
 }): Promise<OAuthAuthorizationActionResult> {
 	const { transaction, catalog } = props;
@@ -30,14 +32,32 @@ export async function disconnectConfirmedGoogleAuthorization(props: {
 		current.authorizationMetadataRevision !== target.authorizationMetadataRevision
 	)
 		return { kind: 'authorization-failed', failure: { kind: 'stale-authorization' } };
-	const commit = (): ReturnType<typeof catalog.disconnectAuthorization> =>
-		catalog.disconnectAuthorization({
-			authorizationId: target.authorizationId,
-			expectedRecordRevision: current.recordRevision,
-			owner: { issuer: transaction.identity.issuer, userId: transaction.identity.userId },
-		});
-	const disconnected =
+	const commit = ():
+		| { readonly kind: 'authority-denied' }
+		| {
+				readonly kind: 'catalog-result';
+				readonly result: ReturnType<typeof catalog.disconnectAuthorization>;
+		  } => {
+		if (
+			!props.isAdmissionOpen() ||
+			props.authenticationExpiresAtMs <= props.now() ||
+			transaction.expiresAtMs <= props.now()
+		)
+			return { kind: 'authority-denied' };
+		return {
+			kind: 'catalog-result',
+			result: catalog.disconnectAuthorization({
+				authorizationId: target.authorizationId,
+				expectedRecordRevision: current.recordRevision,
+				owner: { issuer: transaction.identity.issuer, userId: transaction.identity.subject },
+			}),
+		};
+	};
+	const attempt =
 		props.runAuthorityCommit === undefined ? commit() : await props.runAuthorityCommit(commit);
+	if (attempt.kind === 'authority-denied')
+		return { kind: 'authorization-failed', failure: { kind: 'authorization-denied' } };
+	const disconnected = attempt.result;
 	if (disconnected.kind !== 'updated')
 		return { kind: 'authorization-failed', failure: { kind: 'stale-authorization' } };
 	const authorization = disconnected.authorization;

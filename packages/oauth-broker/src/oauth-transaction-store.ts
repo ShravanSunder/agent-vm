@@ -94,7 +94,7 @@ type DisconnectCommitResult =
 	  };
 
 export interface OAuthTransactionStore<TProviderGrant> {
-	/** The host verifies Clerk authentication; this store binds that verified session. */
+	/** The host verifies browser authentication; this store binds that verified principal. */
 	createTransaction(props: {
 		readonly agentId: string;
 		readonly applicationIds: readonly OAuthApplicationId[];
@@ -163,11 +163,7 @@ export function sameOAuthBrowserSession(
 	left: OAuthBrowserSessionIdentity,
 	right: OAuthBrowserSessionIdentity,
 ): boolean {
-	return (
-		left.issuer === right.issuer &&
-		left.userId === right.userId &&
-		left.sessionId === right.sessionId
-	);
+	return left.issuer === right.issuer && left.subject === right.subject;
 }
 
 function browserDecisionFailure(
@@ -318,7 +314,7 @@ export function createOAuthTransactionStore<TProviderGrant>(props: {
 			if (
 				current.initiator.kind === 'website_owner' &&
 				(current.initiator.ownerIdentity.issuer !== identity.issuer ||
-					current.initiator.ownerIdentity.userId !== identity.userId)
+					current.initiator.ownerIdentity.userId !== identity.subject)
 			)
 				throw new Error('OAuth transaction belongs to another website owner.');
 			const bound = oauthSelectingTransactionSchema.parse({ ...current, identity });

@@ -242,10 +242,14 @@ export interface GoogleOAuthBrokerService {
 	confirmAccount(
 		props: GoogleOAuthBrowserDecision & {
 			readonly accountAlias: string;
+			readonly authenticationExpiresAtMs: number;
 			readonly completionSessionId: string;
 		},
 	): Promise<GoogleOAuthConfirmationResult>;
 	confirmDisconnect(
-		props: GoogleOAuthBrowserDecision & { readonly transactionId: OAuthTransactionId },
+		props: GoogleOAuthBrowserDecision & {
+			readonly authenticationExpiresAtMs: number;
+			readonly transactionId: OAuthTransactionId;
+		},
 	): Promise<OAuthAuthorizationActionResult>;
 }

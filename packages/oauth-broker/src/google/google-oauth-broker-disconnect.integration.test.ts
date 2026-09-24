@@ -41,6 +41,7 @@ describe('Google OAuth broker local disconnect and containment', () => {
 	): Promise<OAuthAuthorizationActionResult> {
 		if (fixture === undefined) throw new Error('Expected fixture.');
 		return fixture.broker.confirmDisconnect({
+			authenticationExpiresAtMs: 1_000_000,
 			identity: facadeIdentity,
 			transactionId: page.transactionId,
 			browserBindingSecret: page.browserBindingSecret,
@@ -151,6 +152,32 @@ describe('Google OAuth broker local disconnect and containment', () => {
 		// Act / Assert
 		expect((await confirmDisconnect(page)).kind).toBe('authorization-disconnected');
 		expect(fixture.providerRequests).toHaveLength(requests);
+	});
+
+	it('returns authorization denial without disconnecting when authentication expires inside the authority lock', async () => {
+		let currentTimeMs = 1_000;
+		let expireInsideCommit = false;
+		fixture = await createBrokerFacadeFixture({
+			now: () => currentTimeMs,
+			runAuthorityCommit: async (commit) => {
+				if (expireInsideCommit) currentTimeMs = 1_000_000;
+				return commit();
+			},
+		});
+		const account = await fixture.enroll();
+		const page = await disconnectPage(account);
+		expireInsideCommit = true;
+
+		const result = await confirmDisconnect(page);
+
+		expect(result).toEqual({
+			kind: 'authorization-failed',
+			failure: { kind: 'authorization-denied' },
+		});
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+		expect(fixture.containments).toHaveLength(0);
 	});
 
 	it('can erase corrupt credential material locally, without refreshing or revoking it', async () => {

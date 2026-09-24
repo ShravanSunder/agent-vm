@@ -189,7 +189,7 @@ export function createGoogleOAuthBrokerService(props: {
 			identity.issuer !== props.config.browser.identity.issuer ||
 			!Object.values(props.config.owners).some(
 				(owner) =>
-					owner.clerkUserId === identity.userId && owner.allowedAgentIds.includes(context.agentId),
+					owner.subject === identity.subject && owner.allowedAgentIds.includes(context.agentId),
 			)
 		)
 			throw new Error('OAuth browser owner is not admitted.');
@@ -203,7 +203,7 @@ export function createGoogleOAuthBrokerService(props: {
 				account.providerId !== 'google' ||
 				account.providerSubject !== binding.providerSubject ||
 				account.owner.issuer !== identity.issuer ||
-				account.owner.userId !== identity.userId
+				account.owner.userId !== identity.subject
 			)
 				throw new Error('OAuth account is not owned by this browser human.');
 		}
@@ -335,8 +335,7 @@ export function createGoogleOAuthBrokerService(props: {
 			identity !== undefined &&
 			(identity.issuer !== props.config.browser.identity.issuer ||
 				!Object.values(props.config.owners).some(
-					(owner) =>
-						owner.clerkUserId === identity.userId && owner.allowedAgentIds.includes(agentId),
+					(owner) => owner.subject === identity.subject && owner.allowedAgentIds.includes(agentId),
 				))
 		)
 			return failed('authorization-denied');
@@ -366,7 +365,7 @@ export function createGoogleOAuthBrokerService(props: {
 			if (
 				identity !== undefined &&
 				(authorization.owner.issuer !== identity.issuer ||
-					authorization.owner.userId !== identity.userId)
+					authorization.owner.userId !== identity.subject)
 			)
 				return failed('authorization-denied');
 			target = {
@@ -392,7 +391,7 @@ export function createGoogleOAuthBrokerService(props: {
 					? { kind: 'agent', agentId }
 					: {
 							kind: 'website_owner',
-							ownerIdentity: { issuer: identity.issuer, userId: identity.userId },
+							ownerIdentity: { issuer: identity.issuer, userId: identity.subject },
 						},
 			target,
 			...('suggestedSelections' in request && request.suggestedSelections !== undefined
@@ -539,12 +538,18 @@ export function createGoogleOAuthBrokerService(props: {
 				const pending = transactionStore.getCompletionSession(id);
 				if (pending === undefined) return { kind: 'authorization-denied' };
 				requireOwner(input.identity, pending);
-				const claim = transactionStore.beginCompletionCommit({ ...input, completionSessionId: id });
+				const claim = transactionStore.beginCompletionCommit({
+					browserBindingSecret: input.browserBindingSecret,
+					completionSessionId: id,
+					csrfToken: input.csrfToken,
+					identity: input.identity,
+				});
 				if (claim.kind !== 'accepted') return { kind: 'authorization-denied' };
 				const session = claim.session;
 				let completionContext: OAuthCeremonyContext = session;
 				try {
 					const result = await committer.commitConfirmedGrant({
+						authenticationExpiresAtMs: input.authenticationExpiresAtMs,
 						session,
 						accountAlias: input.accountAlias,
 					});
@@ -625,10 +630,16 @@ export function createGoogleOAuthBrokerService(props: {
 				)
 					return failed('authorization-denied');
 				checkBrowser(transaction, input);
-				const claim = transactionStore.beginDisconnectCommit(input);
+				const claim = transactionStore.beginDisconnectCommit({
+					browserBindingSecret: input.browserBindingSecret,
+					csrfToken: input.csrfToken,
+					identity: input.identity,
+					transactionId: input.transactionId,
+				});
 				if (claim.kind !== 'accepted') return failed('authorization-denied');
 				try {
 					const result = await disconnectConfirmedGoogleAuthorization({
+						authenticationExpiresAtMs: input.authenticationExpiresAtMs,
 						...(props.runAuthorityCommit === undefined
 							? {}
 							: { runAuthorityCommit: props.runAuthorityCommit }),
@@ -636,6 +647,7 @@ export function createGoogleOAuthBrokerService(props: {
 						transaction: claim.transaction,
 						containAuthorizationMaterial: props.containAuthorizationMaterial,
 						isAdmissionOpen: admissionAllowed,
+						now,
 						zoneId: props.config.zoneId,
 					});
 					terminal(transaction, result);

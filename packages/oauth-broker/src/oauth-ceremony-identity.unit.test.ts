@@ -11,8 +11,7 @@ import { createOAuthTransactionStore } from './oauth-transaction-store.js';
 const applicationId = oauthApplicationIdSchema.parse('gmail-app');
 const identity = {
 	issuer: 'https://identity.example.test',
-	userId: 'test-owner',
-	sessionId: 'test-session',
+	subject: 'test-owner',
 };
 const providerGrantSchema = z.object({ accessToken: z.string() }).strict();
 
@@ -53,7 +52,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 		expect(store.getTransaction(transaction.transactionId)).toBeUndefined();
 	});
 
-	it('cancels only the switched browser session and rejects exchanges completed after expiry', () => {
+	it('cancels all same-principal browser contexts and rejects exchanges completed after expiry', () => {
 		// Arrange
 		let now = 1_000;
 		const store = createOAuthTransactionStore({
@@ -76,12 +75,29 @@ describe('OAuth ceremony human and initiator binding', () => {
 			target: { kind: 'enroll', applicationId },
 		});
 		store.bindBrowserIdentity({ identity, transactionId: first.transactionId });
-		const otherSession = { ...identity, sessionId: 'another-session' };
+		const otherSession = { ...identity };
 		store.bindBrowserIdentity({ identity: otherSession, transactionId: second.transactionId });
 
 		// Act / Assert
-		expect(store.cancelBrowserCeremonies(identity)).toBe(1);
-		expect(store.getTransaction(second.transactionId)).toBeDefined();
+		expect(store.cancelBrowserCeremonies(identity)).toBe(2);
+		expect(store.getTransaction(second.transactionId)).toBeUndefined();
+	});
+
+	it('rejects exchanges completed after local ceremony expiry', () => {
+		let now = 1_000;
+		const store = createOAuthTransactionStore({
+			providerGrantSchema,
+			now: () => now,
+			transactionTtlMs: 100,
+		});
+		const second = store.createTransaction({
+			agentId: 'sun',
+			applicationIds: [applicationId],
+			configRevision: 'test-config',
+			initiator: { kind: 'agent', agentId: 'sun' },
+			target: { kind: 'enroll', applicationId },
+		});
+		store.bindBrowserIdentity({ identity, transactionId: second.transactionId });
 		const authorizing = store.beginApplicationAuthorization({
 			applicationId,
 			completedApplications: [],
@@ -93,7 +109,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 		});
 		expect(
 			store.beginCallbackConsumption({
-				identity: otherSession,
+				identity,
 				transactionId: second.transactionId,
 				browserBindingSecret: authorizing.browserBindingSecret,
 				oauthState: authorizing.oauthState,
@@ -109,7 +125,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 		).toThrow('expired during exchange');
 	});
 
-	it('binds the exact Clerk session through callback and one-use confirmation', () => {
+	it('binds the exact human principal through callback and one-use confirmation', () => {
 		// Arrange
 		const store = createOAuthTransactionStore({ providerGrantSchema, now: () => 1_000 });
 		const transaction = store.createTransaction({
@@ -141,7 +157,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 		expect(
 			store.beginCallbackConsumption({
 				...callback,
-				identity: { ...identity, sessionId: 'another-session' },
+				identity: { ...identity, subject: 'another-subject' },
 			}),
 		).toEqual({ kind: 'rejected', reason: 'identity-mismatch' });
 		expect(store.beginCallbackConsumption(callback).kind).toBe('accepted');
@@ -171,7 +187,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 			configRevision: 'test-config',
 			initiator: {
 				kind: 'website_owner',
-				ownerIdentity: { issuer: identity.issuer, userId: identity.userId },
+				ownerIdentity: { issuer: identity.issuer, userId: identity.subject },
 			},
 			target: { kind: 'enroll', applicationId },
 		});
@@ -186,7 +202,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 		expect(store.getTransaction(transaction.transactionId)).toBeDefined();
 		expect(() =>
 			store.bindBrowserIdentity({
-				identity: { ...identity, userId: 'another-owner' },
+				identity: { ...identity, subject: 'another-owner' },
 				transactionId: transaction.transactionId,
 			}),
 		).toThrow();

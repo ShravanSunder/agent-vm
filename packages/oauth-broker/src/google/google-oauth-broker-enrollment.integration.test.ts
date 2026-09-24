@@ -59,7 +59,7 @@ describe('Google OAuth broker enrollment ceremonies', () => {
 		return await fixture.confirm(callback.confirmation);
 	}
 
-	it('runs a Clerk-bound enrollment, advertises verified metadata and resolves only admitted credential material', async () => {
+	it('runs an Access-principal-bound enrollment, advertises verified metadata and resolves only admitted credential material', async () => {
 		// Arrange
 		fixture = await createBrokerFacadeFixture();
 		// Act
@@ -244,7 +244,7 @@ describe('Google OAuth broker enrollment ceremonies', () => {
 		).toHaveLength(1);
 		expect(() =>
 			fixture?.broker.retryApplication({
-				identity: { ...facadeIdentity, sessionId: 'other' },
+				identity: { ...facadeIdentity, subject: 'other' },
 				transactionId: partial.retry.transactionId,
 				browserBindingSecret: partial.retry.browserBindingSecret,
 				csrfToken: partial.retryCsrfToken,
