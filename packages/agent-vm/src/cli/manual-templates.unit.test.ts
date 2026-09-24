@@ -197,6 +197,7 @@ describe('manual templates', () => {
 		expect(portal).toContain('Python connect_tool_portal, TypeScript connectToolPortal');
 		expect(portal).toContain('/agent-vm/tool-portal.md');
 		expect(portal).toContain('AGENT_VM_TOOL_PORTAL_SOCKET');
+		expect(portal).toContain('Managed execute_code starts a fresh remote kernel for every call');
 		expect(portal).toContain('The endpoint ends with the invocation');
 		expect(portal).toContain('catalogMode: compact or catalog');
 		expect(portal).toContain('omission defaults to compact');
