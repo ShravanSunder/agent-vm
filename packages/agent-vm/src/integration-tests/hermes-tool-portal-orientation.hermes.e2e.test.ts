@@ -67,7 +67,7 @@ const oauthListSuccessMarker = 'hermes-oauth-list-action-reached-controller';
 const oauthDiscoveryPrompt = 'discover-google-authorization-tools-through-list';
 const oauthDiscoverySuccessMarker = 'hermes-oauth-lifecycle-tools-discovered';
 const oauthDisconnectPrompt = 'disconnect-google-authorization-requires-approval';
-const oauthDisconnectSuccessMarker = 'hermes-oauth-disconnect-approval-required';
+const oauthDisconnectDeniedMarker = 'hermes-oauth-disconnect-denied-without-run-approval';
 const remoteProviderErrorCanary = 'provider response detail must not escape';
 const remoteSchemaSecretCanary = 'schema-secret-must-not-escape';
 const orientationMarker = 'Profile-authorized Portal tools:';
@@ -357,9 +357,9 @@ async function startRecordingProvider(): Promise<RecordingProvider> {
 			}
 			writeServerSentCompletion(
 				response,
-				/"code"\s*:\s*"provider_unavailable"/u.test(latestToolResult) &&
-					latestToolResult.includes('The approval presenter was unavailable.')
-					? oauthDisconnectSuccessMarker
+				/"code"\s*:\s*"capability_denied"/u.test(latestToolResult) &&
+					latestToolResult.includes('The requested capability was denied.')
+					? oauthDisconnectDeniedMarker
 					: 'hermes-oauth-disconnect-failed',
 			);
 			return;
@@ -1027,7 +1027,7 @@ describeHermesToolPortalOrientationE2e('e2e: Hermes Tool Portal session orientat
 			gatewayPort: project.gatewayPort,
 			prompt: oauthDisconnectPrompt,
 		});
-		expect(oauthDisconnectResponse).toContain(oauthDisconnectSuccessMarker);
+		expect(oauthDisconnectResponse).toContain(oauthDisconnectDeniedMarker);
 
 		const orientationBearingObservations = provider
 			.observations()
