@@ -106,12 +106,12 @@ describe('managed Hermes package contracts', () => {
 	it('pins the researched Hermes Python distribution and source revision', () => {
 		expect(HERMES_AGENT_DISTRIBUTION).toEqual({
 			containerImage:
-				'docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79',
+				'docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7',
 			distributionName: 'hermes-agent',
-			projectVersion: '0.20.6',
+			projectVersion: '0.21.5',
 			pythonRequirement: '>=3.11,<3.14',
 			sourceRepository: 'https://github.com/NousResearch/hermes-agent.git',
-			sourceRevision: '5fc308a70719a83cccdbba4c0e39c23f5a8239d5',
+			sourceRevision: 'f97608f178d1ffeca59860195ab7da295f7c8e5f',
 		});
 	});
 

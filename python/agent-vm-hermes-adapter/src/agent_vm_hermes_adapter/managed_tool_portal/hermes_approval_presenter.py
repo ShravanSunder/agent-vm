@@ -235,7 +235,7 @@ def _is_api_server_run() -> bool:
 
 
 def _wait_for_api_run_response(request: dict[str, object]) -> str:
-    from tools.approval import request_elicitation_consent
+    from tools.approval_prompt import request_elicitation_consent
 
     question = _presentation_question(request)
     return request_elicitation_consent(

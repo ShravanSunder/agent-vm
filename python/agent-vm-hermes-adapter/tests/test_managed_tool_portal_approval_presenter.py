@@ -302,8 +302,8 @@ def test_api_server_elicitation_uses_once_question_and_tool_portal_surface() -> 
             elicitation_calls.append((message, description, surface))
             return "accept"
 
-    approval_module = FakeApprovalModule("tools.approval")
-    with patch.dict(sys.modules, {"tools.approval": approval_module}):
+    approval_prompt_module = FakeApprovalModule("tools.approval_prompt")
+    with patch.dict(sys.modules, {"tools.approval_prompt": approval_prompt_module}):
         from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
             _wait_for_api_run_response,
         )

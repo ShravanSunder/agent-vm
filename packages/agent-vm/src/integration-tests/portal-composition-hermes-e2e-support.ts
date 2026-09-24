@@ -21,6 +21,72 @@ interface PortalCompositionModelServer {
 	readonly port: number;
 }
 
+async function readPortalCompositionDiagnosticHttpStatus(
+	url: string,
+): Promise<number | 'unavailable'> {
+	try {
+		const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+		await response.body?.cancel().catch(() => undefined);
+		return response.status;
+	} catch {
+		return 'unavailable';
+	}
+}
+
+async function readPortalCompositionHealthSnapshot(options: {
+	readonly controllerUrl: string;
+	readonly zoneId: string;
+}): Promise<Readonly<Record<string, unknown>>> {
+	try {
+		const response = await fetch(
+			`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/health-snapshot`,
+			{ signal: AbortSignal.timeout(2_000) },
+		);
+		if (!response.ok) return { httpStatus: response.status };
+		const snapshot: unknown = await response.json();
+		if (!isObjectRecord(snapshot)) return { state: 'malformed' };
+		const events = Array.isArray(snapshot.latestEvents) ? snapshot.latestEvents : [];
+		return {
+			state: ['unknown', 'ok', 'stale', 'failed'].includes(String(snapshot.kind))
+				? snapshot.kind
+				: 'malformed',
+			events: events
+				.filter(isObjectRecord)
+				.map((event) => ({
+					kind: [
+						'gateway-service-health',
+						'gateway-control-session',
+						'controller-request',
+						'lease-renew',
+						'lease-heartbeat',
+						'tool-vm-ssh',
+						'gateway-plugin-health',
+						'agent-channel-provider-health',
+						'gateway-recovery',
+						'gateway-recovery-suspended',
+					].includes(String(event.kind))
+						? event.kind
+						: 'unknown',
+					result: ['ok', 'failed', 'timeout', 'stale'].includes(String(event.result))
+						? event.result
+						: 'unknown',
+					...(typeof event.statusCode === 'number' ? { statusCode: event.statusCode } : {}),
+					...(typeof event.observedAtMs === 'number' ? { observedAtMs: event.observedAtMs } : {}),
+					...(event.reason === 'gateway-service-unhealthy' ||
+					event.reason === 'gateway-control-session-unhealthy' ||
+					event.reason === 'agent-channel-provider-unhealthy'
+						? { reason: event.reason }
+						: {}),
+				}))
+				.toSorted(
+					(first, second) => Number(first.observedAtMs ?? 0) - Number(second.observedAtMs ?? 0),
+				),
+		};
+	} catch {
+		return { state: 'unavailable' };
+	}
+}
+
 function isObjectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -331,11 +397,14 @@ export async function waitForPortalCompositionHermesHealth(options: {
 export async function requestPortalCompositionHermesTurn(options: {
 	readonly agentId: string;
 	readonly apiServerKey: string;
+	readonly controllerUrl: string;
 	readonly gatewayPort: number;
 	readonly modelName: string;
 	readonly prompt: string;
 	readonly sessionId: string;
+	readonly zoneId: string;
 }): Promise<string> {
+	const requestStartedAtMs = performance.now();
 	const response = await fetch(
 		`http://127.0.0.1:${String(options.gatewayPort)}/p/${options.agentId}/v1/chat/completions`,
 		{
@@ -354,8 +423,19 @@ export async function requestPortalCompositionHermesTurn(options: {
 		},
 	);
 	if (!response.ok) {
+		const elapsedMs = Math.round(performance.now() - requestStartedAtMs);
+		await response.body?.cancel().catch(() => undefined);
+		const [gatewayHealthStatus, zoneHealthStatus, healthSnapshot] = await Promise.all([
+			readPortalCompositionDiagnosticHttpStatus(
+				`http://127.0.0.1:${String(options.gatewayPort)}/health`,
+			),
+			readPortalCompositionDiagnosticHttpStatus(
+				`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/health`,
+			),
+			readPortalCompositionHealthSnapshot(options),
+		]);
 		throw new Error(
-			`Portal composition Hermes turn failed with HTTP ${String(response.status)}: ${await response.text()}`,
+			`Portal composition Hermes turn failed with HTTP ${String(response.status)} after ${String(elapsedMs)}ms (Gateway health ${String(gatewayHealthStatus)}, zone health ${String(zoneHealthStatus)}, snapshot ${JSON.stringify(healthSnapshot)}).`,
 		);
 	}
 	return await response.text();

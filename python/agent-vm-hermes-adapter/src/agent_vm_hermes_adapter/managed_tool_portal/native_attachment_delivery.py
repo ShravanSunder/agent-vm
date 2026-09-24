@@ -9,10 +9,12 @@ import typing as t
 from pathlib import PurePosixPath
 
 from agent_vm_agent_portal_sdk.contracts import PORTABLE_CONTRACT_ADAPTERS
-from gateway.config import Platform
 from pydantic import BaseModel, ConfigDict
 
 from .hermes_approval_presenter import HermesGatewayApprovalRoute, HermesGatewayApprovalRouteStore
+
+if t.TYPE_CHECKING:
+    from gateway.config import Platform
 
 NATIVE_SEND_TIMEOUT_SECONDS = 30
 
@@ -32,7 +34,7 @@ class NativeFileAdapter(t.Protocol):
 
 @t.runtime_checkable
 class NativeSessionSource(t.Protocol):
-    platform: str | Platform
+    platform: "str | Platform"
 
 
 class NativeAttachmentInvocation(BaseModel):
@@ -97,6 +99,8 @@ def _observe_completion(future: asyncio.Future[NativeSendResult | None]) -> None
 
 
 async def execute_native_attachment(invocation: NativeAttachmentInvocation) -> BaseModel:
+    from gateway.config import Platform
+
     route = invocation.routes.read_by_session_id(invocation.session_id)
     if (
         route is None
@@ -150,8 +154,8 @@ async def execute_native_attachment(invocation: NativeAttachmentInvocation) -> B
     async def send_on_gateway_loop() -> NativeSendResult | None:
         if not _current(invocation, route):
             return None
-        # Hermes 0.20.6 / 5fc308a: send_document can return a successful TEXT
-        # fallback. This pinned helper instead verifies native attachments,
+        # Hermes send_document can return a successful TEXT fallback. This helper
+        # instead verifies native attachments,
         # including forum starter messages. Qualification must retain this check.
         return await adapter._send_file_attachment(
             route.source.chat_id, path, caption, file_name=document.name

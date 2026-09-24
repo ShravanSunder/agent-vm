@@ -180,6 +180,7 @@ const e2eTempRootPrefixes = [
 	'hermes-framework-otel-',
 	'hermes-managed-base-environment-e2e-',
 	'hermes-tool-portal-orientation-e2e-',
+	'portal-composition-hermes-e2e-',
 ] as const;
 
 export function resolveE2eCacheRoot(): string {

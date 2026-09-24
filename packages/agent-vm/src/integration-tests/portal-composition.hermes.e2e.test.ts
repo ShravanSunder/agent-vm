@@ -376,10 +376,12 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			requestPortalCompositionHermesTurn({
 				agentId,
 				apiServerKey: hermesE2eProfileApiServerKey(agentId),
+				controllerUrl: harness.controllerUrl,
 				gatewayPort: project.gatewayPort,
 				modelName,
 				prompt: promptMarker,
 				sessionId,
+				zoneId: zone.id,
 			}).then((turnResponse) => {
 				expect(
 					turnResponse,
@@ -405,7 +407,11 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		expect(executeCodeResult).toContain('hostSentinelVisible');
 		expect(executeCodeResult).toContain('/opt/agent-vm-tools/bin/python');
 		const executionEnvelope = z
-			.object({ exit_code: z.literal(0), output: z.string(), status: z.literal('success') })
+			.object({
+				kernel: z.object({ remote: z.literal(true), reused: z.literal(false) }),
+				output: z.string(),
+				status: z.literal('success'),
+			})
 			.parse(JSON.parse(executeCodeResult ?? 'null'));
 		const compositionOutput: unknown = JSON.parse(executionEnvelope.output);
 		expect(compositionOutput).toMatchObject({
@@ -533,7 +539,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		);
 		expect(toolVmOrigin).toMatchObject({ hostSentinelVisible: false });
 		expect(toolVmOrigin).toEqual({
-			cwd: expect.stringMatching(/^\/tmp\/hermes_exec_[0-9a-f]{12}$/u),
+			cwd: expect.stringMatching(/^\/tmp\/hermes_rkernel_[0-9a-f]{12}$/u),
 			hostSentinelVisible: false,
 			interpreter: expect.stringMatching(/^\/opt\/agent-vm-tools\/bin\/python(?:3(?:\.\d+)?)?$/u),
 		});

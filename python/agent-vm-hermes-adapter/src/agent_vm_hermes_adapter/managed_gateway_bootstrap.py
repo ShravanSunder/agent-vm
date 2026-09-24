@@ -1,7 +1,6 @@
-"""Fixed managed boot entry for stock Hermes Gateway 0.20.0."""
+"""Fixed managed boot entry for the stock Hermes Gateway."""
 
 import concurrent.futures
-import copy
 import hashlib
 import inspect
 import json
@@ -22,7 +21,9 @@ from gateway import run as hermes_gateway_run
 from hermes_cli import gateway as hermes_gateway
 from hermes_cli import managed_scope as hermes_managed_scope
 from tools import file_tools as hermes_file_tools
+from tools import terminal_scope as hermes_terminal_scope
 from tools import terminal_tool as hermes_terminal_tool
+from tools import terminal_tool_backends as hermes_terminal_tool_backends
 from tools.process_registry import process_registry as hermes_process_registry
 
 from .managed_gateway_runtime_environment import (
@@ -124,14 +125,14 @@ class _StockHermesTerminalToolAdapter:
 
     @property
     def _create_environment(self) -> Callable[..., object]:
-        return hermes_terminal_tool._create_environment
+        return hermes_terminal_tool_backends._create_environment
 
     @property
     def _resolve_container_task_id(self) -> Callable[[str | None], str]:
         return hermes_terminal_tool._resolve_container_task_id
 
     def replace_create_environment(self, value: Callable[..., object]) -> None:
-        setattr(hermes_terminal_tool, "_create_environment", value)
+        setattr(hermes_terminal_tool_backends, "_create_environment", value)
 
     def replace_resolve_container_task_id(
         self,
@@ -470,7 +471,7 @@ def _validate_managed_plugin_policy(configuration: Mapping[str, object]) -> None
 
 
 class _HermesManagedPolicyReadBindings:
-    """Temporarily directs pinned raw readers through Hermes managed config."""
+    """Directs the supported Hermes provider-routing reader through effective config."""
 
     _original_provider_routing_descriptor: object
     _provider_routing_wrapper: object | None
@@ -478,7 +479,6 @@ class _HermesManagedPolicyReadBindings:
     def __init__(self, *, gateway_run_module: object = hermes_gateway_run) -> None:
         self._gateway_run_module = gateway_run_module
         self._gateway_runner = self._require_gateway_runner()
-        self._original_get_fallback_chain = self._require_callable("get_fallback_chain")
         self._original_load_gateway_config_for_runner = self._require_callable(
             "load_gateway_config_for_runner"
         )
@@ -501,7 +501,6 @@ class _HermesManagedPolicyReadBindings:
             raise RuntimeError(message)
         self._original_provider_routing_descriptor = original_provider_routing_descriptor
         self._original_provider_routing: Callable[[], object] = original_provider_routing
-        self._fallback_wrapper: Callable[[object], object] | None = None
         self._gateway_config_for_runner_wrapper: Callable[[], object] | None = None
         self._provider_routing_wrapper = None
 
@@ -521,19 +520,10 @@ class _HermesManagedPolicyReadBindings:
 
     def install(self) -> None:
         if (
-            self._fallback_wrapper is not None
-            or self._gateway_config_for_runner_wrapper is not None
+            self._gateway_config_for_runner_wrapper is not None
             or self._provider_routing_wrapper is not None
         ):
             message = "Hermes managed policy bindings are already installed"
-            raise RuntimeError(message)
-        if (
-            getattr(self._gateway_run_module, "get_fallback_chain", None)
-            is not self._original_get_fallback_chain
-        ):
-            message = (
-                "Pinned Hermes get_fallback_chain target changed before managed binding install"
-            )
             raise RuntimeError(message)
         if (
             getattr(self._gateway_run_module, "_load_gateway_config", None)
@@ -562,15 +552,6 @@ class _HermesManagedPolicyReadBindings:
             )
             raise RuntimeError(message)
 
-        def get_managed_fallback_chain(raw_configuration: object) -> object:
-            if not isinstance(raw_configuration, dict):
-                message = "Pinned Hermes fallback configuration must be a dictionary"
-                raise TypeError(message)
-            managed_configuration = hermes_managed_scope.apply_managed_overlay(
-                copy.deepcopy(raw_configuration)
-            )
-            return self._original_get_fallback_chain(managed_configuration)
-
         def load_managed_provider_routing() -> object:
             effective_configuration = self._original_load_gateway_config()
             if not isinstance(effective_configuration, Mapping):
@@ -585,10 +566,8 @@ class _HermesManagedPolicyReadBindings:
         def load_managed_gateway_config_for_runner() -> object:
             return self._stock_load_gateway_config()
 
-        self._fallback_wrapper = get_managed_fallback_chain
         self._gateway_config_for_runner_wrapper = load_managed_gateway_config_for_runner
         try:
-            setattr(self._gateway_run_module, "get_fallback_chain", self._fallback_wrapper)
             setattr(
                 self._gateway_run_module,
                 "load_gateway_config_for_runner",
@@ -627,17 +606,6 @@ class _HermesManagedPolicyReadBindings:
                 restoration_errors.append(error)
             finally:
                 self._provider_routing_wrapper = None
-        if self._fallback_wrapper is not None:
-            try:
-                setattr(
-                    self._gateway_run_module,
-                    "get_fallback_chain",
-                    self._original_get_fallback_chain,
-                )
-            except BaseException as error:
-                restoration_errors.append(error)
-            finally:
-                self._fallback_wrapper = None
         if self._gateway_config_for_runner_wrapper is not None:
             try:
                 setattr(
@@ -654,7 +622,7 @@ class _HermesManagedPolicyReadBindings:
 
 
 class HermesManagedEnvironmentHooks:
-    """Install the two stock-Hermes seams required by managed mode."""
+    """Install managed profile-scope policy and stock terminal environment seams."""
 
     def __init__(
         self,
@@ -671,6 +639,10 @@ class HermesManagedEnvironmentHooks:
         self._environment_factory = HermesGatewayRuntimeEnvironmentFactory(adapter=adapter)
         self._original_create_environment = terminal_tool_module._create_environment
         self._original_resolve_container_task_id = terminal_tool_module._resolve_container_task_id
+        self._original_profile_terminal_scope_builder = (
+            hermes_terminal_scope.build_profile_terminal_scope
+        )
+        self._profile_terminal_scope_wrapper: Callable[..., dict[str, str]] | None = None
         self._original_upstream_routing_environment: dict[str, str | None] | None = None
         self._resolution_lock = threading.Lock()
         self._current_environments: dict[str, _ManagedEnvironmentCacheEntry] = {}
@@ -812,17 +784,51 @@ class HermesManagedEnvironmentHooks:
         if self._terminal_tool_module.has_active_environments():
             message = "Hermes managed environment hooks must install before environment use"
             raise RuntimeError(message)
+        if (
+            hermes_terminal_scope.build_profile_terminal_scope
+            is not self._original_profile_terminal_scope_builder
+        ):
+            message = (
+                "Pinned Hermes profile terminal scope builder changed before "
+                "managed binding install"
+            )
+            raise RuntimeError(message)
         original_environment = {
             environment_name: os.environ.get(environment_name)
             for environment_name in _MANAGED_UPSTREAM_ROUTING_ENVIRONMENT
         }
+
+        def build_managed_profile_terminal_scope(
+            hermes_home: object,
+            *,
+            env_overlay: dict[str, str] | None = None,
+        ) -> dict[str, str]:
+            profile_scope = self._original_profile_terminal_scope_builder(
+                hermes_home,
+                env_overlay=env_overlay,
+            )
+            return {**profile_scope, **_MANAGED_UPSTREAM_ROUTING_ENVIRONMENT}
+
         try:
             os.environ.update(_MANAGED_UPSTREAM_ROUTING_ENVIRONMENT)
+            setattr(
+                hermes_terminal_scope,
+                "build_profile_terminal_scope",
+                build_managed_profile_terminal_scope,
+            )
+            self._profile_terminal_scope_wrapper = build_managed_profile_terminal_scope
             self._terminal_tool_module.replace_resolve_container_task_id(
                 self.resolve_container_task_id
             )
             self._terminal_tool_module.replace_create_environment(self.create_environment)
         except BaseException:
+            if self._profile_terminal_scope_wrapper is not None:
+                setattr(
+                    hermes_terminal_scope,
+                    "build_profile_terminal_scope",
+                    self._original_profile_terminal_scope_builder,
+                )
+                self._profile_terminal_scope_wrapper = None
             self._terminal_tool_module.replace_create_environment(self._original_create_environment)
             self._terminal_tool_module.replace_resolve_container_task_id(
                 self._original_resolve_container_task_id
@@ -841,6 +847,13 @@ class HermesManagedEnvironmentHooks:
         except BaseException as error:
             cleanup_error = error
         finally:
+            if self._profile_terminal_scope_wrapper is not None:
+                setattr(
+                    hermes_terminal_scope,
+                    "build_profile_terminal_scope",
+                    self._original_profile_terminal_scope_builder,
+                )
+                self._profile_terminal_scope_wrapper = None
             self._terminal_tool_module.replace_create_environment(self._original_create_environment)
             self._terminal_tool_module.replace_resolve_container_task_id(
                 self._original_resolve_container_task_id
@@ -972,7 +985,7 @@ def _run_managed_hermes_gateway_runtime(
         managed_policy_bindings.install()
         from hermes_cli.plugins import discover_plugins
 
-        # Hermes v0.20 can discover entry-point plugins while loading gateway
+        # Hermes can discover entry-point plugins while loading gateway
         # configuration. Refresh only after the managed config bindings are
         # installed, so plugin enablement is read from the controller-authored
         # policy instead of the raw profile config.

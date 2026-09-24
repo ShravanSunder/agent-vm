@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly HERMES_RUNTIME_IMAGE='docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79'
+readonly HERMES_RUNTIME_IMAGE='docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7'
 readonly REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
 readonly CHECK_KIND="${1:-test}"
 
@@ -38,7 +38,7 @@ adapter_project = tomllib.loads(
 	(repository_root / "python/agent-vm-hermes-adapter/pyproject.toml").read_text()
 )
 
-assert metadata.version("hermes-agent") == "0.20.6"
+assert metadata.version("hermes-agent") == "0.21.5"
 assert metadata.version("agent-vm-agent-portal-sdk") == sdk_project["project"]["version"]
 assert metadata.version("agent-vm-hermes-adapter") == adapter_project["project"]["version"]
 '\''

@@ -582,6 +582,7 @@ from agent_vm_hermes_adapter.managed_gateway_bootstrap import (
     _HermesManagedPolicyReadBindings,
 )
 from gateway import run as gateway_run
+from hermes_cli.fallback_config import get_fallback_chain
 from hermes_cli import managed_scope
 from hermes_cli.config import load_config
 
@@ -650,7 +651,7 @@ try:
             state_writable = True
         profile_snapshots[profile_name] = {
             "acceptanceMarker": configuration.get("agent_vm_acceptance_marker"),
-            "fallbackProviders": gateway_run.get_fallback_chain(configuration),
+            "fallbackProviders": get_fallback_chain(configuration),
             "localMarker": configuration.get("agent_vm_profile_marker"),
             "modelDefault": model.get("default"),
             "modelProvider": model.get("provider"),

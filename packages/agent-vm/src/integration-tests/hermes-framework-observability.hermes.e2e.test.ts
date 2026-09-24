@@ -347,7 +347,7 @@ function renderHermesFrameworkObservabilityConfiguration(providerPort: number): 
 		'code_execution:',
 		'  mode: project',
 		// The fake provider intentionally calls the managed plugin tool by its
-		// concrete name. Hermes v0.20 normally defers non-core plugin tools
+		// concrete name. Hermes normally defers non-core plugin tools
 		// behind tool_search, so disable that progressive-disclosure layer for
 		// this direct observability probe.
 		'tools:',
