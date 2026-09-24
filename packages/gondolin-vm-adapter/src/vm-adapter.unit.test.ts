@@ -213,6 +213,56 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it.each([
+		{ githubActions: '', gondolinE2e: '' },
+		{ githubActions: 'true', gondolinE2e: '' },
+		{ githubActions: '', gondolinE2e: '1' },
+	])(
+		'keeps boot diagnostics disabled without both CI gates ($githubActions, $gondolinE2e)',
+		async ({ githubActions, gondolinE2e }) => {
+			vi.stubEnv('GITHUB_ACTIONS', githubActions);
+			vi.stubEnv('AGENT_VM_GONDOLIN_E2E', gondolinE2e);
+			const output: string[] = [];
+			const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+				output.push(String(chunk));
+				return true;
+			});
+			try {
+				const startupError = new Error('vm startup timed out');
+				let capturedVmOptions: VMOptions | undefined;
+				const managedVm = await createManagedVm(
+					{
+						allowedHosts: [],
+						cpus: 1,
+						imagePath: '/images/test',
+						memory: '1G',
+						rootfsMode: 'cow',
+						secrets: {},
+						vfsMounts: {},
+					},
+					createBaseDependencies({
+						createVm: async (vmOptions) => {
+							capturedVmOptions = vmOptions;
+							return createFakeVmInstance({
+								start: async () => {
+									throw startupError;
+								},
+							});
+						},
+					}),
+				);
+				expect(capturedVmOptions?.sandbox?.debug).toBeUndefined();
+				expect(capturedVmOptions?.debugLog).toBeUndefined();
+				await expect(managedVm.start()).rejects.toBe(startupError);
+				expect(output.join('')).not.toContain('[managed-vm-boot]');
+				await managedVm.close();
+			} finally {
+				stderrWrite.mockRestore();
+				vi.unstubAllEnvs();
+			}
+		},
+	);
+
 	it('reports closed boot signals without replacing the CI startup failure', async () => {
 		vi.stubEnv('GITHUB_ACTIONS', 'true');
 		vi.stubEnv('AGENT_VM_GONDOLIN_E2E', '1');
