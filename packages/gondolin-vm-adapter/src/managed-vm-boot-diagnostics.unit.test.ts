@@ -47,6 +47,13 @@ describe('managed VM boot signal tracker', () => {
 		expect(tracker.snapshot().virtioFsFrameCount).toBe(1_000);
 	});
 
+	it('does not classify a found initramfs root device as a boot failure', () => {
+		const tracker = createManagedVmBootSignalTracker();
+		tracker.observe('qemu', 'stdout: [initramfs] root device /dev/vda found');
+
+		expect(tracker.snapshot().initramfsRootDeviceNotFoundObserved).toBe(false);
+	});
+
 	it('keeps only closed startup signals and discards guest and command text', () => {
 		const tracker = createManagedVmBootSignalTracker();
 		tracker.observe('protocol', 'client rx type=boot fuseMount=/data binds=2');

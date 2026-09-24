@@ -48,7 +48,7 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 	function observeGuestInitSignal(message: string): void {
 		if (message.startsWith('[initramfs]')) {
 			initramfsObserved = true;
-			if (message.startsWith('[initramfs] root device ')) {
+			if (message.startsWith('[initramfs] root device ') && message.endsWith(' not found')) {
 				initramfsRootDeviceNotFoundObserved = true;
 			}
 			if (message.startsWith('[initramfs] failed to mount ')) {
