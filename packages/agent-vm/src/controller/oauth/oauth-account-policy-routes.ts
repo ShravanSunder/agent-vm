@@ -174,7 +174,10 @@ export function createOAuthAccountPolicyRoutes(props: {
 		const owner = await identity(context);
 		const verifiedHuman = await props.verifier.verifyRequest(context.req.raw);
 		if (verifiedHuman.kind !== 'verified')
-			return context.text('Your signed-in identity could not be verified. Sign in again.', 403);
+			return context.text(
+				'Your signed-in identity could not be verified. Sign in again.',
+				verifiedHuman.kind === 'verification-unavailable' ? 503 : 403,
+			);
 		const agents = props.policy.listOwnerAccounts(owner).map((agent) => ({
 			agentId: agent.agentId,
 			accounts: agent.accounts.flatMap((account) =>

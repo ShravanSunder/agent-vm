@@ -188,6 +188,192 @@ def test_presenter_projects_only_approve_and_deny_as_decisions() -> None:
     }
 
 
+def test_api_server_presenter_projects_http_approval_responses() -> None:
+    diagnostics = RecordingApprovalDiagnostics()
+    presenter = HermesGatewayApprovalPresenter(
+        HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    )
+    with (
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_is_api_server_run",
+            return_value=True,
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_wait_for_api_run_response",
+            side_effect=["accept", "decline", "cancel"],
+        ) as wait_for_response,
+    ):
+        outcomes = [
+            asyncio.run(presenter.present("api-session-a", _presentation_request()))
+            for _ in range(3)
+        ]
+
+    assert [_outcome_mapping(outcome) for outcome in outcomes] == [
+        {"kind": "approved"},
+        {"kind": "denied"},
+        {"kind": "cancelled", "reason": "user-cancelled"},
+    ]
+    assert wait_for_response.call_count == 3
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "approved"),
+        ("present", "presenter-entered"),
+        ("present", "denied"),
+        ("present", "presenter-entered"),
+        ("present", "user-cancelled"),
+    ]
+
+
+def test_api_server_expired_challenge_never_enters_upstream_wait() -> None:
+    diagnostics = RecordingApprovalDiagnostics()
+    presenter = HermesGatewayApprovalPresenter(
+        HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    )
+    with (
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_is_api_server_run",
+            return_value=True,
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_wait_for_api_run_response",
+        ) as wait_for_response,
+    ):
+        outcome = asyncio.run(
+            presenter.present(
+                "api-session-a",
+                _presentation_request(expires_at="2000-01-01T00:00:00.000Z"),
+            )
+        )
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "cancelled",
+        "reason": "challenge-expired",
+    }
+    wait_for_response.assert_not_called()
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "challenge-expired"),
+    ]
+
+
+def test_api_server_approval_after_challenge_expiry_is_cancelled() -> None:
+    presenter = HermesGatewayApprovalPresenter(HermesGatewayApprovalRouteStore())
+    with (
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_is_api_server_run",
+            return_value=True,
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_remaining_timeout_seconds",
+            side_effect=[1.0, 0.0],
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_wait_for_api_run_response",
+            return_value="accept",
+        ) as wait_for_response,
+    ):
+        outcome = asyncio.run(presenter.present("api-session-a", _presentation_request()))
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "cancelled",
+        "reason": "challenge-expired",
+    }
+    wait_for_response.assert_called_once()
+
+
+def test_api_server_elicitation_uses_once_question_and_tool_portal_surface() -> None:
+    elicitation_calls: list[tuple[str, str, str]] = []
+
+    class FakeApprovalModule(ModuleType):
+        def request_elicitation_consent(
+            self,
+            message: str,
+            description: str,
+            *,
+            surface: str,
+        ) -> str:
+            elicitation_calls.append((message, description, surface))
+            return "accept"
+
+    approval_module = FakeApprovalModule("tools.approval")
+    with patch.dict(sys.modules, {"tools.approval": approval_module}):
+        from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter import (
+            _wait_for_api_run_response,
+        )
+
+        response = _wait_for_api_run_response(
+            {
+                "namespace": "files",
+                "name": "write",
+                "display": {"argumentsPreview": '{"path":"README.md"}'},
+                "expiresAt": "2099-08-20T21:00:00.000Z",
+            }
+        )
+
+    assert response == "accept"
+    assert elicitation_calls == [
+        (
+            'Approve files.write once?\nArguments: {"path":"README.md"}\n'
+            "Expires: 2099-08-20T21:00:00.000Z",
+            'Approve files.write once?\nArguments: {"path":"README.md"}\n'
+            "Expires: 2099-08-20T21:00:00.000Z",
+            "agent-vm-tool-portal",
+        )
+    ]
+
+
+def test_api_server_exceptions_emit_only_closed_failure_diagnostics() -> None:
+    secret_canary = "Bearer secret-api-approval-canary"
+    diagnostics = RecordingApprovalDiagnostics()
+    presenter = HermesGatewayApprovalPresenter(
+        HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    )
+    request = _presentation_request()
+    with (
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_is_api_server_run",
+            return_value=True,
+        ),
+        patch.object(type(request), "model_dump", side_effect=RuntimeError(secret_canary)),
+    ):
+        with pytest.raises(RuntimeError, match=secret_canary):
+            asyncio.run(presenter.present("api-session-a", request))
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "request-encoding-raised"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+    diagnostics.observations.clear()
+    with (
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_is_api_server_run",
+            return_value=True,
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_wait_for_api_run_response",
+            side_effect=RuntimeError(secret_canary),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match=secret_canary):
+            asyncio.run(presenter.present("api-session-a", _presentation_request()))
+    assert diagnostics.observations == [
+        ("present", "presenter-entered"),
+        ("present", "native-send-raised"),
+    ]
+    assert secret_canary not in repr(diagnostics.observations)
+
+
 def test_presenter_is_unavailable_without_the_originating_session_route() -> None:
     diagnostics = RecordingApprovalDiagnostics()
     presenter = HermesGatewayApprovalPresenter(
@@ -281,6 +467,51 @@ def test_challenge_expiring_during_send_cleans_entry_without_using_native_respon
     assert len(clarify_module.registered_ids) == 1
     assert clarify_module.pending_ids == set()
     assert clarify_module.wait_timeouts == [1]
+
+
+def test_native_approval_arriving_after_challenge_expiry_is_cancelled() -> None:
+    diagnostics = RecordingApprovalDiagnostics()
+    routes = HermesGatewayApprovalRouteStore(diagnostics=diagnostics)
+    clarify_module = FakeClarifyGatewayModule(response="Approve")
+
+    async def exercise() -> BaseModel:
+        captured = routes.capture(
+            gateway=FakeGateway(authorized=True),
+            session_store=FakeSessionStore(),
+            source=FakeSource(profile="researcher"),
+        )
+        assert captured is not None
+        return await HermesGatewayApprovalPresenter(routes).present(
+            "session-a", _presentation_request()
+        )
+
+    with (
+        patch.dict(sys.modules, {"tools.clarify_gateway": clarify_module}),
+        patch.object(
+            FakeAdapter,
+            "send_clarify",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(success=True),
+        ),
+        patch(
+            "agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter."
+            "_remaining_timeout_seconds",
+            side_effect=[1.0, 1.0, 0.0],
+        ),
+    ):
+        outcome = asyncio.run(exercise())
+
+    assert _outcome_mapping(outcome) == {
+        "kind": "cancelled",
+        "reason": "challenge-expired",
+    }
+    assert clarify_module.wait_timeouts == [1]
+    assert clarify_module.pending_ids == set()
+    assert diagnostics.observations == [
+        ("capture", "captured"),
+        ("present", "presenter-entered"),
+        ("present", "challenge-expired"),
+    ]
 
 
 def test_pre_observation_exceptions_keep_the_same_failure_and_only_static_diagnostics() -> None:

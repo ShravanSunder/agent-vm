@@ -2,7 +2,14 @@ import {
 	oauthAuthenticatedHumanSchema,
 	type OAuthAuthenticatedHuman,
 } from '@agent-vm/oauth-broker-contracts';
-import { createRemoteJWKSet, customFetch, errors, jwtVerify, type FetchImplementation } from 'jose';
+import {
+	createRemoteJWKSet,
+	customFetch,
+	errors,
+	jwtVerify,
+	type FetchImplementation,
+	type JWTVerifyGetKey,
+} from 'jose';
 import { z } from 'zod';
 
 const accessAssertionHeader = 'cf-access-jwt-assertion';
@@ -141,6 +148,16 @@ export function createCloudflareAccessIdentityVerifier(
 		timeoutDuration: 5_000,
 		[customFetch]: fetchImplementation,
 	});
+	const resolveAccessVerificationKey: JWTVerifyGetKey = async (protectedHeader, token) => {
+		try {
+			return await remoteJwks(protectedHeader, token);
+		} catch (error) {
+			if (error instanceof errors.JWKSNoMatchingKey) throw error;
+			throw new CloudflareAccessJwksUnavailableError('Access JWKS key resolution failed.', {
+				cause: error,
+			});
+		}
+	};
 	const now = props.now ?? Date.now;
 	return {
 		verifyRequest: async (request): Promise<CloudflareAccessVerification> => {
@@ -154,7 +171,7 @@ export function createCloudflareAccessIdentityVerifier(
 				return { kind: 'denied' };
 			try {
 				const currentDate = new Date(now());
-				const verified = await jwtVerify(assertions, remoteJwks, {
+				const verified = await jwtVerify(assertions, resolveAccessVerificationKey, {
 					algorithms: ['RS256'],
 					audience: props.audience,
 					clockTolerance: 0,

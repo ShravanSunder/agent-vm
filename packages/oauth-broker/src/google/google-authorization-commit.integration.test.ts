@@ -318,7 +318,24 @@ describe('confirmed Google authorization commit', () => {
 	it('returns authorization denial without committing when authentication expires inside the authority lock', async () => {
 		const input = await arrange();
 		input.authorityGate.beforeCommit = () => {
-			input.now.value = 1_000_001;
+			input.now.value = 200_001;
+		};
+
+		const result = await input.committer.commitConfirmedGrant({
+			authenticationExpiresAtMs: 200_000,
+			session: input.session,
+			accountAlias: 'My mailbox',
+		});
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(catalog.listAuthorizationsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+		expect(input.containAuthorizationMaterial).not.toHaveBeenCalled();
+	});
+
+	it('returns authorization denial without committing when the completion context expires inside the authority lock', async () => {
+		const input = await arrange();
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = input.session.expiresAtMs;
 		};
 
 		const result = await input.committer.commitConfirmedGrant({

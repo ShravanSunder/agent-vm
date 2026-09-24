@@ -109,6 +109,15 @@ describe('OAuth version-3 ownership and application configuration', () => {
 				}).success,
 			).toBe(false);
 		}
+		expect(
+			oauthConfigSchema.safeParse({
+				...input,
+				browser: {
+					...input.browser,
+					identity: { ...input.browser.identity, audience: '' },
+				},
+			}).success,
+		).toBe(false);
 		expect(oauthConfigSchema.safeParse({ ...input, schemaVersion: 2 }).success).toBe(false);
 		expect(
 			oauthConfigSchema.safeParse({

@@ -160,7 +160,39 @@ describe('Google OAuth broker local disconnect and containment', () => {
 		fixture = await createBrokerFacadeFixture({
 			now: () => currentTimeMs,
 			runAuthorityCommit: async (commit) => {
-				if (expireInsideCommit) currentTimeMs = 1_000_000;
+				if (expireInsideCommit) currentTimeMs = 200_001;
+				return commit();
+			},
+		});
+		const account = await fixture.enroll();
+		const page = await disconnectPage(account);
+		expireInsideCommit = true;
+
+		const result = await fixture.broker.confirmDisconnect({
+			authenticationExpiresAtMs: 200_000,
+			identity: facadeIdentity,
+			transactionId: page.transactionId,
+			browserBindingSecret: page.browserBindingSecret,
+			csrfToken: page.csrfToken,
+		});
+
+		expect(result).toEqual({
+			kind: 'authorization-failed',
+			failure: { kind: 'authorization-denied' },
+		});
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+		expect(fixture.containments).toHaveLength(0);
+	});
+
+	it('returns authorization denial without disconnecting when the transaction expires inside the authority lock', async () => {
+		let currentTimeMs = 1_000;
+		let expireInsideCommit = false;
+		fixture = await createBrokerFacadeFixture({
+			now: () => currentTimeMs,
+			runAuthorityCommit: async (commit) => {
+				if (expireInsideCommit) currentTimeMs = 601_000;
 				return commit();
 			},
 		});

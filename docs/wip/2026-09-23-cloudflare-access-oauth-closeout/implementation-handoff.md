@@ -1,3 +1,12 @@
+# Superseded historical checkpoint — 2026-09-24
+
+This preservation checkpoint predates the updated beta proof in
+[`docs/wip/2026-09-24-cloudflare-access-oauth-beta-proof.md`](../2026-09-24-cloudflare-access-oauth-beta-proof.md).
+Statements below describing the Hermes approval work as diagnostic-only and the
+public-origin probe as client-side `ERR_BLOCKED_BY_CLIENT` are historical and
+superseded by that proof note. The original checkpoint body is preserved as
+written; use the linked note for current evidence and provenance.
+
 # Cloudflare Access OAuth and Hermes approval WIP handoff
 
 Date: 2026-09-23 (America/Toronto)

@@ -5,7 +5,11 @@ import {
 	createOAuthBrowserNavigationStore,
 	createOAuthLoginContinuationStore,
 } from '@agent-vm/oauth-broker';
-import { Hono } from 'hono';
+import {
+	oauthCompletionSessionIdSchema,
+	oauthTransactionIdSchema,
+} from '@agent-vm/oauth-broker-contracts';
+import type { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
@@ -18,7 +22,6 @@ import { wrappingKey } from '../../../../oauth-broker/src/oauth-catalog-test-fix
 import type { CloudflareAccessIdentityVerifier } from './cloudflare-access-identity-verifier.js';
 import { createGooglePermissionPolicyService } from './google-permission-policy-service.js';
 import { createOAuthBrowserSessionRoutes } from './oauth-browser-session-routes.js';
-import type { OAuthGoogleCallbackDiagnosticReason } from './oauth-google-callback-diagnostics.js';
 import { createOAuthHttpApp, startOAuthHttpServer } from './oauth-https-server.js';
 
 async function reserveLoopbackPort(): Promise<number> {
@@ -152,18 +155,22 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		let currentIdentity = facadeIdentity;
 		let authenticationExpiresAtMs = 2_000;
 		let verificationKind: 'verified' | 'denied' | 'verification-unavailable' = 'verified';
+		let verificationCallCount = 0;
+		let unavailableOnVerificationCall: number | undefined;
 		const verifier: CloudflareAccessIdentityVerifier = {
 			verifyRequest: async () =>
-				verificationKind === 'verified'
-					? {
-							kind: 'verified',
-							human: {
-								authenticationExpiresAtMs,
-								emailAddress: 'member@example.test',
-								identity: currentIdentity,
-							},
-						}
-					: { kind: verificationKind },
+				++verificationCallCount === unavailableOnVerificationCall
+					? { kind: 'verification-unavailable' }
+					: verificationKind === 'verified'
+						? {
+								kind: 'verified',
+								human: {
+									authenticationExpiresAtMs,
+									emailAddress: 'member@example.test',
+									identity: currentIdentity,
+								},
+							}
+						: { kind: verificationKind },
 		};
 		const navigation = createOAuthBrowserNavigationStore({ now: () => currentTimeMs });
 		const continuations = createOAuthLoginContinuationStore({ now: () => currentTimeMs });
@@ -179,7 +186,6 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 			loginContinuations: continuations,
 			navigation,
 			policyService: policy,
-			recordGoogleCallbackFailure: () => {},
 			now: () => currentTimeMs,
 			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
 		});
@@ -215,7 +221,28 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		expect(accounts.status).toBe(200);
 		const accountsHtml = await accounts.text();
 		expect(accountsHtml).toContain('sun mailbox');
+		expect(accounts.headers.get('content-security-policy')).toContain("default-src 'none'");
+		expect(accounts.headers.get('referrer-policy')).toBe('same-origin');
 		expect(currentTimeMs).toBeGreaterThan(2_000);
+		const inaccessibleNavigation = navigation.create({
+			identity: facadeIdentity,
+			target: {
+				kind: 'authorization',
+				transactionId: oauthTransactionIdSchema.parse('transaction_identifier_1234567890abcdef'),
+			},
+		});
+		if (inaccessibleNavigation.kind !== 'created')
+			throw new Error('Expected bound inaccessible transaction navigation.');
+		const inaccessibleTransaction = await app.request(
+			`${compiled.oauthConfig.browser.publicBaseUrl}/oauth/transactions/transaction_identifier_1234567890abcdef`,
+			{
+				headers: {
+					cookie: `agent_vm_oauth_navigation=${inaccessibleNavigation.contextId}; agent_vm_oauth_navigation_binding=${inaccessibleNavigation.browserBindingSecret}`,
+				},
+			},
+		);
+		expect(inaccessibleTransaction.status).toBe(403);
+		expect(await inaccessibleTransaction.text()).not.toContain('sun mailbox');
 		expect((await app.request(`${compiled.oauthConfig.browser.publicBaseUrl}/health`)).status).toBe(
 			404,
 		);
@@ -294,6 +321,20 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		);
 		expect(unaffected.status).toBe(200);
 		expect(await unaffected.text()).toContain('sun mailbox');
+		verificationCallCount = 0;
+		unavailableOnVerificationCall = 3;
+		const unavailableAfterAdmission = await app.request(
+			`${compiled.oauthConfig.browser.publicBaseUrl}/oauth/agents`,
+			{ headers: { cookie: unaffectedCookie } },
+		);
+		expect(unavailableAfterAdmission.status).toBe(503);
+		unavailableOnVerificationCall = undefined;
+		currentIdentity = { ...facadeIdentity, issuer: 'https://wrong-issuer.example.test' };
+		const wrongIssuer = await app.request(
+			`${compiled.oauthConfig.browser.publicBaseUrl}/oauth/agents`,
+			{ headers: { cookie: unaffectedCookie } },
+		);
+		expect(wrongIssuer.status).toBe(403);
 	});
 
 	it('renders Waiting for access without account disclosure when an unconfigured assertion has no email', async () => {
@@ -321,7 +362,6 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 			loginContinuations: createOAuthLoginContinuationStore(),
 			navigation: createOAuthBrowserNavigationStore(),
 			policyService: createPolicyService({ compiled, fixture }),
-			recordGoogleCallbackFailure: () => {},
 			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
 		});
 		const cookies = new Map<string, string>();
@@ -359,7 +399,7 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 			'https://permissions-beta.example.test';
 		const otherDeployment = compileOAuthPolicy(otherDeploymentInput);
 		const policy = createPolicyService({ compiled, fixture });
-		const callbackDiagnostics: OAuthGoogleCallbackDiagnosticReason[] = [];
+		const assetBytes = new TextEncoder().encode('body { color: black; }');
 		let currentIdentity = facadeIdentity;
 		const verifier: CloudflareAccessIdentityVerifier = {
 			verifyRequest: async () => ({
@@ -373,7 +413,7 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		};
 		const app = createOAuthHttpApp({
 			assets: {
-				files: {},
+				files: { 'oauth.1111111111111111.css': assetBytes },
 				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
 			},
 			brokerService: fixture.broker,
@@ -383,10 +423,16 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 			loginContinuations: createOAuthLoginContinuationStore(),
 			navigation: createOAuthBrowserNavigationStore(),
 			policyService: policy,
-			recordGoogleCallbackFailure: (reason) => callbackDiagnostics.push(reason),
+			now: () => 1_000,
 			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
 		});
 		const cookies = new Map<string, string>();
+		const stylesheet = await app.request(
+			`${compiled.oauthConfig.browser.publicBaseUrl}/oauth/assets/oauth.1111111111111111.css`,
+		);
+		expect(stylesheet.status).toBe(200);
+		expect(await stylesheet.text()).toBe('body { color: black; }');
+		expect(stylesheet.headers.get('cache-control')).toContain('immutable');
 		const request = async (
 			route: string,
 			fields?: URLSearchParams,
@@ -431,7 +477,25 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		const connected = await request(freshConnect.action, freshConnect.fields);
 		expect(connected.status).toBe(303);
 		const permissionPage = await request(connected.headers.get('location') ?? '');
+		expect(permissionPage.headers.getSetCookie()).toEqual(
+			expect.arrayContaining([
+				expect.stringMatching(/agent_vm_oauth_transaction=.*Max-Age=[1-9][0-9]*/u),
+				expect.stringMatching(/agent_vm_oauth_transaction_binding=.*Max-Age=[1-9][0-9]*/u),
+			]),
+		);
 		const permissionForm = nativeForm(await permissionPage.text(), '/permissions');
+		const wrongPermissionOrigin = await request(
+			permissionForm.action,
+			permissionForm.fields,
+			otherDeployment.oauthConfig.browser.publicBaseUrl,
+		);
+		expect(wrongPermissionOrigin.status).toBe(403);
+		expect(fixture.providerRequests).toHaveLength(0);
+		const invalidPermissions = new URLSearchParams(permissionForm.fields);
+		invalidPermissions.set('mode.gmail-app', 'invalid-mode');
+		const invalidSubmission = await request(permissionForm.action, invalidPermissions);
+		expect(invalidSubmission.status).toBe(400);
+		expect(fixture.providerRequests).toHaveLength(0);
 		const submitted = await request(permissionForm.action, permissionForm.fields);
 		expect(submitted.status).toBe(200);
 		const authorizationHref = /href="(https:\/\/accounts\.google\.com\/[^" ]+)"/u.exec(
@@ -453,9 +517,9 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		expect(await expiredCallback.text()).toContain('authorization link expired');
 		const rejectedCallback = await request(callbackRoute);
 		expect(rejectedCallback.status).toBe(403);
-		expect(await rejectedCallback.text()).toContain('could not be verified');
-		expect(callbackDiagnostics).toEqual(['expired', 'callback-rejected']);
-		expect(JSON.stringify(callbackDiagnostics)).not.toContain(secretShapedError);
+		const rejectedCallbackHtml = await rejectedCallback.text();
+		expect(rejectedCallbackHtml).toContain('could not be verified');
+		expect(rejectedCallbackHtml).not.toContain(secretShapedError);
 		callbackHandler.mockRestore();
 		const callback = await request(callbackRoute);
 
@@ -477,7 +541,162 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		cookies.set('agent_vm_oauth_completion_binding', validCompletionBinding);
 		const completion = await request(completionRoute);
 		expect(completion.status).toBe(200);
-		expect(await completion.text()).toContain('Confirm this account');
+		const confirmation = nativeForm(await completion.text(), '/confirm');
+		const confirmed = await request(confirmation.action, confirmation.fields);
+		expect(confirmed.status).toBe(200);
+		expect(
+			fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' }),
+		).toHaveLength(1);
+	});
+
+	it('keeps cancellation, retry, partial completion, and next-application routes bound to Access', async () => {
+		fixture = await createBrokerFacadeFixture();
+		const account = await fixture.enroll('sun');
+		const compiled = compileOAuthPolicy(createOAuthPolicyCompilerTestInput());
+		const transactionId = oauthTransactionIdSchema.parse('transaction_identifier_1234567890abcdef');
+		const completionId = oauthCompletionSessionIdSchema.parse(
+			'completion_session_1234567890abcdef',
+		);
+		const binding = 'browser_binding_secret_1234567890abcdefghi';
+		const csrfToken = 'csrf_token_1234567890abcdefghijklmnop';
+		const redirect = {
+			applicationId: facadeApplicationId,
+			applicationLabel: 'Gmail',
+			authorizationUrl: 'https://accounts.google.test/authorize-next',
+			browserBindingSecret: binding,
+			expiresAtMs: 15_000,
+			kind: 'redirect' as const,
+			transactionId,
+		};
+		vi.spyOn(fixture.broker, 'getBrowserSession').mockReturnValue(facadeIdentity);
+		const cancelTransaction = vi
+			.spyOn(fixture.broker, 'cancelBrowserTransaction')
+			.mockReturnValue(true);
+		const cancelCompletion = vi
+			.spyOn(fixture.broker, 'cancelBrowserCompletion')
+			.mockReturnValue(true);
+		const retryApplication = vi.spyOn(fixture.broker, 'retryApplication').mockReturnValue(redirect);
+		vi.spyOn(fixture.broker, 'getRetryPage').mockReturnValue({
+			completed: ['Gmail'],
+			csrfToken,
+			retryable: ['Workspace'],
+		});
+		const callback = vi.spyOn(fixture.broker, 'handleGoogleCallback').mockResolvedValue({
+			completed: ['Gmail'],
+			kind: 'partial-completion',
+			retry: redirect,
+			retryCsrfToken: csrfToken,
+			retryable: ['Workspace'],
+		});
+		const confirmAccount = vi.spyOn(fixture.broker, 'confirmAccount');
+		const disconnect = vi.spyOn(fixture.broker, 'confirmDisconnect').mockResolvedValue({
+			accountId: account.accountId,
+			applicationId: facadeApplicationId,
+			kind: 'authorization-disconnected',
+		});
+		const app = createOAuthHttpApp({
+			assets: {
+				files: {},
+				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
+			},
+			brokerService: fixture.broker,
+			browserIdentityVerifier: {
+				verifyRequest: async () => ({
+					kind: 'verified',
+					human: { authenticationExpiresAtMs: 20_000, identity: facadeIdentity },
+				}),
+			},
+			config: compiled.oauthConfig,
+			isAdmissionOpen: () => true,
+			loginContinuations: createOAuthLoginContinuationStore(),
+			navigation: createOAuthBrowserNavigationStore(),
+			now: () => 10_000,
+			policyService: createPolicyService({ compiled, fixture }),
+			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
+		});
+		const origin = compiled.oauthConfig.browser.publicBaseUrl;
+		const transactionCookies = `agent_vm_oauth_transaction=${transactionId}; agent_vm_oauth_transaction_binding=${binding}`;
+		const completionCookies = `agent_vm_oauth_completion=${completionId}; agent_vm_oauth_completion_binding=${binding}`;
+		const post = async (
+			route: string,
+			cookie: string,
+			submittedOrigin = origin,
+		): Promise<Response> =>
+			await app.request(`${origin}${route}`, {
+				body: new URLSearchParams({ accountAlias: 'Personal Google', csrfToken }),
+				headers: { cookie, origin: submittedOrigin },
+				method: 'POST',
+			});
+		const partial = await app.request(`${origin}/oauth/google/callback?code=test&state=test`, {
+			headers: { cookie: transactionCookies },
+		});
+		expect(partial.status).toBe(303);
+		expect(partial.headers.get('location')).toBe(`/oauth/completions/${transactionId}/retry`);
+		expect(callback).toHaveBeenCalledOnce();
+		expect(partial.headers.getSetCookie()).toEqual(
+			expect.arrayContaining([expect.stringMatching(/agent_vm_oauth_transaction=.*Max-Age=5/u)]),
+		);
+		const retryPage = await app.request(`${origin}/oauth/completions/${transactionId}/retry`, {
+			headers: { cookie: transactionCookies },
+		});
+		expect(retryPage.status).toBe(200);
+		expect(await retryPage.text()).toContain('Workspace');
+		expect(
+			(
+				await post(
+					`/oauth/completions/${transactionId}/retry`,
+					transactionCookies,
+					'https://wrong.example.test',
+				)
+			).status,
+		).toBe(403);
+		expect(retryApplication).not.toHaveBeenCalled();
+		const retried = await post(`/oauth/completions/${transactionId}/retry`, transactionCookies);
+		expect(retried.status).toBe(200);
+		expect(await retried.text()).toContain('authorize-next');
+		expect(retryApplication).toHaveBeenCalledOnce();
+		expect(
+			(
+				await post(
+					`/oauth/transactions/${transactionId}/disconnect`,
+					transactionCookies,
+					'https://wrong.example.test',
+				)
+			).status,
+		).toBe(403);
+		expect(disconnect).not.toHaveBeenCalled();
+		expect(
+			(await post(`/oauth/transactions/${transactionId}/disconnect`, transactionCookies)).status,
+		).toBe(200);
+		expect(disconnect).toHaveBeenCalledWith(
+			expect.objectContaining({ authenticationExpiresAtMs: 20_000 }),
+		);
+		expect(
+			(await post(`/oauth/transactions/${transactionId}/cancel`, transactionCookies)).status,
+		).toBe(200);
+		expect(cancelTransaction).toHaveBeenCalledOnce();
+		expect(
+			(await post(`/oauth/completions/${completionId}/cancel`, completionCookies)).status,
+		).toBe(200);
+		expect(cancelCompletion).toHaveBeenCalledOnce();
+		confirmAccount.mockResolvedValueOnce({ kind: 'replacement-pending' });
+		expect(
+			(await post(`/oauth/completions/${completionId}/confirm`, completionCookies)).status,
+		).toBe(202);
+		confirmAccount.mockResolvedValueOnce({
+			...redirect,
+			applications: [{ applicationId: facadeApplicationId, label: 'Gmail', status: 'authorizing' }],
+			csrfToken,
+		});
+		const nextApplication = await post(
+			`/oauth/completions/${completionId}/confirm`,
+			completionCookies,
+		);
+		expect(nextApplication.status).toBe(200);
+		expect(await nextApplication.text()).toContain('authorize-next');
+		expect(confirmAccount).toHaveBeenCalledWith(
+			expect.objectContaining({ authenticationExpiresAtMs: 20_000 }),
+		);
 	});
 
 	it('wires account-policy preview and commit while wrong Origin, CSRF, and expired local context remain side-effect free', async () => {
@@ -513,7 +732,6 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 			navigation: createOAuthBrowserNavigationStore({ now: () => currentTimeMs }),
 			now: () => currentTimeMs,
 			policyService: policy,
-			recordGoogleCallbackFailure: () => {},
 			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
 		});
 		const cookies = new Map<string, string>();
@@ -576,17 +794,49 @@ describe('Cloudflare Access OAuth HTTP integration', () => {
 		expect(activity()).toEqual({ kind: 'denied' });
 	});
 
-	it('binds only loopback HTTP and serves the permissions app over the real listener', async () => {
+	it('binds the real Access app only to loopback HTTP without controller admin or lease routes', async () => {
+		fixture = await createBrokerFacadeFixture();
+		await fixture.enroll('sun');
+		const compiled = compileOAuthPolicy(createOAuthPolicyCompilerTestInput());
+		const app = createOAuthHttpApp({
+			assets: {
+				files: {},
+				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
+			},
+			brokerService: fixture.broker,
+			browserIdentityVerifier: {
+				verifyRequest: async () => ({
+					kind: 'verified',
+					human: {
+						authenticationExpiresAtMs: Date.now() + 60_000,
+						identity: facadeIdentity,
+					},
+				}),
+			},
+			config: compiled.oauthConfig,
+			isAdmissionOpen: () => true,
+			loginContinuations: createOAuthLoginContinuationStore(),
+			navigation: createOAuthBrowserNavigationStore(),
+			policyService: createPolicyService({ compiled, fixture }),
+			publicBaseUrl: compiled.oauthConfig.browser.publicBaseUrl,
+		});
 		const port = await reserveLoopbackPort();
-		const app = new Hono().get('/oauth/auth/start', (context) => context.text('ready'));
 		await expect(startOAuthHttpServer({ app, bindAddress: '0.0.0.0', port })).rejects.toThrow(
 			'loopback',
 		);
 		const listener = await startOAuthHttpServer({ app, bindAddress: '127.0.0.1', port });
 		try {
-			const response = await fetch(`http://127.0.0.1:${String(port)}/oauth/auth/start`);
-			expect(response.status).toBe(200);
-			expect(await response.text()).toBe('ready');
+			const response = await fetch(`http://127.0.0.1:${String(port)}/oauth/auth/start`, {
+				redirect: 'manual',
+			});
+			expect(response.status).toBe(303);
+			const adminResponses = await Promise.all(
+				['/zones/apollofam/execute-command', '/stop-controller', '/lease'].map(
+					async (route) =>
+						await fetch(`http://127.0.0.1:${String(port)}${route}`, { method: 'POST' }),
+				),
+			);
+			for (const adminResponse of adminResponses) expect(adminResponse.status).toBe(404);
 		} finally {
 			await listener.close();
 		}

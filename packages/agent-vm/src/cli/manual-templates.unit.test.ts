@@ -120,6 +120,9 @@ describe('manual templates', () => {
 		expect(layout).toContain('Google resource consent to the application');
 		expect(layout).toContain('Cloudflare Access self-hosted application');
 		expect(layout).toContain('Google as the identity provider with Instant Authentication');
+		expect(layout).toContain(
+			'Access application session duration to at least the longest ten-minute ceremony bound; 24 hours is recommended',
+		);
 		expect(layout).toContain('route only to the configured loopback HTTP listener');
 		expect(layout).not.toContain('/oauth/auth/invite');
 		expect(layout).toContain('separate agent/account/application connections');

@@ -247,7 +247,30 @@ describe('owner account policy preview, save and containment', () => {
 		const input = await arrange();
 		const draft = await preview(input);
 		input.authorityGate.beforeCommit = () => {
-			input.now.value = 1_000_001;
+			input.now.value = 200_001;
+		};
+
+		const result = await input.editor.confirmPolicyChange({
+			authenticationExpiresAtMs: 200_000,
+			contextId: draft.contextId,
+			browserBindingSecret: input.opened.browserBindingSecret,
+			csrfToken: draft.csrfToken,
+			identity: facadeIdentity,
+			origin: input.compiled.oauthConfig.browser.publicBaseUrl,
+		});
+
+		expect(result).toEqual({ kind: 'expired' });
+		expect(input.contain).not.toHaveBeenCalled();
+		expect(fixture?.catalog.getPolicy(input.opened.view.snapshot.authorizationId)).toMatchObject({
+			overrideRevision: 1,
+			state: 'active',
+		});
+	});
+	it('returns expired when the policy context expires inside the serialized commit', async () => {
+		const input = await arrange();
+		const draft = await preview(input);
+		input.authorityGate.beforeCommit = () => {
+			input.now.value = 601_000;
 		};
 
 		const result = await input.editor.confirmPolicyChange({
@@ -261,6 +284,10 @@ describe('owner account policy preview, save and containment', () => {
 
 		expect(result).toEqual({ kind: 'expired' });
 		expect(input.contain).not.toHaveBeenCalled();
+		expect(fixture?.catalog.getPolicy(input.opened.view.snapshot.authorizationId)).toMatchObject({
+			overrideRevision: 1,
+			state: 'active',
+		});
 	});
 	it('rejects forged origin, session, browser secret and CSRF without changing policy', async () => {
 		// Arrange

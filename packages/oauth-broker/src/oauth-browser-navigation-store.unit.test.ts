@@ -22,15 +22,22 @@ describe('bounded post-login navigation context', () => {
 	it('cancels only the matching person while allowing same-principal renewal', () => {
 		const store = createOAuthBrowserNavigationStore();
 		const first = store.create({ identity, target: { kind: 'agents' } });
-		const second = store.create({
+		const renewed = store.create({
 			identity: { ...identity },
 			target: { kind: 'agents' },
 		});
-		if (first.kind !== 'created' || second.kind !== 'created')
+		const otherPerson = store.create({
+			identity: { ...identity, subject: 'owner-two' },
+			target: { kind: 'agents' },
+		});
+		if (first.kind !== 'created' || renewed.kind !== 'created' || otherPerson.kind !== 'created')
 			throw new Error('Expected contexts.');
 		store.cancelSession(identity);
 		expect(store.read(first)).toBeUndefined();
-		expect(store.read(second)).toBeUndefined();
+		expect(store.read(renewed)).toBeUndefined();
+		expect(store.read(otherPerson)).toMatchObject({
+			identity: { ...identity, subject: 'owner-two' },
+		});
 	});
 	it('fails bounded capacity without evicting another active browser', () => {
 		const store = createOAuthBrowserNavigationStore({ capacity: 1 });

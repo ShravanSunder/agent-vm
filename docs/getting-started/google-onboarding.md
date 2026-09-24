@@ -5,8 +5,9 @@
    application audience, owner/editor subjects, Google Web clients, and KEK.
 2. Configure a Cloudflare Access self-hosted application for that public origin.
    Use Google as the identity provider with Instant Authentication and restrict the
-   Access policy to the intended people. Login identity scopes do not grant Google
-   resource access.
+   Access policy to the intended people. Set the Access application session
+   duration to at least the longest ten-minute ceremony bound; 24 hours is
+   recommended. Login identity scopes do not grant Google resource access.
 3. Configure Cloudflare Tunnel to protect the route with Access and forward only to
    the configured loopback HTTP listener. Do not route the controller administration
    listener. The Tunnel owns public HTTPS; Agent VM does not require a public-host

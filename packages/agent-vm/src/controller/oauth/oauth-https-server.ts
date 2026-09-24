@@ -34,10 +34,6 @@ import {
 	beginAccessLogin,
 	createOAuthBrowserSessionRoutes,
 } from './oauth-browser-session-routes.js';
-import {
-	classifyOAuthGoogleCallbackFailureReason,
-	type OAuthGoogleCallbackDiagnosticReason,
-} from './oauth-google-callback-diagnostics.js';
 import { parsePermissionForm, permissionPageModel } from './oauth-permission-form.js';
 
 const transactionIdCookieName = 'agent_vm_oauth_transaction';
@@ -160,7 +156,6 @@ export function createOAuthHttpApp(props: {
 	readonly navigation: OAuthBrowserNavigationStore;
 	readonly loginContinuations: OAuthLoginContinuationStore;
 	readonly policyService: GooglePermissionPolicyService;
-	readonly recordGoogleCallbackFailure: (reason: OAuthGoogleCallbackDiagnosticReason) => void;
 	readonly isAdmissionOpen: () => boolean;
 	readonly now?: () => number;
 	readonly publicBaseUrl: string;
@@ -168,13 +163,6 @@ export function createOAuthHttpApp(props: {
 	const app = new Hono();
 	const expectedOrigin = new URL(props.publicBaseUrl).origin;
 	const now = props.now ?? Date.now;
-	const recordGoogleCallbackFailure = (reason: OAuthGoogleCallbackDiagnosticReason): void => {
-		try {
-			props.recordGoogleCallbackFailure(reason);
-		} catch {
-			// Diagnostics are non-authoritative and cannot change the callback response.
-		}
-	};
 
 	app.use('*', async (context, next) => {
 		securityHeaders(context);
@@ -575,7 +563,6 @@ export function createOAuthHttpApp(props: {
 				transactionId,
 			});
 			if (result.kind === 'failed') {
-				recordGoogleCallbackFailure(classifyOAuthGoogleCallbackFailureReason(result.reason));
 				const expired = result.reason === 'expired';
 				return context.html(
 					renderPage({
@@ -622,7 +609,6 @@ export function createOAuthHttpApp(props: {
 			});
 			return context.redirect(`/oauth/completions/${result.confirmation.completionSessionId}`, 303);
 		} catch {
-			recordGoogleCallbackFailure('callback-rejected');
 			return context.html(
 				renderPage({
 					assets: props.assets,

@@ -129,7 +129,34 @@ describe('account-based Google broker facade', () => {
 		fixture = await createBrokerFacadeFixture({
 			now: () => currentTimeMs,
 			runAuthorityCommit: async (commit) => {
-				if (expireInsideCommit) currentTimeMs = 1_000_000;
+				if (expireInsideCommit) currentTimeMs = 200_001;
+				return commit();
+			},
+		});
+		const prepared = await prepareBrokerConsent(fixture);
+		const callback = await fixture.exchangeRedirect(prepared.redirect);
+		if (callback.kind !== 'confirmation') throw new Error('Expected account confirmation.');
+		expireInsideCommit = true;
+
+		const result = await fixture.broker.confirmAccount({
+			authenticationExpiresAtMs: 200_000,
+			identity: facadeIdentity,
+			completionSessionId: callback.confirmation.completionSessionId,
+			browserBindingSecret: callback.confirmation.browserBindingSecret,
+			csrfToken: callback.confirmation.csrfToken,
+			accountAlias: 'My mailbox',
+		});
+
+		expect(result).toEqual({ kind: 'authorization-denied' });
+		expect(fixture.catalog.listGrantsForAgent({ agentId: 'sun', zoneId: 'test-zone' })).toEqual([]);
+	});
+	it('returns authorization denial when the completion context expires inside the serialized commit', async () => {
+		let currentTimeMs = 1_000;
+		let expireInsideCommit = false;
+		fixture = await createBrokerFacadeFixture({
+			now: () => currentTimeMs,
+			runAuthorityCommit: async (commit) => {
+				if (expireInsideCommit) currentTimeMs = 301_000;
 				return commit();
 			},
 		});

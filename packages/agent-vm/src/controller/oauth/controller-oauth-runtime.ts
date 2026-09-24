@@ -48,7 +48,6 @@ import {
 	createGooglePermissionPolicyService,
 	type GooglePermissionPolicyService,
 } from './google-permission-policy-service.js';
-import { writeOAuthGoogleCallbackFailureDiagnostic } from './oauth-google-callback-diagnostics.js';
 import { createOAuthHttpApp, startOAuthHttpServer } from './oauth-https-server.js';
 import { assertOAuthListenerPortAvailable } from './oauth-listener-port-validation.js';
 
@@ -321,7 +320,6 @@ export async function prepareControllerOAuthRuntime(props: {
 			navigation,
 			loginContinuations,
 			policyService,
-			recordGoogleCallbackFailure: writeOAuthGoogleCallbackFailureDiagnostic,
 			isAdmissionOpen: () => admissionOpen && !admissionStopped,
 			publicBaseUrl: config.browser.publicBaseUrl,
 		});

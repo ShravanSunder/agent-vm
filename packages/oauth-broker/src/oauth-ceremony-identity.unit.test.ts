@@ -54,7 +54,7 @@ describe('OAuth ceremony human and initiator binding', () => {
 
 	it('cancels all same-principal browser contexts and rejects exchanges completed after expiry', () => {
 		// Arrange
-		let now = 1_000;
+		const now = 1_000;
 		const store = createOAuthTransactionStore({
 			providerGrantSchema,
 			now: () => now,
@@ -74,13 +74,25 @@ describe('OAuth ceremony human and initiator binding', () => {
 			initiator: { kind: 'agent', agentId: 'sun' },
 			target: { kind: 'enroll', applicationId },
 		});
+		const otherPerson = store.createTransaction({
+			agentId: 'sun',
+			applicationIds: [applicationId],
+			configRevision: 'test-config',
+			initiator: { kind: 'agent', agentId: 'sun' },
+			target: { kind: 'enroll', applicationId },
+		});
 		store.bindBrowserIdentity({ identity, transactionId: first.transactionId });
-		const otherSession = { ...identity };
-		store.bindBrowserIdentity({ identity: otherSession, transactionId: second.transactionId });
+		store.bindBrowserIdentity({ identity: { ...identity }, transactionId: second.transactionId });
+		store.bindBrowserIdentity({
+			identity: { ...identity, subject: 'another-owner' },
+			transactionId: otherPerson.transactionId,
+		});
 
 		// Act / Assert
 		expect(store.cancelBrowserCeremonies(identity)).toBe(2);
+		expect(store.getTransaction(first.transactionId)).toBeUndefined();
 		expect(store.getTransaction(second.transactionId)).toBeUndefined();
+		expect(store.getTransaction(otherPerson.transactionId)).toBeDefined();
 	});
 
 	it('rejects exchanges completed after local ceremony expiry', () => {

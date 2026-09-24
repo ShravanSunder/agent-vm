@@ -160,6 +160,9 @@ describe('controller Access OAuth runtime composition', () => {
 			throw new Error('Expected prepared OAuth runtime.');
 		try {
 			expect(prepared.port).toBe(19_123);
+			expect(() => prepared.activateAfterRuntimeCleanup()).toThrow(
+				/OAuth admission requires installed containment handlers/u,
+			);
 			prepared.setContainmentHandlers({
 				authorization: async () => 'contained',
 				policy: async () => 'contained',
@@ -182,7 +185,24 @@ describe('controller Access OAuth runtime composition', () => {
 			release.resolve();
 			await publishing;
 			expect(await commit).toBe('committed');
+			const closeEntered = Promise.withResolvers<void>();
+			const releaseClose = Promise.withResolvers<void>();
+			const guardedPublication = prepared.withPublicationGuard(async () => {
+				closeEntered.resolve();
+				await releaseClose.promise;
+			});
+			await closeEntered.promise;
+			let closeCompleted = false;
+			const closing = prepared.close().then(() => {
+				closeCompleted = true;
+			});
+			await Promise.resolve();
+			expect(closeCompleted).toBe(false);
+			releaseClose.resolve();
+			await Promise.all([guardedPublication, closing]);
+			expect(closeCompleted).toBe(true);
 		} finally {
+			await prepared.close();
 			await prepared.close();
 		}
 	});
@@ -295,6 +315,18 @@ describe('controller Access OAuth runtime composition', () => {
 		expect(closeBroker).toHaveBeenCalledOnce();
 		expect(capturedKeyEncryptionKey).toBeDefined();
 		expect(capturedKeyEncryptionKey?.every((byte) => byte === 0)).toBe(true);
+		const retried = await prepareControllerOAuthRuntime({
+			loadApprovalAssets: async () => ({
+				files: {},
+				manifest: { css: 'oauth.1111111111111111.css', javascript: 'oauth.2222222222222222.js' },
+			}),
+			secretResolver: secretResolver(`${configured.browser.publicBaseUrl}/oauth/google/callback`),
+			selectedZoneIds: ['apollofam'],
+			systemConfig: systemConfig(configDirectory),
+		});
+		if (retried === undefined)
+			throw new Error('Expected successful retry after failed preparation.');
+		await retried.close();
 	});
 
 	it('keeps catalog operations closed until activation and zeroes the KEK on close', async () => {

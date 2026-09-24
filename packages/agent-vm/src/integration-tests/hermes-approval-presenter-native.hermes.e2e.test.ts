@@ -192,6 +192,7 @@ try:
             port = site._server.sockets[0].getsockname()[1]
             outcomes = []
             http_choices = []
+            wrong_key_statuses = []
             try:
                 async with ClientSession() as client:
                     for challenge_id, choice in [
@@ -217,6 +218,14 @@ try:
                         assert await asyncio.to_thread(api_request_ready.wait, 5)
                         async with client.post(
                             f"http://127.0.0.1:{port}/v1/runs/run-approval-e2e/approval",
+                            headers={"Authorization": "Bearer wrong-local-test-key"},
+                            json={"choice": choice},
+                        ) as response:
+                            wrong_key_statuses.append(response.status)
+                            assert (await response.json())["error"]["code"] == "gateway_auth_failed"
+                        assert pending.done() is False
+                        async with client.post(
+                            f"http://127.0.0.1:{port}/v1/runs/run-approval-e2e/approval",
                             headers={"Authorization": "Bearer local-test-key"},
                             json={"choice": choice},
                         ) as response:
@@ -228,9 +237,11 @@ try:
                         )
             finally:
                 await runner.cleanup()
-            return outcomes, http_choices
+            return outcomes, http_choices, wrong_key_statuses
 
-        api_outcomes, api_http_choices = asyncio.run(exercise_http_approvals())
+        api_outcomes, api_http_choices, api_wrong_key_statuses = asyncio.run(
+            exercise_http_approvals()
+        )
     finally:
         portal_loop.close(disconnect=False)
         unregister_gateway_notify("run-approval-e2e")
@@ -251,6 +262,7 @@ try:
                 "apiRequestCount": len(api_requests),
                 "apiHttpChoices": api_http_choices,
                 "apiOutcomes": api_outcomes,
+                "apiWrongKeyStatuses": api_wrong_key_statuses,
             },
             sort_keys=True,
         )
@@ -303,6 +315,7 @@ describeHermesApprovalPresenterE2e('e2e: pinned Hermes approval presenter', () =
 			apiRequestCount: 2,
 			apiHttpChoices: ['once', 'deny'],
 			apiOutcomes: [{ kind: 'approved' }, { kind: 'denied' }],
+			apiWrongKeyStatuses: [401, 401],
 		});
 	}, 180_000);
 });

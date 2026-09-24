@@ -275,6 +275,23 @@ describe('Cloudflare Access identity verifier', () => {
 		},
 	);
 
+	it('classifies unusable or ambiguous JWKS keys as verification unavailable', async () => {
+		const key = await createSigningKey('key-one');
+		const assertion = await signAssertion({ privateKey: key.privateKey, kid: 'key-one' });
+		for (const keys of [[{ ...key.publicJwk, n: undefined }], [key.publicJwk, key.publicJwk]]) {
+			const verifier = createCloudflareAccessIdentityVerifier({
+				audience,
+				issuer,
+				now: () => nowMs,
+				fetch: async () => Response.json({ keys }),
+			});
+
+			expect(await verifier.verifyRequest(requestWithAssertion(assertion))).toEqual({
+				kind: 'verification-unavailable',
+			});
+		}
+	});
+
 	it('uses the fixed issuer JWKS URL without redirects and cancels a chunked response at the bound', async () => {
 		const key = await createSigningKey('key-one');
 		const assertion = await signAssertion({ privateKey: key.privateKey, kid: 'key-one' });

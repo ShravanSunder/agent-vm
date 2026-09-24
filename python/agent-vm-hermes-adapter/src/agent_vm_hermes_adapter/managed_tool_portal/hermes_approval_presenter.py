@@ -303,19 +303,27 @@ class HermesGatewayApprovalPresenter:
     async def present(self, session_id: str, request: BaseModel) -> BaseModel:
         self._routes.observe_presentation("presenter-entered")
         if _is_api_server_run():
-            request_mapping = request.model_dump(
-                by_alias=True,
-                exclude_none=True,
-                mode="json",
-            )
-            if not isinstance(request_mapping, dict):
-                raise TypeError("Hermes approval request did not produce a JSON object.")
+            try:
+                request_mapping = request.model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    mode="json",
+                )
+                if not isinstance(request_mapping, dict):
+                    raise TypeError("Hermes approval request did not produce a JSON object.")
+            except Exception:
+                self._routes.observe_presentation("request-encoding-raised")
+                raise
             if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
                 self._routes.observe_presentation("challenge-expired")
                 return _approval_outcome(
                     {"kind": "cancelled", "reason": "challenge-expired"},
                 )
-            response = await asyncio.to_thread(_wait_for_api_run_response, request_mapping)
+            try:
+                response = await asyncio.to_thread(_wait_for_api_run_response, request_mapping)
+            except Exception:
+                self._routes.observe_presentation("native-send-raised")
+                raise
             if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
                 self._routes.observe_presentation("challenge-expired")
                 return _approval_outcome(
@@ -367,6 +375,11 @@ class HermesGatewayApprovalPresenter:
             return _approval_outcome(
                 {"kind": "unavailable", "reason": "presentation-failed"},
             )
+        if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
+            self._routes.observe_presentation("challenge-expired")
+            return _approval_outcome(
+                {"kind": "cancelled", "reason": "challenge-expired"},
+            )
         if response.casefold() == "approve":
             self._routes.observe_presentation("approved")
             return _approval_outcome({"kind": "approved"})
@@ -377,11 +390,6 @@ class HermesGatewayApprovalPresenter:
             self._routes.observe_presentation("session-ended")
             return _approval_outcome(
                 {"kind": "cancelled", "reason": "session-ended"},
-            )
-        if _remaining_timeout_seconds(request_mapping.get("expiresAt")) <= 0:
-            self._routes.observe_presentation("challenge-expired")
-            return _approval_outcome(
-                {"kind": "cancelled", "reason": "challenge-expired"},
             )
         self._routes.observe_presentation("user-cancelled")
         return _approval_outcome(
