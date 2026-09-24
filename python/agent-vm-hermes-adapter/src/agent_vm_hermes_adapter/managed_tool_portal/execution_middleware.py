@@ -376,6 +376,8 @@ class HermesToolExecutionMiddleware:
     ) -> object:
         execution_args = args
         if tool_name == "execute_code":
+            # Hermes keys remote kernels by raw task id, not managed Tool VM generation.
+            # A fresh kernel prevents reuse after the managed environment rotates.
             execution_args = dict(args)
             execution_args["reset"] = True
         del original_args, telemetry_schema_version, middleware_schema_version

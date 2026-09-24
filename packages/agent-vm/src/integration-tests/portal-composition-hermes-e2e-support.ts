@@ -14,6 +14,7 @@ interface PortalCompositionModelServer {
 	readonly executeCodeRequestCount: () => number;
 	readonly generatedTerminalRequestCount: () => number;
 	readonly latestExecuteCodeResult: () => string | undefined;
+	readonly secondExecuteCodeResult: () => string | undefined;
 	readonly latestGeneratedTerminalResult: () => string | undefined;
 	readonly observedGeneratedTerminalProgram: () =>
 		| PortalCompositionGeneratedTerminalProgram
@@ -196,6 +197,7 @@ export async function startPortalCompositionModelServer(options: {
 	let executeCodeRequestCount = 0;
 	let generatedTerminalRequestCount = 0;
 	let latestExecuteCodeResult: string | undefined;
+	let secondExecuteCodeResult: string | undefined;
 	let latestGeneratedTerminalResult: string | undefined;
 	let observedGeneratedTerminalProgram: PortalCompositionGeneratedTerminalProgram | undefined;
 	const server = createServer((request, response) => {
@@ -284,6 +286,24 @@ export async function startPortalCompositionModelServer(options: {
 					);
 				}
 				latestExecuteCodeResult = toolResult;
+				executeCodeRequestCount += 1;
+				const resetProbeCall = {
+					function: {
+						arguments: JSON.stringify({ code: 'print("portal-composition-kernel-reset-probe")' }),
+						name: 'execute_code',
+					},
+					id: 'portal-composition-reset-probe',
+					index: 0,
+					type: 'function',
+				};
+				writeServerSentEvents(response, [
+					completionChunk({ role: 'assistant', tool_calls: [resetProbeCall] }, null),
+					completionChunk({}, 'tool_calls'),
+				]);
+				return;
+			}
+			if (secondExecuteCodeResult === undefined) {
+				secondExecuteCodeResult = toolResult;
 				if (observedGeneratedTerminalProgram === undefined) {
 					throw new Error('Hermes model server lost the generated terminal program.');
 				}
@@ -346,6 +366,7 @@ export async function startPortalCompositionModelServer(options: {
 		executeCodeRequestCount: () => executeCodeRequestCount,
 		generatedTerminalRequestCount: () => generatedTerminalRequestCount,
 		latestExecuteCodeResult: () => latestExecuteCodeResult,
+		secondExecuteCodeResult: () => secondExecuteCodeResult,
 		latestGeneratedTerminalResult: () => latestGeneratedTerminalResult,
 		observedGeneratedTerminalProgram: () => observedGeneratedTerminalProgram,
 		port: address.port,

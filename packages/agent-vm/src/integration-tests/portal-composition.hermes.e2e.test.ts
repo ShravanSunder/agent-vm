@@ -399,8 +399,21 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			response,
 			`Raw foreground results: ${JSON.stringify({ executeCode: modelServer.latestExecuteCodeResult(), generatedTerminal: modelServer.latestGeneratedTerminalResult() })}`,
 		).toContain(finalMarker);
-		expect(modelServer.executeCodeRequestCount()).toBe(1);
+		expect(modelServer.executeCodeRequestCount()).toBe(2);
 		expect(modelServer.generatedTerminalRequestCount()).toBe(1);
+		const resetProbeResult = modelServer.secondExecuteCodeResult();
+		const resetProbeEnvelope = z
+			.object({
+				kernel: z.object({
+					remote: z.literal(true),
+					reused: z.literal(false),
+					state_reset: z.literal(true),
+				}),
+				output: z.string(),
+				status: z.literal('success'),
+			})
+			.parse(JSON.parse(resetProbeResult ?? 'null'));
+		expect(resetProbeEnvelope.output).toContain('portal-composition-kernel-reset-probe');
 		const executeCodeResult = modelServer.latestExecuteCodeResult();
 		expect(executeCodeResult).toContain(programResultMarker);
 		expect(executeCodeResult).toContain(resultDerivedValue);
