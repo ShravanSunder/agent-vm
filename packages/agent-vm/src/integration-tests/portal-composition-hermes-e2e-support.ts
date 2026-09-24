@@ -9,13 +9,46 @@ import {
 	type PortalCompositionGeneratedTerminalProgram,
 } from './portal-composition-hermes-generated-terminal.js';
 
-interface PortalCompositionModelServer {
-	readonly close: () => Promise<void>;
+interface PortalCompositionModelProgressSource {
 	readonly executeCodeRequestCount: () => number;
+	readonly finalResponseIssued: () => boolean;
+	readonly firstExecuteCodeResultObserved: () => boolean;
 	readonly generatedTerminalRequestCount: () => number;
 	readonly latestExecuteCodeResult: () => string | undefined;
 	readonly secondExecuteCodeResult: () => string | undefined;
 	readonly latestGeneratedTerminalResult: () => string | undefined;
+	readonly promptedModelRequestCount: () => number;
+}
+
+export interface PortalCompositionModelProgressSnapshot {
+	readonly executeCodeToolCallsIssued: number;
+	readonly finalResponseIssued: boolean;
+	readonly firstExecuteCodeMarkerAccepted: boolean;
+	readonly firstExecuteCodeResultObserved: boolean;
+	readonly generatedTerminalToolCallsIssued: number;
+	readonly generatedTerminalResultPresent: boolean;
+	readonly promptedModelRequests: number;
+	readonly secondExecuteCodeResultPresent: boolean;
+}
+
+/** Discard result bodies while identifying the last completed fake-model stage. */
+export function snapshotPortalCompositionModelProgress(
+	modelServer: PortalCompositionModelProgressSource,
+): PortalCompositionModelProgressSnapshot {
+	return {
+		executeCodeToolCallsIssued: modelServer.executeCodeRequestCount(),
+		finalResponseIssued: modelServer.finalResponseIssued(),
+		firstExecuteCodeMarkerAccepted: modelServer.latestExecuteCodeResult() !== undefined,
+		firstExecuteCodeResultObserved: modelServer.firstExecuteCodeResultObserved(),
+		generatedTerminalToolCallsIssued: modelServer.generatedTerminalRequestCount(),
+		generatedTerminalResultPresent: modelServer.latestGeneratedTerminalResult() !== undefined,
+		promptedModelRequests: modelServer.promptedModelRequestCount(),
+		secondExecuteCodeResultPresent: modelServer.secondExecuteCodeResult() !== undefined,
+	};
+}
+
+interface PortalCompositionModelServer extends PortalCompositionModelProgressSource {
+	readonly close: () => Promise<void>;
 	readonly observedGeneratedTerminalProgram: () =>
 		| PortalCompositionGeneratedTerminalProgram
 		| undefined;
@@ -195,11 +228,14 @@ export async function startPortalCompositionModelServer(options: {
 	readonly programResultMarker: string;
 }): Promise<PortalCompositionModelServer> {
 	let executeCodeRequestCount = 0;
+	let finalResponseIssued = false;
+	let firstExecuteCodeResultObserved = false;
 	let generatedTerminalRequestCount = 0;
 	let latestExecuteCodeResult: string | undefined;
 	let secondExecuteCodeResult: string | undefined;
 	let latestGeneratedTerminalResult: string | undefined;
 	let observedGeneratedTerminalProgram: PortalCompositionGeneratedTerminalProgram | undefined;
+	let promptedModelRequestCount = 0;
 	const server = createServer((request, response) => {
 		void (async () => {
 			if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -240,6 +276,7 @@ export async function startPortalCompositionModelServer(options: {
 				]);
 				return;
 			}
+			promptedModelRequestCount += 1;
 			const toolResult = latestToolResult(body);
 			if (toolResult === undefined) {
 				const instructions = modelMessageText(body);
@@ -280,6 +317,7 @@ export async function startPortalCompositionModelServer(options: {
 				return;
 			}
 			if (latestExecuteCodeResult === undefined) {
+				firstExecuteCodeResultObserved = true;
 				if (!toolResult.includes(options.programResultMarker)) {
 					throw new Error(
 						`execute_code omitted the portal composition marker: ${toolResult.slice(0, 2_000)}`,
@@ -336,6 +374,7 @@ export async function startPortalCompositionModelServer(options: {
 				completionChunk({ content: options.finalMarker, role: 'assistant' }, null),
 				completionChunk({}, 'stop'),
 			]);
+			finalResponseIssued = true;
 		})().catch((error: unknown) => {
 			if (response.headersSent) {
 				response.destroy(error instanceof Error ? error : new Error(String(error)));
@@ -364,12 +403,15 @@ export async function startPortalCompositionModelServer(options: {
 	return {
 		close: async () => closeServer(server),
 		executeCodeRequestCount: () => executeCodeRequestCount,
+		finalResponseIssued: () => finalResponseIssued,
+		firstExecuteCodeResultObserved: () => firstExecuteCodeResultObserved,
 		generatedTerminalRequestCount: () => generatedTerminalRequestCount,
 		latestExecuteCodeResult: () => latestExecuteCodeResult,
 		secondExecuteCodeResult: () => secondExecuteCodeResult,
 		latestGeneratedTerminalResult: () => latestGeneratedTerminalResult,
 		observedGeneratedTerminalProgram: () => observedGeneratedTerminalProgram,
 		port: address.port,
+		promptedModelRequestCount: () => promptedModelRequestCount,
 	};
 }
 

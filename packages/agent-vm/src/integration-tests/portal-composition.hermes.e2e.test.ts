@@ -48,6 +48,7 @@ import {
 } from './portal-composition-hermes-e2e-program.js';
 import {
 	requestPortalCompositionHermesTurn,
+	snapshotPortalCompositionModelProgress,
 	startPortalCompositionModelServer,
 	waitForPortalCompositionHermesHealth,
 } from './portal-composition-hermes-e2e-support.js';
@@ -394,7 +395,20 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 				timestampPath: lossFastTimestampPath,
 				signal: lossObservation.signal,
 			}),
-		]).finally(() => lossObservation.abort());
+		])
+			.catch((error: unknown) => {
+				if (modelServer !== undefined) {
+					try {
+						process.stderr.write(
+							`[portal-composition-model-stage] ${JSON.stringify(snapshotPortalCompositionModelProgress(modelServer))}\n`,
+						);
+					} catch {
+						// Diagnostics must never replace the real turn failure.
+					}
+				}
+				throw error;
+			})
+			.finally(() => lossObservation.abort());
 		expect(
 			response,
 			`Raw foreground results: ${JSON.stringify({ executeCode: modelServer.latestExecuteCodeResult(), generatedTerminal: modelServer.latestGeneratedTerminalResult() })}`,
