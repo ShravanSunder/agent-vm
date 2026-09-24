@@ -21,11 +21,11 @@ interface PortalCompositionModelProgressSource {
 }
 
 export interface PortalCompositionModelProgressSnapshot {
-	readonly executeCodeToolCallsIssued: number;
+	readonly executeCodeToolCallsPrepared: number;
 	readonly finalResponseIssued: boolean;
 	readonly firstExecuteCodeMarkerAccepted: boolean;
 	readonly firstExecuteCodeResultObserved: boolean;
-	readonly generatedTerminalToolCallsIssued: number;
+	readonly generatedTerminalToolCallsPrepared: number;
 	readonly generatedTerminalResultPresent: boolean;
 	readonly promptedModelRequests: number;
 	readonly secondExecuteCodeResultPresent: boolean;
@@ -36,11 +36,11 @@ export function snapshotPortalCompositionModelProgress(
 	modelServer: PortalCompositionModelProgressSource,
 ): PortalCompositionModelProgressSnapshot {
 	return {
-		executeCodeToolCallsIssued: modelServer.executeCodeRequestCount(),
+		executeCodeToolCallsPrepared: modelServer.executeCodeRequestCount(),
 		finalResponseIssued: modelServer.finalResponseIssued(),
 		firstExecuteCodeMarkerAccepted: modelServer.latestExecuteCodeResult() !== undefined,
 		firstExecuteCodeResultObserved: modelServer.firstExecuteCodeResultObserved(),
-		generatedTerminalToolCallsIssued: modelServer.generatedTerminalRequestCount(),
+		generatedTerminalToolCallsPrepared: modelServer.generatedTerminalRequestCount(),
 		generatedTerminalResultPresent: modelServer.latestGeneratedTerminalResult() !== undefined,
 		promptedModelRequests: modelServer.promptedModelRequestCount(),
 		secondExecuteCodeResultPresent: modelServer.secondExecuteCodeResult() !== undefined,

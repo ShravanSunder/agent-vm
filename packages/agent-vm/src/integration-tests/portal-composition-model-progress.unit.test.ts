@@ -16,11 +16,11 @@ describe('portal composition model progress', () => {
 		});
 
 		expect(snapshot).toEqual({
-			executeCodeToolCallsIssued: 2,
+			executeCodeToolCallsPrepared: 2,
 			finalResponseIssued: false,
 			firstExecuteCodeMarkerAccepted: true,
 			firstExecuteCodeResultObserved: true,
-			generatedTerminalToolCallsIssued: 1,
+			generatedTerminalToolCallsPrepared: 1,
 			generatedTerminalResultPresent: false,
 			promptedModelRequests: 3,
 			secondExecuteCodeResultPresent: true,
