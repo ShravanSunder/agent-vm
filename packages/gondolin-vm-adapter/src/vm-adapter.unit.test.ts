@@ -213,6 +213,53 @@ function createPinnedRoot(fd: number): PinnedRealFsRoot {
 }
 
 describe('createManagedVm', () => {
+	it('reports closed boot signals without replacing the CI startup failure', async () => {
+		vi.stubEnv('GITHUB_ACTIONS', 'true');
+		vi.stubEnv('AGENT_VM_GONDOLIN_E2E', '1');
+		const output: string[] = [];
+		const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+			output.push(String(chunk));
+			return true;
+		});
+		try {
+			const startupError = new Error('vm startup timed out');
+			let capturedVmOptions: VMOptions | undefined;
+			const managedVm = await createManagedVm(
+				{
+					allowedHosts: [],
+					cpus: 1,
+					imagePath: '/images/test',
+					memory: '1G',
+					rootfsMode: 'cow',
+					secrets: {},
+					vfsMounts: {},
+				},
+				createBaseDependencies({
+					createVm: async (vmOptions) => {
+						capturedVmOptions = vmOptions;
+						return createFakeVmInstance({
+							hostPid: 4321,
+							start: async () => {
+								throw startupError;
+							},
+						});
+					},
+				}),
+			);
+			expect(capturedVmOptions?.sandbox?.debug).toEqual(['protocol', 'vfs']);
+			capturedVmOptions?.debugLog?.('qemu', 'stdout: private-guest-output');
+			capturedVmOptions?.debugLog?.('protocol', 'client rx type=boot');
+			await expect(managedVm.start()).rejects.toBe(startupError);
+			expect(output.join('')).toContain('"hostProcessObserved":true');
+			expect(output.join('')).toContain('"bootRequestObserved":true');
+			expect(output.join('')).not.toContain('private-guest-output');
+			await managedVm.close();
+		} finally {
+			stderrWrite.mockRestore();
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('finalizes writable and guest-read-only memory mounts before start', async () => {
 		const rawProviders: VirtualProvider[] = [];
 		let capturedVmOptions: VMOptions | undefined;
