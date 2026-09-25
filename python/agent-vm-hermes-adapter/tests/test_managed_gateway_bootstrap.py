@@ -1,4 +1,5 @@
 import concurrent.futures
+import inspect
 import json
 import os
 import stat
@@ -13,7 +14,9 @@ from unittest.mock import ANY, Mock, call, patch
 import hermes_constants
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from gateway import run as hermes_gateway_run
+from tools import code_kernel_remote as hermes_code_kernel_remote
 from tools import file_tools as hermes_file_tools
+from tools import terminal_scope as hermes_terminal_scope
 from tools.environments import local as local_environment_module
 from tools.environments import ssh as ssh_environment_module
 from tools.process_registry import ProcessSession
@@ -603,17 +606,11 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             self.assertFalse((protected_hermes_home / ".env").exists())
             stock_gateway_runner.assert_not_called()
 
-    def test_managed_policy_bindings_overlay_fallbacks_and_restore_stock_targets(self) -> None:
+    def test_managed_policy_bindings_restore_stock_targets(self) -> None:
         class FakeGatewayRunner:
             @staticmethod
             def _load_provider_routing() -> dict[str, object]:
                 return {"unexpected": True}
-
-        fallback_inputs: list[dict[str, object]] = []
-
-        def get_fallback_chain(configuration: dict[str, object]) -> list[object]:
-            fallback_inputs.append(configuration)
-            return [configuration]
 
         def load_gateway_config() -> dict[str, object]:
             return {"provider_routing": {"order": ["provider-b"]}}
@@ -624,43 +621,25 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         fake_gateway_run = SimpleNamespace(
             GatewayRunner=FakeGatewayRunner,
             _load_gateway_config=load_gateway_config,
-            get_fallback_chain=get_fallback_chain,
             load_gateway_config=load_gateway_config,
             load_gateway_config_for_runner=load_gateway_config_for_runner,
         )
         bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
             gateway_run_module=fake_gateway_run,
         )
-        original_fallback = fake_gateway_run.get_fallback_chain
         original_gateway_config_for_runner = fake_gateway_run.load_gateway_config_for_runner
         original_routing_descriptor = FakeGatewayRunner.__dict__["_load_provider_routing"]
 
-        with patch.object(
-            managed_gateway_bootstrap.hermes_managed_scope,
-            "apply_managed_overlay",
-            side_effect=lambda configuration: {**configuration, "managed": True},
-        ):
-            bindings.install()
-            self.assertEqual(
-                fake_gateway_run.get_fallback_chain({"fallback": "local"}),
-                [{"fallback": "local", "managed": True}],
-            )
-            self.assertIsInstance(
-                FakeGatewayRunner.__dict__["_load_provider_routing"], staticmethod
-            )
-            self.assertEqual(FakeGatewayRunner._load_provider_routing(), {"order": ["provider-b"]})
-            self.assertEqual(
-                FakeGatewayRunner()._load_provider_routing(),
-                {"order": ["provider-b"]},
-            )
-            self.assertEqual(
-                fake_gateway_run.load_gateway_config_for_runner(),
-                {"provider_routing": {"order": ["provider-b"]}},
-            )
-            bindings.close()
+        bindings.install()
+        self.assertIsInstance(FakeGatewayRunner.__dict__["_load_provider_routing"], staticmethod)
+        self.assertEqual(FakeGatewayRunner._load_provider_routing(), {"order": ["provider-b"]})
+        self.assertEqual(FakeGatewayRunner()._load_provider_routing(), {"order": ["provider-b"]})
+        self.assertEqual(
+            fake_gateway_run.load_gateway_config_for_runner(),
+            {"provider_routing": {"order": ["provider-b"]}},
+        )
+        bindings.close()
 
-        self.assertEqual(fallback_inputs, [{"fallback": "local", "managed": True}])
-        self.assertIs(fake_gateway_run.get_fallback_chain, original_fallback)
         self.assertIs(
             fake_gateway_run.load_gateway_config_for_runner,
             original_gateway_config_for_runner,
@@ -670,7 +649,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             original_routing_descriptor,
         )
 
-    def test_managed_policy_bindings_restore_fallback_after_partial_install_failure(self) -> None:
+    def test_managed_policy_bindings_restore_after_partial_install_failure(self) -> None:
         class RefusingGatewayRunnerMeta(type):
             fail_provider_routing_install = True
 
@@ -685,29 +664,23 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
             def _load_provider_routing() -> dict[str, object]:
                 return {}
 
-        def get_fallback_chain(configuration: dict[str, object]) -> list[object]:
-            return [configuration]
-
         def load_gateway_config() -> dict[str, object]:
             return {}
 
         fake_gateway_run = SimpleNamespace(
             GatewayRunner=RefusingGatewayRunner,
             _load_gateway_config=load_gateway_config,
-            get_fallback_chain=get_fallback_chain,
             load_gateway_config=load_gateway_config,
             load_gateway_config_for_runner=load_gateway_config,
         )
         bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
             gateway_run_module=fake_gateway_run,
         )
-        original_fallback = fake_gateway_run.get_fallback_chain
         original_routing_descriptor = RefusingGatewayRunner.__dict__["_load_provider_routing"]
 
         with self.assertRaisesRegex(RuntimeError, "forced provider routing install failure"):
             bindings.install()
 
-        self.assertIs(fake_gateway_run.get_fallback_chain, original_fallback)
         self.assertIs(
             RefusingGatewayRunner.__dict__["_load_provider_routing"],
             original_routing_descriptor,
@@ -717,9 +690,226 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         bindings = managed_gateway_bootstrap._HermesManagedPolicyReadBindings(
             gateway_run_module=hermes_gateway_run,
         )
-        with patch.object(hermes_gateway_run, "get_fallback_chain", lambda _: []):
+        with patch.object(hermes_gateway_run, "_load_gateway_config", lambda: {}):
             with self.assertRaisesRegex(RuntimeError, "changed"):
                 bindings.install()
+
+    def test_fallback_refresh_uses_hermes_effective_loader_with_managed_precedence(self) -> None:
+        from gateway.run_config_loaders import GatewayConfigLoadersMixin
+
+        user_fallback = {"provider": "user-provider", "model": "user-model"}
+        managed_fallback = {"provider": "managed-provider", "model": "managed-model"}
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            hermes_home = temporary_root / "hermes-home"
+            managed_home = temporary_root / "managed"
+            hermes_home.mkdir()
+            managed_home.mkdir()
+            (hermes_home / "config.yaml").write_text(
+                "fallback_providers:\n"
+                f"  - provider: {user_fallback['provider']}\n"
+                f"    model: {user_fallback['model']}\n",
+                encoding="utf-8",
+            )
+            (managed_home / "config.yaml").write_text(
+                "fallback_providers:\n"
+                f"  - provider: {managed_fallback['provider']}\n"
+                f"    model: {managed_fallback['model']}\n",
+                encoding="utf-8",
+            )
+            managed_gateway_bootstrap.hermes_managed_scope.invalidate_managed_cache()
+            with (
+                patch.object(hermes_gateway_run, "_gateway_config_home", return_value=hermes_home),
+                patch.dict(os.environ, {"HERMES_MANAGED_DIR": str(managed_home)}),
+            ):
+                try:
+                    runner = GatewayConfigLoadersMixin()
+                    self.assertEqual(
+                        GatewayConfigLoadersMixin._refresh_fallback_model(runner),
+                        [managed_fallback],
+                    )
+                finally:
+                    managed_gateway_bootstrap.hermes_managed_scope.invalidate_managed_cache()
+
+    def test_managed_terminal_scope_overrides_profiles_without_admitting_root_or_unknown_profiles(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            protected_hermes_home = temporary_root / "hermes-home"
+            profile_homes = {
+                "root": protected_hermes_home,
+                "researcher": protected_hermes_home / "profiles" / "researcher",
+                "unapproved": protected_hermes_home / "profiles" / "unapproved",
+            }
+            malformed_home = protected_hermes_home / "profiles" / "malformed"
+            for profile_home in (*profile_homes.values(), malformed_home):
+                profile_home.mkdir(parents=True, exist_ok=True)
+                (profile_home / "config.yaml").write_text(
+                    "terminal:\n  backend: local\n  cwd: /profile-local\n",
+                    encoding="utf-8",
+                )
+            (malformed_home / "config.yaml").write_text("terminal: [\n", encoding="utf-8")
+
+            adapter = HermesManagedAdapter(
+                config=HermesManagedAdapterConfig(
+                    profiles=(build_projection(agent_id="researcher", profile_name="researcher"),),
+                    projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                    protected_hermes_home=str(protected_hermes_home),
+                ),
+                gateway_runtime_client=t.cast(
+                    "GatewayRuntimeClient",
+                    t.cast("object", FakeGatewayRuntimeClient()),
+                ),
+            )
+            hooks = HermesManagedEnvironmentHooks(
+                adapter=adapter,
+                attachment=build_attachment(),
+                protected_hermes_home=protected_hermes_home,
+                terminal_tool_module=FakeTerminalToolModule(),
+            )
+            stock_builder = hermes_terminal_scope.build_profile_terminal_scope
+            stock_remote_kernel = hermes_code_kernel_remote.execute_in_remote_kernel
+            try:
+                hooks.install()
+                self.assertIsNot(
+                    hermes_code_kernel_remote.execute_in_remote_kernel,
+                    stock_remote_kernel,
+                )
+
+                for profile_name in ("root", "researcher"):
+                    profile_home = profile_homes[profile_name]
+                    with (
+                        self.subTest(profile_name=profile_name),
+                        patch.object(
+                            hermes_constants,
+                            "get_hermes_home",
+                            return_value=profile_home,
+                        ),
+                        hermes_terminal_scope.install_and_reset_profile_terminal_scope(
+                            profile_home
+                        ),
+                    ):
+                        self.assertEqual(
+                            hermes_terminal_scope.terminal_env("TERMINAL_ENV"),
+                            "ssh",
+                        )
+                        self.assertEqual(
+                            hermes_terminal_scope.terminal_env("TERMINAL_CWD"),
+                            "/work",
+                        )
+                        if profile_name == "root":
+                            with self.assertRaises(
+                                managed_gateway_bootstrap.HermesProfileAdmissionError
+                            ):
+                                hooks._current_projection()
+                        else:
+                            self.assertEqual(
+                                hooks._current_projection().framework_identity.profile_name,
+                                "researcher",
+                            )
+
+                with hermes_terminal_scope.install_and_reset_profile_terminal_scope(
+                    profile_homes["unapproved"]
+                ):
+                    self.assertEqual(
+                        hermes_terminal_scope.terminal_env("TERMINAL_ENV"),
+                        "ssh",
+                    )
+                    with self.assertRaises(managed_gateway_bootstrap.HermesProfileAdmissionError):
+                        hooks._current_projection()
+
+                with hermes_terminal_scope.install_and_reset_profile_terminal_scope(malformed_home):
+                    with self.assertRaises(hermes_terminal_scope.TerminalPolicyUnavailable):
+                        hermes_terminal_scope.terminal_env("TERMINAL_ENV")
+            finally:
+                hooks.close()
+                adapter.close(disconnect_gateway_runtime=False)
+
+            self.assertIs(hermes_terminal_scope.build_profile_terminal_scope, stock_builder)
+            self.assertIs(
+                hermes_code_kernel_remote.execute_in_remote_kernel,
+                stock_remote_kernel,
+            )
+
+    def test_managed_terminal_scope_partial_install_restores_builder_and_process_environment(
+        self,
+    ) -> None:
+        class FailingTerminalToolModule(FakeTerminalToolModule):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fail_next_create_environment_replacement = True
+
+            @t.override
+            def replace_create_environment(self, value: Callable[..., object]) -> None:
+                if self.fail_next_create_environment_replacement:
+                    self.fail_next_create_environment_replacement = False
+                    raise RuntimeError("forced terminal factory install failure")
+                super().replace_create_environment(value)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            protected_hermes_home = Path(temporary_directory) / "hermes-home"
+            protected_hermes_home.mkdir()
+            adapter = HermesManagedAdapter(
+                config=HermesManagedAdapterConfig(
+                    profiles=(build_projection(agent_id="researcher", profile_name="researcher"),),
+                    projection_cohort_digest=PROJECTION_COHORT_DIGEST,
+                    protected_hermes_home=str(protected_hermes_home),
+                ),
+                gateway_runtime_client=t.cast(
+                    "GatewayRuntimeClient",
+                    t.cast("object", FakeGatewayRuntimeClient()),
+                ),
+            )
+            terminal_tool_module = FailingTerminalToolModule()
+            hooks = HermesManagedEnvironmentHooks(
+                adapter=adapter,
+                attachment=build_attachment(),
+                protected_hermes_home=protected_hermes_home,
+                terminal_tool_module=terminal_tool_module,
+            )
+            stock_builder = hermes_terminal_scope.build_profile_terminal_scope
+            stock_remote_kernel = hermes_code_kernel_remote.execute_in_remote_kernel
+            original_create_environment = terminal_tool_module._create_environment
+            original_resolve_container_task_id = terminal_tool_module._resolve_container_task_id
+            original_routing_environment = {
+                "TERMINAL_CWD": "/operator/work",
+                "TERMINAL_ENV": "local",
+                "TERMINAL_SSH_HOST": "operator-host",
+                "TERMINAL_SSH_USER": "operator-user",
+            }
+
+            try:
+                with patch.dict(os.environ, original_routing_environment, clear=False):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "forced terminal factory install failure",
+                    ):
+                        hooks.install()
+
+                    self.assertIs(
+                        hermes_terminal_scope.build_profile_terminal_scope,
+                        stock_builder,
+                    )
+                    self.assertIs(
+                        hermes_code_kernel_remote.execute_in_remote_kernel,
+                        stock_remote_kernel,
+                    )
+                    self.assertIs(
+                        terminal_tool_module._create_environment,
+                        original_create_environment,
+                    )
+                    self.assertIs(
+                        terminal_tool_module._resolve_container_task_id,
+                        original_resolve_container_task_id,
+                    )
+                    self.assertEqual(
+                        {name: os.environ.get(name) for name in original_routing_environment},
+                        original_routing_environment,
+                    )
+            finally:
+                adapter.close(disconnect_gateway_runtime=False)
 
     def test_rejects_missing_or_unsafe_profile_values_before_stock_gateway(self) -> None:
         environment_mapping = {
@@ -1693,10 +1883,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         terminal_tool_module = FakeTerminalToolModule()
         plugin_context = FakeHermesPluginContext()
         telemetry = FakeHermesToolPortalTelemetry()
-        original_fallback_chain = hermes_gateway_run.get_fallback_chain
-        original_provider_routing_descriptor = hermes_gateway_run.GatewayRunner.__dict__[
-            "_load_provider_routing"
-        ]
+        original_provider_routing_descriptor = inspect.getattr_static(
+            hermes_gateway_run.GatewayRunner,
+            "_load_provider_routing",
+        )
 
         def failing_stock_gateway_runner() -> None:
             register_managed_tool_portal_plugin(plugin_context)
@@ -1746,7 +1936,6 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
         self.assertEqual(client.disconnect_calls, 1)
         self.assertIs(client.trace_context_provider, telemetry.trace_context_provider)
         self.assertEqual(telemetry.shutdown_calls, 1)
-        self.assertIs(hermes_gateway_run.get_fallback_chain, original_fallback_chain)
         self.assertIs(
             hermes_gateway_run.GatewayRunner.__dict__["_load_provider_routing"],
             original_provider_routing_descriptor,

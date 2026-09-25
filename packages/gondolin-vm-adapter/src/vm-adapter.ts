@@ -39,6 +39,7 @@ import {
 	configureHostNetworkDefaults,
 	type HostNetworkDefaultsResult,
 } from './host-network-defaults.js';
+import { createManagedVmBootSignalTracker } from './managed-vm-boot-diagnostics.js';
 import {
 	closePinnedRealFsRoot,
 	createPinnedRealFsProvider,
@@ -909,6 +910,10 @@ export async function createManagedVm(
 	options: CreateVmOptions,
 	dependencies: ManagedVmDependencies = createDefaultDependencies(),
 ): Promise<ManagedVm> {
+	const bootSignalTracker =
+		process.env.GITHUB_ACTIONS === 'true' && process.env.AGENT_VM_GONDOLIN_E2E === '1'
+			? createManagedVmBootSignalTracker()
+			: undefined;
 	dependencies.configureHostNetworkDefaults?.();
 	const hasTcpHosts = options.tcpHosts && Object.keys(options.tcpHosts).length > 0;
 	const hasSshEgress = options.sshEgress !== undefined && options.sshEgress.allowedHosts.length > 0;
@@ -932,7 +937,21 @@ export async function createManagedVm(
 			...(options.onResponse ? { onResponse: options.onResponse } : {}),
 		});
 		vmInstance = await dependencies.createVm({
-			...(options.imagePath.length > 0 ? { sandbox: { imagePath: options.imagePath } } : {}),
+			...(options.imagePath.length > 0 || bootSignalTracker !== undefined
+				? {
+						sandbox: {
+							...(options.imagePath.length > 0 ? { imagePath: options.imagePath } : {}),
+							...(bootSignalTracker === undefined ? {} : { debug: ['protocol', 'vfs'] }),
+						},
+					}
+				: {}),
+			...(bootSignalTracker === undefined
+				? {}
+				: {
+						debugLog: (component: string, message: string): void => {
+							bootSignalTracker.observe(component, message);
+						},
+					}),
 			...(options.sessionLabel ? { sessionLabel: options.sessionLabel } : {}),
 			rootfs: {
 				mode: options.rootfsMode,
@@ -1078,8 +1097,30 @@ export async function createManagedVm(
 				poisonFinalization(error);
 				throw error;
 			}
-			await vmInstance.start();
-			lifecycleState = 'started';
+			try {
+				await vmInstance.start();
+				lifecycleState = 'started';
+			} catch (error: unknown) {
+				if (bootSignalTracker !== undefined) {
+					let hostProcessObserved = false;
+					try {
+						const hostProcessId = vmInstance.getHostPid?.();
+						hostProcessObserved = typeof hostProcessId === 'number' && hostProcessId > 0;
+					} catch {
+						// Diagnostics must never replace the startup error.
+					}
+					try {
+						process.stderr.write(
+							`[managed-vm-boot] ${JSON.stringify({ hostProcessObserved, ...bootSignalTracker.snapshot() })}\n`,
+						);
+					} catch {
+						// Diagnostic output must never replace the startup error.
+					}
+				}
+				throw error;
+			} finally {
+				bootSignalTracker?.stop();
+			}
 		},
 		async close(): Promise<void> {
 			const closeErrors: unknown[] = [];

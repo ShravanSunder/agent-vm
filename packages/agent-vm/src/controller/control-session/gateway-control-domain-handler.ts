@@ -60,6 +60,7 @@ import type {
 	ControllerApprovalDecisionResult,
 	ControllerApprovalOperatorIdentity,
 } from '../approval/controller-approval-ledger.js';
+import { writeControllerDiagnostic } from '../controller-diagnostic-logging.js';
 import type { ConfiguredCliAuthorizedOperation } from '../runner/configured-cli-authorization.js';
 import { ConfiguredControllerExecutionError } from '../runner/configured-controller-execution-error.js';
 import type { GatewayEpochIdentity } from '../vm-ownership/vm-ownership-contracts.js';
@@ -1275,6 +1276,15 @@ async function executeToolPortalControllerExecution(options: {
 		return assertUnreachableControllerExecution(options.payload.action);
 	} catch (error) {
 		if (error instanceof ConfiguredControllerExecutionError) {
+			writeControllerDiagnostic('gateway', {
+				event: 'controller-operation-failed',
+				failureClass: 'failure',
+				level: 'warning',
+				telemetry: {
+					errorCode: error.code,
+					operation: 'tool-portal-controller-execution',
+				},
+			});
 			const result =
 				error.code === 'cancelled'
 					? 'cancelled'

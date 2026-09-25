@@ -374,11 +374,17 @@ class HermesToolExecutionMiddleware:
         middleware_schema_version: object = None,
         next_call: Callable[[dict[str, object]], object],
     ) -> object:
+        execution_args = args
+        if tool_name == "execute_code":
+            # Hermes keys remote kernels by raw task id, not managed Tool VM generation.
+            # A fresh kernel prevents reuse after the managed environment rotates.
+            execution_args = dict(args)
+            execution_args["reset"] = True
         del original_args, telemetry_schema_version, middleware_schema_version
-        if not self._supports_invocation(tool_name, args):
-            return next_call(args)
+        if not self._supports_invocation(tool_name, execution_args):
+            return next_call(execution_args)
         if current_hermes_portal_invocation_scope() is not None:
-            return next_call(args)
+            return next_call(execution_args)
         identity = self.build_identity(
             task_id=task_id,
             session_id=session_id,
@@ -386,10 +392,10 @@ class HermesToolExecutionMiddleware:
             turn_id=turn_id,
             api_request_id=api_request_id,
             tool_name=tool_name,
-            args=args,
+            args=execution_args,
         )
         if identity is None:
-            return next_call(args)
+            return next_call(execution_args)
 
         async def present_approval(request: BaseModel) -> BaseModel:
             return await self._runtime.approval_presenter.present(
@@ -414,7 +420,7 @@ class HermesToolExecutionMiddleware:
                 scope.catalog_source = binding.source
         scope_token = _CURRENT_HERMES_PORTAL_INVOCATION_SCOPE.set(scope)
         try:
-            return next_call(args)
+            return next_call(execution_args)
         finally:
             _CURRENT_HERMES_PORTAL_INVOCATION_SCOPE.reset(scope_token)
             try:

@@ -136,6 +136,109 @@ class HermesToolExecutionMiddlewareTests(unittest.TestCase):
         self.assertEqual(len(captured_scopes), 1)
         self.assertIsNone(current_hermes_portal_invocation_scope())
 
+    def test_execute_code_forces_reset_on_admitted_and_missing_identity_paths(self) -> None:
+        middleware = HermesToolExecutionMiddleware(_MiddlewareRuntime())
+
+        for session_id in (None, "session-a"):
+            with self.subTest(session_id=session_id):
+                model_args: dict[str, object] = {
+                    "code": "print('fresh execution')",
+                    "reset": False,
+                }
+                original_args = model_args
+                observed_args: list[dict[str, object]] = []
+                observed_scopes: list[HermesPortalInvocationScope | None] = []
+
+                def continue_execution(args: dict[str, object]) -> str:
+                    observed_args.append(args)
+                    observed_scopes.append(current_hermes_portal_invocation_scope())
+                    return "stock-result"
+
+                result = middleware(
+                    tool_name="execute_code",
+                    args=model_args,
+                    original_args=original_args,
+                    task_id="task-a",
+                    session_id=session_id,
+                    tool_call_id="call-a",
+                    turn_id="turn-a",
+                    api_request_id="request-a",
+                    telemetry_schema_version="hermes.observer.v1",
+                    middleware_schema_version="hermes.middleware.v1",
+                    next_call=continue_execution,
+                )
+
+                self.assertEqual(result, "stock-result")
+                self.assertEqual(len(observed_args), 1)
+                self.assertIsNot(observed_args[0], model_args)
+                self.assertIs(original_args, model_args)
+                self.assertEqual(model_args["reset"], False)
+                self.assertEqual(observed_args[0]["reset"], True)
+                if session_id is None:
+                    self.assertIsNone(observed_scopes[0])
+                else:
+                    self.assertIsNotNone(observed_scopes[0])
+
+        terminal_args: dict[str, object] = {
+            "command": "printf unchanged",
+            "reset": False,
+        }
+        terminal_observed: list[dict[str, object]] = []
+        middleware(
+            tool_name="terminal",
+            args=terminal_args,
+            original_args=terminal_args,
+            session_id=None,
+            next_call=lambda args: terminal_observed.append(args),
+        )
+        self.assertIs(terminal_observed[0], terminal_args)
+        self.assertEqual(terminal_args["reset"], False)
+
+        nested_model_args: dict[str, object] = {
+            "code": "print('nested execution')",
+            "reset": False,
+        }
+        nested_observed_args: list[dict[str, object]] = []
+
+        def run_nested_execute_code(_args: dict[str, object]) -> str:
+            nested_result = middleware(
+                tool_name="execute_code",
+                args=nested_model_args,
+                original_args=nested_model_args,
+                task_id="task-a",
+                session_id="session-a",
+                tool_call_id="nested-call",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=lambda args: nested_observed_args.append(args) or "nested-result",
+            )
+            if not isinstance(nested_result, str):
+                raise AssertionError("nested stock continuation must return its string result")
+            return nested_result
+
+        self.assertEqual(
+            middleware(
+                tool_name="terminal",
+                args={"command": "printf outer", "timeout": 10},
+                original_args={"command": "printf outer", "timeout": 10},
+                task_id="task-a",
+                session_id="session-a",
+                tool_call_id="outer-call",
+                turn_id="turn-a",
+                api_request_id="request-a",
+                telemetry_schema_version="hermes.observer.v1",
+                middleware_schema_version="hermes.middleware.v1",
+                next_call=run_nested_execute_code,
+            ),
+            "nested-result",
+        )
+        self.assertEqual(len(nested_observed_args), 1)
+        self.assertIsNot(nested_observed_args[0], nested_model_args)
+        self.assertEqual(nested_observed_args[0]["reset"], True)
+        self.assertEqual(nested_model_args["reset"], False)
+
     def test_foreground_terminal_reuses_outer_scope_but_background_and_missing_session_do_not(
         self,
     ) -> None:

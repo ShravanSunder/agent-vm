@@ -105,7 +105,7 @@ describe('portal composition generated foreground terminal program', () => {
 		).resolves.toBeUndefined();
 	});
 
-	it('drives execute_code followed by foreground terminal from the observed orientation', async () => {
+	it('drives two execute_code calls followed by foreground terminal from the observed orientation', async () => {
 		const fingerprint = 'b'.repeat(64);
 		const promptMarker = 'RUN_GENERATED_TERMINAL_HOST_PROOF';
 		const programResultMarker = 'generic-program-complete';
@@ -134,13 +134,18 @@ describe('portal composition generated foreground terminal program', () => {
 
 			messages.push({ content: programResultMarker, role: 'tool' });
 			const second = await requestDeterministicModel(server.port, messages);
-			expect(second).toContain('portal-composition-generated-terminal');
-			expect(second).toContain(portalCompositionGeneratedTerminalResultMarker);
+			expect(second).toContain('portal-composition-reset-probe');
+			expect(second).toContain('portal-composition-kernel-reset-probe');
+
+			messages.push({ content: 'portal-composition-kernel-reset-probe', role: 'tool' });
+			const third = await requestDeterministicModel(server.port, messages);
+			expect(third).toContain('portal-composition-generated-terminal');
+			expect(third).toContain(portalCompositionGeneratedTerminalResultMarker);
 
 			messages.push({ content: portalCompositionGeneratedTerminalResultMarker, role: 'tool' });
-			const third = await requestDeterministicModel(server.port, messages);
-			expect(third).toContain('host-proof-finished');
-			expect(server.executeCodeRequestCount()).toBe(1);
+			const fourth = await requestDeterministicModel(server.port, messages);
+			expect(fourth).toContain('host-proof-finished');
+			expect(server.executeCodeRequestCount()).toBe(2);
 			expect(server.generatedTerminalRequestCount()).toBe(1);
 		} finally {
 			await server.close();

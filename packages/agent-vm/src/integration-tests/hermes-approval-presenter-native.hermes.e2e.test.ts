@@ -12,7 +12,7 @@ const runHermesApprovalPresenterE2e = await shouldRunHermesE2e({ architecture })
 const describeHermesApprovalPresenterE2e = runHermesApprovalPresenterE2e ? describe : describe.skip;
 
 const hermesRuntimeImage =
-	'docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79';
+	'docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7';
 
 const pinnedPresenterProof = String.raw`
 set -euo pipefail
@@ -35,6 +35,7 @@ from agent_vm_hermes_adapter.managed_tool_portal.hermes_approval_presenter impor
 )
 from gateway.config import PlatformConfig
 from gateway.platforms.api_server import APIServerAdapter
+from gateway.run import GatewayRunner
 from gateway.session_context import clear_session_vars, set_session_vars
 from pydantic import BaseModel
 from tools.approval import register_gateway_notify, unregister_gateway_notify
@@ -87,7 +88,7 @@ class Gateway:
         self.adapter = adapter
         self.authorized = authorized
 
-    def _adapter_for_source(self, source):
+    def _delivery_adapter_for(self, source):
         assert source is source_fixture
         return self.adapter
 
@@ -124,6 +125,7 @@ def presentation_request(challenge_id):
 
 
 source_fixture = Source()
+assert callable(getattr(GatewayRunner, "_delivery_adapter_for", None))
 adapter = Adapter()
 routes = HermesGatewayApprovalRouteStore()
 gateway_loop = asyncio.new_event_loop()
@@ -179,6 +181,9 @@ try:
             )
             api_adapter._run_statuses["run-approval-e2e"] = {"status": "running"}
             api_adapter._run_approval_sessions["run-approval-e2e"] = "run-approval-e2e"
+            api_adapter._run_owners["run-approval-e2e"] = api_adapter._run_idempotency_scope(
+                SimpleNamespace(headers={})
+            )
             api_adapter._run_streams["run-approval-e2e"] = asyncio.Queue()
             app = web.Application()
             app.router.add_post(

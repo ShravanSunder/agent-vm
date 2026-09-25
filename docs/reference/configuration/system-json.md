@@ -1250,7 +1250,7 @@ The outer mapping keys must exactly match both `zones[].agents` and
 one `DISCORD_BOT_TOKEN` target. Each target is backed by its own distinct
 `injection: "env"`, `audience: "gateway"` source. The root listener keeps the
 separate reserved source `API_SERVER_KEY`; it cannot be projected into a named
-profile or reused as a profile-key source. Hermes v0.20 authenticates
+profile or reused as a profile-key source. Hermes authenticates
 `/p/<profile>/...` with the selected profile's key, while unprefixed root routes
 use the root listener key.
 

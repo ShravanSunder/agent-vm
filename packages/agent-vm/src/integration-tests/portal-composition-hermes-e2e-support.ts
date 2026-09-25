@@ -9,16 +9,116 @@ import {
 	type PortalCompositionGeneratedTerminalProgram,
 } from './portal-composition-hermes-generated-terminal.js';
 
-interface PortalCompositionModelServer {
-	readonly close: () => Promise<void>;
+interface PortalCompositionModelProgressSource {
 	readonly executeCodeRequestCount: () => number;
+	readonly finalResponseIssued: () => boolean;
+	readonly firstExecuteCodeResultObserved: () => boolean;
 	readonly generatedTerminalRequestCount: () => number;
 	readonly latestExecuteCodeResult: () => string | undefined;
+	readonly secondExecuteCodeResult: () => string | undefined;
 	readonly latestGeneratedTerminalResult: () => string | undefined;
+	readonly promptedModelRequestCount: () => number;
+}
+
+export interface PortalCompositionModelProgressSnapshot {
+	readonly executeCodeToolCallsPrepared: number;
+	readonly finalResponseIssued: boolean;
+	readonly firstExecuteCodeMarkerAccepted: boolean;
+	readonly firstExecuteCodeResultObserved: boolean;
+	readonly generatedTerminalToolCallsPrepared: number;
+	readonly generatedTerminalResultPresent: boolean;
+	readonly promptedModelRequests: number;
+	readonly secondExecuteCodeResultPresent: boolean;
+}
+
+/** Discard result bodies while identifying the last completed fake-model stage. */
+export function snapshotPortalCompositionModelProgress(
+	modelServer: PortalCompositionModelProgressSource,
+): PortalCompositionModelProgressSnapshot {
+	return {
+		executeCodeToolCallsPrepared: modelServer.executeCodeRequestCount(),
+		finalResponseIssued: modelServer.finalResponseIssued(),
+		firstExecuteCodeMarkerAccepted: modelServer.latestExecuteCodeResult() !== undefined,
+		firstExecuteCodeResultObserved: modelServer.firstExecuteCodeResultObserved(),
+		generatedTerminalToolCallsPrepared: modelServer.generatedTerminalRequestCount(),
+		generatedTerminalResultPresent: modelServer.latestGeneratedTerminalResult() !== undefined,
+		promptedModelRequests: modelServer.promptedModelRequestCount(),
+		secondExecuteCodeResultPresent: modelServer.secondExecuteCodeResult() !== undefined,
+	};
+}
+
+interface PortalCompositionModelServer extends PortalCompositionModelProgressSource {
+	readonly close: () => Promise<void>;
 	readonly observedGeneratedTerminalProgram: () =>
 		| PortalCompositionGeneratedTerminalProgram
 		| undefined;
 	readonly port: number;
+}
+
+async function readPortalCompositionDiagnosticHttpStatus(
+	url: string,
+): Promise<number | 'unavailable'> {
+	try {
+		const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+		await response.body?.cancel().catch(() => undefined);
+		return response.status;
+	} catch {
+		return 'unavailable';
+	}
+}
+
+async function readPortalCompositionHealthSnapshot(options: {
+	readonly controllerUrl: string;
+	readonly zoneId: string;
+}): Promise<Readonly<Record<string, unknown>>> {
+	try {
+		const response = await fetch(
+			`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/health-snapshot`,
+			{ signal: AbortSignal.timeout(2_000) },
+		);
+		if (!response.ok) return { httpStatus: response.status };
+		const snapshot: unknown = await response.json();
+		if (!isObjectRecord(snapshot)) return { state: 'malformed' };
+		const events = Array.isArray(snapshot.latestEvents) ? snapshot.latestEvents : [];
+		return {
+			state: ['unknown', 'ok', 'stale', 'failed'].includes(String(snapshot.kind))
+				? snapshot.kind
+				: 'malformed',
+			events: events
+				.filter(isObjectRecord)
+				.map((event) => ({
+					kind: [
+						'gateway-service-health',
+						'gateway-control-session',
+						'controller-request',
+						'lease-renew',
+						'lease-heartbeat',
+						'tool-vm-ssh',
+						'gateway-plugin-health',
+						'agent-channel-provider-health',
+						'gateway-recovery',
+						'gateway-recovery-suspended',
+					].includes(String(event.kind))
+						? event.kind
+						: 'unknown',
+					result: ['ok', 'failed', 'timeout', 'stale'].includes(String(event.result))
+						? event.result
+						: 'unknown',
+					...(typeof event.statusCode === 'number' ? { statusCode: event.statusCode } : {}),
+					...(typeof event.observedAtMs === 'number' ? { observedAtMs: event.observedAtMs } : {}),
+					...(event.reason === 'gateway-service-unhealthy' ||
+					event.reason === 'gateway-control-session-unhealthy' ||
+					event.reason === 'agent-channel-provider-unhealthy'
+						? { reason: event.reason }
+						: {}),
+				}))
+				.toSorted(
+					(first, second) => Number(first.observedAtMs ?? 0) - Number(second.observedAtMs ?? 0),
+				),
+		};
+	} catch {
+		return { state: 'unavailable' };
+	}
 }
 
 function isObjectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -128,10 +228,14 @@ export async function startPortalCompositionModelServer(options: {
 	readonly programResultMarker: string;
 }): Promise<PortalCompositionModelServer> {
 	let executeCodeRequestCount = 0;
+	let finalResponseIssued = false;
+	let firstExecuteCodeResultObserved = false;
 	let generatedTerminalRequestCount = 0;
 	let latestExecuteCodeResult: string | undefined;
+	let secondExecuteCodeResult: string | undefined;
 	let latestGeneratedTerminalResult: string | undefined;
 	let observedGeneratedTerminalProgram: PortalCompositionGeneratedTerminalProgram | undefined;
+	let promptedModelRequestCount = 0;
 	const server = createServer((request, response) => {
 		void (async () => {
 			if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
@@ -172,6 +276,7 @@ export async function startPortalCompositionModelServer(options: {
 				]);
 				return;
 			}
+			promptedModelRequestCount += 1;
 			const toolResult = latestToolResult(body);
 			if (toolResult === undefined) {
 				const instructions = modelMessageText(body);
@@ -212,12 +317,31 @@ export async function startPortalCompositionModelServer(options: {
 				return;
 			}
 			if (latestExecuteCodeResult === undefined) {
+				firstExecuteCodeResultObserved = true;
 				if (!toolResult.includes(options.programResultMarker)) {
 					throw new Error(
 						`execute_code omitted the portal composition marker: ${toolResult.slice(0, 2_000)}`,
 					);
 				}
 				latestExecuteCodeResult = toolResult;
+				executeCodeRequestCount += 1;
+				const resetProbeCall = {
+					function: {
+						arguments: JSON.stringify({ code: 'print("portal-composition-kernel-reset-probe")' }),
+						name: 'execute_code',
+					},
+					id: 'portal-composition-reset-probe',
+					index: 0,
+					type: 'function',
+				};
+				writeServerSentEvents(response, [
+					completionChunk({ role: 'assistant', tool_calls: [resetProbeCall] }, null),
+					completionChunk({}, 'tool_calls'),
+				]);
+				return;
+			}
+			if (secondExecuteCodeResult === undefined) {
+				secondExecuteCodeResult = toolResult;
 				if (observedGeneratedTerminalProgram === undefined) {
 					throw new Error('Hermes model server lost the generated terminal program.');
 				}
@@ -250,6 +374,7 @@ export async function startPortalCompositionModelServer(options: {
 				completionChunk({ content: options.finalMarker, role: 'assistant' }, null),
 				completionChunk({}, 'stop'),
 			]);
+			finalResponseIssued = true;
 		})().catch((error: unknown) => {
 			if (response.headersSent) {
 				response.destroy(error instanceof Error ? error : new Error(String(error)));
@@ -278,11 +403,15 @@ export async function startPortalCompositionModelServer(options: {
 	return {
 		close: async () => closeServer(server),
 		executeCodeRequestCount: () => executeCodeRequestCount,
+		finalResponseIssued: () => finalResponseIssued,
+		firstExecuteCodeResultObserved: () => firstExecuteCodeResultObserved,
 		generatedTerminalRequestCount: () => generatedTerminalRequestCount,
 		latestExecuteCodeResult: () => latestExecuteCodeResult,
+		secondExecuteCodeResult: () => secondExecuteCodeResult,
 		latestGeneratedTerminalResult: () => latestGeneratedTerminalResult,
 		observedGeneratedTerminalProgram: () => observedGeneratedTerminalProgram,
 		port: address.port,
+		promptedModelRequestCount: () => promptedModelRequestCount,
 	};
 }
 
@@ -331,11 +460,14 @@ export async function waitForPortalCompositionHermesHealth(options: {
 export async function requestPortalCompositionHermesTurn(options: {
 	readonly agentId: string;
 	readonly apiServerKey: string;
+	readonly controllerUrl: string;
 	readonly gatewayPort: number;
 	readonly modelName: string;
 	readonly prompt: string;
 	readonly sessionId: string;
+	readonly zoneId: string;
 }): Promise<string> {
+	const requestStartedAtMs = performance.now();
 	const response = await fetch(
 		`http://127.0.0.1:${String(options.gatewayPort)}/p/${options.agentId}/v1/chat/completions`,
 		{
@@ -354,8 +486,19 @@ export async function requestPortalCompositionHermesTurn(options: {
 		},
 	);
 	if (!response.ok) {
+		const elapsedMs = Math.round(performance.now() - requestStartedAtMs);
+		await response.body?.cancel().catch(() => undefined);
+		const [gatewayHealthStatus, zoneHealthStatus, healthSnapshot] = await Promise.all([
+			readPortalCompositionDiagnosticHttpStatus(
+				`http://127.0.0.1:${String(options.gatewayPort)}/health`,
+			),
+			readPortalCompositionDiagnosticHttpStatus(
+				`${options.controllerUrl}/zones/${encodeURIComponent(options.zoneId)}/health`,
+			),
+			readPortalCompositionHealthSnapshot(options),
+		]);
 		throw new Error(
-			`Portal composition Hermes turn failed with HTTP ${String(response.status)}: ${await response.text()}`,
+			`Portal composition Hermes turn failed with HTTP ${String(response.status)} after ${String(elapsedMs)}ms (Gateway health ${String(gatewayHealthStatus)}, zone health ${String(zoneHealthStatus)}, snapshot ${JSON.stringify(healthSnapshot)}).`,
 		);
 	}
 	return await response.text();

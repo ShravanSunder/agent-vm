@@ -3,6 +3,7 @@ import importlib
 import pathlib
 import tomllib
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent.turn_finalizer import finalize_turn
@@ -253,6 +254,8 @@ class PackageBoundaryTests(unittest.TestCase):
         agent._memory_manager = None
         agent._memory_review_interval = 0
         agent._background_review_thread = None
+        agent._persist_disabled = False
+        agent.context_compressor = SimpleNamespace(last_prompt_tokens=0)
         observed_session_end_payloads: list[dict[str, object]] = []
 
         def capture_hook(hook_name: str, **hook_payload: object) -> list[object]:
@@ -260,7 +263,7 @@ class PackageBoundaryTests(unittest.TestCase):
                 observed_session_end_payloads.append(hook_payload)
             return []
 
-        with patch("hermes_cli.plugins.invoke_hook", side_effect=capture_hook):
+        with patch("hermes_cli.lifecycle.invoke_hook", side_effect=capture_hook):
             result = finalize_turn(
                 agent,
                 final_response="incomplete response",

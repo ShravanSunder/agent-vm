@@ -48,6 +48,7 @@ import {
 } from './portal-composition-hermes-e2e-program.js';
 import {
 	requestPortalCompositionHermesTurn,
+	snapshotPortalCompositionModelProgress,
 	startPortalCompositionModelServer,
 	waitForPortalCompositionHermesHealth,
 } from './portal-composition-hermes-e2e-support.js';
@@ -376,10 +377,12 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			requestPortalCompositionHermesTurn({
 				agentId,
 				apiServerKey: hermesE2eProfileApiServerKey(agentId),
+				controllerUrl: harness.controllerUrl,
 				gatewayPort: project.gatewayPort,
 				modelName,
 				prompt: promptMarker,
 				sessionId,
+				zoneId: zone.id,
 			}).then((turnResponse) => {
 				expect(
 					turnResponse,
@@ -392,20 +395,50 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 				timestampPath: lossFastTimestampPath,
 				signal: lossObservation.signal,
 			}),
-		]).finally(() => lossObservation.abort());
+		])
+			.catch((error: unknown) => {
+				if (modelServer !== undefined) {
+					try {
+						process.stderr.write(
+							`[portal-composition-model-stage] ${JSON.stringify(snapshotPortalCompositionModelProgress(modelServer))}\n`,
+						);
+					} catch {
+						// Diagnostics must never replace the real turn failure.
+					}
+				}
+				throw error;
+			})
+			.finally(() => lossObservation.abort());
 		expect(
 			response,
 			`Raw foreground results: ${JSON.stringify({ executeCode: modelServer.latestExecuteCodeResult(), generatedTerminal: modelServer.latestGeneratedTerminalResult() })}`,
 		).toContain(finalMarker);
-		expect(modelServer.executeCodeRequestCount()).toBe(1);
+		expect(modelServer.executeCodeRequestCount()).toBe(2);
 		expect(modelServer.generatedTerminalRequestCount()).toBe(1);
+		const resetProbeResult = modelServer.secondExecuteCodeResult();
+		const resetProbeEnvelope = z
+			.object({
+				kernel: z.object({
+					remote: z.literal(true),
+					reused: z.literal(false),
+					state_reset: z.literal(true),
+				}),
+				output: z.string(),
+				status: z.literal('success'),
+			})
+			.parse(JSON.parse(resetProbeResult ?? 'null'));
+		expect(resetProbeEnvelope.output).toContain('portal-composition-kernel-reset-probe');
 		const executeCodeResult = modelServer.latestExecuteCodeResult();
 		expect(executeCodeResult).toContain(programResultMarker);
 		expect(executeCodeResult).toContain(resultDerivedValue);
 		expect(executeCodeResult).toContain('hostSentinelVisible');
 		expect(executeCodeResult).toContain('/opt/agent-vm-tools/bin/python');
 		const executionEnvelope = z
-			.object({ exit_code: z.literal(0), output: z.string(), status: z.literal('success') })
+			.object({
+				kernel: z.object({ remote: z.literal(true), reused: z.literal(false) }),
+				output: z.string(),
+				status: z.literal('success'),
+			})
 			.parse(JSON.parse(executeCodeResult ?? 'null'));
 		const compositionOutput: unknown = JSON.parse(executionEnvelope.output);
 		expect(compositionOutput).toMatchObject({
@@ -533,7 +566,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		);
 		expect(toolVmOrigin).toMatchObject({ hostSentinelVisible: false });
 		expect(toolVmOrigin).toEqual({
-			cwd: expect.stringMatching(/^\/tmp\/hermes_exec_[0-9a-f]{12}$/u),
+			cwd: expect.stringMatching(/^\/tmp\/hermes_rkernel_[0-9a-f]{12}$/u),
 			hostSentinelVisible: false,
 			interpreter: expect.stringMatching(/^\/opt\/agent-vm-tools\/bin\/python(?:3(?:\.\d+)?)?$/u),
 		});

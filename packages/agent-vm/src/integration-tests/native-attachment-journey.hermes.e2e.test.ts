@@ -26,7 +26,7 @@ import { prepareGogRealFsLeaseFixture } from '../controller/oauth/gog-realfs-aut
 
 const executeFile = promisify(execFile);
 const hermesRuntimeImage =
-	'docker.io/nousresearch/hermes-agent@sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79';
+	'docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7';
 const temporaryRoots: string[] = [];
 // Expected bytes live in this test process; Gateway payload memory is measured independently in Python.
 const selectedBytes = Buffer.alloc(

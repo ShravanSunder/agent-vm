@@ -88,6 +88,16 @@ execution owner. Adapter middleware captures the admitted projection, originatin
 session, and outer invocation deadline. The first managed launch opens one relay
 for that invocation and environment generation. Child processes inherit only
 `AGENT_VM_TOOL_PORTAL_SOCKET`, not managed credentials or an approval token.
+Managed `execute_code` starts a fresh remote kernel for every call, including
+consecutive calls in one session. In-memory Python state does not carry between
+calls; use explicit files or Tool Portal results for cross-call state. This
+prevents a kernel keyed by Hermes's raw task ID from surviving a managed Tool VM
+environment rotation.
+
+If remote-kernel execution raises after a cell may have run, the managed
+Gateway returns an uncertain error and suppresses Hermes's per-call fallback.
+The caller must verify effects before deciding whether to retry. A proven
+no-kernel startup may still use Hermes's per-call path before code dispatch.
 
 The bridge starts the relay through existing managed process/stream APIs over
 pinned SSH. Request frames travel on the helper's stdout and responses on its

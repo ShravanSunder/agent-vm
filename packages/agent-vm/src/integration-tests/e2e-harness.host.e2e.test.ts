@@ -521,6 +521,7 @@ describe('startE2eControllerRuntime', () => {
 		'hermes-framework-observability-e2e-',
 		'hermes-framework-otel-signals-disabled-e2e-',
 		'hermes-tool-portal-orientation-e2e-',
+		'portal-composition-hermes-e2e-',
 	])('removes owned Hermes temp roots with prefix %s', async (prefix) => {
 		const temporaryRoot = await createTemporaryRoot(prefix);
 

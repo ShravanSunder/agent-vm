@@ -41,6 +41,15 @@ import {
 } from './gateway-control-domain-handler.js';
 import { createGatewaySemanticResultLedger } from './gateway-semantic-result-ledger.js';
 
+const { writeControllerDiagnosticMock } = vi.hoisted(() => ({
+	writeControllerDiagnosticMock: vi.fn(),
+}));
+
+vi.mock('../controller-diagnostic-logging.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../controller-diagnostic-logging.js')>();
+	return { ...actual, writeControllerDiagnostic: writeControllerDiagnosticMock };
+});
+
 const acceptedSession = {
 	bootId: 'gateway-boot-a',
 	connectionId: '11111111-1111-4111-8111-111111111111',
@@ -2477,13 +2486,15 @@ describe('gateway control domain handler', () => {
 	});
 
 	it.each([
-		{ code: 'not_dispatched' as const, retryable: false },
-		{ code: 'runtime_busy' as const, retryable: true },
-	])('reports configured CLI $code as a bounded rejected result', async ({ code, retryable }) => {
+		{ code: 'not_dispatched' as const, retryable: false, result: 'rejected' as const },
+		{ code: 'runtime_busy' as const, retryable: true, result: 'rejected' as const },
+		{ code: 'execution_failed' as const, retryable: false, result: 'failed' as const },
+	])('reports configured CLI $code as a bounded result', async ({ code, retryable, result }) => {
+		writeControllerDiagnosticMock.mockClear();
 		const executeConfiguredCli = vi.fn(async () => {
 			throw new ConfiguredControllerExecutionError(
 				code,
-				'Configured controller execution operation is no longer authorized.',
+				'private error message /private/path command=private-command',
 			);
 		});
 		const dispatcher = createGatewayControlTestDispatcher();
@@ -2535,9 +2546,21 @@ describe('gateway control domain handler', () => {
 		expect(response).toMatchObject({
 			payload: {
 				error: { errorClass: `controller_execution_${code}`, retryable },
-				result: 'rejected',
+				result,
 			},
 		});
+		expect(writeControllerDiagnosticMock).toHaveBeenCalledWith('gateway', {
+			event: 'controller-operation-failed',
+			failureClass: 'failure',
+			level: 'warning',
+			telemetry: {
+				errorCode: code,
+				operation: 'tool-portal-controller-execution',
+			},
+		});
+		expect(JSON.stringify(writeControllerDiagnosticMock.mock.calls)).not.toMatch(
+			/private|command=|error message/u,
+		);
 	});
 
 	it('aborts configured CLI work when the controller execution window expires', async () => {
