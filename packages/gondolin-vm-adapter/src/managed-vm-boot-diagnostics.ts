@@ -1,12 +1,19 @@
 export interface ManagedVmBootSignalSnapshot {
 	readonly bootRequestObserved: boolean;
+	readonly dhcpActivityObserved: boolean;
 	readonly execResponseCount: number;
+	readonly ext4MountActivityObserved: boolean;
 	readonly guestControlFrameCount: number;
 	readonly hostExecRequestObserved: boolean;
+	readonly initProcessLaunchObserved: boolean;
 	readonly initramfsObserved: boolean;
+	readonly initramfsUnpackFailureObserved: boolean;
 	readonly initramfsRootDeviceNotFoundObserved: boolean;
 	readonly initramfsRootMountFailedObserved: boolean;
 	readonly initramfsVirtioPortsNotReadyObserved: boolean;
+	readonly kernelOomObserved: boolean;
+	readonly kernelPanicObserved: boolean;
+	readonly linuxKernelBannerObserved: boolean;
 	readonly qemuStderrObserved: boolean;
 	readonly qemuStdoutObserved: boolean;
 	readonly rootfsInitObserved: boolean;
@@ -28,13 +35,20 @@ export interface ManagedVmBootSignalTracker {
 export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 	let active = true;
 	let bootRequestObserved = false;
+	let dhcpActivityObserved = false;
 	let execResponseCount = 0;
+	let ext4MountActivityObserved = false;
 	let guestControlFrameCount = 0;
 	let hostExecRequestObserved = false;
+	let initProcessLaunchObserved = false;
 	let initramfsObserved = false;
+	let initramfsUnpackFailureObserved = false;
 	let initramfsRootDeviceNotFoundObserved = false;
 	let initramfsRootMountFailedObserved = false;
 	let initramfsVirtioPortsNotReadyObserved = false;
+	let kernelOomObserved = false;
+	let kernelPanicObserved = false;
+	let linuxKernelBannerObserved = false;
 	let qemuStderrObserved = false;
 	let qemuStdoutObserved = false;
 	let rootfsInitObserved = false;
@@ -46,31 +60,49 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 	let virtioFsFrameCount = 0;
 
 	function observeGuestInitSignal(message: string): void {
-		if (message.startsWith('[initramfs]')) {
+		const signalText = message.replace(/^\[\s*\d+(?:\.\d+)?\]\s+/u, '');
+		if (signalText.startsWith('Linux version ')) linuxKernelBannerObserved = true;
+		if (signalText.startsWith('Run /init as init process')) initProcessLaunchObserved = true;
+		if (signalText.startsWith('Initramfs unpacking failed:')) {
+			initramfsUnpackFailureObserved = true;
+		}
+		if (signalText.startsWith('Kernel panic - not syncing:')) kernelPanicObserved = true;
+		if (signalText.startsWith('Out of memory:') || signalText.startsWith('oom-kill:')) {
+			kernelOomObserved = true;
+		}
+		if (
+			signalText.startsWith('udhcpc:') ||
+			signalText === '[init] udhcpc failed' ||
+			signalText === '[initramfs] udhcpc failed'
+		) {
+			dhcpActivityObserved = true;
+		}
+		if (signalText.startsWith('EXT4-fs (')) ext4MountActivityObserved = true;
+		if (signalText.startsWith('[initramfs]')) {
 			initramfsObserved = true;
-			if (message.startsWith('[initramfs] root device ') && message.endsWith(' not found')) {
+			if (signalText.startsWith('[initramfs] root device ') && signalText.endsWith(' not found')) {
 				initramfsRootDeviceNotFoundObserved = true;
 			}
-			if (message.startsWith('[initramfs] failed to mount ')) {
+			if (signalText.startsWith('[initramfs] failed to mount ')) {
 				initramfsRootMountFailedObserved = true;
 			}
-			if (message === '[initramfs] virtio ports not ready') {
+			if (signalText === '[initramfs] virtio ports not ready') {
 				initramfsVirtioPortsNotReadyObserved = true;
 			}
 			return;
 		}
-		if (!message.startsWith('[init]')) return;
+		if (!signalText.startsWith('[init]')) return;
 		rootfsInitObserved = true;
-		if (message.startsWith('[init] starting sandboxfs')) sandboxfsLaunchObserved = true;
+		if (signalText.startsWith('[init] starting sandboxfs')) sandboxfsLaunchObserved = true;
 		if (
-			message === '[init] sandboxfs mount not ready' ||
-			message === '[init] /usr/bin/sandboxfs missing'
+			signalText === '[init] sandboxfs mount not ready' ||
+			signalText === '[init] /usr/bin/sandboxfs missing'
 		) {
 			sandboxfsFailureObserved = true;
 		}
-		if (message === '[init] starting sandboxssh') sandboxsshLaunchObserved = true;
+		if (signalText === '[init] starting sandboxssh') sandboxsshLaunchObserved = true;
 		// This serial marker precedes `exec /usr/bin/sandboxd`; it does not prove sandboxd started.
-		if (message === '[init] starting sandboxd') preSandboxdMarkerObserved = true;
+		if (signalText === '[init] starting sandboxd') preSandboxdMarkerObserved = true;
 	}
 
 	return {
@@ -108,13 +140,20 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 		snapshot(): ManagedVmBootSignalSnapshot {
 			return {
 				bootRequestObserved,
+				dhcpActivityObserved,
 				execResponseCount,
+				ext4MountActivityObserved,
 				guestControlFrameCount,
 				hostExecRequestObserved,
+				initProcessLaunchObserved,
 				initramfsObserved,
+				initramfsUnpackFailureObserved,
 				initramfsRootDeviceNotFoundObserved,
 				initramfsRootMountFailedObserved,
 				initramfsVirtioPortsNotReadyObserved,
+				kernelOomObserved,
+				kernelPanicObserved,
+				linuxKernelBannerObserved,
 				qemuStderrObserved,
 				qemuStdoutObserved,
 				rootfsInitObserved,

@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { createManagedVmBootSignalTracker } from './managed-vm-boot-diagnostics.js';
 
 describe('managed VM boot signal tracker', () => {
+	it('classifies fixed kernel boot milestones without retaining guest output', () => {
+		const tracker = createManagedVmBootSignalTracker();
+		tracker.observe('qemu', 'stdout: [    0.000000] Linux version 6.12.1-private');
+		tracker.observe('qemu', 'stdout: [    0.010000] Run /init as init process');
+		tracker.observe('qemu', 'stdout: [    0.020000] Initramfs unpacking failed: private archive');
+		tracker.observe('qemu', 'stdout: [    0.030000] Kernel panic - not syncing: private reason');
+		tracker.observe('qemu', 'stdout: [    0.040000] Out of memory: Killed process 42 (private)');
+		tracker.observe('qemu', 'stdout: [    0.050000] udhcpc: sending discover on private-interface');
+		tracker.observe('qemu', 'stdout: [    0.060000] EXT4-fs (vda): mounted private-volume');
+
+		const snapshot = tracker.snapshot();
+		expect(snapshot).toMatchObject({
+			dhcpActivityObserved: true,
+			ext4MountActivityObserved: true,
+			initProcessLaunchObserved: true,
+			initramfsUnpackFailureObserved: true,
+			kernelOomObserved: true,
+			kernelPanicObserved: true,
+			linuxKernelBannerObserved: true,
+		});
+		expect(JSON.stringify(snapshot)).not.toMatch(/private|archive|reason|interface|volume|vda/u);
+	});
+
 	it('classifies pinned QEMU, guest init, virtiofs, and host exec milestones without retaining text', () => {
 		const tracker = createManagedVmBootSignalTracker();
 		tracker.observe('qemu', 'stdout: [initramfs] root device /dev/private-root not found');
@@ -18,13 +41,20 @@ describe('managed VM boot signal tracker', () => {
 		const snapshot = tracker.snapshot();
 		expect(snapshot).toEqual({
 			bootRequestObserved: false,
+			dhcpActivityObserved: false,
 			execResponseCount: 1,
+			ext4MountActivityObserved: false,
 			guestControlFrameCount: 1,
 			hostExecRequestObserved: true,
+			initProcessLaunchObserved: false,
 			initramfsObserved: true,
+			initramfsUnpackFailureObserved: false,
 			initramfsRootDeviceNotFoundObserved: true,
 			initramfsRootMountFailedObserved: false,
 			initramfsVirtioPortsNotReadyObserved: false,
+			kernelOomObserved: false,
+			kernelPanicObserved: false,
+			linuxKernelBannerObserved: false,
 			qemuStderrObserved: true,
 			qemuStdoutObserved: true,
 			rootfsInitObserved: true,
@@ -67,13 +97,20 @@ describe('managed VM boot signal tracker', () => {
 		const snapshot = tracker.snapshot();
 		expect(snapshot).toEqual({
 			bootRequestObserved: true,
+			dhcpActivityObserved: false,
 			execResponseCount: 1,
+			ext4MountActivityObserved: false,
 			guestControlFrameCount: 1,
 			hostExecRequestObserved: true,
+			initProcessLaunchObserved: false,
 			initramfsObserved: false,
+			initramfsUnpackFailureObserved: false,
 			initramfsRootDeviceNotFoundObserved: false,
 			initramfsRootMountFailedObserved: false,
 			initramfsVirtioPortsNotReadyObserved: false,
+			kernelOomObserved: false,
+			kernelPanicObserved: false,
+			linuxKernelBannerObserved: false,
 			qemuStderrObserved: false,
 			qemuStdoutObserved: true,
 			rootfsInitObserved: false,
