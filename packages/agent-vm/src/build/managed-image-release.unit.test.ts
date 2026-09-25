@@ -261,9 +261,17 @@ describe('managed image release', () => {
 			path.join(outputDirectory, managedToolVmLoginProfileFileName),
 			'utf8',
 		);
+		const portalPackageDirectoryInstallIndex = generatedDockerfile.indexOf(
+			'RUN install -d -m 0755 /opt/agent-vm/portal-packages',
+		);
+		const portalSdkInstallIndex = generatedDockerfile.indexOf(
+			'pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts',
+		);
 		expect(generatedDockerfile).toContain(
 			'RUN rm -rf /scratch && install -d -m 0755 /work /workspace',
 		);
+		expect(portalPackageDirectoryInstallIndex).toBeGreaterThan(-1);
+		expect(portalSdkInstallIndex).toBeGreaterThan(portalPackageDirectoryInstallIndex);
 		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');

@@ -222,7 +222,10 @@ function renderManagedDockerfile(props: {
 		const localWheel = props.overlay.copy.find((copy) => /agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(copy.from));
 		lines.push('RUN uv pip install --python /opt/agent-vm-tools/bin/python ' + shellJoin([localWheel?.to ?? `agent-vm-agent-portal-sdk==${version}`]));
 		if (!hasLocalAgentVmPackageOverlay(props.overlay)) {
-			lines.push('RUN pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts ' + shellJoin([props.portalSdkPackageSpec]));
+			lines.push(
+				'RUN install -d -m 0755 /opt/agent-vm/portal-packages && pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts ' +
+					shellJoin([props.portalSdkPackageSpec]),
+			);
 		}
 	}
 	for (const command of props.overlay.runAfterBase) {
