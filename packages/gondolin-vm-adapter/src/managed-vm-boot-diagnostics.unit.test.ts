@@ -16,7 +16,7 @@ describe('managed VM boot signal tracker', () => {
 		const snapshot = tracker.snapshot();
 		expect(snapshot).toMatchObject({
 			dhcpActivityObserved: true,
-			ext4MountActivityObserved: true,
+			ext4FilesystemActivityObserved: true,
 			initProcessLaunchObserved: true,
 			initramfsUnpackFailureObserved: true,
 			kernelOomObserved: true,
@@ -24,6 +24,25 @@ describe('managed VM boot signal tracker', () => {
 			linuxKernelBannerObserved: true,
 		});
 		expect(JSON.stringify(snapshot)).not.toMatch(/private|archive|reason|interface|volume|vda/u);
+	});
+
+	it.each([
+		'EXT4-fs error (device private-device): private error',
+		'EXT4-fs warning (device private-device): private warning',
+		'EXT4-fs: registered filesystem type ext4',
+	])('classifies ext4 filesystem diagnostics without retaining their text', (line) => {
+		const tracker = createManagedVmBootSignalTracker();
+		tracker.observe('qemu', `stdout: [    1.000000] ${line}`);
+
+		expect(tracker.snapshot().ext4FilesystemActivityObserved).toBe(true);
+		expect(JSON.stringify(tracker.snapshot())).not.toMatch(/private|error|warning|device/u);
+	});
+
+	it('ignores near-match ext4 text that does not use the kernel ext4 marker', () => {
+		const tracker = createManagedVmBootSignalTracker();
+		tracker.observe('qemu', 'stdout: [    1.000000] EXT4-filesystem error: private detail');
+
+		expect(tracker.snapshot().ext4FilesystemActivityObserved).toBe(false);
 	});
 
 	it('classifies pinned QEMU, guest init, virtiofs, and host exec milestones without retaining text', () => {
@@ -43,7 +62,7 @@ describe('managed VM boot signal tracker', () => {
 			bootRequestObserved: false,
 			dhcpActivityObserved: false,
 			execResponseCount: 1,
-			ext4MountActivityObserved: false,
+			ext4FilesystemActivityObserved: false,
 			guestControlFrameCount: 1,
 			hostExecRequestObserved: true,
 			initProcessLaunchObserved: false,
@@ -99,7 +118,7 @@ describe('managed VM boot signal tracker', () => {
 			bootRequestObserved: true,
 			dhcpActivityObserved: false,
 			execResponseCount: 1,
-			ext4MountActivityObserved: false,
+			ext4FilesystemActivityObserved: false,
 			guestControlFrameCount: 1,
 			hostExecRequestObserved: true,
 			initProcessLaunchObserved: false,

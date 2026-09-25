@@ -2,7 +2,7 @@ export interface ManagedVmBootSignalSnapshot {
 	readonly bootRequestObserved: boolean;
 	readonly dhcpActivityObserved: boolean;
 	readonly execResponseCount: number;
-	readonly ext4MountActivityObserved: boolean;
+	readonly ext4FilesystemActivityObserved: boolean;
 	readonly guestControlFrameCount: number;
 	readonly hostExecRequestObserved: boolean;
 	readonly initProcessLaunchObserved: boolean;
@@ -37,7 +37,7 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 	let bootRequestObserved = false;
 	let dhcpActivityObserved = false;
 	let execResponseCount = 0;
-	let ext4MountActivityObserved = false;
+	let ext4FilesystemActivityObserved = false;
 	let guestControlFrameCount = 0;
 	let hostExecRequestObserved = false;
 	let initProcessLaunchObserved = false;
@@ -77,7 +77,14 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 		) {
 			dhcpActivityObserved = true;
 		}
-		if (signalText.startsWith('EXT4-fs (')) ext4MountActivityObserved = true;
+		if (
+			signalText.startsWith('EXT4-fs (') ||
+			signalText.startsWith('EXT4-fs error (') ||
+			signalText.startsWith('EXT4-fs warning (') ||
+			signalText.startsWith('EXT4-fs:')
+		) {
+			ext4FilesystemActivityObserved = true;
+		}
 		if (signalText.startsWith('[initramfs]')) {
 			initramfsObserved = true;
 			if (signalText.startsWith('[initramfs] root device ') && signalText.endsWith(' not found')) {
@@ -142,7 +149,7 @@ export function createManagedVmBootSignalTracker(): ManagedVmBootSignalTracker {
 				bootRequestObserved,
 				dhcpActivityObserved,
 				execResponseCount,
-				ext4MountActivityObserved,
+				ext4FilesystemActivityObserved,
 				guestControlFrameCount,
 				hostExecRequestObserved,
 				initProcessLaunchObserved,
