@@ -94,6 +94,11 @@ calls; use explicit files or Tool Portal results for cross-call state. This
 prevents a kernel keyed by Hermes's raw task ID from surviving a managed Tool VM
 environment rotation.
 
+If remote-kernel execution raises after a cell may have run, the managed
+Gateway returns an uncertain error and suppresses Hermes's per-call fallback.
+The caller must verify effects before deciding whether to retry. A proven
+no-kernel startup may still use Hermes's per-call path before code dispatch.
+
 The bridge starts the relay through existing managed process/stream APIs over
 pinned SSH. Request frames travel on the helper's stdout and responses on its
 stdin, separately from composition output. No reverse SSH forwarding, public

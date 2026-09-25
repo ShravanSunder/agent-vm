@@ -90,6 +90,7 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(layout).not.toContain('account-profile-scoped');
 		const portal = await readText(targetDir, 'docs/manual/mcp-portal.md');
 		expect(portal).toContain('Managed execute_code starts a fresh remote kernel for every call');
+		expect(portal).toContain('verify effects before retrying');
 		expect(portal).toContain('no separate list/materialize copy action');
 		expect(portal).toContain('No outcome triggers automatic resend');
 		const toolVmLeases = await readText(targetDir, 'docs/manual/tool-vm-leases.md');

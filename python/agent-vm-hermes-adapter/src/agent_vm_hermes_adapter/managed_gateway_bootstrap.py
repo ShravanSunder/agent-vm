@@ -40,6 +40,7 @@ from .managed_profile_adapter import (
     _projection_string_field,
     _validate_canonical_managed_projection,
 )
+from .managed_remote_kernel_outcome import ManagedRemoteKernelOutcomeGuard
 from .managed_tool_portal.cache import PluginStateCache
 from .managed_tool_portal.catalog import (
     ManagedCatalogCoordinator,
@@ -622,7 +623,7 @@ class _HermesManagedPolicyReadBindings:
 
 
 class HermesManagedEnvironmentHooks:
-    """Install managed profile-scope policy and stock terminal environment seams."""
+    """Install managed profile, terminal, and remote-kernel outcome seams."""
 
     def __init__(
         self,
@@ -637,6 +638,7 @@ class HermesManagedEnvironmentHooks:
         self._protected_hermes_home = protected_hermes_home
         self._terminal_tool_module = terminal_tool_module
         self._environment_factory = HermesGatewayRuntimeEnvironmentFactory(adapter=adapter)
+        self._remote_kernel_outcome_guard = ManagedRemoteKernelOutcomeGuard()
         self._original_create_environment = terminal_tool_module._create_environment
         self._original_resolve_container_task_id = terminal_tool_module._resolve_container_task_id
         self._original_profile_terminal_scope_builder = (
@@ -811,6 +813,7 @@ class HermesManagedEnvironmentHooks:
 
         try:
             os.environ.update(_MANAGED_UPSTREAM_ROUTING_ENVIRONMENT)
+            self._remote_kernel_outcome_guard.install()
             setattr(
                 hermes_terminal_scope,
                 "build_profile_terminal_scope",
@@ -822,6 +825,7 @@ class HermesManagedEnvironmentHooks:
             )
             self._terminal_tool_module.replace_create_environment(self.create_environment)
         except BaseException:
+            self._remote_kernel_outcome_guard.close()
             if self._profile_terminal_scope_wrapper is not None:
                 setattr(
                     hermes_terminal_scope,
@@ -847,6 +851,7 @@ class HermesManagedEnvironmentHooks:
         except BaseException as error:
             cleanup_error = error
         finally:
+            self._remote_kernel_outcome_guard.close()
             if self._profile_terminal_scope_wrapper is not None:
                 setattr(
                     hermes_terminal_scope,

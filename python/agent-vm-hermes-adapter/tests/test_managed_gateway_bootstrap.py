@@ -14,6 +14,7 @@ from unittest.mock import ANY, Mock, call, patch
 import hermes_constants
 from agent_vm_agent_portal_sdk.gateway_runtime_client import GatewayRuntimeClient
 from gateway import run as hermes_gateway_run
+from tools import code_kernel_remote as hermes_code_kernel_remote
 from tools import file_tools as hermes_file_tools
 from tools import terminal_scope as hermes_terminal_scope
 from tools.environments import local as local_environment_module
@@ -769,8 +770,13 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 terminal_tool_module=FakeTerminalToolModule(),
             )
             stock_builder = hermes_terminal_scope.build_profile_terminal_scope
+            stock_remote_kernel = hermes_code_kernel_remote.execute_in_remote_kernel
             try:
                 hooks.install()
+                self.assertIsNot(
+                    hermes_code_kernel_remote.execute_in_remote_kernel,
+                    stock_remote_kernel,
+                )
 
                 for profile_name in ("root", "researcher"):
                     profile_home = profile_homes[profile_name]
@@ -822,6 +828,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 adapter.close(disconnect_gateway_runtime=False)
 
             self.assertIs(hermes_terminal_scope.build_profile_terminal_scope, stock_builder)
+            self.assertIs(
+                hermes_code_kernel_remote.execute_in_remote_kernel,
+                stock_remote_kernel,
+            )
 
     def test_managed_terminal_scope_partial_install_restores_builder_and_process_environment(
         self,
@@ -860,6 +870,7 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                 terminal_tool_module=terminal_tool_module,
             )
             stock_builder = hermes_terminal_scope.build_profile_terminal_scope
+            stock_remote_kernel = hermes_code_kernel_remote.execute_in_remote_kernel
             original_create_environment = terminal_tool_module._create_environment
             original_resolve_container_task_id = terminal_tool_module._resolve_container_task_id
             original_routing_environment = {
@@ -880,6 +891,10 @@ class ManagedGatewayBootstrapTests(unittest.TestCase):
                     self.assertIs(
                         hermes_terminal_scope.build_profile_terminal_scope,
                         stock_builder,
+                    )
+                    self.assertIs(
+                        hermes_code_kernel_remote.execute_in_remote_kernel,
+                        stock_remote_kernel,
                     )
                     self.assertIs(
                         terminal_tool_module._create_environment,
