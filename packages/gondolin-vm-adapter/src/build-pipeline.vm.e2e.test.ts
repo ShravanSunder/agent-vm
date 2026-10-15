@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, rm, statfs, symlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { access, mkdir, mkdtemp, readdir, rm, statfs, symlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,14 +27,16 @@ async function createTemporaryDirectory(prefix: string): Promise<string> {
 async function assertCompilerFreeHostShell(
 	environment: NodeJS.ProcessEnv,
 	shellMode: '-c' | '-lc',
+	options: { readonly shellPath?: string } = {},
 ): Promise<void> {
 	try {
 		// Stock host assembly uses sh -c. Check the same selected PATH after login profiles too.
+		// Own the absence status: bash and dash use different command-v failure codes.
 		const result = await promisify(execFile)(
-			'/bin/sh',
+			options.shellPath ?? '/bin/sh',
 			[
 				shellMode,
-				'PATH="$1"; export PATH; command -v zig',
+				'PATH="$1"; export PATH; command -v zig || exit 42',
 				'qualification-host',
 				environment.PATH ?? '',
 			],
@@ -43,9 +46,39 @@ async function assertCompilerFreeHostShell(
 			`Zig is reachable in qualification ${shellMode} shell: ${result.stdout.trim()}`,
 		);
 	} catch (error: unknown) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return;
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 42) return;
 		throw error;
 	}
+}
+
+async function resolveCalibrationShellPaths(): Promise<readonly string[]> {
+	const availableShellPaths = ['/bin/sh'];
+	const unavailableShellPaths: string[] = [];
+	for (const shellPath of ['/bin/bash', '/bin/dash']) {
+		try {
+			await access(shellPath, fsConstants.X_OK);
+			availableShellPaths.push(shellPath);
+		} catch (error: unknown) {
+			if (
+				typeof error === 'object' &&
+				error !== null &&
+				'code' in error &&
+				error.code === 'ENOENT'
+			) {
+				unavailableShellPaths.push(shellPath);
+				continue;
+			}
+			throw error;
+		}
+	}
+	process.stdout.write(
+		JSON.stringify({
+			qualification: 'shell-calibration-availability',
+			availableShellPaths,
+			unavailableShellPaths,
+		}) + '\n',
+	);
+	return availableShellPaths;
 }
 
 function resolveHostCompatibleGuestArchitecture(): 'aarch64' | 'x86_64' {
@@ -136,11 +169,71 @@ describeGondolinBuildPipelineSmoke('Gondolin 0.13 published-helper qualification
 		async (shellMode) => {
 			const commandDirectory = await createTemporaryDirectory('agent-vm-compiler-visible-');
 			await symlink(process.execPath, path.join(commandDirectory, 'zig'));
-			await expect(
-				assertCompilerFreeHostShell({ ...process.env, PATH: commandDirectory }, shellMode),
-			).rejects.toThrow(/Zig is reachable in qualification/u);
+			for (const shellPath of await resolveCalibrationShellPaths()) {
+				await expect(
+					assertCompilerFreeHostShell({ ...process.env, PATH: commandDirectory }, shellMode, {
+						shellPath,
+					}),
+				).rejects.toThrow(/Zig is reachable in qualification/u);
+				process.stdout.write(
+					JSON.stringify({
+						qualification: 'shell-calibration',
+						shellPath,
+						shellMode,
+						outcome: 'compiler-rejected',
+					}) + '\n',
+				);
+			}
 		},
 	);
+
+	it.each(['-c', '-lc'] as const)(
+		'accepts compiler-free probes in a %s shell',
+		async (shellMode) => {
+			const commandDirectory = await createTemporaryDirectory('agent-vm-compiler-absent-');
+			for (const shellPath of await resolveCalibrationShellPaths()) {
+				await expect(
+					assertCompilerFreeHostShell({ ...process.env, PATH: commandDirectory }, shellMode, {
+						shellPath,
+					}),
+				).resolves.toBeUndefined();
+				process.stdout.write(
+					JSON.stringify({
+						qualification: 'shell-calibration',
+						shellPath,
+						shellMode,
+						outcome: 'compiler-absent',
+					}) + '\n',
+				);
+			}
+		},
+	);
+
+	it('preserves an unexpected missing shell launch error', async () => {
+		const directory = await createTemporaryDirectory('agent-vm-shell-launch-error-');
+		await expect(
+			assertCompilerFreeHostShell({ ...process.env, PATH: directory }, '-c', {
+				shellPath: path.join(directory, 'missing-shell'),
+			}),
+		).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+
+	it.each([
+		{ name: 'non-sentinel status', script: 'exit 1\n', expected: { code: 1 } },
+		{ name: 'syntax failure', script: 'if\n', expected: { code: 2 } },
+		{
+			name: 'signal termination',
+			script: 'kill -TERM $$\n',
+			expected: { code: null, signal: 'SIGTERM' },
+		},
+	])('preserves unexpected shell $name', async ({ script, expected }) => {
+		const directory = await createTemporaryDirectory('agent-vm-shell-failure-');
+		const shellPath = path.join(directory, 'failing-shell');
+		await writeFile(shellPath, '#!/bin/sh\n' + script, { mode: 0o755 });
+		await expect(
+			assertCompilerFreeHostShell({ ...process.env, PATH: directory }, '-c', { shellPath }),
+		).rejects.toMatchObject(expected);
+	});
 
 	it('keeps the qualification PATH after a login profile exposes a compiler', async () => {
 		const temporaryRoot = await createTemporaryDirectory('agent-vm-compiler-profile-');
@@ -153,12 +246,25 @@ describeGondolinBuildPipelineSmoke('Gondolin 0.13 published-helper qualification
 			`export PATH='${compilerDirectory.replaceAll("'", "'\\''")}'\n`,
 		);
 		const environment = { ...process.env, HOME: temporaryRoot, PATH: commandDirectory };
-		const exposedCompiler = await promisify(execFile)('/bin/sh', ['-lc', 'command -v zig'], {
-			env: environment,
-		});
-		expect(exposedCompiler.stdout.trim()).toBe(path.join(compilerDirectory, 'zig'));
-		await expect(assertCompilerFreeHostShell(environment, '-c')).resolves.toBeUndefined();
-		await expect(assertCompilerFreeHostShell(environment, '-lc')).resolves.toBeUndefined();
+		for (const shellPath of await resolveCalibrationShellPaths()) {
+			const exposedCompiler = await promisify(execFile)(shellPath, ['-lc', 'command -v zig'], {
+				env: environment,
+			});
+			expect(exposedCompiler.stdout.trim()).toBe(path.join(compilerDirectory, 'zig'));
+			await expect(
+				assertCompilerFreeHostShell(environment, '-c', { shellPath }),
+			).resolves.toBeUndefined();
+			await expect(
+				assertCompilerFreeHostShell(environment, '-lc', { shellPath }),
+			).resolves.toBeUndefined();
+			process.stdout.write(
+				JSON.stringify({
+					qualification: 'shell-profile-calibration',
+					shellPath,
+					outcome: 'profile-compiler-isolated',
+				}) + '\n',
+			);
+		}
 	});
 
 	it.each(['missing', 'corrupt'] as const)(
