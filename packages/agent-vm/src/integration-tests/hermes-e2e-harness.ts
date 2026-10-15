@@ -58,7 +58,7 @@ export async function shouldRunHermesE2e(
 	const prerequisitesAvailable = await canRunManagedVmE2e(options);
 	if (!prerequisitesAvailable) {
 		throw new Error(
-			'AGENT_VM_HERMES_E2E=1 explicitly requested live Hermes proof, but Docker, QEMU, or the pinned Zig version is unavailable.',
+			'AGENT_VM_HERMES_E2E=1 explicitly requested live Hermes proof, but Docker or QEMU is unavailable.',
 		);
 	}
 	return true;

@@ -805,24 +805,26 @@ async function readManagedGatewayStartupDiagnosticSection(options: {
 	readonly sensitiveValues: readonly string[];
 	readonly signal: AbortSignal;
 	readonly truncationMarker: string;
-}): Promise<string | undefined> {
+}): Promise<string> {
+	let output: string;
 	try {
 		const result = await options.managedVm.exec(options.command, { signal: options.signal });
-		const output = formatGatewayDiagnosticCommandOutput(result);
-		if (output.length === 0) {
-			return undefined;
-		}
-		return boundGatewayDiagnosticSection({
-			maximumCharacters: options.maximumCharacters,
-			output: scrubGatewayDiagnosticOutput({
-				output,
-				sensitiveValues: options.sensitiveValues,
-			}),
-			truncationMarker: options.truncationMarker,
-		});
-	} catch {
-		return undefined;
+		const commandOutput = formatGatewayDiagnosticCommandOutput(result);
+		output =
+			commandOutput.length === 0
+				? `[read completed: exit code ${String(result.exitCode)}, empty output]`
+				: commandOutput;
+	} catch (error: unknown) {
+		output = `[read failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}]`;
 	}
+	return boundGatewayDiagnosticSection({
+		maximumCharacters: options.maximumCharacters,
+		output: scrubGatewayDiagnosticOutput({
+			output,
+			sensitiveValues: options.sensitiveValues,
+		}),
+		truncationMarker: options.truncationMarker,
+	});
 }
 
 async function readManagedGatewayStartupDiagnostics(options: {

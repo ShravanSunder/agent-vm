@@ -87,6 +87,11 @@ export type GatewayDisposableControlSocket = Socket<
 	ControlSessionControllerToPeerEvents<unknown, GatewayControlHello, GatewayControlHelloResponse>
 >;
 
+export type GatewayControlInitialHeadersOutcome =
+	| { readonly kind: 'ready'; readonly headers: Readonly<Record<string, string>> }
+	| { readonly kind: 'transient-unavailable'; readonly error: Error }
+	| { readonly kind: 'terminal-failure'; readonly error: unknown };
+
 export interface GatewayDisposableControlSessionClientOptions {
 	readonly commandAckTimeoutMs?: number;
 	readonly commandResultTimeoutMsByOperation?: Partial<Record<string, number>>;
@@ -96,7 +101,9 @@ export interface GatewayDisposableControlSessionClientOptions {
 	) => GatewayDisposableControlSocket;
 	readonly dispatcher?: ControlSessionDispatcher;
 	readonly endpoint: ControlSessionEndpoint;
-	readonly initialExtraHeaders: Readonly<Record<string, string>>;
+	readonly acquireInitialHeaders: (
+		signal: AbortSignal,
+	) => Promise<GatewayControlInitialHeadersOutcome>;
 	readonly identity: GatewayDisposableControlSessionIdentity;
 	readonly nextAttachmentGeneration: () => number;
 	readonly now?: () => number;
@@ -124,7 +131,7 @@ export interface GatewayDisposableControlSessionClientOptions {
 		readonly envelope: ControlEnvelope;
 		readonly message: GatewayControlRpcMessage;
 	}) => GatewayControlInboundPrincipalResolution;
-	readonly refreshExtraHeaders: () => Promise<Readonly<Record<string, string>>>;
+	readonly refreshExtraHeaders: (signal: AbortSignal) => Promise<Readonly<Record<string, string>>>;
 	readonly scheduleImmediate?: (callback: () => void) => void;
 }
 
@@ -493,9 +500,11 @@ export function createGatewayDisposableControlSessionClient(
 		  }
 		| undefined;
 	let stabilizingAttempt: GatewayControlStabilizingAttempt | undefined;
-	let initialHeaders = options.initialExtraHeaders;
+	const headerAcquisitionAbort = new AbortController();
+	let initialHeadersAcquired = false;
+	let lastInitialFailure: unknown;
 	let resolveReady!: (response: GatewayControlHelloResponse) => void;
-	let rejectReady!: (error: Error) => void;
+	let rejectReady!: (error: unknown) => void;
 	let readySettled = false;
 	const ready = new Promise<GatewayControlHelloResponse>((resolve, reject) => {
 		resolveReady = resolve;
@@ -652,7 +661,38 @@ export function createGatewayDisposableControlSessionClient(
 		);
 	}
 
+	function failInitialReady(error: unknown): void {
+		if (!readySettled) {
+			readySettled = true;
+			rejectReady(error);
+		}
+		closeClient('gateway control initial attachment failed');
+	}
+
+	function exhaustInitialBudget(
+		exhaustionReason: GatewayControlReconnectExhaustedTransition['exhaustionReason'],
+	): void {
+		notifyReconnectExhausted(exhaustionReason);
+		const lastFailureDetail =
+			lastInitialFailure instanceof Error
+				? lastInitialFailure.message
+				: typeof lastInitialFailure === 'string'
+					? lastInitialFailure
+					: 'unclassified startup failure';
+		const lastFailureMessage =
+			lastInitialFailure === undefined
+				? ''
+				: ` Last startup failure: ${lastFailureDetail.slice(0, 200)}`;
+		failInitialReady(
+			new Error(
+				`gateway control reconnect budget exhausted.${lastFailureMessage}`,
+				lastInitialFailure === undefined ? undefined : { cause: lastInitialFailure },
+			),
+		);
+	}
+
 	function resetReconnectRecoveryEpisode(): void {
+		lastInitialFailure = undefined;
 		reconnectEpisodeGeneration += 1;
 		reconnectAttempts = 0;
 		reconnectExhausted = false;
@@ -736,11 +776,7 @@ export function createGatewayDisposableControlSessionClient(
 		) {
 			const exhaustionReason = reconnectExhaustionReason();
 			if (exhaustionReason !== undefined) {
-				notifyReconnectExhausted(exhaustionReason);
-				if (!readySettled) {
-					readySettled = true;
-					rejectReady(new Error('gateway control reconnect budget exhausted'));
-				}
+				exhaustInitialBudget(exhaustionReason);
 			}
 			return;
 		}
@@ -768,6 +804,7 @@ export function createGatewayDisposableControlSessionClient(
 		if (currentAttempt !== attempt) {
 			return;
 		}
+		if (!hasAcceptedSession) lastInitialFailure = new Error(reason);
 		const acceptedAttachmentGeneration = attempt.accepted
 			? attempt.attachmentGeneration
 			: undefined;
@@ -1328,25 +1365,47 @@ export function createGatewayDisposableControlSessionClient(
 		recordReconnectEvidence({ phase: 'attempt-started' });
 		let extraHeaders: Readonly<Record<string, string>>;
 		try {
-			extraHeaders = attemptNumber === 0 ? initialHeaders : await options.refreshExtraHeaders();
-		} catch {
-			if (pendingAttemptStartIdentity !== attemptStartIdentity) {
-				return;
+			if (!initialHeadersAcquired) {
+				const outcome = await options.acquireInitialHeaders(headerAcquisitionAbort.signal);
+				if (
+					pendingAttemptStartIdentity !== attemptStartIdentity ||
+					closed ||
+					reconnectEpisodeGeneration !== attemptStartIdentity.reconnectEpisodeGeneration
+				)
+					return;
+				switch (outcome.kind) {
+					case 'terminal-failure':
+						pendingAttemptStartIdentity = undefined;
+						failInitialReady(outcome.error);
+						return;
+					case 'transient-unavailable':
+						pendingAttemptStartIdentity = undefined;
+						lastInitialFailure = outcome.error;
+						scheduleReconnect();
+						return;
+					case 'ready':
+						initialHeadersAcquired = true;
+						extraHeaders = outcome.headers;
+						break;
+				}
+			} else {
+				extraHeaders = await options.refreshExtraHeaders(headerAcquisitionAbort.signal);
 			}
+		} catch (error: unknown) {
+			if (pendingAttemptStartIdentity !== attemptStartIdentity) return;
 			pendingAttemptStartIdentity = undefined;
-			if (
-				closed ||
-				reconnectEpisodeGeneration !== attemptStartIdentity.reconnectEpisodeGeneration
-			) {
+			if (closed || reconnectEpisodeGeneration !== attemptStartIdentity.reconnectEpisodeGeneration)
+				return;
+			if (!initialHeadersAcquired) {
+				failInitialReady(error);
 				return;
 			}
+			if (!hasAcceptedSession) lastInitialFailure = error;
 			recordReconnectEvidence({ outcome: 'transport-error', phase: 'attempt-failed' });
 			scheduleReconnect();
 			return;
 		}
-		if (pendingAttemptStartIdentity !== attemptStartIdentity) {
-			return;
-		}
+		if (pendingAttemptStartIdentity !== attemptStartIdentity) return;
 		pendingAttemptStartIdentity = undefined;
 		if (
 			closed ||
@@ -1356,7 +1415,6 @@ export function createGatewayDisposableControlSessionClient(
 			scheduleReconnect();
 			return;
 		}
-		initialHeaders = {};
 		const attachmentGeneration =
 			reservedInitialAttachmentGeneration ?? options.nextAttachmentGeneration();
 		reservedInitialAttachmentGeneration = undefined;
@@ -1434,6 +1492,11 @@ export function createGatewayDisposableControlSessionClient(
 		}
 		closed = true;
 		pendingAttemptStartIdentity = undefined;
+		headerAcquisitionAbort.abort(new Error(reason));
+		if (!readySettled) {
+			readySettled = true;
+			rejectReady(new Error(reason));
+		}
 		if (reconnectTimer !== undefined) {
 			reconnectTimer.cancel();
 			reconnectTimer = undefined;

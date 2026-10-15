@@ -1366,7 +1366,7 @@ describe('retained Gateway control-session transport', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1444,7 +1444,7 @@ describe('retained Gateway control-session transport', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1459,7 +1459,9 @@ describe('retained Gateway control-session transport', () => {
 			expect(registeredControllerEpochs).toEqual([]);
 			expect(client.getDiagnostics()).toMatchObject({ accepted: false, ready: false });
 		} finally {
+			const readyClosed = expect(client.ready).rejects.toThrow('gateway control session closed');
 			client.close();
+			await readyClosed;
 			await closeSocketIoServer(socketServer);
 		}
 	});
@@ -1472,6 +1474,7 @@ describe('retained Gateway control-session transport', () => {
 			serveClient: false,
 			transports: ['websocket'],
 		});
+		let publishUnacknowledgedFrame: (() => void) | undefined;
 		const attachmentDisconnected = waitForProtocolEvent<void>((resolve) => {
 			socketServer.on('connection', (socket) => {
 				socket.on(CONTROL_SESSION_EVENT_NAMES.hello, (hello: GatewayControlHello, acknowledge) => {
@@ -1482,7 +1485,7 @@ describe('retained Gateway control-session transport', () => {
 						outcome: 'accepted',
 						sessionId: '33333333-3333-4333-8333-333333333333',
 					});
-					setImmediate(() => {
+					publishUnacknowledgedFrame = () => {
 						socket.emit(
 							CONTROL_SESSION_EVENT_NAMES.message,
 							{
@@ -1502,7 +1505,7 @@ describe('retained Gateway control-session transport', () => {
 							} satisfies ControlEnvelope,
 							{ kind: 'heartbeat', payload: { observedAtMs: 1 } },
 						);
-					});
+					};
 				});
 				socket.once('disconnect', () => resolve());
 			});
@@ -1528,7 +1531,7 @@ describe('retained Gateway control-session transport', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1539,6 +1542,11 @@ describe('retained Gateway control-session transport', () => {
 		});
 
 		try {
+			await expect(client.ready).resolves.toMatchObject({ outcome: 'accepted' });
+			if (publishUnacknowledgedFrame === undefined) {
+				throw new Error('Real server hello did not publish its invalid-frame producer.');
+			}
+			publishUnacknowledgedFrame();
 			await attachmentDisconnected;
 			expect(dispatchCount).toBe(0);
 			expect(client.getDiagnostics()).toMatchObject({ accepted: false, ready: false });
@@ -1629,6 +1637,55 @@ describe('retained Gateway control-session transport', () => {
 		).rejects.toThrow(
 			'Gateway control readiness failed with HTTP 401 Unauthorized: unauthorized: signature_mismatch',
 		);
+	});
+
+	it('rejects a wrong signing key through the real ready endpoint without accepting a control session', async () => {
+		const material = createGatewayControlSessionMaterial({
+			controllerEpoch: 'controller-401',
+			zoneId: 'zone-401',
+		});
+		const foreignSigner = createGatewayControlSessionMaterial({
+			controllerEpoch: material.controllerEpoch,
+			zoneId: material.zoneId,
+		});
+		const service = createGatewayControlService({
+			identity: {
+				bootId: material.bootId,
+				controllerEpoch: material.controllerEpoch,
+				generationId: material.generationId,
+				peerId: material.peerId,
+				processEpoch: material.processEpoch,
+				zoneId: material.zoneId,
+			},
+			verifierPublicKeyPem: material.verifierPublicKeyPem,
+		});
+		let readyRequestCount = 0;
+		let upgradeCount = 0;
+		const onHelloResponse = vi.fn();
+		const httpServer = createServer((request, response) => {
+			readyRequestCount += 1;
+			service.handleReadyRequest(request, response);
+		});
+		httpServer.on('upgrade', (_request, socket) => {
+			upgradeCount += 1;
+			socket.destroy();
+		});
+		const port = await listen(httpServer);
+		try {
+			await expect(
+				connectGatewayControlSession({
+					endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port }),
+					material: { ...material, privateKey: foreignSigner.privateKey },
+					onHelloResponse,
+				}),
+			).rejects.toThrow('HTTP 401');
+			expect(readyRequestCount).toBe(1);
+			expect(upgradeCount).toBe(0);
+			expect(onHelloResponse).not.toHaveBeenCalled();
+		} finally {
+			await service.close();
+			await closeHttpServer(httpServer);
+		}
 	});
 
 	it('refreshes the gateway readiness credential before reconnecting after plugin restart', async () => {

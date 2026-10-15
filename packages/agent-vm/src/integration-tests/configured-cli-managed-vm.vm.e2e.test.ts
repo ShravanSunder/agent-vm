@@ -92,6 +92,7 @@ const configuredCliProofScript = [
 	'  --write-state) printf retained > /tmp/credential-runtime-marker; printf state-written ;;',
 	'  --read-state) if [ -f /tmp/credential-runtime-marker ]; then cat /tmp/credential-runtime-marker; else printf absent; fi ;;',
 	'  --credential-proof) test "$PROOF_CREDENTIAL_ROOT" = /run/agent-vm/credentials; test -s "$PROOF_CREDENTIAL_FILE"; mode=$(stat -c %a "$PROOF_CREDENTIAL_FILE"); test "$mode" = 600; if printf forbidden > "$PROOF_CREDENTIAL_FILE" 2>/dev/null; then exit 91; fi; credential=$(cat "$PROOF_CREDENTIAL_FILE"); if grep -R -F -l -- "$credential" /tmp /root /home 2>/dev/null | grep -q .; then exit 92; fi; printf credential-read-only ;;',
+	'  --environment-proof) printf "HOME=%s\\nXDG_CONFIG_HOME=%s\\nXDG_DATA_HOME=%s\\nXDG_CACHE_HOME=%s\\nUV_CACHE_DIR=%s\\n" "${HOME-unset}" "${XDG_CONFIG_HOME-unset}" "${XDG_DATA_HOME-unset}" "${XDG_CACHE_HOME-unset}" "${UV_CACHE_DIR-unset}"; stat -f -c "tmpBacking=%T" /tmp; if [ -n "${PROOF_CREDENTIAL_ROOT-}" ]; then stat -f -c "credentialBacking=%T" "$PROOF_CREDENTIAL_ROOT"; fi ;;',
 	'  --host-isolation) test ! -e "$3"; printf host-isolated ;;',
 	'  --http-mediated) printf "env:%s\\n" "$PROOF_HTTP_TOKEN"; curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
 	'  --http-untrusted) curl -sS -H "Authorization: Bearer $PROOF_HTTP_TOKEN" "$3" ;;',
@@ -307,7 +308,7 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 															},
 															kind: 'http_mediation',
 														},
-														environment: { kind: 'empty' },
+														environment: { kind: 'inherit_allowlist', names: ['HOME'] },
 														guestCwd: '/tmp',
 														imageReference: './configured-cli-image.json',
 														kind: 'ephemeral_managed_vm',
@@ -768,6 +769,27 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 			});
 			expect(createdRunnerVmCount).toBe(1);
 
+			const environmentProofInput = {
+				argv: ['isolated', '--environment-proof'],
+				reason: 'real credentialed default environment and backing',
+				timeoutMs: 60_000,
+			};
+			const environmentProofResult = await runInvocation({
+				authority: authorityFor({
+					approved: false,
+					callId: 'environment-proof-call',
+					input: environmentProofInput,
+				}),
+				callId: 'environment-proof-call',
+				input: environmentProofInput,
+			});
+			expect(environmentProofResult?.exitCode).toBe(0);
+			expect(environmentProofResult?.stdout).toContain(
+				'HOME=/root\nXDG_CONFIG_HOME=unset\nXDG_DATA_HOME=unset\nXDG_CACHE_HOME=unset\nUV_CACHE_DIR=unset\n',
+			);
+			expect(environmentProofResult?.stdout).toContain('tmpBacking=tmpfs\n');
+			expect(environmentProofResult?.stdout).toMatch(/credentialBacking=fuse[^\n]*\n/u);
+
 			const credentialProofInput = {
 				argv: ['isolated', '--credential-proof'],
 				reason: 'real VM credential mount proof',
@@ -993,6 +1015,25 @@ describeLiveConfiguredRunner('configured CLI reusable credentialed Managed VM', 
 				},
 				resolution: mediatedResolution,
 			};
+
+			const authoredEnvironmentAcquisition = await runtimeManager.acquireCommand({
+				...mediatedRequest,
+				operationId: 'mediated-authored-environment',
+			});
+			if (authoredEnvironmentAcquisition.kind !== 'acquired')
+				throw new Error('Expected authored-environment runtime');
+			try {
+				const authoredEnvironmentResult = await authoredEnvironmentAcquisition.command.exec({
+					argv: ['mediated', '--environment-proof'],
+					reason: 'real configured inherited HOME',
+					timeoutMs: 60_000,
+				});
+				// The configured allowlist authors HOME; the empty-policy runtime above retains the guest default.
+				expect(authoredEnvironmentResult.exitCode).toBe(0);
+				expect(authoredEnvironmentResult.stdout).toContain('HOME=' + process.env.HOME + '\n');
+			} finally {
+				await authoredEnvironmentAcquisition.command.complete({ kind: 'completed' });
+			}
 			const mediatedAcquisition = await runtimeManager.acquireCommand(mediatedRequest);
 			if (mediatedAcquisition.kind !== 'acquired') {
 				throw new Error('Mediated agent did not acquire its credentialed runtime.');

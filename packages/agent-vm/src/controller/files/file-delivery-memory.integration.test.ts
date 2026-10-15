@@ -124,6 +124,7 @@ function watchFiles(root: string, stalledWrites = 1): ReturnType<typeof createPa
 
 function expectBounded(probe: ReturnType<typeof createPayloadMemoryProbe>, streams = 1): void {
 	const measured = probe.snapshot();
+	process.stdout.write(`[file-delivery-memory] ${JSON.stringify(measured)}\n`);
 	expect(measured.peakPendingWriteBytes).toBeLessThanOrEqual(streams * chunkBytes);
 	// ArrayBuffer accounting observes native byte storage, not only generator pull counts.
 	// Heap/RSS are recorded too; heap allows fixed control/Promise overhead, not an 8MiB payload.
@@ -131,7 +132,6 @@ function expectBounded(probe: ReturnType<typeof createPayloadMemoryProbe>, strea
 	expect(measured.peakHeapGrowth).toBeLessThan(4 * 1024 * 1024);
 	expect(measured.pendingWriteBytes).toBe(0);
 	expect(measured.openHandles).toBe(0);
-	process.stdout.write(`[file-delivery-memory] ${JSON.stringify(measured)}\n`);
 }
 
 async function waitForStall(

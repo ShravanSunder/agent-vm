@@ -467,6 +467,8 @@ async function startManagedHermesEpoch(options: {
 		});
 	} catch (error: unknown) {
 		await controlTransportProxy?.close().catch(() => undefined);
+		// Vitest otherwise renders AggregateError components without the decorated startup diagnostics.
+		if (error instanceof Error) throw new Error(error.message, { cause: error });
 		throw error;
 	}
 	let managedGatewayStart: ManagedGatewayStartObservation;
@@ -478,6 +480,7 @@ async function startManagedHermesEpoch(options: {
 		} finally {
 			await controlTransportProxy?.close();
 		}
+		if (error instanceof Error) throw new Error(error.message, { cause: error });
 		throw error;
 	}
 	return {

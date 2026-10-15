@@ -17,7 +17,7 @@ export interface VmOwnershipBoundaryAuditFinding {
 
 const AUDIT_SOURCE_ROOTS = ['packages/agent-vm/src', 'packages/gondolin-vm-adapter/src'] as const;
 const STOCK_GONDOLIN_PACKAGE_NAME = '@earendil-works/gondolin';
-const STOCK_GONDOLIN_VERSION = '0.12.0';
+const STOCK_GONDOLIN_VERSION = '0.13.0';
 const STOCK_GONDOLIN_REPOSITORY_METADATA_PATHS = [
 	'package.json',
 	'pnpm-lock.yaml',

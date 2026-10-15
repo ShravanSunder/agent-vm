@@ -31,7 +31,6 @@ import { resolveZoneAdminToken } from './ssh-commands.js';
 interface RunControllerOperationCommandOptions {
 	readonly collectDoctorEnvironment?: (
 		systemConfig: LoadedSystemConfig,
-		dependencies: CliDependencies,
 	) => Promise<ControllerDoctorEnvironment>;
 	readonly collectDynamicDoctorChecks?: (
 		options: CollectDynamicDoctorChecksOptions,
@@ -84,8 +83,6 @@ export interface ControllerDoctorEnvironment {
 	readonly dockerDaemonReady: boolean;
 	readonly env: NodeJS.ProcessEnv;
 	readonly nodeVersion: string;
-	readonly requiredZigVersion: string;
-	readonly zigVersion?: string;
 }
 
 export interface CollectDynamicDoctorChecksOptions {
@@ -242,18 +239,6 @@ async function collectAvailableBinaryNames(
 	return availableBinaries;
 }
 
-async function collectCommandOutput(
-	command: string,
-	arguments_: readonly string[],
-): Promise<string | undefined> {
-	try {
-		const result = await execa(command, [...arguments_]);
-		return result.stdout.trim();
-	} catch {
-		return undefined;
-	}
-}
-
 async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>): Promise<boolean> {
 	if (!availableBinaries.has('docker')) {
 		return false;
@@ -268,7 +253,6 @@ async function collectDockerDaemonReady(availableBinaries: ReadonlySet<string>):
 
 export async function collectControllerDoctorEnvironment(
 	systemConfig: LoadedSystemConfig,
-	dependencies: CliDependencies,
 ): Promise<ControllerDoctorEnvironment> {
 	const availableBinaries = await collectAvailableBinaryNames(
 		[
@@ -290,16 +274,12 @@ export async function collectControllerDoctorEnvironment(
 		] as const,
 		path.resolve(path.dirname(systemConfig.systemConfigPath), '..', 'node_modules', '.bin'),
 	);
-	const requiredZigVersion = await dependencies.resolveManagedVmMinimumZigVersion();
-	const zigVersion = await collectCommandOutput('zig', ['version']);
 	const dockerDaemonReady = await collectDockerDaemonReady(availableBinaries);
 	return {
 		availableBinaries,
 		dockerDaemonReady,
 		env: process.env,
 		nodeVersion: process.version,
-		requiredZigVersion,
-		...(zigVersion ? { zigVersion } : {}),
 	};
 }
 
@@ -505,15 +485,13 @@ export async function runControllerOperationCommand(
 		case 'doctor': {
 			const doctorEnvironment = await (
 				options.collectDoctorEnvironment ?? collectControllerDoctorEnvironment
-			)(options.systemConfig, options.dependencies);
+			)(options.systemConfig);
 			const doctorResult = await options.dependencies.runControllerDoctor({
 				availableBinaries: doctorEnvironment.availableBinaries,
 				dockerDaemonReady: doctorEnvironment.dockerDaemonReady,
 				env: doctorEnvironment.env,
 				nodeVersion: doctorEnvironment.nodeVersion,
-				requiredZigVersion: doctorEnvironment.requiredZigVersion,
 				systemConfig: options.systemConfig,
-				...(doctorEnvironment.zigVersion ? { zigVersion: doctorEnvironment.zigVersion } : {}),
 			});
 			const dynamicChecks = await (
 				options.collectDynamicDoctorChecks ?? collectDynamicDoctorChecks

@@ -83,6 +83,10 @@ describe('manual templates', () => {
 			'anchors deletion to opened directories without following ancestor symlinks',
 		);
 		expect(imageVersioning).toContain('New images are checksum-verified before publication.');
+		expect(imageVersioning).toContain('Host Zig is not required');
+		expect(imageVersioning).toContain(
+			'missing or corrupt helpers and actual Docker/QEMU/build failures remain errors',
+		);
 		expect(imageVersioning).toContain(
 			'Reuse validates manifest and file structure without hashing large images again',
 		);

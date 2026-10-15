@@ -13,8 +13,8 @@ outputs use controller-owned RealFS staging. Native attachment copies use the
 existing Gateway cache mount. The managed VM contract no longer exposes a
 guest-file writer. Credentials remain on the separate protected memory mount.
 
-This removes our dependency on the affected guest-file operations; it does not
-claim that upstream fixed them. Ordinary guest exec streaming uses stock Gondolin
+The retired path is independent of upstream fix distribution. Stock 0.13.0
+contains the upstream fix; the removed writer remains outside our contract. Ordinary guest exec streaming uses stock Gondolin
 flow control and disables final payload buffering. No QEMU, kernel, firmware,
 guest protocol or machine setting changes are part of this transition.
 
@@ -22,7 +22,7 @@ guest protocol or machine setting changes are part of this transition.
 
 | Fix | Upstream PR and pinned revision | Last verified upstream state | Local state |
 | --- | --- | --- | --- |
-| Early completion-promise rejection observers in guest writes/deletes | [#136](https://github.com/earendil-works/gondolin/pull/136), `94b1f94828e5b834d5abe7fda478b3c7ce6ab352` | Open/unmerged when checked 2026-09-07; fixed release not established | Retired with owner approval 2026-09-09; formerly applied to 0.12.0 |
+| Early completion-promise rejection observers in guest writes/deletes | [#136](https://github.com/earendil-works/gondolin/pull/136), `94b1f94828e5b834d5abe7fda478b3c7ce6ab352` | Merged 2026-10-04; verified 2026-10-15 at release [0.13.0](https://github.com/earendil-works/gondolin/releases/tag/v0.13.0), `fcbcef162a73b214f79069f8430c70cebda0f827` | Retired with owner approval 2026-09-09; formerly applied to 0.12.0. Removal gate satisfied by writer retirement; no patch to carry into 0.13.0 |
 
 The retired patch attached immediate rejection observers to two internal promises
 in `SandboxServerOps.writeGuestFile` and `deleteGuestFile`. It did not alter caller

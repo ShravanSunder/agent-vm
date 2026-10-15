@@ -91,7 +91,8 @@ This is a pnpm TypeScript monorepo targeting Node 24. It uses the OXC stack for
 fast formatting and linting.
 
 - Use `mise exec -- <command>` for commands that depend on pinned local tools.
-  The repo `mise.toml` pins Zig for Gondolin image builds and e2e tests.
+  The repo `mise.toml` retains its existing Zig pin. Normal Gondolin image
+  assembly consumes published sandbox helpers and does not require host Zig.
 - Install/build: `pnpm install`, then `pnpm build`.
 - Test taxonomy audit: `pnpm test:taxonomy`.
   This is part of `pnpm test:unit` and `pnpm check`. It fails when test files
@@ -120,8 +121,9 @@ fast formatting and linting.
   Proof lanes run directly through their named Vitest projects and use
   Vitest's exit status for pass/fail. `test:e2e:inventory` is the discovery
   lane and may report skipped tests by design.
-- E2E VM/Hermes lanes require Docker, QEMU, and the pinned Zig from
-  `mise.toml`. Use `mise exec --` for those lanes. The e2e harness uses a
+- E2E VM/Hermes lanes require Docker and architecture-matched QEMU. Normal
+  image assembly uses stock published helpers without host Zig. Use
+  `mise exec --` for those lanes. The e2e harness uses a
   shared rebuildable image/local-package cache by default and honors
   `AGENT_VM_E2E_CACHE_DIR` when you want to pin that cache location.
   `AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1` is only for callers that already ran

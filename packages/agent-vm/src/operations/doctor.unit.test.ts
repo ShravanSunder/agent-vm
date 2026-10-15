@@ -393,18 +393,15 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: createExternalObservabilitySystemConfig(),
 		});
 
 		expect(result.ok).toBe(true);
 		expect(result.checks.every((check) => check.ok)).toBe(true);
-		expect(result.checks.find((check) => check.name === 'zig-version')).toMatchObject({
-			ok: true,
-			value: '0.15.2',
-		});
+		expect(result.checks.find((check) => check.name === 'zig-version')).toBeUndefined();
 		expect(result.checks.find((check) => check.name === 'qemu')?.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'qemu-img')?.ok).toBe(true);
 		expect(result.checks.find((check) => check.name === 'mke2fs')?.ok).toBe(true);
@@ -473,9 +470,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: scopedSecretConfig,
 		});
 
@@ -498,9 +495,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig,
 		});
 
@@ -521,9 +518,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: createManagedObservabilitySystemConfig(),
 		});
 		const readyDockerResult = await runControllerDoctor({
@@ -533,9 +530,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: createManagedObservabilitySystemConfig(),
 		});
 
@@ -569,9 +566,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: dockerBackedConfig,
 		});
 		const readyDockerResult = await runControllerDoctor({
@@ -581,9 +578,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: dockerBackedConfig,
 		});
 
@@ -630,9 +627,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: managedBaseConfig,
 		});
 
@@ -775,9 +772,9 @@ describe('runControllerDoctor', () => {
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
 			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.2',
+
 			systemConfig: dockerBackedConfig,
 		});
 
@@ -797,40 +794,18 @@ describe('runControllerDoctor', () => {
 		).toBeUndefined();
 	});
 
-	it('flags missing or too-old Zig versions', async () => {
-		const missingResult = await runControllerDoctor({
-			availableBinaries: allBinaries,
+	it('does not require compiler facts for normal published-helper readiness', async () => {
+		const result = await runControllerDoctor({
+			availableBinaries: new Set([...allBinaries].filter((binary) => binary !== 'zig')),
 			diskFreeBytes: 50 * 1024 * 1024 * 1024,
 			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
 			occupiedPorts: new Set<number>(),
-			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
+			nodeVersion: 'v24.15.0',
 			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
 			systemConfig,
 		});
-		const outdatedResult = await runControllerDoctor({
-			availableBinaries: allBinaries,
-			diskFreeBytes: 50 * 1024 * 1024 * 1024,
-			env: { OP_SERVICE_ACCOUNT_TOKEN: 'token' },
-			occupiedPorts: new Set<number>(),
-			nodeVersion: 'v25.9.0',
-			requiredZigVersion: '0.15.2',
-			totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-			zigVersion: '0.15.1',
-			systemConfig,
-		});
-
-		expect(missingResult.ok).toBe(false);
-		expect(missingResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
-			ok: false,
-			hint: 'Install Zig >= 0.15.2. On macOS: brew install zig.',
-		});
-		expect(outdatedResult.ok).toBe(false);
-		expect(outdatedResult.checks.find((check) => check.name === 'zig-version')).toMatchObject({
-			ok: false,
-			value: '0.15.1',
-			hint: 'Requires Zig >= 0.15.2. On macOS: brew install zig.',
-		});
+		expect(result.ok).toBe(true);
+		expect(result.checks.find((check) => check.name === 'zig-version')).toBeUndefined();
 	});
 
 	it('does not require optional 1Password CLI or age binaries for env-backed configs', async () => {

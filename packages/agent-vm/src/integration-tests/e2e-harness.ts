@@ -14,7 +14,6 @@ import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
 import {
 	hasManagedVmImageAssets,
-	resolveManagedVmMinimumZigVersion,
 	type ManagedGatewayImageBootProjection,
 } from '../build/gondolin-managed-vm-build-tooling.js';
 import {
@@ -34,7 +33,6 @@ import {
 	writePreparedManagedVmImage,
 	type PreparedManagedVmImage,
 } from '../build/prepared-gondolin-image-cache.js';
-import { isZigVersionAtLeast, resolveHostZigVersion } from '../build/zig-compatibility.js';
 import { runBuildCommand } from '../cli/build-command.js';
 import type { ImageArchitecture } from '../cli/init-command-schemas.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
@@ -224,8 +222,6 @@ export interface GatewayE2eImageProject {
 export interface ManagedVmE2ePrerequisiteOptions {
 	readonly architecture: ImageArchitecture;
 	readonly commandExists?: (command: string) => boolean;
-	readonly resolveRequiredZigVersion?: () => Promise<string>;
-	readonly resolveZigVersion?: () => Promise<string | undefined>;
 }
 
 export interface PrepareGatewayE2eProjectImagesOptions {
@@ -307,14 +303,7 @@ export async function canRunManagedVmE2e(
 	) {
 		return false;
 	}
-	const requiredZigVersion = await (
-		options.resolveRequiredZigVersion ?? resolveManagedVmMinimumZigVersion
-	)();
-	const installedZigVersion = await (options.resolveZigVersion ?? resolveHostZigVersion)();
-	return (
-		installedZigVersion !== undefined &&
-		isZigVersionAtLeast(installedZigVersion, requiredZigVersion)
-	);
+	return true;
 }
 
 export async function findAvailablePort(): Promise<number> {

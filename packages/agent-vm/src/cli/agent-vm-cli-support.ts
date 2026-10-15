@@ -55,7 +55,6 @@ export interface CliDependencies {
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly collectControllerDoctorEnvironment?: (
 		systemConfig: LoadedSystemConfig,
-		dependencies: CliDependencies,
 	) => Promise<ControllerDoctorEnvironment>;
 	readonly collectDynamicDoctorChecks?: (
 		options: CollectDynamicDoctorChecksOptions,

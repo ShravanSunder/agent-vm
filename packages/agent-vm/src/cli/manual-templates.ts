@@ -136,6 +136,8 @@ Agent VM stores complete immutable VM images once under cacheDir/vm-images/<fing
 
 New images are checksum-verified before publication. Reuse validates manifest and file structure without hashing large images again; it does not detect every later binary corruption. Never repair or replace shared fingerprint directories by hand.
 
+Normal image preparation consumes stock published Gondolin sandbox helpers and still assembles the custom guest image. Host Zig is not required; missing or corrupt helpers and actual Docker/QEMU/build failures remain errors.
+
 Uncached image publication requires Python 3 on the controller host and native no-replace rename support on macOS or Linux. Missing support fails closed before image construction. Keep declared init scripts, copied files/directories, and custom helper binaries stable during a build; their content participates in shared-image identity.
 
 Cache cleanup also requires Python 3 with symlink-resistant directory operations. It holds the controller ownership lock and anchors deletion to opened directories without following ancestor symlinks. If a target changes or the host lacks support, cleanup fails closed; do not substitute a recursive shell deletion.

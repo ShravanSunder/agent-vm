@@ -346,7 +346,10 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: { authorization: 'Bearer private-credential' },
+			acquireInitialHeaders: async () => ({
+				kind: 'ready',
+				headers: { authorization: 'Bearer private-credential' },
+			}),
 			nextAttachmentGeneration: () => 7,
 			onAttemptOutcome: (outcome: ExpectedGatewayControlAttemptOutcome) => {
 				attemptOutcomes.push(outcome);
@@ -365,7 +368,9 @@ describe('Gateway disposable control session client', () => {
 			},
 		]);
 		expect(JSON.stringify(attemptOutcomes)).not.toContain('private-credential');
+		const closedReady = expect(client.ready).rejects.toThrow('gateway control session closed');
 		client.close();
+		await closedReady;
 	});
 
 	it('reports a parsed hello outcome without letting observer failure affect readiness', async () => {
@@ -384,7 +389,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 11,
 			onAttemptOutcome: (outcome: ExpectedGatewayControlAttemptOutcome) => {
 				attemptOutcomes.push(outcome);
@@ -429,7 +434,7 @@ describe('Gateway disposable control session client', () => {
 					processEpoch: 'process-a',
 					zoneId: 'zone-a',
 				},
-				initialExtraHeaders: {},
+				acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 				nextAttachmentGeneration: () => {
 					attachmentGeneration += 1;
 					return attachmentGeneration;
@@ -491,7 +496,7 @@ describe('Gateway disposable control session client', () => {
 					processEpoch: 'process-a',
 					zoneId: 'zone-a',
 				},
-				initialExtraHeaders: {},
+				acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 				nextAttachmentGeneration: () => {
 					attachmentGeneration += 1;
 					return attachmentGeneration;
@@ -556,7 +561,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -622,7 +627,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -633,7 +638,12 @@ describe('Gateway disposable control session client', () => {
 			scheduleImmediate: (callback) => callback(),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -714,7 +724,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -725,7 +735,12 @@ describe('Gateway disposable control session client', () => {
 			scheduleImmediate: (callback) => callback(),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -823,7 +838,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -837,7 +852,12 @@ describe('Gateway disposable control session client', () => {
 			refreshExtraHeaders: async () => ({}),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -917,7 +937,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			onReconnectExhausted: (transition: unknown) => {
 				reconnectExhaustedTransitions.push(transition);
@@ -927,7 +947,12 @@ describe('Gateway disposable control session client', () => {
 			refreshExtraHeaders: async () => ({}),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -991,7 +1016,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1113,7 +1138,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1184,7 +1209,7 @@ describe('Gateway disposable control session client', () => {
 					processEpoch: 'process-a',
 					zoneId: 'zone-a',
 				},
-				initialExtraHeaders: {},
+				acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 				nextAttachmentGeneration: () => {
 					attachmentGeneration += 1;
 					return attachmentGeneration;
@@ -1243,7 +1268,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			now: () => nowMs,
 			policyByOperation: {},
@@ -1282,7 +1307,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			now: () => nowMs,
 			policyByOperation: {},
@@ -1341,7 +1366,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1407,7 +1432,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1417,7 +1442,12 @@ describe('Gateway disposable control session client', () => {
 			refreshExtraHeaders: async () => ({}),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		const readyResult = expect(client.ready).rejects.toThrow(
@@ -1462,7 +1492,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1512,7 +1542,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1575,7 +1605,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1667,7 +1697,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1759,7 +1789,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -1852,7 +1882,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			now: () => nowMs,
 			onReconnectExhausted: (transition: unknown) => {
@@ -1862,7 +1892,12 @@ describe('Gateway disposable control session client', () => {
 			refreshExtraHeaders: async () => ({}),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -1915,7 +1950,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => socketCreateCount + 1,
 			onAttachmentGap: (transition: unknown) => {
 				attachmentGaps.push(transition);
@@ -1933,7 +1968,12 @@ describe('Gateway disposable control session client', () => {
 			},
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -1942,10 +1982,9 @@ describe('Gateway disposable control session client', () => {
 		expect(reconnectCallbacks).toHaveLength(1);
 		reconnectCallbacks.shift()?.();
 		await Promise.resolve();
-		expect(reconnectCallbacks).toHaveLength(1);
-		reconnectCallbacks.shift()?.();
+		expect(reconnectCallbacks).toHaveLength(0);
 		expect(refreshCount).toBe(1);
-		expect(socketCreateCount).toBe(2);
+		expect(socketCreateCount).toBe(1);
 		const callbackCountsBeforeClose = {
 			attachmentGaps: attachmentGaps.length,
 			helloResponses: helloResponses.length,
@@ -1956,7 +1995,7 @@ describe('Gateway disposable control session client', () => {
 		reconnectHeaders.resolve({ authorization: 'refreshed' });
 		await flushImmediate();
 
-		expect(socketCreateCount).toBe(2);
+		expect(socketCreateCount).toBe(1);
 		expect(third.control.clientDisconnectCount).toBe(0);
 		expect({
 			attachmentGaps: attachmentGaps.length,
@@ -1990,7 +2029,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: {
 				control_ping: 'acked_idempotent',
@@ -2082,7 +2121,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByKind: { heartbeat: 'critical_idempotent' },
 			policyByOperation: { lease_get: 'acked_idempotent' },
@@ -2160,7 +2199,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { tool_portal_controller_execution: 'single_use_critical' },
 			refreshExtraHeaders: async () => ({}),
@@ -2218,7 +2257,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { lease_get: 'acked_idempotent' },
 			refreshExtraHeaders: async () => ({}),
@@ -2273,7 +2312,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { lease_renew: 'single_use_critical' },
 			refreshExtraHeaders: async () => ({}),
@@ -2360,7 +2399,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			now: () => 1_000,
 			policyByOperation: { lease_renew: 'single_use_critical' },
@@ -2448,7 +2487,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2458,7 +2497,12 @@ describe('Gateway disposable control session client', () => {
 			refreshExtraHeaders: async () => ({}),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -2518,7 +2562,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2584,7 +2628,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2629,7 +2673,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByKind: { heartbeat: 'critical_idempotent' },
 			policyByOperation: {},
@@ -2689,7 +2733,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2737,7 +2781,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByOperation: { control_ping: 'acked_idempotent' },
 			refreshExtraHeaders: async () => ({}),
@@ -2820,7 +2864,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2904,7 +2948,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => {
 				attachmentGeneration += 1;
 				return attachmentGeneration;
@@ -2916,7 +2960,12 @@ describe('Gateway disposable control session client', () => {
 			scheduleImmediate: (callback) => immediateCallbacks.push(callback),
 			scheduleReconnectTimer: (callback) => {
 				reconnectCallbacks.push(callback);
-				return { cancel: () => undefined };
+				return {
+					cancel: () => {
+						const callbackIndex = reconnectCallbacks.indexOf(callback);
+						if (callbackIndex !== -1) reconnectCallbacks.splice(callbackIndex, 1);
+					},
+				};
 			},
 		});
 		await client.ready;
@@ -2974,7 +3023,7 @@ describe('Gateway disposable control session client', () => {
 				processEpoch: 'process-a',
 				zoneId: 'zone-a',
 			},
-			initialExtraHeaders: {},
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
 			nextAttachmentGeneration: () => 1,
 			policyByKind: { heartbeat: 'latest_wins' },
 			policyByOperation: {},
@@ -3016,5 +3065,390 @@ describe('Gateway disposable control session client', () => {
 			},
 		]);
 		client.close();
+	});
+	it('settles close during initial header acquisition and fences the late result without allocating another generation', async () => {
+		vi.useFakeTimers();
+		const headers = deferred<{
+			readonly kind: 'ready';
+			readonly headers: Readonly<Record<string, string>>;
+		}>();
+		const createSocket = vi.fn();
+		const nextAttachmentGeneration = vi.fn(() => 1);
+		const client = createGatewayDisposableControlSessionClient({
+			acquireInitialHeaders: async () => await headers.promise,
+			createSocket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			nextAttachmentGeneration,
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+		const readyClosed = expect(client.ready).rejects.toThrow('gateway control session closed');
+		client.close();
+		await readyClosed;
+		headers.resolve({ kind: 'ready', headers: {} });
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(createSocket).not.toHaveBeenCalled();
+		expect(nextAttachmentGeneration).toHaveBeenCalledOnce();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('refuses process capacity before requesting initial headers or a socket', async () => {
+		const coordinator = createGatewayControlProcessAdmissionCoordinator({ maxActiveSessions: 1 });
+		const firstSocket = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const client = createGatewayDisposableControlSessionClient({
+			acquireInitialHeaders: async () => ({ kind: 'ready', headers: {} }),
+			createSocket: () => firstSocket.socket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			nextAttachmentGeneration: () => 1,
+			policyByOperation: {},
+			processAdmissionCoordinator: coordinator,
+			refreshExtraHeaders: async () => ({}),
+		});
+		await client.ready;
+		const acquireInitialHeaders = vi.fn();
+		const createSocket = vi.fn();
+		try {
+			expect(() =>
+				createGatewayDisposableControlSessionClient({
+					acquireInitialHeaders,
+					createSocket,
+					endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+					identity: {
+						controllerEpoch: 'controller-a',
+						gatewayEpoch: 'gateway-b',
+						peerId: 'gateway-zone-b',
+						processEpoch: 'process-b',
+						zoneId: 'zone-b',
+					},
+					nextAttachmentGeneration: () => 1,
+					policyByOperation: {},
+					processAdmissionCoordinator: coordinator,
+					refreshExtraHeaders: async () => ({}),
+				}),
+			).toThrow('gateway control process session capacity refused: session_capacity');
+			expect(acquireInitialHeaders).not.toHaveBeenCalled();
+			expect(createSocket).not.toHaveBeenCalled();
+		} finally {
+			client.close();
+		}
+	});
+	it('reuses its single reserved generation after transient initial header failures', async () => {
+		vi.useFakeTimers();
+		const accepted = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const nextAttachmentGeneration = vi.fn(() => 1);
+		let headerAttempts = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			acquireInitialHeaders: async () => {
+				headerAttempts += 1;
+				return headerAttempts < 3
+					? { kind: 'transient-unavailable', error: new Error('HTTP 502') }
+					: { kind: 'ready', headers: {} };
+			},
+			createSocket: () => accepted.socket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			nextAttachmentGeneration,
+			policyByOperation: {},
+			refreshExtraHeaders: async () => ({}),
+		});
+		const acceptedReady = expect(client.ready).resolves.toMatchObject({
+			outcome: 'accepted',
+			attachmentGeneration: 1,
+		});
+		try {
+			await vi.advanceTimersByTimeAsync(10_000);
+			await acceptedReady;
+			expect(headerAttempts).toBe(3);
+			expect(nextAttachmentGeneration).toHaveBeenCalledOnce();
+		} finally {
+			client.close();
+		}
+	});
+
+	it.each(['headers', 'hello'] as const)(
+		'accepts an attempt admitted at 59s when %s completes at 61s',
+		async (pendingPhase) => {
+			let nowMs = 1_000;
+			const headers = deferred<{
+				readonly kind: 'ready';
+				readonly headers: Readonly<Record<string, string>>;
+			}>();
+			const hello = deferred<unknown>();
+			const accepted = createFakeSocket({
+				connectionId: '11111111-1111-4111-8111-111111111111',
+				...(pendingPhase === 'hello' ? { helloAcknowledgement: hello.promise } : {}),
+				sessionId: '22222222-2222-4222-8222-222222222222',
+			});
+			const timers = createFakeReconnectTimerQueue();
+			let headerAttempts = 0;
+			const onHelloResponse = vi.fn();
+			const createSocket = vi.fn(() => accepted.socket);
+			const client = createGatewayDisposableControlSessionClient({
+				acquireInitialHeaders: async () => {
+					headerAttempts += 1;
+					return headerAttempts === 1
+						? { kind: 'transient-unavailable', error: new Error('HTTP 502') }
+						: await headers.promise;
+				},
+				createSocket,
+				endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+				identity: {
+					controllerEpoch: 'controller-a',
+					gatewayEpoch: 'gateway-a',
+					peerId: 'gateway-zone-a',
+					processEpoch: 'process-a',
+					zoneId: 'zone-a',
+				},
+				nextAttachmentGeneration: () => 1,
+				now: () => nowMs,
+				onHelloResponse,
+				policyByOperation: {},
+				refreshExtraHeaders: async () => ({}),
+				scheduleReconnectTimer: timers.schedule,
+			});
+			const readiness = client.ready.then(
+				(response) => ({ kind: 'accepted' as const, response }),
+				(error: unknown) => ({ kind: 'failed' as const, error }),
+			);
+			try {
+				await flushImmediate();
+				nowMs += 59_000;
+				const retry = timers.takeNextActive();
+				expect(retry).toBeTypeOf('function');
+				retry?.();
+				if (pendingPhase === 'headers') nowMs += 2_000;
+				headers.resolve({ kind: 'ready', headers: { authorization: 'admitted-proof' } });
+				if (pendingPhase === 'hello') {
+					await accepted.control.accept();
+					nowMs += 2_000;
+					hello.resolve({
+						attachmentGeneration: 1,
+						connectionId: '11111111-1111-4111-8111-111111111111',
+						controllerEpoch: 'controller-a',
+						outcome: 'accepted',
+						sessionId: '22222222-2222-4222-8222-222222222222',
+					});
+				}
+				expect(await readiness).toMatchObject({
+					kind: 'accepted',
+					response: { outcome: 'accepted' },
+				});
+				expect(headerAttempts).toBe(2);
+				expect(createSocket).toHaveBeenCalledOnce();
+				expect(onHelloResponse).toHaveBeenCalledOnce();
+				expect(client.getDiagnostics()).toMatchObject({ accepted: true, ready: true });
+				expect(timers.takeNextActive()).toBeUndefined();
+			} finally {
+				client.close();
+			}
+		},
+	);
+
+	it.each([60_000, 60_001])(
+		'does not admit a scheduled new attempt at elapsed %i ms',
+		async (elapsedMs) => {
+			let nowMs = 1_000;
+			const timers = createFakeReconnectTimerQueue();
+			const acquireInitialHeaders = vi.fn(async () => ({
+				kind: 'transient-unavailable' as const,
+				error: new Error('HTTP 502'),
+			}));
+			const createSocket = vi.fn();
+			const onReconnectExhausted = vi.fn();
+			const client = createGatewayDisposableControlSessionClient({
+				acquireInitialHeaders,
+				createSocket,
+				endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+				identity: {
+					controllerEpoch: 'controller-a',
+					gatewayEpoch: 'gateway-a',
+					peerId: 'gateway-zone-a',
+					processEpoch: 'process-a',
+					zoneId: 'zone-a',
+				},
+				nextAttachmentGeneration: () => 1,
+				now: () => nowMs,
+				onReconnectExhausted,
+				policyByOperation: {},
+				refreshExtraHeaders: async () => ({}),
+				scheduleReconnectTimer: timers.schedule,
+			});
+			const readyExpired = expect(client.ready).rejects.toThrow(
+				'gateway control reconnect budget exhausted',
+			);
+			try {
+				await flushImmediate();
+				nowMs += elapsedMs;
+				const retry = timers.takeNextActive();
+				expect(retry).toBeTypeOf('function');
+				retry?.();
+				await readyExpired;
+				expect(acquireInitialHeaders).toHaveBeenCalledOnce();
+				expect(createSocket).not.toHaveBeenCalled();
+				expect(onReconnectExhausted).toHaveBeenCalledWith(
+					expect.objectContaining({ attempts: 1, exhaustionReason: 'deadline' }),
+				);
+				expect(timers.takeNextActive()).toBeUndefined();
+			} finally {
+				client.close();
+			}
+		},
+	);
+
+	it('does not reset deadline admission accounting on the first valid credential below the attempt limit', async () => {
+		let nowMs = 1_000;
+		const headers = deferred<{
+			readonly kind: 'ready';
+			readonly headers: Readonly<Record<string, string>>;
+		}>();
+		let rejectHello!: (error: Error) => void;
+		const helloAcknowledgement = new Promise<never>((_resolve, reject) => {
+			rejectHello = reject;
+		});
+		const pending = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			helloAcknowledgement,
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const timers = createFakeReconnectTimerQueue();
+		const acquireInitialHeaders = vi
+			.fn()
+			.mockResolvedValueOnce({ kind: 'transient-unavailable', error: new Error('HTTP 502') })
+			.mockImplementation(async () => await headers.promise);
+		const createSocket = vi.fn(() => pending.socket);
+		const refreshExtraHeaders = vi.fn(async () => ({}));
+		const nextAttachmentGeneration = vi.fn(() => 1);
+		const onReconnectExhausted = vi.fn();
+		const onHelloResponse = vi.fn();
+		const client = createGatewayDisposableControlSessionClient({
+			acquireInitialHeaders,
+			createSocket,
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			nextAttachmentGeneration,
+			now: () => nowMs,
+			onHelloResponse,
+			onReconnectExhausted,
+			policyByOperation: {},
+			refreshExtraHeaders,
+			scheduleReconnectTimer: timers.schedule,
+		});
+		const readinessFailures: unknown[] = [];
+		const onReadyAccepted = vi.fn();
+		void client.ready.then(onReadyAccepted, (error: unknown): void => {
+			readinessFailures.push(error);
+		});
+		try {
+			await flushImmediate();
+			nowMs += 59_000;
+			const retry = timers.takeNextActive();
+			expect(retry).toBeTypeOf('function');
+			retry?.();
+			headers.resolve({ kind: 'ready', headers: {} });
+			await pending.control.accept();
+			nowMs += 2_000;
+			rejectHello(new Error('hello acknowledgement timed out'));
+			await flushImmediate();
+			// Observe settlement without awaiting a promise a broken reset would leave pending.
+			expect(readinessFailures).toHaveLength(1);
+			expect(String(readinessFailures[0])).toContain('gateway control reconnect budget exhausted');
+			expect(onReconnectExhausted).toHaveBeenCalledWith(
+				expect.objectContaining({ attempts: 2, exhaustionReason: 'deadline' }),
+			);
+			expect(acquireInitialHeaders).toHaveBeenCalledTimes(2);
+			expect(refreshExtraHeaders).not.toHaveBeenCalled();
+			expect(createSocket).toHaveBeenCalledOnce();
+			expect(nextAttachmentGeneration).toHaveBeenCalledOnce();
+			expect(onHelloResponse).not.toHaveBeenCalled();
+			expect(onReadyAccepted).not.toHaveBeenCalled();
+			expect(timers.takeNextActive()).toBeUndefined();
+		} finally {
+			client.close();
+		}
+	});
+
+	it('obtains fresh authenticated headers before its first post-acceptance reconnect socket', async () => {
+		const first = createFakeSocket({
+			connectionId: '11111111-1111-4111-8111-111111111111',
+			sessionId: '22222222-2222-4222-8222-222222222222',
+		});
+		const second = createFakeSocket({
+			connectionId: '33333333-3333-4333-8333-333333333333',
+			sessionId: '44444444-4444-4444-8444-444444444444',
+		});
+		const headers = deferred<Readonly<Record<string, string>>>();
+		const timers = createFakeReconnectTimerQueue();
+		const observedHeaders: Readonly<Record<string, string>>[] = [];
+		let attachmentGeneration = 0;
+		const client = createGatewayDisposableControlSessionClient({
+			acquireInitialHeaders: async () => ({
+				kind: 'ready',
+				headers: { authorization: 'initial-proof' },
+			}),
+			createSocket: (options) => {
+				observedHeaders.push(options.extraHeaders);
+				return observedHeaders.length === 1 ? first.socket : second.socket;
+			},
+			endpoint: { host: '127.0.0.1', path: '/control', port: 1 },
+			identity: {
+				controllerEpoch: 'controller-a',
+				gatewayEpoch: 'gateway-a',
+				peerId: 'gateway-zone-a',
+				processEpoch: 'process-a',
+				zoneId: 'zone-a',
+			},
+			nextAttachmentGeneration: () => ++attachmentGeneration,
+			policyByOperation: {},
+			refreshExtraHeaders: async () => await headers.promise,
+			scheduleReconnectTimer: timers.schedule,
+		});
+		try {
+			await client.ready;
+			first.control.disconnectFromPeer();
+			timers.takeNextActive()?.();
+			await flushImmediate();
+			expect(observedHeaders).toEqual([{ authorization: 'initial-proof' }]);
+			headers.resolve({ authorization: 'fresh-proof' });
+			await flushImmediate();
+			expect(observedHeaders).toEqual([
+				{ authorization: 'initial-proof' },
+				{ authorization: 'fresh-proof' },
+			]);
+			expect(client.getDiagnostics()).toMatchObject({ accepted: true });
+		} finally {
+			client.close();
+		}
 	});
 });

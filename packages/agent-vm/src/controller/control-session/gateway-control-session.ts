@@ -42,6 +42,7 @@ import type {
 import type { GatewayControlProcessAdmissionCoordinator } from './gateway-control-process-admission-coordinator.js';
 import {
 	createGatewayDisposableControlSessionClient,
+	type GatewayControlInitialHeadersOutcome,
 	type GatewayDisposableControlSessionClient,
 	type GatewayDisposableControlSessionClientOptions,
 } from './gateway-disposable-control-session-client.js';
@@ -104,14 +105,19 @@ export interface ConnectGatewayControlSessionOptions {
 	readonly signal?: AbortSignal;
 }
 
-interface FetchGatewayControlCredentialOptions extends Pick<
+type FetchGatewayControlCredentialOptions = Pick<
 	ConnectGatewayControlSessionOptions,
 	'endpoint' | 'fetchImpl' | 'material' | 'signal'
-> {
-	readonly retryTransientUnavailable?: boolean;
-}
+>;
 
-const GATEWAY_CONTROL_INITIAL_READY_RETRY_DELAY_MS = 50;
+class GatewayControlReadinessHttpError extends Error {
+	constructor(
+		readonly statusCode: number,
+		message: string,
+	) {
+		super(message);
+	}
+}
 
 const attachmentGenerationByGatewayEpoch = new Map<string, number>();
 
@@ -356,23 +362,6 @@ async function waitForAbortablePromise<TResult>(
 	});
 }
 
-async function waitForGatewayControlInitialReadyRetry(signal: AbortSignal): Promise<void> {
-	signal.throwIfAborted();
-	await new Promise<void>((resolve, reject) => {
-		const retryTimer = setTimeout(() => {
-			signal.removeEventListener('abort', rejectWithSignalReason);
-			resolve();
-		}, GATEWAY_CONTROL_INITIAL_READY_RETRY_DELAY_MS);
-		retryTimer.unref?.();
-		const rejectWithSignalReason = (): void => {
-			clearTimeout(retryTimer);
-			signal.removeEventListener('abort', rejectWithSignalReason);
-			reject(signal.reason);
-		};
-		signal.addEventListener('abort', rejectWithSignalReason, { once: true });
-	});
-}
-
 export function buildGatewayControlReadyHeaders(options: {
 	readonly material: GatewayControlSessionMaterial;
 	readonly now?: () => number;
@@ -430,8 +419,7 @@ export async function fetchGatewayControlCredential(
 ): Promise<ControlHandshakeCredential> {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const readyTimeout = buildControlReadyTimeoutSignal(options.signal);
-	let lastTransientUnavailableError: Error | undefined;
-	const fetchCredentialAttempt = async (): Promise<ControlHandshakeCredential> => {
+	try {
 		readyTimeout.signal.throwIfAborted();
 		const response = await waitForAbortablePromise(
 			fetchImpl(buildReadyUrl(options.endpoint), {
@@ -449,38 +437,15 @@ export async function fetchGatewayControlCredential(
 				readSafeErrorResponseBody(response),
 				readyTimeout.signal,
 			);
-			const responseError = new Error(
+			throw new GatewayControlReadinessHttpError(
+				response.status,
 				`Gateway control readiness failed with HTTP ${String(response.status)} ${response.statusText}${
 					responseBody === undefined ? '' : `: ${responseBody}`
 				}`,
 			);
-			if (response.status !== 502 || options.retryTransientUnavailable !== true) {
-				throw responseError;
-			}
-			lastTransientUnavailableError = responseError;
-			await waitForGatewayControlInitialReadyRetry(readyTimeout.signal);
-			return await fetchCredentialAttempt();
 		}
 		const responseBody = await waitForAbortablePromise(response.json(), readyTimeout.signal);
 		return ControlHandshakeCredentialSchema.parse(responseBody);
-	};
-	try {
-		return await fetchCredentialAttempt();
-	} catch (error: unknown) {
-		if (options.signal?.aborted === true) {
-			throw error;
-		}
-		if (readyTimeout.signal.aborted && lastTransientUnavailableError !== undefined) {
-			const timeoutReason: unknown = readyTimeout.signal.reason;
-			const timeoutMessage =
-				timeoutReason instanceof Error ? timeoutReason.message : String(timeoutReason);
-			throw new AggregateError(
-				[error, lastTransientUnavailableError],
-				`${timeoutMessage} Last transient failure: ${lastTransientUnavailableError.message}`,
-				{ cause: error },
-			);
-		}
-		throw error;
 	} finally {
 		readyTimeout.clear();
 	}
@@ -489,12 +454,16 @@ export async function fetchGatewayControlCredential(
 export async function connectGatewayControlSession(
 	options: ConnectGatewayControlSessionOptions,
 ): Promise<GatewayDisposableControlSessionClient> {
+	options.signal?.throwIfAborted();
 	const buildHeaders = async (
-		retryTransientUnavailable: boolean,
+		managerSignal: AbortSignal,
 	): Promise<Readonly<Record<string, string>>> => {
 		const credential = await fetchGatewayControlCredential({
 			...options,
-			retryTransientUnavailable,
+			signal:
+				options.signal === undefined
+					? managerSignal
+					: AbortSignal.any([options.signal, managerSignal]),
 		});
 		assertCredentialMatchesMaterial(credential, options.material);
 		return buildGatewayControlHandshakeHeaders({
@@ -502,8 +471,6 @@ export async function connectGatewayControlSession(
 			privateKey: options.material.privateKey,
 		});
 	};
-	const extraHeaders = await buildHeaders(true);
-	options.signal?.throwIfAborted();
 	const client = createGatewayDisposableControlSessionClient({
 		endpoint: {
 			host: options.endpoint.host,
@@ -511,7 +478,15 @@ export async function connectGatewayControlSession(
 			port: options.endpoint.port,
 		},
 		...(options.dispatcher === undefined ? {} : { dispatcher: options.dispatcher }),
-		initialExtraHeaders: extraHeaders,
+		acquireInitialHeaders: async (managerSignal): Promise<GatewayControlInitialHeadersOutcome> => {
+			try {
+				return { kind: 'ready', headers: await buildHeaders(managerSignal) };
+			} catch (error: unknown) {
+				return error instanceof GatewayControlReadinessHttpError && error.statusCode === 502
+					? { kind: 'transient-unavailable', error }
+					: { kind: 'terminal-failure', error };
+			}
+		},
 		identity: {
 			controllerEpoch: options.material.controllerEpoch,
 			gatewayEpoch: options.material.generationId,
@@ -563,7 +538,7 @@ export async function connectGatewayControlSession(
 		...(options.resolveInboundStablePrincipal === undefined
 			? {}
 			: { resolveInboundStablePrincipal: options.resolveInboundStablePrincipal }),
-		refreshExtraHeaders: async () => await buildHeaders(false),
+		refreshExtraHeaders: buildHeaders,
 	});
 	try {
 		await waitForAbortablePromise(client.ready, options.signal);

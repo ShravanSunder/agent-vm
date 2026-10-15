@@ -2,10 +2,12 @@ import { writeFile } from 'node:fs/promises';
 /* oxlint-disable eslint/no-await-in-loop -- the test waits on external protocol state */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { connectGatewayControlSession } from '../controller/control-session/gateway-control-session.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
@@ -357,18 +359,54 @@ function renderHermesFrameworkObservabilityConfiguration(providerPort: number): 
 	].join('\n');
 }
 
-async function waitForRootApiHealth(gatewayPort: number): Promise<void> {
+async function waitForRootApiHealth(options: {
+	readonly gatewayPort: number;
+	readonly vm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+	readonly startupZones: E2eHarnessRuntime['runtime']['zones'];
+}): Promise<void> {
 	const deadline = Date.now() + 60_000;
+	let lastStatus: number | undefined;
+	let lastError: string | undefined;
 	while (Date.now() < deadline) {
 		try {
-			const response = await fetch(`http://127.0.0.1:${String(gatewayPort)}/health`, {
+			const response = await fetch(`http://127.0.0.1:${String(options.gatewayPort)}/health`, {
 				signal: AbortSignal.timeout(2_000),
 			});
+			lastStatus = response.status;
 			if (response.ok) return;
-		} catch {}
+		} catch (error: unknown) {
+			lastError = error instanceof Error ? error.message : String(error);
+		}
 		await waitForProtocolRetryInterval(250);
 	}
-	throw new Error('Timed out waiting for the Hermes root API health endpoint.');
+	const diagnosticOutput =
+		options.vm === undefined
+			? 'Gateway start did not publish a VM handle.'
+			: await options.vm
+					.exec(
+						[
+							'/bin/sh',
+							'-c',
+							"printf 'PROCESSES\\n'; ps -eo pid,ppid,comm; printf 'LISTENERS\\n'; cat /proc/net/tcp /proc/net/tcp6; printf 'GUEST_HEALTH\\n'; curl --silent --show-error --max-time 2 -w '\\nHTTP=%{http_code}\\n' http://127.0.0.1:8642/health || true; printf 'FRAMEWORK_LOG\\n'; tail -c 16384 /var/log/agent-vm/hermes-service.log 2>&1 || true",
+						],
+						{ signal: AbortSignal.timeout(5_000) },
+					)
+					.then(
+						(result): string => result.stdout + result.stderr,
+						(error: unknown): string =>
+							'Guest diagnostic unavailable: ' +
+							(error instanceof Error ? error.message : String(error)),
+					);
+	let output = JSON.stringify({ startupZones: options.startupZones, guest: diagnosticOutput });
+	for (const canary of [
+		...forbiddenCanaries,
+		...Object.values(buildHermesE2eProfileApiServerKeySecrets(['main'])),
+	])
+		output = output.replaceAll(canary, '<redacted-canary>');
+	throw new Error(
+		'Timed out waiting for the Hermes root API health endpoint. ' +
+			JSON.stringify({ lastStatus, lastError, diagnostic: output }),
+	);
 }
 
 async function runSignalNegativeGatewayBoot(options: {
@@ -378,6 +416,7 @@ async function runSignalNegativeGatewayBoot(options: {
 	const repoRoot = process.cwd();
 	const provider = await startFakeProvider();
 	let harness: E2eHarnessRuntime | undefined;
+	let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
 	let project: HermesE2eProject | undefined;
 	let operationFailure: { readonly error: unknown } | undefined;
 	const capturedRequests: CapturedOtlpRequest[] = [];
@@ -477,8 +516,8 @@ async function runSignalNegativeGatewayBoot(options: {
 				[discordSecretEnvironmentName]: forbiddenCanariesByField.discordSecret,
 				GITHUB_TOKEN: 'unused-hermes-framework-otel-github-token',
 			},
-			startGatewayZone: async (startOptions, dependencies) =>
-				await startGatewayZone(startOptions, {
+			startGatewayZone: async (startOptions, dependencies) => {
+				const result = await startGatewayZone(startOptions, {
 					...dependencies,
 					gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
 					managedVmFactory: {
@@ -487,14 +526,21 @@ async function runSignalNegativeGatewayBoot(options: {
 								captureOtlpMediation({ capturedRequests, request }),
 							),
 					},
-				}),
+				});
+				gatewayVm = result.vm;
+				return result;
+			},
 			startOptions: { systemConfig: project.systemConfig, zoneIds: [project.zone.id] },
 			tcpHostsOverride: {
 				[`${primaryModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
 				[`${fallbackModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
 			},
 		});
-		await waitForRootApiHealth(project.gatewayPort);
+		await waitForRootApiHealth({
+			gatewayPort: project.gatewayPort,
+			vm: gatewayVm,
+			startupZones: harness.runtime.zones,
+		});
 		const response = await fetch(
 			`http://127.0.0.1:${String(project.gatewayPort)}/p/main/v1/chat/completions`,
 			{
@@ -716,6 +762,35 @@ describeHermesFrameworkObservabilityE2e(
 						{
 							...dependencies,
 							gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+							connectGatewayControlSession: async (
+								connectOptions: Parameters<typeof connectGatewayControlSession>[0],
+							): ReturnType<typeof connectGatewayControlSession> => {
+								const startedAtMs = performance.now();
+								const fetchImpl = connectOptions.fetchImpl ?? fetch;
+								let initial502Count = 0;
+								let credentialResponseObserved = false;
+								const client = await connectGatewayControlSession({
+									...connectOptions,
+									fetchImpl: async (input, init) => {
+										const response = await fetchImpl(input, init);
+										if (!credentialResponseObserved && response.status === 502)
+											initial502Count += 1;
+										if (response.ok) credentialResponseObserved = true;
+										return response;
+									},
+								});
+								// Success-only receipt from the real requests; no extra probe,
+								// credential source, retry, budget or containment delay.
+								process.stdout.write(
+									JSON.stringify({
+										diagnostic: 'gateway-control-startup-accepted',
+										initial502Count,
+										elapsedMs: performance.now() - startedAtMs,
+										accepted: client.getDiagnostics().accepted,
+									}) + '\n',
+								);
+								return client;
+							},
 							managedVmFactory: {
 								createManagedVm: async (request) =>
 									await dependencies.managedVmFactory.createManagedVm(
@@ -736,7 +811,11 @@ describeHermesFrameworkObservabilityE2e(
 					[`${fallbackModelHost}:${String(provider.port)}`]: `127.0.0.1:${String(provider.port)}`,
 				},
 			});
-			await waitForRootApiHealth(project.gatewayPort);
+			await waitForRootApiHealth({
+				gatewayPort: project.gatewayPort,
+				vm: gatewayVm,
+				startupZones: harness.runtime.zones,
+			});
 			const response = await fetch(
 				`http://127.0.0.1:${String(project.gatewayPort)}/p/main/v1/chat/completions`,
 				{
