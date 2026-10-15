@@ -8,10 +8,7 @@ import {
 } from '@agent-vm/config-contracts';
 import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-lifecycle';
 
-import {
-	resolveManagedVmBackendPackageSpec,
-	resolveManagedVmMinimumZigVersion,
-} from '../build/managed-vm-build-tooling.js';
+import { resolveManagedVmBackendPackageSpec } from '../build/managed-vm-build-tooling.js';
 import { resolveConfigPath } from '../config/path-resolver.js';
 import { projectNamespaceSchema } from '../config/system-config-identifier-schemas.js';
 import {
@@ -72,7 +69,6 @@ export interface ScaffoldAgentVmProjectResult {
 
 interface ScaffoldAgentVmProjectDependencies {
 	readonly getHomeDir?: () => string;
-	readonly resolveManagedVmMinimumZigVersion?: typeof resolveManagedVmMinimumZigVersion;
 }
 
 export interface PromptAndStoreTokenDependencies {
@@ -797,9 +793,6 @@ async function scaffoldAgentVmProjectInternal(
 	created.push(...manualResult.updated);
 
 	if (options.hostSystemType === 'container') {
-		const resolveZigVersion =
-			dependencies.resolveManagedVmMinimumZigVersion ?? resolveManagedVmMinimumZigVersion;
-		const zigVersion = await resolveZigVersion();
 		const managedVmBackendPackageSpec = await resolveManagedVmBackendPackageSpec();
 		const vmHostSystemFiles = [
 			[
@@ -807,7 +800,6 @@ async function scaffoldAgentVmProjectInternal(
 				renderVmHostSystemDockerfile({
 					managedVmBackendPackageSpec,
 					imageArchitecture: options.architecture,
-					zigVersion,
 				}),
 			],
 			['start.sh', renderVmHostSystemStartScript({ zoneId: options.zoneId })],

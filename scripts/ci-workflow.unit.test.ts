@@ -8,6 +8,27 @@ async function readRepositoryFile(relativePath: string): Promise<string> {
 }
 
 describe('CI workflow topology', () => {
+	it('keeps normal managed-image publication compiler-free with real build and E2E gates', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/publish.yml');
+
+		expect(workflow).not.toMatch(
+			/minimum_zig_version|ziglang\.org|\.cache\/zig|zig-version|Install Zig/iu,
+		);
+		expect(workflow).not.toMatch(/GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE/iu);
+		for (const command of [
+			'pnpm build',
+			'pnpm lint',
+			'pnpm fmt:check',
+			'pnpm test:unit',
+			'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e',
+		]) {
+			expect(workflow).toContain(`run: ${command}`);
+		}
+		expect(workflow).toContain(
+			'sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils',
+		);
+	});
+
 	it('keeps every required proof lane behind one aggregate check', async () => {
 		const [workflow, hermesPythonTestScript] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),

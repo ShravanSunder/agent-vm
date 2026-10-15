@@ -23,6 +23,31 @@ async function createTemporaryDirectory(prefix: string): Promise<string> {
 	return temporaryDirectory;
 }
 
+async function assertCompilerFreeHostShell(
+	environment: NodeJS.ProcessEnv,
+	shellMode: '-c' | '-lc',
+): Promise<void> {
+	try {
+		// Stock host assembly uses sh -c. Check the same selected PATH after login profiles too.
+		const result = await promisify(execFile)(
+			'/bin/sh',
+			[
+				shellMode,
+				'PATH="$1"; export PATH; command -v zig',
+				'qualification-host',
+				environment.PATH ?? '',
+			],
+			{ env: environment },
+		);
+		throw new Error(
+			`Zig is reachable in qualification ${shellMode} shell: ${result.stdout.trim()}`,
+		);
+	} catch (error: unknown) {
+		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 1) return;
+		throw error;
+	}
+}
+
 function resolveHostCompatibleGuestArchitecture(): 'aarch64' | 'x86_64' {
 	if (process.arch === 'arm64') {
 		return 'aarch64';
@@ -106,6 +131,36 @@ SH
 });
 
 describeGondolinBuildPipelineSmoke('Gondolin 0.13 published-helper qualification', () => {
+	it.each(['-c', '-lc'] as const)(
+		'rejects a compiler-visible qualification environment in a %s shell',
+		async (shellMode) => {
+			const commandDirectory = await createTemporaryDirectory('agent-vm-compiler-visible-');
+			await symlink(process.execPath, path.join(commandDirectory, 'zig'));
+			await expect(
+				assertCompilerFreeHostShell({ ...process.env, PATH: commandDirectory }, shellMode),
+			).rejects.toThrow(/Zig is reachable in qualification/u);
+		},
+	);
+
+	it('keeps the qualification PATH after a login profile exposes a compiler', async () => {
+		const temporaryRoot = await createTemporaryDirectory('agent-vm-compiler-profile-');
+		const commandDirectory = path.join(temporaryRoot, 'host-commands');
+		const compilerDirectory = path.join(temporaryRoot, 'profile-commands');
+		await Promise.all([mkdir(commandDirectory), mkdir(compilerDirectory)]);
+		await symlink(process.execPath, path.join(compilerDirectory, 'zig'));
+		await writeFile(
+			path.join(temporaryRoot, '.profile'),
+			`export PATH='${compilerDirectory.replaceAll("'", "'\\''")}'\n`,
+		);
+		const environment = { ...process.env, HOME: temporaryRoot, PATH: commandDirectory };
+		const exposedCompiler = await promisify(execFile)('/bin/sh', ['-lc', 'command -v zig'], {
+			env: environment,
+		});
+		expect(exposedCompiler.stdout.trim()).toBe(path.join(compilerDirectory, 'zig'));
+		await expect(assertCompilerFreeHostShell(environment, '-c')).resolves.toBeUndefined();
+		await expect(assertCompilerFreeHostShell(environment, '-lc')).resolves.toBeUndefined();
+	});
+
 	it.each(['missing', 'corrupt'] as const)(
 		'rejects %s helper inputs without publishing an image',
 		async (failureKind) => {
@@ -155,6 +210,10 @@ describeGondolinBuildPipelineSmoke('Gondolin 0.13 published-helper qualification
 		const commandDirectory = path.join(temporaryRoot, 'host-commands');
 		await mkdir(commandDirectory);
 		const commandNames = [
+			'sh',
+			'find',
+			'which',
+			'tar',
 			'docker',
 			'qemu-system-aarch64',
 			'qemu-system-x86_64',
@@ -179,21 +238,10 @@ describeGondolinBuildPipelineSmoke('Gondolin 0.13 published-helper qualification
 		);
 		await symlink(process.execPath, path.join(commandDirectory, 'node'));
 		const previousPath = process.env.PATH;
-		const controlledPath = [
-			commandDirectory,
-			'/usr/local/bin',
-			'/usr/bin',
-			'/bin',
-			'/usr/sbin',
-			'/sbin',
-		].join(path.delimiter);
+		const controlledPath = commandDirectory;
 		const hostEnvironment = { ...process.env, PATH: controlledPath };
-		await expect(
-			runHostCommand('/bin/sh', ['-c', 'command -v zig'], { env: hostEnvironment }),
-		).rejects.toMatchObject({ code: 1 });
-		await expect(
-			runHostCommand('/bin/sh', ['-lc', 'command -v zig'], { env: hostEnvironment }),
-		).rejects.toMatchObject({ code: 1 });
+		await assertCompilerFreeHostShell(hostEnvironment, '-c');
+		await assertCompilerFreeHostShell(hostEnvironment, '-lc');
 		expect(process.env.GONDOLIN_SANDBOX_HELPERS_DIR).toBeUndefined();
 		expect(process.env.GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE ?? '').not.toMatch(
 			/^(1|true|yes|on)$/iu,

@@ -105,7 +105,7 @@ describe('publish workflow', () => {
 		}
 	});
 
-	it('installs Gondolin Zig only for explicit source-build publication', async () => {
+	it('keeps normal publication and shared setup on published helpers without Zig', async () => {
 		const [ciWorkflow, publishWorkflow, sharedSetupAction] = await Promise.all([
 			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'ci.yml'), 'utf8'),
 			fs.readFile(path.join(process.cwd(), '.github', 'workflows', 'publish.yml'), 'utf8'),
@@ -117,22 +117,24 @@ describe('publish workflow', () => {
 
 		expect(ciWorkflow).toContain('./.github/actions/setup-agent-vm');
 
-		expect(publishWorkflow).toContain('Resolve Gondolin Zig version');
-		expect(publishWorkflow).toContain('Cache Zig tarballs');
-		expect(publishWorkflow).toContain('path: .cache/zig');
+		for (const normalSetup of [publishWorkflow, sharedSetupAction]) {
+			expect(normalSetup).not.toMatch(
+				/minimum_zig_version|ziglang\.org|\.cache\/zig|zig-version|Install Zig/iu,
+			);
+			expect(normalSetup).not.toContain('GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE');
+		}
+		for (const command of [
+			'pnpm build',
+			'pnpm lint',
+			'pnpm fmt:check',
+			'pnpm test:unit',
+			'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e',
+		]) {
+			expect(publishWorkflow).toContain(`run: ${command}`);
+		}
 		expect(publishWorkflow).toContain(
-			'key: ${{ runner.os }}-zig-${{ steps.zig-version.outputs.arch }}-${{ steps.zig-version.outputs.version }}',
+			'sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils',
 		);
-		expect(publishWorkflow).toContain('--continue-at -');
-		expect(publishWorkflow).toContain('--speed-limit 1024');
-		expect(publishWorkflow).toContain('xz --test "${ZIG_ARCHIVE}"');
-		expect(publishWorkflow).toContain('sudo tar -xJf "${ZIG_ARCHIVE}" -C /opt');
-		expect(publishWorkflow).not.toContain('curl -fsSL "https://ziglang.org');
-		expect(publishWorkflow).not.toContain('-o /tmp/zig.tar.xz');
-
-		expect(sharedSetupAction).not.toContain('Resolve Gondolin Zig version');
-		expect(sharedSetupAction).not.toContain('Cache Zig tarballs');
-		expect(sharedSetupAction).not.toContain('ziglang.org');
 	});
 
 	it('uses the publish-specific 1Password item for local npm publish', async () => {

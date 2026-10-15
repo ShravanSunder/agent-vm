@@ -308,7 +308,8 @@ expose a native host-filesystem escape hatch.
 
 The adapter pins stock Gondolin 0.13.0. Normal assembly consumes its verified,
 architecture-matched published sandbox helpers, then assembles the custom guest
-rootfs, init and overlays. Host Zig is not required. Upstream Zig 0.17 metadata
+rootfs, init and overlays. Host Zig is not required; generated container-host
+scaffolds neither install it nor require it at startup. Upstream Zig 0.17 metadata
 applies to contributor helper source compilation, outside this cached image path.
 Incomplete source-build overrides remain rejected; missing or corrupt helper
 inputs fail preparation rather than selecting a compiler fallback.

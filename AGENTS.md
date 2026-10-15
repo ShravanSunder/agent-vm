@@ -449,7 +449,7 @@ Gondolin handles, filesystem objects, or `getVmInstance()` across that boundary.
 `vm-images/` holds Gondolin VM image recipes.
 
 `vm-host-system/` is optional boot plumbing for a generic container host that
-runs Docker, QEMU, Zig, and the controller.
+runs Docker, QEMU, image assembly tools, and the controller without requiring Zig.
 
 Storage boundaries are load-bearing. Durable zone state belongs in `stateDir`
 and is included in encrypted backups. Rebuildable artifacts belong in

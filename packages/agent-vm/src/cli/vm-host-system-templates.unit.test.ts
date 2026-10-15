@@ -10,7 +10,6 @@ import {
 const renderOptions = {
 	managedVmBackendPackageSpec: '@earendil-works/gondolin@0.9.1',
 	imageArchitecture: 'x86_64',
-	zigVersion: '0.15.2',
 } as const satisfies Parameters<typeof renderVmHostSystemDockerfile>[0];
 
 describe('vm-host-system templates', () => {
@@ -21,10 +20,10 @@ describe('vm-host-system templates', () => {
 		expect(dockerfile).toMatch(/qemu-system-x86.*python3/u);
 		expect(startScript).toMatch(/for cmd in .*python3/u);
 	});
-	it('substitutes zig version and gondolin package into the Dockerfile', () => {
+	it('uses published helpers without provisioning a host compiler', () => {
 		const dockerfile = renderVmHostSystemDockerfile(renderOptions);
 
-		expect(dockerfile).toContain('zig-x86_64-linux-0.15.2');
+		expect(dockerfile).not.toMatch(/ziglang\.org|\/opt\/zig|\/usr\/local\/bin\/zig/u);
 		expect(dockerfile).toContain('@earendil-works/gondolin@0.9.1');
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch x86_64');
 		expect(dockerfile).toContain(
@@ -40,8 +39,7 @@ describe('vm-host-system templates', () => {
 		});
 
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch aarch64');
-		expect(dockerfile).toContain('zig-aarch64-linux-0.15.2');
-		expect(dockerfile).not.toContain('zig-x86_64-linux-0.15.2');
+		expect(dockerfile).not.toMatch(/ziglang\.org|\/opt\/zig/u);
 	});
 
 	it('does not bake generated Git SHA metadata into the host image', () => {
@@ -51,6 +49,22 @@ describe('vm-host-system templates', () => {
 		expect(dockerfile).not.toContain('gitSha');
 	});
 
+	it('requires genuine normal-build commands without requiring Zig at startup', () => {
+		const startScript = renderVmHostSystemStartScript({ zoneId: 'coding-agent' });
+
+		const requiredCommands = startScript.match(/^for cmd in (.+); do$/mu)?.[1]?.split(' ');
+		expect(requiredCommands).toEqual([
+			'mke2fs',
+			'docker',
+			'agent-vm',
+			'cpio',
+			'lz4',
+			'qemu-img',
+			'qemu-system-x86_64',
+			'python3',
+		]);
+		expect(startScript).toContain('agent-vm build --config /etc/agent-vm/system.json');
+	});
 	it('substitutes zone id into the start script exec line', () => {
 		const startScript = renderVmHostSystemStartScript({ zoneId: 'coding-agent' });
 
@@ -75,5 +89,6 @@ describe('vm-host-system templates', () => {
 
 		expect(readme).toContain('vm-host-system');
 		expect(readme).toContain('coding-agent');
+		expect(readme).toContain('does not install or require Zig');
 	});
 });

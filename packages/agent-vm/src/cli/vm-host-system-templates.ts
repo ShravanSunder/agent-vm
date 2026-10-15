@@ -1,19 +1,13 @@
 export interface RenderVmHostSystemDockerfileOptions {
 	readonly imageArchitecture: 'aarch64' | 'x86_64';
 	readonly managedVmBackendPackageSpec: string;
-	readonly zigVersion: string;
 }
 
 export interface RenderVmHostSystemZoneOptions {
 	readonly zoneId: string;
 }
 
-function resolveLinuxZigArchitecture(imageArchitecture: 'aarch64' | 'x86_64'): string {
-	return imageArchitecture === 'aarch64' ? 'aarch64' : 'x86_64';
-}
-
 export function renderVmHostSystemDockerfile(options: RenderVmHostSystemDockerfileOptions): string {
-	const zigArchitecture = resolveLinuxZigArchitecture(options.imageArchitecture);
 	return `# syntax=docker/dockerfile:1.7
 # --------------------------------------------------------------------
 # agent-vm vm-host-system - container host runtime image (multi-stage)
@@ -53,10 +47,6 @@ RUN apt-get update \\
       qemu-system-x86 qemu-utils e2fsprogs curl xz-utils cpio lz4 python3 \\
     && apt-get clean \\
     && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://ziglang.org/download/${options.zigVersion}/zig-${zigArchitecture}-linux-${options.zigVersion}.tar.xz \\
-    | tar -xJ -C /opt \\
-    && ln -s /opt/zig-${zigArchitecture}-linux-${options.zigVersion}/zig /usr/local/bin/zig
 
 COPY --from=builder /deploy-agent-vm /opt/agent-vm
 RUN printf '#!/bin/sh\\nexec node /opt/agent-vm/dist/cli/agent-vm-entrypoint.js "$@"\\n' > /usr/local/bin/agent-vm && \\
@@ -107,7 +97,7 @@ if ! timeout 120 bash -c 'until docker info >/dev/null 2>&1; do sleep 1; done'; 
 fi
 
 echo "[start] Running preflight checks..."
-for cmd in zig mke2fs docker agent-vm cpio lz4 qemu-img qemu-system-x86_64 python3; do
+for cmd in mke2fs docker agent-vm cpio lz4 qemu-img qemu-system-x86_64 python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "[FATAL] Required command not found: $cmd" >&2
     exit 1
@@ -182,6 +172,8 @@ export function renderVmHostSystemReadme(options: RenderVmHostSystemZoneOptions)
 \`vm-host-system/\` contains the outer runtime image and boot plumbing for the container host that runs agent-vm.
 
 It is separate from \`vm-images/\`: those are inner Gondolin VM recipes. This folder is the host system that starts Docker, checks the shared cache, builds the nested gateway OCI image on cache miss, and launches the controller for zone \`${options.zoneId}\`.
+
+Normal image preparation uses published Gondolin helpers. This host scaffold does not install or require Zig; deliberately selected helper source compilation needs a compatible compiler.
 
 Regenerate these files with:
 

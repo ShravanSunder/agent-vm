@@ -1085,13 +1085,14 @@ describe('scaffoldAgentVmProject', () => {
 		);
 		expect(dockerfile).not.toContain('ARG GIT_SHA');
 		expect(dockerfile).not.toContain('gitSha');
-		expect(dockerfile).toContain('zig-x86_64-linux-');
+		expect(dockerfile).not.toMatch(/ziglang\.org|\/opt\/zig/u);
 
 		const startScript = await fs.readFile(
 			path.join(targetDir, 'vm-host-system', 'start.sh'),
 			'utf8',
 		);
 		expect(startScript).toContain('--zone coding-agent');
+		expect(startScript).not.toMatch(/for cmd in [^\n]*\bzig\b/u);
 
 		await expect(
 			fs.access(path.join(targetDir, 'vm-host-system', 'agent-vm-controller.service')),
@@ -1130,7 +1131,7 @@ describe('scaffoldAgentVmProject', () => {
 		);
 
 		expect(gatewayBuildConfig.arch).toBe('aarch64');
-		expect(dockerfile).toContain('zig-aarch64-linux-');
+		expect(dockerfile).not.toMatch(/ziglang\.org|\/opt\/zig/u);
 		expect(dockerfile).toContain('image pull alpine-base:latest --arch aarch64');
 	});
 
