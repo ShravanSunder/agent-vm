@@ -33,6 +33,7 @@ import {
 	scaffoldHermesE2eProject,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
+import { rethrowPortalCompositionFailure } from './portal-composition-failure-diagnostics.js';
 import {
 	buildPortalCompositionFixtureConfig,
 	buildPortalCompositionHostScriptBody,
@@ -396,18 +397,23 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 				signal: lossObservation.signal,
 			}),
 		])
-			.catch((error: unknown) => {
-				if (modelServer !== undefined) {
-					try {
-						process.stderr.write(
-							`[portal-composition-model-stage] ${JSON.stringify(snapshotPortalCompositionModelProgress(modelServer))}\n`,
-						);
-					} catch {
-						// Diagnostics must never replace the real turn failure.
-					}
-				}
-				throw error;
-			})
+			.catch((error: unknown) =>
+				rethrowPortalCompositionFailure(error, {
+					modelProgress: () =>
+						modelServer === undefined
+							? undefined
+							: snapshotPortalCompositionModelProgress(modelServer),
+					mcpCalls: mcpServer?.calls ?? [],
+					vmRequests: controllerManagedVmRequests,
+					paths: {
+						hostEffectPath,
+						concurrencyOrderPath,
+						lossOrderPath,
+						lossPidPath,
+						lossFastTimestampPath,
+					},
+				}),
+			)
 			.finally(() => lossObservation.abort());
 		expect(
 			response,
