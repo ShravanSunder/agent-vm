@@ -261,4 +261,38 @@ describe('CI workflow topology', () => {
 		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:hermes');
 		expect(vmJob).not.toMatch(/continue-on-error|timeout-minutes|--exclude|--retry/u);
 	});
+	it('runs one bounded stock SDK probe after shard four even when its VM tests fail', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const vmJob = workflow.slice(workflow.indexOf('  e2e-vm:'), workflow.indexOf('  check:'));
+		const inspection = vmJob.indexOf('      - name: Observe restored prepared image assets');
+		const vmProof = vmJob.indexOf('      - name: Run VM shard');
+		const probe = vmJob.indexOf('      - name: Probe restored image boot through stock SDK');
+		const hermes = vmJob.indexOf('      - parallel:', vmProof);
+		expect(probe).toBeGreaterThan(vmProof);
+		expect(hermes).toBeGreaterThan(probe);
+		expect(inspection).toBeLessThan(vmProof);
+		expect(vmJob.slice(inspection, vmProof)).toContain('id: image-cache-inspection');
+		const probeStep = vmJob.slice(probe, hermes);
+		expect(probeStep).toContain(
+			"if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-cache-inspection.outcome == 'success'",
+		);
+		expect(probeStep).toContain('run: pnpm exec tsx scripts/probe-e2e-image-boot.ts');
+		for (const binding of [
+			'CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}',
+			'CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}',
+			'CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}',
+			'CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}',
+			'CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}',
+		])
+			expect(probeStep).toContain(binding);
+		expect(workflow.match(/run: pnpm exec tsx scripts\/probe-e2e-image-boot\.ts/gu)).toHaveLength(
+			1,
+		);
+		expect(probeStep).not.toMatch(
+			/continue-on-error|timeout-minutes|uses:|retry|restore-e2e|prepare-e2e|save@/u,
+		);
+		expect(vmJob).toContain('test "${HERMES_CACHE_HIT}" = true');
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}');
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:hermes');
+	});
 });

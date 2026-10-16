@@ -474,7 +474,7 @@ function classifyIoFailure(error: unknown): never {
 	}
 	throw error;
 }
-const osInspectionIo: InspectionIo = {
+export const osInspectionIo: InspectionIo = {
 	async lstat(filePath) {
 		try {
 			const info = await lstat(filePath);
