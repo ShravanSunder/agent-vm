@@ -511,3 +511,121 @@ describe('bounded projection of existing fixture facts', () => {
 		).rejects.toBe(original);
 	});
 });
+
+describe('post-Node phase and credentialed state projection', () => {
+	const directory = '/synthetic/credentialed';
+	const filename = 'credentialed-' + 'a'.repeat(64) + '.json';
+	const phasePath = '/synthetic/workspace/portal-composition-program-phase.json';
+	it.each([
+		['creation-started', false],
+		['vm-created', false],
+		['current-active', true],
+		['current-idle', true],
+	] as const)('projects %s without private record contents', async (state, identityPresent) => {
+		const record = {
+			agentId: privateMarker,
+			controllerEpoch: privateMarker,
+			gatewayEpoch: privateMarker,
+			generation: 3,
+			agentRuntimeRevision: privateMarker,
+			parentGatewayVmId: privateMarker,
+			recordId: privateMarker,
+			recordVersion: 2,
+			runtimeEpoch: privateMarker,
+			stablePrincipal: privateMarker,
+			updatedAtMs: 101,
+			zoneId: privateMarker,
+			kind: state,
+			...(state === 'creation-started' ? {} : { vmId: privateMarker }),
+			...(identityPresent
+				? {
+						identity: {
+							hostProcessId: 42,
+							command: privateMarker,
+							processStartIdentity: privateMarker,
+							vmId: privateMarker,
+						},
+					}
+				: {}),
+			...(state === 'current-active' ? { activeOperationId: privateMarker, startedAtMs: 100 } : {}),
+			...(state === 'current-idle' ? { idleExpiresAtMs: 200, lastUsedAtMs: 100 } : {}),
+		};
+		const files = new Map([
+			[phasePath, content(JSON.stringify({ phase: 'credentialed-write-started', privateMarker }))],
+			[directory + '/' + filename, content(JSON.stringify(record))],
+		]);
+		const evidence = await collectFacts({
+			...defaults,
+			credentialedRuntimeDirectory: directory,
+			readDirectory: async () => [filename],
+			readFile: reader(files),
+		});
+		expect(evidence.programPhase).toEqual({
+			kind: 'present-valid',
+			phase: 'credentialed-write-started',
+		});
+		expect(evidence.credentialedRuntime).toEqual({
+			kind: 'present-valid',
+			state,
+			generation: 3,
+			updatedAtMs: 101,
+			...(state === 'current-active' ? { startedAtMs: 100 } : {}),
+			identityPresent,
+		});
+		expect(JSON.stringify(evidence)).not.toContain(privateMarker);
+		expect(JSON.stringify(evidence)).not.toContain('/synthetic');
+	});
+	it.each([
+		[{ kind: 'absent' }, 'absent'],
+		[{ kind: 'read-failed' }, 'read-failed'],
+		[{ kind: 'truncated' }, 'malformed'],
+		[content(JSON.stringify({ phase: privateMarker, kind: privateMarker })), 'malformed'],
+	] satisfies readonly (readonly [PortalCompositionFileInput, string])[])(
+		'rejects unavailable or unrecognized post-Node inputs %j',
+		async (input, kind) => {
+			const files = new Map([
+				[phasePath, input],
+				[directory + '/' + filename, input],
+			]);
+			const evidence = await collectFacts({
+				...defaults,
+				credentialedRuntimeDirectory: directory,
+				readDirectory: async () => [filename],
+				readFile: reader(files),
+			});
+			expect(evidence.programPhase).toEqual({ kind });
+			expect(evidence.credentialedRuntime).toEqual({ kind });
+			expect(JSON.stringify(evidence)).not.toContain(privateMarker);
+		},
+	);
+	it('refuses ambiguous records and untrusted directory names', async () => {
+		const options = {
+			...defaults,
+			credentialedRuntimeDirectory: directory,
+			readFile: reader(new Map()),
+		};
+		expect(
+			(
+				await collectFacts({
+					...options,
+					readDirectory: async () => [filename, filename.replace('aaa', 'bbb')],
+				})
+			).credentialedRuntime,
+		).toEqual({ kind: 'multiple-records' });
+		expect(
+			(await collectFacts({ ...options, readDirectory: async () => ['../' + privateMarker] }))
+				.credentialedRuntime,
+		).toEqual({ kind: 'absent' });
+	});
+	it('bounds a hanging directory observation with the existing deadline', async () => {
+		vi.useFakeTimers();
+		const pending = collectFacts({
+			...defaults,
+			credentialedRuntimeDirectory: directory,
+			readDirectory: () => new Promise<readonly string[]>(() => undefined),
+			readFile: reader(new Map()),
+		});
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect((await pending).credentialedRuntime).toEqual({ kind: 'read-failed' });
+	});
+});

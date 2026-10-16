@@ -1,8 +1,29 @@
 import { constants as fsConstants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { z } from 'zod/v4';
+
+import { credentialedRuntimeRecordSchema } from '../controller/credentialed-runtime/credentialed-runtime-record.js';
+import {
+	portalCompositionProgramPhaseFilename,
+	portalCompositionProgramPhases,
+} from './portal-composition-hermes-e2e-program.js';
+
+const programPhaseSchema = z.object({ phase: z.enum(portalCompositionProgramPhases) });
+type ProgramPhaseEvidence =
+	| ({ readonly kind: 'present-valid' } & z.infer<typeof programPhaseSchema>)
+	| { readonly kind: MissingFileState | 'no-tool-vm-workspace-request' };
+type CredentialedRuntimeEvidence =
+	| {
+			readonly kind: 'present-valid';
+			readonly state: z.infer<typeof credentialedRuntimeRecordSchema>['kind'];
+			readonly generation: number;
+			readonly updatedAtMs: number;
+			readonly identityPresent: boolean;
+			readonly startedAtMs?: number;
+	  }
+	| { readonly kind: MissingFileState | 'multiple-records' | 'not-configured' };
 
 const maximumBodyBytes = 4096;
 const maximumBodyChunks = 64;
@@ -179,6 +200,8 @@ interface FailureFactsOptions {
 	readonly mcpCalls: readonly { readonly name: string }[];
 	readonly vmRequests: readonly unknown[];
 	readonly readFile?: PortalCompositionFileReader;
+	readonly credentialedRuntimeDirectory?: string;
+	readonly readDirectory?: (directory: string) => Promise<readonly string[]>;
 }
 type ModelEvidence =
 	| { readonly kind: 'present-valid'; readonly progress: z.infer<typeof modelProgressSchema> }
@@ -214,6 +237,8 @@ export interface PortalCompositionFailureFacts {
 		readonly collectionTruncated: boolean;
 	};
 	readonly origin: OriginEvidence;
+	readonly programPhase: ProgramPhaseEvidence;
+	readonly credentialedRuntime: CredentialedRuntimeEvidence;
 	readonly hostEffect: HostEffectEvidence;
 	readonly concurrencyOrder: OrderedEvidence;
 	readonly lossOrder: OrderedEvidence;
@@ -323,6 +348,46 @@ function presence(input: PortalCompositionFileInput): {
 	return { kind: input.kind === 'content' || input.kind === 'truncated' ? 'present' : input.kind };
 }
 
+async function collectCredentialedRuntimeEvidence(
+	options: FailureFactsOptions,
+): Promise<CredentialedRuntimeEvidence> {
+	const directory = options.credentialedRuntimeDirectory;
+	if (directory === undefined) return { kind: 'not-configured' };
+	if (!path.isAbsolute(directory) || path.normalize(directory) !== directory)
+		return { kind: 'read-failed' };
+	const collect = async (): Promise<CredentialedRuntimeEvidence> => {
+		try {
+			const names = await (options.readDirectory ?? readdir)(directory);
+			if (names.length > maximumFacts) return { kind: 'malformed' };
+			let filename: string | undefined;
+			for (const name of names) {
+				if (!/^credentialed-[a-f0-9]{64}\.json$/u.test(name)) continue;
+				if (filename !== undefined) return { kind: 'multiple-records' };
+				filename = name;
+			}
+			if (filename === undefined) return { kind: 'absent' };
+			const input = await readBoundedFile(
+				path.join(directory, filename),
+				options.readFile ?? readFilePrefix,
+			);
+			const parsed = parseFile(input, credentialedRuntimeRecordSchema);
+			if (parsed.kind !== 'parsed') return parsed;
+			const record = parsed.value;
+			return {
+				kind: 'present-valid',
+				state: record.kind,
+				generation: record.generation,
+				updatedAtMs: record.updatedAtMs,
+				identityPresent: 'identity' in record && record.identity !== null,
+				...('startedAtMs' in record ? { startedAtMs: record.startedAtMs } : {}),
+			};
+		} catch {
+			return { kind: 'read-failed' };
+		}
+	};
+	return await withinDiagnosticDeadline(collect(), { kind: 'read-failed' });
+}
+
 export async function collectPortalCompositionFailureFacts(
 	options: FailureFactsOptions,
 ): Promise<PortalCompositionFailureFacts> {
@@ -352,22 +417,32 @@ export async function collectPortalCompositionFailureFacts(
 		} else vmCounts.other += 1;
 	}
 	const reader = options.readFile ?? readFilePrefix;
-	const [originInput, hostInput, concurrencyInput, lossInput, pidInput, timestampInput] =
-		await Promise.all([
-			workspaceRoot === undefined
-				? Promise.resolve(undefined)
-				: readBoundedFile(
-						path.join(workspaceRoot, 'portal-composition-tool-vm-origin.json'),
-						reader,
-					),
-			readBoundedFile(options.paths.hostEffectPath, reader),
-			readBoundedFile(options.paths.concurrencyOrderPath, reader),
-			readBoundedFile(options.paths.lossOrderPath, reader),
-			readBoundedFile(options.paths.lossPidPath, reader),
-			readBoundedFile(options.paths.lossFastTimestampPath, reader),
-		]);
+	const [
+		originInput,
+		hostInput,
+		concurrencyInput,
+		lossInput,
+		pidInput,
+		timestampInput,
+		phaseInput,
+		credentialedRuntime,
+	] = await Promise.all([
+		workspaceRoot === undefined
+			? Promise.resolve(undefined)
+			: readBoundedFile(path.join(workspaceRoot, 'portal-composition-tool-vm-origin.json'), reader),
+		readBoundedFile(options.paths.hostEffectPath, reader),
+		readBoundedFile(options.paths.concurrencyOrderPath, reader),
+		readBoundedFile(options.paths.lossOrderPath, reader),
+		readBoundedFile(options.paths.lossPidPath, reader),
+		readBoundedFile(options.paths.lossFastTimestampPath, reader),
+		workspaceRoot === undefined
+			? Promise.resolve(undefined)
+			: readBoundedFile(path.join(workspaceRoot, portalCompositionProgramPhaseFilename), reader),
+		collectCredentialedRuntimeEvidence(options),
+	]);
 	const origin = originInput === undefined ? undefined : parseFile(originInput, originSchema);
 	const host = parseFile(hostInput, hostEffectSchema);
+	const phase = phaseInput === undefined ? undefined : parseFile(phaseInput, programPhaseSchema);
 	return {
 		kind: 'phase-facts',
 		model,
@@ -389,6 +464,13 @@ export async function collectPortalCompositionFailureFacts(
 							hostSentinelVisible: origin.value.hostSentinelVisible,
 						}
 					: origin,
+		programPhase:
+			phase === undefined
+				? { kind: vmCounts.toolVmWorkspace === 0 ? 'no-tool-vm-workspace-request' : 'read-failed' }
+				: phase.kind === 'parsed'
+					? { kind: 'present-valid', ...phase.value }
+					: phase,
+		credentialedRuntime,
 		hostEffect:
 			host.kind === 'parsed'
 				? {

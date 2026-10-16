@@ -12,6 +12,11 @@ import {
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
@@ -43,6 +48,7 @@ import {
 	buildPortalCompositionProgram as buildSharedPortalCompositionProgram,
 	portalCompositionArtifactNamespace,
 	portalCompositionArtifactOperationName,
+	portalCompositionProgramPhaseFilename,
 	portalCompositionLossCancellationWindowMilliseconds,
 	portalCompositionLossProbeOperationName,
 	validatePortalCompositionGeneratedProgramSyntax,
@@ -291,6 +297,14 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		if (zone === undefined || zone.gateway.type !== 'hermes') {
 			throw new Error('Expected the portal composition Hermes zone.');
 		}
+		const credentialedRuntimeDirectory = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
+				}),
+				zoneId: zone.id,
+			}),
+		}).credentialedRuntimeRecords.directoryPath;
 		zone.gateway.profileSecretProjectionsByAgent[agentId] = {
 			API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
 		};
@@ -399,6 +413,7 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		])
 			.catch((error: unknown) =>
 				rethrowPortalCompositionFailure(error, {
+					credentialedRuntimeDirectory,
 					modelProgress: () =>
 						modelServer === undefined
 							? undefined
@@ -561,6 +576,16 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		if (workspaceMount?.kind !== 'owned-filtered-workspace') {
 			throw new Error('Portal composition E2E did not observe the Tool VM workspace mount.');
 		}
+		const programPhase: unknown = JSON.parse(
+			await readFile(
+				path.join(
+					workspaceMount.directory.identity.canonicalPath,
+					portalCompositionProgramPhaseFilename,
+				),
+				'utf8',
+			),
+		);
+		expect(programPhase).toEqual({ phase: 'loss-prepare-returned' });
 		const toolVmOrigin: unknown = JSON.parse(
 			await readFile(
 				path.join(
