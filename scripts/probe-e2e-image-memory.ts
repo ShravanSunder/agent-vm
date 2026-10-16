@@ -125,12 +125,12 @@ async function observeSelectedKernelHeader(props: {
 			canonicalKernel !== path.join(canonicalImage, 'vmlinuz-virt')
 		)
 			return { observation: { status: 'unavailable', reason: 'unsafe-path' }, primaryError: null };
+		if (info.sizeBytes !== expected.sizeBytes)
+			return { observation: { status: 'changed', reason: 'size-mismatch' }, primaryError: null };
 		if (!Number.isSafeInteger(info.sizeBytes) || info.sizeBytes <= 0)
 			return { observation: { status: 'unavailable', reason: 'invalid-size' }, primaryError: null };
 		if (info.sizeBytes > inspectionLimits.kernel)
 			return { observation: { status: 'unavailable', reason: 'over-limit' }, primaryError: null };
-		if (info.sizeBytes !== expected.sizeBytes)
-			return { observation: { status: 'changed', reason: 'size-mismatch' }, primaryError: null };
 		const prefix = Buffer.alloc(0x238);
 		const hash = createHash('sha256');
 		let sizeBytes = 0;

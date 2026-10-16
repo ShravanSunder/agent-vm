@@ -407,7 +407,7 @@ describe('bound kernel header admission for the exact 2G boundary control', () =
 		expect(data.options).toEqual([]);
 	});
 	it.each([0, -1, Number.NaN, inspectionLimits.kernel + 1])(
-		'rejects an invalid or capped kernel size %s',
+		'classifies a replacement size %s as changed measured identity',
 		async (sizeBytes) => {
 			const data = fixture();
 			const original = data.dependencies.inputIo;
@@ -422,8 +422,10 @@ describe('bound kernel header admission for the exact 2G boundary control', () =
 					},
 				},
 			});
+			expect(result.exitCode).toBe(1);
 			expect(result.record).toMatchObject({
-				inputStatus: 'kernel-header-unavailable',
+				inputStatus: 'kernel-header-changed',
+				kernelHeader: { status: 'changed', reason: 'size-mismatch' },
 				probe: null,
 			});
 			expect(data.options).toEqual([]);
