@@ -82,6 +82,11 @@ It checks:
 - `vm-host-system/` files when present in a checked-out container runtime
   layout, or runtime host files when running from `/etc/agent-vm/system.json`.
 
+Normal Gondolin image preparation consumes published sandbox helpers and still
+assembles the custom guest image. Host Zig is not required for this path. Doctor
+does not resolve or download helpers; actual helper, image-build and VM-boot
+failures remain errors from those operations.
+
 `doctor` does not treat age, 1Password CLI, or macOS Keychain as universal
 requirements. They are only relevant to flows that use them:
 

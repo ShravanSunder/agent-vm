@@ -164,8 +164,6 @@ function fastDoctorEnvironmentOptions(binaryNames: readonly string[] = []): {
 			dockerDaemonReady: binaryNames.includes('docker'),
 			env: {},
 			nodeVersion: 'v24.0.0',
-			requiredZigVersion: '0.16.0',
-			zigVersion: '0.16.0',
 		}),
 	};
 }

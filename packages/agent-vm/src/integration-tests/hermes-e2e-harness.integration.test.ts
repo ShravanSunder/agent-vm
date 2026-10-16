@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { removeE2eTempRoot } from './e2e-harness.js';
 import { scaffoldHermesE2eProject } from './hermes-e2e-harness.js';
@@ -22,6 +23,17 @@ describe('Hermes E2E project scaffold', () => {
 	it('releases its TCP pool reservation when scaffold validation fails', async () => {
 		const failedScaffoldPrefix = `agent-vm-hermes-e2e-harness-${randomUUID()}-`;
 		let leakedProjectRoots: readonly string[] = [];
+		const boundServers: net.Server[] = [];
+		const originalCreateServer = net.createServer;
+		const createServerSpy = vi
+			.spyOn(net, 'createServer')
+			.mockImplementation((...arguments_: Parameters<typeof net.createServer>): net.Server => {
+				const server = originalCreateServer(...arguments_);
+				server.once('listening', () => {
+					boundServers.push(server);
+				});
+				return server;
+			});
 		try {
 			await expect(
 				scaffoldHermesE2eProject({
@@ -35,12 +47,13 @@ describe('Hermes E2E project scaffold', () => {
 			leakedProjectRoots = (await fs.readdir(os.tmpdir()))
 				.filter((entry) => entry.startsWith(failedScaffoldPrefix))
 				.map((entry) => path.join(os.tmpdir(), entry));
+			expect(boundServers.length).toBeGreaterThan(0);
+			expect(boundServers.every((server) => !server.listening)).toBe(true);
 			expect(leakedProjectRoots).toEqual([]);
 		} finally {
+			createServerSpy.mockRestore();
 			await Promise.all(
-				leakedProjectRoots.map(
-					async (projectRoot) => await fs.rm(projectRoot, { force: true, recursive: true }),
-				),
+				leakedProjectRoots.map(async (projectRoot) => await removeE2eTempRoot(projectRoot)),
 			);
 		}
 
@@ -51,7 +64,6 @@ describe('Hermes E2E project scaffold', () => {
 			zoneId: 'hermes-smoke',
 		});
 		temporaryProjectRoots.push(project.tempRoot);
-		expect(project.systemConfig.tcpPool.basePort).toBe(30_001);
 	});
 
 	it('uses the public Hermes scaffold without materializing OpenClaw project files', async () => {

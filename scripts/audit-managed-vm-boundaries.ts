@@ -17,7 +17,7 @@ export interface ManagedVmBoundaryAuditFinding {
 
 const ADAPTER_PACKAGE = '@agent-vm/gondolin-vm-adapter';
 const GONDOLIN_SDK_PACKAGE = '@earendil-works/gondolin';
-const GONDOLIN_SDK_VERSION = '0.12.0';
+const GONDOLIN_SDK_VERSION = '0.13.0';
 const OLD_PACKAGE_NAMES = ['@agent-vm/gondolin-adapter', '@agent-vm/gateway-interface'] as const;
 const REMOVED_WORKER_AND_CODEX_PACKAGE_NAMES = [
 	'@agent-vm/agent-vm-worker',

@@ -1804,115 +1804,126 @@ describe('startGatewayZone', () => {
 		);
 	});
 
-	it('captures Tool Portal startup evidence before containing an initial control attachment failure', async () => {
-		// Arrange
-		const vmId = 'vm-managed-control-attachment-failure';
-		const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
-		const { close, managedVm } = createHealthyGatewayVmStub(vmId, 28_413);
-		const lifecycleEvents: string[] = [];
-		let vmDestroyed = false;
-		close.mockImplementation(async () => {
-			vmDestroyed = true;
-			lifecycleEvents.push('destroy');
-		});
-		const controlAttachmentError = new Error(
-			'Gateway control credential readiness failed with HTTP 502 before the 3000ms deadline.',
-		);
-		const rawCredentialValues = [
-			'op://agent-vm-testing/private-item/credential',
-			'ops_service_account_value_123456789',
-			'gateway-token-123',
-		] as const;
-		const diagnosticOutputs = {
-			fatalEvidence: `{"kind":"fatal","detail":"${rawCredentialValues[0]}"}`,
-			processes:
-				'role=tool-portal pid=221 ppid=1 uid=0 command=agent-vm-gateway-runtime\nrole=hermes pid=222 ppid=1 uid=0 command=hermes gateway',
-			readinessEvidence: `{"kind":"starting","token":"${rawCredentialValues[1]}"}`,
-			sockets: 'table=/proc/net/tcp local=0100007F:496E state=LISTEN',
-			toolPortalLog: `tool portal failed before bind: password=${rawCredentialValues[2]}`,
-		} as const;
-		const exec = vi.fn((command: Parameters<ManagedVm['exec']>[0]) => {
-			lifecycleEvents.push('diagnostics');
-			if (vmDestroyed) {
-				throw new Error('VM already destroyed before diagnostic capture');
-			}
-			if (typeof command === 'string') {
-				throw new Error(`Unexpected managed Gateway command '${command}'.`);
-			}
-			if (command[0] === 'tail') {
-				return createManagedExecProcessStub({ stdout: diagnosticOutputs.toolPortalLog });
-			}
-			if (command[0] === 'sh' && command[2]?.includes('/proc/[0-9]*')) {
-				return createManagedExecProcessStub({ stdout: diagnosticOutputs.processes });
-			}
-			if (command[0] === 'sh' && command[2]?.includes('/proc/net/tcp')) {
-				return createManagedExecProcessStub({ stdout: diagnosticOutputs.sockets });
-			}
-			const evidencePath = command.at(-1);
-			if (evidencePath?.endsWith('tool-portal.readiness.json')) {
-				return createManagedExecProcessStub({ stdout: diagnosticOutputs.readinessEvidence });
-			}
-			if (evidencePath?.endsWith('tool-portal.fatal.json')) {
-				return createManagedExecProcessStub({ stdout: diagnosticOutputs.fatalEvidence });
-			}
-			throw new Error(`Unexpected managed Gateway diagnostic command '${command.join(' ')}'.`);
-		});
-		managedVm.exec = exec;
-		const connectGatewayControlSession = vi.fn<GatewayControlSessionConnector>(async () => {
-			lifecycleEvents.push('control-attachment');
-			throw controlAttachmentError;
-		});
-		const writeGatewayRuntimeRecord = vi.fn<
-			NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
-		>(async () => {});
-
-		// Act
-		let caughtError: Error | undefined;
-		try {
-			await startGatewayZone(
-				{
-					createVmOwnership: ownership.createVmOwnership,
-					secretResolver: createGatewaySecretResolver({
-						DISCORD_BOT_TOKEN: 'discord-token',
-						TEST_GATEWAY_SECRET: 'gateway-token-123',
-						PERPLEXITY_API_KEY: 'pplx-key',
-					}),
-					systemConfig: await createSystemConfig(),
-					zoneId: 'shravan',
-				},
-				{
-					connectGatewayControlSession,
-					createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
-					managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
-					managedVmImages: testManagedVmImages,
-					writeGatewayRuntimeRecord,
-				},
-				'controller-internal',
-				{ dispatchRuntimeReadiness: false },
+	it.each(['complete', 'incomplete'] as const)(
+		'captures %s Tool Portal startup evidence before containing an initial control attachment failure',
+		async (diagnosticKind) => {
+			// Arrange
+			const vmId = 'vm-managed-control-attachment-failure';
+			const ownership = createTestVmOwnershipHarness(vmId, createTestGatewayEpochIdentity(vmId));
+			const { close, managedVm } = createHealthyGatewayVmStub(vmId, 28_413);
+			const lifecycleEvents: string[] = [];
+			let vmDestroyed = false;
+			close.mockImplementation(async () => {
+				vmDestroyed = true;
+				lifecycleEvents.push('destroy');
+			});
+			const controlAttachmentError = new Error(
+				'Gateway control credential readiness failed with HTTP 502 before the 3000ms deadline.',
 			);
-		} catch (error) {
-			if (!(error instanceof Error)) {
-				throw error;
-			}
-			caughtError = error;
-		}
+			const rawCredentialValues = [
+				'op://agent-vm-testing/private-item/credential',
+				'ops_service_account_value_123456789',
+				'gateway-token-123',
+			] as const;
+			const diagnosticOutputs = {
+				fatalEvidence: `{"kind":"fatal","detail":"${rawCredentialValues[0]}"}`,
+				processes:
+					'role=tool-portal pid=221 ppid=1 uid=0 command=agent-vm-gateway-runtime\nrole=hermes pid=222 ppid=1 uid=0 command=hermes gateway',
+				readinessEvidence: `{"kind":"starting","token":"${rawCredentialValues[1]}"}`,
+				sockets: 'table=/proc/net/tcp local=0100007F:496E state=LISTEN',
+				toolPortalLog: `tool portal failed before bind: password=${rawCredentialValues[2]}`,
+			} as const;
+			const exec = vi.fn((command: Parameters<ManagedVm['exec']>[0]) => {
+				lifecycleEvents.push('diagnostics');
+				if (vmDestroyed) {
+					throw new Error('VM already destroyed before diagnostic capture');
+				}
+				if (typeof command === 'string') {
+					throw new Error(`Unexpected managed Gateway command '${command}'.`);
+				}
+				if (command[0] === 'tail') {
+					if (diagnosticKind === 'incomplete')
+						throw new Error('section read rejected: password=' + rawCredentialValues[2]);
+					return createManagedExecProcessStub({ stdout: diagnosticOutputs.toolPortalLog });
+				}
+				if (command[0] === 'sh' && command[2]?.includes('/proc/[0-9]*')) {
+					return createManagedExecProcessStub({ stdout: diagnosticOutputs.processes });
+				}
+				if (command[0] === 'sh' && command[2]?.includes('/proc/net/tcp')) {
+					return createManagedExecProcessStub({ stdout: diagnosticOutputs.sockets });
+				}
+				const evidencePath = command.at(-1);
+				if (evidencePath?.endsWith('tool-portal.readiness.json')) {
+					return createManagedExecProcessStub({
+						stdout: diagnosticKind === 'incomplete' ? '' : diagnosticOutputs.readinessEvidence,
+					});
+				}
+				if (evidencePath?.endsWith('tool-portal.fatal.json')) {
+					return createManagedExecProcessStub({ stdout: diagnosticOutputs.fatalEvidence });
+				}
+				throw new Error(`Unexpected managed Gateway diagnostic command '${command.join(' ')}'.`);
+			});
+			managedVm.exec = exec;
+			const connectGatewayControlSession = vi.fn<GatewayControlSessionConnector>(async () => {
+				lifecycleEvents.push('control-attachment');
+				throw controlAttachmentError;
+			});
+			const writeGatewayRuntimeRecord = vi.fn<
+				NonNullable<GatewayManagerDependencies['writeGatewayRuntimeRecord']>
+			>(async () => {});
 
-		// Assert
-		expect(caughtError).toBe(controlAttachmentError);
-		expect(caughtError?.message).toMatch(
-			/HTTP 502.*Managed Gateway pre-containment diagnostics.*Tool Portal log tail.*Tool Portal readiness evidence.*Tool Portal fatal evidence.*Framework process identities.*agent-vm-gateway-runtime.*hermes.*Listening TCP sockets.*0100007F:496E/su,
-		);
-		expect(caughtError?.message).toContain('[REDACTED]');
-		for (const rawCredentialValue of rawCredentialValues) {
-			expect(caughtError?.message).not.toContain(rawCredentialValue);
-		}
-		expect(lifecycleEvents.at(0)).toBe('control-attachment');
-		expect(lifecycleEvents.at(-1)).toBe('destroy');
-		expect(lifecycleEvents.filter((event) => event === 'diagnostics')).toHaveLength(5);
-		expect(ownership.destroyLive).toHaveBeenCalledOnce();
-		expect(close).toHaveBeenCalledOnce();
-		expect(writeGatewayRuntimeRecord).not.toHaveBeenCalled();
-	});
+			// Act
+			let caughtError: Error | undefined;
+			try {
+				await startGatewayZone(
+					{
+						createVmOwnership: ownership.createVmOwnership,
+						secretResolver: createGatewaySecretResolver({
+							DISCORD_BOT_TOKEN: 'discord-token',
+							TEST_GATEWAY_SECRET: 'gateway-token-123',
+							PERPLEXITY_API_KEY: 'pplx-key',
+						}),
+						systemConfig: await createSystemConfig(),
+						zoneId: 'shravan',
+					},
+					{
+						connectGatewayControlSession,
+						createGatewayControlSessionMaterial: createExactTestGatewayControlSessionMaterial,
+						managedVmFactory: { createManagedVm: vi.fn(async () => managedVm) },
+						managedVmImages: testManagedVmImages,
+						writeGatewayRuntimeRecord,
+					},
+					'controller-internal',
+					{ dispatchRuntimeReadiness: false },
+				);
+			} catch (error) {
+				if (!(error instanceof Error)) {
+					throw error;
+				}
+				caughtError = error;
+			}
+
+			// Assert
+			expect(caughtError).toBe(controlAttachmentError);
+			expect(caughtError?.message).toMatch(
+				/HTTP 502.*Managed Gateway pre-containment diagnostics.*Tool Portal log tail.*Tool Portal readiness evidence.*Tool Portal fatal evidence.*Framework process identities.*agent-vm-gateway-runtime.*hermes.*Listening TCP sockets.*0100007F:496E/su,
+			);
+			if (diagnosticKind === 'incomplete') {
+				expect(caughtError?.message).toContain('[read failed: Error: section read rejected:');
+				expect(caughtError?.message).toContain('[read completed: exit code 0, empty output]');
+			}
+			expect(caughtError?.message).toContain('[REDACTED]');
+			for (const rawCredentialValue of rawCredentialValues) {
+				expect(caughtError?.message).not.toContain(rawCredentialValue);
+			}
+			expect(lifecycleEvents.at(0)).toBe('control-attachment');
+			expect(lifecycleEvents.at(-1)).toBe('destroy');
+			expect(lifecycleEvents.filter((event) => event === 'diagnostics')).toHaveLength(5);
+			expect(ownership.destroyLive).toHaveBeenCalledOnce();
+			expect(close).toHaveBeenCalledOnce();
+			expect(writeGatewayRuntimeRecord).not.toHaveBeenCalled();
+		},
+	);
 
 	it('includes the exact aggregate containment reason in managed Gateway startup failures', async () => {
 		const vmId = 'vm-managed-readiness-mismatch';

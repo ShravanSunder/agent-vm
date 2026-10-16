@@ -23,7 +23,7 @@ const validSources: readonly ManagedVmBoundaryAuditSource[] = [
 		content: JSON.stringify({
 			dependencies: {
 				'@agent-vm/managed-vm': 'workspace:*',
-				'@earendil-works/gondolin': '0.12.0',
+				'@earendil-works/gondolin': '0.13.0',
 			},
 			name: '@agent-vm/gondolin-vm-adapter',
 		}),
@@ -296,7 +296,7 @@ describe('auditManagedVmBoundaries', () => {
 							content: JSON.stringify({
 								dependencies: {
 									'@agent-vm/managed-vm': 'workspace:*',
-									'@earendil-works/gondolin': '^0.13.0',
+									'@earendil-works/gondolin': '^0.12.0',
 								},
 								name: '@agent-vm/gondolin-vm-adapter',
 							}),
@@ -308,7 +308,7 @@ describe('auditManagedVmBoundaries', () => {
 					pnpm: {
 						overrides: { '@earendil-works/gondolin': 'file:../gondolin' },
 						patchedDependencies: {
-							'@earendil-works/gondolin@0.12.0': 'patches/gondolin.patch',
+							'@earendil-works/gondolin@0.13.0': 'patches/gondolin.patch',
 						},
 					},
 				}),
@@ -318,7 +318,7 @@ describe('auditManagedVmBoundaries', () => {
 
 		expect(findings.map((finding) => finding.reason)).toEqual(
 			expect.arrayContaining([
-				"Gondolin SDK dependency must be exact stock version '0.12.0'",
+				"Gondolin SDK dependency must be exact stock version '0.13.0'",
 				'Gondolin SDK patch or override configuration is forbidden',
 				'Gondolin SDK local replacement is forbidden',
 			]),

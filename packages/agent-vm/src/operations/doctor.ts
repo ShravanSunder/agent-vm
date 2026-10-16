@@ -12,7 +12,6 @@ import {
 	type PackageOverrides,
 	resolveEffectivePackageOverrides,
 } from '../build/package-overrides.js';
-import { buildZigInstallHint, checkManagedVmZigCompatibility } from '../build/zig-compatibility.js';
 import type { LoadedSystemConfig, SystemConfig } from '../config/system-config.js';
 import { scanLegacyControllerRecordEvidence as scanGatewayStateAuthorityEvidenceDefault } from '../controller/durable-state/legacy-controller-record-evidence.js';
 import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-storage.js';
@@ -33,11 +32,9 @@ export interface RunControllerDoctorOptions {
 	readonly env: NodeJS.ProcessEnv;
 	readonly occupiedPorts?: ReadonlySet<number>;
 	readonly nodeVersion: string;
-	readonly requiredZigVersion?: string;
 	readonly scanGatewayStateAuthorityEvidence?: typeof scanGatewayStateAuthorityEvidenceDefault;
 	readonly systemConfig: SystemConfig;
 	readonly totalMemoryBytes?: number;
-	readonly zigVersion?: string;
 }
 
 export interface ControllerDoctorResult {
@@ -56,39 +53,6 @@ function checkAnyBinary(
 		name,
 		ok: foundBinary !== undefined,
 		...(foundBinary ? { hint: foundBinary } : { hint: installHint }),
-	};
-}
-
-function buildZigVersionCheck(
-	zigVersion: string | undefined,
-	requiredZigVersion: string | undefined,
-): DoctorCheck | null {
-	if (!zigVersion && !requiredZigVersion) {
-		return null;
-	}
-	if (!zigVersion) {
-		return {
-			name: 'zig-version',
-			ok: false,
-			hint: buildZigInstallHint(requiredZigVersion),
-		};
-	}
-	if (!requiredZigVersion) {
-		return {
-			name: 'zig-version',
-			ok: true,
-			value: zigVersion,
-		};
-	}
-	const compatibility = checkManagedVmZigCompatibility({
-		requiredVersion: requiredZigVersion,
-		installedVersion: zigVersion,
-	});
-	return {
-		name: 'zig-version',
-		ok: compatibility.compatible,
-		value: zigVersion,
-		...(!compatibility.compatible ? { hint: compatibility.hint } : {}),
 	};
 }
 
@@ -585,7 +549,6 @@ export async function runControllerDoctor(
 		return totalBytes + numericValue * multiplier;
 	}, 0);
 	const tokenSource = options.systemConfig.host.secretsProvider?.tokenSource;
-	const zigVersionCheck = buildZigVersionCheck(options.zigVersion, options.requiredZigVersion);
 	const tokenSourceReady = (() => {
 		if (!tokenSource) {
 			return true;
@@ -608,7 +571,6 @@ export async function runControllerDoctor(
 			ok: nodeMajorVersion >= 24,
 			...(nodeMajorVersion < 24 ? { hint: 'Requires Node.js >= 24. Install via nvm or fnm.' } : {}),
 		},
-		...(zigVersionCheck ? [zigVersionCheck] : []),
 		...(tokenSource
 			? [
 					{

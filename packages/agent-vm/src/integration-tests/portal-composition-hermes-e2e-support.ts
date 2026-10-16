@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
+import { reportPortalCompositionResponseFailure } from './portal-composition-failure-diagnostics.js';
 import {
 	buildPortalCompositionGeneratedTerminalProgram,
 	portalCompositionGeneratedTerminalResultMarker,
@@ -487,7 +488,7 @@ export async function requestPortalCompositionHermesTurn(options: {
 	);
 	if (!response.ok) {
 		const elapsedMs = Math.round(performance.now() - requestStartedAtMs);
-		await response.body?.cancel().catch(() => undefined);
+		await reportPortalCompositionResponseFailure(response);
 		const [gatewayHealthStatus, zoneHealthStatus, healthSnapshot] = await Promise.all([
 			readPortalCompositionDiagnosticHttpStatus(
 				`http://127.0.0.1:${String(options.gatewayPort)}/health`,

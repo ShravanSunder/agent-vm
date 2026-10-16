@@ -72,9 +72,17 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			const environment = await client.sandbox.environment.open({}, trustedOptions);
 			const directShellProcess = await client.sandbox.process.start(
 				{
-					command: 'printf "%s" "$DIRECT_SHELL_MARKER" > /work/direct-shell-proof.txt',
+					command:
+						'printf "%s" "$DIRECT_SHELL_MARKER" > /work/direct-shell-proof.txt; printf "HOME=%s\\nXDG_CONFIG_HOME=%s\\nXDG_DATA_HOME=%s\\nXDG_CACHE_HOME=%s\\nUV_CACHE_DIR=%s\\n" "${HOME-unset}" "${XDG_CONFIG_HOME-unset}" "${XDG_DATA_HOME-unset}" "${XDG_CACHE_HOME-unset}" "${UV_CACHE_DIR-unset}" > /work/authored-environment-proof.txt; stat -f -c "workBacking=%T" /work >> /work/authored-environment-proof.txt',
 					environment: environment.environment,
-					environmentVariables: [{ name: 'DIRECT_SHELL_MARKER', value: 'stock-vm-direct-shell' }],
+					environmentVariables: [
+						{ name: 'DIRECT_SHELL_MARKER', value: 'stock-vm-direct-shell' },
+						{ name: 'HOME', value: '/work/authored-home' },
+						{ name: 'XDG_CONFIG_HOME', value: '/work/authored-config' },
+						{ name: 'XDG_DATA_HOME', value: '/work/authored-data' },
+						{ name: 'XDG_CACHE_HOME', value: '/work/authored-cache' },
+						{ name: 'UV_CACHE_DIR', value: '/work/authored-uv' },
+					],
 					maxRuntimeMs: 5_000,
 					retainOutputBytes: 4_096,
 				},
@@ -85,7 +93,8 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 			}
 			const interactiveShellProcess = await client.sandbox.process.start(
 				{
-					command: 'IFS= read -r line; printf "stream-echo:%s" "$line"',
+					command:
+						'printf "HOME=%s\\nXDG_CONFIG_HOME=%s\\nXDG_DATA_HOME=%s\\nXDG_CACHE_HOME=%s\\nUV_CACHE_DIR=%s\\n" "${HOME-unset}" "${XDG_CONFIG_HOME-unset}" "${XDG_DATA_HOME-unset}" "${XDG_CACHE_HOME-unset}" "${UV_CACHE_DIR-unset}" > /work/default-environment-proof.txt; IFS= read -r line; printf "stream-echo:%s" "$line"',
 					environment: environment.environment,
 					maxRuntimeMs: 5_000,
 					retainOutputBytes: 4_096,
@@ -182,6 +191,17 @@ describeLiveVmIntegration('Gateway runtime sandbox stock VM proof', () => {
 				'stream-echo:stock-stream-roundtrip',
 			);
 			expect(streamRead.eof).toBe(true);
+			expect(await harness.readToolVmFile('/work/default-environment-proof.txt')).toBe(
+				'HOME=/root\nXDG_CONFIG_HOME=unset\nXDG_DATA_HOME=unset\nXDG_CACHE_HOME=unset\nUV_CACHE_DIR=unset\n',
+			);
+			const authoredEnvironment = await harness.readToolVmFile(
+				'/work/authored-environment-proof.txt',
+			);
+			expect(authoredEnvironment).toContain(
+				'HOME=/work/authored-home\nXDG_CONFIG_HOME=/work/authored-config\nXDG_DATA_HOME=/work/authored-data\nXDG_CACHE_HOME=/work/authored-cache\nUV_CACHE_DIR=/work/authored-uv\n',
+			);
+			expect(authoredEnvironment).toMatch(/workBacking=(ext2\/ext3|ext4)\n/u);
+
 			const workspaceRootfsEvidence = await harness.proveWorkspaceRootfsSeparation();
 			expect(workspaceRootfsEvidence.hostWorkspaceRoot).toMatch(/\/agents\/gateway-agent$/u);
 			expect(workspaceRootfsEvidence.hostToGuestWorkspace).toEqual({

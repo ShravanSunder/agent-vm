@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -8,6 +9,27 @@ async function readRepositoryFile(relativePath: string): Promise<string> {
 }
 
 describe('CI workflow topology', () => {
+	it('keeps normal managed-image publication compiler-free with real build and E2E gates', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/publish.yml');
+
+		expect(workflow).not.toMatch(
+			/minimum_zig_version|ziglang\.org|\.cache\/zig|zig-version|Install Zig/iu,
+		);
+		expect(workflow).not.toMatch(/GONDOLIN_BUILD_SANDBOX_HELPERS_FROM_SOURCE/iu);
+		for (const command of [
+			'pnpm build',
+			'pnpm lint',
+			'pnpm fmt:check',
+			'pnpm test:unit',
+			'AGENT_VM_E2E_SKIP_WORKSPACE_BUILD=1 pnpm test:e2e',
+		]) {
+			expect(workflow).toContain(`run: ${command}`);
+		}
+		expect(workflow).toContain(
+			'sudo apt-get install -y age qemu-system-arm qemu-system-x86 xz-utils',
+		);
+	});
+
 	it('keeps every required proof lane behind one aggregate check', async () => {
 		const [workflow, hermesPythonTestScript] = await Promise.all([
 			readRepositoryFile('.github/workflows/ci.yml'),
@@ -196,6 +218,114 @@ describe('CI workflow topology', () => {
 		expect(preparationScript).toContain('agent-vm-hermes-e2e-cache-');
 		expect(`${workflow}\n${cacheAction}\n${preparationScript}`.toLowerCase()).not.toContain(
 			'openclaw',
+		);
+	});
+	it('observes one exact restored cache before shard four without changing proof gates', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const preparationJob = workflow.slice(
+			workflow.indexOf('  e2e-image-cache:'),
+			workflow.indexOf('  e2e-host:'),
+		);
+		const vmJob = workflow.slice(workflow.indexOf('  e2e-vm:'), workflow.indexOf('  check:'));
+		const barrier = vmJob.indexOf('      - name: Require prepared image caches');
+		const inspection = vmJob.indexOf('      - name: Observe restored prepared image assets');
+		const proof = vmJob.indexOf('      - name: Run VM shard');
+
+		expect(inspection).toBeGreaterThan(barrier);
+		expect(proof).toBeGreaterThan(inspection);
+		expect(preparationJob).toContain(
+			'hermes-cache-lookup-hit: ${{ steps.hermes-image.outputs.cache-hit }}',
+		);
+		expect(preparationJob).toContain('image-input-hash: ${{ steps.image-key.outputs.input-hash }}');
+		const observationStep = vmJob.slice(inspection, proof);
+		expect(observationStep).toContain("if: matrix.lane == 'e2e-vm-shard-4'");
+		expect(observationStep).toContain('run: pnpm exec tsx scripts/inspect-e2e-image-cache.ts');
+		for (const binding of [
+			'CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}',
+			'CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}',
+			'CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}',
+			'CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}',
+			'CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}',
+		])
+			expect(observationStep).toContain(binding);
+		expect(
+			workflow.match(/run: pnpm exec tsx scripts\/inspect-e2e-image-cache\.ts/gu),
+		).toHaveLength(1);
+		expect(observationStep).not.toMatch(
+			/continue-on-error|timeout-minutes|uses:|prepare-e2e|restore-e2e|save@/u,
+		);
+		expect(vmJob).toContain('test "${HERMES_CACHE_HIT}" = true');
+		expect(vmJob).toContain("if: matrix.shard != ''");
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}');
+		expect(vmJob).toContain("AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'");
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:hermes');
+		expect(vmJob).not.toMatch(/continue-on-error|timeout-minutes|--exclude|--retry/u);
+	});
+	it('runs one bounded stock SDK probe after shard four even when its VM tests fail', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const vmJob = workflow.slice(workflow.indexOf('  e2e-vm:'), workflow.indexOf('  check:'));
+		const inspection = vmJob.indexOf('      - name: Observe restored prepared image assets');
+		const vmProof = vmJob.indexOf('      - name: Run VM shard');
+		const probe = vmJob.indexOf('      - name: Probe restored image boot through stock SDK');
+		const hermes = vmJob.indexOf('      - parallel:', vmProof);
+		expect(probe).toBeGreaterThan(vmProof);
+		expect(hermes).toBeGreaterThan(probe);
+		expect(inspection).toBeLessThan(vmProof);
+		expect(vmJob.slice(inspection, vmProof)).toContain('id: image-cache-inspection');
+		const probeStep = vmJob.slice(probe, hermes);
+		expect(probeStep).toContain(
+			"if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-cache-inspection.outcome == 'success'",
+		);
+		expect(probeStep).toContain('run: pnpm exec tsx scripts/probe-e2e-image-boot.ts');
+		for (const binding of [
+			'CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}',
+			'CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}',
+			'CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}',
+			'CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}',
+			'CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}',
+		])
+			expect(probeStep).toContain(binding);
+		expect(workflow.match(/run: pnpm exec tsx scripts\/probe-e2e-image-boot\.ts/gu)).toHaveLength(
+			1,
+		);
+		expect(probeStep).not.toMatch(
+			/continue-on-error|timeout-minutes|uses:|retry|restore-e2e|prepare-e2e|save@/u,
+		);
+		expect(vmJob).toContain('test "${HERMES_CACHE_HIT}" = true');
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}');
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:hermes');
+	});
+});
+
+describe('retained Tool memory comparison workflow', () => {
+	it('runs one 2049M comparison only after the unchanged 2G probe succeeds', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const baseline = workflow.indexOf('      - name: Probe restored image boot through stock SDK');
+		const comparison = workflow.indexOf(
+			'      - name: Probe retained Tool image with 2049M memory',
+		);
+		const hermes = workflow.indexOf('      - parallel:', baseline);
+		expect(comparison).toBeGreaterThan(baseline);
+		expect(hermes).toBeGreaterThan(comparison);
+		expect(workflow.slice(baseline, comparison)).toContain('id: image-boot-probe');
+		const step = workflow.slice(comparison, hermes);
+		expect(step).toContain(
+			"if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-boot-probe.outcome == 'success'",
+		);
+		expect(step).toContain('run: pnpm exec tsx scripts/probe-e2e-image-memory.ts');
+		expect(workflow.match(/run: pnpm exec tsx scripts\/probe-e2e-image-memory\.ts/gu)).toHaveLength(
+			1,
+		);
+		for (const binding of [
+			'CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}',
+			'CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}',
+			'CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}',
+			'CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}',
+			'CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}',
+		])
+			expect(step).toContain(binding);
+		expect(step).not.toMatch(
+			/continue-on-error|timeout-minutes|uses:|retry|restore-e2e|prepare-e2e|save@/u,
 		);
 	});
 });

@@ -126,6 +126,12 @@ factory. The adapter translates this request into Gondolin SDK options.
 
 ## Rootfs Modes
 
+Gondolin 0.13 init sets HOME to /root and keeps Linux scratch tmpfs mounts. It
+leaves XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME and UV_CACHE_DIR unset
+unless the application supplies them. Hermes continues to author HOME and its
+/work temporary and uv cache locations. Tool and credentialed runtimes retain
+their separate workspace, disposable COW and protected credential-mount policies.
+
 The `rootfsMode` controls what happens when a process inside the VM writes to the root filesystem (outside VFS mounts).
 
 ```
@@ -194,7 +200,9 @@ HTTP mediation is how secrets reach outbound API calls without the VM process ev
 
 Each neutral mediated-secret descriptor carries an environment-variable name,
 an allowed-host list, and a value resolved at the trusted host boundary. The
-adapter converts these descriptors to Gondolin HTTP hooks. The resolved value
+adapter converts these descriptors to Gondolin HTTP hooks. It selects
+`secretPlaceholderMode: 'unique'` to retain independent generated markers; an
+explicit controller-authored placeholder is passed through unchanged. The resolved value
 may enter the trusted provider request for mediation, but never the guest
 environment or image.
 
@@ -297,6 +305,14 @@ expose a native host-filesystem escape hatch.
 ---
 
 ## Image Build Pipeline
+
+The adapter pins stock Gondolin 0.13.0. Normal assembly consumes its verified,
+architecture-matched published sandbox helpers, then assembles the custom guest
+rootfs, init and overlays. Host Zig is not required; generated container-host
+scaffolds neither install it nor require it at startup. Upstream Zig 0.17 metadata
+applies to contributor helper source compilation, outside this cached image path.
+Incomplete source-build overrides remain rejected; missing or corrupt helper
+inputs fail preparation rather than selecting a compiler fallback.
 
 VM images are built from a `BuildConfig` (loaded from JSON) through Gondolin's `buildAssets()`. The pipeline uses content-addressed fingerprinting to cache builds.
 

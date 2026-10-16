@@ -310,7 +310,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 			...defaultCliDependencies,
 			getCurrentWorkingDirectory: () => targetDir,
 			promptAndStoreServiceAccountToken,
-			resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 		} satisfies CliDependencies;
 
 		await parseAndDispatchAgentVmCommandForTest(
@@ -1228,12 +1227,9 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					dockerDaemonReady: false,
 					env: {},
 					nodeVersion: 'v24.0.0',
-					requiredZigVersion: '0.16.0',
-					zigVersion: '0.16.0',
 				}),
 				collectDynamicDoctorChecks: async () => [],
 				isGatewayImageCached: async () => true,
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -1346,7 +1342,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -1467,7 +1462,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 					listBackups: () => [],
 				}),
 				isGatewayImageCached: async () => true,
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				loadSystemConfig: async () => ({
@@ -1786,7 +1780,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				restoreBackup: async () => ({ stateDir: '', zoneFilesDir: '', zoneId: '' }),
 				listBackups: () => [],
 			}),
-			resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 			probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 			resolveServiceAccountToken: async () => 'mock-token',
 			loadSystemConfig: async (): Promise<LoadedSystemConfig> => ({
@@ -2378,7 +2371,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),
@@ -2545,7 +2537,6 @@ describe('parseAndDispatchAgentVmCommandForTest', () => {
 				runControllerDoctor: () => ({ checks: [], ok: true }),
 				runControllerOfflineCleanup: defaultCliDependencies.runControllerOfflineCleanup,
 				startControllerRuntime: vi.fn(async () => createStartedControllerRuntime({ vmId: 'vm-1' })),
-				resolveManagedVmMinimumZigVersion: async () => '0.15.2',
 				probeOnePasswordServiceAccountHeadlessAuth: async () => ({ hint: 'ok', ok: true }),
 				resolveServiceAccountToken: async () => 'mock-token',
 				startGatewayZone: vi.fn(async () => undefined as never),

@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 const repositoryRoot = process.cwd();
 const packagesDirectory = path.join(repositoryRoot, 'packages');
 const stockGondolinPackageName = '@earendil-works/gondolin';
-const stockGondolinVersion = '0.12.0';
+const stockGondolinVersion = '0.13.0';
 const maximumConsumerBytes = 2 * 1024 * 1024 * 1024;
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -310,7 +310,7 @@ describe('packed stock Gondolin consumer', () => {
 			expect(lockfile).not.toContain('patchedDependencies');
 			expect(lockfile).not.toContain(`${stockGondolinPackageName}@patch:`);
 			expect(lockfile).toMatch(
-				/  '@earendil-works\/gondolin@0\.12\.0':\n    resolution: \{integrity: sha512-[^}\s]+\}/u,
+				/  '@earendil-works\/gondolin@0\.13\.0':\n    resolution: \{integrity: sha512-[^}\s]+\}/u,
 			);
 
 			const listResult = await execa(
@@ -346,11 +346,11 @@ describe('packed stock Gondolin consumer', () => {
 			);
 			expect(listedGondolin.version).toBe(stockGondolinVersion);
 			expect(listedGondolin.resolved).toBe(
-				'https://registry.npmjs.org/@earendil-works/gondolin/-/gondolin-0.12.0.tgz',
+				`https://registry.npmjs.org/@earendil-works/gondolin/-/gondolin-${stockGondolinVersion}.tgz`,
 			);
 			expect(await realpath(listedGondolin.path ?? '')).toBe(gondolinDirectory);
 			expect(gondolinDirectory).toContain(
-				`${path.sep}.pnpm${path.sep}@earendil-works+gondolin@0.12.0${path.sep}`,
+				`${path.sep}.pnpm${path.sep}@earendil-works+gondolin@${stockGondolinVersion}${path.sep}`,
 			);
 
 			const consumerBytes = await storedBytes(fixtureRoot);

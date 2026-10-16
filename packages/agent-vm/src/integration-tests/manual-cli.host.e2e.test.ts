@@ -73,6 +73,9 @@ describe('smoke: agent-vm manual CLI', () => {
 		expect(runtimePaths).toContain(
 			'already-open descriptors or cached bytes are not forcibly revoked',
 		);
+		expect(await readText(targetDir, 'docs/manual/image-versioning.md')).toContain(
+			'Host Zig is not required',
+		);
 		const layout = await readText(targetDir, 'docs/manual/layout.md');
 		expect(layout).toContain('Access login is human identity only and never supplies Gog tokens');
 		expect(layout).toContain('route only to the configured loopback HTTP listener');

@@ -381,6 +381,7 @@ export interface ManagedVmDependencies {
 	configureHostNetworkDefaults?: () => HostNetworkDefaultsResult;
 	createVm(vmOptions: VMOptions): Promise<ManagedVmInstance>;
 	createHttpHooks(options: {
+		readonly secretPlaceholderMode: 'unique';
 		readonly allowedHosts: readonly string[];
 		readonly allowedInternalHosts?: readonly string[];
 		readonly isIpAllowed?: HttpHooks['isIpAllowed'];
@@ -474,6 +475,7 @@ function createDefaultDependencies(): ManagedVmDependencies {
 			(await VM.create(vmOptions)) as unknown as ManagedVmInstance,
 		createHttpHooks: (hookOptions) =>
 			createHttpHooks({
+				secretPlaceholderMode: hookOptions.secretPlaceholderMode,
 				allowedHosts: [...hookOptions.allowedHosts],
 				...(hookOptions.allowedInternalHosts === undefined
 					? {}
@@ -929,6 +931,7 @@ export async function createManagedVm(
 	try {
 		createdVfsMounts = createVfsMounts(options.vfsMounts, dependencies);
 		const hookBundle = dependencies.createHttpHooks({
+			secretPlaceholderMode: 'unique',
 			allowedHosts: options.allowedHosts,
 			...(allowedInternalHosts.length > 0 ? { allowedInternalHosts } : {}),
 			...(isIpAllowed ? { isIpAllowed } : {}),

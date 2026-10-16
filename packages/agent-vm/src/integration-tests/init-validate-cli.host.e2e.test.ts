@@ -98,11 +98,25 @@ describe('smoke: generated agent-vm config validation', () => {
 	});
 
 	it.each([
-		{ name: 'default Hermes', gatewayArguments: [] },
-		{ name: 'explicit Hermes', gatewayArguments: ['--type', 'hermes'] },
+		{ name: 'default Hermes', gatewayArguments: [], containerArchitecture: undefined },
+		{
+			name: 'explicit Hermes',
+			gatewayArguments: ['--type', 'hermes'],
+			containerArchitecture: undefined,
+		},
+		{
+			name: 'container x86',
+			gatewayArguments: ['--preset', 'container-x86'],
+			containerArchitecture: 'x86_64',
+		},
+		{
+			name: 'container arm64',
+			gatewayArguments: ['--preset', 'container-arm64'],
+			containerArchitecture: 'aarch64',
+		},
 	])(
 		'initializes and validates $name with root-derived controller storage',
-		async ({ gatewayArguments }) => {
+		async ({ gatewayArguments, containerArchitecture }) => {
 			// Arrange
 			const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-init-validate-cli-'));
 			createdDirectories.push(targetDirectory);
@@ -118,7 +132,7 @@ describe('smoke: generated agent-vm config validation', () => {
 					'--secrets',
 					'environment',
 					'--arch',
-					process.arch === 'arm64' ? 'aarch64' : 'x86_64',
+					containerArchitecture ?? (process.arch === 'arm64' ? 'aarch64' : 'x86_64'),
 					'--paths',
 					'local',
 				],
@@ -140,6 +154,30 @@ describe('smoke: generated agent-vm config validation', () => {
 			);
 			expect(generatedConfigText).toContain('"type": "hermes"');
 			expect(validationResult.exitCode).toBe(0);
+			if (containerArchitecture !== undefined) {
+				const [dockerfile, startScript, readme] = await Promise.all(
+					['Dockerfile', 'start.sh', 'README.md'].map(
+						async (fileName) =>
+							await readFile(path.join(targetDirectory, 'vm-host-system', fileName), 'utf8'),
+					),
+				);
+				expect(dockerfile).not.toMatch(/ziglang\.org|\/opt\/zig|\/usr\/local\/bin\/zig/u);
+				expect(dockerfile).toContain(
+					`image pull alpine-base:latest --arch ${containerArchitecture}`,
+				);
+				expect(startScript?.match(/^for cmd in (.+); do$/mu)?.[1]?.split(' ')).toEqual([
+					'mke2fs',
+					'docker',
+					'agent-vm',
+					'cpio',
+					'lz4',
+					'qemu-img',
+					'qemu-system-x86_64',
+					'python3',
+				]);
+				expect(startScript).toContain('agent-vm build --config /etc/agent-vm/system.json');
+				expect(readme).toContain('does not install or require Zig');
+			}
 		},
 	);
 });

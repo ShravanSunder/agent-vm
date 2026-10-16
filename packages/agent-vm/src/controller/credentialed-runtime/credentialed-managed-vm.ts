@@ -26,7 +26,7 @@ import type { CredentialedRuntimeResolution } from './credentialed-runtime-regis
 
 const credentialedRuntimeResources = {
 	cpuCount: 2,
-	memory: '2G',
+	memory: '2560M',
 } as const;
 
 export async function createUnstartedCredentialedManagedVm(props: {

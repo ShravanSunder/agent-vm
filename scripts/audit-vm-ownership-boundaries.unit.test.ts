@@ -13,12 +13,12 @@ describe('auditStockGondolinDependencyBoundary', () => {
 		const findings = auditStockGondolinDependencyBoundary([
 			{
 				content:
-					'{"pnpm":{"patchedDependencies":{"@earendil-works/gondolin@0.12.0":"patches/gondolin.patch"}}}',
+					'{"pnpm":{"patchedDependencies":{"@earendil-works/gondolin@0.13.0":"patches/gondolin.patch"}}}',
 				filePath: 'package.json',
 			},
 			{
 				content: 'patch-package-content',
-				filePath: 'patches/@earendil-works__gondolin@0.12.0.patch',
+				filePath: 'patches/@earendil-works__gondolin@0.13.0.patch',
 			},
 		]);
 
@@ -49,7 +49,7 @@ describe('auditStockGondolinDependencyBoundary', () => {
 	it('rejects a Gondolin patch identity in the lockfile', () => {
 		const findings = auditStockGondolinDependencyBoundary([
 			{
-				content: "'@earendil-works/gondolin@patch:0.12.0#./patches/gondolin.patch': {}",
+				content: "'@earendil-works/gondolin@patch:0.13.0#./patches/gondolin.patch': {}",
 				filePath: 'pnpm-lock.yaml',
 			},
 		]);
@@ -63,7 +63,7 @@ describe('auditStockGondolinDependencyBoundary', () => {
 		const findings = auditStockGondolinDependencyBoundary([
 			{
 				content: [
-					"  '@earendil-works/gondolin@0.12.0':",
+					"  '@earendil-works/gondolin@0.13.0':",
 					'    resolution: {}',
 					'    engines: {node: ">=23.6.0"}',
 				].join('\n'),
@@ -79,38 +79,38 @@ describe('auditStockGondolinDependencyBoundary', () => {
 	it('rejects non-stock repository and installed Gondolin versions', () => {
 		const findings = auditStockGondolinDependencyBoundary([
 			{
-				content: JSON.stringify({ dependencies: { '@earendil-works/gondolin': '0.13.0' } }),
+				content: JSON.stringify({ dependencies: { '@earendil-works/gondolin': '0.12.0' } }),
 				filePath: 'packages/gondolin-vm-adapter/package.json',
-			},
-			{
-				content: JSON.stringify({ name: '@earendil-works/gondolin', version: '0.13.0' }),
-				filePath:
-					'node_modules/.pnpm/@earendil-works+gondolin@0.13.0/node_modules/@earendil-works/gondolin/package.json',
-			},
-		]);
-
-		expect(findings.map((finding) => finding.reason)).toEqual([
-			"Installed Gondolin must be '0.12.0', found '0.13.0'",
-			"Gondolin repository dependency must be exact '0.12.0', found '0.13.0'",
-		]);
-	});
-
-	it('accepts exact stock registry Gondolin 0.12.0 in repository and installed metadata', () => {
-		const findings = auditStockGondolinDependencyBoundary([
-			{
-				content: JSON.stringify({
-					dependencies: { '@earendil-works/gondolin': '0.12.0' },
-				}),
-				filePath: 'packages/gondolin-vm-adapter/package.json',
-			},
-			{
-				content: "'@earendil-works/gondolin@0.12.0':\n  resolution: {integrity: sha512-safe}",
-				filePath: 'pnpm-lock.yaml',
 			},
 			{
 				content: JSON.stringify({ name: '@earendil-works/gondolin', version: '0.12.0' }),
 				filePath:
 					'node_modules/.pnpm/@earendil-works+gondolin@0.12.0/node_modules/@earendil-works/gondolin/package.json',
+			},
+		]);
+
+		expect(findings.map((finding) => finding.reason)).toEqual([
+			"Installed Gondolin must be '0.13.0', found '0.12.0'",
+			"Gondolin repository dependency must be exact '0.13.0', found '0.12.0'",
+		]);
+	});
+
+	it('accepts exact stock registry Gondolin 0.13.0 in repository and installed metadata', () => {
+		const findings = auditStockGondolinDependencyBoundary([
+			{
+				content: JSON.stringify({
+					dependencies: { '@earendil-works/gondolin': '0.13.0' },
+				}),
+				filePath: 'packages/gondolin-vm-adapter/package.json',
+			},
+			{
+				content: "'@earendil-works/gondolin@0.13.0':\n  resolution: {integrity: sha512-safe}",
+				filePath: 'pnpm-lock.yaml',
+			},
+			{
+				content: JSON.stringify({ name: '@earendil-works/gondolin', version: '0.13.0' }),
+				filePath:
+					'node_modules/.pnpm/@earendil-works+gondolin@0.13.0/node_modules/@earendil-works/gondolin/package.json',
 			},
 		]);
 

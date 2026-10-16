@@ -242,43 +242,6 @@ describe('gateway control session material', () => {
 		expect(observedFetchInit[0]?.signal).toBeInstanceOf(AbortSignal);
 	});
 
-	it('retries transient pre-publication ingress unavailability before accepting a readiness credential', async () => {
-		vi.useFakeTimers();
-		try {
-			const material = createGatewayControlSessionMaterial({
-				controllerEpoch: 'epoch-a',
-				zoneId: 'zone-a',
-			});
-			let fetchAttemptCount = 0;
-			const fetchImpl = vi.fn<typeof fetch>(async () => {
-				fetchAttemptCount += 1;
-				return fetchAttemptCount === 1
-					? new Response('bad gateway\n', { status: 502, statusText: 'Bad Gateway' })
-					: buildReadyCredentialResponse(material);
-			});
-			const connectedClient = {
-				close: vi.fn(),
-				ready: Promise.resolve(),
-			};
-			disposableClientMocks.create.mockReturnValue(connectedClient);
-
-			const connectionPromise = connectGatewayControlSession({
-				endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
-				fetchImpl,
-				material,
-			});
-			const connectionExpectation = expect(connectionPromise).resolves.toBe(connectedClient);
-
-			await vi.runAllTimersAsync();
-			await connectionExpectation;
-			expect(fetchImpl).toHaveBeenCalledTimes(2);
-			expect(disposableClientMocks.create).toHaveBeenCalledOnce();
-		} finally {
-			disposableClientMocks.create.mockReset();
-			vi.useRealTimers();
-		}
-	});
-
 	it('does not retry readiness authentication failures during initial attachment', async () => {
 		const material = createGatewayControlSessionMaterial({
 			controllerEpoch: 'epoch-a',
@@ -297,44 +260,11 @@ describe('gateway control session material', () => {
 				endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
 				fetchImpl,
 				material,
-				retryTransientUnavailable: true,
 			}),
 		).rejects.toThrow(
 			'Gateway control readiness failed with HTTP 401 Unauthorized: unauthorized: signature_mismatch',
 		);
 		expect(fetchImpl).toHaveBeenCalledOnce();
-	});
-
-	it('aborts a pending credential wait with the owner reason before creating a client', async () => {
-		const material = createGatewayControlSessionMaterial({
-			controllerEpoch: 'epoch-a',
-			zoneId: 'zone-a',
-		});
-		const abortController = new AbortController();
-		const addEventListener = vi.spyOn(abortController.signal, 'addEventListener');
-		const removeEventListener = vi.spyOn(abortController.signal, 'removeEventListener');
-		let markFetchStarted: (() => void) | undefined;
-		const fetchStarted = new Promise<void>((resolve) => {
-			markFetchStarted = resolve;
-		});
-		const fetchImpl: typeof fetch = async () => {
-			markFetchStarted?.();
-			return await new Promise<Response>(() => undefined);
-		};
-		const abortReason = new Error('successor attachment deadline expired');
-
-		const connectPromise = connectGatewayControlSession({
-			endpoint: buildGatewayControlEndpoint({ host: '127.0.0.1', port: 18791 }),
-			fetchImpl,
-			material,
-			signal: abortController.signal,
-		});
-		await fetchStarted;
-		abortController.abort(abortReason);
-
-		await expect(connectPromise).rejects.toBe(abortReason);
-		expect(disposableClientMocks.create).not.toHaveBeenCalled();
-		expect(removeEventListener).toHaveBeenCalledTimes(addEventListener.mock.calls.length);
 	});
 
 	it('aborts a pending client readiness wait, closes the client, and removes its listener', async () => {

@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 
 import {
 	MemoryProvider,
+	VM,
 	createHttpHooks,
 	type ExecProcess as GondolinExecProcess,
 	type ExecResult as GondolinExecResult,
@@ -721,6 +722,7 @@ describe('createManagedVm', () => {
 			syntheticHostMapping: 'per-host',
 		});
 		expect(createHttpHooksMock).toHaveBeenCalledWith({
+			secretPlaceholderMode: 'unique',
 			allowedHosts: [],
 			allowedInternalHosts: ['controller.vm.host'],
 			isIpAllowed: expect.any(Function),
@@ -918,6 +920,7 @@ describe('createManagedVm', () => {
 		);
 
 		expect(createHttpHooksMock).toHaveBeenCalledWith({
+			secretPlaceholderMode: 'unique',
 			allowedHosts: ['api.openai.com'],
 			secrets: {},
 		});
@@ -1150,6 +1153,7 @@ describe('createManagedVm', () => {
 		);
 
 		expect(dependencies.createHttpHooks).toHaveBeenCalledWith({
+			secretPlaceholderMode: 'unique',
 			allowedHosts: ['api.perplexity.ai'],
 			secrets: {
 				AGENT_VM_MCP_PERPLEXITY_PERPLEXITY_API_KEY: {
@@ -1163,6 +1167,78 @@ describe('createManagedVm', () => {
 			MANAGED_VM_LOG_LEVEL: 'debug',
 		});
 		expect(capturedVmOptions?.httpHooks).toEqual({});
+	});
+
+	it('keeps unique generated markers and exact explicit markers through real host substitution', async () => {
+		let capturedVmOptions: VMOptions | undefined;
+		const createNativeVm = vi
+			.spyOn(VM, 'create')
+			.mockImplementation(async (vmOptions?: VMOptions): Promise<never> => {
+				capturedVmOptions = vmOptions;
+				throw new Error('VM boundary stopped before boot');
+			});
+		try {
+			await expect(
+				createManagedVm({
+					allowedHosts: ['api.example.com', 'other.example.com'],
+					cpus: 1,
+					imagePath: '/vm-images/tool-vm',
+					memory: '1G',
+					rootfsMode: 'cow',
+					secrets: {
+						FIRST_TOKEN: { hosts: ['api.example.com'], value: 'first-host-only-value' },
+						SECOND_TOKEN: { hosts: ['api.example.com'], value: 'second-host-only-value' },
+						EXPLICIT_TOKEN: {
+							hosts: ['api.example.com'],
+							placeholder: 'controller-exact-marker',
+							value: 'explicit-host-only-value',
+						},
+					},
+					vfsMounts: {},
+				}),
+			).rejects.toThrow('VM boundary stopped before boot');
+		} finally {
+			createNativeVm.mockRestore();
+		}
+		const guestEnvironment = capturedVmOptions?.env;
+		if (guestEnvironment === undefined || Array.isArray(guestEnvironment)) {
+			throw new Error('Expected an object guest environment from the default adapter');
+		}
+		expect(guestEnvironment?.FIRST_TOKEN).toMatch(/^GONDOLIN_SECRET_[a-f0-9]{48}$/u);
+		expect(guestEnvironment?.SECOND_TOKEN).toMatch(/^GONDOLIN_SECRET_[a-f0-9]{48}$/u);
+		expect(guestEnvironment?.FIRST_TOKEN).not.toBe(guestEnvironment?.SECOND_TOKEN);
+		expect(guestEnvironment?.EXPLICIT_TOKEN).toBe('controller-exact-marker');
+		for (const rawValue of [
+			'first-host-only-value',
+			'second-host-only-value',
+			'explicit-host-only-value',
+		]) {
+			expect(Object.values(guestEnvironment ?? {})).not.toContain(rawValue);
+		}
+		const requestHook = capturedVmOptions?.httpHooks?.onRequest;
+		if (!requestHook || !guestEnvironment?.FIRST_TOKEN || !guestEnvironment.SECOND_TOKEN) {
+			throw new Error('Expected real host mediation hooks and generated guest markers');
+		}
+		const admittedRequest = await requestHook(
+			new Request('https://api.example.com/data', {
+				headers: {
+					authorization: `Bearer ${guestEnvironment.FIRST_TOKEN}`,
+					'x-second-token': guestEnvironment.SECOND_TOKEN,
+					'x-explicit-token': 'controller-exact-marker',
+				},
+			}),
+		);
+		if (!(admittedRequest instanceof Request)) throw new Error('Expected mediated Request');
+		expect(admittedRequest.headers.get('authorization')).toBe('Bearer first-host-only-value');
+		expect(admittedRequest.headers.get('x-second-token')).toBe('second-host-only-value');
+		expect(admittedRequest.headers.get('x-explicit-token')).toBe('explicit-host-only-value');
+		await expect(
+			requestHook(
+				new Request('https://other.example.com/data', {
+					headers: { authorization: `Bearer ${guestEnvironment.FIRST_TOKEN}` },
+				}),
+			),
+		).rejects.toThrow();
 	});
 
 	it('preserves explicit mediated secret placeholders for Gondolin', async () => {
@@ -1203,6 +1279,7 @@ describe('createManagedVm', () => {
 		);
 
 		expect(dependencies.createHttpHooks).toHaveBeenCalledWith({
+			secretPlaceholderMode: 'unique',
 			allowedHosts: ['api.example.com'],
 			secrets: {
 				API_TOKEN: {

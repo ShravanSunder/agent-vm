@@ -7,7 +7,6 @@ import {
 
 import { createAgeBackupEncryption } from '../backup/backup-encryption.js';
 import { createZoneBackupManager } from '../backup/backup-manager.js';
-import { resolveManagedVmMinimumZigVersion } from '../build/managed-vm-build-tooling.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import {
 	loadSystemConfig,
@@ -55,7 +54,6 @@ export interface CliDependencies {
 	readonly createZoneBackupManager: typeof createZoneBackupManager;
 	readonly collectControllerDoctorEnvironment?: (
 		systemConfig: LoadedSystemConfig,
-		dependencies: CliDependencies,
 	) => Promise<ControllerDoctorEnvironment>;
 	readonly collectDynamicDoctorChecks?: (
 		options: CollectDynamicDoctorChecksOptions,
@@ -83,7 +81,6 @@ export interface CliDependencies {
 		arguments_: readonly string[],
 	) => Promise<void>;
 	readonly resolveServiceAccountToken: typeof resolveServiceAccountToken;
-	readonly resolveManagedVmMinimumZigVersion: typeof resolveManagedVmMinimumZigVersion;
 	readonly runControllerDoctor: (
 		options: RunControllerDoctorOptions,
 	) => ControllerDoctorResult | Promise<ControllerDoctorResult>;
@@ -132,7 +129,6 @@ export const defaultCliDependencies: CliDependencies = {
 	runBuildCommand,
 	runCacheCommand,
 	probeOnePasswordServiceAccountHeadlessAuth,
-	resolveManagedVmMinimumZigVersion: resolveManagedVmMinimumZigVersion,
 	resolveServiceAccountToken,
 	runControllerDoctor,
 	runControllerOfflineCleanup: async (options) => {

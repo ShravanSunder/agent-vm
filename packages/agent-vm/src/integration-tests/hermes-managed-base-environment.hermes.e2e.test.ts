@@ -467,6 +467,8 @@ async function startManagedHermesEpoch(options: {
 		});
 	} catch (error: unknown) {
 		await controlTransportProxy?.close().catch(() => undefined);
+		// Vitest otherwise renders AggregateError components without the decorated startup diagnostics.
+		if (error instanceof Error) throw new Error(error.message, { cause: error });
 		throw error;
 	}
 	let managedGatewayStart: ManagedGatewayStartObservation;
@@ -478,6 +480,7 @@ async function startManagedHermesEpoch(options: {
 		} finally {
 			await controlTransportProxy?.close();
 		}
+		if (error instanceof Error) throw new Error(error.message, { cause: error });
 		throw error;
 	}
 	return {
@@ -914,6 +917,12 @@ describeHermesManagedEnvironmentE2e(
 				prefix: 'hermes-managed-base-environment-e2e-',
 				zoneId: 'hermes-managed-environment-e2e',
 			});
+			Object.assign(project.zone.gateway, { memory: '2049M' });
+			const standardToolVmProfile = project.systemConfig.toolVmProfiles.standard;
+			if (standardToolVmProfile === undefined) {
+				throw new Error('Hermes memory comparison requires the standard Tool VM profile.');
+			}
+			Object.assign(standardToolVmProfile, { memory: '2560M' });
 			configureHermesSecrets(project);
 			await materializeNativeProfileLeaves(project);
 			const expectedNativeLeaves = await readNativeProfileLeaves(project);
@@ -934,6 +943,24 @@ describeHermesManagedEnvironmentE2e(
 			const firstEpoch = await startManagedHermesEpoch({ project });
 			activeHarness = firstEpoch.harness;
 			assertManagedGatewayProjection(firstEpoch.start, project);
+			console.info(
+				JSON.stringify({
+					qualification: 'managed-memory-2560',
+					phase: 'first-gateway-start',
+					requestedResources: firstEpoch.start.managedVmCreateRequest?.resources,
+					actualQemuMemory:
+						/(?:^|\s)-m\s+(\S+)/u.exec(
+							(
+								await execFileAsync('ps', [
+									'-p',
+									String(firstEpoch.start.qemuPid),
+									'-o',
+									'command=',
+								])
+							).stdout,
+						)?.[1] ?? 'unobserved',
+				}),
+			);
 			expect(firstEpoch.toolVmCreateRequests).toEqual([]);
 			await waitForRootApiHealth({
 				gatewayPort: project.gatewayPort,
@@ -999,6 +1026,27 @@ describeHermesManagedEnvironmentE2e(
 				}),
 			).toContain(filesystemIsolationMarker);
 			expect(secondEpoch.toolVmCreateRequests).toHaveLength(2);
+			console.info(
+				JSON.stringify({
+					qualification: 'managed-memory-2560',
+					phase: 'second-gateway-and-tool-starts',
+					gatewayConfiguredMemory: project.zone.gateway.memory,
+					toolRequestedResources: secondEpoch.toolVmCreateRequests.map(
+						(request) => request.resources,
+					),
+					actualGatewayQemuMemory:
+						/(?:^|\s)-m\s+(\S+)/u.exec(
+							(
+								await execFileAsync('ps', [
+									'-p',
+									String(secondEpoch.start.qemuPid),
+									'-o',
+									'command=',
+								])
+							).stdout,
+						)?.[1] ?? 'unobserved',
+				}),
+			);
 			expect(secondEpoch.leaseCreateRequests.map((request) => request.agentId)).toEqual([
 				'main',
 				'beta',
