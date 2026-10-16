@@ -29,6 +29,8 @@ import {
 	type ProbeBootSignals,
 } from './probe-e2e-image-boot-signals.ts';
 
+type ProbeMemory = '1G' | '2G';
+
 export interface PublicProbeVm {
 	start(): Promise<void>;
 	close(): Promise<void>;
@@ -37,7 +39,7 @@ export interface PublicProbeVm {
 export interface ProbeVmOptions {
 	readonly sandbox: { readonly imagePath: string; readonly debug: readonly ['protocol', 'vfs'] };
 	readonly rootfs: { readonly mode: 'cow'; readonly size: '12G' };
-	readonly memory: '2G';
+	readonly memory: ProbeMemory;
 	readonly cpus: 1;
 	readonly env: Readonly<Record<string, string>>;
 	readonly httpHooks: unknown;
@@ -67,6 +69,7 @@ export interface BootProbeRecord {
 	readonly caller: 'isolated-public-sdk-no-managed-input-mounts';
 	readonly sdkVersion: '0.13.0';
 	readonly stockReadinessDefaultMs: 120000;
+	readonly requestedMemory: ProbeMemory;
 	readonly provenance: CacheObservation['provenance'];
 	readonly binding: {
 		readonly recipeFingerprint: string;
@@ -118,6 +121,7 @@ function baseRecord(
 		caller: 'isolated-public-sdk-no-managed-input-mounts',
 		sdkVersion: '0.13.0',
 		stockReadinessDefaultMs: 120000,
+		requestedMemory: '2G',
 		provenance,
 		binding: null,
 		inputStatus: 'available',
@@ -140,7 +144,9 @@ export async function probeOneImage(props: {
 	readonly sdk: PublicProbeSdk;
 	readonly processIo: OwnedProcessIo;
 	readonly now: () => number;
+	readonly memory?: ProbeMemory;
 }): Promise<ImageProbeResult> {
+	const requestedMemory: ProbeMemory = props.memory ?? '2G';
 	const tracker = createProbeBootSignalTracker(props.now);
 	let vm: PublicProbeVm | undefined;
 	let capturePromise: Promise<OwnedProcessCapture> | undefined;
@@ -192,7 +198,7 @@ export async function probeOneImage(props: {
 		vm = await props.sdk.VM.create({
 			sandbox: { imagePath: props.input.imagePath, debug: ['protocol', 'vfs'] },
 			rootfs: { mode: 'cow', size: '12G' },
-			memory: '2G',
+			memory: requestedMemory,
 			cpus: 1,
 			env: { ...hooks.env },
 			httpHooks: hooks.httpHooks,
@@ -232,6 +238,7 @@ export async function probeOneImage(props: {
 	}
 	const record: BootProbeRecord = {
 		...baseRecord(props.input, props.observation.provenance),
+		requestedMemory,
 		binding: { recipeFingerprint: props.input.recipeFingerprint, image: props.input.metadata },
 		startup,
 		beforeClose,

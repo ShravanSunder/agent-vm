@@ -229,6 +229,7 @@ jobs:
         run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}
 
       - name: Probe restored image boot through stock SDK
+        id: image-boot-probe
         if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-cache-inspection.outcome == 'success'
         env:
           CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}
@@ -237,6 +238,16 @@ jobs:
           CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}
           CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}
         run: pnpm exec tsx scripts/probe-e2e-image-boot.ts
+
+      - name: Probe retained Tool image with 1G memory
+        if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-boot-probe.outcome == 'success'
+        env:
+          CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}
+          CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}
+          CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}
+          CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}
+          CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}
+        run: pnpm exec tsx scripts/probe-e2e-image-memory.ts
 
       - parallel:
           - name: Run Hermes E2E tests

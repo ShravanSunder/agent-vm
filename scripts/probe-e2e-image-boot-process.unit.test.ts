@@ -103,6 +103,7 @@ describe('owned QEMU proc observation', () => {
 		const result = await capture(fixture());
 		expect(result.observation).toEqual({
 			status: 'observed',
+			memory: 'other',
 			accelerator: 'kvm',
 			machine: 'microvm',
 			cpu: 'host',
@@ -204,6 +205,7 @@ describe('owned QEMU proc observation', () => {
 		);
 		expect(result.observation).toEqual({
 			status: 'observed',
+			memory: 'other',
 			accelerator: 'other',
 			machine: 'other',
 			cpu: 'other',
@@ -261,5 +263,32 @@ describe('runner exit is separate from close resolution', () => {
 	});
 	it('never calls an uncaptured runner exited', async () => {
 		expect(await observeOwnedRunnerExit(null, fixture().io)).toBe('unknown');
+	});
+});
+
+describe('closed actual QEMU memory projection', () => {
+	it.each(['1G', '2G'] as const)(
+		'projects actual -m %s without inferring requested options',
+		async (memory) => {
+			const result = await capture(
+				fixture({ command: argumentsBytes([...normalArguments, '-m', memory]) }),
+			);
+			expect(result.observation).toMatchObject({ status: 'observed', memory });
+		},
+	);
+	it('maps unsafe or absent actual memory values to other without echoing them', async () => {
+		const result = await capture(
+			fixture({ command: argumentsBytes([...normalArguments, '-m', 'fixture-private-memory']) }),
+		);
+		expect(result.observation).toMatchObject({ status: 'observed', memory: 'other' });
+		expect(JSON.stringify(result.observation)).not.toContain('fixture-private-memory');
+		expect((await capture(fixture())).observation).toMatchObject({ memory: 'other' });
+	});
+	it('refuses duplicate actual memory flags without losing stable ownership', async () => {
+		const result = await capture(
+			fixture({ command: argumentsBytes([...normalArguments, '-m', '1G', '-m', '2G']) }),
+		);
+		expect(result.observation).toEqual({ status: 'malformed' });
+		expect(result.identity).not.toBeNull();
 	});
 });

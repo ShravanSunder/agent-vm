@@ -27,6 +27,7 @@ export type ProcessObservation =
 	| { readonly status: ProcessUnavailable }
 	| {
 			readonly status: 'observed';
+			readonly memory: '1G' | '2G' | 'other';
 			readonly accelerator: 'kvm' | 'tcg' | 'hvf' | 'other';
 			readonly machine: 'microvm' | 'q35' | 'virt' | 'other';
 			readonly cpu: 'host' | 'max' | 'other';
@@ -105,6 +106,7 @@ async function projectArguments(props: {
 	argumentsList.pop();
 	if (argumentsList.length === 0 || argumentsList.some((value) => value.length > 8192))
 		throw new ProcessReadFailure('malformed');
+	const memory = flagValue(argumentsList, '-m');
 	const accelerator = flagValue(argumentsList, '-accel')?.split(',')[0];
 	const machine = flagValue(argumentsList, '-machine')?.split(',')[0];
 	const cpu = flagValue(argumentsList, '-cpu')?.split(',')[0];
@@ -125,6 +127,7 @@ async function projectArguments(props: {
 	const executable = path.basename(argumentsList[0] ?? '');
 	return {
 		status: 'observed',
+		memory: memory === '1G' || memory === '2G' ? memory : 'other',
 		accelerator:
 			accelerator === 'kvm' || accelerator === 'tcg' || accelerator === 'hvf'
 				? accelerator

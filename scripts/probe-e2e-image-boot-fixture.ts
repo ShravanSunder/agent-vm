@@ -158,11 +158,14 @@ export function fixture(
 			}
 			if (filePath.endsWith('/stat')) return statBytes(index + 50);
 			if (behavior.cmdlineUnavailable) throw new ProcessReadFailure('read-failed');
-			const selected = options[index]?.sandbox.imagePath;
-			if (selected === undefined) throw new Error('fixture missing selected image');
+			const selectedOptions = options[index];
+			if (selectedOptions === undefined) throw new Error('fixture missing selected image');
+			const selected = selectedOptions.sandbox.imagePath;
 			return Buffer.from(
 				[
 					'/usr/bin/qemu-system-x86_64',
+					'-m',
+					selectedOptions.memory,
 					'-accel',
 					'kvm',
 					'-machine',

@@ -426,3 +426,35 @@ describe('bound prepared inputs refuse unsafe or different experiments before VM
 		expect(JSON.stringify(result.records)).not.toContain('fixture-private');
 	});
 });
+
+describe('diagnostic requested memory', () => {
+	it('changes only requested memory for the same selected Tool image and reports that request', async () => {
+		const data = fixture();
+		const input = await firstInput(data);
+		const baseline = await probeOneImage({
+			input,
+			observation: observation(),
+			sdk: data.dependencies.sdk,
+			processIo: data.dependencies.processIo,
+			now: data.dependencies.now,
+		});
+		const comparison = await probeOneImage({
+			input,
+			observation: observation(),
+			sdk: data.dependencies.sdk,
+			processIo: data.dependencies.processIo,
+			now: data.dependencies.now,
+			memory: '1G',
+		});
+		expect(data.options.map((options) => options.memory)).toEqual(['2G', '1G']);
+		expect(data.options.map((options) => options.sandbox.imagePath)).toEqual([
+			imagePath(toolFingerprint),
+			imagePath(toolFingerprint),
+		]);
+		expect(baseline.record.requestedMemory).toBe('2G');
+		expect(comparison.record.requestedMemory).toBe('1G');
+		expect(comparison.record.cleanup).toMatchObject({ close: 'resolved', runner: 'exited' });
+		const [first, second] = data.options;
+		expect(second).toEqual({ ...first, memory: '1G', debugLog: expect.any(Function) });
+	});
+});
