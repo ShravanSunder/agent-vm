@@ -27,7 +27,7 @@ export type ProcessObservation =
 	| { readonly status: ProcessUnavailable }
 	| {
 			readonly status: 'observed';
-			readonly memory: '1G' | '2G' | 'other';
+			readonly memory: '1G' | '2G' | '2049M' | 'other';
 			readonly accelerator: 'kvm' | 'tcg' | 'hvf' | 'other';
 			readonly machine: 'microvm' | 'q35' | 'virt' | 'other';
 			readonly cpu: 'host' | 'max' | 'other';
@@ -127,7 +127,7 @@ async function projectArguments(props: {
 	const executable = path.basename(argumentsList[0] ?? '');
 	return {
 		status: 'observed',
-		memory: memory === '1G' || memory === '2G' ? memory : 'other',
+		memory: memory === '1G' || memory === '2G' || memory === '2049M' ? memory : 'other',
 		accelerator:
 			accelerator === 'kvm' || accelerator === 'tcg' || accelerator === 'hvf'
 				? accelerator

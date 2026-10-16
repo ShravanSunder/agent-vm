@@ -267,7 +267,7 @@ describe('runner exit is separate from close resolution', () => {
 });
 
 describe('closed actual QEMU memory projection', () => {
-	it.each(['1G', '2G'] as const)(
+	it.each(['1G', '2G', '2049M'] as const)(
 		'projects actual -m %s without inferring requested options',
 		async (memory) => {
 			const result = await capture(

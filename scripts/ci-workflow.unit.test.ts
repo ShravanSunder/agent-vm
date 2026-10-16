@@ -298,10 +298,12 @@ describe('CI workflow topology', () => {
 });
 
 describe('retained Tool memory comparison workflow', () => {
-	it('runs one 1G comparison only after the unchanged 2G probe succeeds', async () => {
+	it('runs one 2049M comparison only after the unchanged 2G probe succeeds', async () => {
 		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
 		const baseline = workflow.indexOf('      - name: Probe restored image boot through stock SDK');
-		const comparison = workflow.indexOf('      - name: Probe retained Tool image with 1G memory');
+		const comparison = workflow.indexOf(
+			'      - name: Probe retained Tool image with 2049M memory',
+		);
 		const hermes = workflow.indexOf('      - parallel:', baseline);
 		expect(comparison).toBeGreaterThan(baseline);
 		expect(hermes).toBeGreaterThan(comparison);

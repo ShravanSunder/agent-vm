@@ -29,7 +29,7 @@ import {
 	type ProbeBootSignals,
 } from './probe-e2e-image-boot-signals.ts';
 
-type ProbeMemory = '1G' | '2G';
+type ProbeMemory = '1G' | '2G' | '2049M';
 
 export interface PublicProbeVm {
 	start(): Promise<void>;

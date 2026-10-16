@@ -239,7 +239,7 @@ jobs:
           CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}
         run: pnpm exec tsx scripts/probe-e2e-image-boot.ts
 
-      - name: Probe retained Tool image with 1G memory
+      - name: Probe retained Tool image with 2049M memory
         if: always() && matrix.lane == 'e2e-vm-shard-4' && steps.image-boot-probe.outcome == 'success'
         env:
           CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}
