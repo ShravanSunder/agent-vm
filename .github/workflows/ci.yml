@@ -49,6 +49,9 @@ jobs:
   e2e-image-cache:
     name: Prepare E2E image cache
     runs-on: ubuntu-latest
+    outputs:
+      hermes-cache-lookup-hit: ${{ steps.hermes-image.outputs.cache-hit }}
+      image-input-hash: ${{ steps.image-key.outputs.input-hash }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -209,6 +212,16 @@ jobs:
         run: |
           set -euo pipefail
           test "${HERMES_CACHE_HIT}" = true
+
+      - name: Observe restored prepared image assets
+        if: matrix.lane == 'e2e-vm-shard-4'
+        env:
+          CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}
+          CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}
+          CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}
+          CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}
+          CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}
+        run: pnpm exec tsx scripts/inspect-e2e-image-cache.ts
 
       - name: Run VM shard
         if: matrix.shard != ''

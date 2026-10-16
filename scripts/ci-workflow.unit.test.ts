@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -218,5 +219,46 @@ describe('CI workflow topology', () => {
 		expect(`${workflow}\n${cacheAction}\n${preparationScript}`.toLowerCase()).not.toContain(
 			'openclaw',
 		);
+	});
+	it('observes one exact restored cache before shard four without changing proof gates', async () => {
+		const workflow = await readRepositoryFile('.github/workflows/ci.yml');
+		const preparationJob = workflow.slice(
+			workflow.indexOf('  e2e-image-cache:'),
+			workflow.indexOf('  e2e-host:'),
+		);
+		const vmJob = workflow.slice(workflow.indexOf('  e2e-vm:'), workflow.indexOf('  check:'));
+		const barrier = vmJob.indexOf('      - name: Require prepared image caches');
+		const inspection = vmJob.indexOf('      - name: Observe restored prepared image assets');
+		const proof = vmJob.indexOf('      - name: Run VM shard');
+
+		expect(inspection).toBeGreaterThan(barrier);
+		expect(proof).toBeGreaterThan(inspection);
+		expect(preparationJob).toContain(
+			'hermes-cache-lookup-hit: ${{ steps.hermes-image.outputs.cache-hit }}',
+		);
+		expect(preparationJob).toContain('image-input-hash: ${{ steps.image-key.outputs.input-hash }}');
+		const observationStep = vmJob.slice(inspection, proof);
+		expect(observationStep).toContain("if: matrix.lane == 'e2e-vm-shard-4'");
+		expect(observationStep).toContain('run: pnpm exec tsx scripts/inspect-e2e-image-cache.ts');
+		for (const binding of [
+			'CACHE_INSPECTION_INPUT_HASH: ${{ steps.image-key.outputs.input-hash }}',
+			'CACHE_INSPECTION_CACHE_HIT: ${{ steps.hermes-image.outputs.cache-hit }}',
+			'CACHE_INSPECTION_PRIMARY_KEY: ${{ steps.hermes-image.outputs.primary-key }}',
+			'CACHE_INSPECTION_PREPARATION_LOOKUP_HIT: ${{ needs.e2e-image-cache.outputs.hermes-cache-lookup-hit }}',
+			'CACHE_INSPECTION_PREPARATION_INPUT_HASH: ${{ needs.e2e-image-cache.outputs.image-input-hash }}',
+		])
+			expect(observationStep).toContain(binding);
+		expect(
+			workflow.match(/run: pnpm exec tsx scripts\/inspect-e2e-image-cache\.ts/gu),
+		).toHaveLength(1);
+		expect(observationStep).not.toMatch(
+			/continue-on-error|timeout-minutes|uses:|prepare-e2e|restore-e2e|save@/u,
+		);
+		expect(vmJob).toContain('test "${HERMES_CACHE_HIT}" = true');
+		expect(vmJob).toContain("if: matrix.shard != ''");
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:vm --shard=${{ matrix.shard }}');
+		expect(vmJob).toContain("AGENT_VM_E2E_REQUIRE_PREPARED_IMAGE_CACHE: '1'");
+		expect(vmJob).toContain('run: mise exec -- pnpm run test:e2e:hermes');
+		expect(vmJob).not.toMatch(/continue-on-error|timeout-minutes|--exclude|--retry/u);
 	});
 });
