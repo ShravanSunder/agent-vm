@@ -6,7 +6,7 @@ import {
 
 export type CliPathContribution = 'deny' | 'ask' | 'none';
 
-// Explain only the fixed path; flag and stdin decisions remain explicitly per-call.
+// Explain only the fixed path; argument, flag and stdin decisions remain explicitly per-call.
 export function classifyCliPathContribution(
 	policy: ConfiguredCliPolicy,
 	path: readonly string[],
@@ -30,6 +30,7 @@ export function cliPolicyHasConditionalMatchers(policy: ConfiguredCliPolicy): bo
 			? policy.calls.deny
 			: [...policy.calls.deny, ...policy.calls.requiresApproval];
 	return (
+		policy.deniedPatterns.length > 0 ||
 		policy.stdin.kind !== 'none' ||
 		policy.commands.some((command) => command.flagRules.length > 0) ||
 		matchers.some((matcher) => matcher.flags.length > 0)

@@ -80,15 +80,28 @@ describe('explain result contract', () => {
 		const operation = namespace(input).operations.run;
 		if (operation?.googleCommands === null || operation?.googleCommands === undefined)
 			throw new Error('Missing Google set');
-		operation.googleCommands.descriptors = operation.googleCommands.descriptors.map(
-			(descriptor) => ({
-				...descriptor,
-				requirements: [
-					...descriptor.requirements,
-					{ serviceId: gmailService, effects: ['write'] },
-					{ serviceId: driveService, effects: ['write'] },
-				],
-			}),
+		// Independent paths preserve the mixed-effect view under full-path grouping.
+		operation.googleCommands.descriptors = operation.googleCommands.descriptors.flatMap(
+			(descriptor) => [
+				descriptor,
+				{
+					...descriptor,
+					operationId: 'gmail-send',
+					paths: [['gmail', 'send']],
+					requirements: [{ serviceId: gmailService, effects: ['write'] }],
+				},
+				{
+					...descriptor,
+					operationId: 'drive-edit',
+					paths: [['drive', 'edit']],
+					requirements: [{ serviceId: driveService, effects: ['write'] }],
+				},
+			],
+		);
+		if (operation.cliPolicy === null) throw new Error('Missing CLI policy');
+		operation.cliPolicy.commands.push(
+			{ path: ['gmail', 'send'], flagRules: [] },
+			{ path: ['drive', 'edit'], flagRules: [] },
 		);
 		account(input).decisions = [
 			...account(input).decisions,

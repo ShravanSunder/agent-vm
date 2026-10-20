@@ -325,6 +325,24 @@ function foldCliContribution(props: {
 	};
 }
 
+function sameAccessState(left: AccessState, right: AccessState): boolean {
+	switch (left.kind) {
+		case 'usable':
+		case 'approval-each-call':
+			return right.kind === left.kind;
+		case 'not-usable':
+			return right.kind === left.kind && right.firstUnmet === left.firstUnmet;
+		case 'blocked-by-policy':
+			return (
+				right.kind === left.kind &&
+				right.rule.source === left.rule.source &&
+				right.rule.ruleId === left.rule.ruleId
+			);
+		default:
+			return assertNever(left);
+	}
+}
+
 function googleExplainEntries(props: {
 	readonly input: AssessAccessInput;
 	readonly base: CallClassification;
@@ -339,50 +357,45 @@ function googleExplainEntries(props: {
 			requirements.findIndex((other) => sameGoogleEffect(other, requirement)) === index,
 	);
 	const accounts = input.facts.accounts.length === 0 ? [undefined] : input.facts.accounts;
+	// Every displayed state describes the complete path, including its other effects.
+	const evaluatedAccounts = accounts.map((account) => ({
+		account: account?.account ?? null,
+		paths: paths.map((command) => ({
+			command,
+			state: stateFor({
+				input,
+				account,
+				classification: foldCliContribution({
+					base,
+					contribution: command.contribution,
+					requirements: command.requirements,
+					input,
+				}),
+			}),
+		})),
+	}));
 	const entries: AccessEntry[] = [];
 	const splitPaths = new Set<string>();
 	for (const operationClass of unique) {
-		const matching = paths.filter((command) =>
-			command.requirements.some((requirement) => sameGoogleEffect(requirement, operationClass)),
-		);
-		const first = matching[0];
-		if (first === undefined) continue;
-		if (matching.every((command) => command.contribution === first.contribution)) {
-			for (const account of accounts)
-				entries.push({
-					operationClass,
-					account: account?.account ?? null,
-					state: stateFor({
-						input,
-						account,
-						classification: foldCliContribution({
-							base,
-							contribution: first.contribution,
-							requirements: [operationClass],
-							input,
-						}),
-					}),
-				});
-		} else {
-			for (const command of matching) {
-				const pathKey = JSON.stringify(command.path);
-				if (splitPaths.has(pathKey)) continue;
-				splitPaths.add(pathKey);
-				for (const account of accounts)
+		for (const evaluated of evaluatedAccounts) {
+			const matching = evaluated.paths.filter(({ command }) =>
+				command.requirements.some((requirement) => sameGoogleEffect(requirement, operationClass)),
+			);
+			const first = matching[0];
+			if (first === undefined) continue;
+			if (matching.every(({ state }) => sameAccessState(state, first.state))) {
+				entries.push({ operationClass, account: evaluated.account, state: first.state });
+			} else {
+				for (const { command, state } of matching) {
+					const pathAccountKey = JSON.stringify([command.path, evaluated.account]);
+					if (splitPaths.has(pathAccountKey)) continue;
+					splitPaths.add(pathAccountKey);
 					entries.push({
 						operationClass: { kind: 'cli-command', commandPath: command.path },
-						account: account?.account ?? null,
-						state: stateFor({
-							input,
-							account,
-							classification: foldCliContribution({
-								base,
-								contribution: command.contribution,
-								requirements: command.requirements,
-								input,
-							}),
-						}),
+						account: evaluated.account,
+						state,
 					});
+				}
 			}
 		}
 	}
