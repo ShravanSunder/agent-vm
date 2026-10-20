@@ -153,7 +153,8 @@ One function at the Worker's edge answers "who is calling, and for whom". It ret
 - **An agent is known by its own credential,** never by a name, session ID, client name or tool argument it supplies.
 - **A person is present only through that person's grant** (below), never because the caller names them. The fleet's existing "on behalf of" field records who asked; it grants nothing (fleet F-35), and it stays that way.
 - **Until question 1 is answered,** the check is designed against today's proxy agent bearer tokens, sent behind Access. That's a stand-in, and it's unverified through the MCP Portal.
-- **Access can't be bypassed:** the Worker's `workers.dev` address and preview addresses are turned off, so the only way in is through Access.
+- **Access is checked, not assumed.** On every request the Worker verifies Cloudflare's signed Access assertion against our Access issuer and this application's audience, as agent-vm's controller already does ([cloudflare-access-identity-verifier.ts:137](../../../packages/agent-vm/src/controller/oauth/cloudflare-access-identity-verifier.ts#L137)). A missing, forged or wrong-audience assertion is refused, even alongside a valid agent token. The Worker's `workers.dev` and preview addresses are also turned off.
+- **Each organization gets its own engine.** Each organization has its own configuration (today's proxy config format, unchanged), its own secrets and its own approval signing key, all deployed with the Worker. The organization this check verified picks the engine that handles the call; nothing the caller sends can pick it. So tools, server settings, connections and the approval key never cross organizations. Today one runtime picks servers by name alone ([upstream-mcp-client-runtime.ts:532](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L532)) and reuses connections per agent and server ([:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)). Two organizations can use the same agent or server names, so they can't share one runtime.
 
 ### The organization's Durable Object
 
@@ -170,20 +171,26 @@ One object per organization, holding only that organization's auth state. It's t
 - **Tool calls and their streams run in the Worker, not in the object.** The object only does short reads and writes.
 - **Splitting when needed:** if one organization's used-approval-token records grow too large or too busy, they can split by agent into more objects. That spreads only the approval records: every call still makes its one check against the organization's object, so a very busy organization would have that check measured before anything else changes.
 - **Why approval state moves here:** today the proxy remembers used tokens in a list inside one process ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)). A Worker runs as many copies at once, so a list per copy couldn't stop a token being used twice. The object is the single place that records a use. This is approval state, not call history.
+- **Recording a use is one awaited step, before anything runs.**
+  1. The Worker checks the token's signature, agent and calls.
+  2. It asks the organization's object to record the token. The object does that in one storage write and answers "first use" or "already used".
+  3. Only "first use" lets the calls run. "Already used", an error or no answer means none of them run.
+
+  Today the token check calls a plain function for this ([hmac-token.ts:204](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L204)). It becomes an awaited step on both hosts; a machine keeps today's in-memory list behind it. The token's bytes don't change. A token signed with one organization's key fails the signature check in another.
 - **People's accounts and sign-in sessions aren't kept here.** Once question 2 is answered, they live in the sign-in service's own database. Membership is written in one place only: this object.
 
 ### Organization tools
 
-Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). The Worker reads the same config, deployed with it.
-- **Secret values** come from Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
-- **Connections stay inside their organization.** Today a connection to a tool server is reused per agent and per server ([upstream-mcp-client-runtime.ts:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)), where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). On the Worker the organization is part of that key too, because the same agent or server name can appear in two organizations. A reused connection never skips the per-call check.
+Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). Each organization's engine reads its own copy of that config.
+- **Secret values** come from that organization's Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
+- **Connections are reused only inside the organization's engine,** per agent and per server as today, where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). A reused connection never skips the per-call check.
 - **1Password:** the Node host's `op` path doesn't run in a Worker. A 1Password service-account token would need a client that works in a Worker, which is unproven, so Cloudflare secrets are the default.
 
 ### Per-user and computer tools: designed, not built
 
 - **Per-user tools:**
   - The account a call uses comes from the person's grant, checked at the organization's object, never from a label the caller sends.
-  - A per-user connection adds the person's connected account, taken from the checked grant, to the organization's connection key above. So one person's connection is never reused for someone else, and every call through it is still checked against the current grant.
+  - A per-user connection adds the person's connected account, taken from the checked grant, to its engine's connection key. So one person's connection is never reused for someone else, and every call through it is still checked against the current grant.
   - Where people's provider tokens are kept, and how they're refreshed and revoked, is decided with question 2.
 - **Computer tools:**
   - A private route (Cloudflare Tunnel or Workers VPC) only reaches the machine.
@@ -200,24 +207,30 @@ There are two generators today, and only one is on the Worker's path.
 
 | Part | What it holds |
 | --- | --- |
-| index (how Analytics Engine groups and samples) | the organization's ID. Cloudflare's guidance is to pick the index the data is viewed by, and never a unique ID per call ([sampling](https://developers.cloudflare.com/analytics/analytics-engine/sampling/)). Workspaces aren't in this work; when they arrive, the index becomes the workspace ID. |
+| index (how Analytics Engine groups and samples) | the organization's ID, a UUID (36 bytes, under the 96-byte limit). Cloudflare's guidance is to pick the index the data is viewed by, and never a unique ID per call ([sampling](https://developers.cloudflare.com/analytics/analytics-engine/sampling/)). Workspaces aren't in this work; when they arrive, the index becomes the workspace ID. |
 | text fields | organization, agent, mode (`direct` or `indirect`), tool server, tool name, outcome (ran, refused, needs approval or failed), failure kind, and whether the call was for a person (yes or no) |
 | number fields | duration in milliseconds, request bytes, response bytes |
 
-- **Kept small and safe:** no arguments, results, secrets, tokens or personal details. Agent and tool names are bounded by the configuration; every other text field has a fixed set of values.
+- **Kept small and safe:** no arguments, results, secrets, tokens or personal details. Mode, outcome, failure kind and "for a person" have fixed sets of values. Names come from configuration, which sets no length limit, so each text field is cut to at most 256 bytes, on a character boundary. That keeps a data point's eight text fields far under Analytics Engine's 16 KB ([limits](https://developers.cloudflare.com/analytics/analytics-engine/limits/)).
+- **Analytics never changes a call:** a data point that can't be written is dropped, and the failure is logged without its contents.
 - **Reading it:** counts are weighted by `_sample_interval`, because data is sampled. A rare event inside a busy organization may not be retrievable on its own.
 - **Logs, traces and errors** use Cloudflare's Workers observability. Logs are structured and never contain secrets.
 
 ### Limits on the Worker
 
-These are new, and apply to the Worker only. They keep a request inside Cloudflare's 128 MB of memory, 6 open outgoing connections per request, and 250 analytics data points per request. Each is provisional until measured on a real Worker build.
+These are new, and apply to the Worker only. They're our own budgets, chosen to stay well inside Cloudflare's limits ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/)):
+- 128 MB of memory per isolate, shared by every request that isolate is serving;
+- 6 connections per request waiting for response headers;
+- 250 analytics data points per request.
+
+A budget alone doesn't guarantee memory, so each is provisional until measured on a real Worker build, including several requests sharing one isolate.
 
 | What | Limit | Why |
 | --- | --- | --- |
 | request body | 4 MiB | today's proxy has none; the Worker needs one to stay inside its memory |
 | each tool server's response | 4 MiB, measured before redaction | the same as today's proxy |
 | calls in one `mcp_portal_call` | 50 | today's proxy has no limit; 50 matches the standalone Tool Portal's batch limit, and stays under 250 data points |
-| calls running at once | 6 | Cloudflare allows 6 open outgoing connections per request; the rest wait their turn |
+| calls of one batch running at once | 6 | our choice, so at most about 24 MiB of responses (6 × 4 MiB) are held at once; the rest wait their turn. It isn't Cloudflare's limit, which counts connections waiting for headers |
 | the whole reply | 16 MiB | calls that would push the reply past it fail with a too-large result, rather than the Worker running out of memory |
 | an organization's object | records far below Cloudflare's 2 MB per record and 10 GB per object | each record is a small row |
 
@@ -233,7 +246,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | `mcp-portal` proxy server, config, CLI and binary | `tool-host-node` |
 | `mcp-portal` per-tool TypeScript helper, used by `describe` | `tool-engine/mcp-gateway`, on Web Crypto, so both hosts use it; output byte-identical |
 | `mcp-portal` full catalog compiler | `tool-host-node`; output byte-identical |
-| `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in, as today ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)): an in-memory list on a machine, the organization's object on the Worker |
+| `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)), but becomes awaited: an in-memory list on a machine, the organization's object on the Worker |
 | `mcp-portal` call digest | `tool-access/contracts`; same bytes |
 | `mcp-portal` provider backend | `tool-engine/connectors`, used by agent-vm's adapter |
 | `tool-portal` standalone server, its MCP projection, artifacts and batch approval | `tool-host-node` |

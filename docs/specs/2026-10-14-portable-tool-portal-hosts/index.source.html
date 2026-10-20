@@ -23,7 +23,7 @@
 
 <ex-callout tone="question" title="Questions for you, in order">
 
-1. **Do agents reach the Worker through Cloudflare's MCP Portal, or directly behind Access?** Through the Portal, the Worker can't tell agents apart. This blocks the Worker's caller check; it went to Sun as a brief.
+1. **Do agents reach the Worker through Cloudflare's MCP Portal, or directly behind Access?** For agents using service tokens through the Portal, as Cloudflare documents it, the Worker can't tell them apart. This blocks the Worker's caller check; it went to Sun as a brief.
 2. **Who issues real sign-in and agent tokens: our own Better Auth service, or fleet?** This blocks per-user tools, and selling this without your Cloudflare Access.
 3. **Do tool calls need history that survives a restart?** The design assumes not; the Worker keeps only which approvals were used.
 4. **Retire either of today's two standalone approval paths?** The design keeps both.

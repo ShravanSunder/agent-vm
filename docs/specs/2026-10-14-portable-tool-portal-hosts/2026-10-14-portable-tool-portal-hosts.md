@@ -54,16 +54,16 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 The Worker serves the MCP proxy's way in for organization tools. Its reference is today's proxy at `08f9e426`, run on a machine with the same configuration.
 
 13. **The Worker behaves like the proxy.**
-    - With the same configuration and caller, it offers the same tools, in `direct` or `indirect` mode, with the same results and the same refusals, as checks 1 to 4 require of the proxy.
-    - Its approval token works as the proxy's does (check 6). A token can be used only once, even when two copies of the Worker receive it at the same time.
+    - With the same configuration and caller, it offers the same tools, in `direct` or `indirect` mode, with the same results and the same refusals, as checks 1 to 4 require of the proxy. The only differences are the four search tools `direct` adds (check 2) and the Worker's own limits (check 15).
+    - Its approval token works as the proxy's does (check 6). A token can be used only once, even when two copies of the Worker receive it at the same time, and no call runs if its use can't be recorded.
     - `describe` returns the same per-tool helper as on a machine, built from the tool's current schema.
 14. **Only known callers, kept apart.**
-    - The Worker refuses a caller it can't identify, including anyone reaching it by a way that skips Cloudflare Access.
-    - An agent can't pass as another agent by sending another's name, session ID or client name.
-    - One organization's callers can't list or call another organization's tools, or read its auth data.
+    - The Worker refuses a caller it can't identify. That includes a request carrying a valid agent token but a missing, forged or wrong-audience Access assertion, and anyone reaching it by a way that skips Cloudflare Access.
+    - An agent can't gain another agent's tools, connections or effects by sending another's name, session ID or client name. Such labels are ignored, and the call runs, or is refused, as the agent's own credential allows.
+    - One organization's callers can't list or call another organization's tools, use its credentials or connections, or read its auth data, even when both organizations use the same agent or server names.
     - Removing an agent from its organization stops that agent's next call.
-15. **The Worker's own limits hold,** as listed in the [Program Design](program-design.md#limits-on-the-worker): a request over the size limit is refused; a batch over the call limit is refused; no more than 6 calls run at once; and a reply that would pass its limit returns too-large results instead of failing the Worker.
-16. **Analytics carry nothing private.** Each call sends one data point, in the shape the Program Design lists, and none holds arguments, results, secrets, tokens or personal details. Credentials stay out of the Worker's logs, as check 7 requires everywhere.
+15. **The Worker's own limits hold,** as listed in the [Program Design](program-design.md#limits-on-the-worker): a request over the size limit is refused; a batch over the call limit is refused; no more than 6 calls of one batch run at once; and a reply that would pass its limit returns too-large results instead of failing the Worker.
+16. **Analytics carry nothing private.** Each call sends one data point, in the shape the Program Design lists, and none holds arguments, results, secrets, tokens or personal details. Every data point fits Analytics Engine's limits, however long the configured names are, and a failed analytics write never changes the call. Credentials stay out of the Worker's logs, as check 7 requires everywhere.
 
 ## Not checked here
 

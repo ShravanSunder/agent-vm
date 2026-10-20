@@ -57,7 +57,7 @@ This work has two parts:
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
    - **It refuses every caller it can't identify,** and it tells agents apart. How agents reach it, and how they prove who they are, is the first open question below.
    - **Its limits fit Workers and Durable Objects,** within the paid Workers plan the owner pays for.
-   - **When one Worker or one Durable Object isn't enough,** the work is split across several (sharding) rather than refused.
+   - **When one Worker or one Durable Object isn't enough,** the work can be split across several (sharding), once measurement shows it's needed.
    - Things a Worker can't run (stdio servers, configured CLIs, Tool VMs) stay on the Node host and agent-vm.
 
 4. **Organizations, for sign-in only.** You belong to an organization to reach anything inside it. It has two roles:
@@ -118,7 +118,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 Bring these one at a time, in this order. The first was sent as a brief on 2026-10-20.
 
 1. **How do agents reach the Worker: through Cloudflare's managed MCP Portal, or directly behind Cloudflare Access?**
-   - Cloudflare documents that the Portal sends one stored admin credential upstream for service-token sessions. So the Worker can't tell agents apart through it, and per-user servers are excluded for those sessions. One upstream registration per agent might work around this. That's unproven, and proving it needs the owner's Cloudflare account.
+   - Cloudflare documents that the Portal sends one stored admin credential upstream for service-token sessions. So, for agents using service tokens, the Worker can't tell them apart through it, and per-user servers are excluded for those sessions. One upstream registration per agent might work around this. That's unproven, and proving it needs the owner's Cloudflare account.
    - Directly behind Access, the Worker tells agents apart by each agent's own credential, as today's proxy does with its agent bearer tokens.
    - **This blocks:** the Worker's caller check, and per-user tools.
 2. **Who issues people's sign-in and agent tokens for real: our own auth service (Better Auth), or fleet?** Both advisors lean toward Better Auth, using fleet only if fleet commits a ready token contract. **This blocks:** per-user tools, and selling this as a product without the owner's Cloudflare Access.
