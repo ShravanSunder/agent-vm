@@ -45,7 +45,7 @@ Unverified until performed: real controlled CLI process isolation and authentica
 
 ### U6 — Recover work without replay
 
-**Proven by:** interrupt transport and processes at defined admission/arming/receipt boundaries, reconnect, and recover the same operation or its explicit ambiguity with no second effect.
+**Proven by:** interrupt transport and processes at defined admission/arming/receipt boundaries, reconnect, and recover the same operation or its explicit ambiguity with no second effect. This covers calls under the public operation contract, including usable ones. A managed call that needs no approval is `untracked` and is not recoverable; J7 observes that boundary.
 
 Unverified until performed: durable adapters under process/Worker replacement, expiry/retention and multi-handler contention.
 
@@ -215,7 +215,7 @@ Attempt recovery with a gateway service credential lacking delegation, an otherw
 
 ### J7 — Managed boundary preservation
 
-Needed lasting journey through the real controller, managed gateway and relevant Tool VM/credentialed backend when the adopted change touches them. Observe allowed control and forbidden admin/epoch/principal/artifact cases. Closes V8. Unit/integration suites are supporting checks; VM inventory with skips is not evidence of a managed effect. Existing repository live proof lanes must remain required by the delivery plan.
+Needed lasting journey through the real controller, managed gateway and relevant Tool VM/credentialed backend when the adopted change touches them. Observe allowed control and forbidden admin/epoch/principal/artifact cases. Also observe the managed `untracked` boundary: a managed usable call invokes once with no operation record, and a call that needs approval but gets an `untracked` answer is refused with zero backend invocations. Closes V8. Unit/integration suites are supporting checks; VM inventory with skips is not evidence of a managed effect. Existing repository live proof lanes must remain required by the delivery plan.
 
 ### J8 — Enrollment and revocation
 
