@@ -177,7 +177,7 @@ function directConfig(): GatewayRuntimeManagedToolPortalConfig {
 			};
 	return config;
 }
-function invocation(
+function createNeutralInvocation(
 	adapter: ReturnType<typeof createManagedToolEngineAdapter>,
 	reference: string,
 	kind: DispatchInvocation['backendKind'] = 'mcp_provider',
@@ -355,7 +355,7 @@ describe('managed dispatch authority', () => {
 				context: { trustedContext, surfaceClass: 'protected_uds' },
 				call,
 			});
-			const incoming = invocation(good.adapter, goodReference);
+			const incoming = createNeutralInvocation(good.adapter, goodReference);
 			const badReference = subject.adapter.register({
 				context: { trustedContext: context, surfaceClass: 'protected_uds' },
 				call,
@@ -374,7 +374,7 @@ describe('managed dispatch authority', () => {
 			context: { trustedContext, surfaceClass: 'mcp' },
 			call,
 		});
-		const incoming = invocation(subject.adapter, reference);
+		const incoming = createNeutralInvocation(subject.adapter, reference);
 		expect(await subject.adapter.backends.get('mcp_provider')?.invoke(incoming)).toMatchObject({
 			kind: 'not-dispatched',
 		});
