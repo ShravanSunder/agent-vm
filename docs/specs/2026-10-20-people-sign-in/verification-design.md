@@ -108,8 +108,10 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 6. A token request held after the final check. **Expect:** the token reaches the client; introspection of it is inactive; its `exp` is within `SD3`.
 7. Introspection held after Better Auth's own `sid` read, before the final check. **Expect:** `{ active: false }`.
 8. Introspection held after the final check. **Expect:** `active` with a `checkedAt` before the removal.
+9. A first Google sign-in held after Better Auth wrote its user and account rows, before the current-person check binds the entry, while the owner removes that entry. **Expect:** refused. Read back the `user`, `account`, `allowed_email` binding, `session` and `sign_in_audit` rows: the user and account remain, unbound, with no session. A later re-add reactivates that same Person.
+10. The same hold on the owner's first sign-in on an empty deployment, while a second, never-listed account tries. **Expect:** exactly one `deployment_owner` row naming the owner, and one `owner-bound` record.
 
-**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7.
+**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook fails case 9's readback.
 
 **F. Decision freshness** (Tool Portal integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
 1. the live check passes, then the apply is held past `SD8`;
