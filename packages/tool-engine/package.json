@@ -21,7 +21,7 @@
 	},
 	"scripts": {
 		"build": "tsdown",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"typecheck": "tsc -p tsconfig.production.json --noEmit",
 		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-engine/src"
 	},
 	"dependencies": {

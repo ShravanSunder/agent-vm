@@ -1,0 +1,5 @@
+{
+	"extends": "../../../tsconfig.production.json",
+	"include": ["controller-type-import.ts"],
+	"exclude": []
+}

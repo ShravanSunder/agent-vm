@@ -1,0 +1,129 @@
+{
+	"extends": "./tsconfig.production.json",
+	"compilerOptions": {
+		"paths": {
+			"@agent-vm/gateway-runtime/managed-tool-engine/*": [
+				"./packages/gateway-runtime/src/managed-tool-engine/*"
+			],
+			"@agent-vm/config-contracts-test-support/*": ["./packages/config-contracts/src/*"],
+			"@agent-vm/tool-portal/policy-comparison": [
+				"./packages/tool-portal/src/tool-portal-service-common.ts"
+			],
+			"@agent-vm/controller-test-support/*": ["./packages/agent-vm/src/controller/*"],
+			"@agent-collaboration/tool-engine/dispatch": ["./packages/tool-engine/src/dispatch/index.ts"],
+			"@agent-collaboration/tool-access/contracts": [
+				"./packages/tool-access/src/contracts/index.ts"
+			],
+			"@agent-collaboration/tool-access/authorization": [
+				"./packages/tool-access/src/authorization/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
+			"@agent-vm/agent-portal-sdk/generated-tools": [
+				"./packages/agent-portal-sdk/src/generated-tools/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/gateway-runtime-client": [
+				"./packages/agent-portal-sdk/src/gateway-runtime-client/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/tool-portal-mcp-client": [
+				"./packages/agent-portal-sdk/src/tool-portal-mcp-client/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/adapter-boundary": [
+				"./packages/agent-portal-sdk/src/adapter-boundary/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/approval-surface": [
+				"./packages/agent-portal-sdk/src/approval-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/artifact-surface": [
+				"./packages/agent-portal-sdk/src/artifact-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/capability-description-surface": [
+				"./packages/agent-portal-sdk/src/capability-description-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/portal-call-surface": [
+				"./packages/agent-portal-sdk/src/portal-call-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/portal-event-surface": [
+				"./packages/agent-portal-sdk/src/portal-event-surface/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/portable-contracts": [
+				"./packages/agent-portal-sdk/src/portable-contracts/index.ts"
+			],
+			"@agent-vm/agent-portal-sdk/testing": ["./packages/agent-portal-sdk/src/testing/index.ts"],
+			"@agent-vm/agent-vm": ["./packages/agent-vm/src/index.ts"],
+			"@agent-vm/config-contracts": ["./packages/config-contracts/src/index.ts"],
+			"@agent-vm/control-protocol-contracts": [
+				"./packages/control-protocol-contracts/src/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts": [
+				"./packages/controller-execution-contracts/src/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-dispatch-boundary": [
+				"./packages/controller-execution-contracts/src/controller-dispatch-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-execution-data-boundary": [
+				"./packages/controller-execution-contracts/src/controller-execution-data-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/controller-host-action-boundary": [
+				"./packages/controller-execution-contracts/src/controller-host-action-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/tool-vm-runner-boundary": [
+				"./packages/controller-execution-contracts/src/tool-vm-runner-boundary/index.ts"
+			],
+			"@agent-vm/controller-execution-contracts/testing": [
+				"./packages/controller-execution-contracts/src/testing/index.ts"
+			],
+			"@agent-vm/gondolin-vm-adapter": ["./packages/gondolin-vm-adapter/src/index.ts"],
+			"@agent-vm/gateway-control-contracts": ["./packages/gateway-control-contracts/src/index.ts"],
+			"@agent-vm/gateway-lifecycle": ["./packages/gateway-lifecycle/src/index.ts"],
+			"@agent-vm/gateway-runtime": ["./packages/gateway-runtime/src/index.ts"],
+			"@agent-vm/hermes-gateway": ["./packages/hermes-gateway/src/index.ts"],
+			"@agent-vm/gateway-runtime/flow-control": [
+				"./packages/gateway-runtime/src/uds/gateway-runtime-flow-control.ts"
+			],
+			"@agent-vm/gateway-runtime/protocol": [
+				"./packages/gateway-runtime/src/uds/gateway-runtime-protocol.ts"
+			],
+			"@agent-vm/managed-vm": ["./packages/managed-vm/src/index.ts"],
+			"@agent-vm/mcp-portal": ["./packages/mcp-portal/src/index.ts"],
+			"@agent-vm/mcp-portal/catalog-typescript": [
+				"./packages/mcp-portal/src/catalog-typescript/index.ts"
+			],
+			"@agent-vm/mcp-portal/core": ["./packages/mcp-portal/src/core/index.ts"],
+			"@agent-vm/mcp-portal/mcp-proxy": ["./packages/mcp-portal/src/mcp-proxy/index.ts"],
+			"@agent-vm/mcp-portal/mcp-provider-backend": [
+				"./packages/mcp-portal/src/mcp-provider-backend/index.ts"
+			],
+			"@agent-vm/mcp-portal/cli": ["./packages/mcp-portal/src/cli/index.ts"],
+			"@agent-vm/mcp-portal/portal-config": ["./packages/mcp-portal/src/portal-config/index.ts"],
+			"@agent-vm/mcp-portal/portal-auth/agent-bearer-token": [
+				"./packages/mcp-portal/src/portal-auth/agent-bearer-token.ts"
+			],
+			"@agent-vm/mcp-portal/portal-auth/hmac-env": [
+				"./packages/mcp-portal/src/portal-auth/hmac-env.ts"
+			],
+			"@agent-vm/mcp-portal/portal-auth/hmac-token": [
+				"./packages/mcp-portal/src/portal-auth/hmac-token.ts"
+			],
+			"@agent-vm/mcp-portal/testing/fake-upstream-mcp-server": [
+				"./packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts"
+			],
+			"@agent-vm/secret-management": ["./packages/secret-management/src/index.ts"],
+			"@agent-vm/tool-portal": ["./packages/tool-portal/src/index.ts"],
+			"@agent-vm/tool-portal/cli-allowances": [
+				"./packages/tool-portal/src/cli-allowances/index.ts"
+			],
+			"@agent-vm/tool-portal/dispatch-authority": [
+				"./packages/tool-portal/src/dispatch-authority.ts"
+			],
+			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"]
+		}
+	},
+	"include": [
+		"packages/**/*.ts",
+		"tests/**/*.ts",
+		"vitest.config.ts",
+		"vitest.setup.ts",
+		"scripts/portable-test-aliases.unit.test.ts"
+	],
+	"exclude": ["packages/**/contract-fixtures/**", "packages/**/dist/**", "node_modules"]
+}

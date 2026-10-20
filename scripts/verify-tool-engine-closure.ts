@@ -351,6 +351,29 @@ export async function verifyToolEngineClosure(): Promise<void> {
 				source: `${original}\nimport '@gondolin/provider';`,
 				reason: 'tool-engine forbidden import @gondolin/provider',
 			},
+			{
+				name: 'controller-test-alias',
+				source: original,
+				declaration:
+					"import type { ControllerApprovalLedger } from '@agent-vm/controller-test-support/approval/controller-approval-ledger.js'; export type AliasPoison = ControllerApprovalLedger;",
+				reason:
+					'tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
+			},
+			{
+				name: 'config-test-alias',
+				source: original,
+				declaration:
+					"import type { createOAuthPolicyCompilerTestInput } from '@agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js'; export type AliasPoison = typeof createOAuthPolicyCompilerTestInput;",
+				reason:
+					'tool-engine forbidden import @agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js',
+			},
+			{
+				name: 'policy-test-alias',
+				source: original,
+				declaration:
+					"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
+				reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
+			},
 		];
 		await writeFile(
 			path.join(root, 'dist/dispatch/s2-transitive-poison.js'),
@@ -360,6 +383,8 @@ export async function verifyToolEngineClosure(): Promise<void> {
 			await previous;
 			try {
 				await replaceArtifact(contract, fixture.source);
+				if (fixture.declaration !== undefined)
+					await replaceArtifact(declaration, `${originalDeclaration}\n${fixture.declaration}\n`);
 				if (fixture.name === 'managed-type')
 					await replaceArtifact(
 						declaration,
