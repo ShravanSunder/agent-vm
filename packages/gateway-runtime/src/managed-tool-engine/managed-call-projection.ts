@@ -3,6 +3,7 @@ import type {
 	GatewayRuntimeApprovalAdmissionResult,
 	GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
+import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
 import {
 	approvalRequiredItem,
 	ambiguousDispatchItem,
@@ -29,7 +30,9 @@ export function createManagedPortalCallProjection(props: {
 					const expected = deterministicOperationId({
 						callId: call.id,
 						semanticRevision: snapshot.activeRevision,
-						stablePrincipal: neutralRequest.principal,
+						stablePrincipal: deriveGatewayControlStablePrincipal({
+							principal: context.trustedContext.principal,
+						}),
 						surfaceClass: context.surfaceClass,
 					});
 					const result = await dispatcher.dispatch(neutralRequest);
