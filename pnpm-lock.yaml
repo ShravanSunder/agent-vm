@@ -573,6 +573,43 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
 
+  packages/tool-host-node:
+    dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
+      '@agent-vm/agent-portal-sdk':
+        specifier: workspace:*
+        version: link:../agent-portal-sdk
+      '@logtape/logtape':
+        specifier: 2.3.0
+        version: 2.3.0
+      '@logtape/otel':
+        specifier: 2.3.0
+        version: 2.3.0(@logtape/logtape@2.3.0)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
+      json-schema-to-typescript:
+        specifier: 16.0.0
+        version: 16.0.0
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
+
   packages/tool-portal:
     dependencies:
       '@agent-vm/agent-portal-sdk':
