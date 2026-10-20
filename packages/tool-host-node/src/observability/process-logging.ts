@@ -130,7 +130,13 @@ export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServ
 				category,
 				level: 'error',
 				message: 'MCP Portal server error',
-				properties: { failureClass: 'server' },
+				properties: {
+					failureClass: 'server',
+					...(event.reason === 'operation-store-capacity' ||
+					event.reason === 'operation-store-storage-failed'
+						? { reason: event.reason }
+						: {}),
+				},
 			};
 		case 'mcp_proxy_auth':
 			return {

@@ -18,6 +18,7 @@ export function createNodeHostDiagnosticLogger(
 		if (event === 'operation-store-capacity' || event === 'operation-store-storage-failed') {
 			logger.log({
 				event: 'server_error',
+				reason: event,
 				level: 'error',
 				message:
 					event === 'operation-store-capacity'
