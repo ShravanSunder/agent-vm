@@ -8,9 +8,12 @@ import {
 	output,
 } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function mutableRecord(value: unknown): Record<string, unknown> {
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
-		throw new Error('Expected an object to mutate in place');
+	if (!isObjectRecord(value)) throw new Error('Expected an object to mutate in place');
 	return value;
 }
 
