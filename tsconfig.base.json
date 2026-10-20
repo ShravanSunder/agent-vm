@@ -139,7 +139,13 @@
 			"@agent-vm/tool-portal/dispatch-authority": [
 				"./packages/tool-portal/src/dispatch-authority.ts"
 			],
-			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"]
+			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
+			"@agent-collaboration/tool-engine/mcp-gateway": [
+				"./packages/tool-engine/src/mcp-gateway/index.ts"
+			],
+			"@agent-collaboration/tool-engine/connectors": [
+				"./packages/tool-engine/src/connectors/index.ts"
+			]
 		}
 	}
 }

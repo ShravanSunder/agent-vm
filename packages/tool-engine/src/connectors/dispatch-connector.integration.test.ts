@@ -1,0 +1,278 @@
+async function unavailable(): Promise<{ kind: 'unavailable' }> {
+	return { kind: 'unavailable' };
+}
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+
+import { createPortalAgentIdentity } from '@agent-collaboration/tool-access/authorization';
+import {
+	assessAccessInput,
+	jsonValueSchema,
+	type AssessAccessInput,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	type ToolBackend,
+	type BackendKind,
+	type DispatchInvocation,
+} from '@agent-collaboration/tool-engine/dispatch';
+import {
+	createMcpGateway,
+	createPortalSessionManager,
+} from '@agent-collaboration/tool-engine/mcp-gateway';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { describe, expect, it } from 'vitest';
+
+import { createUpstreamMcpClientRuntime } from '#connectors/upstream-mcp-client-runtime';
+
+// Real dispatcher + assessor + connector + SDK HTTP. The controlled provider is the external fixture.
+describe('dispatch to a selected credentialed HTTP MCP connector', () => {
+	it('records the configured binding/header while nested catalog, result and error material is redacted', async () => {
+		const secretCanary = 'opaque-provider-credential-31';
+		const headerCanary = 'selected-header-canary-62';
+		const effects: {
+			name: string;
+			arguments: unknown;
+			authorization: string | undefined;
+			header: string | undefined;
+		}[] = [];
+		const diagnostics: unknown[] = [];
+		const invocations: DispatchInvocation[] = [];
+		const provider = createServer((request, response) => {
+			const serve = async (): Promise<void> => {
+				const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
+				const server = new Server(
+					{ name: 'controlled-provider', version: '1.0.0' },
+					{ capabilities: { tools: {} } },
+				);
+				server.setRequestHandler(ListToolsRequestSchema, async () => ({
+					tools: ['read', 'fail'].map((name) => ({
+						name,
+						description: `provider ${secretCanary} ${headerCanary}`,
+						inputSchema: {
+							type: 'object',
+							properties: { value: { type: 'integer', description: secretCanary } },
+							required: ['value'],
+							additionalProperties: false,
+						},
+					})),
+				}));
+				server.setRequestHandler(CallToolRequestSchema, async (call) => {
+					effects.push({
+						name: call.params.name,
+						arguments: call.params.arguments,
+						authorization: request.headers.authorization,
+						header:
+							typeof request.headers['x-selected-binding'] === 'string'
+								? request.headers['x-selected-binding']
+								: undefined,
+					});
+					return {
+						content: [{ type: 'text', text: `${secretCanary} ${headerCanary}` }],
+						structuredContent: { nested: { credential: secretCanary, header: headerCanary } },
+						...(call.params.name === 'fail' ? { isError: true } : {}),
+					};
+				});
+				const serverTransport: Transport = {
+					start: async () => transport.start(),
+					send: async (message, options) => transport.send(message, options),
+					close: async () => transport.close(),
+				};
+				transport.onclose = () => serverTransport.onclose?.();
+				transport.onerror = (error) => serverTransport.onerror?.(error);
+				// eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport exposes callbacks, not EventTarget.
+				transport.onmessage = (message, extra) => serverTransport.onmessage?.(message, extra);
+				await server.connect(serverTransport);
+				try {
+					await transport.handleRequest(request, response);
+				} finally {
+					await server.close();
+				}
+			};
+			void serve().catch(() => {
+				response.writeHead(500);
+				response.end();
+			});
+		});
+		provider.listen(0, '127.0.0.1');
+		await once(provider, 'listening');
+		const address = provider.address();
+		if (address === null || typeof address === 'string') throw new Error('No provider address');
+		const runtime = createUpstreamMcpClientRuntime({
+			servers: [
+				{
+					namespace: 'provider',
+					transport: 'streamable-http',
+					url: `http://127.0.0.1:${address.port}/mcp`,
+					headers: { Authorization: `Bearer ${secretCanary}`, 'x-selected-binding': headerCanary },
+				},
+			],
+			additionalRedactionValues: [secretCanary],
+			createUpstreamMcpTransport: (server) =>
+				new StreamableHTTPClientTransport(
+					new URL(server.url),
+					server.requestInit === undefined ? {} : { requestInit: server.requestInit },
+				),
+			onCloseError: (error) => {
+				diagnostics.push(error);
+			},
+		});
+		const revision = { owner: 'provider-registry', revision: 'selected-account:v1' };
+		const identity = createPortalAgentIdentity({
+			agentId: 'agent-a',
+			agentScopeId: 'scope-a',
+			source: 'mcp-proxy-bearer',
+		});
+		const backend: ToolBackend<BackendKind> = {
+			backendKind: 'mcp_provider',
+			list: async () => ({}),
+			describe: async () => ({}),
+			search: async () => ({}),
+			invoke: async (invocation) => {
+				invocations.push(invocation);
+				try {
+					return {
+						kind: 'completed',
+						result: jsonValueSchema.parse(
+							await runtime.callTool({
+								agentScopeId: 'scope-a',
+								namespace: invocation.capability.namespace,
+								toolName: invocation.capability.tool,
+								arguments: invocation.arguments,
+							}),
+						),
+					};
+				} catch (error) {
+					diagnostics.push(error);
+					throw error;
+				}
+			},
+		};
+
+		const gateway = createMcpGateway({
+			caller: {
+				identity,
+				authority: 'fixture',
+				principal: 'agent-a',
+				verifiedContextRef: 'verified-a',
+			},
+			hostBinding: { workspaceLayer: 'not-configured', config: revision },
+			sessions: createPortalSessionManager({
+				accessPolicy: {
+					defaultPolicy: 'allow-all',
+					enabledNamespacesByAgent: {},
+					hiddenToolsByAgent: {},
+				},
+				catalogTtlMs: 60000,
+				runtime,
+				upstreamNamespaces: ['provider'],
+			}),
+			resolveAccess: async ({ capability, call }): Promise<AssessAccessInput> =>
+				assessAccessInput.parse({
+					capability,
+					call,
+					surface: 'mcp',
+					facts: {
+						workspace: { kind: 'not-configured' },
+						assignment: {
+							profileRevision: revision,
+							revision,
+							profile: {
+								profileId: 'complete-profile',
+								namespaces: {
+									provider: {
+										backendKind: 'mcp_provider',
+										tools: { allow: '*', deny: [] },
+										calls: {
+											kind: 'selectors',
+											withoutApproval: { allow: '*', deny: [] },
+											requiresApproval: { allow: [], deny: [] },
+										},
+										operations: {},
+									},
+								},
+							},
+						},
+						surface: { eligible: ['mcp'], snapshot: revision },
+						accounts: [],
+						upstream: { status: 'available', credentialNeed: 'met', binding: revision },
+					},
+				}),
+			prepareCatalog: async (input) => input,
+			operations: {
+				createOrRead: async () => ({ kind: 'untracked' }),
+				lookup: unavailable,
+				transition: unavailable,
+			},
+			approvals: { challenge: unavailable, decision: unavailable, receipt: unavailable },
+			backends: new Map([['mcp_provider', backend]]),
+			now: () => 0,
+		});
+		try {
+			const catalog = await gateway.prepareCatalog();
+			const result = await gateway.call({
+				calls: [
+					{ id: 'allowed', namespace: 'provider', toolName: 'read', arguments: { value: 42 } },
+				],
+			});
+			expect(result).toMatchObject({
+				ok: true,
+				results: {
+					allowed: {
+						ok: true,
+						output: {
+							result: {
+								structuredContent: { nested: { credential: '[REDACTED]', header: '[REDACTED]' } },
+							},
+						},
+					},
+				},
+			});
+			const failed = await gateway.call({
+				calls: [
+					{ id: 'failed', namespace: 'provider', toolName: 'fail', arguments: { value: 43 } },
+				],
+			});
+			expect(failed).toMatchObject({
+				ok: false,
+				results: {
+					failed: {
+						ok: false,
+						error: { kind: 'ambiguous', reason: 'resource-authority-unconfirmed' },
+					},
+				},
+			});
+			expect(effects).toEqual([
+				{
+					name: 'read',
+					arguments: { value: 42 },
+					authorization: `Bearer ${secretCanary}`,
+					header: headerCanary,
+				},
+				{
+					name: 'fail',
+					arguments: { value: 43 },
+					authorization: `Bearer ${secretCanary}`,
+					header: headerCanary,
+				},
+			]);
+			expect(invocations.map((invocation) => invocation.bindingRevision)).toEqual([
+				revision,
+				revision,
+			]);
+			const callerVisible = JSON.stringify({ catalog, result, failed, diagnostics });
+			expect(callerVisible).not.toContain(secretCanary);
+			expect(callerVisible).not.toContain(headerCanary);
+			expect(callerVisible).toContain('[REDACTED]');
+		} finally {
+			await runtime.closeAgentScope('scope-a');
+			provider.closeAllConnections();
+			await new Promise<void>((resolve, reject) =>
+				provider.close((error) => (error ? reject(error) : resolve())),
+			);
+		}
+	});
+});

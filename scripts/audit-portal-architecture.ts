@@ -1015,6 +1015,8 @@ function collectProductionTestAliasViolations(
 
 export function isForbiddenToolEngineImport(specifier: string): boolean {
 	return (
+		specifier === 'typescript' ||
+		specifier === 'json-schema-to-typescript' ||
 		specifier.startsWith('node:') ||
 		portableBuiltinNames.has(specifier) ||
 		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-host-[^/]+|tool-portal|mcp-portal|gateway-runtime|gateway-control-contracts|controller-execution-contracts|controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(

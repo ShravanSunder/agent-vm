@@ -8,12 +8,22 @@
 	],
 	"type": "module",
 	"imports": {
-		"#dispatch/*": "./src/dispatch/*.ts"
+		"#dispatch/*": "./src/dispatch/*.ts",
+		"#mcp-gateway/*": "./src/mcp-gateway/*.ts",
+		"#connectors/*": "./src/connectors/*.ts"
 	},
 	"exports": {
 		"./dispatch": {
 			"types": "./dist/dispatch/index.d.ts",
 			"import": "./dist/dispatch/index.js"
+		},
+		"./mcp-gateway": {
+			"types": "./dist/mcp-gateway/index.d.ts",
+			"import": "./dist/mcp-gateway/index.js"
+		},
+		"./connectors": {
+			"types": "./dist/connectors/index.d.ts",
+			"import": "./dist/connectors/index.js"
 		}
 	},
 	"publishConfig": {
@@ -26,6 +36,7 @@
 	},
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

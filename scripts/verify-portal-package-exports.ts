@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/tool-engine/mcp-gateway',
+	'@agent-collaboration/tool-engine/connectors',
 	'@agent-collaboration/tool-engine/dispatch',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
@@ -52,6 +54,17 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/tool-engine/mcp-gateway': [
+		'createMcpGateway',
+		'encodeToolRef',
+		'decodeToolRef',
+		'createPortalSessionManager',
+	],
+	'@agent-collaboration/tool-engine/connectors': [
+		'createUpstreamMcpClientRuntime',
+		'redactUpstreamResponse',
+		'UpstreamMcpError',
+	],
 	'@agent-collaboration/tool-engine/dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',

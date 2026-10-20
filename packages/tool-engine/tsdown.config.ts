@@ -2,7 +2,11 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
 	clean: true,
 	dts: true,
-	entry: { 'dispatch/index': 'src/dispatch/index.ts' },
+	entry: {
+		'dispatch/index': 'src/dispatch/index.ts',
+		'mcp-gateway/index': 'src/mcp-gateway/index.ts',
+		'connectors/index': 'src/connectors/index.ts',
+	},
 	format: 'esm',
 	outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
 	outDir: 'dist',
