@@ -24,7 +24,7 @@ import {
 	trustedContext,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const now = Date.parse('2026-07-13T12:00:00.000Z');
 const configRevision = { owner: 'controller', revision: 'host-config:9' };
@@ -203,6 +203,57 @@ function invocation(
 }
 
 describe('managed dispatch authority', () => {
+	it('keeps the public caller and item stable when the managed assignment cohort changes', async () => {
+		const first = harness({ config: directConfig() });
+		const snapshot = GatewayRuntimePortalSemanticSnapshotSchema.parse(semanticSnapshot);
+		const context = GatewayRuntimeTrustedInvocationContextSchema.parse({
+			...trustedContext,
+			principal: { ...trustedContext.principal, profileAssignmentRevision: 'assignment:next' },
+		});
+		const projection = snapshot.agentProjections[context.principal.agentId];
+		if (projection === undefined) throw new Error('Missing controller projection.');
+		const nextSnapshot = GatewayRuntimePortalSemanticSnapshotSchema.parse({
+			...snapshot,
+			agentProjections: {
+				...snapshot.agentProjections,
+				[context.principal.agentId]: {
+					...projection,
+					profileAssignmentRevision: 'assignment:next',
+				},
+			},
+		});
+		const second = harness({ config: directConfig(), snapshot: nextSnapshot });
+		const invokedKeys: DispatchInvocation['operationKey'][] = [];
+		const storedKeys: DispatchInvocation['operationKey'][] = [];
+		for (const subject of [first, second]) {
+			const backend = subject.adapter.backends.get('mcp_provider');
+			if (backend === undefined) throw new Error('Missing backend.');
+			const originalInvoke = backend.invoke;
+			vi.spyOn(backend, 'invoke').mockImplementation(async (invocation) => {
+				invokedKeys.push(invocation.operationKey);
+				return await originalInvoke(invocation);
+			});
+			const originalCreate = subject.adapter.operations.createOrRead;
+			vi.spyOn(subject.adapter.operations, 'createOrRead').mockImplementation(async (operation) => {
+				storedKeys.push(operation.invocation.operationKey);
+				return await originalCreate(operation);
+			});
+		}
+		const firstResult = await first.adapter.call(
+			{ calls: [call] },
+			{ trustedContext, surfaceClass: 'protected_uds' },
+		);
+		const secondResult = await second.adapter.call(
+			{ calls: [call] },
+			{ trustedContext: context, surfaceClass: 'protected_uds' },
+		);
+		const key = { authority: 'managed-zone', principal: 'agent-gate-c', item: 'original-item' };
+		expect(firstResult.ok).toBe(true);
+		expect(secondResult.ok).toBe(true);
+		expect(invokedKeys).toEqual([key, key]);
+		expect(storedKeys).toEqual([key, key]);
+		expect(firstResult.items[0]?.operationId).not.toBe(secondResult.items[0]?.operationId);
+	});
 	it('preserves literal managed ID and fingerprint bytes from the untouched baseline', async () => {
 		const subject = harness();
 		await subject.adapter.call(

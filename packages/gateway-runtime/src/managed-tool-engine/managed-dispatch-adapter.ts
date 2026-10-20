@@ -225,7 +225,7 @@ export function createManagedToolEngineAdapter(props: {
 	const operations: OperationPort = {
 		lookup: async () => ({ kind: 'unsupported-version' }),
 		createOrRead: async ({ invocation, requiresApproval }) => {
-			const { selected, needsApproval } = validate(invocation);
+			const { selected, managed, needsApproval } = validate(invocation);
 			if (requiresApproval !== needsApproval) return { kind: 'denied' };
 			if (!needsApproval) return { kind: 'untracked' };
 			const admission = await props.approvalPort.reserveDispatch({ intent: intent(invocation) });
@@ -250,7 +250,7 @@ export function createManagedToolEngineAdapter(props: {
 				if (
 					reservation.operationId !== expected.operationId ||
 					reservation.backendKind !== expected.backendKind ||
-					reservation.stablePrincipal !== invocation.operationKey.principal ||
+					reservation.stablePrincipal !== managed.stablePrincipal ||
 					reservation.fingerprint !== fingerprint ||
 					reservation.approvalId !== deriveGatewayRuntimeApprovalId(fingerprint)
 				)

@@ -34,7 +34,7 @@ export function createManagedAccessRequest(props: {
 	});
 	return {
 		authority: props.authority,
-		principal: resolved.stablePrincipal,
+		principal: selected.context.trustedContext.principal.agentId,
 		item: selected.call.id,
 		verifiedContextRef: reference,
 		correlation: jsonObjectSchema.parse(selected.context.trustedContext.correlation ?? {}),
