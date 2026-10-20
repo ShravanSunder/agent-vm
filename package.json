@@ -37,7 +37,7 @@
 		"lint:types": "oxlint --type-aware .",
 		"fmt": "oxfmt .",
 		"fmt:check": "oxfmt --check .",
-		"typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
+		"typecheck": "tsc -p tsconfig.production.json --noEmit && tsc -p tsconfig.tests.json --noEmit && pnpm -r typecheck",
 		"check": "tsx scripts/run-check-gate.ts",
 		"test": "pnpm test:unit",
 		"test:unit": "pnpm test:taxonomy && vitest run --config vitest.config.ts --project unit",

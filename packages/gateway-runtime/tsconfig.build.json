@@ -1,5 +1,5 @@
 {
-	"extends": "./tsconfig.json",
+	"extends": "./tsconfig.production.json",
 	"compilerOptions": {
 		"rootDir": "./src",
 		"outDir": "./dist",
@@ -8,5 +8,5 @@
 		"sourceMap": true,
 		"noEmit": false
 	},
-	"exclude": ["src/**/*.test.ts"]
+	"exclude": ["dist", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*-test-fixture.ts"]
 }

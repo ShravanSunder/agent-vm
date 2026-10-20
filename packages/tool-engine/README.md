@@ -18,3 +18,9 @@ The managed adapter currently lives in gateway-runtime's new `managed-tool-engin
 module. The existing production composition remains on the previous engine until
 the separately planned cutover. Managed public lookup returns `unsupported-version`;
 no stable-key index or public durable store is implemented by this slice.
+
+Production build and typecheck commands select `tsconfig.production.json`, which
+cannot resolve the managed test aliases. Default `tsconfig.json` files retain the
+editor/test context for type-aware linting; `tsconfig.tests.json` owns the test
+path map. The root quality gate checks both contexts, and the architecture audit
+rejects test-only aliases in production source and declarations.
