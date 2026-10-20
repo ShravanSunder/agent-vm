@@ -149,7 +149,8 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - after linking by redirect, a GitHub sign-in reaches Person A;
   - the ID-token linking form is refused and adds no `account` row;
   - passkey registration with no session is refused;
-  - every `account` row has empty access-token, refresh-token and ID-token columns, after first sign-in, repeat sign-in and linking.
+  - every `account` row has null access-token, refresh-token and ID-token columns, after first sign-in, repeat sign-in and linking;
+  - an `account` row seeded with token values before a repeat sign-in has those columns null afterwards.
 
   Wrong builds that fail it:
   - email-and-password left enabled (an attempt creates a user or sets a session);
