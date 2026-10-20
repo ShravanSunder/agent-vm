@@ -111,9 +111,11 @@ Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-par
 
 ### The organization's portal starts once
 
-Each organization's portal connects to its configured tool servers and reads their tool lists when it starts, as today's proxy prepares its catalog ([portal-http-server.ts:269](../../../packages/mcp-portal/src/mcp-proxy/portal-http-server.ts#L269)). Both cases are answered from that same catalog.
-- **On a machine,** it starts with the process.
-- **On the Worker,** it starts with the first request that creates the organization's engine in an isolate. The engine, its catalog and its connections then last as long as that isolate; it doesn't reconnect for each call. A new isolate starts its own.
+**This is a change from today.** Each organization's portal connects to its configured tool servers and reads their tool lists into one catalog when it starts. Today, discovery is lazy and separate for each agent: it runs the first time that agent's session starts ([portal-session.ts:194](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L194), [:243](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L243)).
+- **Each client's view is filtered from that catalog,** by what the caller may use, in whichever case it gets. Calls keep using connections per agent and per server, as today.
+- **The case belongs to the caller, not the organization.** The gateway already takes the case on each `listTools` call ([mcp-gateway.ts:73](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/mcp-gateway.ts#L73)). The host sets it for each client's protocol server ([node-mcp-server.ts:27](https://github.com/ShravanSunder/agent-vm/blob/51c9813938a9f6e5a9bf4494696c5c847aa58f92/packages/tool-host-node/src/ingress/node-mcp-server.ts#L27)), never as one setting shared across the organization. So two clients of one organization can be in different cases at once.
+- **On a machine,** the portal starts with the process.
+- **On the Worker,** it starts with the first request that creates the organization's engine in an isolate; that request waits for the catalog. The engine, its catalog and its connections then last as long as the isolate, with no reconnect for each call. A new isolate starts its own.
 
 ### The tool list's size
 

@@ -17,7 +17,8 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 2. **Each client gets one of two cases, and both reach the same tools.**
    - A client set up as deferring tool loading itself (`client-deferred`) gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
    - Any other client (`portal-deferred`), including one whose support is unknown, gets `indirect`: only the four search tools are listed.
-   - A caller gets the same case on every request.
+   - A caller gets the same case on every request, whatever other clients of the organization are connected.
+   - The organization's portal connects to its tool servers and reads their tool lists when it starts, before any client's first call.
    - Either way the agent can reach exactly the same tools, and the same call gives the same result.
    - In `client-deferred`, the tool list comes in pages, each under the smallest cap a supported client enforces.
    - The changes from today: `direct` also offers the search tools; the case is chosen per client instead of per server; and the list comes in pages.
