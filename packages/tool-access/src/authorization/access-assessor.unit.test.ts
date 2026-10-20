@@ -28,10 +28,22 @@ describe('10-step first-unmet order', () => {
 		expected: AccessState;
 	}[] = [
 		{
-			name: '1 revoked beats retained allowance and capability deny',
+			name: '1 revoked beats 2 denied workspace allowance',
 			change: (input) => {
-				if (input.facts.workspace.kind === 'configured')
+				if (input.facts.workspace.kind === 'configured') {
 					input.facts.workspace.registration.status = 'revoked';
+					input.facts.workspace.allowance.allowed = false;
+				}
+			},
+			expected: notUsable('registration-revoked'),
+		},
+		{
+			name: '1 revoked beats 2 denied allowance and capability deny',
+			change: (input) => {
+				if (input.facts.workspace.kind === 'configured') {
+					input.facts.workspace.registration.status = 'revoked';
+					input.facts.workspace.allowance.allowed = false;
+				}
 				namespace(input).tools.deny = ['run'];
 			},
 			expected: notUsable('registration-revoked'),
@@ -73,6 +85,27 @@ describe('10-step first-unmet order', () => {
 				];
 			},
 			expected: blocked('profile-selector'),
+		},
+		{
+			name: '4 command deny beats 5 account not granted',
+			change: (input) => {
+				account(input).granted = false;
+				account(input).decisions = [
+					{
+						operationClass: { kind: 'google-effect', serviceId: driveService, effect: 'read' },
+						result: { kind: 'denied', reason: 'command' },
+					},
+				];
+			},
+			expected: blocked('cli-allowance'),
+		},
+		{
+			name: '4 CLI shape deny beats 5 account not granted',
+			change: (input) => {
+				account(input).granted = false;
+				if (input.call !== null) input.call.arguments = { argv: ['unrecognized'], reason: 'test' };
+			},
+			expected: blocked('cli-allowance'),
 		},
 		{
 			name: '5 not granted beats applying',

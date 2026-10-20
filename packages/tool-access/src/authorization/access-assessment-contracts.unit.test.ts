@@ -264,43 +264,52 @@ describe('strict schemas, revisions and purity', () => {
 			],
 		};
 		expect(result.assessment.revisions).toEqual(expected);
-		const variations: readonly { field: string; change: (input: AssessAccessInput) => void }[] = [
+		const variations: readonly {
+			field:
+				| 'registration'
+				| 'workspaceAllowance'
+				| 'profile'
+				| 'assignment'
+				| 'surfaceSnapshot'
+				| 'upstreamBinding';
+			change: (input: AssessAccessInput) => void;
+		}[] = [
 			{
 				field: 'registration',
 				change: (value) => {
 					if (value.facts.workspace.kind === 'configured')
-						value.facts.workspace.registration.revision = revision('changed');
+						value.facts.workspace.registration.revision = { owner: 'registration', revision: 'v2' };
 				},
 			},
 			{
 				field: 'workspaceAllowance',
 				change: (value) => {
 					if (value.facts.workspace.kind === 'configured')
-						value.facts.workspace.allowance.revision = revision('changed');
+						value.facts.workspace.allowance.revision = { owner: 'allowance', revision: 'v2' };
 				},
 			},
 			{
 				field: 'profile',
 				change: (value) => {
-					value.facts.assignment.profileRevision = revision('changed');
+					value.facts.assignment.profileRevision = { owner: 'profile', revision: 'v2' };
 				},
 			},
 			{
 				field: 'assignment',
 				change: (value) => {
-					value.facts.assignment.revision = revision('changed');
+					value.facts.assignment.revision = { owner: 'assignment', revision: 'v2' };
 				},
 			},
 			{
 				field: 'surfaceSnapshot',
 				change: (value) => {
-					value.facts.surface.snapshot = revision('changed');
+					value.facts.surface.snapshot = { owner: 'surface', revision: 'v2' };
 				},
 			},
 			{
 				field: 'upstreamBinding',
 				change: (value) => {
-					value.facts.upstream.binding = revision('changed');
+					value.facts.upstream.binding = { owner: 'upstream', revision: 'v2' };
 				},
 			},
 		];
@@ -309,24 +318,60 @@ describe('strict schemas, revisions and purity', () => {
 			change(value);
 			const changed = assessor(value);
 			if (changed.kind !== 'assessed') throw new Error('Expected answer');
-			expect(changed.assessment.revisions).toEqual({ ...expected, [field]: revision('changed') });
+			expect(changed.assessment.revisions).toEqual({
+				...expected,
+				[field]: { ...expected[field], revision: 'v2' },
+			});
 		}
 		for (const field of ['grant', 'policy', 'consent'] as const) {
 			const value = googleFixture();
 			const fact = account(value);
-			if (field === 'grant') fact.grantRevision = revision('changed');
-			if (field === 'policy') fact.policyRevision = revision('changed');
-			if (field === 'consent') fact.consentRevision = revision('changed');
+			if (field === 'grant') fact.grantRevision = { owner: 'grant', revision: 'v2' };
+			if (field === 'policy') fact.policyRevision = { owner: 'policy', revision: 'v2' };
+			if (field === 'consent') fact.consentRevision = { owner: 'consent', revision: 'v2' };
 			const changed = assessor(value);
 			if (changed.kind !== 'assessed') throw new Error('Expected answer');
 			expect(changed.assessment.revisions).toEqual({
 				...expected,
-				accounts: [{ ...expected.accounts[0], [field]: revision('changed') }],
+				accounts: [{ ...expected.accounts[0], [field]: { owner: field, revision: 'v2' } }],
 			});
 		}
-		const changed = createAccessAssessor({ ...binding, config: revision('changed') })(input);
+		const changed = createAccessAssessor({ ...binding, config: { owner: 'host', revision: 'v2' } })(
+			input,
+		);
 		if (changed.kind !== 'assessed') throw new Error('Expected answer');
-		expect(changed.assessment.revisions).toEqual({ ...expected, hostConfig: revision('changed') });
+		expect(changed.assessment.revisions).toEqual({
+			...expected,
+			hostConfig: { owner: 'host', revision: 'v2' },
+		});
+	});
+	it('keeps exactly the allowed absent-source revision slots null', () => {
+		const input = googleFixture();
+		input.facts.workspace = { kind: 'not-configured' };
+		account(input).policySnapshotState = null;
+		account(input).policyRevision = null;
+		const result = createAccessAssessor({ ...binding, workspaceLayer: 'not-configured' })(input);
+		if (result.kind !== 'assessed') throw new Error('Expected assessment');
+		expect(result.assessment.revisions).toEqual({
+			hostConfig: revision('host'),
+			registration: null,
+			workspaceAllowance: null,
+			profile: revision('profile'),
+			assignment: revision('assignment'),
+			surfaceSnapshot: revision('surface'),
+			upstreamBinding: revision('upstream'),
+			accounts: [
+				{
+					account: { oauthAccountId: accountId },
+					grant: revision('grant'),
+					policy: null,
+					consent: revision('consent'),
+				},
+			],
+		});
+		const accountFree = assessor(fixture());
+		if (accountFree.kind !== 'assessed') throw new Error('Expected assessment');
+		expect(accountFree.assessment.revisions.accounts).toEqual([]);
 	});
 	it('does not mutate frozen input or binding and is deterministic', () => {
 		const input = googleFixture();
