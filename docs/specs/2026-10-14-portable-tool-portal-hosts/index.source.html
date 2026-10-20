@@ -12,19 +12,23 @@
 
 <h1 id="top">Tool Portal: take it apart and put it back together</h1>
 
-<ex-callout tone="tldr" title="The design in four lines">
+<ex-callout tone="tldr" title="The design in five lines">
 
-- **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher) and `tool-host-node` (runs it on a machine). agent-vm plugs in through its own adapter.
-- **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal's MCP tools and the MCP proxy) keep their tools, results and approvals. There are no new features, nothing new stored, and no new limits.
+- **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher), `tool-host-node` (runs it on a machine) and `tool-host-cloudflare` (runs the MCP proxy on a Worker). agent-vm plugs in through its own adapter.
+- **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal and the MCP proxy) keep their tools, results, approvals and limits.
 - **The proxy's two modes:** `direct` lists every tool plus the search tools; `indirect` offers only the search tools.
-- **Later:** code mode in both modes. The pruned work (Worker host, UI, sign-in, workspaces, audit and more) belongs to separate projects.
+- **The one addition is a deployed, secured Cloudflare Worker** serving the proxy for organization tools. Each organization has its own Durable Object for sign-in and used approvals, and each call sends one data point to Analytics Engine. Per-user and computer tools are designed for, and built after your decisions.
+- **Later:** code mode in both modes. UI, people sign-in, workspaces and audit belong to separate projects.
 </ex-callout>
 
-<ex-callout tone="question" title="Three questions for you, one at a time; none blocks this design">
+<ex-callout tone="question" title="Questions for you, in order">
 
-1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not.
-2. **Do tool calls need history that survives a restart?** The design assumes not, since today's server keeps none.
-3. **Retire either of today's two standalone approval paths?** The design keeps both, because each serves its own way in.
+1. **Do agents reach the Worker through Cloudflare's MCP Portal, or directly behind Access?** Through the Portal, the Worker can't tell agents apart. This blocks the Worker's caller check; it went to Sun as a brief.
+2. **Who issues real sign-in and agent tokens: our own Better Auth service, or fleet?** This blocks per-user tools, and selling this without your Cloudflare Access.
+3. **Do tool calls need history that survives a restart?** The design assumes not; the Worker keeps only which approvals were used.
+4. **Retire either of today's two standalone approval paths?** The design keeps both.
+
+Deploying the Worker also needs a Cloudflare account and an API token.
 </ex-callout>
 
 <ex-tabs data-width="reading">

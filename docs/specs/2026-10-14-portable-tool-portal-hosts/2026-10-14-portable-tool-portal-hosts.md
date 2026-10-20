@@ -4,7 +4,7 @@
 
 Each check below compares the new pieces against **today's behaviour at `master` commit `08f9e426`**. That makes today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` the reference: if they did something, the new pieces do the same thing, unless a check below names the change.
 
-There are three ways in today, and every check applies to each one:
+There are three ways in today, and checks 1 to 12 apply to each one:
 - agent-vm's private gateway connection;
 - the standalone Tool Portal (its MCP tools and its JSON-over-HTTP endpoint);
 - the MCP proxy.
@@ -32,7 +32,7 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
    - **In the standalone Tool Portal,** its signed batch approval works as today, carried in MCP metadata on its MCP route and in its header on its JSON route. That includes refusing an old approval after the server restarts with a new service generation.
    - **In the MCP proxy,** its signed approval token works as today, carried in `mcp_portal_call`'s input or in MCP metadata on a `direct` call. Its record of used tokens lasts for the life of the process.
 7. **Credentials stay out.** Provider credentials never appear in what a caller sends, receives, sees in errors, or can read from logs. Secrets in results and errors are redacted, as today.
-8. **Same limits.** Each way in enforces today's limits, with today's meaning, and no new ones. They're listed in the [Program Design](program-design.md#limits-today).
+8. **Same limits.** Each way in enforces today's limits, with today's meaning, and no new ones. They're listed in the [Program Design](program-design.md#limits-today). The Worker's own limits are check 15.
 
 ## agent-vm keeps working
 
@@ -45,9 +45,28 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
     - `tool-access` imports none of the other pieces.
     - `tool-engine` imports `tool-access`, but no Node-only code and nothing from agent-vm.
     - `tool-host-node` doesn't import agent-vm.
+    - `tool-host-cloudflare` imports neither agent-vm nor `tool-host-node`.
     - agent-vm's managed adapter lives inside agent-vm.
 12. **Clean switch.** When agent-vm runs on the new pieces, `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Nothing re-exports them, and nothing translates old calls into new ones. The three ways in stay as they are.
 
+## The Worker
+
+The Worker serves the MCP proxy's way in for organization tools. Its reference is today's proxy at `08f9e426`, run on a machine with the same configuration.
+
+13. **The Worker behaves like the proxy.**
+    - With the same configuration and caller, it offers the same tools, in `direct` or `indirect` mode, with the same results and the same refusals, as checks 1 to 4 require of the proxy.
+    - Its approval token works as the proxy's does (check 6). A token can be used only once, even when two copies of the Worker receive it at the same time.
+    - `describe` returns the same per-tool helper as on a machine, or refuses when it can't match the tool.
+14. **Only known callers, kept apart.**
+    - The Worker refuses a caller it can't identify, including anyone reaching it by a way that skips Cloudflare Access.
+    - An agent can't pass as another agent by sending another's name, session ID or client name.
+    - One organization's callers can't list or call another organization's tools, or read its auth data.
+    - Removing an agent from its organization stops that agent's next call.
+15. **The Worker's own limits hold,** as listed in the [Program Design](program-design.md#limits-on-the-worker): a request over the size limit is refused; a batch over the call limit is refused; no more than 6 calls run at once; and a reply that would pass its limit returns too-large results instead of failing the Worker.
+16. **Analytics carry nothing private.** Each call sends one data point, in the shape the Program Design lists, and none holds arguments, results, secrets, tokens or personal details. Credentials stay out of the Worker's logs, as check 7 requires everywhere.
+
 ## Not checked here
 
-Everything under "Not in this work" in the [Requirements](requirements.md#not-in-this-work), and code mode, which comes later.
+- Everything under "Not in this work" in the [Requirements](requirements.md#not-in-this-work).
+- Code mode, which comes later.
+- Per-user and computer tools, which wait on the owner's questions 1 and 2 and on their private connection. Only the design's openings for them are in this work.

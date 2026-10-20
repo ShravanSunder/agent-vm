@@ -2,13 +2,15 @@
 
 [Requirements](requirements.md) · [Specification](2026-10-14-portable-tool-portal-hosts.md) · [Program Design](program-design.md)
 
-This is the plan for proving the twelve checks in the [Specification](2026-10-14-portable-tool-portal-hosts.md). Writing it proves nothing; each check is proven when its test or run passes on the real code.
+This is the plan for proving the sixteen checks in the [Specification](2026-10-14-portable-tool-portal-hosts.md). Writing it proves nothing; each check is proven when its test or run passes on the real code.
 
 **The main method is to compare old with new, through each way in.** While `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` still exist (before the switch in S4), the same configuration and the same calls go to the old code and to the new pieces, and the results must match. That's how "the same as today" gets checked rather than assumed.
 - **The old side is pinned to `master` commit `08f9e426`,** so the reference can't drift during the comparison.
 - **The comparison runs through each of the three ways in:** agent-vm's private connection, the standalone Tool Portal's MCP tools, and the MCP proxy.
 
 **VM tests run in GitHub CI only,** never locally. VM memory there is 2.5G (#242).
+
+**Worker tests run twice:** first in Cloudflare's own runtime on a machine (workerd, through `wrangler`'s local mode), then on the deployed Worker. Deploying needs the owner's Cloudflare account and an API token. Behaviour that only a real deployment shows (several copies of the Worker at once, Access in front, real Analytics Engine writes, real memory) is proven only on the deployed Worker.
 
 | # | Check | How it's proven | It fails if… |
 | --- | --- | --- | --- |
@@ -24,9 +26,17 @@ This is the plan for proving the twelve checks in the [Specification](2026-10-14
 | 10 | Same clients | The Portal SDK calling `tool_portal_call` with approval metadata and reading an artifact through the replacement standalone server; a request on the Tool Portal's JSON route; the MCP SDK client over Streamable HTTP against the proxy; Hermes in the CI Hermes tests | a client that worked can't connect, call or read |
 | 11 | Allowed imports only | The packed import checks per package (already in `pnpm check`), plus poisoned builds that must fail | a forbidden import gets through |
 | 12 | Clean switch | After S4: no source or package refers to `@agent-vm/tool-portal` or `@agent-vm/mcp-portal`, both folders are gone, CI passes, and checks 1, 9 and 10 still pass through all three ways in | anything still imports or re-exports the old packages, or a way in changed |
+| 13 | The Worker behaves like the proxy | Old-versus-new: the same configuration and calls go to the proxy at `08f9e426` on a machine and to the Worker, both pointed at the same controlled remote test MCP server. Tool lists, results, refusals and the bytes of `describe`'s helper are compared item by item, in both modes. **Approval, deployed only:** the same token sent to the Worker twice at the same moment; the test server counts effects | any result differs; a token's call runs twice; `describe` returns a helper that doesn't match the tool |
+| 14 | Only known callers, kept apart | **Deployed,** with two test organizations and two test agents in each: a request with no credential; a request to the `workers.dev` address; an agent sending another agent's name and session ID; an agent of one organization listing and calling the other's tools; then an agent removed from its organization calls again. An allowed call is the control | any of those requests is served, or the removed agent's next call runs |
+| 15 | The Worker's own limits hold | Requests just under and just over each limit, locally and deployed: a 4 MiB body against one byte more; 50 calls against 51; 12 slow calls while the test server counts open connections; upstream responses that sum past 16 MiB | a limit moves; more than 6 calls run at once; or the Worker fails instead of returning too-large results |
+| 16 | Analytics carry nothing private | Canary values placed in arguments, results, secrets and tokens. The test reads the data points written (captured from the binding locally, and through Analytics Engine's SQL API when deployed) and the Worker's logs | a canary appears anywhere; a call writes no data point, or more than one |
 
 ## What stays unproven
 
 - **Real third-party MCP servers.** Tests use controlled test servers; Gmail, GitHub and others aren't called.
 - **Clients beyond the Portal SDK, the MCP SDK client and Hermes.** Other harnesses are expected to work because the protocols are unchanged, but none is tested here.
 - **Code mode.** It's not in this work.
+- **Agents reaching the Worker through Cloudflare's MCP Portal.** That waits on the owner's question 1. If the answer is the Portal, a check that the Worker still tells agents apart through it is added first.
+- **Per-user and computer tools.** They aren't built in this work.
+- **1Password service-account tokens inside a Worker.** Cloudflare secrets are used instead.
+- **The Worker's limits under real traffic.** The checks above prove each limit holds; they don't prove the numbers suit real use.
