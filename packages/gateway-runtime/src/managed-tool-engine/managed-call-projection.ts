@@ -1,4 +1,9 @@
-import { PortalCallRequestSchema, PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
+import {
+	PortalCallItemResultSchema,
+	PortalCallRequestSchema,
+	PortalCallResultSchema,
+	type PortalCallResult,
+} from '@agent-vm/agent-portal-sdk';
 import type {
 	GatewayRuntimeApprovalAdmissionResult,
 	GatewayRuntimePortalSemanticSnapshot,
@@ -7,6 +12,7 @@ import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-c
 import {
 	approvalRequiredItem,
 	ambiguousDispatchItem,
+	failedDispatchItem,
 	notDispatchedItem,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results.js';
 import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
@@ -18,6 +24,7 @@ export function createManagedPortalCallProjection(props: {
 	readonly dispatcher: ManagedToolEngineAdapter['dispatcher'];
 	readonly snapshot: GatewayRuntimePortalSemanticSnapshot;
 	readonly admission: (reference: string) => GatewayRuntimeApprovalAdmissionResult | null;
+	readonly backendItem: (reference: string) => PortalCallResult['items'][number] | null;
 }): ManagedToolEngineAdapter['call'] {
 	const { request, register, dispatcher, snapshot } = props;
 	return async (publicRequest, context) => {
@@ -36,8 +43,7 @@ export function createManagedPortalCallProjection(props: {
 						surfaceClass: context.surfaceClass,
 					});
 					const result = await dispatcher.dispatch(neutralRequest);
-					if (result.kind === 'completed')
-						return PortalCallResultSchema.parse({ ok: true, items: [result.result] }).items[0];
+					if (result.kind === 'completed') return PortalCallItemResultSchema.parse(result.result);
 					if (result.kind === 'pending') {
 						const admission = props.admission(reference);
 						if (admission?.kind !== 'approval-required')
@@ -55,9 +61,17 @@ export function createManagedPortalCallProjection(props: {
 						operationId: expected,
 						owningGeneration: snapshot.activeRevision,
 					};
-					return result.kind === 'ambiguous' ||
-						result.kind === 'failed' ||
-						result.kind === 'result-expired'
+					const backendItem = props.backendItem(reference);
+					if (
+						backendItem !== null &&
+						((result.kind === 'failed' && backendItem.outcome.certainty === 'proven-terminated') ||
+							((result.kind === 'ambiguous' || result.kind === 'not-dispatched') &&
+								backendItem.outcome.kind === result.kind))
+					)
+						return backendItem;
+					if (result.kind === 'failed')
+						return failedDispatchItem({ ...common, reason: result.reason });
+					return result.kind === 'ambiguous' || result.kind === 'result-expired'
 						? ambiguousDispatchItem(common)
 						: notDispatchedItem({ ...common, reason: 'Managed dispatch refused' });
 				} finally {
