@@ -29,19 +29,28 @@ export function createManagedPortalCallProjection(props: {
 	const { request, register, dispatcher, snapshot } = props;
 	return async (publicRequest, context) => {
 		const parsed = PortalCallRequestSchema.parse(publicRequest);
+		const stablePrincipal = deriveGatewayControlStablePrincipal({
+			principal: context.trustedContext.principal,
+		});
 		const items = await Promise.all(
 			parsed.calls.map(async (call) => {
-				const reference = register({ context, call });
-				try {
-					const neutralRequest = request(reference);
-					const expected = deterministicOperationId({
+				const common = {
+					id: call.id,
+					operationId: deterministicOperationId({
 						callId: call.id,
 						semanticRevision: snapshot.activeRevision,
-						stablePrincipal: deriveGatewayControlStablePrincipal({
-							principal: context.trustedContext.principal,
-						}),
+						stablePrincipal,
 						surfaceClass: context.surfaceClass,
-					});
+					}),
+					owningGeneration: snapshot.activeRevision,
+				};
+				let reference: string | undefined;
+				let dispatchAttempted = false;
+				try {
+					reference = register({ context, call });
+					const neutralRequest = request(reference);
+					// A thrown dispatch call may already have reached the leaf.
+					dispatchAttempted = true;
 					const result = await dispatcher.dispatch(neutralRequest);
 					if (result.kind === 'completed') return PortalCallItemResultSchema.parse(result.result);
 					if (result.kind === 'pending') {
@@ -49,18 +58,11 @@ export function createManagedPortalCallProjection(props: {
 						if (admission?.kind !== 'approval-required')
 							throw new Error('Missing managed challenge.');
 						return approvalRequiredItem({
-							id: call.id,
-							operationId: expected,
-							owningGeneration: snapshot.activeRevision,
+							...common,
 							challengeId: result.reference,
 							expiresAt: admission.challenge.expiresAt,
 						});
 					}
-					const common = {
-						id: call.id,
-						operationId: expected,
-						owningGeneration: snapshot.activeRevision,
-					};
 					const backendItem = props.backendItem(reference);
 					if (
 						backendItem !== null &&
@@ -74,8 +76,12 @@ export function createManagedPortalCallProjection(props: {
 					return result.kind === 'ambiguous' || result.kind === 'result-expired'
 						? ambiguousDispatchItem(common)
 						: notDispatchedItem({ ...common, reason: 'Managed dispatch refused' });
+				} catch {
+					return dispatchAttempted
+						? ambiguousDispatchItem(common)
+						: notDispatchedItem({ ...common, reason: 'Managed dispatch preparation failed' });
 				} finally {
-					props.release(reference);
+					if (reference !== undefined) props.release(reference);
 				}
 			}),
 		);
