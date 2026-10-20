@@ -17,7 +17,7 @@ Each check below compares the new pieces against **today's behaviour** on `maste
 
 4. **Same outcomes.** For the same call, the result matches today's: allowed and run, refused, needs approval, or failed.
 5. **One way in.** Every call, in both modes and from both agent-vm and the standalone server, goes through the same dispatcher and the same rules check. Nothing can reach a tool another way.
-6. **Approvals.** A call that needs approval doesn't run without it. An approval granted for one call can't be reused for a different call.
+6. **Approvals.** A call that needs approval doesn't run without it. An approval covers exactly the calls it names (one call, or a batch, as today), can be used once, and can't be reused for other calls.
    - In agent-vm, approvals go through the controller, as today.
    - In the standalone server, approvals work as they do today. Today there are two signed-token paths: the old standalone Tool Portal's batch approval, and the MCP proxy's approval token. Which one the new server keeps is an open question in the [Requirements](requirements.md#questions-for-the-owner). Until that's settled, neither is replaced by something new.
 7. **Credentials stay out.** Provider credentials never appear in what an agent sends, receives, sees in errors, or can read from logs. Secrets in results and errors are redacted, as today.

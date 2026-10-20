@@ -82,7 +82,7 @@ The same path serves both modes and both hosts. Nothing reaches a backend except
 
 **Nothing new.**
 - **The standalone server** keeps sessions in memory. For calls that **need approval**, it also keeps a record in memory, for the life of the process. That matches what today's standalone servers keep: the old Tool Portal's one-use token tombstones ([standalone-tool-portal-approval.ts:306](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-approval.ts#L306)) and the proxy's used-token list ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)).
-  - Each such record is keyed by the approval the call carries, so one approval runs one call, as today. It's lost on restart, as today.
+  - An approval covers exactly the calls it names, which can be one call or a batch, as today (the old Tool Portal approves 1 to 50 calls at once; the proxy's token carries a list of calls). It can be used once. The in-memory record keeps one entry per approved call, so each call still passes the dispatcher's per-call check, and the whole approval counts as used. Records are lost on restart, as today.
   - Calls that need no approval aren't recorded at all.
   - This is how the standalone server's approvals reach the one dispatcher. The dispatcher needs a record and a receipt for any call that requires approval ([capability-dispatcher.ts:125](../../../packages/tool-engine/src/dispatch/capability-dispatcher.ts#L125)), so this in-memory record satisfies it without a disk store.
 - **agent-vm's controller** keeps what it keeps today: approvals, provider accounts and Tool VM leases. It stays the owner of that state, and the managed adapter uses it.
