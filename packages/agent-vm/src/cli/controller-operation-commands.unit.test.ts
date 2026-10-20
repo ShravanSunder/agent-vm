@@ -100,7 +100,7 @@ function createHermesSystemConfig(
 						profilesByAgent: { sun: 'sun' },
 						imageProfile: 'hermes',
 						cpus: 2,
-						memory: '2G',
+						memory: '2560M',
 						config: path.join(path.dirname(systemConfigPath), 'gateways', 'shravan', 'hermes.yaml'),
 						port: 18791,
 					},

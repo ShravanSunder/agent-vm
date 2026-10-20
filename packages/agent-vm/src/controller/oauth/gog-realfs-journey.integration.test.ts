@@ -387,7 +387,7 @@ describe('Gog account policy to RealFS file journey', () => {
 						config: path.join(root, 'config', 'hermes.yaml'),
 						cpus: 2,
 						imageProfile: 'hermes',
-						memory: '2G',
+						memory: '2560M',
 						port: 18_791,
 						profileSecretProjectionsByAgent: { [agentId]: {} },
 						profilesByAgent: { [agentId]: agentId },

@@ -283,7 +283,7 @@ function createIntegrationLeaseRpcOptions(
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -496,7 +496,7 @@ describe('gateway control lease RPC integration', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,

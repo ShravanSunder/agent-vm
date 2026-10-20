@@ -67,7 +67,7 @@ const liveRoundtripFixtureSystemConfig = {
 				config: './config/shravan/hermes.yaml',
 				cpus: 2,
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				port: 18_791,
 				stateDir: '/storage-root-test/shravan/state',
 				zoneFilesDir: '/storage-root-test/shravan/zone-files',
