@@ -8,6 +8,7 @@ import { startNodeHost, type RunningNodeHost } from '#node-host/node-host-startu
 import {
 	connectClient,
 	decodedResult,
+	fixtureContextRef,
 	fixtureConfig,
 	fixtureDirectory,
 	headerCanary,
@@ -217,7 +218,7 @@ describe('Node host real admission and preparation races', () => {
 				await known.lookup({
 					version: 'tool-operation-v1',
 					key: { authority: config.authority, principal: 'agent-a', item: 'absent' },
-					verifiedContextRef: 'agent-a:v1',
+					verifiedContextRef: fixtureContextRef(config),
 				}),
 			).toEqual({ kind: 'not-found' });
 		} finally {

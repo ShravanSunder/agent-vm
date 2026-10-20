@@ -11,6 +11,7 @@ import { startNodeHost } from '#node-host/node-host-startup';
 import {
 	connectClient,
 	decodedResult,
+	fixtureContextRef,
 	fixtureConfig,
 	fixtureDirectory,
 	headerCanary,
@@ -264,13 +265,13 @@ describe('real Node host ingress, gateway, dispatcher, connectors and public sto
 				const foreignLookup = await host.composition.operations.lookup({
 					version: 'tool-operation-v1',
 					key: { authority: config.authority, principal: 'agent-a', item: 'item-one' },
-					verifiedContextRef: 'agent-b:v1',
+					verifiedContextRef: fixtureContextRef(config, 'agent-b'),
 				});
 				expect(foreignLookup).toEqual({ kind: 'denied' });
 				const ownLookup = await host.composition.operations.lookup({
 					version: 'tool-operation-v1',
 					key: { authority: config.authority, principal: 'agent-a', item: 'item-one' },
-					verifiedContextRef: 'agent-a:v1',
+					verifiedContextRef: fixtureContextRef(config),
 				});
 				expect(ownLookup).toMatchObject({
 					kind: 'found',

@@ -16,6 +16,7 @@ import {
 	nodeHostConfigSchema,
 	type NodeHostConfig,
 } from '#node-host/configuration/node-host-config';
+import { compileNodeHostCredentialSet } from '#node-host/ingress/bearer-credentials';
 
 export const secretCanary = 'provider-secret-canary-841';
 export const headerCanary = 'provider-header-canary-243';
@@ -322,4 +323,13 @@ export function successfulOutput(result: unknown, item: string): Record<string, 
 			})
 			.parse(batch).results[item]?.output ?? {}
 	);
+}
+
+/** Current trusted context for store observations, without depending on its opaque encoding. */
+export function fixtureContextRef(config: NodeHostConfig, agentId = 'agent-a'): string {
+	const credential = compileNodeHostCredentialSet(config.auth).credentials.find(
+		(entry) => entry.principal.agentId === agentId,
+	);
+	if (credential === undefined) throw new Error('Missing fixture credential');
+	return credential.credentialId;
 }

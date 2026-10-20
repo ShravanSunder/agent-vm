@@ -37,7 +37,10 @@ crash-durable record mechanism and SQLite ownership fence, with no controller
 dependency. Conditional arm transitions permit one portal dispatch. A lost reply
 after arm remains ambiguous; lookup never dispatches. This does not promise
 exactly-once effects from third-party providers. Caller-scoped lookup rechecks
-the injected current context. Store or writer-fence failure prevents new work.
+the injected current context. The opaque credential admission identity includes the
+configured service generation, so prior-generation approval receipts refuse after
+a restart. The stable authority/agent/item operation key and its history survive
+that change. Store or writer-fence failure prevents new work.
 
 Store bounds are required positive integers with no defaults. The record-byte
 bound must be at least the copied 4 MiB per-call result limit plus a 32 KiB

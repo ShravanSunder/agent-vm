@@ -4,6 +4,7 @@ import { startNodeHost } from '#node-host/node-host-startup';
 import {
 	connectClient,
 	decodedResult,
+	fixtureContextRef,
 	fixtureConfig,
 	fixtureDirectory,
 	startControlledProvider,
@@ -103,7 +104,7 @@ describe('Node operation capacity through real HTTP ingress and dispatcher', () 
 						await host.composition.operations.lookup({
 							version: 'tool-operation-v1',
 							key: { authority: config.authority, principal: 'agent-a', item },
-							verifiedContextRef: 'agent-a:v1',
+							verifiedContextRef: fixtureContextRef(config),
 						}),
 					).toMatchObject({ kind: 'found', record: { state: { kind: 'completed' } } });
 				}),
@@ -126,7 +127,7 @@ describe('Node operation capacity through real HTTP ingress and dispatcher', () 
 						await host.composition.operations.lookup({
 							version: 'tool-operation-v1',
 							key: { authority: config.authority, principal: 'agent-a', item },
-							verifiedContextRef: 'agent-a:v1',
+							verifiedContextRef: fixtureContextRef(config),
 						}),
 					).toMatchObject({ kind: 'found', record: { state: { kind: 'completed' } } });
 				}),
@@ -145,7 +146,15 @@ describe('Node operation capacity through real HTTP ingress and dispatcher', () 
 		// 500,000 raw bytes become 5,000,000 bytes of [REDACTED], above 4 MiB.
 		const alpha = await startControlledProvider('alpha', { resultText: 'x'.repeat(500_000) });
 		const beta = await startControlledProvider('beta');
-		const config = fixtureConfig(directory, [alpha.url, beta.url]);
+		const original = fixtureConfig(directory, [alpha.url, beta.url]);
+		// Explicit fixture-only bound exceeds the 5 MiB redacted result, so record size cannot mask the per-call guard.
+		const config = {
+			...original,
+			operationStoreBounds: {
+				...original.operationStoreBounds,
+				maximumRecordBytes: 8 * 1024 * 1024,
+			},
+		};
 		const configPath = await writeFixtureConfig(config, directory);
 		const host = await startNodeHost({ configPath, secrets: { resolve: async () => 'x' } });
 		if (host.http === undefined) throw new Error('Missing HTTP ingress');
@@ -161,7 +170,7 @@ describe('Node operation capacity through real HTTP ingress and dispatcher', () 
 				await host.composition.operations.lookup({
 					version: 'tool-operation-v1',
 					key: { authority: config.authority, principal: 'agent-a', item: 'expanded' },
-					verifiedContextRef: 'agent-a:v1',
+					verifiedContextRef: fixtureContextRef(config),
 				}),
 			).toMatchObject({ kind: 'found', record: { state: { kind: 'armed' } } });
 			expect(outcome(await connection.client.callTool(call('expanded')), 'expanded')).toMatchObject(

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
@@ -147,7 +147,16 @@ export function compileNodeHostCredentialSet(
 				principal,
 				serviceGeneration: parsed.serviceGeneration,
 			}),
-			credentialId: `${credential.principal.agentId}:v${String(credential.credentialVersion)}`,
+			// Opaque admission identity includes authority generation; operation keys use agentId separately.
+			credentialId: createHash('sha256')
+				.update(
+					JSON.stringify([
+						parsed.serviceGeneration,
+						credential.principal.agentId,
+						credential.credentialVersion,
+					]),
+				)
+				.digest('hex'),
 			credentialVersion: credential.credentialVersion,
 			principal,
 			tokenBytes: Buffer.from(credential.bearerToken, 'utf8'),
