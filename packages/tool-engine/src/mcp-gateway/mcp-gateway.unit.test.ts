@@ -21,7 +21,10 @@ import {
 	type PreparedGatewayCatalog,
 } from '#mcp-gateway/mcp-gateway';
 import * as callValidation from '#mcp-gateway/portal-call-validation';
-import { createPortalSessionManager } from '#mcp-gateway/portal-session';
+import {
+	createPortalSessionManager,
+	PortalCatalogPreparationError,
+} from '#mcp-gateway/portal-session';
 import type { PortalBatchResult } from '#mcp-gateway/portal-tools';
 
 const revision = { owner: 'fixture-authority', revision: 'v1' };
@@ -52,6 +55,7 @@ function retainCatalog(catalog: PreparedGatewayCatalog): PreparedGatewayCatalog 
 }
 function createHarness(
 	throwAt?: 'access' | 'backend' | 'backend-after-effect',
+	discovery: 'complete' | 'incomplete' | 'duplicate' = 'complete',
 ): GatewayTestHarness {
 	const effects: DispatchInvocation[] = [];
 	const inputDigests: string[] = [];
@@ -145,8 +149,13 @@ function createHarness(
 		],
 		runtime: {
 			closeAgentScope: () => {},
-			listTools: async () =>
-				['read', 'ask', 'denied', 'hidden'].map((name) => ({ name, inputSchema })),
+			listTools: async ({ namespace }) => {
+				if (discovery === 'incomplete' && namespace === 'beta')
+					throw new Error('beta discovery unavailable');
+				const names =
+					discovery === 'duplicate' ? ['read', 'read'] : ['read', 'ask', 'denied', 'hidden'];
+				return names.map((name) => ({ name, inputSchema }));
+			},
 		},
 		upstreamNamespaces: ['alpha', 'beta'],
 	});
@@ -254,6 +263,90 @@ function identities(value: unknown): readonly string[] {
 
 // Oracles: Spec R3/R5/R8/R15, S3a proof 1/2/7/8/9. No host/auth/durable-store claim.
 describe('portable MCP gateway through the neutral dispatcher', () => {
+	it.each(['prepare', 'list'] as const)(
+		'refuses incomplete full catalog discovery through %s before publication',
+		async (path) => {
+			const publisher = vi.fn(retainCatalog);
+			const harness = createHarness(undefined, 'incomplete');
+			harness.setPrepared(publisher);
+			const preparation =
+				path === 'prepare'
+					? harness.gateway.prepareCatalog()
+					: harness.gateway.listTools('catalog');
+			await expect(preparation).rejects.toThrowError(
+				new PortalCatalogPreparationError([
+					{
+						namespace: 'beta',
+						kind: 'upstream_discovery_failed',
+						message: 'beta discovery unavailable',
+					},
+				]),
+			);
+			await expect(preparation).rejects.toMatchObject({
+				name: 'PortalCatalogPreparationError',
+				failedNamespaces: ['beta'],
+				message:
+					'MCP Portal catalog preparation failed for namespace(s): beta. Run live MCP validation or use compact mode for partial discovery diagnostics.',
+			});
+			expect(publisher).not.toHaveBeenCalled();
+		},
+	);
+	it.each(['prepare', 'list'] as const)(
+		'refuses duplicate exported full catalog names through %s before publication',
+		async (path) => {
+			const harness = createHarness(undefined, 'duplicate');
+			const publisher = vi.fn(retainCatalog);
+			harness.setPrepared(publisher);
+			const preparation =
+				path === 'prepare'
+					? harness.gateway.prepareCatalog()
+					: harness.gateway.listTools('catalog');
+			await expect(preparation).rejects.toBeInstanceOf(PortalCatalogPreparationError);
+			await expect(preparation).rejects.toMatchObject({
+				name: 'PortalCatalogPreparationError',
+				failedNamespaces: ['alpha'],
+				message:
+					'MCP Portal catalog preparation failed for namespace(s): alpha. Run live MCP validation or use compact mode for partial discovery diagnostics.',
+			});
+			expect(publisher).not.toHaveBeenCalled();
+		},
+	);
+	it('publishes a complete allowed full catalog', async () => {
+		const harness = createHarness();
+		const publisher = vi.fn(retainCatalog);
+		harness.setPrepared(publisher);
+		expect((await harness.gateway.listTools('catalog')).map((tool) => tool.name)).toEqual(
+			frozenNames,
+		);
+		expect(publisher).toHaveBeenCalledOnce();
+	});
+	it('keeps healthy compact discovery, describe and calls available with failure diagnostics', async () => {
+		const harness = createHarness(undefined, 'incomplete');
+		const publisher = vi.fn(retainCatalog);
+		harness.setPrepared(publisher);
+		const listed = await harness.gateway.list({ requests: [{ id: 'r' }] });
+		expect(identities(output(listed, 'r'))).toEqual(['alpha.ask', 'alpha.read']);
+		const described = await harness.gateway.describe({
+			requests: [{ id: 'r', tools: [{ namespace: 'alpha', toolName: 'read' }] }],
+		});
+		expect(identities(output(described, 'r'))).toEqual(['alpha.read']);
+		const called = await harness.gateway.call(callInput());
+		expect(called.results['original-item']?.ok).toBe(true);
+		expect(harness.effects).toHaveLength(1);
+		for (const result of [listed, described, called]) {
+			expect(result.diagnostics).toMatchObject([
+				{ kind: 'upstream_discovery_failed', namespace: 'beta' },
+			]);
+		}
+		expect((await harness.gateway.listTools('compact')).map((tool) => tool.name)).toEqual([
+			'mcp_portal_list',
+			'mcp_portal_search',
+			'mcp_portal_describe',
+			'mcp_portal_call',
+		]);
+		expect(publisher).not.toHaveBeenCalled();
+	});
+
 	it('keeps the same literal allowed corpus across list, search, describe and native catalog', async () => {
 		const { gateway } = createHarness();
 		expect(identities(output(await gateway.list({ requests: [{ id: 'r' }] }), 'r'))).toEqual([

@@ -492,8 +492,8 @@ export async function verifyToolEngineClosure(): Promise<void> {
 				path.join(entryDirectory, 's2-transitive-poison.js'),
 				"export async function lazyPoison() { return import('node:fs'); }\n",
 			);
-			await fixtureSources.reduce<Promise<void>>(async (previous, fixture): Promise<void> => {
-				await previous;
+			await fixtureSources.reduce<Promise<void>>(async (prior, fixture): Promise<void> => {
+				await prior;
 				try {
 					await replaceArtifact(contract, fixture.source);
 					if (fixture.declaration !== undefined)

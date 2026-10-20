@@ -23,7 +23,12 @@ import { z } from 'zod';
 
 import { createCatalogToolPresentationName } from '#mcp-gateway/catalog-tool-presentation-name';
 import { listPortalCoreToolDescriptors } from '#mcp-gateway/compact-tool-descriptors';
-import type { PortalSession, PortalSessionManager } from '#mcp-gateway/portal-session';
+import {
+	PortalCatalogPreparationError,
+	type PortalSession,
+	type PortalSessionManager,
+} from '#mcp-gateway/portal-session';
+import { describeInputSchema } from '#mcp-gateway/portal-tool-contracts';
 import { createPortalToolHandlers, type PortalBatchResult } from '#mcp-gateway/portal-tools';
 import { createSearchIndex } from '#mcp-gateway/search-index';
 import { buildToolGraph } from '#mcp-gateway/tool-graph';
@@ -230,22 +235,36 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	async function currentCatalog(): Promise<PreparedGatewayCatalog> {
 		const session = await visibleSession();
-		const tools = await Promise.all(
-			session.catalog.tools.map(
-				async (tool): Promise<PreparedCatalogTool> => ({
-					namespace: tool.namespace,
-					toolName: tool.toolName,
-					bindingRevision: requireCatalogBinding(session.bindings, tool.namespace, tool.toolName),
-					descriptor: {
-						name: await createCatalogToolPresentationName(tool.namespace, tool.toolName),
-						inputSchema: { ...tool.inputSchema, type: 'object' },
-						...(tool.description === undefined ? {} : { description: tool.description }),
-						...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
-						...(tool.title === undefined ? {} : { title: tool.title }),
+		if (session.catalog.discoveryFailures.length > 0)
+			throw new PortalCatalogPreparationError(session.catalog.discoveryFailures);
+		const tools: PreparedCatalogTool[] = [];
+		const exportedNames = new Set<string>();
+		for (const tool of session.catalog.tools) {
+			const exportedName = await createCatalogToolPresentationName(tool.namespace, tool.toolName);
+			if (exportedNames.has(exportedName)) {
+				throw new PortalCatalogPreparationError([
+					{
+						kind: 'catalog_tool_name_collision',
+						message: 'Authorized catalog contains duplicate exported MCP tool names.',
+						namespace: tool.namespace,
+						toolName: tool.toolName,
 					},
-				}),
-			),
-		);
+				]);
+			}
+			exportedNames.add(exportedName);
+			tools.push({
+				namespace: tool.namespace,
+				toolName: tool.toolName,
+				bindingRevision: requireCatalogBinding(session.bindings, tool.namespace, tool.toolName),
+				descriptor: {
+					name: exportedName,
+					inputSchema: { ...tool.inputSchema, type: 'object' },
+					...(tool.description === undefined ? {} : { description: tool.description }),
+					...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+					...(tool.title === undefined ? {} : { title: tool.title }),
+				},
+			});
+		}
 		return {
 			agentScopeId: portalAgentScopeKey(identity),
 			sourceHash: session.catalog.sourceHash,
@@ -295,6 +314,12 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 		list: async (input) => handlers.list({ identity, input }),
 		search: async (input) => handlers.search({ identity, input }),
 		describe: async (input) => {
+			const parsed = describeInputSchema.safeParse(input);
+			if (
+				!parsed.success ||
+				!parsed.data.requests.some((request) => request.includeTypescriptHelper)
+			)
+				return handlers.describe({ identity, input });
 			const catalog = await prepareCatalog();
 			const describeHandlers = createPortalToolHandlers({
 				getSession: visibleSession,
