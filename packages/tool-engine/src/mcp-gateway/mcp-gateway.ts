@@ -258,9 +258,11 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 				bindingRevision: requireCatalogBinding(session.bindings, tool.namespace, tool.toolName),
 				descriptor: {
 					name: exportedName,
-					inputSchema: { ...tool.inputSchema, type: 'object' },
+					inputSchema: { ...structuredClone(tool.inputSchema), type: 'object' },
 					...(tool.description === undefined ? {} : { description: tool.description }),
-					...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+					...(tool.annotations === undefined
+						? {}
+						: { annotations: structuredClone(tool.annotations) }),
 					...(tool.title === undefined ? {} : { title: tool.title }),
 				},
 			});

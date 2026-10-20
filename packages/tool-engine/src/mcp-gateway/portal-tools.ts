@@ -322,7 +322,7 @@ function describeToolOutput(props: {
 		result.typescriptHelper = props.typescriptHelper;
 	}
 
-	return result;
+	return structuredClone(result);
 }
 
 function searchOutputWithFullSchema(
@@ -362,17 +362,17 @@ function searchOutputWithFullSchema(
 		}
 	}
 
-	return result;
+	return structuredClone(result);
 }
 
 function toolSummaryWithSchemaHint(summary: ToolSummary): ToolSummary {
-	return Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint });
+	return structuredClone(Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint }));
 }
 
 function toolSearchResultWithSchemaHint(
 	summary: ToolSearchResult,
 ): ToolSearchResult & { readonly schemaHint: ToolSchemaHint } {
-	return Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint });
+	return structuredClone(Object.assign({}, summary, { schemaHint: describeBeforeCallSchemaHint }));
 }
 
 function listRequestResult(session: PortalSession, request: ListRequest): PortalToolResult {

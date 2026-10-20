@@ -49,17 +49,17 @@ export function listPortalCoreToolDescriptors(namespaces: readonly string[] = []
 		},
 		{
 			description: 'Search the caller scoped MCP Portal index.',
-			inputSchema: portalToolInputSchemas.mcp_portal_search,
+			inputSchema: cloneJsonObject(portalToolInputSchemas.mcp_portal_search),
 			name: 'mcp_portal_search',
 		},
 		{
 			description: 'Describe exact MCP tool schemas and optional TypeScript/Zod helpers.',
-			inputSchema: portalToolInputSchemas.mcp_portal_describe,
+			inputSchema: cloneJsonObject(portalToolInputSchemas.mcp_portal_describe),
 			name: 'mcp_portal_describe',
 		},
 		{
 			description: 'Validate and call an authorized upstream MCP tool by namespace and toolName.',
-			inputSchema: portalToolInputSchemas.mcp_portal_call,
+			inputSchema: cloneJsonObject(portalToolInputSchemas.mcp_portal_call),
 			name: 'mcp_portal_call',
 		},
 	];
