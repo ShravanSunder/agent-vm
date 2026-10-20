@@ -259,7 +259,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	);
 	const install = await command({
 		executable: 'pnpm',
-		args: ['install', '--offline', '--ignore-scripts'],
+		args: ['install', '--ignore-scripts'],
 		cwd: scratch,
 		label: 'install-packed',
 		evidence,

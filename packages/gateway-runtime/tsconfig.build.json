@@ -8,5 +8,5 @@
 		"sourceMap": true,
 		"noEmit": false
 	},
-	"exclude": ["dist", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*-test-fixture.ts"]
+	"exclude": ["src/**/*.test.ts", "src/managed-tool-engine/**/*-test-fixture.ts"]
 }
