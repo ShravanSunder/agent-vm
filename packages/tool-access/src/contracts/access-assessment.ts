@@ -10,7 +10,11 @@ import { z } from 'zod';
 import { configuredCliArgvTokenSchema, configuredCliPolicySchema } from './cli-allowance-policy.js';
 import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
 import { jsonValueSchema } from './json-value.js';
-import { toolPortalBackendKindSchema, toolPortalToolSelectorSchema } from './tool-selectors.js';
+import {
+	toolPortalBackendKindSchema,
+	toolPortalToolSelectorSchema,
+	toolPortalCallPolicySchema,
+} from './tool-selectors.js';
 
 const boundedId = z.string().min(1).max(256);
 export const revisionRef = z.strictObject({ owner: boundedId, revision: boundedId });
@@ -66,11 +70,7 @@ export const accessNamespacePolicy = z.strictObject({
 	backendKind: toolPortalBackendKindSchema,
 	tools: toolPortalToolSelectorSchema,
 	calls: z.discriminatedUnion('kind', [
-		z.strictObject({
-			kind: z.literal('selectors'),
-			requiresApproval: toolPortalToolSelectorSchema,
-			withoutApproval: toolPortalToolSelectorSchema,
-		}),
+		toolPortalCallPolicySchema.safeExtend({ kind: z.literal('selectors') }),
 		z.strictObject({ kind: z.literal('account-policy') }),
 	]),
 	operations: z.record(
