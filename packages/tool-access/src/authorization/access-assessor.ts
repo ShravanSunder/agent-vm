@@ -16,12 +16,19 @@ import {
 	type InputRevisions,
 	type OperationClassRef,
 	type PolicyRuleRef,
+	type CompiledGoogleCommandSet,
+	type ConfiguredCliPolicy,
 } from '../contracts/index.js';
 import { resolvedMcpPortalProfileSchema } from '../contracts/mcp-approval-profile.js';
 import {
 	evaluateCliAllowanceInvocation,
 	validateCliAllowanceInvocation,
 } from './cli-allowances/index.js';
+import {
+	classifyCliPathContribution,
+	cliPolicyHasConditionalMatchers,
+	type CliPathContribution,
+} from './cli-path-policy.js';
 import { resolveCompiledGoogleCommand } from './compiled-google-command-resolution.js';
 import { mcpPortalCallPolicyDecision } from './mcp-approval-policy.js';
 import { toolPortalSelectorAllowsOperation } from './tool-selector-policy.js';
@@ -268,6 +275,120 @@ function stateFor(props: {
 	return { kind: ask ? 'approval-each-call' : 'usable' };
 }
 
+type GoogleEffect = Extract<OperationClassRef, { kind: 'google-effect' }>;
+type AccessEntry = Extract<AccessAssessment, { kind: 'call-dependent' }>['entries'][number];
+interface GoogleCommandPath {
+	readonly path: readonly string[];
+	readonly requirements: readonly GoogleEffect[];
+	readonly contribution: CliPathContribution;
+}
+
+function sameGoogleEffect(left: GoogleEffect, right: GoogleEffect): boolean {
+	return left.serviceId === right.serviceId && left.effect === right.effect;
+}
+
+function googleCommandPaths(
+	commands: CompiledGoogleCommandSet,
+	cliPolicy: ConfiguredCliPolicy,
+): readonly GoogleCommandPath[] {
+	return commands.descriptors.flatMap((descriptor) =>
+		descriptor.paths.map((path) => ({
+			path,
+			requirements: descriptor.requirements.flatMap((requirement) =>
+				requirement.effects.map(
+					(effect) =>
+						({
+							kind: 'google-effect',
+							serviceId: requirement.serviceId,
+							effect,
+						}) satisfies GoogleEffect,
+				),
+			),
+			contribution: classifyCliPathContribution(cliPolicy, path),
+		})),
+	);
+}
+
+function foldCliContribution(props: {
+	readonly base: CallClassification;
+	readonly contribution: CliPathContribution;
+	readonly requirements: readonly GoogleEffect[];
+	readonly input: AssessAccessInput;
+}): CallClassification {
+	const { base, contribution, requirements, input } = props;
+	return {
+		...base,
+		accountRequired: true,
+		requirements,
+		deny: contribution === 'deny' ? blocked(rule(input, 'cli-allowance')) : base.deny,
+		ask: base.ask || contribution === 'ask',
+	};
+}
+
+function googleExplainEntries(props: {
+	readonly input: AssessAccessInput;
+	readonly base: CallClassification;
+	readonly commands: CompiledGoogleCommandSet;
+	readonly cliPolicy: ConfiguredCliPolicy;
+}): readonly AccessEntry[] {
+	const { input, base } = props;
+	const paths = googleCommandPaths(props.commands, props.cliPolicy);
+	const requirements = paths.flatMap((command) => command.requirements);
+	const unique = requirements.filter(
+		(requirement, index) =>
+			requirements.findIndex((other) => sameGoogleEffect(other, requirement)) === index,
+	);
+	const accounts = input.facts.accounts.length === 0 ? [undefined] : input.facts.accounts;
+	const entries: AccessEntry[] = [];
+	const splitPaths = new Set<string>();
+	for (const operationClass of unique) {
+		const matching = paths.filter((command) =>
+			command.requirements.some((requirement) => sameGoogleEffect(requirement, operationClass)),
+		);
+		const first = matching[0];
+		if (first === undefined) continue;
+		if (matching.every((command) => command.contribution === first.contribution)) {
+			for (const account of accounts)
+				entries.push({
+					operationClass,
+					account: account?.account ?? null,
+					state: stateFor({
+						input,
+						account,
+						classification: foldCliContribution({
+							base,
+							contribution: first.contribution,
+							requirements: [operationClass],
+							input,
+						}),
+					}),
+				});
+		} else {
+			for (const command of matching) {
+				const pathKey = JSON.stringify(command.path);
+				if (splitPaths.has(pathKey)) continue;
+				splitPaths.add(pathKey);
+				for (const account of accounts)
+					entries.push({
+						operationClass: { kind: 'cli-command', commandPath: command.path },
+						account: account?.account ?? null,
+						state: stateFor({
+							input,
+							account,
+							classification: foldCliContribution({
+								base,
+								contribution: command.contribution,
+								requirements: command.requirements,
+								input,
+							}),
+						}),
+					});
+			}
+		}
+	}
+	return entries;
+}
+
 function explain(
 	input: AssessAccessInput,
 	namespace: AccessNamespacePolicy,
@@ -287,39 +408,14 @@ function explain(
 	}
 	const entries: Extract<AccessAssessment, { kind: 'call-dependent' }>['entries'][number][] = [];
 	if (operation.googleCommands !== null) {
-		const requirements = operation.googleCommands.descriptors.flatMap((descriptor) =>
-			descriptor.requirements.flatMap((requirement) =>
-				requirement.effects.map(
-					(effect) =>
-						({ kind: 'google-effect', serviceId: requirement.serviceId, effect }) satisfies Extract<
-							OperationClassRef,
-							{ kind: 'google-effect' }
-						>,
-				),
-			),
+		entries.push(
+			...googleExplainEntries({
+				input,
+				base,
+				commands: operation.googleCommands,
+				cliPolicy: operation.cliPolicy,
+			}),
 		);
-		const unique = requirements.filter(
-			(requirement, index) =>
-				requirements.findIndex(
-					(other) =>
-						other.serviceId === requirement.serviceId && other.effect === requirement.effect,
-				) === index,
-		);
-		for (const operationClass of unique) {
-			for (const account of input.facts.accounts.length === 0
-				? [undefined]
-				: input.facts.accounts) {
-				entries.push({
-					operationClass,
-					account: account?.account ?? null,
-					state: stateFor({
-						input,
-						account,
-						classification: { ...base, accountRequired: true, requirements: [operationClass] },
-					}),
-				});
-			}
-		}
 	} else {
 		for (const command of operation.cliPolicy.commands) {
 			// Path-wide rules are decidable without guessing flags or stdin. Conditional rules stay per-call.
@@ -349,7 +445,9 @@ function explain(
 		entries,
 		perCallRule: rule(
 			input,
-			operation.googleCommands === null ? 'cli-allowance' : 'account-policy',
+			operation.googleCommands === null || cliPolicyHasConditionalMatchers(operation.cliPolicy)
+				? 'cli-allowance'
+				: 'account-policy',
 		),
 	};
 }
