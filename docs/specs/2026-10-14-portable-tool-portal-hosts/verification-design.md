@@ -271,6 +271,7 @@ Include these cases, each with its expected shown state:
 | expired consent | not usable: consent missing or expired |
 | registration revoked while an allowance still exists | not usable: registration revoked |
 | host switched from `not-configured` to configured | earlier assessments stale; new ones use the workspace steps |
+| a `not-configured` workspace fact reaching a host configured with workspaces | admission refuses; `explain` returns an error, not an answer |
 | the same agent, capability and arguments over `mcp` and over `protected_uds`, eligible on one only | each answer names its surface: usable on the eligible one, not given to the agent on the other; admission agrees per surface, and the managed final fence still refuses the ineligible one |
 
 Check the access projection against today's code: for the same calls, `assessAccess` over the projection the managed adapter produces must give the same decisions as today's `callPolicyDecision` over the original managed configuration. A projection that drops a field a decision reads, or copies an execution target into `tool-access`, fails here or in U12's packed check.

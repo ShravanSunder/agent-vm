@@ -283,21 +283,36 @@ A caller cannot supply a state. It supplies facts, each carrying its owner's rev
 
 | Fact | Supplied by | Existing shape or function reused |
 | --- | --- | --- |
-| workspace layer: `not-configured` (milestone 1, today's managed profiles), or `configured` with registration (`active` or `revoked`) and this capability's allowance, each with revision and rule | the host configuration; then `WorkspaceAccessPort.resolve` (the configuration adapter under F-53, a fleet verifier later) and Tool Portal's workspace policy authority | config-contracts agent assignment; E14 allowance is new |
-| the profile's access projection and the assignment, with revisions: per namespace its backend kind, tool selector, call policy and, per operation, the pure CLI policy and compiled Google command set; no execution targets, images, credentials or executors | `AssignmentPort.read`; for managed profiles, agent-vm's managed adapter maps the unchanged managed profile to this projection | [`toolPortalToolSelectorSchema`](../../../packages/config-contracts/src/tool-portal-config.ts#L30) and [`toolPortalSelectorAllowsOperation`](../../../packages/config-contracts/src/tool-portal-config.ts#L280), `mcpPortalCallPolicyDecision`, [`configuredCliPolicySchema`](../../../packages/config-contracts/src/controller-configured-cli.ts#L161) (the validator's `CliAllowance`), `compiledGoogleCommandSetSchema` |
+| whether the host has a workspace layer, with the host configuration's revision | the host binding: read once by the host's composition root from its own configuration, never from a request, port or facts supplier | new; the managed host binds `not-configured` (milestone 1) |
+| workspace: `not-configured`, or `configured` with registration (`active` or `revoked`) and this capability's allowance, each with revision and rule | `WorkspaceAccessPort.resolve` (the configuration adapter under F-53, a fleet verifier later) and Tool Portal's workspace policy authority; the managed adapter supplies `not-configured` | config-contracts agent assignment; E14 allowance is new |
+| the profile's access projection with the profile's revision, and the assignment with its own revision: per namespace its backend kind, tool selector, call policy and, per operation, the pure CLI policy and compiled Google command set; no execution targets, images, credentials or executors | `AssignmentPort.read`; for managed profiles, agent-vm's managed adapter maps the unchanged managed profile to this projection | [`toolPortalToolSelectorSchema`](../../../packages/config-contracts/src/tool-portal-config.ts#L30) and [`toolPortalSelectorAllowsOperation`](../../../packages/config-contracts/src/tool-portal-config.ts#L280), `mcpPortalCallPolicyDecision`, [`configuredCliPolicySchema`](../../../packages/config-contracts/src/controller-configured-cli.ts#L161) (the validator's `CliAllowance`), `compiledGoogleCommandSetSchema` |
 | surface: the surfaces this namespace is exposed on for this profile, with the revision of the snapshot that says so; at admission, the surface the call arrived on, from the verified invocation context | the managed controller's semantic snapshot (`surfaceEligibilityByProfile`); a host with one surface supplies that one | today's [surface gate](../../../packages/tool-portal/src/tool-portal-service-common.ts#L278) and [discovery filter](../../../packages/tool-portal/src/tool-portal-service.ts#L415) |
-| per account: granted or not; policy snapshot state (`applying` or `active`); activity availability; the account authority's own evaluator result per Google service and effect | the controller's Google permission policy service and broker | [`GoogleAccountPolicySnapshot.state`](../../../packages/oauth-broker-contracts/src/google-account-policy-contracts.ts#L42), [`resolveGoogleAccountInvocationPolicy`](../../../packages/tool-portal/src/google-account-policy.ts#L31) result, `OAuthAccountActivityAvailability` |
+| per account: granted to this agent or not, with the grant's revision; policy snapshot state (`applying` or `active`) with its override revision; the revision of the authorization whose granted effects decide consent; activity availability; the account authority's own evaluator result per Google service and effect | the controller's Google permission policy service (grant, snapshot, evaluator result) and broker (authorization and its granted effects) | [`GoogleAccountPolicySnapshot.state` and `overrideRevision`](../../../packages/oauth-broker-contracts/src/google-account-policy-contracts.ts#L42), the evaluator's `grants` input, [`resolveGoogleAccountInvocationPolicy`](../../../packages/tool-portal/src/google-account-policy.ts#L31) result, `OAuthAccountActivityAvailability` |
 | upstream: `available` or `unavailable`, binding revision, credential need met or unmet | the backend registration (E5) | registered backend binding |
 
 ```ts
 const revisionRef = z.strictObject({ owner: authorityRef, revision: boundedRevision });
+const accountRef = z.strictObject({ oauthAccountId: oauthAccountIdSchema });
+// Bound once per host configuration by the host's composition root. No request, port or facts supplier provides it.
+export const hostAccessBinding = z.strictObject({
+  workspaceLayer: z.enum(["not-configured", "configured"]),
+  config: revisionRef,                         // the host configuration revision that set the layer
+});
+// Every revision the answer read, copied from the binding and the facts; a change to any makes the answer stale.
 const inputRevisions = z.strictObject({
-  profile: revisionRef, assignment: revisionRef, upstreamBinding: revisionRef, surfaceSnapshot: revisionRef,
-  hostConfig: revisionRef,                     // binds the workspace-layer mode; a change makes earlier answers stale
-  registration: revisionRef.nullable(),        // null only when the workspace layer is not-configured
-  workspaceAllowance: revisionRef.nullable(),
-  accountPolicy: revisionRef.nullable(),       // null when the capability uses no account
-  consentStatus: revisionRef.nullable(),
+  hostConfig: revisionRef,                     // hostAccessBinding.config
+  registration: revisionRef.nullable(),        // workspace.registration.revision; null only when not-configured
+  workspaceAllowance: revisionRef.nullable(),  // workspace.allowance.revision; null only when not-configured
+  profile: revisionRef,                        // assignment.profileRevision
+  assignment: revisionRef,                     // assignment.revision
+  surfaceSnapshot: revisionRef,                // surface.snapshot
+  upstreamBinding: revisionRef,                // upstream.binding
+  accounts: z.array(z.strictObject({           // one per account read; empty when the capability uses no account
+    account: accountRef,
+    grant: revisionRef,                        // accountFact.grantRevision
+    policy: revisionRef.nullable(),            // accountFact.policyRevision; null with no verified snapshot
+    consent: revisionRef,                      // accountFact.consentRevision
+  })).readonly(),
 });
 const policyRuleRef = z.strictObject({
   source: z.enum(["workspace-allowance", "profile-selector", "mcp-approval-policy", "cli-allowance", "account-policy"]),
@@ -307,7 +322,6 @@ const operationClassRef = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("cli-command"), commandPath: z.array(boundedToken).min(1).readonly() }),
   z.strictObject({ kind: z.literal("google-effect"), serviceId: oauthServiceIdSchema, effect: googleOperationEffectSchema }),
 ]);
-const accountRef = z.strictObject({ oauthAccountId: oauthAccountIdSchema });
 const surfaceClass = z.enum(["mcp", "protected_uds"]);      // today's managed surface classes, as a neutral enum
 // Execution-neutral projection of one profile. Targets, images, credentials and executors stay with execution.
 const accessNamespacePolicy = z.strictObject({
@@ -324,25 +338,28 @@ const accessNamespacePolicy = z.strictObject({
 });
 const accessProfileProjection = z.strictObject({ profileId: boundedId, namespaces: z.record(boundedId, accessNamespacePolicy) });
 const accountFact = z.strictObject({
-  account: accountRef, granted: z.boolean(), revision: revisionRef,
+  account: accountRef,
+  granted: z.boolean(), grantRevision: revisionRef,                 // this agent's grant to use the account
   policySnapshotState: z.enum(["applying", "active"]).nullable(),   // null: no verified snapshot
+  policyRevision: revisionRef.nullable(),                           // the snapshot's overrideRevision; null with the state
+  consentRevision: revisionRef,                                     // the broker authorization whose granted effects decide consent
   availability: oauthAccountActivityAvailabilitySchema,
   decisions: z.array(z.strictObject({
     operationClass: operationClassRef,                               // google-effect only
     result: googleAccountInvocationPolicyResultSchema,               // the account authority's own output
   })).readonly(),
-  boundToCall: callDigest.nullable(),                                // set at admission, null in explain
+  boundToCall: callDigest.nullable(),                                // the call's digest at admission, null in explain
 });
 const accessFacts = z.strictObject({
   workspace: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("not-configured"), hostConfig: revisionRef }),   // milestone 1: today's managed profiles
+    z.strictObject({ kind: z.literal("not-configured") }),          // must match the host binding; milestone 1: today's managed profiles
     z.strictObject({
       kind: z.literal("configured"),
       registration: z.strictObject({ status: z.enum(["active", "revoked"]), revision: revisionRef }),
       allowance: z.strictObject({ allowed: z.boolean(), rule: policyRuleRef, revision: revisionRef }),
     }),
   ]),
-  assignment: z.strictObject({ profile: accessProfileProjection, revision: revisionRef }),
+  assignment: z.strictObject({ profile: accessProfileProjection, profileRevision: revisionRef, revision: revisionRef }),
   surface: z.strictObject({ eligible: z.array(surfaceClass).readonly(), snapshot: revisionRef }),
   accounts: z.array(accountFact).readonly(),
   upstream: z.strictObject({ status: z.enum(["available", "unavailable"]), credentialNeed: z.enum(["none", "met", "unmet"]), binding: revisionRef }),
@@ -353,11 +370,20 @@ export const assessAccessInput = z.strictObject({
   surface: surfaceClass,                       // the surface this answer describes; at admission, the verified arrival surface
   call: z.strictObject({ arguments: jsonValue, account: accountRef.nullable(), digest: callDigest }).nullable(),
 });
+export const assessAccessResult = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("assessed"), assessment: accessAssessment }),
+  // The facts contradict the host binding or the call. No access answer exists for them.
+  z.strictObject({ kind: z.literal("facts-rejected"), reason: z.enum(["workspace-layer-mismatch", "account-decision-unbound"]) }),
+]);
+// Effect-free. The composition root builds one assessor per host configuration; explain and admission share it.
+//   createAccessAssessor(binding: HostAccessBinding): (input: AssessAccessInput) => AssessAccessResult
 ```
 
-**At admission** `call` carries the exact arguments. `assessAccess` parses them with the capability's existing input schema ([`controllerConfiguredCliInputSchema`](../../../packages/config-contracts/src/controller-configured-cli.ts#L948) and its quick or open variants) and runs the unchanged validators on the full input. Those are [`validateCliAllowanceInvocation`](../../../packages/tool-portal/src/cli-allowances/cli-allowance-validator.ts#L57), [`evaluateCliAllowanceInvocation`](../../../packages/tool-portal/src/cli-allowances/cli-allowance-validator.ts#L95) and, for Google commands, [`resolveCompiledGoogleCommand`](../../../packages/config-contracts/src/compiled-google-command-set.ts#L32). Together they decide argv, denied patterns, flag values, stdin and the per-call deny and approval matchers. A command-path summary would discard that information, so the operation class is derived from the arguments, never supplied by the caller. Account decisions must carry the same call digest; a decision bound to another call is ignored and the path is `not-usable` with `service-unavailable`. The result is `fixed`.
+The returned function is `assessAccess`. On `facts-rejected`, admission refuses the call and the agent sees `not-usable` with `service-unavailable`; the host records the rejection reason. `explain` returns an error instead of an answer.
 
-**In `explain`** `call` is null and `surface` comes from the request, defaulting to `mcp`, the surface agents call through. Each answer names its surface. The result is `fixed` when no decision reads the arguments. Otherwise it is `call-dependent`: one entry per command path and per Google service and effect whose state is known in advance, plus `perCallRule` naming the CLI allowance or account rule that decides the rest per call (R28).
+**At admission** `call` carries the exact arguments. `assessAccess` parses them with the capability's existing input schema ([`controllerConfiguredCliInputSchema`](../../../packages/config-contracts/src/controller-configured-cli.ts#L948) and its quick or open variants) and runs the unchanged validators on the full input. Those are [`validateCliAllowanceInvocation`](../../../packages/tool-portal/src/cli-allowances/cli-allowance-validator.ts#L57), [`evaluateCliAllowanceInvocation`](../../../packages/tool-portal/src/cli-allowances/cli-allowance-validator.ts#L95) and, for Google commands, [`resolveCompiledGoogleCommand`](../../../packages/config-contracts/src/compiled-google-command-set.ts#L32). Together they decide argv, denied patterns, flag values, stdin and the per-call deny and approval matchers. A command-path summary would discard that information, so the operation class is derived from the arguments, never supplied by the caller. Every account decision must carry this call's digest. A decision bound to another call, or to none, gives `facts-rejected` with `account-decision-unbound`, so it is never reused. Otherwise the result is `assessed` and `fixed`.
+
+**In `explain`** `call` is null and no account decision may carry a digest (`account-decision-unbound` otherwise). `surface` comes from the request, defaulting to `mcp`, the surface agents call through. Each answer names its surface. The result is `fixed` when no decision reads the arguments. Otherwise it is `call-dependent`: one entry per command path and per Google service and effect whose state is known in advance, plus `perCallRule` naming the CLI allowance or account rule that decides the rest per call (R28).
 
 Evaluation keeps the order the existing decisions already use, so the access view and admission agree:
 1. registration revoked (only when the workspace layer is configured);
@@ -373,7 +399,7 @@ Evaluation keeps the order the existing decisions already use, so the access vie
 
 The access projection is produced by the profile's owner, never by `tool-access`. For managed profiles, agent-vm's managed adapter maps today's unchanged `toolPortalProfileDefinitionSchema` to it. That schema's controller-execution bindings carry execution targets ([tool-portal-config.ts](../../../packages/config-contracts/src/tool-portal-config.ts#L219)), which must not enter the portable package (F-51, F-52). The mapping keeps every field a decision reads and drops target, image, credential and executor fields. Its correctness is checked by comparing `assessAccess` over the projection with today's `callPolicyDecision` over the original managed configuration, for the same calls (J13). The surface gate stays in the managed adapter's final fence too, so removing it from either place is a regression.
 
-Whether a host has a workspace layer is a fact of that host's configuration, read with its revision, never a default a caller can pick. `not-configured` skips steps 1 and 2; it never stands in for an `active` registration or an allowance of `true`. Once a host configures workspaces, every capability needs both facts, and `not-configured` is rejected for it.
+Whether a host has a workspace layer belongs to the host binding, not to the facts. The composition root reads it from the host's own configuration with that configuration's revision, and builds the assessor with it; it rebuilds the assessor when that configuration changes. No request, port or facts supplier can choose it. `not-configured` skips steps 1 and 2; it never stands in for an `active` registration or an allowance of `true`. A workspace fact whose kind differs from the binding gives `facts-rejected` with `workspace-layer-mismatch`, so once a host configures workspaces a stale or forged `not-configured` fact is refused, and every capability needs both workspace facts. Tests of the function prove that comparison. That the composition root reads the real configuration and rebuilds on change is proved at the host and admission boundary (J11, J13).
 
 Step 4 groups every deny that today runs before an account is resolved: Tool Portal's command and shape classification ([tool-portal-service-common.ts](../../../packages/tool-portal/src/tool-portal-service-common.ts#L289)), and the Google evaluator's own first check, `commandAllowed`. Steps 6–8 follow the Google evaluator after that check: activation, then hard-limit and policy deny, then consent. One projection is new. Today that evaluator returns `unavailable` for a snapshot that isn't active, which would merge "paused" into "service unavailable" and break R28. So the account authority supplies the snapshot state as its own fact, and `assessAccess` reads it before the evaluator's result.
 
