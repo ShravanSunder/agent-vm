@@ -3,7 +3,6 @@ import { Writable } from 'node:stream';
 import { dispose, reset, type Config, type LogRecord, type Sink } from '@logtape/logtape';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createNodeHostDiagnosticLogger } from '#node-host/observability/node-host-diagnostics';
 import {
 	configureProcessLogging,
 	createPortalServerLogger,
@@ -277,32 +276,6 @@ describe('MCP Portal process logging', () => {
 		expect(record.properties.scope).toBe('unknown');
 		expect(JSON.stringify(record.properties)).not.toContain('scope-secret');
 		expect(JSON.stringify(record.properties)).not.toContain('query-secret');
-	});
-
-	it('preserves distinct bounded operation-store failure reasons in final production JSONL records', async () => {
-		const stderr = new CaptureWritable();
-		const logging = await configureProcessLogging({ stderr });
-		try {
-			const diagnostic = createNodeHostDiagnosticLogger(createPortalServerLogger());
-			diagnostic('operation-store-capacity');
-			diagnostic('operation-store-storage-failed');
-			await stderr.waitForWrite();
-			await logging.shutdown();
-			const records = parseJsonLines<{
-				readonly message: string;
-				readonly properties: Readonly<Record<string, unknown>>;
-			}>(stderr.chunks);
-			expect(records.map((record) => record.properties)).toEqual([
-				{ failureClass: 'server', reason: 'operation-store-capacity' },
-				{ failureClass: 'server', reason: 'operation-store-storage-failed' },
-			]);
-			expect(records.map((record) => record.message)).toEqual([
-				'MCP Portal server error',
-				'MCP Portal server error',
-			]);
-		} finally {
-			await logging.shutdown();
-		}
 	});
 
 	it('routes the default typed logger to bounded JSONL stderr', async () => {

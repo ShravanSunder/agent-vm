@@ -19,35 +19,6 @@ const invalidConfigurations: readonly {
 	readonly name: string;
 	readonly change: (config: NodeHostConfig) => unknown;
 }[] = [
-	{
-		name: 'missing operation bounds',
-		change: (config) => ({ ...config, operationStoreBounds: undefined }),
-	},
-	...([0, -1, 1.5] as const).map((value) => ({
-		name: `invalid operation count ${value}`,
-		change: (config: NodeHostConfig): unknown => ({
-			...config,
-			operationStoreBounds: { ...config.operationStoreBounds, maximumOperations: value },
-		}),
-	})),
-	...([0, -1, 1.5, 4 * 1024 * 1024] as const).map((value) => ({
-		name: `invalid or too-small record bound ${value}`,
-		change: (config: NodeHostConfig): unknown => ({
-			...config,
-			operationStoreBounds: { ...config.operationStoreBounds, maximumRecordBytes: value },
-		}),
-	})),
-	{
-		name: 'missing operation count',
-		change: (config) => ({
-			...config,
-			operationStoreBounds: { maximumRecordBytes: config.operationStoreBounds.maximumRecordBytes },
-		}),
-	},
-	{
-		name: 'missing record byte bound',
-		change: (config) => ({ ...config, operationStoreBounds: { maximumOperations: 2 } }),
-	},
 	{ name: 'missing authentication', change: (config) => ({ ...config, auth: undefined }) },
 	{
 		name: 'missing operation store',

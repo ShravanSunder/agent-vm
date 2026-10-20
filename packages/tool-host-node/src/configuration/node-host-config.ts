@@ -10,7 +10,6 @@ import {
 	NodeHostBearerCredentialSetSchema,
 	type NodeHostBearerCredentialSet,
 } from '#node-host/ingress/bearer-credentials';
-import { nodeOperationStoreBoundsSchema } from '#node-host/operations/node-operation-bounds';
 
 export const nodeHostConfigSchema = z
 	.strictObject({
@@ -19,7 +18,6 @@ export const nodeHostConfigSchema = z
 		revision: revisionRef,
 		workspaceLayer: z.literal('not-configured'),
 		storeDirectory: z.string().min(1),
-		operationStoreBounds: nodeOperationStoreBoundsSchema,
 		auth: NodeHostBearerCredentialSetSchema,
 		profiles: z.record(
 			z.string().min(1),

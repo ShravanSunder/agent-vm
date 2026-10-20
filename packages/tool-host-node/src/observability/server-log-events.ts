@@ -1,7 +1,6 @@
 export type PortalServerLogEvent =
 	| {
 			readonly event: 'server_error';
-			readonly reason?: 'operation-store-capacity' | 'operation-store-storage-failed';
 			readonly level: 'error';
 			readonly message: string;
 			readonly stack?: string;
