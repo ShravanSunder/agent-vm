@@ -20,7 +20,7 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
    - A caller gets the same case on every request, whatever other clients of the organization are connected.
    - The organization's portal connects to its tool servers and reads their tool lists when it starts, before any client's first call.
    - Either way the agent can reach exactly the same tools, and the same call gives the same result.
-   - In `client-deferred`, the tool list comes in pages, each under the smallest cap a supported client enforces.
+   - In `client-deferred`, the tool list comes in pages, each under the smallest cap a supported client enforces, and only a client whose own page and tool limits cover the caller's whole list is set up that way.
    - The changes from today: `direct` also offers the search tools; the case is chosen per client instead of per server; and the list comes in pages.
 3. **Hidden stays hidden.** A tool the caller may not use can't be found or called through any way in, by its name, by a guessed name, or through the search tools.
 

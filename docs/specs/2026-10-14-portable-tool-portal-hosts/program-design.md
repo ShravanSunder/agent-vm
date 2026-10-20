@@ -131,7 +131,13 @@ Either way:
 
 - **Client deferral doesn't shrink the download.** In `client-deferred`, the client keeps tool definitions out of the model's context, but it still downloads the whole tool list. So deferral alone doesn't fix a list that's too big for the client. The owner measured the full list at 4.56 MB or more, against a 1 MiB cap cited in "PR 153"; the client or transport that enforces it is still being located.
 - **The list is sent in pages.** MCP lets a server split `tools/list` into pages with a cursor ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)). Today the proxy returns every tool in one reply ([portal-mcp-server.ts:215](../../../packages/mcp-portal/src/mcp-proxy/portal-mcp-server.ts#L215)). In `client-deferred`, the portal sends the list in pages, each under the smallest cap a supported client enforces (1 MiB, as cited so far).
-- **Only clients that follow the pages can be set to `client-deferred`.** A client that doesn't follow pages stays `portal-deferred`, where `list` and `search` already return bounded pages ([portal-tools.ts:111](../../../packages/mcp-portal/src/core/portal-tools.ts#L111), [:120](../../../packages/mcp-portal/src/core/portal-tools.ts#L120)). Which clients defer and follow pages is being checked now, client by client.
+- **Only clients whose own limits cover the whole list can be set to `client-deferred`.** Clients stop fetching pages at their own limits, and tools past that point silently disappear:
+  - Codex defers MCP tools by default, but stops at 2,048 tools or 100 pages ([pagination.rs:9](https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/pagination.rs#L9));
+  - Hermes stops at 50 pages ([mcp_tool.py:258](https://github.com/NousResearch/hermes-agent/blob/main/tools/mcp_tool.py#L258));
+  - the MCP TypeScript SDK stops at 64 pages.
+
+  So a client whose limit is below the caller's catalog stays `portal-deferred`, where `list` and `search` already return bounded pages ([portal-tools.ts:111](../../../packages/mcp-portal/src/core/portal-tools.ts#L111), [:120](../../../packages/mcp-portal/src/core/portal-tools.ts#L120)).
+- **The size caps found so far are larger than 1 MiB:** 8 MiB per message in Codex, and 10 MiB per HTTP response in Hermes and on stdio in the TypeScript SDK. Pages stay under 1 MiB, the smallest cap cited, until "PR 153" is located.
 
 ### `describe` and code mode
 
