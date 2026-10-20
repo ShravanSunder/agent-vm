@@ -1,3 +1,4 @@
+export * from './access-assessment.js';
 export * from './cli-allowance-policy.js';
 export * from './compiled-google-command-set.js';
 export * from './google-application-id.js';
