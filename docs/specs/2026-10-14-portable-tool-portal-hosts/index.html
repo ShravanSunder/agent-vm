@@ -1,283 +1,46 @@
 <!DOCTYPE html><html lang="en"><head>
-		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width,initial-scale=1">
-		<title>How your agents get access — Concept walkthroughs</title>
-		<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
-		<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
-		<!-- Authoring/checking release: 1.5.0; source ae26faf6dd3905c6c05440104ff943ec1653154f. -->
-	</head>
-	<body>
-		<ex-nav for="content"><nav slot="pages" aria-label="Pages">
-				<a href="index.html">Your tools, available to your agents</a>
-				<a href="build-plan.html">Build plan</a>
-				<a href="core-and-split.html">Core and split</a>
-				<a href="mcp-portal-explainer.html">MCP Gateway explained</a>
-				<a href="tool-portal-explainer.html">Identity and approvals</a>
-				<a href="requirements.html">Requirements</a>
-				<a href="2026-10-14-portable-tool-portal-hosts.html">Specification</a>
-				<a href="program-design.html">Program Design</a>
-				<a href="verification-design.html">Verification Design</a>
-				<a href="gateway-composition.html">Composition chapter</a>
-				<a href="public-host-contracts.html">Contracts chapter</a>
-			</nav></ex-nav>
-		<ex-document id="content">
-			<ex-callout tone="planned" title="Proposed design">Revised for shared security and distributed hosts. Identity, ingress and approval policy
-				choices remain open. No implementation or hosted tool proof is claimed.</ex-callout>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tool Portal: take it apart and put it back together</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-document id="content">
 
-			<ex-markdown id="overview" label="Your tools, available to your agents"><script type="application/json" data-ex-markdown-source="">{"text":"# How your agents get access to your tools\n\nYou want agents on different harnesses and machines to use your allowed tools through MCP: ordinary remote resources, sensitive cloud services and configured computer tools. Provider credentials stay with the resource backend. Identity, permissions and approval must remain meaningful across every connection.\n\nThe walkthrough follows the concepts needed to understand that system. It moves between the existing source pages; a page can be revisited when a later concept needs it. The four design documents remain the detailed references.\n\n## Choose the question you want to follow\n\nOpen **Walkthroughs** in the page controls and choose one of these paths:\n\n- **Understand the system:** your goal → identity → permissions → routing → tool and credential placement → approval → recovery → package changes → cutover and proof.\n- **Identity and permissions:** why a session is insufficient, what an agent identity means, how login proof maps to it, and how that becomes scoped access.\n- **Approvals across products:** how the same protected request can appear in Hermes, Router or the IDE while one authority records the human decision and the resource controls its effect.\n\n**Next** continues the same story across pages. **Previous** returns within that story. The narration explains why the current concept follows from your requirement, what the diagram or text adds, and what question comes next. You can close the player and read any page normally.\n\n## The main through-line\n\n| Concept | Why the story needs it | Your requirements |\n| --- | --- | --- |\n| The connected system | Agents need one understandable MCP experience over independently hosted resources. | U2, U4, U8, U10, U11 |\n| Identity | We cannot isolate agents if a display name, session or copied credential is treated as the agent itself. | U3, U13, U15 |\n| Permissions | Knowing the agent does not determine which tools and targets it may use. Each call names its admitted workspace. | U3, U7, U13, U16 |\n| Administration | Workspace managers see what each agent can use in one view and change it by asking; nothing changes until a manager accepts the proposal, and backend owners enforce it. | U16, U17, U19–U22 |\n| Audit | Security changes need an authoritative attributable occurrence, not only a toast or webhook receipt. | U18 |\n| Routing | An allowed request must reach its registered resource with the caller's bounded authority intact. | U4, U10 |\n| Tool and credential placement | The resource needs useful authority without handing its provider grant or machine privileges to the agent. | U1, U5, U8, U9 |\n| Approval | A protected action needs an exact decision, independent of which product presents it. | U3, U14, U15 |\n| Recovery | A lost connection must not erase work or turn an uncertain effect into a new action. | U6, U9 |\n| Shared packages | These responsibilities need independent consumers and host adapters rather than one local runtime owning everything. | U1, U8, U12 |\n| Contract cutover | New approval authority cannot be inferred from an old token or missing standalone history. | U3, U6, U9, U12 |\n| Proof and remaining choices | The design must distinguish a correct build from a wrong one and make its unselected policies visible. | U1–U22 |\n\nThe main walkthrough visits the requirement behind each concept before following its consequences into definitions, component ownership, current code and planned proof. It does not march through document types as chapters.\n\n## Keep these distinctions as you read\n\nA **package** is reusable code. A **service** is a running owner. An **endpoint** is a network address. An **authority** owns a particular decision or record. Their counts do not need to match.\n\nAn **agent** is a logical subject acting for you. A **credential** proves an admitted issuance. A **machine** hosts resources or agent deployments. A **session** identifies a conversation. None of those names alone grants tool permission.\n\nCloudflare's managed **MCP Portal** and our proposed **MCP Gateway** are different. The managed Portal's unattended identity behavior is a deployment constraint, not something the walkthrough can assume away. The identity path shows why it matters.\n\n## Reference pages\n\n| Source | Its job |\n| --- | --- |\n| [Requirements](requirements.html) · [Markdown](requirements.md) | Your authorized needs, limits and open decisions. |\n| [Specification](2026-10-14-portable-tool-portal-hosts.html) · [Markdown](2026-10-14-portable-tool-portal-hosts.md) | Identity meanings and observable obligations. |\n| [Program Design](program-design.html) · [Markdown](program-design.md) | Owners, contracts, package boundaries and code changes. |\n| [Verification Design](verification-design.html) · [Markdown](verification-design.md) | What would prove each need and catch a wrong build. |\n| [Core and split](core-and-split.html) | What Tool Portal's core does, the five packages, and where today's code goes. |\n| [Port inventory](../../wip/2026-10-19-tool-portal-port-inventory/port-inventory.md) | Evidence: every current file's recommended destination and port kind. |\n| [MCP Gateway explained](mcp-portal-explainer.html) | A compact view of composition and caller-specific resource groups. |\n| [Identity and approvals explained](tool-portal-explainer.html) | A compact explanation of identities, custody and protected actions. |\n\n## Review the control screens\n\nThe screens are one access view, a request bar at the top, the proposal card with Accept and Deny, connections, the audit log and, if D7 is confirmed, approvals. Their behavior is specified in [C11](2026-10-14-portable-tool-portal-hosts.html#specification--c11-inspecting-access-connections-and-the-audit-log) and [C12](2026-10-14-portable-tool-portal-hosts.html#specification--c12-chat-request-to-accepted-change), and their structure in [Program Design](program-design.html#program--the-access-foundation-chat-led-change-and-the-control-surface). A console service that talks to both Tool Portal and the fleet will most likely host them (F-57). The experimental mock showed the request router can work; its visual design is not accepted and is aligned later (F-56). The earlier [React review](../../wip/2026-10-18-agent-vm-review/review.html#react-evidence) and its Tools → Agents → Accounts → Audit fixture are superseded.\n\n## What remains a proposal\n\nThe shared fleet backbone is the intended identity home and human-interaction route. Its issuer/enrollment contract, persona relationships, Cloudflare ingress identity path, approval settlement and continuation, source-machine policy and finite freshness/retention values remain open. D1–D6 in Requirements identify those gaps, including audit ownership, persistence and trusted team/personal-account classification. No walkthrough step establishes implementation or hosted proof.\n\n## Reading and source\n\nContent stays in its source page. [The agent entry](index.md) links the four governing documents and concept paths. The three walkthrough definitions reference selected headings and diagrams across those pages; their narration is maintained in [walkthroughs.md](walkthroughs.md). The HTML snapshots embed their matching Markdown and load the shared Demistify runtime/theme from the public v1 binding. Internet access is required for those assets; loading them does not publish these local files.\n\nRecorded authoring binding: Demistify `1.5.0`, source `ae26faf6dd3905c6c05440104ff943ec1653154f`. The public v1 URL is experimental and may change. Browser proof is performed through loopback HTTP; direct-file viewing is a separate boundary. Code links are editor references, not files hosted by this document server.\n","reference":"./README.md"}</script></ex-markdown>
-			<h2 id="ownership-map">Who owns what</h2>
-			<ex-board cols="2">
-				<ex-region tone="planned" id="entry-region" title="Cloud entry" icon="cloud">
-					<ex-card id="cloud-gateway" title="Our MCP Gateway" tone="planned">Authenticates the admitted caller, filters its catalog and routes registered tools.
-						Cloudflare ingress is selected separately.</ex-card>
-				</ex-region>
-				<ex-region tone="planned" id="resource-region" title="Resource services" icon="cpu">
-					<ex-card id="computer-resource" title="Cloud or computer MCP" tone="planned">Verifies delegated caller authority and its local ceiling. Owns final admission to its
-						configured native, CLI, MCP or VM backend.</ex-card>
-				</ex-region>
-				<ex-region tone="question" id="security-region" title="Shared security, explicit authorities" icon="shield-check">
-					<ex-card id="identity-authority" title="Identity and policy authority" tone="question">Verified agents, machines, services and assignments. Its deployed owner must be
-						selected; a library is not a registry.</ex-card>
-					<ex-card id="approval-authority" title="Approval authority" tone="question">One durable owner of an exact decision. Resource-local or external placement remains
-						open.</ex-card>
-				</ex-region>
-				<ex-region tone="planned" id="presentation-region" title="Approval surfaces" icon="chat-circle">
-					<ex-card id="approval-presenter" title="Router, IDE, Hermes or events" tone="planned">Presents a redacted challenge and returns an authenticated human decision. Notification
-						delivery does not approve.</ex-card>
-				</ex-region>
-				<ex-arrow from="cloud-gateway" to="computer-resource" label="Delegated MCP call"></ex-arrow>
-				<ex-arrow from="identity-authority" to="cloud-gateway" label="Verified context"></ex-arrow>
-				<ex-arrow from="computer-resource" to="approval-authority" label="Exact decision"></ex-arrow>
-				<ex-arrow from="approval-authority" to="approval-presenter" label="Challenge event"></ex-arrow>
-				<ex-arrow from="approval-presenter" to="approval-authority" label="Human decision"></ex-arrow>
-			</ex-board>
-			<ex-presentation id="system-model" title="Understand the system" description="Follow your goal through identity, access, routing, custody, approval, recovery and package changes.">
-				<ex-step to="requirements.html#requirements--diagram-1">Goal — your agents, your resources. You want agents on different harnesses and machines
-					to use your resources through MCP. Keep that outcome in mind: hosting, tool placement and
-					agent identity must vary without rebuilding the security model. First see the shape that
-					follows from this need.</ex-step>
-				<ex-step to="mcp-portal-explainer.html#gateway--diagram-1">Composition — why there are two MCP levels. Your cloud entry connects ordinary providers,
-					protected cloud services and computer services. The computer service exposes its
-					configured tools; it need not use Gondolin. Collaboration stays independently governed.
-					Before deciding what any caller can see, we need to know who that caller actually
-					is.</ex-step>
-				<ex-step to="requirements.html#requirements--agent-and-machine-identity">Identity — the requirement. Your identity requirement is more than naming a session. The
-					same agent may reconnect or run elsewhere, while a stolen deployment credential must be
-					revocable. This need forces us to distinguish the agent from its machine, credentials and
-					conversations.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--diagram-2">Identity — the relationships. Here those distinctions become a precise model: a stable
-					caller can have several credentials and sessions, with a current assignment. Rotation
-					changes the proof, not the agent. The next question is how a real connection establishes
-					that identity.</ex-step>
-				<ex-step to="program-design.html#program--example-provision-an-agent-without-a-new-identity-provider-product">Authentication — turn proof into an enrolled agent. The shared backbone is the intended
-					identity home. You authorize agent types and launchers; a launcher enrolls instances
-					automatically. The gateway still needs verified agent proof and a current assignment.
-					Cloudflare machine/service admission and Router session labels do not supply that agent
-					proof; its contract and ingress carriage remain open.</ex-step>
-				<ex-step to="mcp-portal-explainer.html#gateway--the-cloudflare-identity-constraint">Authentication — check which identity survives the entry. The enrollment example assumes
-					a proof that actually reaches our gateway. Cloudflare’s managed Portal uses a configured
-					admin credential for unattended upstream access, so original-agent identity cannot be
-					assumed. This constraint must be resolved before caller-specific permissions can work
-					through that entry.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c1-mcp-discovery-and-invocation">Permissions — knowing the caller is only the beginning. Once identified, the agent sees
-					only its permitted capabilities. Guessing a hidden tool name must fail too. Full catalog
-					and compact search are alternative presentations of the same permissions, so client
-					convenience cannot become a second authorization path.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c10-workspace-context-and-team-resources">Workspace — scope each call deliberately. A bot may discover the union of its workspace
-					tools, but each call names one admitted workspace and fits that workspace’s allowance.
-					That selector is not identity proof. Managers configure team-account use; requester
-					attribution never supplies personal credentials. The next step follows this permission
-					model into routing.</ex-step>
-				<ex-step to="mcp-portal-explainer.html#gateway--one-address-can-expose-different-groups">Resource groups — one URL need not mean one permission set. When the entry preserves
-					verified per-agent identity, that policy can expose ordinary search to one agent and
-					sensitive or computer tools to another through the same address. Separate endpoints are an
-					isolation option, not the permission model. Now follow an allowed computer call beyond the
-					cloud gateway.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c6-cloud-to-computer-composition">Routing — preserve the caller across the hop. The computer must recognize both the acting
-					gateway and the represented agent, then enforce its own ceiling. Being reachable is
-					insufficient. This explains why a gateway connection needs bounded delegation and the same
-					represented caller/item at the computer. Its target and inner key are recorded before
-					forwarding, even if the reference has not returned; a copied agent-name field cannot
-					supply that authority.</ex-step>
-				<ex-step to="program-design.html#program--what-runs-where">Placement — different hosts compose different effects. A Worker can route HTTP MCP and
-					evaluate portable policy; a Mac can host native effects; the managed controller retains
-					its protected VM operations. These placements answer your portability requirement. They do
-					not require every host to import the same desktop or execution runtime.</ex-step>
-				<ex-step to="tool-portal-explainer.html#security--where-credentials-run">Credentials — authority stays beside the resource. The backend selects the provider
-					account and uses its grant. The agent gets the permitted result, not the provider
-					credential. Several controlled CLIs may share a backend. This custody boundary is separate
-					from the credential the agent uses to connect to MCP.</ex-step>
-				<ex-step to="requirements.html#requirements--approval-surfaces">Approval — your requirement is reusable decision presentation. Some otherwise permitted
-					actions need an exact decision. You want that request to appear in Hermes, Router, the IDE
-					or another surface. That requirement cannot be met by moving a Hermes-specific prompt into
-					the dispatcher; we must separate the jobs first.</ex-step>
-				<ex-step to="program-design.html#program--approvals-library-authority-and-presenter">Approval — library, authority and presenter. The library defines decision rules, an
-					authority stores the decision, and a presenter shows it. A webhook delivers a
-					notification. Sharing the library does not make every presenter a decision writer. With
-					those responsibilities separate, the protected-call sequence becomes
-					understandable.</ex-step>
-				<ex-step to="tool-portal-explainer.html#security--a-protected-call">Approval — follow one exact action. The tool service creates a challenge for one
-					operation, reports pending, and continues that same operation only after a valid decision.
-					Approval never overrides a hard deny. The next stop addresses the return path: how does
-					the authority authenticate the operator or client submitting the decision?</ex-step>
-				<ex-step to="program-design.html#program--how-a-human-decision-reaches-a-cloud-or-mac-authority">Approver identity — the return path is protected too. An operator session or explicitly
-					enrolled approver client authenticates the decision’s source. Client-key possession alone
-					does not prove a fresh human gesture; the client is part of the decision trust boundary. A
-					presenter cannot simply claim the owner clicked approve. A Mac authority also needs this
-					protected return path.</ex-step>
-				<ex-step to="program-design.html#program--router-integration-reuse-the-boundary-not-declared-actors-as-authentication">Router integration — reuse what exists and expose the gap. Router has useful typed
-					interactions and adapters, but the inspected local broker uses declared actors and cancels
-					pending interactions on restart. It can present a tool challenge through an explicit
-					adapter; adopting it as remote authority needs additional contracts. Neither integration
-					merges collaboration permissions with tool access.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c4-recovery-without-effect-replay">Recovery — a lost connection is not a new action. Your logical-session requirement now
-					matters at the effect boundary. If a response disappears after dispatch, reconnecting must
-					recover the same operation or its ambiguity. Repeating an uncertain action under a fresh
-					wrapper would violate the outcome you asked for.</ex-step>
-				<ex-step to="program-design.html#program--recover-the-inner-reference-after-a-lost-reply">Recovery — when the Mac reply never arrives. The Mac may have created or completed work
-					before the gateway learns its reference. The gateway already retained the target and same
-					caller/item key. Recovery finds that record; it cannot generate a new item or call the
-					executor just to learn what happened. Current delegation and lookup permission still
-					apply. This closes a failure window before ordinary result lookup is possible.</ex-step>
-				<ex-step to="program-design.html#program--durable-state-failure-and-concurrency">Durability — what must survive the process. The operation owner persists reservation,
-					arming and known outcomes. Once armed, a missing receipt cannot be treated as
-					non-execution. This is why portable state-machine code needs a real durable adapter, and
-					why a process-local replay map cannot establish distributed safety.</ex-step>
-				<ex-step to="requirements.html#requirements--shared-security-consumers">Shared components — the extraction requirement. These concepts must also be usable
-					outside either portal runtime. That is your separation-of-concerns requirement: identity,
-					policy, credentials and approval cannot depend on a particular MCP listener, desktop or VM
-					provider. The package boundaries follow from those independent consumers.</ex-step>
-				<ex-step to="program-design.html#program--diagram-2">Packages — give each responsibility a home. Hosts compose MCP Gateway and Tool Portal.
-					One shared tool-access package contains separate contract, authorization and approval-rule
-					modules; each can be consumed without importing a portal runtime. That preserves your
-					independent-use requirement without publishing a package per rule family. HTTP MCP
-					connectors own outbound protocol work.</ex-step>
-				<ex-step to="program-design.html#program--contracts-across-typescript-python-rust-and-swift">Shared contracts — cross languages without copying meaning. The shared contracts module
-					owns one manifest, generator and fixture corpus; the SDK becomes a consumer. Managed and
-					new public families stay distinct, so a valid managed message cannot be mistaken for a
-					public decision. Rust and Swift validate the expected family/version from that artifact.
-					Representation parity still does not prove authenticated decisions or durable
-					consumption.</ex-step>
-				<ex-step to="program-design.html#program--current-code-and-the-required-change">Code delta — distinguish moving code from new behavior. The source map says what stays,
-					moves, is added or is retired. Splitting Node imports is extraction; durable public
-					operations and verified distributed identity are additional behavior. Existing managed
-					controller, credential and generation checks remain obligations through either kind of
-					change.</ex-step>
-				<ex-step to="program-design.html#program--the-access-foundation-chat-led-change-and-the-control-surface">Administration — one view, and change by asking. The access view and admission call the same assessment, so what a manager sees is what an agent gets. A request becomes a proposal that changes nothing until a manager of that workspace accepts it; the policy and account owners then apply it once, with its audit occurrence. The console that hosts these screens owns no authority.</ex-step>
-				<ex-step to="program-design.html#program--retire-legacy-standalone-approvals">Cutover — retire old authority without inventing history. The new host retires both
-					legacy standalone approval protocols. Their tokens never become new grants, and an
-					uncertain old call never becomes a fresh retry automatically. Old maps are not a durable
-					ledger. The operator accounts for work per item, preserves existing managed history and
-					keeps affected capabilities unavailable until unresolved effects are reconciled. This is a
-					cutover design, not proof of deployed retirement.</ex-step>
-				<ex-step to="program-design.html#program--standards-alignment-without-claiming-unimplemented-conformance">Interoperability and cost — choose mechanisms deliberately. The shared boundaries cross
-					products and hosts, so use established protocol contracts where they fit. MCP rules,
-					webhook delivery and the approval draft address different parts of the system. They do not
-					make every client compatible or every mechanism free: Cloudflare Access mTLS requires a
-					paid plan. No new issuer or paid tier is selected.</ex-step>
-				<ex-step to="verification-design.html#verification--j8-enrollment-and-revocation">Identity proof — catch the wrong implementation. Return to your identity need and ask
-					what would falsify the design. An untrusted agent copying a session name must fail;
-					rotating a credential must preserve logical identity; revocation must meet its selected
-					freshness bound. These observations are planned, not already demonstrated.</ex-step>
-				<ex-step to="verification-design.html#verification--j9-approval-surfaces-and-router-isolation">Approval proof — delivery is not the outcome. Your reusable-approval requirement is met
-					only when the actual surface returns an authenticated exact decision and the effect obeys
-					it. Duplicate notifications, a declared actor or a delivery acknowledgement must not
-					approve. A mock presenter cannot establish the real Router or IDE integration.</ex-step>
-				<ex-step to="verification-design.html#verification--j13-the-access-view-equals-admission">Workspace and access proof — compare the view with admission. Test two workspaces and forged selectors, then compare every shown state with what admission decides for the same call and surface. J14 checks that only a manager's Accept applies a proposal, once, and J12 that every change is audited. A screenshot or toast cannot establish enforcement or history.</ex-step>
-				<ex-step to="requirements.html#requirements--decisions-that-remain-open">Open choices — what the model still needs from you. We can now see why the remaining
-					choices matter: identity and ingress determine whose proof survives; approval placement
-					determines its control and continuation path; source-machine policy and freshness bounds
-					determine exposure. Cost and standards fit belong in those choices too. They remain open
-					decisions; the walkthrough explains consequences without silently choosing a mechanism or
-					paid tier.</ex-step>
-			</ex-presentation>
-			<ex-presentation id="identity-and-access" title="Identity and permissions" description="Connect agent identity to enrollment, Cloudflare proof, scoped access and revocation.">
-				<ex-step to="requirements.html#requirements--agent-and-machine-identity">Identity starts with your requirement. You want an agent to remain identifiable across
-					sessions and machines, while retaining separately revocable credentials. That is the need
-					this path follows; a displayed agent name or Router session is not yet its authentication
-					mechanism.</ex-step>
-				<ex-step to="tool-portal-explainer.html#security--who-is-who">Separate the identities. Agent, machine, service, credential and session answer different
-					questions. Keeping them separate prevents key rotation or reconnect from accidentally
-					becoming a new agent. Now see how those concepts relate, rather than treating them as five
-					unrelated labels.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--diagram-2">The relationship that survives rotation. One caller may have several issued credentials
-					and session associations, with one current assignment per addressed scope. Separate
-					credentials are revocation units; they do not automatically create private histories
-					within one logical agent. Current lookup policy still applies.</ex-step>
-				<ex-step to="program-design.html#program--example-provision-an-agent-without-a-new-identity-provider-product">Enrollment connects proof to the agent. The owner authorizes an agent type and launcher;
-					the launcher enrolls each launched instance through the intended shared backbone. Its
-					credential proves the instance, while each product owns its permission assignment. The
-					enrollment and credential-carriage contract remains open. A session identifier cannot
-					substitute for it today.</ex-step>
-				<ex-step to="mcp-portal-explainer.html#gateway--the-cloudflare-identity-constraint">Check the actual Cloudflare entry. The managed Portal's documented unattended path uses
-					an upstream admin credential. Our gateway cannot assume distinct agents survive that hop.
-					Access-direct and explicitly separated managed registrations are design options; the entry
-					architecture must preserve the identity the previous stop established.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c1-mcp-discovery-and-invocation">Turn identity into allowed work. Authentication identifies the caller. Its complete
-					assignment determines allowed discovery, invocation and lookup. This is where your
-					different-agent access requirement becomes a rule every MCP presentation must enforce,
-					including guessed or stale tool references.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c6-cloud-to-computer-composition">Carry only bounded authority onward. On the next service hop, the resource verifies the
-					gateway actor and represented agent, then applies its own ceiling. A valid cloud login
-					does not automatically grant a computer effect. Delegation must preserve this distinction,
-					not forward an unverified identity object.</ex-step>
-				<ex-step to="verification-design.html#verification--j8-enrollment-and-revocation">Prove the distinction under misuse. Test enrollment, spoofed labels, separate
-					credentials, rotation and revocation against the selected real issuer and target. The
-					operation's history must survive a credential change. The selected source-machine and
-					freshness policies provide the reference limits; they have not been chosen yet.</ex-step>
-				<ex-step to="requirements.html#requirements--decisions-that-remain-open">Locate the remaining identity choices. The shared backbone direction is selected; its
-					persona/instance semantics, issuer/bootstrap contract, ingress proof and freshness policy
-					still need definition. Source-machine restrictions are a separate decision. Client
-					compatibility, source-proof cost and standards fit remain part of that decision. Those
-					gaps prevent treating the design as a deployed identity service.</ex-step>
-			</ex-presentation>
-			<ex-presentation id="approval-journey" title="Approvals across products" description="Follow one exact decision across the resource, approval authority, Router or IDE, and recovery.">
-				<ex-step to="requirements.html#requirements--approval-surfaces">The requirement is one approval meaning across surfaces. You want Hermes, Router, the IDE
-					or another integration to show the same protected request. The need is reusable decision
-					meaning and routing, not a requirement that every product owns the same writable approval
-					database.</ex-step>
-				<ex-step to="program-design.html#program--approvals-library-authority-and-presenter">Establish the responsibilities. Separate the engine, authoritative record, presenter and
-					notification transport. A webhook can connect products without becoming permission to act.
-					Next make the decision concrete: what precisely is the human being asked to
-					approve?</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c2-exact-protected-action">Bind the decision to exact work. The approval binds one operation, exact current intent
-					and requesting credential issuance. Changed arguments or another issuance cannot consume
-					that existing grant for first dispatch. Policy denial remains denial, so approval is not
-					an alternative privilege system.</ex-step>
-				<ex-step to="program-design.html#program--the-approval-boundary-inside-that-call">See the interaction across owners. The computer asks its selected approval authority; a
-					human sees a redacted challenge through a presenter; the decision returns to its
-					authority. This is the interaction an adapter must preserve. The authority may be local or
-					external, which remains a deployment decision.</ex-step>
-				<ex-step to="program-design.html#program--how-a-human-decision-reaches-a-cloud-or-mac-authority">Authenticate the human decision. The decision route verifies an operator session or
-					admitted approver client for its control audience. Router's ordinary service identity
-					cannot assert that a human clicked approve. If the authority is on a Mac, a protected
-					route to that authority is part of the same requirement.</ex-step>
-				<ex-step to="program-design.html#program--router-integration-reuse-the-boundary-not-declared-actors-as-authentication">Understand Router's current integration limit. Reuse Router's typed interaction
-					vocabulary and adapter pattern. Its inspected broker is not yet a verified remote
-					exact-tool authority. Cross-machine continuation, authenticated decision actors and exact
-					intent consumption must be supplied before selecting that role for it.</ex-step>
-				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--c4-recovery-without-effect-replay">Keep the operation when the connection disappears. An approved action can still lose its
-					response. The effect owner must preserve the same operation and return a known receipt or
-					ambiguity. Neither a second notification nor a new connection permits an automatic second
-					action.</ex-step>
-				<ex-step to="program-design.html#program--retire-legacy-standalone-approvals">Retire old tokens without retrying old effects. The new contract accepts no legacy
-					standalone approval authority or compatibility alias. Known managed history stays with its
-					owner; missing standalone history is reported honestly. Closing a listener or waiting for
-					token expiry cannot prove a backend did nothing. The affected capability stays unavailable
-					until the cutover accounts for its old work.</ex-step>
-				<ex-step to="verification-design.html#verification--j9-approval-surfaces-and-router-isolation">Prove approval at the effect. Exercise the real chosen surface, authenticated decision
-					path and resource outcome. Forged actors, delayed or duplicate events and delivery
-					acknowledgements must fail to approve. If Router becomes the authority, its durable
-					continuation and consumption also need real proof.</ex-step>
-				<ex-step to="requirements.html#requirements--decisions-that-remain-open">Leave the actual authority choice visible. The remaining approval decisions include which
-					policy domain can require a separate gate, where the authoritative record lives, and how
-					valid undispatched work continues after interruption or credential change. Neither
-					ignoring a cloud approval requirement nor creating two prompts is a selected default. The
-					integration must also fit the selected standards and operating cost. This walkthrough has
-					exposed what each choice must preserve; it has not selected an authority, mechanism or
-					paid tier for you.</ex-step>
-			</ex-presentation>
-		</ex-document>
-	
+<h1 id="top">Tool Portal: take it apart and put it back together</h1>
+
+<ex-callout tone="tldr" title="The design in four lines">
+
+- **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher) and `tool-host-node` (runs it on a machine). agent-vm plugs in through its own adapter.
+- **Behaviour stays the same.** There are no new features, and nothing new is stored.
+- **Two modes:** `direct` lists every tool plus the search tools; `indirect` offers only the search tools.
+- **Later:** code mode in both modes. The pruned work (Worker host, UI, sign-in, workspaces, audit and more) belongs to separate projects.
+</ex-callout>
+
+<ex-callout tone="question" title="Three questions for you, one at a time; none blocks this design">
+
+1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not.
+2. **Do tool calls need history that survives a restart?** The design assumes not, since today's server keeps none.
+3. **Standalone approvals:** keep and adapt today's two signed-token paths, or replace them? The design keeps today's.
+</ex-callout>
+
+<ex-tabs data-width="reading">
+<section label="Requirements" icon="book-open">
+<ex-markdown id="requirements" label="Requirements"><script type="application/json" data-ex-markdown-source="">{"text":"# Requirements: take Tool Portal apart and put it back together\n\n[Specification](2026-10-14-portable-tool-portal-hosts.md) · [Program Design](program-design.md) · [Verification Design](verification-design.md)\n\n## What this work is\n\nagent-vm has two libraries for tools today: `@agent-vm/tool-portal` and `@agent-vm/mcp-portal`. They grew up together and each one mixes several jobs:\n- the rules for who may call what;\n- serving MCP to agents;\n- calling other MCP servers;\n- running agent-vm's own tools;\n- Node-only code.\n\nThis work takes them apart into pieces with **one job each**, and puts agent-vm back together on those pieces. **Behaviour stays the same.** No new features.\n\n**Why:**\n- each piece can be understood, tested and changed on its own;\n- the rules can be used without pulling in the server;\n- code mode can be added later, in one place.\n\n## What must stay the same\n\n1. Agents see the same tools, under the same permissions, as today.\n2. A call that needs approval still needs it, and approvals work as they do today:\n   - in agent-vm, through its controller;\n   - in the standalone server, through today's signed approval tokens (which of today's two paths it keeps is question 3 below).\n3. Provider credentials never reach agents.\n4. agent-vm's controller keeps its authority over its own tools, VMs and credentials.\n5. Any MCP client that works today keeps working.\n6. Today's size caps stay as they are: 4 MiB for what an agent sends, and 4 MiB for what a tool server returns.\n\n## What changes\n\n1. **The pieces.** The two libraries become these:\n\n   | New piece | Its one job |\n   | --- | --- |\n   | `@agent-collaboration/tool-access` | The rules: may this agent call this tool, and does the call need approval? It has no server code. |\n   | `@agent-collaboration/tool-engine` | The core: shows tools to agents, routes every call through one dispatcher, and talks to other MCP servers. |\n   | `@agent-collaboration/tool-host-node` | Runs the engine on a machine: takes connections, checks who's calling, and loads config. It replaces the standalone `mcp-portal` binary. |\n   | agent-vm's managed adapter | Plugs agent-vm's own tools and approvals into the engine. It stays inside agent-vm. |\n\n   When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted.\n\n2. **The two ways an agent sees tools get clearer names:**\n   - **`direct`**: every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well. This was \"catalog\".\n   - **`indirect`**: only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was \"compact\".\n\n## Not in this work\n\nPruned by the owner on 2026-10-20. Several of these **were** asked for at different times, as separate tracks: workspace scopes, a React UI, audit, changing access by chat, people sign-in, and a central cloud entry. The owner also said \"in essence this is 2 projects\" and \"lets move to the core functionality and design and split\". So they belong in their own later projects, not in this core split. The earlier design made them all one delivery; that was the mistake. The owner's words for each are kept in the [independent inventory](../../wip/2026-10-20-tool-portal-scope-inventory/inventory.md).\n- A Cloudflare Worker host, a cloud gateway in front of computers, and calls routed across machines.\n- Fleet and Router integration, and enrolment of agents, machines and services.\n- A stored record of every call, and recovery of calls after a restart. Today's server keeps no such record.\n- Workspaces and per-workspace allowances.\n- Any UI or screens, an access view, changing access by chat, entering secrets, and approval settings.\n- Audit events.\n- The people sign-in service.\n- A control API for proposing and deciding changes.\n- New limits or hardening beyond today's size caps.\n\n## Later, if wanted\n\n- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work.\n\n## Owner decisions on 2026-10-20\n\n- **Scope:** take apart and recompose only, with no new features. In the owner's words: \"decompose and rethink composition and system ground up not add more features.\"\n- **Mode names:** `direct` and `indirect`.\n- **Code mode:** in both modes eventually, \"but not now\".\n- **Pruning:** everything listed under \"Not in this work\".\n\n## Questions for the owner\n\nBring these one at a time. None of them blocks writing this design.\n\n1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not: the first delivery ends at the new packages, running in agent-vm and in the standalone Node server. If \"I can use it from anywhere now\" is required, the Worker host comes back into this delivery.\n2. **Do tool calls need history that survives a restart?** The design assumes not. Today's server keeps no record per call, and you asked \"why do we need to store anything\". If that's right, the per-call store and the name-in-`_meta` requirement already built in S3b get removed.\n3. **Standalone approvals: keep today's or replace them?** There are two today: the old standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. The design keeps and adapts what exists, and leaves any new approval system to a later project.\n","reference":"./requirements.md"}</script></ex-markdown>
+</section>
+<section label="Specification" icon="shield-check">
+<ex-markdown id="specification" label="Specification"><script type="application/json" data-ex-markdown-source="">{"text":"# Specification: what must be true when this is done\n\n[Requirements](requirements.md) · [Program Design](program-design.md) · [Verification Design](verification-design.md)\n\nEach check below compares the new pieces against **today's behaviour** on `master`. That makes today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` the reference: if they did something, the new pieces do the same thing, unless a check below says otherwise.\n\n## Agents see the same tools\n\n1. **Same tool list.** With the same configuration and the same agent, the tools an agent can see match today's, tool for tool.\n2. **Two modes, same tools.**\n   - In `direct` mode, every tool the agent may use is listed as its own MCP tool, and so are the four search tools (list, search, describe, call).\n   - In `indirect` mode, only the four search tools are listed.\n   - Either way the agent can reach exactly the same tools, and the same call gives the same result.\n3. **Hidden stays hidden.** A tool the agent may not use can't be found or called in either mode, by its name, by a guessed name, or through the search tools.\n\n## Calls behave the same\n\n4. **Same outcomes.** For the same call, the result matches today's: allowed and run, refused, needs approval, or failed.\n5. **One way in.** Every call, in both modes and from both agent-vm and the standalone server, goes through the same dispatcher and the same rules check. Nothing can reach a tool another way.\n6. **Approvals.** A call that needs approval doesn't run without it. An approval granted for one call can't be reused for a different call.\n   - In agent-vm, approvals go through the controller, as today.\n   - In the standalone server, approvals work as they do today. Today there are two signed-token paths: the old standalone Tool Portal's batch approval, and the MCP proxy's approval token. Which one the new server keeps is an open question in the [Requirements](requirements.md#questions-for-the-owner). Until that's settled, neither is replaced by something new.\n7. **Credentials stay out.** Provider credentials never appear in what an agent sends, receives, sees in errors, or can read from logs. Secrets in results and errors are redacted, as today.\n8. **Same size caps.** 4 MiB for what an agent sends, and 4 MiB for what a tool server returns, as today.\n\n## agent-vm keeps working\n\n9. **Managed tools unchanged.** agent-vm's own tools (native tools, configured CLIs and Tool VMs), its approvals and its controller's authority work end to end after the switch, as they do today.\n10. **Same clients.** Hermes and the other MCP clients that work today connect and call tools the same way.\n\n## The pieces stay separate\n\n11. **Allowed imports only.**\n    - `tool-access` imports none of the other pieces.\n    - `tool-engine` imports `tool-access`, but no Node-only code and nothing from agent-vm.\n    - `tool-host-node` doesn't import agent-vm.\n    - agent-vm's managed adapter lives inside agent-vm.\n12. **Clean switch.** When agent-vm runs on the new pieces, `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Nothing re-exports them, and nothing translates old calls into new ones.\n\n## Not checked here\n\nEverything under \"Not in this work\" in the [Requirements](requirements.md#not-in-this-work), and code mode, which comes later.\n","reference":"./2026-10-14-portable-tool-portal-hosts.md"}</script></ex-markdown>
+</section>
+<section label="Program Design" icon="stack">
+<ex-markdown id="program-design" label="Program Design"><script type="application/json" data-ex-markdown-source="">{"text":"# Program Design: the pieces and how they fit\n\n[Requirements](requirements.md) · [Specification](2026-10-14-portable-tool-portal-hosts.md) · [Verification Design](verification-design.md)\n\n**The short version.** Today's two libraries become three packages with one job each, plus an adapter that stays inside agent-vm:\n- `tool-access` holds the rules;\n- `tool-engine` shows tools and routes every call through one dispatcher;\n- `tool-host-node` runs the engine on a machine;\n- agent-vm plugs its own tools and approvals into the engine through its managed adapter.\n\nNothing new is stored. Behaviour stays the same.\n\n## Today\n\n```mermaid\nflowchart TB\n  Agent[Agent] -->|MCP| Proxy[mcp-portal server · standalone binary]\n  Agent -->|MCP| TPS[tool-portal standalone server]\n  Agent -->|MCP inside the gateway VM| GR[gateway-runtime · agent-vm's composition]\n  TPS --> TP\n  Proxy --> Core[mcp-portal core · list, search, describe, call · approval-token check · TypeScript generator]\n  Core --> Up[mcp-portal upstream client · HTTP, SSE and stdio]\n  GR --> TP[tool-portal · plans and dispatches calls]\n  TP -->|MCP providers| Up\n  TP -->|native tools, configured CLIs, Tool VMs| Ctl[agent-vm controller · approvals, accounts, VMs]\n  Up --> Servers[Other MCP servers]\n```\n\n**What's tangled, and why we split it:**\n1. **`tool-portal` can't be used without agent-vm.** Its ports carry agent-vm's managed types. [`ToolPortalBackendCallOptions`](../../../packages/tool-portal/src/tool-portal-service.ts#L104) takes a `GatewayRuntime…DispatchAuthority`, and [`ToolPortalApprovalPort`](../../../packages/tool-portal/src/tool-portal-service.ts#L182) reserves and arms `GatewayRuntime…` intents.\n2. **`mcp-portal` mixes serving with Node-only code.** Its core imports the TypeScript catalog generator ([portal-tools.ts:12](../../../packages/mcp-portal/src/core/portal-tools.ts#L12)). Its upstream client mixes HTTP with stdio and `process.env` ([upstream-mcp-client-runtime.ts:266](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L266)).\n3. **`config-contracts` mixes pure schemas with host loaders.** See [tool-portal-config.ts](../../../packages/config-contracts/src/tool-portal-config.ts#L280) and [controller-configured-cli.ts](../../../packages/config-contracts/src/controller-configured-cli.ts#L1).\n4. **The call digest is in the wrong place.** Approvals bind to it, but it lives inside the HMAC token file ([portal-tools.ts:11](../../../packages/mcp-portal/src/core/portal-tools.ts#L11)).\n\n## The new pieces\n\n| Package | Its one job | What's inside | May not import |\n| --- | --- | --- | --- |\n| `@agent-collaboration/tool-access` | the rules | `contracts` (schemas and the call digest), `authorization` (`assessAccess`, policy helpers, CLI allowances), `approval-rules` (which call an approval is valid for), `credentials` (rules for which provider account a call may use) | any other piece, agent-vm, `node:*` |\n| `@agent-collaboration/tool-engine` | show tools and route calls | `dispatch` (the one dispatcher, with neutral interfaces for backends and approvals), `mcp-gateway` (what an agent sees: `direct` or `indirect`, plus list, search, describe and call), `connectors` (calls to other MCP servers over HTTP or SSE) | any host, agent-vm, `node:*` |\n| `@agent-collaboration/tool-host-node` | run it on a machine | HTTP and stdio listeners, caller checks (agent bearer tokens), config loading, the stdio connection to MCP servers, the TypeScript catalog compiler, and the standalone approval-token check | agent-vm |\n| agent-vm's managed adapter (in `gateway-runtime`) | plug agent-vm in | wraps agent-vm's existing backends (native tools, configured CLIs, Tool VMs, MCP providers) and the controller's approvals behind `tool-engine`'s interfaces; keeps agent-vm's own IDs and fingerprints | n/a; it's agent-vm code |\n\n```mermaid\nflowchart BT\n  Engine[tool-engine] -->|imports| Access[tool-access]\n  Host[tool-host-node] -->|runs| Engine\n  Managed[gateway-runtime · agent-vm's managed adapter] -->|runs| Engine\n  Exec[agent-vm execution · controller, Tool VMs] -->|plugged in as backends| Managed\n```\n\n**Execution stays outside the engine.** A Tool VM or a configured CLI reaches the engine only as a backend that agent-vm plugs in. The engine never imports a VM provider.\n\n## One call, step by step\n\n```mermaid\nflowchart LR\n  A[Agent] --> H[Host · agent-vm gateway or tool-host-node]\n  H --> G[mcp-gateway · direct or indirect]\n  G --> R[tool-access · may this agent call this?]\n  R --> D[dispatcher]\n  D -->|needs approval| P[approval · agent-vm controller or signed token]\n  D --> B[backend · MCP server or agent-vm tool]\n  B -->|result, secrets redacted| A\n```\n\nThe same path serves both modes and both hosts. Nothing reaches a backend except through the dispatcher.\n\n## Direct and indirect\n\n- **`direct`** lists every tool the agent may use as its own MCP tool, plus the four search tools. Today's catalog mode listed only the tools, so offering the search tools as well is the one small change in this mode.\n- **`indirect`** lists only the four search tools: list, search, describe and call.\n- **Underneath, they're the same.** Both use the same rules and the same dispatcher.\n- **Code mode, later.** Today's code already has most of one route to code mode:\n  1. the catalog compiler builds typed TypeScript modules for the tools an agent may use;\n  2. the client SDK binds them to an MCP client;\n  3. code in the agent's own environment calls those functions, and each one makes an ordinary MCP call.\n\n  `describe` also returns a lighter, per-tool helper. When code mode is picked up, the first question is which client runs that code and where.\n\n## What's stored\n\n**Nothing new.**\n- **The standalone server** keeps sessions in memory and no record of each call, as today's `mcp-portal` does.\n- **agent-vm's controller** keeps what it keeps today: approvals, provider accounts and Tool VM leases. It stays the owner of that state, and the managed adapter uses it.\n- **`tool-engine` and `tool-access`** store nothing.\n\n## Where today's code goes\n\nThe per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-inventory/port-inventory.md). It's evidence: read a file's body before moving it.\n\n| Today | New home |\n| --- | --- |\n| `mcp-portal` core: list, search, describe, call, and sessions | `tool-engine/mcp-gateway` |\n| `mcp-portal` upstream client: HTTP and SSE | `tool-engine/connectors` |\n| `mcp-portal` upstream client: stdio and environment | `tool-host-node` |\n| `mcp-portal` server, config, CLI and binary | `tool-host-node` |\n| `mcp-portal` TypeScript catalog generator | `tool-host-node`; its output bytes stay identical |\n| `mcp-portal` agent bearer tokens and approval tokens | `tool-host-node`; which standalone approval path it keeps is an open question |\n| `tool-portal` standalone server (`standalone-entrypoint`), with its signed batch approvals | `tool-host-node`, which replaces both of today's standalone servers |\n| `mcp-portal` call digest | `tool-access/contracts`; same bytes |\n| `mcp-portal` provider backend | `tool-engine/connectors`, used by agent-vm's adapter |\n| `tool-portal` capability core and ports | `tool-engine/dispatch`, with agent-vm's types removed from the interfaces |\n| `tool-portal` dispatch authority, managed IDs and fingerprints | stay in agent-vm (`gateway-runtime`) |\n| `tool-portal` CLI allowances | `tool-access/authorization` |\n| `config-contracts` tool schemas | `tool-access/contracts`; schema IDs unchanged |\n| `config-contracts` loaders | `tool-host-node` |\n| `oauth-approval-ui` | unchanged; not part of this work |\n\n**Byte-exact outputs stay byte-exact:** config schema IDs, the `mcp:` tool reference encoding, the call digest and the generated TypeScript catalog.\n\n## What's built, and what changes\n\n| Step | Status | Change under this design |\n| --- | --- | --- |\n| S1 `tool-access` | draft PR [#238](https://github.com/ShravanSunder/agent-vm/pull/238), built and reviewed | keep; `assessAccess` stays as built, but isn't expanded for the deferred UI |\n| S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240), built and reviewed | keep; the standalone host records nothing per call |\n| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241), built and reviewed | keep; rename the modes to `direct`/`indirect`; `direct` also lists the search tools |\n| S3b `tool-host-node` | branch at `51c98139`, no PR yet | keep the listeners, stdio, config, compiler and the review fixes; **remove** its per-call store and the requirement that direct calls carry a name in `_meta` (if the owner confirms question 2); **carry over** today's standalone approvals (which path depends on question 3) |\n| S4 switch agent-vm over | not started | agent-vm runs on the new pieces, then the old packages are deleted |\n| S3c limits, S5 control API, S6 Worker host, sign-in, UI | cancelled | none |\n\nThe stack's branches start from `33914cbe`. `master` now also has the 2.5G VM memory change (#242), which the stack takes in when building resumes.\n","reference":"./program-design.md"}</script></ex-markdown>
+</section>
+<section label="Verification" icon="test-tube">
+<ex-markdown id="verification-design" label="Verification Design"><script type="application/json" data-ex-markdown-source="">{"text":"# Verification Design: how we'll know it works\n\n[Requirements](requirements.md) · [Specification](2026-10-14-portable-tool-portal-hosts.md) · [Program Design](program-design.md)\n\nThis is the plan for proving the twelve checks in the [Specification](2026-10-14-portable-tool-portal-hosts.md). Writing it proves nothing; each check is proven when its test or run passes on the real code.\n\n**The main method is to compare old with new.** While `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` still exist (before the switch in S4), the same configuration and the same calls run through both the old code and the new pieces, and the results must match. That's how \"the same as today\" gets checked rather than assumed.\n\n**VM tests run in GitHub CI only,** never locally. VM memory there is 2.5G (#242).\n\n| # | Check | How it's proven | It fails if… |\n| --- | --- | --- | --- |\n| 1 | Same tool list | Old-vs-new comparison: for a fixed set of configurations and agents, the old and new tool lists are compared item by item | a tool appears or disappears, or its schema differs |\n| 2 | Two modes, same tools | The same set run through `direct` and `indirect`: the same reachable tools, and the same results for the same calls. `direct` also lists the four search tools | one mode shows or allows something the other doesn't |\n| 3 | Hidden stays hidden | Calls to a hidden tool by its exact name, a guessed name and a search result, in both modes, plus an allowed call as the control | a hidden tool runs or is shown |\n| 4 | Same outcomes | Old-vs-new comparison of allowed, refused, needs-approval and failed calls, matching result for result | any result differs from today's |\n| 5 | One way in | A deliberately wrong build that calls a backend without going through the dispatcher must fail the test, on the unauthorised effect, not on a setup error | the wrong build passes |\n| 6 | Approvals | **agent-vm:** the real controller path in CI, through the Hermes portal-composition test (`portal-composition.hermes.e2e.test.ts`): a call needing approval waits, runs once after approval, and a reused approval is refused. **Standalone:** the tests of the approval path the owner picks, carried over from today | a call runs without approval, or one approval works for a different call |\n| 7 | Credentials stay out | A secret \"canary\" value given to a test tool server; the test checks it never shows up in results, errors, catalogs or logs the agent can read | the canary appears anywhere an agent can see it |\n| 8 | Same size caps | Today's size-cap tests carried over: 4 MiB for what an agent sends, 4 MiB for what a tool server returns | either cap moves or disappears |\n| 9 | Managed tools unchanged | agent-vm's full suite, plus its VM and Hermes tests in CI, run after the switch | any managed tool, approval or controller check stops working |\n| 10 | Same clients | The MCP SDK client over Streamable HTTP in the host tests; Hermes in the CI Hermes tests | a client that worked can't connect or call |\n| 11 | Allowed imports only | The packed import checks per package (already in `pnpm check`), plus poisoned builds that must fail | a forbidden import gets through |\n| 12 | Clean switch | After S4: no source or package refers to `@agent-vm/tool-portal` or `@agent-vm/mcp-portal`, both folders are gone, and CI passes | anything still imports or re-exports the old packages |\n\n## What stays unproven\n\n- **Real third-party MCP servers.** Tests use controlled test servers; Gmail, GitHub and others aren't called.\n- **Clients beyond the MCP SDK client and Hermes.** Other harnesses are expected to work because the protocol is unchanged, but none is tested here.\n- **Code mode.** It's not in this work.\n","reference":"./verification-design.md"}</script></ex-markdown>
+</section>
+</ex-tabs>
+
+</ex-document>
+
 
 </body></html>
