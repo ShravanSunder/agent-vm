@@ -134,4 +134,4 @@ Bring these one at a time, in this order. The first was sent as a brief on 2026-
 
    Either way, a client on the default never gets the full list, and a wrong choice can't grant any tool. **This blocks** building `client-deferred`, not the rest of the design.
 
-**Needed from the owner before the Worker can be deployed:** a Cloudflare account and an API token for the deployment and its proof.
+**Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.

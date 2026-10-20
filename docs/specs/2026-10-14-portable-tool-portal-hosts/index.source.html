@@ -21,14 +21,13 @@
 - **Later:** code mode in both modes. UI, people sign-in, workspaces and audit belong to separate projects.
 </ex-callout>
 
-<ex-callout tone="question" title="Questions for you, in order">
+<ex-callout tone="question" title="Three choices for you">
 
-1. **Do agents reach the Worker through Cloudflare's MCP Portal, or directly behind Access?** For agents using service tokens through the Portal, as Cloudflare documents it, the Worker can't tell them apart. This blocks the Worker's caller check; it went to Sun as a brief.
-2. **Who issues real sign-in and agent tokens: our own Better Auth service, or fleet?** This blocks per-user tools, and selling this without your Cloudflare Access.
-3. **Do tool calls need history that survives a restart?** The design assumes not; the Worker keeps only which approvals were used.
-4. **Retire either of today's two standalone approval paths?** The design keeps both.
+1. **How do agents connect to the cloud tool server?** Through Cloudflare's ready-made MCP Portal, which forwards every call with one shared key so the Worker can't tell agents apart, or **straight to our Worker behind Cloudflare Access, each agent with its own key (recommended)**.
+2. **Who hands out real logins and agent keys later?** **Better Auth, our own login service.** Every advisor agrees; just confirm.
+3. **How does the server know a client can take the full tool list?** **Two web addresses, the normal one and `/direct`, picked when the client is set up (recommended)**, or a setting on each agent's key, which needs a separate key per kind of client.
 
-Deploying the Worker also needs a Cloudflare account and an API token.
+Already assumed unless you say otherwise: no saved history of tool calls, and both of today's approval methods are kept. Deploying uses your existing Cloudflare CLI login.
 </ex-callout>
 
 <ex-tabs data-width="reading">
