@@ -140,6 +140,9 @@ function createHarness(
 			},
 		},
 		catalogTtlMs: 60000,
+		skills: [
+			{ title: 'workflow-only-marker', toolRefs: ['mcp:YWxwaGE:cmVhZA', 'mcp:YWxwaGE:aGlkZGVu'] },
+		],
 		runtime: {
 			closeAgentScope: () => {},
 			listTools: async () =>
@@ -266,11 +269,14 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		expect(catalog.tools.map((tool) => tool.descriptor.name)).toEqual(frozenNames);
 		expect((await gateway.listTools('catalog')).map((tool) => tool.name)).toEqual(frozenNames);
 		expect((await gateway.listTools('compact')).map((tool) => tool.name)).toEqual([
-			'mcp_portal_call',
-			'mcp_portal_describe',
 			'mcp_portal_list',
 			'mcp_portal_search',
+			'mcp_portal_describe',
+			'mcp_portal_call',
 		]);
+		expect((await gateway.listTools('compact'))[0]?.description).toBe(
+			'List authorized MCP namespaces and compact tool summaries. Allowed namespaces for this agent: alpha, beta.',
+		);
 		expect(
 			identities(
 				output(
@@ -279,6 +285,26 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 				),
 			),
 		).toEqual(['alpha.read']);
+	});
+	it('keeps configured skill search hints while filtering hidden references', async () => {
+		const h = createHarness();
+		expect(
+			identities(
+				output(
+					await h.gateway.search({ requests: [{ id: 'r', query: 'workflow-only-marker' }] }),
+					'r',
+				),
+			),
+		).toEqual(['alpha.read']);
+		h.setDenyRead();
+		expect(
+			identities(
+				output(
+					await h.gateway.search({ requests: [{ id: 'r', query: 'workflow-only-marker' }] }),
+					'r',
+				),
+			),
+		).toEqual([]);
 	});
 	it.each(['compact', 'direct'] as const)(
 		'runs the allowed control in %s and records the literal normalized digest and effect',
@@ -331,6 +357,14 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			]);
 		},
 	);
+	it('binds the consumer digest to normalized arguments', async () => {
+		const h = createHarness();
+		expect((await h.gateway.call(callInput('read', 'normalized', { value: '42' }))).ok).toBe(true);
+		expect(h.effects.map((effect) => effect.arguments)).toEqual([{ value: 42 }]);
+		expect(h.inputDigests).toEqual([
+			'dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3',
+		]);
+	});
 	it.each(['compact', 'direct'] as const)(
 		'pending approval and invalid arguments cause zero effects in %s',
 		async (mode) => {

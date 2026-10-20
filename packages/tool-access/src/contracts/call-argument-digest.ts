@@ -4,7 +4,7 @@ export interface ApprovalTokenCallDigest {
 	readonly namespace: string;
 	readonly toolName: string;
 }
-export function canonicalCallArguments(value: unknown): string {
+export function canonicalCallArguments(value: unknown): string | undefined {
 	if (value === null || typeof value !== 'object') {
 		return JSON.stringify(value ?? null);
 	}
@@ -19,9 +19,13 @@ export function canonicalCallArguments(value: unknown): string {
 }
 
 export async function hashCallArguments(args: unknown): Promise<string> {
+	const serializedArguments = canonicalCallArguments(args);
+	// Node's former hash rejected undefined input; TextEncoder would hash an empty string.
+	if (serializedArguments === undefined)
+		throw new TypeError('Call arguments are not serializable.');
 	const digest = await globalThis.crypto.subtle.digest(
 		'SHA-256',
-		new TextEncoder().encode(canonicalCallArguments(args)),
+		new TextEncoder().encode(serializedArguments),
 	);
 	return btoa(Array.from(new Uint8Array(digest), (byte) => String.fromCharCode(byte)).join(''))
 		.replaceAll('+', '-')

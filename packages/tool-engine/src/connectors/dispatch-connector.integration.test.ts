@@ -81,10 +81,12 @@ describe('dispatch to a selected credentialed HTTP MCP connector', () => {
 					send: async (message, options) => transport.send(message, options),
 					close: async () => transport.close(),
 				};
-				transport.onclose = () => serverTransport.onclose?.();
-				transport.onerror = (error) => serverTransport.onerror?.(error);
-				// eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport exposes callbacks, not EventTarget.
-				transport.onmessage = (message, extra) => serverTransport.onmessage?.(message, extra);
+				const callbacks: Pick<Transport, 'onclose' | 'onerror' | 'onmessage'> = {
+					onclose: () => serverTransport.onclose?.(),
+					onerror: (error) => serverTransport.onerror?.(error),
+					onmessage: (message, extra) => serverTransport.onmessage?.(message, extra),
+				};
+				Object.assign(transport, callbacks);
 				await server.connect(serverTransport);
 				try {
 					await transport.handleRequest(request, response);

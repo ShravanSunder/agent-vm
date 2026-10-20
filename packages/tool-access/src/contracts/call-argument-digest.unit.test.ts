@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { canonicalCallArguments, hashCallArguments } from './call-argument-digest.js';
 // Frozen SHA-256 vectors computed independently with Node crypto over the literal UTF-8 bytes.
 describe('legacy call-argument digest bytes', () => {
+	it.each([Symbol('unsupported'), (): void => {}])(
+		'keeps the legacy rejection of unserializable top-level values',
+		async (input) => {
+			await expect(hashCallArguments(input)).rejects.toThrow(TypeError);
+		},
+	);
 	it.each([
 		{ input: null, bytes: 'null', digest: 'dCNOmK_nSY-12vHzasLXiswzlGT5UHA7jAGYkvmCuQs' },
 		{

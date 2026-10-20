@@ -22,12 +22,9 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import { createCatalogToolPresentationName } from '#mcp-gateway/catalog-tool-presentation-name';
+import { listPortalCoreToolDescriptors } from '#mcp-gateway/compact-tool-descriptors';
 import type { PortalSession, PortalSessionManager } from '#mcp-gateway/portal-session';
-import {
-	createPortalToolHandlers,
-	portalToolInputSchemas,
-	type PortalBatchResult,
-} from '#mcp-gateway/portal-tools';
+import { createPortalToolHandlers, type PortalBatchResult } from '#mcp-gateway/portal-tools';
 import { createSearchIndex } from '#mcp-gateway/search-index';
 import { buildToolGraph } from '#mcp-gateway/tool-graph';
 import { encodeToolRef } from '#mcp-gateway/tool-ref';
@@ -171,7 +168,7 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 			}),
 		);
 		const tools = selected.flat();
-		const graph = buildToolGraph({ tools });
+		const graph = buildToolGraph({ tools, skills: session.graph.skills });
 		return {
 			...session,
 			bindings,
@@ -287,14 +284,14 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	return {
 		prepareCatalog,
-		listTools: async (mode) =>
-			z.enum(['catalog', 'compact']).parse(mode) === 'catalog'
-				? (await prepareCatalog()).tools.map((tool) => tool.descriptor)
-				: Object.entries(portalToolInputSchemas).map(([name, inputSchema]) => ({
-						name,
-						inputSchema,
-						description: 'Discover and call caller-permitted MCP capabilities.',
-					})),
+		listTools: async (mode) => {
+			z.enum(['catalog', 'compact']).parse(mode);
+			if (mode === 'catalog') return (await prepareCatalog()).tools.map((tool) => tool.descriptor);
+			const session = await visibleSession();
+			return listPortalCoreToolDescriptors(
+				[...new Set(session.catalog.tools.map((tool) => tool.namespace))].toSorted(),
+			);
+		},
 		list: async (input) => handlers.list({ identity, input }),
 		search: async (input) => handlers.search({ identity, input }),
 		describe: async (input) => {
