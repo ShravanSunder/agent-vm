@@ -41,6 +41,7 @@ flowchart TB
   CON -->|Bearer token| TPV
   TPV -->|keys, live check| OP
   AL -->|before any session| BA
+  AL -->|current person at code, token, introspection| OP
   BA --> DB
   OP --> DB
   AD -->|change + audit, one batch| DB
@@ -51,7 +52,7 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | Better Auth core | Persons, linked logins, passkeys, sessions (E2–E5) | `@agent-collaboration/auth`, a Worker app (new) | people's browsers | a sign-in method or session rule changes |
 | OAuth provider | relying services, clients, issued proofs, introspection (E6, E7) | same Worker (Better Auth `oauthProvider` plugin, existing library) | the console; Tool Portal's verifier | the token or audience contract changes |
-| Allowlist gate | the private-mode admission decision (E8) | same Worker (new) | Better Auth's identity and session creation | private admission rules change |
+| Allowlist gate | the private-mode admission decision (E8), and the current-person check that re-reads a Person's status wherever a session or token becomes capability | same Worker (new) | Better Auth's session creation, authorization, token exchange and introspection | private admission or removal rules change |
 | Admin surface | allowlist and relying-service changes, owner-only | same Worker (new) | the owner | who may administer changes (`SD1`) |
 | Audit writer | the audit record of every change and sign-in outcome | same Worker (new) | the owner | the record contents change |
 | Person-proof verifier | the decision "this proof is a current Person for this service" | `tool-host-node` and `tool-host-cloudflare`, implementing Tool Portal's identity-verifier port (new adapter) | Tool Portal `explain`, `propose`, `decide`, `read` | the proof format or freshness rule changes |
@@ -68,24 +69,37 @@ The sign-in Worker is built in agent-vm's workspace under the same rules as the 
 | `E4` Passkey | Better Auth passkey plugin | D1 `passkey` table (existing library schema) | the plugin's model (existing) | not exposed; WebAuthn messages between the browser and the Worker only | persisted | library schema |
 | `E5` Session | Better Auth core | D1 `session` table (existing library schema) | Better Auth's session model (existing) | the browser session cookie on the sign-in origin only; a session reference inside introspection results | persisted | library schema |
 | `E6` Relying service | OAuth provider | D1 OAuth resource and client rows (existing plugin schema) | the plugin's resource and client models (existing) | the `aud` claim; the resource identifier at authorization | persisted | library schema |
-| `E7` Person proof | OAuth provider | issued JWT access token, not stored (existing plugin issuance) | `personProofClaimsSchema` in `tool-access/contracts` (new) | `{ iss, sub, aud, exp, iat, scope }`, EdDSA-signed, verifiable through the Worker's JWKS | derived | Zod schema, `z.infer` type |
+| `E7` Person proof | OAuth provider | issued JWT access token, not stored (existing plugin issuance) | `personTokenClaimsSchema` (the raw claims) and `PersonProof` (what a relying service keeps after verifying), both in `tool-access/contracts` (new) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, sid, jti }`, EdDSA-signed, verifiable through the Worker's JWKS. Inside a relying service: `PersonProof` only | derived | Zod schema, `z.infer` type |
 | `E8` Allowlist entry | Allowlist gate | D1 `allowed_email` table (new) | `allowlistEntrySchema` in the Worker (new) | the admin surface's add, remove and list operations | persisted | Zod schema, `z.infer` type |
 | audit record (serves `R12`) | Audit writer | D1 `sign_in_audit` table (new) | `signInAuditRecordSchema` in the Worker (new) | the owner's audit list | persisted, append-only | Zod discriminated union |
 
 ```ts
-export const personProofClaimsSchema = z.strictObject({
-  iss: z.url(),                  // E1: the deployment's issuer
-  sub: z.string().min(1),        // E2: the Better Auth user id, never pairwise
-  aud: z.string().min(1),        // E6: exactly one relying service's resource identifier
+// The access-token claims Better Auth's OAuth provider issues (v1.7.11, oauth-provider/src/token.ts:263-290).
+// Faithful to the provider: other claims are allowed and ignored, and the fields the verifier judges stay visible.
+export const personTokenClaimsSchema = z.looseObject({
+  iss: z.url(),                                        // E1: the deployment's issuer
+  sub: z.string().min(1),                              // E2: the Better Auth user id, never pairwise
+  aud: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),  // an array only with `openid`, which no relying service requests
   exp: z.number().int(),
   iat: z.number().int(),
   scope: z.string(),
+  client_id: z.string().min(1),
+  azp: z.string().min(1),
+  sid: z.string().min(1).optional(),                   // E5: present only for a token issued within a person's session
+  jti: z.string().min(1),
 });
-export type PersonProofClaims = z.infer<typeof personProofClaimsSchema>;
+export type PersonTokenClaims = z.infer<typeof personTokenClaimsSchema>;
+
+// What a relying service keeps after verifying. Nothing past the verifier reads raw claims.
+export const personProofSchema = z.strictObject({
+  issuer: z.url(), subject: z.string().min(1), audience: z.string().min(1),
+  sessionRef: z.string().min(1), clientId: z.string().min(1), expiresAt: z.number().int(),
+});
+export type PersonProof = z.infer<typeof personProofSchema>;
 
 export type PersonProofVerification =
-  | { kind: "verified"; issuer: string; subject: string; audience: string; expiresAt: number; freshness: "signature" | "live" }
-  | { kind: "refused"; reason: "malformed" | "bad-signature" | "wrong-issuer" | "wrong-audience" | "expired" | "inactive" }
+  | { kind: "verified"; proof: PersonProof; freshness: { kind: "signature" } | { kind: "live"; checkedAt: number } }
+  | { kind: "refused"; reason: "malformed" | "wrong-token-type" | "bad-signature" | "wrong-issuer" | "wrong-audience" | "not-a-person" | "expired" | "inactive" }
   | { kind: "unavailable"; reason: "keys-unreachable" | "introspection-unreachable" };
 
 export const deploymentConfigSchema = z.strictObject({
@@ -109,7 +123,17 @@ export const signInAuditRecordSchema = z.discriminatedUnion("kind", [
 ]);
 ```
 
-`personProofClaimsSchema` lives in `tool-access/contracts`, so every relying service verifies one shape. `freshness: "live"` appears only after a live check; Tool Portal's `decide` refuses a `signature`-only result (`R9`).
+Both shapes live in `tool-access/contracts`, so every relying service verifies the same way. The verifier judges the raw token before projecting it, in this order:
+1. header `typ` is `at+jwt` (`wrong-token-type`);
+2. signature against the deployment's JWKS (`bad-signature`);
+3. `iss` is the expected deployment (`wrong-issuer`, `R5`, `R6`);
+4. `aud` is a single string equal to this service's own resource identifier; an array is refused (`wrong-audience`, `R6`);
+5. `exp` (`expired`);
+6. `sid` is present (`not-a-person`, `R7`): tokens issued without a person's session, such as `client_credentials` tokens, carry none.
+
+`freshness.kind: "live"` appears only after a live check, with the time it ran. Tool Portal's `decide` refuses a `signature` result, and takes effect only while `checkedAt` is within `SD8` (`R9`).
+
+No relying service requests the `openid` scope. Better Auth adds the UserInfo endpoint to `aud` when `openid` is requested ([resources.ts:500-506](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/resources.ts#L500)), which would make one token valid for two audiences. A relying service that later needs an ID token is a change to this contract.
 
 ## How a person signs in and a decision is checked
 
@@ -136,10 +160,10 @@ sequenceDiagram
 
 The edges that cross a boundary carry:
 - Browser and Worker: the sign-in session cookie on the Worker's origin.
-- Console and Worker: an authorization request with S256 PKCE and `resource` set to one relying service.
-- Worker to console: an E7 (`personProofClaimsSchema`).
+- Console and Worker: an authorization request with S256 PKCE, `resource` set to one relying service, and no `openid` scope.
+- Worker to console: an E7 (`personTokenClaimsSchema`).
 - Console to Tool Portal: `Authorization: Bearer <E7>`.
-- Tool Portal and Worker: an introspection request authenticated as Tool Portal's own confidential client, returning `active`, `sub`, `aud`, `exp` and the session reference.
+- Tool Portal and Worker: an introspection request authenticated as Tool Portal's own confidential client, returning `active`, `sub`, `aud`, `exp` and `sid`. `active` is true only when the token is valid, its `sid` session still exists unexpired, and its Person is active (the current-person check).
 
 The **intentionally unchanged edge** is the controller's Access-gated browser path ([oauth-https-server.ts](../../../packages/agent-vm/src/controller/oauth/oauth-https-server.ts#L167)). It stays until `SD5`.
 
@@ -148,7 +172,7 @@ The **intentionally unchanged edge** is the controller's Access-gated browser pa
 | Entity | States | Transition and guard | Illegal and how it is handled |
 | --- | --- | --- | --- |
 | E8 Allowlist entry | allowed → removed | owner adds or removes through the admin surface; the change and its audit record are one D1 batch | a re-add after removal creates a new entry; removal of a missing entry returns `not-found` and writes nothing |
-| E2 Person (private) | active → removed | removal of its matching E8 marks it removed and revokes every session in the same batch | a removed Person can't create a session by any method. The allowlist gate runs in Better Auth's `databaseHooks.session.create.before` (v1.7.11, `packages/core/src/types/init-options.ts:1510`), which every stock session creation passes through, including passkey sign-in. It throws a policy error that ends as "not allowed". A passkey attempt still records its challenge and counter before the hook runs. The read is not atomic with a concurrent removal, and the removal's session revocation closes that window. |
+| E2 Person (private) | active → removed | one D1 batch sets the E8's `removedAt`, marks the Person removed, deletes its sessions and writes the audit record. That commit is the cutoff (`R4`) | a removed Person can neither create a session nor use one. **At creation**, the gate runs in Better Auth's `databaseHooks.session.create.before` (v1.7.11, `packages/core/src/types/init-options.ts:1510`), which every stock session creation passes through, including passkey sign-in. It throws a policy error that ends as "not allowed". A passkey attempt still records its challenge and counter before the hook runs. **At use**, the hook's read is not atomic with a removal: a sign-in can pass the hook, pause, and insert its session after the removal deleted sessions. So the current-person check re-reads the Person's status wherever a session or token becomes capability: authorization (a code), token exchange and introspection. A session that slipped in is inert: it gets no code, no token and no active introspection answer. |
 | E5 Session | active → signed out \| expired \| revoked | sign-out, expiry, or revocation by removal | a revoked session can't mint new E7s; there is no offline grant to outlive it, since the `offline_access` scope is never granted (`R13`) |
 | E7 Person proof | valid → expired | time; it cannot be individually revoked | its signature check still passes until expiry, so `decide` always performs the live check |
 
@@ -160,7 +184,8 @@ The **intentionally unchanged edge** is the controller's Access-gated browser pa
 | D1 unavailable | Worker database error | no sessions, proofs or admin changes; admin changes return `unavailable` | the Worker recovers when D1 does |
 | Introspection unreachable during `decide` | the verifier's call fails or times out | `unavailable`, and `decide` is refused, never accepted | the console retries; nothing applied |
 | Signing key rotated | the key id is unknown to the verifier | the verifier refetches the key set once, then refuses | the Worker's key set |
-| Removal races an in-flight Accept | the live check before commit | the Accept is refused if the live check sees the revoked session. A removal landing between the live check and Tool Portal's commit is accepted debt: a window of milliseconds, with Tool Portal's audit naming the decider | owner; revisit if the window matters |
+| Removal races a sign-in | the current-person check at code, token and introspection | the late session exists but obtains nothing, and expires | the Worker |
+| Removal races an in-flight Accept | the live check, then `checkedAt` against `SD8` at commit | an Accept whose live check ran after the removal committed is refused. One whose check came first takes effect only within `SD8` (Lead default 5 s) of that check, so a paused request can't apply minutes later; past it, Tool Portal checks again. Tool Portal's audit names the decider | Tool Portal's `decide` |
 | Admin batch partly fails | a D1 batch error | the whole batch rolls back: no change without its audit record | the owner retries |
 
 ## Security and other qualities
@@ -187,6 +212,8 @@ flowchart LR
 ```
 
 - **Only three methods (`R1`):** Better Auth is configured with the Google and GitHub social providers and the passkey plugin. No email-and-password, magic-link or OAuth-proxy plugin is installed. The package is pinned at 1.7.11 or later.
+- **Current-person check (`R4`, `R9`, `R13`):** one Worker module reads the Person's status and the session row. Every point where a session or token becomes capability calls it: session creation, authorization, token exchange, introspection. A check that can't read D1 refuses.
+- **Token profile (`R6`, `R7`):** relying services request no `openid`, so `aud` is one service. The verifier refuses a token without `sid`, and no client is registered with the `client_credentials` grant.
 - **Explicit linking (`R8`):** implicit account linking is disabled. A login whose verified email belongs to an existing Person is refused with a "link it from your account" result.
 - **Admin protection:** Better Auth's resource and client administration APIs let any signed-in session act when no privilege callbacks are set. So the admin surface sets explicit `resourcePrivileges` and `clientPrivileges` callbacks that allow only the deployment owner's user id (`SD1` default), and exposes only its own owner-checked routes.
 - **Privacy:** the Worker stores provider account ids, verified email, display name and passkey public keys. Audit records never contain tokens, cookies, codes or passkey material.
@@ -201,16 +228,16 @@ flowchart LR
 | U1 | R1: only Google, GitHub, passkey · C1 | E1–E4 | Better Auth core | Worker sign-in routes | library models; Worker configuration | none: configuration | other paths absent, so they 404 | deployed private Worker: enumerate the sign-in routes |
 | U1 | R2: provider first, passkeys after (`SD7`) · C1 | E2–E5 | Better Auth core and passkey plugin | sign-in and passkey registration routes | library models | Person and Session created | a failed passkey assertion creates no session | deployed Worker: sign in with Google, register a passkey, sign back in with it |
 | U2 | R3: allowlist gate · C1 | E1–E3, E8 | Allowlist gate | identity validation at create, link and sign-in | `allowlistEntrySchema` (Worker) | none on refusal | "not allowed", nothing written | deployed Worker with test accounts |
-| U2 | R4: removal stops sign-in and decisions · C1 | E2, E5, E7, E8 | Allowlist gate and admin surface | admin remove, plus the gate at session creation | `allowlistEntrySchema`, audit record | E8 removed, Person removed, sessions revoked | batch failure rolls back | remove, then attempt passkey sign-in and a Tool Portal Accept |
+| U2 | R4: removal stops sign-in and decisions · C1 | E2, E5, E7, E8 | Allowlist gate and admin surface | admin remove; the current-person check at session creation, authorization, token exchange and introspection | `allowlistEntrySchema`, audit record | E8 removed, Person removed, sessions revoked, one batch | batch failure rolls back; a session that slipped past creation obtains nothing | remove, then attempt a passkey sign-in, a token from a surviving session and a Tool Portal Accept; and a sign-in held before its session insert while the removal commits |
 | U3 | R5: public deployments separate · C2 | E1, E2, E7 | sign-in Worker configuration | separate Worker and D1 | `deploymentConfigSchema` | none | a cross-deployment token is refused | two deployments; cross-present proofs |
-| U4 | R6: proof valid for one service · C1 | E1, E2, E6, E7 | OAuth provider; person-proof verifier | authorize with resource; verify `aud` and `iss` | `personProofClaimsSchema` (`tool-access/contracts`) | none: derived | `refused` with wrong-audience or wrong-issuer | console and Tool Portal exchange each other's tokens |
-| U4, U6 | R7: proofs stand for people only · C1, C3 | E6, E7 | OAuth provider | client grant types: authorization code only for people | Worker client registration | none | a `client_credentials` token is refused by the verifier | attempt a service-credential token at Tool Portal |
+| U4 | R6: proof valid for one service · C1 | E1, E2, E6, E7 | OAuth provider; person-proof verifier | authorize with one resource and no `openid`; verify `typ`, `iss`, single `aud` | `personTokenClaimsSchema`, `PersonProof` (`tool-access/contracts`) | none: derived | `refused` with wrong-audience, wrong-issuer or wrong-token-type | console and Tool Portal exchange each other's real tokens; an `openid` token with an array `aud` |
+| U4, U6 | R7: proofs stand for people only · C1, C3 | E6, E7 | OAuth provider; person-proof verifier | client grant types: authorization code only; the verifier requires `sid` | Worker client registration; `personTokenClaimsSchema` | none | a token without `sid` is refused as not-a-person | present a token issued without a person's session at Tool Portal |
 | U1, U4 | R8: explicit linking only · C1 | E2, E3 | Better Auth core | account-linking settings | library models | link created only by explicit action | refusal says how to link | second provider with the same email |
-| U2, U4 | R9: live check for privileged decisions · C1 | E2, E5, E7 | person-proof verifier | introspection call in `decide` | `PersonProofVerification` with `freshness: "live"` | none | `unavailable` means refused | revoke a session, then Accept |
+| U2, U4 | R9: live check for privileged decisions · C1 | E2, E5, E7 | person-proof verifier; Tool Portal `decide` | introspection, answered through the current-person check; `checkedAt` within `SD8` at commit | `PersonProofVerification` with `freshness.kind: "live"` | none | `unavailable`, signature-only or stale means refused | revoke a session, then Accept; hold an Accept past `SD8` between its check and commit |
 | U6 | R10: machines never use sign-in · C3 | E1, E7 | sign-in Worker configuration | no machine clients registered | none: absence | none | none: not applicable | machine and VM access with the Worker offline |
 | U5 | R11: owner's Workers and D1, no vendor · the deployment configuration contract | E1 | sign-in Worker configuration | deployment configuration | `deploymentConfigSchema` | none | none: not applicable | inspect the deployment configuration |
 | U7 | R12: every change recorded, no secrets · C1 | E6, E8 | Audit writer | admin batches and sign-in hooks | `signInAuditRecordSchema` (Worker) | append-only | no change without its record (one batch) | read the audit table after changes, with planted test secrets |
-| U2, U4 | R13: sign-out ends new proofs · C1 | E5, E7 | OAuth provider | no `offline_access` scope; session revocation | library models | Session signed out | none: not applicable | sign out, then request a token |
+| U2, U4 | R13: sign-out ends new proofs · C1 | E5, E7 | OAuth provider; current-person check | no `offline_access` scope; the session row is required at authorization, token exchange and introspection | library models | Session signed out | none: not applicable | sign out, then request a token and introspect an earlier one |
 
 Coverage: R1–R13 are covered by the rows above. E1–E8 are bound in the entity table. C1–C3 are cited in the rows. V1–V9 go to the Verification Design.
 
