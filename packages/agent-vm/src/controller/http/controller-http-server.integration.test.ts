@@ -71,7 +71,7 @@ async function loadHermesSystemConfig(options: {
 						config: './config/gateways/hermes-zone/hermes-managed/config.yaml',
 						cpus: 2,
 						imageProfile: 'hermes',
-						memory: '2G',
+						memory: '2560M',
 						port: 18_791,
 						profileSecretProjectionsByAgent: {
 							'test-agent': {

@@ -64,7 +64,7 @@ export function createCredentialedRuntimeRetirementTestSystemConfig(options: {
 				gateway: {
 					type: 'hermes',
 					imageProfile: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: 18_793,
 					config: './config/hermes/config.yaml',

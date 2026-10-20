@@ -54,7 +54,7 @@ function createConfig(): SystemConfigInput {
 					},
 					profilesByAgent: { main: 'main' },
 					imageProfile: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: 18791,
 					config: '/tmp/hermes.yaml',
@@ -113,7 +113,7 @@ describe('createObservabilityRuntimeConfig', () => {
 		firstZone.gateway = {
 			type: 'hermes',
 			imageProfile: 'hermes',
-			memory: '2G',
+			memory: '2560M',
 			cpus: 2,
 			port: 8642,
 			config: '/tmp/hermes/config.yaml',

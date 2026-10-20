@@ -41,7 +41,7 @@ const systemConfig = {
 			gateway: {
 				type: 'hermes',
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: 18791,
 				config: './config/shravan/hermes.json',
@@ -68,7 +68,7 @@ const systemConfig = {
 			gateway: {
 				type: 'hermes',
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: 18792,
 				config: './config/alevtina/hermes.json',
