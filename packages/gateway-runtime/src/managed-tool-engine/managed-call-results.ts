@@ -60,6 +60,27 @@ export function notDispatchedItem(props: {
 	};
 }
 
+export function failedDispatchItem(props: {
+	readonly id: string;
+	readonly operationId: string;
+	readonly owningGeneration: string;
+	readonly reason: string;
+}): PortalCallItem {
+	return {
+		error: { code: 'execution_failed', message: props.reason },
+		id: props.id,
+		operationId: props.operationId,
+		outcome: {
+			certainty: 'proven',
+			kind: 'completed',
+			completion: 'failed',
+			retryClass: 'forbidden',
+		},
+		owningGeneration: props.owningGeneration,
+		status: 'error',
+	};
+}
+
 export function ambiguousDispatchItem(props: {
 	readonly id: string;
 	readonly operationId: string;

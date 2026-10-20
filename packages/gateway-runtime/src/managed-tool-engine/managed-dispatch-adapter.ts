@@ -73,6 +73,7 @@ interface ManagedDispatchEntry {
 	grant: GatewayRuntimeApprovalDispatchGrant | null;
 	receipt: ApprovalReceipt | null;
 	record: OperationRecord | null;
+	backendItem: PortalCallResult['items'][number] | null;
 }
 
 export interface ManagedToolEngineAdapter {
@@ -491,6 +492,7 @@ export function createManagedToolEngineAdapter(props: {
 			)
 				return { kind: 'ambiguous', reason: 'managed-result-mismatch' };
 			const item = parsed.items[0];
+			selected.backendItem = item;
 			if (item.outcome.kind === 'ambiguous')
 				return { kind: 'ambiguous', reason: 'managed-backend-ambiguous' };
 			if (item.outcome.kind === 'not-dispatched')
@@ -539,6 +541,7 @@ export function createManagedToolEngineAdapter(props: {
 			grant: null,
 			receipt: null,
 			record: null,
+			backendItem: null,
 		});
 		return reference;
 	};
@@ -562,6 +565,7 @@ export function createManagedToolEngineAdapter(props: {
 			dispatcher,
 			snapshot,
 			admission: (reference) => entry(reference).admission,
+			backendItem: (reference) => entry(reference).backendItem,
 		}),
 	};
 }
