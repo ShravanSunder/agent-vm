@@ -114,12 +114,12 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Passes when:**
   - the unlisted account ends at "not allowed", and D1 gains no `user`, `account` or `session` row for it;
   - after removal, the passkey sign-in, the new token request, the Accept and the introspection are all refused or inactive; the proposal stays pending; no session row remains for A;
-  - in E, the late session obtains no code, no token and no active introspection answer;
+  - in E, a code the late session obtains cannot be exchanged for a token, and introspection of any token tied to it is inactive;
   - in F, a commit held past `SD8` checks again, and is refused when the removal landed in between, while a commit within `SD8` with no removal applies once;
   - after B signs out, the token request is refused and introspection of B's earlier token is inactive.
 
   Wrong builds that fail it:
-  - a gate only at session creation (E's late session gets a token);
+  - a gate only at session creation (E's late session gets a signed token);
   - a decision that trusts the signature (Accept with the earlier token applies);
   - introspection that ignores the session row (B's earlier token stays active);
   - a missing freshness bound (F's held commit applies without a second check).
