@@ -1,3 +1,4 @@
+export * from './access-assessor.js';
 export * from './cli-allowances/index.js';
 export * from './mcp-approval-policy.js';
 export * from './portal-access-policy.js';
