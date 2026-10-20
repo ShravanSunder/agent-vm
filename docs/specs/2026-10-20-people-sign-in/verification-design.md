@@ -98,6 +98,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Re-add:** the owner re-adds A's address. A signs in again and reaches the same Person id. The audit shows `reactivatedPersonId`.
 - **Sign-out branch:** Person B signs out. Then request a new token with B's old cookie, and introspect B's earlier token.
 - **Owner branch:** the owner removes their own entry. Their next admin call is refused.
+- **Two-entry branch:** Person C has two allowlisted addresses, both bound to them: C signed in with Google on one and linked GitHub on the other. The owner removes one address. C's passkey sign-in, a new token and an Accept are all refused. Re-adding that address restores C.
 
 **E. Held interleavings** (automated integration on `T3`, no journey). The test's composition can hold a request at a named step while the removal batch, or a sign-out, commits on another request. Each case is a separate run:
 1. A passkey sign-in held after its session insert, before the final check. **Expect:** refused; no session row for A.
@@ -108,10 +109,11 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 6. A token request held after the final check. **Expect:** the token reaches the client; introspection of it is inactive; its `exp` is within `SD3`.
 7. Introspection held after Better Auth's own `sid` read, before the final check. **Expect:** `{ active: false }`.
 8. Introspection held after the final check. **Expect:** `active` with a `checkedAt` before the removal.
-9. A first Google sign-in held after Better Auth wrote its user and account rows, before the current-person check binds the entry, while the owner removes that entry. **Expect:** refused. Read back the `user`, `account`, `allowed_email` binding, `session` and `sign_in_audit` rows: the user and account remain, unbound, with no session. A later re-add reactivates that same Person.
+9. A first Google sign-in held at two points while the owner removes that entry: (a) after the gate's read, before either of Better Auth's writes; (b) after both writes, before the bind. **Expect:** refused in both. Read back the `user`, `account`, `allowed_email` binding, `session` and `sign_in_audit` rows: no `user` or `account` row for that login remains, and there is no session.
 10. The same hold on the owner's first sign-in on an empty deployment, while a second, never-listed account tries. **Expect:** exactly one `deployment_owner` row naming the owner, and one `owner-bound` record.
+11. Case 9(b) with the cleanup batch made to fail. **Expect:** the `user` and `account` rows remain, unbound. The failure is recorded, and a later sign-in with that login is refused while its entry stays removed.
 
-**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook fails case 9's readback.
+**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback.
 
 **F. Decision freshness** (Tool Portal integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
 1. the live check passes, then the apply is held past `SD8`;
@@ -124,7 +126,11 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - *The verifier's token rules*, with real JOSE signing over test keys. Each of these must give its own reason: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another service, an `aud` array containing this service (from `openid` and from two resources), expired, and `sid` missing. A token that is correct in every way verifies.
 - *The allowlist gate:*
   - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches;
-  - **derived active state:** bound and allowed is active; removed is inactive; re-added is active again.
+  - **derived active state:**
+    - every bound entry allowed: active;
+    - any bound entry removed: inactive, including when another bound entry is still allowed;
+    - re-added with the rest allowed: active again;
+    - no bound entry: bind the matching allowed entry, or inactive.
 
 **I. Audit coverage** (`verify-auth` `audit`, needed, lasting; plus forced failures on `T3`).
 - **On `T1`:**
@@ -146,7 +152,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Passes when:**
   - each provider sign-in and the passkey sign-in end with a session whose user id equals Person A's;
   - each well-formed attempt through another method creates no `user`, `account` or `session` row and sets no session cookie, whatever status it answers;
-  - the configuration enables only the Google and GitHub providers and the passkey and OAuth-provider plugins;
+  - the configuration enables only the Google and GitHub providers, the passkey and OAuth-provider plugins, and the JWT plugin the OAuth provider needs, with that plugin's own token endpoint disabled;
   - before linking, the GitHub attempt shows the link message and D1 gains no `user` or `account` row;
   - after linking by redirect, a GitHub sign-in reaches Person A;
   - the ID-token linking form is refused and adds no `account` row;
@@ -180,6 +186,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - in H, the first non-owner attempt and the never-listed account are refused. The owner becomes the bound owner, with one `owner-bound` record;
   - the unlisted account ends at "not allowed", and D1 gains no `user`, `account` or `session` row for it;
   - after removal, every attempt in D is refused or inactive, writes nothing, and leaves no session row for A. The proposal stays pending;
+  - in the two-entry branch, removing one of C's two addresses stops C, and re-adding it restores C;
   - the re-added person reaches the same Person id;
   - in E, every case gives its expected result;
   - in F, an apply held past `SD8` checks again and is refused when the removal landed in between. An apply within `SD8` with no removal changes state once;

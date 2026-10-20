@@ -48,7 +48,7 @@ The sign-in service never serves machines or agents (`U6`). It does not decide w
 | `E5` Session | One signed-in period of one Person in one deployment. | belongs to one E2 | Ends at sign-out, expiry or removal of the Person | active, signed out, expired, revoked |
 | `E6` Relying service | One of our services that receives proof of a person, identified by its audience identifier (the console; Tool Portal's control API). | registered in one E1; receives many E7 | Proof for one relying service is never valid for another | registered, retired |
 | `E7` Person proof | Evidence issued to one relying service that one Person is signed in, valid for that service only and for a bounded time. | names one E2 and one E6; issued during one E5 | Represents a person, never a service or machine | valid, expired, withdrawn |
-| `E8` Allowlist entry | One provider-verified email address approved for a private deployment, compared case-insensitively. An unverified address never matches. | belongs to one private E1; admits at most one E2, the Person it first admitted | Changes are recorded (`R12`). A Person in a private deployment is active exactly while an allowed E8 admits them | allowed, removed |
+| `E8` Allowlist entry | One provider-verified email address approved for a private deployment, compared case-insensitively. An unverified address never matches. | belongs to one private E1; admits at most one E2, the Person it first admitted | Changes are recorded (`R12`). A Person in a private deployment is active exactly while at least one E8 admits them and every E8 that admits them is allowed | allowed, removed |
 
 ```mermaid
 flowchart TB
@@ -119,6 +119,7 @@ A VM reaching the personal fleet over the VPN, and a machine calling the Router,
 | A relying service receives an expired, wrong-audience or wrong-deployment proof | refused |
 | The service cannot reach its database | no new sessions or proofs; relying services keep refusing what they cannot verify |
 | A privileged decision cannot confirm current status | the decision is refused, not accepted |
+| A first sign-in is refused, and the records it created can't be deleted because the database fails or the service stops mid-request | those records stay unbound and inactive: they can't start a session or obtain a proof, and the failure is recorded for the owner |
 | A removal is recorded while a sign-in or a decision is in progress | a session the sign-in creates can't be used for anything; the decision takes effect only if its confirmation came before the removal and is still within `SD8`, otherwise it is refused |
 
 ## Cross-cutting obligations
