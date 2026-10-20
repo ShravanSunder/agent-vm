@@ -39,5 +39,5 @@ This is the plan for proving the sixteen checks in the [Specification](2026-10-1
 - **Agents reaching the Worker through Cloudflare's MCP Portal.** That waits on the owner's question 1. If the answer is the Portal, a check that the Worker still tells agents apart through it is added first.
 - **Per-user and computer tools.** They aren't built in this work.
 - **1Password service-account tokens inside a Worker.** Cloudflare secrets are used instead.
-- **Which clients defer and follow pages, beyond Claude Code.** Codex defers by default but stops at 2,048 tools; Hermes defers only when configured to; Cursor documents neither. Each is set to `client-deferred` only after a real run like row 2's, against a catalog its limits cover.
+- **Which clients defer and follow pages, beyond Claude Code.** Codex defers by default but refuses a list over 2,048 tools; Hermes defers only when configured to; Cursor documents neither. Each is set to `client-deferred` only after a real run like row 2's, against a catalog its limits cover.
 - **The Worker's limits under real traffic.** The checks above prove each limit holds; they don't prove the numbers suit real use.
