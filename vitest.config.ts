@@ -36,6 +36,17 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-vm/gateway-runtime/managed-tool-engine': repoPath(
+				'packages/gateway-runtime/src/managed-tool-engine',
+			),
+			'@agent-vm/config-contracts-test-support': repoPath('packages/config-contracts/src'),
+			'@agent-vm/tool-portal/policy-comparison': repoPath(
+				'packages/tool-portal/src/tool-portal-service-common.ts',
+			),
+			'@agent-vm/controller-test-support': repoPath('packages/agent-vm/src/controller'),
+			'@agent-collaboration/tool-engine/dispatch': repoPath(
+				'packages/tool-engine/src/dispatch/index.ts',
+			),
 			'@agent-collaboration/tool-access/contracts': repoPath(
 				'packages/tool-access/src/contracts/index.ts',
 			),

@@ -26,6 +26,15 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
+			"@agent-vm/gateway-runtime/managed-tool-engine/*": [
+				"./packages/gateway-runtime/src/managed-tool-engine/*"
+			],
+			"@agent-vm/config-contracts-test-support/*": ["./packages/config-contracts/src/*"],
+			"@agent-vm/tool-portal/policy-comparison": [
+				"./packages/tool-portal/src/tool-portal-service-common.ts"
+			],
+			"@agent-vm/controller-test-support/*": ["./packages/agent-vm/src/controller/*"],
+			"@agent-collaboration/tool-engine/dispatch": ["./packages/tool-engine/src/dispatch/index.ts"],
 			"@agent-collaboration/tool-access/contracts": [
 				"./packages/tool-access/src/contracts/index.ts"
 			],
