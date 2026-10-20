@@ -54,7 +54,7 @@ This work has two parts:
    - **The client defers (`client-deferred`), so it gets `direct`:** every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is a deliberate change.
    - **The portal defers (`portal-deferred`), so it gets `indirect`:** only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
    - **Exactly these two cases.** A client not known to defer gets `portal-deferred`. Either way the agent reaches the same tools, under the same permissions and approvals.
-   - **A big tool list still has to fit the client.** The full list has been measured at 4.56 MB or more, so in `client-deferred` it's sent in pages the client can take.
+   - **A big tool list still has to fit the client.** The full list has been measured at about 4.56 MB across 170 tools (Router PR #153), so in `client-deferred` it's sent in pages the client can take.
 
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
    - **It refuses every caller it can't identify,** and it tells agents apart. How agents reach it, and how they prove who they are, is the first open question below.
