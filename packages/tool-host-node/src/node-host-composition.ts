@@ -94,7 +94,7 @@ export async function createNodeHostComposition(props: {
 				async function resolveValues(
 					values: Readonly<Record<string, FormattedSecretValue>>,
 				): Promise<Record<string, string>> {
-					return Object.fromEntries(
+					return Object.fromEntries<string>(
 						await Promise.all(
 							Object.entries(values).map(async ([name, secret]) => {
 								const rawValue = await props.secrets.resolve(secret);

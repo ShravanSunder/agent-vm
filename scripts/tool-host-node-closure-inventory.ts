@@ -1,3 +1,6 @@
+/// <reference lib="es2024" />
+/// <reference types="node" />
+
 import { readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 

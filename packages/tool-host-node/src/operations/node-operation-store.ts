@@ -39,7 +39,14 @@ function transitionIsAllowed(
 		case 'ambiguous':
 		case 'result-expired':
 			return false;
+		default:
+			return assertNever(current);
 	}
+}
+
+function assertNever(value: never): never {
+	void value;
+	throw new Error('Unsupported operation state.');
 }
 
 /** One fenced writer owns durable records; callers receive only currently authorized records. */

@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { spawnSync } from 'node:child_process';
 import {
 	mkdtemp,

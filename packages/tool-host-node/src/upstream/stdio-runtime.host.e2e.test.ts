@@ -119,7 +119,7 @@ describe('real Node outgoing stdio process boundary', () => {
 				(await readFile(effectsPath, 'utf8'))
 					.trim()
 					.split('\n')
-					.map((line) => JSON.parse(line)),
+					.map((line) => z.record(z.string(), z.unknown()).parse(JSON.parse(line))),
 			).toEqual(expect.arrayContaining([expect.objectContaining({ event: 'cancelled' })]));
 		} finally {
 			await runtime.closeAgentScope('scope-a');
