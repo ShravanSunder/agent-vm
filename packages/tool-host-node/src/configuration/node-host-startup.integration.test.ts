@@ -115,6 +115,28 @@ describe('real Node host loader and startup boundary', () => {
 		await writeFile(configPath, '{ malformed }');
 		await expect(loadNodeHostConfig(configPath)).rejects.toThrow(/Invalid JSONC/u);
 	});
+	it('refuses an injected resolver that returns an empty string before serving and releases the writer fence', async () => {
+		const directory = await fixtureDirectory();
+		const configPath = await writeFixtureConfig(fixtureConfig(directory, unusedUrls), directory);
+		let resolutions = 0;
+		const attempt = await startNodeHost({
+			configPath,
+			secrets: {
+				resolve: async (): Promise<string> => {
+					resolutions += 1;
+					return '';
+				},
+			},
+		}).then(
+			(host) => ({ kind: 'served' as const, host }),
+			() => ({ kind: 'refused' as const }),
+		);
+		if (attempt.kind === 'served') await attempt.host.retire();
+		expect(resolutions).toBeGreaterThan(0);
+		expect(attempt.kind).toBe('refused');
+		const recovered = await startNodeHost({ configPath, secrets: resolver });
+		await recovered.retire();
+	});
 	it('rolls back the writer fence when a required injected secret cannot resolve', async () => {
 		const directory = await fixtureDirectory();
 		const configPath = await writeFixtureConfig(fixtureConfig(directory, unusedUrls), directory);
