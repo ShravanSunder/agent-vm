@@ -1,5 +1,6 @@
+import { once } from 'node:events';
 import { readFile, readdir } from 'node:fs/promises';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import path from 'node:path';
 
 import type { ApprovalPort } from '@agent-collaboration/tool-engine/dispatch';
@@ -333,7 +334,28 @@ describe('real Node host ingress, gateway, dispatcher, connectors and public sto
 		const config = fixtureConfig(directory, [alpha.url, beta.url]);
 		const configPath = await writeFixtureConfig(config, directory);
 		const host = await startNodeHost({ configPath, secrets });
+		const otherAudience = {
+			audience: 'collaboration:mcp',
+			bearerToken: 'credential-for-another-audience',
+		};
+		const otherService = createServer((request, response) => {
+			response.writeHead(
+				request.headers.authorization === `Bearer ${otherAudience.bearerToken}` ? 200 : 401,
+				{ 'content-type': 'application/json' },
+			);
+			response.end(JSON.stringify({ audience: otherAudience.audience }));
+		});
+		otherService.listen(0, '127.0.0.1');
+		await once(otherService, 'listening');
 		try {
+			const otherAddress = otherService.address();
+			if (otherAddress === null || typeof otherAddress === 'string')
+				throw new Error('Missing other audience endpoint');
+			const validOtherProof = await fetch(`http://127.0.0.1:${otherAddress.port}`, {
+				headers: { Authorization: `Bearer ${otherAudience.bearerToken}` },
+			});
+			expect(validOtherProof.status).toBe(200);
+			expect(await validOtherProof.json()).toEqual({ audience: 'collaboration:mcp' });
 			const endpoint = endpointOf(host);
 			const initialize = {
 				jsonrpc: '2.0',
@@ -399,9 +421,69 @@ describe('real Node host ingress, gateway, dispatcher, connectors and public sto
 					expect(status, JSON.stringify(headers)).toBe(400);
 				}),
 			);
+			const active = await connectClient(endpoint, 'credential-a');
+			try {
+				await Promise.all(
+					[
+						'mcp_portal_list',
+						'mcp_portal_search',
+						'mcp_portal_describe',
+						'mcp_portal_call',
+					].flatMap((name) =>
+						['profile', 'principal', 'backend', 'account', 'url'].map(async (field) => {
+							const normal =
+								name === 'mcp_portal_call'
+									? readCall('override-' + field)
+									: {
+											requests: [
+												{
+													id: 'request',
+													...(name === 'mcp_portal_describe'
+														? { tools: [{ namespace: 'alpha', toolName: 'read' }] }
+														: {}),
+												},
+											],
+										};
+							expect(
+								decodedResult(
+									await active.client.callTool({
+										name,
+										arguments: { ...normal, [field]: 'untrusted-override' },
+									}),
+								).ok,
+							).toBe(false);
+						}),
+					),
+				);
+			} finally {
+				await active.client.close();
+			}
+			await Promise.all(
+				(
+					[
+						['{invalid', 400],
+						[JSON.stringify({ padding: 'x'.repeat(4 * 1024 * 1024) }), 413],
+					] as const
+				).map(async ([body, status]) => {
+					const response = await fetch(endpoint, {
+						method: 'POST',
+						headers: {
+							Authorization: 'Bearer credential-a',
+							accept: 'application/json, text/event-stream',
+							'content-type': 'application/json',
+						},
+						body,
+					});
+					expect(response.status).toBe(status);
+				}),
+			);
 			expect(alpha.effects).toEqual([]);
 			expect(beta.effects).toEqual([]);
 		} finally {
+			otherService.closeAllConnections();
+			await new Promise<void>((resolve, reject) =>
+				otherService.close((error) => (error === undefined ? resolve() : reject(error))),
+			);
 			await host.retire();
 			await alpha.close();
 			await beta.close();

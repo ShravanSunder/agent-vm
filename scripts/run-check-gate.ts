@@ -117,6 +117,7 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 						'scripts/verify-portal-package-exports.ts',
 						'--packed-access',
 						'--packed-engine',
+						'--packed-host-node',
 					],
 					command: 'pnpm',
 					id: 'portal-exports',

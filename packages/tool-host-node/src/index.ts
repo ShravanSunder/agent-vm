@@ -13,3 +13,4 @@ export * from '#node-host/upstream/node-upstream-transports';
 export { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
 export * from '#node-host/observability/process-logging';
 export * from '#node-host/observability/server-log-events';
+export * from '#node-host/configuration/mcp-schema-artifact';

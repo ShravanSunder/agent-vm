@@ -15,7 +15,7 @@ import type {
 	PortalServerLogger,
 } from '#node-host/observability/server-log-events';
 
-const portalServerLogger = getLogger(['agent-vm', 'mcp-portal', 'server']);
+const portalServerLogger = getLogger(['agent-collaboration', 'tool-host-node', 'server']);
 const maxSafeIdentifierLength = 128;
 const maxSafeReasonLength = 64;
 const unsafeIdentifierSyntaxPattern = /(?:\/\/|[?&#=%@])/u;
@@ -36,7 +36,7 @@ function ignoreRecordsAfterDisposal<TSink extends Sink & AsyncDisposable>(sink: 
 type PortalServerLogLevel = 'error' | 'info' | 'warn';
 
 export interface PortalServerLogRecord {
-	readonly category: readonly ['agent-vm', 'mcp-portal', 'server'];
+	readonly category: readonly ['agent-collaboration', 'tool-host-node', 'server'];
 	readonly level: PortalServerLogLevel;
 	readonly message: string;
 	readonly properties: Readonly<Record<string, number | string>>;
@@ -123,7 +123,7 @@ function assertNever(value: never): never {
 }
 
 export function mapPortalServerLogEvent(event: PortalServerLogEvent): PortalServerLogRecord {
-	const category = ['agent-vm', 'mcp-portal', 'server'] as const;
+	const category = ['agent-collaboration', 'tool-host-node', 'server'] as const;
 	switch (event.event) {
 		case 'server_error':
 			return {
@@ -239,12 +239,12 @@ export async function configureProcessLogging(
 			getOpenTelemetrySinkImpl({
 				diagnostics: false,
 				exceptionAttributes: false,
-				serviceName: 'agent-vm-mcp-portal',
+				serviceName: 'tool-host-node',
 			}),
 		);
 		const config = {
 			loggers: [
-				{ category: 'agent-vm', sinks: ['stderr', 'otel'] },
+				{ category: 'agent-collaboration', sinks: ['stderr', 'otel'] },
 				{
 					category: ['logtape', 'meta'],
 					lowestLevel: 'warning',

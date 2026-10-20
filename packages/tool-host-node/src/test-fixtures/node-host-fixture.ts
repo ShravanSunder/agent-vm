@@ -22,7 +22,7 @@ export const headerCanary = 'provider-header-canary-243';
 export const revision = { owner: 'configured-host', revision: 'v1' };
 export const toolInputSchema = {
 	type: 'object' as const,
-	properties: { value: { type: 'integer' } },
+	properties: { value: { type: 'integer' }, profile: { type: 'string' } },
 	required: ['value'],
 	additionalProperties: false,
 };
@@ -36,12 +36,17 @@ export interface ControlledProvider {
 		readonly selectedHeader: string | undefined;
 	}[];
 	readonly close: () => Promise<void>;
+	readonly duplicateDiscovery: () => void;
+	readonly holdCalls: () => { readonly entered: Promise<void>; readonly release: () => void };
 	readonly holdDiscovery: () => { readonly entered: Promise<void>; readonly release: () => void };
 }
 
 export async function startControlledProvider(label: string): Promise<ControlledProvider> {
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
+	let duplicates = false;
+	let enteredCall: (() => void) | undefined;
+	let callGate: Promise<void> = Promise.resolve();
 	let enteredDiscovery: (() => void) | undefined;
 	let discoveryGate: Promise<void> = Promise.resolve();
 	const http = createServer((request, response) => {
@@ -56,11 +61,13 @@ export async function startControlledProvider(label: string): Promise<Controlled
 				enteredDiscovery?.();
 				await discoveryGate;
 				return {
-					tools: ['read', 'ask', 'blocked', 'hidden', 'fail'].map((name) => ({
-						name,
-						inputSchema: toolInputSchema,
-						description: `${label} ${secretCanary} ${headerCanary}`,
-					})),
+					tools: (duplicates ? ['read', 'read'] : ['read', 'ask', 'blocked', 'hidden', 'fail']).map(
+						(name) => ({
+							name,
+							inputSchema: toolInputSchema,
+							description: `${label} ${secretCanary} ${headerCanary}`,
+						}),
+					),
 				};
 			});
 			server.setRequestHandler(CallToolRequestSchema, async (call) => {
@@ -71,6 +78,8 @@ export async function startControlledProvider(label: string): Promise<Controlled
 					authorization: request.headers.authorization,
 					selectedHeader: typeof selectedHeader === 'string' ? selectedHeader : undefined,
 				});
+				enteredCall?.();
+				await callGate;
 				return {
 					content: [{ type: 'text', text: `${label}:${String(call.params.arguments?.value)}` }],
 					structuredContent: {
@@ -119,6 +128,25 @@ export async function startControlledProvider(label: string): Promise<Controlled
 			await new Promise<void>((resolve, reject) =>
 				http.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
+		},
+		duplicateDiscovery: () => {
+			duplicates = true;
+		},
+		holdCalls: () => {
+			let release: (() => void) | undefined;
+			const entered = new Promise<void>((resolve) => {
+				enteredCall = resolve;
+			});
+			callGate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			return {
+				entered,
+				release: () => {
+					release?.();
+					enteredCall = undefined;
+				},
+			};
 		},
 		holdDiscovery: () => {
 			let release: (() => void) | undefined;

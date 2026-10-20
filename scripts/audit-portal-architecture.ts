@@ -1,3 +1,8 @@
+import { collectToolHostNodeViolations } from './tool-host-node-architecture.js';
+export {
+	collectToolHostNodeViolations,
+	isForbiddenToolHostNodeImport,
+} from './tool-host-node-architecture.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import path from 'node:path';
@@ -24,6 +29,7 @@ const portalPackageNames = new Set([
 	'tool-portal',
 	'tool-access',
 	'tool-engine',
+	'tool-host-node',
 ]);
 
 const controlContractPackageNames = new Set([
@@ -856,6 +862,7 @@ export function collectPortalArchitectureViolations(
 	const violations = [
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),
+		...props.files.flatMap(collectToolHostNodeViolations),
 		...props.files.flatMap(collectProductionTestAliasViolations),
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
 		...props.files.flatMap(collectDependencyViolations),

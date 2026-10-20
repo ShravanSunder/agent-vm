@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/tool-host-node',
+	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-engine/mcp-gateway',
 	'@agent-collaboration/tool-engine/connectors',
 	'@agent-collaboration/tool-engine/dispatch',
@@ -54,6 +56,16 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/tool-host-node': [
+		'startNodeHost',
+		'openNodeOperationStore',
+		'createNodeHostComposition',
+		'nodeHostConfigSchema',
+	],
+	'@agent-collaboration/tool-host-node/catalog-typescript': [
+		'compileCatalogTypescriptModules',
+		'fingerprintCatalogTypescriptInput',
+	],
 	'@agent-collaboration/tool-engine/mcp-gateway': [
 		'createMcpGateway',
 		'encodeToolRef',
@@ -290,6 +302,8 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-host-node',
+	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -598,6 +612,10 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertToolHostNodeSourceIsRestricted, verifyToolHostNodeClosure } =
+		await import('./verify-tool-host-node-closure.ts');
+	await assertToolHostNodeSourceIsRestricted();
+	if (process.argv.includes('--packed-host-node')) await verifyToolHostNodeClosure();
 	const { assertToolEngineSourceIsPortable, verifyToolEngineClosure } =
 		await import('./verify-tool-engine-closure.ts');
 	await assertToolEngineSourceIsPortable();

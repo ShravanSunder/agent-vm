@@ -81,7 +81,7 @@ export async function startNodeHost(props: {
 		};
 		const input = props.input ?? process.stdin;
 		input.once('end', () => {
-			void retire();
+			void retire().catch(() => props.onDiagnostic?.('server-failed'));
 		});
 		await server.connect(transport);
 		return { composition, retire };

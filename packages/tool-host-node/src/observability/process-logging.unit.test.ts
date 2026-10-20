@@ -93,7 +93,7 @@ function isSink(value: unknown): value is Sink {
 }
 
 const lateLogRecord = {
-	category: ['agent-vm', 'mcp-portal', 'server'],
+	category: ['agent-collaboration', 'tool-host-node', 'server'],
 	level: 'warning',
 	message: ['late record'],
 	properties: {},
@@ -174,7 +174,7 @@ describe('MCP Portal process logging', () => {
 		for (const event of allPortalServerEvents) {
 			const record = mapPortalServerLogEvent(event);
 
-			expect(record.category).toEqual(['agent-vm', 'mcp-portal', 'server']);
+			expect(record.category).toEqual(['agent-collaboration', 'tool-host-node', 'server']);
 			expect(record.message).not.toContain('raw');
 			expect(record.properties).not.toHaveProperty('event');
 			expect(record.properties).not.toHaveProperty('message');
@@ -295,7 +295,7 @@ describe('MCP Portal process logging', () => {
 			}>(stderr.chunks);
 			expect(records).toHaveLength(2);
 			const output = records[0];
-			expect(output?.logger).toBe('agent-vm.mcp-portal.server');
+			expect(output?.logger).toBe('agent-collaboration.tool-host-node.server');
 			expect(output?.level).toBe('WARN');
 			expect(output?.message).toBe('MCP Portal proxy authentication decision');
 			expect(output?.properties).toMatchObject({
