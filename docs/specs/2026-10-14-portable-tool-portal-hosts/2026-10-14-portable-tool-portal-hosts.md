@@ -6,7 +6,7 @@ Each check below compares the new pieces against **today's behaviour at `master`
 
 There are three ways in today, and every check applies to each one:
 - agent-vm's private gateway connection;
-- the standalone Tool Portal's MCP tools;
+- the standalone Tool Portal (its MCP tools and its JSON-over-HTTP endpoint);
 - the MCP proxy.
 
 They're described in the [Program Design](program-design.md#the-three-ways-in).
@@ -29,8 +29,8 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
    - A call that needs approval doesn't run without it.
    - An approval covers exactly the calls it names (one call or a batch, as today). It can be used once, and it can't be reused for other calls.
    - **In agent-vm,** approvals go through the controller, as today.
-   - **In the standalone Tool Portal,** its signed batch approval works as today. That includes refusing an old approval after the server restarts with a new service generation.
-   - **In the MCP proxy,** its signed approval token works as today. Its record of used tokens lasts for the life of the process.
+   - **In the standalone Tool Portal,** its signed batch approval works as today, carried in MCP metadata on its MCP route and in its header on its JSON route. That includes refusing an old approval after the server restarts with a new service generation.
+   - **In the MCP proxy,** its signed approval token works as today, carried in `mcp_portal_call`'s input or in MCP metadata on a `direct` call. Its record of used tokens lasts for the life of the process.
 7. **Credentials stay out.** Provider credentials never appear in what a caller sends, receives, sees in errors, or can read from logs. Secrets in results and errors are redacted, as today.
 8. **Same limits.** Each way in enforces today's limits, with today's meaning, and no new ones. They're listed in the [Program Design](program-design.md#limits-today).
 

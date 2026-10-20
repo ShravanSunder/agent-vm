@@ -22,7 +22,7 @@ This work takes them apart into pieces with **one job each**, and puts agent-vm 
 
 1. **The three ways in keep working unchanged.** Callers reach tools three ways today, and each keeps its tool names, inputs, results and artifact reads:
    - **agent-vm's private connection** between its gateway and its portal (portal, artifact and catalog operations). It isn't MCP.
-   - **the standalone Tool Portal's MCP tools** (`tool_portal_*`, plus reading artifacts as MCP resources). The Portal SDK uses these.
+   - **the standalone Tool Portal:** its MCP tools (`tool_portal_*`, plus reading artifacts as MCP resources), which the Portal SDK uses, and its JSON-over-HTTP endpoint.
    - **the MCP proxy's tools** (`mcp_portal_*`, or one MCP tool per configured tool).
 2. Agents see the same tools, under the same permissions, as today.
 3. A call that needs approval still needs it, and approvals work as they do today:
@@ -42,6 +42,7 @@ This work takes them apart into pieces with **one job each**, and puts agent-vm 
    | `@agent-collaboration/tool-access` | The rules: may this agent call this tool, and does the call need approval? It has no server code. |
    | `@agent-collaboration/tool-engine` | The core: shows tools to agents, routes every call through one dispatcher, and talks to other MCP servers. |
    | `@agent-collaboration/tool-host-node` | Runs the engine on a machine: takes connections, checks who's calling, and loads config. It replaces both of today's standalone servers and keeps each one's tools and results. |
+   | `@agent-collaboration/tool-host-cloudflare` | Runs the engine as a deployed, secured Cloudflare Worker, serving the MCP proxy's way in for remote MCP servers. |
    | agent-vm's managed adapter | Plugs agent-vm's own tools and approvals into the engine. It stays inside agent-vm. |
 
    When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Deleting the packages doesn't change any of the three ways in.
@@ -50,22 +51,30 @@ This work takes them apart into pieces with **one job each**, and puts agent-vm 
    - **`direct`**: every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is the one deliberate change.
    - **`indirect`**: only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
 
+3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, for remote MCP servers reached over HTTP. Local things (stdio servers, configured CLIs, Tool VMs) stay on the Node host and agent-vm, because a Worker can't run them.
+   - **Its limits fit what Workers and Durable Objects allow,** within the paid Workers plan the owner pays for.
+   - **When one Worker or one Durable Object isn't enough,** the work is split across several (sharding) rather than refused.
+
+4. **An event log of tool calls.** Each call writes one event: who called, which tool, the outcome and the timing. It never holds arguments, results or secrets.
+   - Cloudflare Workers Analytics Engine is the main home for these events.
+   - The event shape is the same on every host.
+
 ## Not in this work
 
 Pruned by the owner on 2026-10-20. Several of these **were** asked for at different times, as separate tracks: workspace scopes, a React UI, audit, changing access by chat, people sign-in, and a central cloud entry. The owner also said "in essence this is 2 projects" and "lets move to the core functionality and design and split". So they belong in their own later projects, not in this core split. The earlier design made them all one delivery; that was the mistake. The owner's words for each are kept in the [independent inventory](../../wip/2026-10-20-tool-portal-scope-inventory/inventory.md).
-- A Cloudflare Worker host, a cloud gateway in front of computers, and calls routed across machines.
+- A cloud gateway in front of computers, and calls routed across machines. The Worker in this work serves remote MCP servers only.
 - Fleet and Router integration, and enrolment of agents, machines and services.
 - A stored record of every call, and recovery of calls after a restart. Today's server keeps no such record.
 - Workspaces and per-workspace allowances.
 - Any UI or screens, an access view, changing access by chat, entering secrets, and approval settings.
-- Audit events.
+- A full audit trail of permission and security changes. The event log of tool calls above is in this work.
 - The people sign-in service.
 - A control API for proposing and deciding changes.
 - New limits or hardening beyond today's limits.
 
 ## Later, if wanted
 
-- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work.
+- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work. **Nothing here may block it:** the TypeScript generators and `describe`'s per-tool helper keep working on every host, including the Worker.
 
 ## Owner decisions on 2026-10-20
 
@@ -73,11 +82,20 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Mode names:** `direct` and `indirect`.
 - **Code mode:** in both modes eventually, "but not now".
 - **Pruning:** everything listed under "Not in this work".
+- **Cloudflare Worker:** "yes deployed secured cf worker is part of the delivery".
+- **Limits:** "make sure caps are reasonable for limits and fit worker/durable objects (i pay for workers)".
+- **Event log:** "we need event log or analytics", using Workers Analytics Engine: "we use cf engine for this mostly".
+- **Scaling:** "we can have shards if we need it and workers need to split up".
+- **Code mode:** "should be possible later, just don't block us".
 
 ## Questions for the owner
 
 Bring these one at a time. None of them blocks writing this design.
 
-1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not: the first delivery ends at the new packages, running in agent-vm and in the standalone Node server. If "I can use it from anywhere now" is required, the Worker host comes back into this delivery.
+1. **How is the Worker secured?** The design assumes two layers:
+   - Cloudflare Access in front, using service tokens for machines and agents, which fits the decision that Cloudflare handles machine access;
+   - today's agent bearer tokens behind it, to tell agents apart.
 2. **Do tool calls need history that survives a restart?** The design assumes not. Today's server keeps no record per call, and you asked "why do we need to store anything". If that's right, the disk store built in S3b is replaced by what today's servers keep: a record in memory only for calls that need approval, lost on restart. The name-in-`_meta` requirement is removed.
 3. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both. Retiring one is only your call.
+
+**Needed from the owner before the Worker can be deployed:** a Cloudflare account and an API token for the deployment and its proof. No test account has been set up yet.
