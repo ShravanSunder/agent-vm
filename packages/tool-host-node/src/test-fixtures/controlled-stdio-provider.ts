@@ -1,4 +1,5 @@
 import { appendFile } from 'node:fs/promises';
+import { Writable } from 'node:stream';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -67,4 +68,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 process.stdin.once('end', () => {
 	void server.close();
 });
-await server.connect(new StdioServerTransport());
+// Force a legal pipe segmentation: progress and its result arrive in one data chunk.
+// SDK send completion means written, not that the remote notification handler ran.
+let heldProgress = '';
+const output = new Writable({
+	write(chunk: Buffer, _encoding, callback): void {
+		const text = chunk.toString('utf8');
+		if (text.includes('"method":"notifications/progress"') && text.includes('"progress":1')) {
+			heldProgress = text;
+			callback();
+			return;
+		}
+		const combined = heldProgress + text;
+		heldProgress = '';
+		process.stdout.write(combined, callback);
+	},
+});
+await server.connect(new StdioServerTransport(process.stdin, output));

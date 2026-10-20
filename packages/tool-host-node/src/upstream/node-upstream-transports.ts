@@ -5,6 +5,8 @@ import {
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import type {
 	NormalizedUpstreamMcpServer,
@@ -63,6 +65,36 @@ export function createNodeStdioUpstreamTransport(
 		transport.stderr?.on('data', (chunk: Buffer | string): void => {
 			props.stderr?.(redactCredentialText(String(chunk), { exactValues: Object.values(env) }));
 		});
-		return transport;
+		let deliveries = Promise.resolve();
+		const orderedTransport: Transport = {
+			start: async () => {
+				Object.assign(transport, {
+					onmessage: (message: JSONRPCMessage): void => {
+						// SDK 1.29 defers notification handlers. Preserve wire order across
+						// their microtasks before a coalesced result removes the progress token.
+						deliveries = deliveries
+							.then(() => {
+								orderedTransport.onmessage?.(message);
+							})
+							.catch((error: unknown) => {
+								orderedTransport.onerror?.(
+									error instanceof Error ? error : new Error('Stdio message delivery failed.'),
+								);
+							});
+					},
+					onerror: (error: Error): void => orderedTransport.onerror?.(error),
+					onclose: (): void => {
+						void deliveries.then(() => orderedTransport.onclose?.());
+					},
+				});
+				await transport.start();
+			},
+			send: async (message) => transport.send(message),
+			close: async () => {
+				await transport.close();
+				await deliveries;
+			},
+		};
+		return orderedTransport;
 	};
 }

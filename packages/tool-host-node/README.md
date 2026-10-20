@@ -11,6 +11,7 @@ HTTP startup prints a JSON readiness record; MCP initialization verifies serving
 readiness. Stdio stdout contains only protocol messages.
 
 The configuration requires an authority, revision, explicit store directory,
+`operationStoreBounds.maximumOperations` and `operationStoreBounds.maximumRecordBytes`,
 complete profiles, credential assignments, MCP providers, exposure mode and
 listener. HTTP plaintext binds loopback only and checks configured Host/Origin
 bounds. This slice supports the `not-configured` workspace binding and registered
@@ -37,6 +38,20 @@ dependency. Conditional arm transitions permit one portal dispatch. A lost reply
 after arm remains ambiguous; lookup never dispatches. This does not promise
 exactly-once effects from third-party providers. Caller-scoped lookup rechecks
 the injected current context. Store or writer-fence failure prevents new work.
+
+Store bounds are required positive integers with no defaults. The record-byte
+bound must be at least the copied 4 MiB per-call result limit plus a 32 KiB
+schema-derived envelope. Capacity is reserved before arm, counted again on
+reopen, and never evicts history. Existing operations remain readable and usable
+at capacity. A failed durability acknowledgement retains its reservation until
+reopen. Capacity and storage failures have separate fixed diagnostics.
+Post-redaction results also meet the copied per-call limit; exceeding it returns
+public `ambiguous` and retains the armed record, preventing replay even though
+the provider effect is known to have occurred. Production sizing is not chosen.
+
+This slice does not earn R14 or C5 deployment readiness. Sessions, agent scopes,
+incoming stdio message bytes, generated helper/artifact bytes and aggregate
+gateway output have no explicit host bounds here; S3c owns those categories.
 
 The `catalog-typescript` entrypoint preserves generator v2 and SDK contract v1
 bytes. The copied MCP-provider schema retains `agent-vm:mcp:1`. Frozen fixtures

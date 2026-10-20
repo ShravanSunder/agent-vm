@@ -41,7 +41,10 @@ export interface ControlledProvider {
 	readonly holdDiscovery: () => { readonly entered: Promise<void>; readonly release: () => void };
 }
 
-export async function startControlledProvider(label: string): Promise<ControlledProvider> {
+export async function startControlledProvider(
+	label: string,
+	providerOutput: { readonly resultText?: string } = {},
+): Promise<ControlledProvider> {
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
@@ -81,7 +84,12 @@ export async function startControlledProvider(label: string): Promise<Controlled
 				enteredCall?.();
 				await callGate;
 				return {
-					content: [{ type: 'text', text: `${label}:${String(call.params.arguments?.value)}` }],
+					content: [
+						{
+							type: 'text',
+							text: providerOutput.resultText ?? `${label}:${String(call.params.arguments?.value)}`,
+						},
+					],
 					structuredContent: {
 						provider: label,
 						value: call.params.arguments?.value,
@@ -188,6 +196,11 @@ export function fixtureConfig(
 		revision,
 		workspaceLayer: 'not-configured',
 		storeDirectory: path.join(directory, 'store'),
+		// Explicit fixture-only values; these are not production sizing decisions.
+		operationStoreBounds: {
+			maximumOperations: 32,
+			maximumRecordBytes: 4 * 1024 * 1024 + 32 * 1024,
+		},
 		auth: {
 			audience: 'tool-portal:mcp',
 			serviceGeneration: 'generation-1',

@@ -15,6 +15,17 @@ export function createNodeHostDiagnosticLogger(
 			});
 			return;
 		}
+		if (event === 'operation-store-capacity' || event === 'operation-store-storage-failed') {
+			logger.log({
+				event: 'server_error',
+				level: 'error',
+				message:
+					event === 'operation-store-capacity'
+						? 'Operation store capacity exhausted.'
+						: 'Operation store storage failed.',
+			});
+			return;
+		}
 		if (event === 'upstream-close-failed') {
 			logger.log({
 				event: 'upstream_close_error',

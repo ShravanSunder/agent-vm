@@ -42,11 +42,13 @@ import {
 	type NodeHostBearerCredentialSet,
 	type CompiledNodeHostCredential,
 } from '#node-host/ingress/bearer-credentials';
+import { maximumNodeHostResultBytes } from '#node-host/operations/node-operation-bounds';
 import { openNodeOperationStore } from '#node-host/operations/node-operation-store';
 import {
 	createNodeHttpUpstreamTransport,
 	createNodeStdioUpstreamTransport,
 } from '#node-host/upstream/node-upstream-transports';
+import { assertUpstreamResponseSize } from '#node-host/upstream/stdio-upstream-protocol';
 import { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
 
 export interface NodeHostSecretResolutionPort {
@@ -70,7 +72,13 @@ export async function createNodeHostComposition(props: {
 	readonly config: NodeHostConfig;
 	readonly secrets: NodeHostSecretResolutionPort;
 	readonly approvals?: ApprovalPort;
-	readonly onDiagnostic?: (event: 'upstream-close-failed' | 'upstream-stderr') => void;
+	readonly onDiagnostic?: (
+		event:
+			| 'upstream-close-failed'
+			| 'upstream-stderr'
+			| 'operation-store-capacity'
+			| 'operation-store-storage-failed',
+	) => void;
 }): Promise<NodeHostComposition> {
 	const config = nodeHostConfigSchema.parse(structuredClone(props.config));
 	const credentials = compileNodeHostCredentialSet(config.auth);
@@ -85,6 +93,8 @@ export async function createNodeHostComposition(props: {
 	const operations = await openNodeOperationStore({
 		directory: config.storeDirectory,
 		authority: config.authority,
+		bounds: config.operationStoreBounds,
+		...(props.onDiagnostic === undefined ? {} : { onDiagnostic: props.onDiagnostic }),
 		authorize: (key, contextRef) => allowedContext.get(contextRef) === key.principal,
 	});
 	try {
@@ -254,6 +264,8 @@ export async function createNodeHostComposition(props: {
 						arguments: invocation.arguments,
 						requestId: invocation.operationKey.item,
 					});
+					// Redaction may expand strings beyond the upstream pre-redaction limit.
+					assertUpstreamResponseSize(result, maximumNodeHostResultBytes);
 					return { kind: 'completed', result: jsonValueSchema.parse(result) };
 				},
 			};

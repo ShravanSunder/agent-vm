@@ -11,6 +11,10 @@ import {
 } from '@agent-collaboration/tool-engine/dispatch';
 
 import { createCrashDurableRecordStore } from '#node-host/operations/crash-durable-record-store';
+import {
+	nodeOperationStoreBoundsSchema,
+	type NodeOperationStoreBounds,
+} from '#node-host/operations/node-operation-bounds';
 import { acquireNodeStoreOwnershipLock } from '#node-host/operations/node-store-ownership-lock';
 
 export interface NodeOperationStore extends OperationPort {
@@ -53,22 +57,47 @@ function assertNever(value: never): never {
 export async function openNodeOperationStore(props: {
 	readonly directory: string;
 	readonly authority: string;
+	readonly bounds: NodeOperationStoreBounds;
+	readonly onDiagnostic?: (
+		event: 'operation-store-capacity' | 'operation-store-storage-failed',
+	) => void;
 	readonly authorize: (key: OperationKey, verifiedContextRef: string) => boolean;
 	readonly now?: () => number;
 }): Promise<NodeOperationStore> {
+	const bounds = nodeOperationStoreBoundsSchema.parse(props.bounds);
 	const ownership = await acquireNodeStoreOwnershipLock({ runtimeDirectory: props.directory });
 	const records = createCrashDurableRecordStore({
-		recordSchema: operationRecordSchema,
+		recordSchema: operationRecordSchema.refine(
+			(record) =>
+				Buffer.byteLength(JSON.stringify(record) + '\n', 'utf8') <= bounds.maximumRecordBytes,
+			'Operation record exceeds configured size.',
+		),
 		recordsDirectoryPath: path.join(props.directory, 'tool-operations-v1'),
 	});
+	let reservedRecordIds: Set<string>;
+	try {
+		const existing = await records.listRecords();
+		reservedRecordIds = new Set(existing.map((record) => operationRecordId(record.key)));
+		if (reservedRecordIds.size > bounds.maximumOperations)
+			throw new Error('Existing operation records exceed configured capacity.');
+	} catch (error) {
+		await ownership.release();
+		throw error;
+	}
 	const now = props.now ?? Date.now;
 	let closed = false;
 	const activeMutations = new Set<Promise<unknown>>();
+	let mutationTail = Promise.resolve();
 	function admitted(key: OperationKey, contextRef: string): boolean {
 		return !closed && key.authority === props.authority && props.authorize(key, contextRef);
 	}
 	async function tracked<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
-		const pending = operation();
+		// One serialized mutation boundary makes the count check and reservation atomic.
+		const pending = mutationTail.then(operation);
+		mutationTail = pending.then(
+			() => undefined,
+			() => undefined,
+		);
 		activeMutations.add(pending);
 		try {
 			return await pending;
@@ -93,6 +122,17 @@ export async function openNodeOperationStore(props: {
 											? { kind: 'existing', record: current }
 											: { kind: 'conflict' },
 								};
+							const recordId = operationRecordId(invocation.operationKey);
+							if (
+								!reservedRecordIds.has(recordId) &&
+								reservedRecordIds.size >= bounds.maximumOperations
+							) {
+								props.onDiagnostic?.('operation-store-capacity');
+								return { nextRecord: null, result: { kind: 'unavailable' } };
+							}
+							// Retain this reservation even if durability acknowledgement fails:
+							// a rename may already have committed. Reopen reads authoritative disk state.
+							reservedRecordIds.add(recordId);
 							const timestamp = new Date(now()).toISOString();
 							const record = operationRecordSchema.parse({
 								version: 'tool-operation-v1',
@@ -108,6 +148,7 @@ export async function openNodeOperationStore(props: {
 					),
 				);
 			} catch {
+				props.onDiagnostic?.('operation-store-storage-failed');
 				return { kind: 'unavailable' };
 			}
 		},
@@ -118,6 +159,7 @@ export async function openNodeOperationStore(props: {
 				const record = await records.loadRecord(operationRecordId(request.key));
 				return record === null ? { kind: 'not-found' } : { kind: 'found', record };
 			} catch {
+				props.onDiagnostic?.('operation-store-storage-failed');
 				return { kind: 'unavailable' };
 			}
 		},
@@ -147,6 +189,7 @@ export async function openNodeOperationStore(props: {
 					),
 				);
 			} catch {
+				props.onDiagnostic?.('operation-store-storage-failed');
 				return { kind: 'unavailable' };
 			}
 		},
