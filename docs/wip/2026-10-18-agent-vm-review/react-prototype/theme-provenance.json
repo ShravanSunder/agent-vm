@@ -1,0 +1,8 @@
+{
+  "agentStudioHead": "8d5d98a7ee676d751768836763090813ef627ceb",
+  "source": "BridgeWeb/src/app/bridge-app.css",
+  "cssPrefixLines": 324,
+  "transform": "Copied token prefix and shared base reset (lines 659\u2013671), then Oxfmt formatting. Excludes viewer clipping, animations and product-specific CSS. Portal adjusts semantic border to 10% foreground and sidebar accent to control-fill for consistent separators and active navigation.",
+  "components": "Official shadcn base-mira registry generated using shadcn4.22.0; cn migration applied. This supersedes the initial Bridge component copies.",
+  "limits": "No native runtime, RPC, viewer providers or product authority copied."
+}

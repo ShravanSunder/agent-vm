@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Tool Portal, approvals &amp; remote execution</title>
+		<link rel="stylesheet" href="assets/islands/theme.css" />
+		<link rel="stylesheet" href="assets/explainer-layout.css" />
+		<script type="module" src="assets/islands/runtime.js"></script>
+	</head>
+	<body>
+		<a class="skip-link" href="#main-content">Skip to content</a>
+		<div class="prototype-banner">
+			<a href="index.html">All explainers</a> · Source snapshot: 14 October 2026 · Local reading
+			bundle
+		</div>
+		<div class="wrap">
+			<nav class="toc" aria-label="Contents">
+				<p>Tool Portal explainers</p>
+				<ol>
+					<li><a href="#overview">Overview</a></li>
+					<li><a href="#reading-paths">Reading paths</a></li>
+					<li><a href="#scope">Your scope</a></li>
+					<li><a href="#reading-guide">Reading controls</a></li>
+					<li><a href="#evidence">Evidence</a></li>
+					<li><a href="#style">Visual reference</a></li>
+				</ol>
+				<button type="button" data-ex-theme>Switch theme</button>
+				<div class="collection-nav">
+					<p>Other explainers</p>
+					<ol>
+						<li><a href="portal-system.html">The system today</a></li>
+						<li><a href="approval-and-reconnects.html">Approval &amp; reconnects</a></li>
+						<li><a href="harness-presentation.html">Harnesses &amp; discovery</a></li>
+						<li><a href="portable-runtime.html">Portable runtime</a></li>
+					</ol>
+				</div>
+			</nav>
+			<main id="main-content">
+				<ex-document>
+					<section id="overview">
+						<div class="eyebrow">Four reading paths</div>
+						<h1>Tool Portal, approvals &amp; remote execution</h1>
+						<p class="lede">
+							Understand the system that exists, then explore a portable service for your machines
+							and harnesses. Each explainer has a Markdown version and an interactive HTML reading
+							view.
+						</p>
+						<ex-callout
+							>Current source, proposed options and evidence limits remain separate. Authority
+							placement is an option to compare, not a prerequisite to understanding the whole
+							system.</ex-callout
+						>
+					</section>
+					<section id="reading-paths">
+						<h2>Choose the question you want to understand</h2>
+						<div class="tbl">
+							<table>
+								<thead>
+									<tr>
+										<th>Explainer</th>
+										<th>What it answers</th>
+										<th>Text</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td><a href="portal-system.html">The system today</a></td>
+										<td>
+											The two libraries, three managed backends, authored configuration and
+											standalone limits.
+										</td>
+										<td><a href="portal-system.md" download>Markdown</a></td>
+									</tr>
+									<tr>
+										<td><a href="approval-and-reconnects.html">Approval &amp; reconnects</a></td>
+										<td>
+											Where consent lives, how it is consumed, and what connection loss can and
+											cannot recover.
+										</td>
+										<td><a href="approval-and-reconnects.md" download>Markdown</a></td>
+									</tr>
+									<tr>
+										<td><a href="harness-presentation.html">Harnesses &amp; discovery</a></td>
+										<td>
+											Hermes, Codex, Claude Code, Cursor, Pi and optional OpenCode; compact, catalog
+											and code access.
+										</td>
+										<td><a href="harness-presentation.md" download>Markdown</a></td>
+									</tr>
+									<tr>
+										<td><a href="portable-runtime.html">Portable runtime</a></td>
+										<td>
+											Generic service boundaries, configuration-driven VM access, Router integration
+											and language choices.
+										</td>
+										<td><a href="portable-runtime.md" download>Markdown</a></td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					</section>
+					<section id="scope">
+						<h2>The scope you asked for</h2>
+						<pre class="flow">
+Your original questions
+├── Existing system: Tool Portal, MCP Portal and Gateway Runtime
+├── Approval: package owner, shared implementation and agent integration
+├── General reuse: a service usable beyond managed Hermes
+├── Machine and VM access: authorized, configured, multi-machine
+├── Harnesses: Hermes, Codex, Claude Code, Cursor, Pi; maybe OpenCode
+├── Discovery: client-native search, compact Portal and code bindings
+├── Language and hosting: TypeScript service versus Rust integration
+└── Resilience: logical interaction separate from physical connection
+</pre>
+						<p>
+							The collection covers this whole tree. The portable-runtime view compares authority
+							options without treating a recommendation as an accepted design.
+						</p>
+					</section>
+					<section id="reading-guide">
+						<h2>How to read the views</h2>
+						<ul>
+							<li>Use tabs for different perspectives on one question.</li>
+							<li>Zoom, drag or expand a diagram when its relationships need more room.</li>
+							<li>Follow source links or open the native Markdown disclosure.</li>
+							<li>Switch theme; print produces a plain reading view.</li>
+						</ul>
+						<p>The diagrams are explanatory SVGs. None of the controls call a live service.</p>
+					</section>
+					<section id="evidence">
+						<h2>What was checked</h2>
+						<p>
+							Agent VM source at <code>8535fdd4</code>, the Router design worktree at
+							<code>d0bb5c10</code>, current official MCP/OpenAI/Cursor documentation and
+							release-pinned Pi/OpenCode source were inspected. The named Router design artifacts
+							were read end to end. Installed harnesses, live providers, VMs and cross-machine
+							recovery were not exercised. Claude primary documentation returned HTTP 403.
+						</p>
+					</section>
+					<section id="style">
+						<h2>The visual reference</h2>
+						<p>
+							The typography, palette, contents rail and island controls are copied from the
+							supplied local
+							<a href="http://127.0.0.1:4173/experiments/html-islands-live.html"
+								>HTML Islands experiment</a
+							>. Fonts and reading-runtime dependencies have local assets and license notices. The
+							source lab was left unchanged.
+						</p>
+						<p><a href="README.md" download>Download the collection guide</a></p>
+					</section>
+					<footer>
+						Research snapshot: 14 October 2026. These are explainers for discussion, not deployment
+						instructions or an accepted specification.
+					</footer>
+				</ex-document>
+			</main>
+		</div>
+	</body>
+</html>

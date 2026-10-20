@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Distributed portal authority</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Gateway and components</a>
+<a href="distributed.html">Distributed authority</a>
+<a href="packages.html">Package boundaries</a>
+</nav></ex-nav>
+<ex-document id="content">
+<h1>Distribution changes who owns the truth</h1>
+<ex-callout tone="tldr" title="Same library does not mean shared authority">
+We already have remote MCP connections and a managed approval RPC. The remaining work is the contract for policy freshness, exact approvals, one-use dispatch and recovery across independently failing processes. A database adapter alone does not supply that contract.
+</ex-callout>
+<ex-callout tone="question" title="Two deployment meanings; no selection made">
+**Replicas** jointly serve one authorization domain. **Independent portals** each own a domain and delegate requests between them. These are different systems even when both reuse identical packages.
+</ex-callout>
+<h2 id="ownership">Replicas and independent portals</h2>
+<ex-tabs>
+<section label="One authority, several front ends">
+<ex-flow id="replica-map" cols="3">
+<ex-card id="replica-a" title="Gateway A" tone="planned" icon="globe">Verifies the request and routes admission to the authority owner.</ex-card>
+<ex-card id="shared-authority" title="One authority" tone="planned" icon="database">Owns current policy, operation identity, approval decisions and atomic consumption.</ex-card>
+<ex-card id="replica-b" title="Gateway B" tone="planned" icon="globe">Can recover the same caller's work through that authority, under current access checks.</ex-card>
+<ex-arrow from="replica-a" to="shared-authority" label="admit"></ex-arrow>
+<ex-arrow from="replica-b" to="shared-authority" label="lookup"></ex-arrow>
+</ex-flow>
+<p>One-use decisions must be ordered at the same owner. A replacement front end must not generate another dispatch permit for work that may already have been sent.</p>
+</section>
+<section label="Independent cloud and Mac authorities">
+<ex-flow id="federation-map" cols="3">
+<ex-card id="cloud-authority" title="Cloud portal" tone="planned" icon="cloud">Cloud caller policy, approval and operation record.</ex-card>
+<ex-card id="delegated-hop" title="Authenticated handoff" tone="question" icon="key">Resource audience, verified acting identity, exact work and correlated operation references. Contract still to settle.</ex-card>
+<ex-card id="mac-authority" title="Mac portal" tone="planned" icon="cpu">Independent local admission, resource limits, approval requirements and outcome owner.</ex-card>
+<ex-arrow from="cloud-authority" to="delegated-hop" label="request"></ex-arrow>
+<ex-arrow from="delegated-hop" to="mac-authority" label="admit"></ex-arrow>
+</ex-flow>
+<p>A cloud transaction cannot atomically commit a Mac or provider effect. Inner pending must remain pending at the outer portal; a lost reply must remain uncertain until evidence resolves it.</p>
+</section>
+</ex-tabs>
+<h2 id="cloudflare-identity">What identity survives the Cloudflare entry?</h2>
+<ex-callout tone="risk" title="A client brand is not an authenticated agent">
+Cloudflare forwards a client-name diagnostic in `X-Forwarded-User-Agent`. Its documentation explicitly says this client-controlled value must not be used for authentication or authorization. Calling a client “Codex” or “Claude Code” cannot choose its permissions.
+</ex-callout>
+<ex-markdown id="cloudflare-credential-modes"><script type="text/markdown">
+| Portal upstream mode | Documented behavior | What our gateway may conclude |
+| --- | --- | --- |
+| Require user auth enabled | Each user authenticates to the upstream using their own OAuth credentials | Whatever user identity the configured upstream verifier establishes; not automatically a distinct enrolled agent |
+| Require user auth disabled | Portal calls the upstream through its configured admin credential | The authenticated integration principal associated with that credential |
+| Automated service-token session | Matching Service Auth policies are needed at the portal and linked server; upstream uses admin credentials and per-user OAuth servers are excluded | Outer service-token access does not by itself prove a separate original-agent identity to our receiver |
+
+The current standalone receiver maps a configured bearer to one principal and profile. **If two callers reach it through the same upstream bearer, they resolve to the same configured principal.** That is a source-backed inference, not a live Cloudflare failure observation.
+
+Cloudflare's separate **Managed OAuth application** contract provides a signed origin assertion that the application must validate. Do not assume that every arbitrary Portal upstream receives that same original-caller assertion. The exact application/OAuth composition and represented-agent semantics need qualification. Two agents used by the same human can share a user subject while still needing separate agent assignments.
+
+[Client identity header](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/#client-identity-header) · [Portal service-token rules](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/#connect-with-a-service-token) · [Managed OAuth token format](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/#token-format)
+
+**Component consequence:** put issuer/resource credential verification at ingress, then give the portal a verified principal. Put computer-specific authentication and accepted delegation on the resource hop. Keep client names and session/run labels as diagnostics or correlation. The choice between a deliberately shared principal, distinct agent identities and user-scoped access remains explicit.
+</script></ex-markdown>
+<h2 id="machine-hop">The cloud-to-computer contract</h2>
+<ex-callout tone="question" title="Proposed obligations, not a wire schema">
+The owner selected a cloud gateway above computer MCP servers. The responsibilities below make that topology concrete. They do not select a token format, database, approval owner or a new public API. Ordinary third-party MCP providers keep their own protocols; our controlled computer servers need this additional contract.
+</ex-callout>
+<ex-markdown id="hop-obligations"><script type="text/markdown">
+| Concern | The cloud gateway supplies | The computer verifies or owns |
+| --- | --- | --- |
+| Peer and caller identity | Its authenticated service identity plus verifiable authority for any represented agent or user | Trusted issuer, intended resource, expiry and delegated scope; it does not trust agent-written identity fields |
+| Exact target | Computer/service identity, logical capability and the selected binding/schema context | The target still resolves to the permitted implementation; a stale catalog cannot expand access |
+| Exact work | Validated arguments and approval-relevant context | Applicable local limits and an exact match with any required approval |
+| Operation identity | A stable outer operation reference and consistent retry identity | A durable admission identity scoped to the authenticated caller; changed arguments cannot reuse the same intent |
+| Approval | A request or evidence accepted by the chosen authority contract | Its own requirements remain satisfied; outer approval is not an automatic inner approval |
+| Observation | Correlation linking the agent request to the computer operation | The inner admission/execution receipt and observed result; the gateway retains the mapping |
+| Recovery | Authenticated status or cancellation requests for that same operation | Caller-scoped lookup, retained outcomes and honest uncertainty; lookup does not start another action |
+
+**Two references can identify two records for one requested action.** The gateway owns its outer orchestration record. The computer owns its admitted inner operation and observations. The mapping connects them; copying one record's status over the other would create competing writers.
+
+The existing trusted-context schema separates principal, requester and correlation, but validates an object shape. That object is not a public delegation credential by itself. Existing approval fingerprints bind exact work and revisions within the managed controller domain; they are not automatically valid for an independent computer audience. [Trusted context](../../../packages/agent-portal-sdk/src/contracts/trusted-context-contracts.ts) · [Managed approval contract](../../../packages/gateway-control-contracts/src/gateway-runtime-approval.ts)
+</script></ex-markdown>
+<h2 id="nested-results">Preserve the inner portal's meaning</h2>
+<ex-flow id="nested-operation" cols="3">
+<ex-card id="outer-operation" title="Cloud operation" icon="cloud" tone="planned">The agent's request and authenticated ownership. Records which computer operation carries out the requested action.</ex-card>
+<ex-card id="inner-operation" title="Computer operation" icon="cpu" tone="planned">Admission, any required approval and execution observation. Returns a typed result or an unresolved operation handle.</ex-card>
+<ex-card id="agent-outcome" title="Agent-visible outcome" icon="robot" tone="planned">Pending stays pending. Confirmed completion stays completion. Unknown stays unknown until evidence resolves it.</ex-card>
+<ex-arrow from="outer-operation" to="inner-operation" label="request"></ex-arrow>
+<ex-arrow from="inner-operation" to="agent-outcome" label="outcome"></ex-arrow>
+</ex-flow>
+<ex-callout tone="risk" title="A successful MCP response can contain unfinished work">
+Current [provider normalization](../../../packages/mcp-portal/src/mcp-provider-backend/mcp-provider-capability-backend.ts) marks a successful core item as completed and keeps its structured payload as the value. That is valid for an ordinary completed provider call, but it does not interpret a nested portal's pending operation as the pending outcome of the requested leaf action. A portal-aware adapter needs to preserve inner approval, operation and uncertainty semantics. Source finding, not a live two-portal test.
+</ex-callout>
+<p>Discovery needs the same explicit composition: importing a computer portal's four wrapper tools is different from federating the permitted leaf-tool catalog. The gateway must know whether a configured provider is an ordinary MCP server or one of our composable computer portals. Exact presentation and protocol negotiation remain design work.</p>
+<h2 id="disconnect">What happens when a connection disappears?</h2>
+<ex-markdown id="recovery-rules"><script type="text/markdown">
+1. Before admission or a proven send, a rejection can establish that this attempt did not dispatch.
+2. After admission or a possible send, a dropped HTTP/WebSocket response does not establish whether the computer executed the action.
+3. A replacement connection authenticates again and looks up the same operation through its authoritative owner.
+4. The owner returns pending, an observed result, a bounded rejection, or uncertainty. It must not silently turn lookup into execution.
+5. A fresh execution requires the retry semantics of that resource. Some external effects cannot be retried safely after an unknown outcome.
+
+Logical operation identity survives transport replacement only if the application's authority and retained state support it. Cloudflare Tunnel, MCP session IDs and a database containing socket metadata do not provide this guarantee on their own. Cancellation is a request to stop; it is not proof that an external side effect was undone.
+</script></ex-markdown>
+<h2 id="approval-placement">Approval ownership remains an explicit choice</h2>
+<ex-markdown id="approval-alternatives"><script type="text/markdown">
+| Model | Gain | Cost and consequence |
+| --- | --- | --- |
+| Cloud-owned approval accepted by a computer | One decision workflow and central history | The computer must explicitly trust scoped cloud authority; cloud availability and revocation semantics affect admission |
+| Computer-owned approval, surfaced through cloud | Resource owner controls its decisions and records | Gateway must relay pending handles and correlate decisions; a disconnected computer cannot supply a fresh decision |
+| Independent requirements at both levels | Each authority keeps its own ceiling | Potentially two separate decisions; each needs its own identity and explanation, not one reused approval token |
+
+The topology does not select among these. Recommended invariant: a computer cannot receive more authority than its own configured ceiling permits. UI location is a separate concern; a cloud UI can request a computer-owned decision without owning that decision's truth. There is no authorization to merge current ledgers or move credential custody.
+</script></ex-markdown>
+<h2 id="measured">What the current code demonstrated</h2>
+<ex-card id="probe-finding" title="One proof, two independent authorizations" tone="risk" icon="test-tube" tag="observed component probe">
+Two distinct Node processes imported the actual unchanged standalone approval module. Each received the same test-only intent, signing material and proof. Each authorized its first submission; each rejected local reuse as already armed/ambiguous.
+
+The experiment sent no tool request and caused no provider effect. It demonstrates local consumption ownership, not an HTTP deployment exploit.
+</ex-card>
+<ex-markdown id="probe-results"><script type="text/markdown">
+| Attempt | Observed result |
+| --- | --- |
+| Process A, first submission | Reserved and authorized |
+| Process A, repeat | Armed / ambiguous |
+| Process B, same proof | Independently reserved and authorized |
+| Process B, repeat | Armed / ambiguous |
+| Different generation, separate control | Rejected as stale |
+
+The two-process observation and the generation control are separate runs. Both used actual source at `8535fdd4`. See the [two-process receipt](../../../tmp/practices-research/2026-10-16-distributed-portals/two-process-probe-result.json) and [coordinator controls](../../../tmp/practices-research/2026-10-16-distributed-portals/coordinator-probe-result.json).
+
+**Consequence:** reusable proof verification can run in many processes, but one-use consumption requires a shared authoritative transition or routing to the owner. Changing every generation fences old work; it does not provide seamless recovery.
+</script></ex-markdown>
+<h2 id="state">State needs different owners and lifetimes</h2>
+<ex-markdown id="state-owners"><script type="text/markdown">
+| State | Required distinction | Current evidence / remaining work |
+| --- | --- | --- |
+| Policy and bindings | Current authority revision versus cached discovery | Current service snapshots are local and frozen; distributed activation must fence stale admission |
+| Approval | Exact decision versus standing permission | Current public consumption is local; managed ledger already has a remote controller owner |
+| Operation | Intended work versus a transport request | Public durable lookup and dispatch consumption are designed, not implemented by the current session map |
+| Live MCP client | Open connection object versus recoverable application state | Connection pools remain process-owned; another node cannot deserialize a socket from a DB |
+| Event replay | Delivery cursor versus execution deduplication | Replaying messages must not create another effectful dispatch |
+| Resource consent and credentials | Portal permission versus provider authorization | Existing broker/resource owner remains authoritative; no custody migration is selected |
+
+An authenticated lookup may return a result or uncertainty. It must not execute work. Cancellation requests stopping; it does not prove that an external effect was undone.
+</script></ex-markdown>
+<h2 id="controls">Tool calls and management take different paths</h2>
+<ex-grid cols="2">
+<ex-card id="call-plane" title="Agent tool call" icon="robot" tone="planned">
+Gateway verifies caller → portal resolves binding → authority checks current policy and required approval → connector sends admitted work → observation is recorded.
+
+Before dispatch: deny, pending, conflict or unavailable can prevent a send. After possible dispatch: no automatic replay without the resource contract's evidence.
+</ex-card>
+<ex-card id="management-plane" title="Policy or approval change" icon="user" tone="planned">
+Separately authorized human or agent management client → validate exact decision/change and expected revision → authoritative state transition → acknowledged active/applying/conflict result.
+
+Tool credentials alone do not grant configuration or approval powers. A saved cloud request is not proof that Mac-owned policy has activated.
+</ex-card>
+</ex-grid>
+<h2 id="contracts">Distributed contracts still to settle</h2>
+<ex-tree id="distributed-needs" title="What correctness requires" icon="shield-check"><script type="text/markdown">
+- planned: Verified identity across hops
+  - Calling agent and any represented user stay distinct
+  - A resource accepts credentials intended for that resource
+- planned: Current authority at admission
+  - Policy, binding and approver changes invalidate stale work
+  - Owner replacement cannot revive consumed dispatch rights
+- planned: Recoverable operation ownership
+  - Stable work identity across new connections
+  - Caller-scoped lookup, honest uncertain outcomes and bounded retention
+- question: Availability and authority placement
+  - Which actions can proceed while another node is offline?
+  - Which Mac and cloud decisions are independent?
+</script></ex-tree>
+<h2 id="proof-plan">Proof needed for the real two-level system</h2>
+<ex-markdown id="proof-matrix"><script type="text/markdown">
+| Scenario | Observation required | Status |
+| --- | --- | --- |
+| Ordinary agent calls a permitted leaf tool | Real MCP client through the outer entry and cloud gateway to a configured computer backend | Not run |
+| Forged or over-scoped represented caller | Computer rejects it before backend dispatch; valid narrow authority succeeds | Not run |
+| Inner portal requires approval | Agent sees pending and the correct operation; a wrapper response does not report leaf completion | Not run |
+| Reply lost after the computer acts | Reconnected client obtains the same receipt; no duplicate dispatch is created | Not run |
+| Two requests race for one admitted operation | One authoritative transition and defined repeated-request response | Not run |
+| Computer disconnects or sleeps | Gateway reports availability/uncertainty accurately; it does not infer no effect or wake the host implicitly | Not run |
+| Gateway instance is replaced | Retained admission and operation mapping remain authoritative; old ownership cannot revive consumed rights | Not run |
+| Policy or tool binding changes during approval | Stale work is rejected or reevaluated under the agreed revision contract | Not run |
+| Different agent harnesses connect | Actual MCP/auth onboarding and results work for each named harness | Not run |
+
+The earlier component probe supports only its stated process-local claim. This matrix describes future integration proof and does not certify a deployment.
+</script></ex-markdown>
+<h2 id="standards">Relevant standards, with limits</h2>
+<ex-markdown id="standards-notes"><script type="text/markdown">
+**OpenID AuthZEN Authorization API 1.0** separates authorization decisions from enforcement. Its policy engine and state management are outside the API specification. The access-request/approval profile adds an asynchronous request handle and fresh evaluation after approval, but it is a working draft. Submission idempotency does not establish tool-effect deduplication. [Final API](https://openid.net/specs/authorization-api-1_0.html) · [approval draft](https://openid.github.io/authzen/authzen-access-request-approval-profile-1_0.html)
+
+**MCP/OAuth** requires resource-specific token validation. A copied caller-context object or forwarded client name is not proof of delegation. RFC 8693 provides actor/subject vocabulary and one possible token-exchange mechanism; adoption is not selected. [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) · [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693.html#section-1.1)
+
+**Protocol version matters:** current repository code uses the older session-oriented SDK path. Current MCP transport is stateless and does not replace application operation state. Neither fact certifies our host compatibility. [Current transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)
+
+Read the [research ledger](../../../tmp/practices-research/2026-10-16-distributed-portals/research-ledger.md) for checked source paths, concrete gateway prior art, queries and proof limits. Continue to [package boundaries](packages.html).
+</script></ex-markdown>
+<ex-presentation id="distributed-walk" title="Why packaging alone is insufficient" description="Compare authority ownership, inspect the measured locality limit and identify the remaining contracts.">
+<ex-step to="ownership">Distinguish replicas from independent portals.</ex-step>
+<ex-step to="machine-hop">Read what the cloud-to-computer hop must preserve.</ex-step>
+<ex-step to="probe-finding" open="sidebar">Read the bounded actual-module observation.</ex-step>
+<ex-step to="proof-plan">Separate proposed contracts from real-path proof.</ex-step>
+</ex-presentation>
+</ex-document>
+</body>
+</html>

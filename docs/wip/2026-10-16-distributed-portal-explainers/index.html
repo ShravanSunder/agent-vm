@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Two levels of MCP servers: gateway, portal and computers</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Gateway and components</a>
+<a href="distributed.html">Distributed authority</a>
+<a href="packages.html">Package boundaries</a>
+</nav></ex-nav>
+<ex-document id="content">
+<h1>Two levels of MCP servers</h1>
+<ex-callout tone="tldr" title="Cloud gateway above configurable computer MCP servers">
+Agents enter through Cloudflare MCP Portal. Our **cloud MCP gateway** connects to remote MCP providers and **computer MCP servers**. Each computer server composes Tool Portal with the tools and execution backends enabled for that computer. **Agent coordination is a separate MCP service**, potentially protected by Cloudflare too.
+</ex-callout>
+<ex-callout tone="question" title="Confirmed direction; proposed structure">
+The owner confirmed a **generic MCP gateway; Hermes is one possible client**, then specified two levels of tool MCP servers and separate coordination. That topology is the target. Component contracts, package names, approval ownership and distributed delegation remain discussion proposals. Current source is pinned to `8535fdd4`; the replica probe is observed component behavior, not a deployed fleet test.
+</ex-callout>
+<h2 id="topology">The target topology</h2>
+<ex-tree id="two-level-topology" title="Two tiers we own, with Cloudflare at the entry" icon="git-branch"><script type="text/markdown">
+- Agent harness — Hermes, Codex, Claude Code, Cursor, pi or another MCP client
+  - Tools connection
+    - Cloudflare MCP Portal — managed outer entry
+      - Our cloud MCP gateway — level 1
+        - Remote MCP providers — existing third-party or self-hosted services
+        - Mac computer MCP server — level 2
+          - Tool Portal with this Mac's configuration
+            - Native Mac tools
+            - Controlled CLIs, APIs and local MCP providers
+            - Configured execution environments — Gondolin is one possible backend
+        - Other computer MCP server — level 2
+          - Tool Portal with that Linux, VM or cloud host's configured backends
+  - Separate coordination connection
+    - Cloudflare protection — exact entry configuration still open
+      - Agent-coordination MCP server — separate system and lifecycle
+</script></ex-tree>
+<p>The cloud gateway is an MCP server to the agent and an MCP client to downstream services. A computer server is an MCP server to that gateway and may itself call local or remote providers. “Upstream” is relative to the caller; it does not name another mandatory deployment tier.</p>
+<ex-grid cols="2">
+<ex-card id="cloud-role" title="Cloud gateway responsibility" icon="cloud" tone="planned">
+Present the caller's permitted catalog, resolve a stable tool target, enforce gateway admission and route the request. Bind the outer operation to any inner operation and preserve pending, failure and uncertain outcomes.
+
+Cloudflare authentication and gateway policy do not automatically supply permission to act on a computer.
+</ex-card>
+<ex-card id="computer-role" title="Computer MCP responsibility" icon="cpu" tone="planned">
+Serve this computer's configured capabilities, authenticate requests from the gateway and enforce the resource's limits before invoking its backends. Native actions and host processes run where their implementations live.
+
+Final local enforcement is the recommendation. Which authority requests and records an approval remains open.
+</ex-card>
+</ex-grid>
+<ex-callout tone="note" title="Coordination stays outside the tool hierarchy">
+The coordination MCP has different interaction priorities and owns its own state and operations. Sharing Cloudflare protection or authentication code need not combine its service, endpoint, sessions or storage with the tool gateway. Its implementation is outside this work.
+</ex-callout>
+<h2 id="parts">What each word means</h2>
+<ex-markdown id="vocabulary"><script type="text/markdown">
+| Part | What it does | What it does not establish |
+| --- | --- | --- |
+| Capability | A named, described action with validated inputs and a configured implementation; an MCP-backed capability maps to an upstream tool | Its name grants no permission |
+| Gateway | Receives MCP, verifies the caller and projects results back to the client | A new gateway process is not a new authorization domain by default |
+| Tool Portal | Resolves permitted capabilities and coordinates a call through validation, policy, required approval and the configured backend | It does not own every tool's runtime or credentials |
+| Host runner | Starts and wires the gateway, portal and host-specific dependencies | It is not the executor of every tool action |
+| Tool backend / connector | Calls the configured MCP service or other admitted implementation | It cannot invent caller authority |
+| Authorization authority | Owns the applicable policy revision, approval decision and one-use admission state for its domain | Shared code alone does not share this state |
+
+“Runner” was doing two jobs in the earlier discussion. Here **host runner** means the Mac/Node or Worker composition. **Tool backend** means where the requested action happens. This is proposed vocabulary for the package discussion.
+</script></ex-markdown>
+<h2 id="architecture">Inside either tool MCP deployment</h2>
+<ex-tabs>
+<section label="Proposed generic composition">
+<ex-flow id="generic-call" cols="3">
+<ex-card id="gateway-entry" title="MCP gateway" icon="globe" tone="planned">
+HTTP/MCP framing, request bounds, caller authentication and tool presentation. Receives untrusted requests; supplies a verified caller context.
+</ex-card>
+<ex-card id="portal-service" title="Tool Portal" icon="plug" tone="planned">
+Caller-scoped discovery, configured binding selection, input validation and invocation orchestration. Calls the authority before effectful dispatch.
+</ex-card>
+<ex-card id="tool-connector" title="Tool connector" icon="gear" tone="planned">
+Uses the admitted binding and protected downstream credentials. Calls the actual upstream and reports completion, proven no-send or uncertainty.
+</ex-card>
+<ex-arrow from="gateway-entry" to="portal-service" label="caller"></ex-arrow>
+<ex-arrow from="portal-service" to="tool-connector" label="dispatch"></ex-arrow>
+</ex-flow>
+<ex-board id="authority-boundary" cols="2">
+<ex-region id="authority-role" title="Authorization and operation authority" icon="shield-check" tone="planned">
+Checks current assignments and policy. Owns exact approval decisions, consumption and operation observations. The portal asks it to admit, reserve, arm, settle and look up work.
+
+This is one responsibility boundary. It may be local or remote under the chosen deployment contract; it is not automatically another public service.
+</ex-region>
+<ex-region id="resource-role" title="Resource enforcement" icon="lock" tone="planned">
+The actual destination authenticates its caller, checks delegated/local limits and owns resource credentials and effects. A cloud approval is not automatically a local resource grant.
+
+A third-party MCP server keeps its existing contract. Our controlled services need an explicit trusted admission contract.
+</ex-region>
+</ex-board>
+<p>Responses return through connector → portal → gateway. This is an internal component view, not a replacement for the two-level deployment above. Pending approval and uncertain effects must keep their meaning through every hop.</p>
+</section>
+<section label="Current source">
+<ex-flow id="current-call" cols="3">
+<ex-card id="current-entry" title="Node MCP entrypoint" icon="globe" tone="note">
+Bearer authentication and a process-local map of MCP sessions. Four compact tool wrappers dispatch into the service.
+</ex-card>
+<ex-card id="current-portal" title="Tool Portal service" icon="plug" tone="note">
+Existing list/search/describe/call core. Standalone mode composes MCP providers; managed mode additionally has controller-execution and Tool VM ports.
+</ex-card>
+<ex-card id="current-backend" title="MCP provider runtime" icon="gear" tone="note">
+Upstream discovery, schemas and calls. Remote HTTP is already supported. Live clients and their lifecycle remain process-owned.
+</ex-card>
+<ex-arrow from="current-entry" to="current-portal" label="caller"></ex-arrow>
+<ex-arrow from="current-portal" to="current-backend" label="binding"></ex-arrow>
+</ex-flow>
+<ex-callout tone="risk" title="The missing distribution contract">
+Standalone approval consumption and sessions are process-local. Managed approvals already use an authoritative controller over RPC. Neither path makes arbitrary public gateway replicas interchangeable.
+</ex-callout>
+</section>
+</ex-tabs>
+<h2 id="hosting">Mac and cloud are host compositions</h2>
+<ex-grid cols="2">
+<ex-card id="node-host" title="Mac / Node host runner" icon="cpu" tone="planned" tag="host adapter">
+Starts the generic gateway and portal; wires a Node HTTP listener, configured connectors, a protected secret resolver and an authority/storage adapter. A tunnel can carry remote requests to its loopback listener.
+
+Native actions still need a configured local backend. The portal does not acquire machine-wide authority merely by running on the Mac.
+</ex-card>
+<ex-card id="worker-host" title="Worker host runner" icon="cloud" tone="planned" tag="host adapter">
+Starts the same generic gateway/portal behavior through a Worker request entry; wires protected bindings, HTTP dispatch and the selected durable authority adapter.
+
+Cloudflare MCP Portal can register this endpoint as an upstream. The Worker calls remote tools; host placement does not grant native Mac execution.
+</ex-card>
+</ex-grid>
+<ex-callout tone="note" title="Package, process and authority are separate choices">
+One package can supply both host runners. Several processes can serve one authority if its state contract supports that. Two hosts using the same package may instead be independent authorities. Neither case follows from an import statement.
+</ex-callout>
+<h2 id="agent-access">What makes this usable by different agents?</h2>
+<ex-markdown id="agent-access-notes"><script type="text/markdown">
+The public integration is MCP plus the supported authentication flow. The agent should not need a private Hermes/controller connection or credentials for every downstream computer. A client connection does not grant new capabilities; its authenticated assignment determines access.
+
+Keep presentation separate from authority: direct tool definitions, compact portal discovery/call tools and an optional code-mode surface can expose the same admitted capabilities. Do not assume every harness has code mode or tool search. Select a supported presentation explicitly; none may bypass policy, approval or computer enforcement. Cloudflare's outer Code Mode is another presentation layer, not a new permission grant. [Cloudflare connection and Code Mode options](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/)
+
+Hermes, Codex, Claude Code, Cursor, pi and any later client are compatibility targets. Actual remote transport, OAuth or service-token onboarding, discovery and pending-operation behavior still need proof per harness. The topology alone does not certify them. In particular, a forwarded client name is not an authenticated agent. See [identity across the Cloudflare entry](distributed.html#cloudflare-identity).
+</script></ex-markdown>
+<h2 id="registration">Registration means three different things</h2>
+<ex-markdown id="registration-roles"><script type="text/markdown">
+| Registration | Who configures it | What it establishes |
+| --- | --- | --- |
+| Our cloud gateway in Cloudflare MCP Portal | Portal operator | The upstream endpoint, outer visibility and configured upstream authentication |
+| A computer MCP or remote provider in our gateway | Our gateway operator | An allowed service target, connector/trust configuration and catalog/binding rules |
+| An agent caller and its profile assignment | The selected identity/policy authority | The verified principal and capabilities it may discover or invoke |
+
+These are separate records with separate reasons to change. Installing Codex, setting `clientInfo.name`, connecting a socket or adding a provider URL does not enroll a privileged caller. “Any agent” means compatible MCP clients can use the interface after authentication and assignment; it does not mean arbitrary clients receive the same authority.
+</script></ex-markdown>
+<h2 id="interfaces">What crosses each boundary</h2>
+<ex-markdown id="boundary-contracts"><script type="text/markdown">
+| Boundary | Supplies | Receives / enforces |
+| --- | --- | --- |
+| Authentication → gateway | Verified issuer/caller and intended audience | Rejects missing, invalid, expired or unmapped credentials; client names do not supply authority |
+| Gateway → portal | Validated request, verified caller, correlation and cancellation context | Returns caller-scoped catalog, operation status or a bounded rejection |
+| Portal → authority | Exact capability, canonical arguments, binding and relevant revision context | Admission, required approval, denial, conflict or unavailable; private dispatch authority stays internal |
+| Portal → connector | Configured destination and exact admitted work | Reports an observed outcome; an ordinary transport error is not proof that nothing happened |
+| Connector → resource | Resource-specific authentication and required delegation | Destination applies its own access and credential rules |
+| UI / management client → authority | Separately authorized decision or configuration change, with expected revision | Decision/activation state; reading or approving does not itself prove execution |
+
+These are **proposed contract responsibilities**, not implemented wire schemas. The existing public-host design has a richer operation contract; the later user/delegation and database-management requirements still need reconciliation.
+</script></ex-markdown>
+<h2 id="evidence">Ground truth and next reading</h2>
+<ex-markdown id="evidence-links"><script type="text/markdown">
+- Current core and managed/standalone composition: [Tool Portal service](../../../packages/tool-portal/src/tool-portal-service.ts).
+- Current external MCP entry: [MCP projection](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-mcp-projection.ts).
+- Current package map: [architecture overview](../../architecture/overview.md#capability-portals).
+- Measured and source-backed limits: [distributed research](../../../tmp/practices-research/2026-10-16-distributed-portals/research-ledger.md).
+
+Continue with [distributed authority](distributed.html) to see what must survive processes and connections, then [package boundaries](packages.html) to compare where the code should live.
+
+This collection uses Demistify `v1`, release `1.1.0`, source `0b6741af`. It is a local discussion explainer; it does not call tools, change policy or deploy a gateway.
+</script></ex-markdown>
+<ex-presentation id="component-walk" title="Understand the components" description="Gateway, portal, host runners and the distributed authority boundary.">
+<ex-step to="two-level-topology">Start with the two MCP levels and separate coordination.</ex-step>
+<ex-step to="generic-call">Look inside one tool MCP deployment.</ex-step>
+<ex-step to="authority-role" open="sidebar">Separate the authority from its callers.</ex-step>
+<ex-step to="hosting">Place the same composition on Mac or Worker.</ex-step>
+</ex-presentation>
+</ex-document>
+</body>
+</html>

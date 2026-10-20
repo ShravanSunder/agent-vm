@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Identity and approvals — Portable tool access</title>
+		<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css" />
+		<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+		<!-- Authoring/checking release: 1.5.0; source ae26faf6dd3905c6c05440104ff943ec1653154f. -->
+	</head>
+	<body>
+		<ex-nav for="content"
+			><nav slot="pages" aria-label="Pages">
+				<a href="index.html">Your tools, available to your agents</a>
+				<a href="build-plan.html">Build plan</a>
+				<a href="core-and-split.html">Core and split</a>
+				<a href="mcp-portal-explainer.html">MCP Gateway explained</a>
+				<a href="tool-portal-explainer.html">Identity and approvals</a>
+				<a href="requirements.html">Requirements</a>
+				<a href="2026-10-14-portable-tool-portal-hosts.html">Specification</a>
+				<a href="program-design.html">Program Design</a>
+				<a href="verification-design.html">Verification Design</a>
+				<a href="gateway-composition.html">Composition chapter</a>
+				<a href="public-host-contracts.html">Contracts chapter</a>
+			</nav></ex-nav
+		>
+		<ex-document id="content">
+			<ex-callout tone="planned" title="Proposed design"
+				>Revised for shared security and distributed hosts. Identity, ingress and approval policy
+				choices remain open. No implementation or hosted tool proof is claimed.</ex-callout
+			>
+
+			<ex-markdown id="security" label="Identity and approvals"
+				><script type="application/json" data-ex-markdown-source="">
+					{
+						"text": "# Identity, permissions and approvals\n\n[Overview](index.html) · [HTML](tool-portal-explainer.html) · [Full structure](program-design.html)\n\nAn agent acting for you needs an enrolled identity, a valid credential and a current permission assignment. A protected action additionally needs an exact approval. The provider's OAuth grant stays with the resource backend throughout.\n\n## Who is who?\n\n| Example | Its purpose | Changes independently |\n| --- | --- | --- |\n| Persona | Owner-authorized agent type and acts-for association in the shared fleet direction. | Its instance population; exact person/profile relationships still need their contract. It is not a credential or an access grant. |\n| Agent A | Logical subject acting for the owner. | Its credentials, sessions and deployment machines. |\n| Credential A1 / A2 | Separate issued proofs for deployments of A. | One can be revoked without sharing the other secret. |\n| Machine M | Enrolled host providing tools or, when policy requires, hosting A. | Its IP, connections and keys. |\n| Service S | Gateway/computer deployment acting as itself. | Its process and service credential. |\n| Router session K | A conversation/run reference. | It can end while A remains the same agent. |\n| Permission assignment | Complete allowed tools/targets at a revision. | It can change without renaming A or erasing operation history. |\n\nA copied session ID or agent name does not authenticate its sender. A machine claim alone does not prove where a copied bearer token is currently running. Source-machine restrictions remain a separate policy choice.\n\n## How an agent gets access\n\nYou authorize an agent type and its trusted launcher once. The launcher enrolls agent instances automatically and obtains separately revocable credentials through the intended shared identity authority. External agents use a separate registration path. Each product still assigns its own permissions; a persona's name or acts-for association grants no account access by itself.\n\nCloudflare machine/service admission and proof of the individual agent are separate. The exact way both proofs reach the gateway remains open, especially through managed MCP Portal. A new Router session is only a new conversation, not a new Cloudflare user or automatically a new principal. A host adapter must keep connection secrets outside the tool sandbox if the agent must not be able to read them. Provider OAuth grants always remain at the resource backend.\n\n## A protected call\n\n```mermaid\nsequenceDiagram\n participant A as Agent\n participant T as Tool service\n participant P as Approval owner\n participant H as Human via presenter\n A->>T: Request exact operation K\n T->>P: Create or read exact challenge\n P-->>H: Redacted approval request\n T-->>A: Pending, same operation K\n H->>P: Authenticated approve or deny\n A->>T: Continue K, fresh admission\n T->>P: Verify and consume exact decision\n T-->>A: Known result or explicit uncertainty\n```\n\nHard-denied work never reaches approval as an escape hatch. A lost response after dispatch remains uncertain until there is a known receipt; a reconnect does not repeat the action.\n\nThe same operation item must survive a retry. Two intentional identical actions use different items, even when their tool and arguments match. Delivering the approval directly to the resource could remove the need for a client-carried private token; it does not solve call identity. Retry versus automatic first dispatch remains a continuation choice.\n\n## What is shared, and what is a service?\n\nThe proposed shared `tool-access` package has separate contract, authorization and approval-rule modules. These are usable without importing a portal runtime; they are not three separately published packages. The deployed approval authority owns its durable decision record and authorizes decision writers; the resource owns consumption and dispatch. A presenter renders the challenge. A webhook delivers an event. [Package and module homes](program-design.html#program--the-packages-and-why-each-exists).\n\nHermes, Router and IDE can all present a challenge through adapters. A webhook acknowledgement means delivery, not approval. A human decision returns to the selected authority through authenticated control. The resource service still performs final admission before the effect.\n\nRouter already has useful typed interaction choices and a local broker. Its inspected broker cancels pending interactions on Host restart and accepts declared actors; its distributed design explicitly names missing continuation/cross-machine answer work. Therefore its current local API is not automatically the tool authority. [Source-grounded integration boundary](program-design.html#program--router-integration-reuse-the-boundary-not-declared-actors-as-authentication).\n\n## Where credentials run\n\nThe credential broker selects a registered provider/account and permits controlled use. A downstream MCP adapter or a protected CLI executor uses the credential. CLI families may share one configured execution environment. Neither the gateway nor the agent needs a provider-specific VM merely because a tool uses Google.\n\nEncryption at rest helps protect stored grants. The encryption key must be separately protected, and the process allowed to use plaintext credentials remains privileged. Moving tokens into SQLite is not by itself isolation from the agent.\n\n## What changes next in the design\n\nThe target separates these concerns from Tool Portal and the renamed MCP Gateway, then supplies Node/computer and Worker hosts. The shared backbone is the intended identity home. Its enrollment/credential contract, approval settlement and continuation, source-machine policy and freshness bounds remain open. The [entity bindings and trace table](program-design.html) show concrete proposed ownership; no implementation has started.\n",
+						"reference": "./tool-portal-explainer.md"
+					}
+				</script></ex-markdown
+			>
+			<ex-presentation
+				id="system-model"
+				title="Understand the system"
+				description="Follow your goal through identity, access, routing, custody, approval, recovery and package changes."
+			>
+				<ex-step to="requirements.html#requirements--diagram-1"
+					>Goal — your agents, your resources. You want agents on different harnesses and machines
+					to use your resources through MCP. Keep that outcome in mind: hosting, tool placement and
+					agent identity must vary without rebuilding the security model. First see the shape that
+					follows from this need.</ex-step
+				>
+				<ex-step to="mcp-portal-explainer.html#gateway--diagram-1"
+					>Composition — why there are two MCP levels. Your cloud entry connects ordinary providers,
+					protected cloud services and computer services. The computer service exposes its
+					configured tools; it need not use Gondolin. Collaboration stays independently governed.
+					Before deciding what any caller can see, we need to know who that caller actually
+					is.</ex-step
+				>
+				<ex-step to="requirements.html#requirements--agent-and-machine-identity"
+					>Identity — the requirement. Your identity requirement is more than naming a session. The
+					same agent may reconnect or run elsewhere, while a stolen deployment credential must be
+					revocable. This need forces us to distinguish the agent from its machine, credentials and
+					conversations.</ex-step
+				>
+				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--diagram-2"
+					>Identity — the relationships. Here those distinctions become a precise model: a stable
+					caller can have several credentials and sessions, with a current assignment. Rotation
+					changes the proof, not the agent. The next question is how a real connection establishes
+					that identity.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--example-provision-an-agent-without-a-new-identity-provider-product"
+					>Authentication — turn proof into an enrolled agent. The shared backbone is the intended
+					identity home. You authorize agent types and launchers; a launcher enrolls instances
+					automatically. The gateway still needs verified agent proof and a current assignment.
+					Cloudflare machine/service admission and Router session labels do not supply that agent
+					proof; its contract and ingress carriage remain open.</ex-step
+				>
+				<ex-step to="mcp-portal-explainer.html#gateway--the-cloudflare-identity-constraint"
+					>Authentication — check which identity survives the entry. The enrollment example assumes
+					a proof that actually reaches our gateway. Cloudflare’s managed Portal uses a configured
+					admin credential for unattended upstream access, so original-agent identity cannot be
+					assumed. This constraint must be resolved before caller-specific permissions can work
+					through that entry.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c1-mcp-discovery-and-invocation"
+					>Permissions — knowing the caller is only the beginning. Once identified, the agent sees
+					only its permitted capabilities. Guessing a hidden tool name must fail too. Full catalog
+					and compact search are alternative presentations of the same permissions, so client
+					convenience cannot become a second authorization path.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c10-workspace-context-and-team-resources"
+					>Workspace — scope each call deliberately. A bot may discover the union of its workspace
+					tools, but each call names one admitted workspace and fits that workspace’s allowance.
+					That selector is not identity proof. Managers configure team-account use; requester
+					attribution never supplies personal credentials. The next step follows this permission
+					model into routing.</ex-step
+				>
+				<ex-step to="mcp-portal-explainer.html#gateway--one-address-can-expose-different-groups"
+					>Resource groups — one URL need not mean one permission set. When the entry preserves
+					verified per-agent identity, that policy can expose ordinary search to one agent and
+					sensitive or computer tools to another through the same address. Separate endpoints are an
+					isolation option, not the permission model. Now follow an allowed computer call beyond the
+					cloud gateway.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c6-cloud-to-computer-composition"
+					>Routing — preserve the caller across the hop. The computer must recognize both the acting
+					gateway and the represented agent, then enforce its own ceiling. Being reachable is
+					insufficient. This explains why a gateway connection needs bounded delegation and the same
+					represented caller/item at the computer. Its target and inner key are recorded before
+					forwarding, even if the reference has not returned; a copied agent-name field cannot
+					supply that authority.</ex-step
+				>
+				<ex-step to="program-design.html#program--what-runs-where"
+					>Placement — different hosts compose different effects. A Worker can route HTTP MCP and
+					evaluate portable policy; a Mac can host native effects; the managed controller retains
+					its protected VM operations. These placements answer your portability requirement. They do
+					not require every host to import the same desktop or execution runtime.</ex-step
+				>
+				<ex-step to="tool-portal-explainer.html#security--where-credentials-run"
+					>Credentials — authority stays beside the resource. The backend selects the provider
+					account and uses its grant. The agent gets the permitted result, not the provider
+					credential. Several controlled CLIs may share a backend. This custody boundary is separate
+					from the credential the agent uses to connect to MCP.</ex-step
+				>
+				<ex-step to="requirements.html#requirements--approval-surfaces"
+					>Approval — your requirement is reusable decision presentation. Some otherwise permitted
+					actions need an exact decision. You want that request to appear in Hermes, Router, the IDE
+					or another surface. That requirement cannot be met by moving a Hermes-specific prompt into
+					the dispatcher; we must separate the jobs first.</ex-step
+				>
+				<ex-step to="program-design.html#program--approvals-library-authority-and-presenter"
+					>Approval — library, authority and presenter. The library defines decision rules, an
+					authority stores the decision, and a presenter shows it. A webhook delivers a
+					notification. Sharing the library does not make every presenter a decision writer. With
+					those responsibilities separate, the protected-call sequence becomes
+					understandable.</ex-step
+				>
+				<ex-step to="tool-portal-explainer.html#security--a-protected-call"
+					>Approval — follow one exact action. The tool service creates a challenge for one
+					operation, reports pending, and continues that same operation only after a valid decision.
+					Approval never overrides a hard deny. The next stop addresses the return path: how does
+					the authority authenticate the operator or client submitting the decision?</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--how-a-human-decision-reaches-a-cloud-or-mac-authority"
+					>Approver identity — the return path is protected too. An operator session or explicitly
+					enrolled approver client authenticates the decision’s source. Client-key possession alone
+					does not prove a fresh human gesture; the client is part of the decision trust boundary. A
+					presenter cannot simply claim the owner clicked approve. A Mac authority also needs this
+					protected return path.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--router-integration-reuse-the-boundary-not-declared-actors-as-authentication"
+					>Router integration — reuse what exists and expose the gap. Router has useful typed
+					interactions and adapters, but the inspected local broker uses declared actors and cancels
+					pending interactions on restart. It can present a tool challenge through an explicit
+					adapter; adopting it as remote authority needs additional contracts. Neither integration
+					merges collaboration permissions with tool access.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c4-recovery-without-effect-replay"
+					>Recovery — a lost connection is not a new action. Your logical-session requirement now
+					matters at the effect boundary. If a response disappears after dispatch, reconnecting must
+					recover the same operation or its ambiguity. Repeating an uncertain action under a fresh
+					wrapper would violate the outcome you asked for.</ex-step
+				>
+				<ex-step to="program-design.html#program--recover-the-inner-reference-after-a-lost-reply"
+					>Recovery — when the Mac reply never arrives. The Mac may have created or completed work
+					before the gateway learns its reference. The gateway already retained the target and same
+					caller/item key. Recovery finds that record; it cannot generate a new item or call the
+					executor just to learn what happened. Current delegation and lookup permission still
+					apply. This closes a failure window before ordinary result lookup is possible.</ex-step
+				>
+				<ex-step to="program-design.html#program--durable-state-failure-and-concurrency"
+					>Durability — what must survive the process. The operation owner persists reservation,
+					arming and known outcomes. Once armed, a missing receipt cannot be treated as
+					non-execution. This is why portable state-machine code needs a real durable adapter, and
+					why a process-local replay map cannot establish distributed safety.</ex-step
+				>
+				<ex-step to="requirements.html#requirements--shared-security-consumers"
+					>Shared components — the extraction requirement. These concepts must also be usable
+					outside either portal runtime. That is your separation-of-concerns requirement: identity,
+					policy, credentials and approval cannot depend on a particular MCP listener, desktop or VM
+					provider. The package boundaries follow from those independent consumers.</ex-step
+				>
+				<ex-step to="program-design.html#program--diagram-2"
+					>Packages — give each responsibility a home. Hosts compose MCP Gateway and Tool Portal.
+					One shared tool-access package contains separate contract, authorization and approval-rule
+					modules; each can be consumed without importing a portal runtime. That preserves your
+					independent-use requirement without publishing a package per rule family. HTTP MCP
+					connectors own outbound protocol work.</ex-step
+				>
+				<ex-step to="program-design.html#program--contracts-across-typescript-python-rust-and-swift"
+					>Shared contracts — cross languages without copying meaning. The shared contracts module
+					owns one manifest, generator and fixture corpus; the SDK becomes a consumer. Managed and
+					new public families stay distinct, so a valid managed message cannot be mistaken for a
+					public decision. Rust and Swift validate the expected family/version from that artifact.
+					Representation parity still does not prove authenticated decisions or durable
+					consumption.</ex-step
+				>
+				<ex-step to="program-design.html#program--current-code-and-the-required-change"
+					>Code delta — distinguish moving code from new behavior. The source map says what stays,
+					moves, is added or is retired. Splitting Node imports is extraction; durable public
+					operations and verified distributed identity are additional behavior. Existing managed
+					controller, credential and generation checks remain obligations through either kind of
+					change.</ex-step
+				>
+				<ex-step to="program-design.html#program--the-access-foundation-chat-led-change-and-the-control-surface">Administration — one view, and change by asking. The access view and admission call the same assessment, so what a manager sees is what an agent gets. A request becomes a proposal that changes nothing until a manager of that workspace accepts it; the policy and account owners then apply it once, with its audit occurrence. The console that hosts these screens owns no authority.</ex-step>
+				<ex-step to="program-design.html#program--retire-legacy-standalone-approvals"
+					>Cutover — retire old authority without inventing history. The new host retires both
+					legacy standalone approval protocols. Their tokens never become new grants, and an
+					uncertain old call never becomes a fresh retry automatically. Old maps are not a durable
+					ledger. The operator accounts for work per item, preserves existing managed history and
+					keeps affected capabilities unavailable until unresolved effects are reconciled. This is a
+					cutover design, not proof of deployed retirement.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--standards-alignment-without-claiming-unimplemented-conformance"
+					>Interoperability and cost — choose mechanisms deliberately. The shared boundaries cross
+					products and hosts, so use established protocol contracts where they fit. MCP rules,
+					webhook delivery and the approval draft address different parts of the system. They do not
+					make every client compatible or every mechanism free: Cloudflare Access mTLS requires a
+					paid plan. No new issuer or paid tier is selected.</ex-step
+				>
+				<ex-step to="verification-design.html#verification--j8-enrollment-and-revocation"
+					>Identity proof — catch the wrong implementation. Return to your identity need and ask
+					what would falsify the design. An untrusted agent copying a session name must fail;
+					rotating a credential must preserve logical identity; revocation must meet its selected
+					freshness bound. These observations are planned, not already demonstrated.</ex-step
+				>
+				<ex-step
+					to="verification-design.html#verification--j9-approval-surfaces-and-router-isolation"
+					>Approval proof — delivery is not the outcome. Your reusable-approval requirement is met
+					only when the actual surface returns an authenticated exact decision and the effect obeys
+					it. Duplicate notifications, a declared actor or a delivery acknowledgement must not
+					approve. A mock presenter cannot establish the real Router or IDE integration.</ex-step
+				>
+				<ex-step to="verification-design.html#verification--j13-the-access-view-equals-admission">Workspace and access proof — compare the view with admission. Test two workspaces and forged selectors, then compare every shown state with what admission decides for the same call and surface. J14 checks that only a manager's Accept applies a proposal, once, and J12 that every change is audited. A screenshot or toast cannot establish enforcement or history.</ex-step>
+				<ex-step to="requirements.html#requirements--decisions-that-remain-open"
+					>Open choices — what the model still needs from you. We can now see why the remaining
+					choices matter: identity and ingress determine whose proof survives; approval placement
+					determines its control and continuation path; source-machine policy and freshness bounds
+					determine exposure. Cost and standards fit belong in those choices too. They remain open
+					decisions; the walkthrough explains consequences without silently choosing a mechanism or
+					paid tier.</ex-step
+				>
+			</ex-presentation>
+			<ex-presentation
+				id="identity-and-access"
+				title="Identity and permissions"
+				description="Connect agent identity to enrollment, Cloudflare proof, scoped access and revocation."
+			>
+				<ex-step to="requirements.html#requirements--agent-and-machine-identity"
+					>Identity starts with your requirement. You want an agent to remain identifiable across
+					sessions and machines, while retaining separately revocable credentials. That is the need
+					this path follows; a displayed agent name or Router session is not yet its authentication
+					mechanism.</ex-step
+				>
+				<ex-step to="tool-portal-explainer.html#security--who-is-who"
+					>Separate the identities. Agent, machine, service, credential and session answer different
+					questions. Keeping them separate prevents key rotation or reconnect from accidentally
+					becoming a new agent. Now see how those concepts relate, rather than treating them as five
+					unrelated labels.</ex-step
+				>
+				<ex-step to="2026-10-14-portable-tool-portal-hosts.html#specification--diagram-2"
+					>The relationship that survives rotation. One caller may have several issued credentials
+					and session associations, with one current assignment per addressed scope. Separate
+					credentials are revocation units; they do not automatically create private histories
+					within one logical agent. Current lookup policy still applies.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--example-provision-an-agent-without-a-new-identity-provider-product"
+					>Enrollment connects proof to the agent. The owner authorizes an agent type and launcher;
+					the launcher enrolls each launched instance through the intended shared backbone. Its
+					credential proves the instance, while each product owns its permission assignment. The
+					enrollment and credential-carriage contract remains open. A session identifier cannot
+					substitute for it today.</ex-step
+				>
+				<ex-step to="mcp-portal-explainer.html#gateway--the-cloudflare-identity-constraint"
+					>Check the actual Cloudflare entry. The managed Portal's documented unattended path uses
+					an upstream admin credential. Our gateway cannot assume distinct agents survive that hop.
+					Access-direct and explicitly separated managed registrations are design options; the entry
+					architecture must preserve the identity the previous stop established.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c1-mcp-discovery-and-invocation"
+					>Turn identity into allowed work. Authentication identifies the caller. Its complete
+					assignment determines allowed discovery, invocation and lookup. This is where your
+					different-agent access requirement becomes a rule every MCP presentation must enforce,
+					including guessed or stale tool references.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c6-cloud-to-computer-composition"
+					>Carry only bounded authority onward. On the next service hop, the resource verifies the
+					gateway actor and represented agent, then applies its own ceiling. A valid cloud login
+					does not automatically grant a computer effect. Delegation must preserve this distinction,
+					not forward an unverified identity object.</ex-step
+				>
+				<ex-step to="verification-design.html#verification--j8-enrollment-and-revocation"
+					>Prove the distinction under misuse. Test enrollment, spoofed labels, separate
+					credentials, rotation and revocation against the selected real issuer and target. The
+					operation's history must survive a credential change. The selected source-machine and
+					freshness policies provide the reference limits; they have not been chosen yet.</ex-step
+				>
+				<ex-step to="requirements.html#requirements--decisions-that-remain-open"
+					>Locate the remaining identity choices. The shared backbone direction is selected; its
+					persona/instance semantics, issuer/bootstrap contract, ingress proof and freshness policy
+					still need definition. Source-machine restrictions are a separate decision. Client
+					compatibility, source-proof cost and standards fit remain part of that decision. Those
+					gaps prevent treating the design as a deployed identity service.</ex-step
+				>
+			</ex-presentation>
+			<ex-presentation
+				id="approval-journey"
+				title="Approvals across products"
+				description="Follow one exact decision across the resource, approval authority, Router or IDE, and recovery."
+			>
+				<ex-step to="requirements.html#requirements--approval-surfaces"
+					>The requirement is one approval meaning across surfaces. You want Hermes, Router, the IDE
+					or another integration to show the same protected request. The need is reusable decision
+					meaning and routing, not a requirement that every product owns the same writable approval
+					database.</ex-step
+				>
+				<ex-step to="program-design.html#program--approvals-library-authority-and-presenter"
+					>Establish the responsibilities. Separate the engine, authoritative record, presenter and
+					notification transport. A webhook can connect products without becoming permission to act.
+					Next make the decision concrete: what precisely is the human being asked to
+					approve?</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c2-exact-protected-action"
+					>Bind the decision to exact work. The approval binds one operation, exact current intent
+					and requesting credential issuance. Changed arguments or another issuance cannot consume
+					that existing grant for first dispatch. Policy denial remains denial, so approval is not
+					an alternative privilege system.</ex-step
+				>
+				<ex-step to="program-design.html#program--the-approval-boundary-inside-that-call"
+					>See the interaction across owners. The computer asks its selected approval authority; a
+					human sees a redacted challenge through a presenter; the decision returns to its
+					authority. This is the interaction an adapter must preserve. The authority may be local or
+					external, which remains a deployment decision.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--how-a-human-decision-reaches-a-cloud-or-mac-authority"
+					>Authenticate the human decision. The decision route verifies an operator session or
+					admitted approver client for its control audience. Router's ordinary service identity
+					cannot assert that a human clicked approve. If the authority is on a Mac, a protected
+					route to that authority is part of the same requirement.</ex-step
+				>
+				<ex-step
+					to="program-design.html#program--router-integration-reuse-the-boundary-not-declared-actors-as-authentication"
+					>Understand Router's current integration limit. Reuse Router's typed interaction
+					vocabulary and adapter pattern. Its inspected broker is not yet a verified remote
+					exact-tool authority. Cross-machine continuation, authenticated decision actors and exact
+					intent consumption must be supplied before selecting that role for it.</ex-step
+				>
+				<ex-step
+					to="2026-10-14-portable-tool-portal-hosts.html#specification--c4-recovery-without-effect-replay"
+					>Keep the operation when the connection disappears. An approved action can still lose its
+					response. The effect owner must preserve the same operation and return a known receipt or
+					ambiguity. Neither a second notification nor a new connection permits an automatic second
+					action.</ex-step
+				>
+				<ex-step to="program-design.html#program--retire-legacy-standalone-approvals"
+					>Retire old tokens without retrying old effects. The new contract accepts no legacy
+					standalone approval authority or compatibility alias. Known managed history stays with its
+					owner; missing standalone history is reported honestly. Closing a listener or waiting for
+					token expiry cannot prove a backend did nothing. The affected capability stays unavailable
+					until the cutover accounts for its old work.</ex-step
+				>
+				<ex-step
+					to="verification-design.html#verification--j9-approval-surfaces-and-router-isolation"
+					>Prove approval at the effect. Exercise the real chosen surface, authenticated decision
+					path and resource outcome. Forged actors, delayed or duplicate events and delivery
+					acknowledgements must fail to approve. If Router becomes the authority, its durable
+					continuation and consumption also need real proof.</ex-step
+				>
+				<ex-step to="requirements.html#requirements--decisions-that-remain-open"
+					>Leave the actual authority choice visible. The remaining approval decisions include which
+					policy domain can require a separate gate, where the authoritative record lives, and how
+					valid undispatched work continues after interruption or credential change. Neither
+					ignoring a cloud approval requirement nor creating two prompts is a selected default. The
+					integration must also fit the selected standards and operating cost. This walkthrough has
+					exposed what each choice must preserve; it has not selected an authority, mechanism or
+					paid tier for you.</ex-step
+				>
+			</ex-presentation>
+		</ex-document>
+	</body>
+</html>

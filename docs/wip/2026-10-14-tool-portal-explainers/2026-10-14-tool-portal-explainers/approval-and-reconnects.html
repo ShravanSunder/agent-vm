@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Approval, operations and reconnects</title>
+		<link rel="stylesheet" href="assets/islands/theme.css" />
+		<link rel="stylesheet" href="assets/explainer-layout.css" />
+		<script type="module" src="assets/islands/runtime.js"></script>
+	</head>
+	<body>
+		<a class="skip-link" href="#main-content">Skip to content</a>
+		<div class="prototype-banner">
+			<a href="index.html">All explainers</a> · Source snapshot: 14 October 2026 · Local reading
+			bundle
+		</div>
+		<div class="wrap">
+			<nav class="toc" aria-label="Contents">
+				<p>Approval &amp; reconnects</p>
+				<ol>
+					<li><a href="#overview">Overview</a></li>
+					<li><a href="#where-approval-lives">Where approval lives</a></li>
+					<li>
+						<a href="#an-exact-approval-passes-through-several-states"
+							>An exact approval passes through several states</a
+						>
+					</li>
+					<li>
+						<a href="#lost-replies-do-not-create-another-permission"
+							>Lost replies do not create another permission</a
+						>
+					</li>
+					<li>
+						<a href="#connection-and-interaction-lifetimes">Connection and interaction lifetimes</a>
+					</li>
+					<li>
+						<a href="#what-tool-vm-work-already-preserves">What Tool VM work already preserves</a>
+					</li>
+					<li><a href="#proposed-recovery-contract">Proposed recovery contract</a></li>
+					<li><a href="#evidence-and-limits">Evidence and limits</a></li>
+					<li><a href="#markdown-source">Markdown source</a></li>
+				</ol>
+				<button type="button" data-ex-theme>Switch theme</button>
+				<div class="collection-nav">
+					<p>Other explainers</p>
+					<ol>
+						<li><a href="portal-system.html">The system today</a></li>
+						<li><a href="approval-and-reconnects.html">Approval &amp; reconnects</a></li>
+						<li><a href="harness-presentation.html">Harnesses &amp; discovery</a></li>
+						<li><a href="portable-runtime.html">Portable runtime</a></li>
+					</ol>
+				</div>
+			</nav>
+			<main id="main-content">
+				<ex-document>
+					<section id="overview">
+						<div class="eyebrow">Current behavior + proposed recovery</div>
+						<ex-markdown prepared
+							><h1>Approval, operations and reconnects</h1>
+							<p>
+								An approval records consent to an exact action. Dispatch permission authorizes its
+								execution under current policy. A reconnect restores communication and observation.
+								Keeping those meanings separate prevents a lost response from becoming a duplicate
+								effect.
+							</p>
+							<p>
+								Source snapshot: 2026-10-14, Agent VM <code>8535fdd4</code>. Current transitions
+								below were inspected in source. The future operation-recovery contract is a
+								proposal, not implemented behavior.
+							</p>
+						</ex-markdown>
+					</section>
+					<ex-tabs
+						><section id="where-approval-lives" label="Approval owners">
+							<ex-markdown prepared
+								><h2>Where approval lives</h2>
+								<p>
+									The managed approval engine is internal to <code>@agent-vm/agent-vm</code>, in
+									<code>createControllerApprovalLedger</code>. There is no generic approval-engine
+									package or Rust crate in this workspace. Shared SDK and control-contract packages
+									carry schemas; Gateway Runtime adapts its approval port to controller RPCs.
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/approval/controller-approval-ledger.ts#L359"
+										>Ledger implementation</a
+									>,
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/tool-portal/src/tool-portal-service.ts#L182"
+										>approval port</a
+									>.
+								</p>
+								<p>
+									Standalone Tool Portal and standalone MCP Portal have separate HMAC
+									implementations with in-memory consumption/replay records. They do not have the
+									managed controller&#39;s durable approval ledger. A common reusable package would
+									be a future extraction.
+								</p>
+							</ex-markdown>
+						</section>
+						<section id="an-exact-approval-passes-through-several-states" label="Exact approval">
+							<ex-markdown prepared
+								><h2>An exact approval passes through several states</h2>
+								<ex-zoom
+									aria-label="The current managed approval sequence: pending challenge, approved decision, consumed reservation, armed dispatch, then backend outcome."
+									><svg
+										xmlns="http://www.w3.org/2000/svg"
+										viewBox="0 0 900 520"
+										role="img"
+										aria-labelledby="approval-sequence-title approval-sequence-description"
+									>
+										<title id="approval-sequence-title">
+											Current approval states and lost-reply boundary
+										</title>
+										<desc id="approval-sequence-description">
+											A pending exact intent may become approved, consumed into a reservation and
+											armed for dispatch. Backend outcome requires separate evidence. A lost arm
+											reply or repeated arm returns ambiguity rather than another grant.
+										</desc>
+										<style>
+											text {
+												font-family: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+												fill: var(--ink, #e7ebf1);
+											}
+											.diagram-node {
+												fill: var(--sheet, #171d26);
+												stroke: var(--rule, #7b899a);
+												stroke-width: 2;
+											}
+											.current {
+												fill: var(--strong-bg, #1b2b40);
+												stroke: var(--strong, #8ab8ef);
+											}
+											.proposed {
+												fill: var(--change-bg, #3a2c14);
+												stroke: var(--change, #f0b45a);
+												stroke-dasharray: 7 5;
+											}
+											.authority {
+												fill: var(--patch-bg, #2c2240);
+												stroke: var(--patch, #c3a6f0);
+											}
+											.edge {
+												fill: none;
+												stroke: var(--accent, #6fc0ca);
+												stroke-width: 2.4;
+												marker-end: url(#approval-sequence-arrow);
+											}
+											.edge-label {
+												font-size: 16px;
+												fill: var(--ink-soft, #a5afbd);
+											}
+										</style>
+										<defs>
+											<marker
+												id="approval-sequence-arrow"
+												markerWidth="9"
+												markerHeight="9"
+												refX="8"
+												refY="4"
+												orient="auto"
+											>
+												<path d="M0 0 L8 4 L0 8" fill="var(--accent,#6fc0ca)" />
+											</marker>
+										</defs>
+										<rect x="0" y="0" width="900" height="520" fill="var(--paper,#11161d)" />
+										<g>
+											<rect
+												class="diagram-node authority"
+												x="30"
+												y="35"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="150.0" y="66" text-anchor="middle" font-size="23" font-weight="600">
+												Pending challenge
+											</text>
+											<text x="150.0" y="90" text-anchor="middle" font-size="16">
+												exact intent + expiry
+											</text>
+										</g>
+										<g>
+											<rect
+												class="diagram-node authority"
+												x="330"
+												y="35"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="450.0" y="66" text-anchor="middle" font-size="23" font-weight="600">
+												Approved decision
+											</text>
+											<text x="450.0" y="90" text-anchor="middle" font-size="16">
+												authorized consent recorded
+											</text>
+										</g>
+										<g>
+											<rect
+												class="diagram-node authority"
+												x="630"
+												y="35"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="750.0" y="66" text-anchor="middle" font-size="23" font-weight="600">
+												Consumed reservation
+											</text>
+											<text x="750.0" y="90" text-anchor="middle" font-size="16">
+												single-use permission
+											</text>
+										</g>
+										<g>
+											<rect
+												class="diagram-node authority"
+												x="630"
+												y="230"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="750.0" y="261" text-anchor="middle" font-size="23" font-weight="600">
+												Armed dispatch
+											</text>
+											<text x="750.0" y="285" text-anchor="middle" font-size="16">
+												grant persisted
+											</text>
+										</g>
+										<g>
+											<rect
+												class="diagram-node current"
+												x="330"
+												y="230"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="450.0" y="261" text-anchor="middle" font-size="23" font-weight="600">
+												Backend outcome
+											</text>
+											<text x="450.0" y="285" text-anchor="middle" font-size="16">
+												requires execution evidence
+											</text>
+										</g>
+										<g>
+											<rect
+												class="diagram-node authority"
+												x="30"
+												y="230"
+												width="240"
+												height="74"
+												rx="5"
+											/>
+											<text x="150.0" y="261" text-anchor="middle" font-size="23" font-weight="600">
+												Ambiguous reply
+											</text>
+											<text x="150.0" y="285" text-anchor="middle" font-size="16">
+												no second grant
+											</text>
+										</g>
+										<path class="edge" d="M270 72 H330" />
+										<text class="edge-label" x="300" y="54" text-anchor="middle">decide</text>
+										<path class="edge" d="M570 72 H630" />
+										<text class="edge-label" x="600" y="54" text-anchor="middle">reserve</text>
+										<path class="edge" d="M750 109 V230" />
+										<text class="edge-label" x="789" y="177" text-anchor="middle">arm</text>
+										<path class="edge" d="M630 267 H570" />
+										<text class="edge-label" x="600" y="248" text-anchor="middle">execute</text>
+										<path class="edge" d="M750 304 V373 H150 V304" />
+										<text class="edge-label" x="450" y="404" text-anchor="middle">
+											lost arm reply / repeated arm
+										</text>
+										<text x="450" y="475" font-size="18" text-anchor="middle">
+											An armed record alone does not establish that the effect happened.
+										</text>
+									</svg>
+								</ex-zoom>
+								<table>
+									<thead>
+										<tr>
+											<th>Step</th>
+											<th>What the controller records</th>
+											<th>What that proves</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr>
+											<td>Request</td>
+											<td>Pending challenge with expiry and intent fingerprint</td>
+											<td>A specific approval request exists</td>
+										</tr>
+										<tr>
+											<td>Decide</td>
+											<td>Approved or denied</td>
+											<td>An authorized decision was recorded</td>
+										</tr>
+										<tr>
+											<td>Reserve</td>
+											<td><code>consumed-not-dispatched</code> and an exact reservation</td>
+											<td>The approval has been consumed</td>
+										</tr>
+										<tr>
+											<td>Arm</td>
+											<td><code>dispatch-armed</code> and a grant</td>
+											<td>Dispatch permission was armed</td>
+										</tr>
+										<tr>
+											<td>Execute</td>
+											<td>Backend-specific outcome</td>
+											<td>Execution evidence must come from the backend</td>
+										</tr>
+									</tbody>
+								</table>
+								<p>
+									The fingerprint binds the exact call and arguments, principal, backend, operation
+									ID, semantic revisions and authority epochs. A recorded decision returns
+									approved/denied state, not a grant.
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/gateway-control-contracts/src/gateway-runtime-approval.ts#L49"
+										>Intent contract</a
+									>,
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-portal-sdk/src/approval-surface/models/gateway-approval-presentation-schema.ts#L74"
+										>decision result</a
+									>.
+								</p>
+								<p>
+									Current controller execution rechecks the configured operation before arming. A
+									changed caller, target or policy can invalidate an earlier approval.
+									Authentication, capability policy and human consent each answer a different
+									question.
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.ts#L1024"
+										>Final admission</a
+									>.
+								</p>
+							</ex-markdown>
+						</section>
+						<section id="lost-replies-do-not-create-another-permission" label="Lost replies">
+							<ex-markdown prepared
+								><h2>Lost replies do not create another permission</h2>
+								<p>
+									If the reservation reply is lost, a fresh reserve attempt sees that the approval
+									was already consumed. If the arm reply is lost, a fresh arm attempt returns an
+									ambiguous armed-dispatch result instead of another grant. An armed record alone
+									does not prove the backend performed its effect.
+									<a
+										href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/approval/controller-approval-ledger.ts#L477"
+										>Lost-reply behavior</a
+									>.
+								</p>
+								<p>
+									For example, an upstream service may send an email and lose its response.
+									Automatically repeating the call could send another email. The correct next action
+									depends on the retained operation evidence and the provider&#39;s reconciliation
+									or idempotency support.
+								</p>
+							</ex-markdown>
+						</section></ex-tabs
+					>
+					<section id="connection-and-interaction-lifetimes">
+						<ex-markdown prepared
+							><h2>Connection and interaction lifetimes</h2>
+							<ex-zoom
+								aria-label="A logical interaction and an operation can span two physical connections, while a disconnected connection is never reused."
+								><svg
+									xmlns="http://www.w3.org/2000/svg"
+									viewBox="0 0 900 530"
+									role="img"
+									aria-labelledby="session-lifetimes-title session-lifetimes-description"
+								>
+									<title id="session-lifetimes-title">
+										Interaction, operation and connection lifetimes
+									</title>
+									<desc id="session-lifetimes-description">
+										The proposed application interaction and operation span two different physical
+										connections. Connection A is replaced by newly authenticated connection B. No
+										execution retry is implied. Current transport and invocation limits are
+										described in the prose.
+									</desc>
+									<style>
+										text {
+											font-family: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+											fill: var(--ink, #e7ebf1);
+										}
+										.diagram-node {
+											fill: var(--sheet, #171d26);
+											stroke: var(--rule, #7b899a);
+											stroke-width: 2;
+										}
+										.current {
+											fill: var(--strong-bg, #1b2b40);
+											stroke: var(--strong, #8ab8ef);
+										}
+										.proposed {
+											fill: var(--change-bg, #3a2c14);
+											stroke: var(--change, #f0b45a);
+											stroke-dasharray: 7 5;
+										}
+										.authority {
+											fill: var(--patch-bg, #2c2240);
+											stroke: var(--patch, #c3a6f0);
+										}
+										.edge {
+											fill: none;
+											stroke: var(--accent, #6fc0ca);
+											stroke-width: 2.4;
+											marker-end: url(#session-lifetimes-arrow);
+										}
+										.edge-label {
+											font-size: 16px;
+											fill: var(--ink-soft, #a5afbd);
+										}
+									</style>
+									<defs>
+										<marker
+											id="session-lifetimes-arrow"
+											markerWidth="9"
+											markerHeight="9"
+											refX="8"
+											refY="4"
+											orient="auto"
+										>
+											<path d="M0 0 L8 4 L0 8" fill="var(--accent,#6fc0ca)" />
+										</marker>
+									</defs>
+									<rect x="0" y="0" width="900" height="530" fill="var(--paper,#11161d)" />
+									<text x="450" y="40" text-anchor="middle" font-size="22" font-weight="600">
+										Requested application lifetime model
+									</text>
+									<text x="25" y="152" font-size="19" font-weight="600">Logical interaction</text>
+									<text x="25" y="297" font-size="19" font-weight="600">Operation</text>
+									<text x="25" y="442" font-size="19" font-weight="600">Physical connection</text>
+									<g>
+										<rect
+											class="diagram-node proposed"
+											x="235"
+											y="120"
+											width="625"
+											height="74"
+											rx="5"
+										/>
+										<text x="547.5" y="151" text-anchor="middle" font-size="23" font-weight="600">
+											Same interaction
+										</text>
+										<text x="547.5" y="175" text-anchor="middle" font-size="16">
+											explicit application identity and lifetime
+										</text>
+									</g>
+									<g>
+										<rect
+											class="diagram-node proposed"
+											x="235"
+											y="265"
+											width="625"
+											height="74"
+											rx="5"
+										/>
+										<text x="547.5" y="296" text-anchor="middle" font-size="23" font-weight="600">
+											Same operation
+										</text>
+										<text x="547.5" y="320" text-anchor="middle" font-size="16">
+											accepted → running → retained result
+										</text>
+									</g>
+									<g>
+										<rect
+											class="diagram-node current"
+											x="235"
+											y="410"
+											width="250"
+											height="74"
+											rx="5"
+										/>
+										<text x="360.0" y="441" text-anchor="middle" font-size="23" font-weight="600">
+											Connection A
+										</text>
+										<text x="360.0" y="465" text-anchor="middle" font-size="16">
+											temporary attachment
+										</text>
+									</g>
+									<g>
+										<rect
+											class="diagram-node current"
+											x="610"
+											y="410"
+											width="250"
+											height="74"
+											rx="5"
+										/>
+										<text x="735.0" y="441" text-anchor="middle" font-size="23" font-weight="600">
+											Connection B
+										</text>
+										<text x="735.0" y="465" text-anchor="middle" font-size="16">
+											new authenticated attachment
+										</text>
+									</g>
+									<path class="edge" d="M485 447 H610" />
+									<text class="edge-label" x="547" y="427" text-anchor="middle">gap</text>
+									<text x="550" y="218" text-anchor="middle" class="edge-label">
+										Transport replacement does not create another execution.
+									</text>
+								</svg>
+							</ex-zoom>
+							<table>
+								<thead>
+									<tr>
+										<th>Identity or lifetime</th>
+										<th>Meaning</th>
+										<th>On reconnect</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td>Authenticated principal</td>
+										<td>Who may access the service</td>
+										<td>Authenticate and resolve current policy again</td>
+									</tr>
+									<tr>
+										<td>Logical interaction</td>
+										<td>Ongoing work and its context</td>
+										<td>May continue under its explicit lifetime contract</td>
+									</tr>
+									<tr>
+										<td>Operation</td>
+										<td>One requested effect</td>
+										<td>Recover the same operation&#39;s outcome</td>
+									</tr>
+									<tr>
+										<td>Connection</td>
+										<td>One physical attachment</td>
+										<td>Create a new connection identity</td>
+									</tr>
+									<tr>
+										<td>VM lease</td>
+										<td>Access to a host-owned environment</td>
+										<td>Follow host lease and active-use policy</td>
+									</tr>
+									<tr>
+										<td>Delivery cursor</td>
+										<td>Position in a retained event stream</td>
+										<td>Recover delivery within the retention window</td>
+									</tr>
+								</tbody>
+							</table>
+							<p>
+								The diagram shows the requested application model. Current MCP
+								<code>2026-07-28</code> removes protocol sessions and SSE replay, so a business
+								interaction or operation handle belongs to the application. Agent VM resolves SDK
+								<code>1.29.0</code>, whose supported protocol list stops at <code>2025-11-25</code>.
+								<a href="https://modelcontextprotocol.io/specification/2026-07-28/changelog"
+									>Current MCP changes</a
+								>,
+								<a
+									href="https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.29.0/src/types.ts"
+									>pinned SDK source</a
+								>.
+							</p>
+						</ex-markdown>
+					</section>
+					<section id="what-tool-vm-work-already-preserves">
+						<ex-markdown prepared
+							><h2>What Tool VM work already preserves</h2>
+							<p>
+								A control-session disconnect moves matching running active uses into an
+								<code>observation-gap</code>, preserving their lease and use record. Resume requires
+								the same principal, process, lease and VM generation, a live admitting parent, a
+								time before the deadline and a newer attachment generation. Expiry makes the outcome
+								ambiguous and quarantines the leaf. It does not automatically rerun the command.
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L503"
+									>Disconnect</a
+								>,
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L533"
+									>resume</a
+								>,
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L654"
+									>expiry</a
+								>.
+							</p>
+							<p>
+								The Tool VM Portal relay is invocation-scoped. Invocation completion closes
+								admission and cancels its pending work. An ended invocation&#39;s Portal authority
+								cannot be recovered by keeping a detached program or opening another socket.
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/docs/architecture/tool-vm-portal-composition.md#L117"
+									>Relay lifetime</a
+								>.
+							</p>
+						</ex-markdown>
+					</section>
+					<section id="proposed-recovery-contract">
+						<ex-markdown prepared
+							><h2>Proposed recovery contract</h2>
+							<p>
+								A generic durable operation service would need a caller-known operation key before
+								submission, a stored payload fingerprint, identity-scoped deduplication, retained
+								outcomes and an authorized lookup path. Reusing a key with different arguments must
+								conflict. A lost initial reply must still be recoverable using that known key.
+							</p>
+							<p>
+								Current Portal results already distinguish proven not-dispatched, completed,
+								terminated and ambiguous outcomes. The public capability interface does not yet
+								expose a universal durable operation lookup API. Persisted state also cannot prove
+								an external process or upstream effect survived a host restart.
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-portal-sdk/src/portal-call-surface/models/portal-call-result-schema.ts#L47"
+									>Result schema</a
+								>,
+								<a
+									href="https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/tool-portal/src/tool-portal-service.ts#L204"
+									>capability interface</a
+								>.
+							</p>
+						</ex-markdown>
+					</section>
+					<section id="evidence-and-limits">
+						<ex-markdown prepared
+							><h2>Evidence and limits</h2>
+							<p>
+								These are source observations and proposed contracts. No lost-reply experiment, live
+								VM continuation or host-restart recovery was run. The diagrams and controls are
+								explanatory views, not a running approval service.
+							</p>
+							<p>
+								Continue with <a href="portal-system.html">the system today</a> or
+								<a href="portable-runtime.html">the portable runtime idea</a>.
+							</p>
+						</ex-markdown>
+					</section>
+					<section id="markdown-source">
+						<h2>Read the Markdown version</h2>
+						<p><a href="approval-and-reconnects.md" download>Download Markdown</a></p>
+						<details>
+							<summary>Inspect the full source text</summary>
+							<pre class="source-reader">
+# Approval, operations and reconnects
+
+An approval records consent to an exact action. Dispatch permission authorizes its execution under current policy. A reconnect restores communication and observation. Keeping those meanings separate prevents a lost response from becoming a duplicate effect.
+
+Source snapshot: 2026-10-14, Agent VM `8535fdd4`. Current transitions below were inspected in source. The future operation-recovery contract is a proposal, not implemented behavior.
+
+## Where approval lives
+
+The managed approval engine is internal to `@agent-vm/agent-vm`, in `createControllerApprovalLedger`. There is no generic approval-engine package or Rust crate in this workspace. Shared SDK and control-contract packages carry schemas; Gateway Runtime adapts its approval port to controller RPCs. [Ledger implementation](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/approval/controller-approval-ledger.ts#L359), [approval port](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/tool-portal/src/tool-portal-service.ts#L182).
+
+Standalone Tool Portal and standalone MCP Portal have separate HMAC implementations with in-memory consumption/replay records. They do not have the managed controller's durable approval ledger. A common reusable package would be a future extraction.
+
+## An exact approval passes through several states
+
+![The current managed approval sequence: pending challenge, approved decision, consumed reservation, armed dispatch, then backend outcome.](assets/approval-sequence.svg)
+
+| Step | What the controller records | What that proves |
+| --- | --- | --- |
+| Request | Pending challenge with expiry and intent fingerprint | A specific approval request exists |
+| Decide | Approved or denied | An authorized decision was recorded |
+| Reserve | `consumed-not-dispatched` and an exact reservation | The approval has been consumed |
+| Arm | `dispatch-armed` and a grant | Dispatch permission was armed |
+| Execute | Backend-specific outcome | Execution evidence must come from the backend |
+
+The fingerprint binds the exact call and arguments, principal, backend, operation ID, semantic revisions and authority epochs. A recorded decision returns approved/denied state, not a grant. [Intent contract](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/gateway-control-contracts/src/gateway-runtime-approval.ts#L49), [decision result](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-portal-sdk/src/approval-surface/models/gateway-approval-presentation-schema.ts#L74).
+
+Current controller execution rechecks the configured operation before arming. A changed caller, target or policy can invalidate an earlier approval. Authentication, capability policy and human consent each answer a different question. [Final admission](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/control-session/gateway-control-domain-handler.ts#L1024).
+
+## Lost replies do not create another permission
+
+If the reservation reply is lost, a fresh reserve attempt sees that the approval was already consumed. If the arm reply is lost, a fresh arm attempt returns an ambiguous armed-dispatch result instead of another grant. An armed record alone does not prove the backend performed its effect. [Lost-reply behavior](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/approval/controller-approval-ledger.ts#L477).
+
+For example, an upstream service may send an email and lose its response. Automatically repeating the call could send another email. The correct next action depends on the retained operation evidence and the provider's reconciliation or idempotency support.
+
+## Connection and interaction lifetimes
+
+![A logical interaction and an operation can span two physical connections, while a disconnected connection is never reused.](assets/session-lifetimes.svg)
+
+| Identity or lifetime | Meaning | On reconnect |
+| --- | --- | --- |
+| Authenticated principal | Who may access the service | Authenticate and resolve current policy again |
+| Logical interaction | Ongoing work and its context | May continue under its explicit lifetime contract |
+| Operation | One requested effect | Recover the same operation's outcome |
+| Connection | One physical attachment | Create a new connection identity |
+| VM lease | Access to a host-owned environment | Follow host lease and active-use policy |
+| Delivery cursor | Position in a retained event stream | Recover delivery within the retention window |
+
+The diagram shows the requested application model. Current MCP `2026-07-28` removes protocol sessions and SSE replay, so a business interaction or operation handle belongs to the application. Agent VM resolves SDK `1.29.0`, whose supported protocol list stops at `2025-11-25`. [Current MCP changes](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [pinned SDK source](https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.29.0/src/types.ts).
+
+## What Tool VM work already preserves
+
+A control-session disconnect moves matching running active uses into an `observation-gap`, preserving their lease and use record. Resume requires the same principal, process, lease and VM generation, a live admitting parent, a time before the deadline and a newer attachment generation. Expiry makes the outcome ambiguous and quarantines the leaf. It does not automatically rerun the command. [Disconnect](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L503), [resume](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L533), [expiry](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-vm/src/controller/leases/tool-vm-lease-authority-state.ts#L654).
+
+The Tool VM Portal relay is invocation-scoped. Invocation completion closes admission and cancels its pending work. An ended invocation's Portal authority cannot be recovered by keeping a detached program or opening another socket. [Relay lifetime](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/docs/architecture/tool-vm-portal-composition.md#L117).
+
+## Proposed recovery contract
+
+A generic durable operation service would need a caller-known operation key before submission, a stored payload fingerprint, identity-scoped deduplication, retained outcomes and an authorized lookup path. Reusing a key with different arguments must conflict. A lost initial reply must still be recoverable using that known key.
+
+Current Portal results already distinguish proven not-dispatched, completed, terminated and ambiguous outcomes. The public capability interface does not yet expose a universal durable operation lookup API. Persisted state also cannot prove an external process or upstream effect survived a host restart. [Result schema](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/agent-portal-sdk/src/portal-call-surface/models/portal-call-result-schema.ts#L47), [capability interface](https://github.com/ShravanSunder/agent-vm/blob/8535fdd433dc90fed627ee7a05f63e59d58cf8ee/packages/tool-portal/src/tool-portal-service.ts#L204).
+
+## Evidence and limits
+
+These are source observations and proposed contracts. No lost-reply experiment, live VM continuation or host-restart recovery was run. The diagrams and controls are explanatory views, not a running approval service.
+
+Continue with [the system today](portal-system.md) or [the portable runtime idea](portable-runtime.md).
+</pre>
+						</details>
+					</section>
+					<footer>
+						Prepared SVGs show the stated relationships. Tabs, theme and zoom are reading controls.
+						This bundle performs no Portal, provider, VM or approval operations.
+					</footer>
+				</ex-document>
+			</main>
+		</div>
+	</body>
+</html>

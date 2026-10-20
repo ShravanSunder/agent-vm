@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 550" role="img" aria-labelledby="diagram-title diagram-description">
+<title id="diagram-title">Three current deployment modes</title>
+<desc id="diagram-description">Managed and standalone deployments use distinct approval mechanisms. The diagram labels each caller surface and its approval owner, with current backend limits.</desc>
+<style>
+text {font-family:'IBM Plex Sans Condensed','Arial Narrow',sans-serif;fill:var(--ink,#e7ebf1)}
+.diagram-node {fill:var(--sheet,#171d26);stroke:var(--rule,#7b899a);stroke-width:2}
+.current {fill:var(--strong-bg,#1b2b40);stroke:var(--strong,#8ab8ef)}
+.proposed {fill:var(--change-bg,#3a2c14);stroke:var(--change,#f0b45a);stroke-dasharray:7 5}
+.authority {fill:var(--patch-bg,#2c2240);stroke:var(--patch,#c3a6f0)}
+.edge {fill:none;stroke:var(--accent,#6fc0ca);stroke-width:2.4;marker-end:url(#arrow)}
+.edge-label {font-size:16px;fill:var(--ink-soft,#a5afbd)}
+</style>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--accent,#6fc0ca)"/></marker></defs>
+<rect x="0" y="0" width="900" height="550" fill="var(--paper,#11161d)"/>
+<g><rect class="diagram-node current" x="15" y="35" width="240" height="74" rx="5"/><text x="135.0" y="66" text-anchor="middle" font-size="23" font-weight="600">Managed Hermes</text><text x="135.0" y="90" text-anchor="middle" font-size="16">caller</text></g>
+<g><rect class="diagram-node current" x="330" y="35" width="240" height="74" rx="5"/><text x="450.0" y="66" text-anchor="middle" font-size="23" font-weight="600">Managed Tool Portal</text><text x="450.0" y="90" text-anchor="middle" font-size="16">capability surface</text></g>
+<g><rect class="diagram-node authority" x="645" y="35" width="240" height="74" rx="5"/><text x="765.0" y="66" text-anchor="middle" font-size="23" font-weight="600">Controller ledger</text><text x="765.0" y="90" text-anchor="middle" font-size="16">approval owner</text></g>
+<path class="edge" d="M255 72 H330"/>
+<path class="edge" d="M570 72 H645"/>
+<text x="450" y="150" text-anchor="middle" class="edge-label">private socket; three managed backends</text><g><rect class="diagram-node current" x="15" y="210" width="240" height="74" rx="5"/><text x="135.0" y="241" text-anchor="middle" font-size="23" font-weight="600">External MCP client</text><text x="135.0" y="265" text-anchor="middle" font-size="16">caller</text></g>
+<g><rect class="diagram-node current" x="330" y="210" width="240" height="74" rx="5"/><text x="450.0" y="241" text-anchor="middle" font-size="23" font-weight="600">Standalone MCP Portal</text><text x="450.0" y="265" text-anchor="middle" font-size="16">capability surface</text></g>
+<g><rect class="diagram-node authority" x="645" y="210" width="240" height="74" rx="5"/><text x="765.0" y="241" text-anchor="middle" font-size="23" font-weight="600">HMAC call verifier</text><text x="765.0" y="265" text-anchor="middle" font-size="16">approval owner</text></g>
+<path class="edge" d="M255 247 H330"/>
+<path class="edge" d="M570 247 H645"/>
+<text x="450" y="325" text-anchor="middle" class="edge-label">MCP tools; process-local replay state</text><g><rect class="diagram-node current" x="15" y="385" width="240" height="74" rx="5"/><text x="135.0" y="416" text-anchor="middle" font-size="23" font-weight="600">External client</text><text x="135.0" y="440" text-anchor="middle" font-size="16">caller</text></g>
+<g><rect class="diagram-node current" x="330" y="385" width="240" height="74" rx="5"/><text x="450.0" y="416" text-anchor="middle" font-size="23" font-weight="600">Standalone Tool Portal</text><text x="450.0" y="440" text-anchor="middle" font-size="16">capability surface</text></g>
+<g><rect class="diagram-node authority" x="645" y="385" width="240" height="74" rx="5"/><text x="765.0" y="416" text-anchor="middle" font-size="23" font-weight="600">HMAC batch coordinator</text><text x="765.0" y="440" text-anchor="middle" font-size="16">approval owner</text></g>
+<path class="edge" d="M255 422 H330"/>
+<path class="edge" d="M570 422 H645"/>
+<text x="450" y="500" text-anchor="middle" class="edge-label">HTTP / MCP / stdio; MCP-backed namespaces</text>
+</svg>

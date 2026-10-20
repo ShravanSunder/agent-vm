@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tool Portal: build plan</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Your tools, available to your agents</a>
+<a href="build-plan.html">Build plan</a>
+<a href="core-and-split.html">Core and split</a>
+<a href="mcp-portal-explainer.html">MCP Gateway explained</a>
+<a href="tool-portal-explainer.html">Identity and approvals</a>
+<a href="requirements.html">Requirements</a>
+<a href="2026-10-14-portable-tool-portal-hosts.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="gateway-composition.html">Composition chapter</a>
+<a href="public-host-contracts.html">Contracts chapter</a>
+</nav></ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Tool Portal: build plan</h1>
+
+<ex-callout tone="tldr" title="The plan in four lines">
+- **Six pull requests, built in order inside agent-vm**, create the new `@agent-collaboration` tool packages by copying from today's code. The old `@agent-vm` packages stay untouched until the cutover in PR 4 (F-60).
+- **PRs 1–4 need nothing more from you** beyond permission to commit the design. They build the rules, the engine, the Node host and the cutover. PR 4 also restores agent-vm's auth, which may break before then (F-59).
+- **PRs 5 and 6 need sign-in for real use.** People sign in through Better Auth on Cloudflare Workers with Google, GitHub or a passkey. Cloudflare itself stays for machines, VMs and VPN (F-64, F-65). Sign-in gets its own short design next.
+- **No screens are built yet.** They wait for your hosting choice (Option A or B) and the UI design alignment (F-56).
+</ex-callout>
+
+<ex-callout tone="question" title="What needs you">
+- **Now: approve committing the design.** The four design documents and their evidence folders get committed and pushed on `design/portable-tool-portal-hosts`. The builders can't work from untracked files in your checkout.
+- **Before PR 6 and sign-in:** a Cloudflare test account and token, plus Google and GitHub OAuth app credentials.
+- **Before any screens:** Option A (the console hosts the screens and request bar from the start) or Option B (Tool Portal hosts them until the console exists).
+- **Before production permission changes:** D6, where the audit log lives and how long it keeps entries.
+</ex-callout>
+
+<h2 id="stack">The six pull requests</h2>
+
+Each step builds on the one before it. One builder (a Sol Implementer) owns each PR; a separate Sol Reviewer checks each one; I integrate and accept. Nothing merges without your say-so.
+
+<ex-mermaid id="stack-map" data-width="canvas"><script type="text/plain">
+flowchart TB
+  P0["Commit the design"]
+  pr1["PR 1: rules and access check"]
+  pr2["PR 2: seam and managed adapter"]
+  pr3["PR 3: gateway and Node host"]
+  pr4["PR 4: cutover, auth restored"]
+  pr5["PR 5: proposals"]
+  pr6["PR 6: Worker host"]
+  signin["Sign-in service"]
+  cf["Cloudflare account"]
+  P0 --> pr1 --> pr2 --> pr3 --> pr4 --> pr5 --> pr6
+  signin -.->|identity| pr5
+  signin -.->|identity| pr6
+  cf -.->|hosted proof| pr6
+</script></ex-mermaid>
+
+<ex-grid cols="3" data-width="canvas">
+<ex-card id="pr1" tone="planned" icon="shield-check" title="PR 1 · tool-access">
+Copies today's pure rules (tool selectors, approval policy, CLI allowances, Google command sets) into `@agent-collaboration/tool-access`, and adds the access check that answers usable, approval each call, blocked, or not usable with the reason.
+
+**Proven by:** a table test of the 10-step order and the Advisor's edge cases, plus a check that the published package loads without Node, agent-vm or Gondolin code.
+</ex-card>
+<ex-card id="pr2" tone="planned" icon="plug" title="PR 2 · the seam">
+Builds `@agent-collaboration/tool-engine`'s dispatch over neutral backend and approval interfaces. Adds agent-vm's managed adapter, which keeps its own final checks.
+
+**Proven by:** today's managed approval test, rerun through the new interfaces: one approved call, refused replay, refused fake reservation. Also: the new access check agrees with today's admission on the real managed configuration.
+</ex-card>
+<ex-card id="pr3" tone="planned" icon="terminal" title="PR 3 · gateway and Node host">
+Adds the MCP gateway and outbound connectors to the engine, and builds `@agent-collaboration/tool-host-node`: listeners, stdio, configuration and catalog build.
+
+**Proven by:** two independently signed-in agents discovering and calling tools through the real Node host, with guessed names and wrong audiences refused. Byte-for-byte checks keep existing formats unchanged.
+</ex-card>
+<ex-card id="pr4" tone="changed" icon="git-branch" title="PR 4 · cutover">
+agent-vm switches to the new packages. The old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted, and the legacy approval tokens retire with no translation. This is where auth must work again.
+
+**Proven by:** the full test suite plus the VM and Hermes end-to-end lanes, a managed-boundary journey, and a one-time cutover rehearsal.
+</ex-card>
+<ex-card id="pr5" tone="planned" icon="chat-circle" title="PR 5 · proposals">
+Adds the control API: see access, propose a change, Accept or Deny, read the result. Identities come from configuration until the fleet's contract exists. Real permission changes stay off until D6.
+
+**Proven by:** the access view matching admission, only a manager's Accept applying a proposal once, and Tool Portal's side of the router boundary. Uses two recorded stand-ins: a test sign-in issuer and a test audit log.
+</ex-card>
+<ex-card id="pr6" tone="planned" icon="cloud" title="PR 6 · Worker host">
+Builds `@agent-collaboration/tool-host-cloudflare`: Worker binding, token checks with WebCrypto, Durable Object stores.
+
+**Proven by:** the same discovery and proposal journeys on a deployed test Worker, matching the Node host. A local emulator alone doesn't count.
+</ex-card>
+</ex-grid>
+
+<h2 id="signin">How sign-in fits</h2>
+
+People and machines get different front doors (F-64, F-65). The sign-in service runs Better Auth on a Cloudflare Worker with D1. People sign in once and receive a short-lived token for each service they use; each service checks that the token was made for it. Machines keep using Cloudflare.
+
+<ex-mermaid id="signin-map" data-width="canvas"><script type="text/plain">
+flowchart TB
+  person["Admins and members"]
+  machines["VMs, VPN, fleet"]
+  signin["Sign-in service"]
+  cfa["Cloudflare access"]
+  idp["Google, GitHub, passkeys"]
+  console["Console"]
+  tp["Tool Portal API"]
+  fleet["Fleet machines"]
+  person --> signin
+  signin --> idp
+  signin -->|console token| console
+  signin -->|Tool Portal token| tp
+  console --> tp
+  machines --> cfa --> fleet
+</script></ex-mermaid>
+
+What the sign-in design must get right, from the Advisor's checks:
+- **Revocation is not instant by default.** A cached session can outlive a revoked account, so Tool Portal checks the person's current manager status at every Accept, not only the token.
+- **A passkey login is not an Accept.** It proves who signed in, not that they pressed this Accept; that check stays with the console's design (F-57).
+- **One membership registry.** Better Auth's organization feature isn't used for workspaces; the fleet owns membership.
+
+**Open in that design:** where it lives (my default is `agent-fleet-tools`, as `@agent-collaboration/auth`), private mode first (approved accounts only), then public mode.
+
+<h2 id="status">Where things stand</h2>
+
+| | State | Evidence |
+| --- | --- | --- |
+| Design (four documents) | done, independently reviewed, 0 open findings | Sol Reviewer, 7 findings fixed and verified |
+| Names and scope | done: `@agent-collaboration/*` | your F-60, F-62, F-63 |
+| Sign-in direction | decided; design not written yet | your F-64, F-65 |
+| Build plan | written | this page, and the plan file below |
+| Code | not started | waiting on your approval to commit the design |
+| Screens | not planned | waiting on Option A or B and F-56 |
+
+<h2 id="out">Not in this plan</h2>
+
+| Left out | Waiting on |
+| --- | --- |
+| Screens and the `tool-access-ui` package | Option A or B, and the UI design (F-56) |
+| Real permission changes (audit log) | D6 |
+| Entering secrets in the app | where typed secrets are stored |
+| The approvals screen | D7 |
+| The request bar's model | the console's design, and D8 |
+| Temporary access grants and revocation | your interest (F-61); a design decision first |
+| Cloud-to-Mac routing, agent enrollment, remote approvals | D1–D5 and the fleet identity contract |
+| Moving to `agent-fleet-tools` | a separate plan once PR 4 passes |
+
+<details>
+<summary>Sources</summary>
+
+- The plan: `tmp/plan-workflows/2026-10-19-tool-engine-core-extraction.md` in this checkout (local, not committed).
+- [Program Design](program-design.html), [Verification Design](verification-design.html), [Core and split](core-and-split.html).
+- Your decisions F-50 to F-66: [Fleet decisions](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md).
+
+</details>
+
+</ex-document>
+</body>
+</html>

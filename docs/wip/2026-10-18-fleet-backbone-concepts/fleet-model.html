@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Who can do what: persons, workspaces, personas, agents</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content">
+<nav slot="pages" aria-label="Pages">
+<a href="fleet-model.html">Who can do what</a>
+<a href="identity.html">Identity end to end</a>
+<a href="journeys.html">Journeys</a>
+</nav>
+</ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Who can do what: persons, workspaces, personas, agents</h1>
+
+<ex-callout tone="tldr" title="The model in five lines">
+**People sign in. Workspaces own things. Personas get access. Agents prove who they are.**
+
+- Every resource (an account, a tool, a board, a machine) has **one owner**: a person, or a shared workspace. Its owner registers and signs it in **once**, into a workspace: your Gmail into your personal workspace (still yours), the family calendar into the household.
+- A **persona** is a kind of agent, registered in one workspace. It gets **its own slice** of that workspace's resources, and each tool has a mode: run it, let a judge decide, ask a person, or never.
+- An **agent** is one running copy of a persona. A launcher enrolls it automatically. It gets the persona's slice and never more.
+- Agents in a workspace can **message** each other. Getting another agent to **act** is a separate permission, granted per action; the agent doing the work uses **its own** access, never the asker's.
+- Nothing crosses between workspaces unless someone shares it explicitly, and no agent ever works for a different person.
+</ex-callout>
+
+<ex-callout tone="note" title="How to spot issues on this page">
+Every claim carries one of three marks:
+
+- ✅ **Decided**: you said it. The number points to your words in `decisions-and-open-questions.md`.
+- 🟡 **Proposed**: the Advisors' reading of what you said. Not confirmed by you. **Push back here.**
+- ❓ **Open**: needs your call.
+
+The fastest check is [section 4](#scenarios): 18 situations, each with what the model says happens. If an outcome feels wrong, the model is wrong at that point.
+</ex-callout>
+
+<h2 id="words">1. The words</h2>
+
+| Word | Plain meaning | Example | Status |
+|---|---|---|---|
+| **Fleet** | your infrastructure: one backbone service plus every machine and VM | — | ✅ one shared backbone (D-1) · 🟡 one fleet, run by you as admin (❓ call A) |
+| **Person** | someone who signs in, owns devices and approves things | you, your wife | 🟡 |
+| **Workspace** | where things are registered: resources, personas and its own machines. A shared workspace owns its resources; in a personal workspace they stay the person's. | `shravan`, `wife`, `household` | 🟡 · ❓ the name clashes (call B) |
+| **Resource** | something agents use: an account, an MCP tool, a board, a VM. One owner (a person or a shared workspace); registered and signed in once. | your Gmail (owner: you), the family calendar (owner: household) | 🟡 |
+| **Persona** | a kind of agent, registered in one workspace, with its own slice of that workspace's resources | `codex-worker`, `mail-assistant` | ✅ D-7 · 🟡 the slice |
+| **Agent** | one running copy of a persona, with its own short-lived credential | `codex-worker#01b` | ✅ never enrolled by hand (D-6) |
+| **Permission profile** | the persona's slice: which resources, and each tool's mode | Gmail send = requires approval | 🟡 the term (D-10) · ✅ the four modes (D-9) |
+| **Approver** | a person who may approve actions on a resource, named by the resource owner's policy | you, for your Gmail | 🟡 |
+
+<h2 id="picture">2. The picture</h2>
+
+Boxes are workspaces. Solid arrows show ownership and membership. The dashed arrow is an example of an explicit share.
+
+<ex-mermaid id="model">
+<script type="text/plain">
+flowchart TB
+  You["Person: you"]
+  Wife["Person: wife"]
+  subgraph WS["Workspace: shravan (personal)"]
+    R1["Resources: your Gmail, GitHub, dev VM"]
+    P1["Persona: codex-worker"]
+    P4["Persona: mail-assistant"]
+    A1["Agents: 3 running copies"]
+    A4["Agent: 1 running copy"]
+    P1 --> A1
+    P4 --> A4
+  end
+  subgraph WW["Workspace: wife (personal)"]
+    R2["Resources: her Gmail, her VM"]
+    P2["Persona: home-assistant"]
+    A2["Agent: 1 running copy"]
+    P2 --> A2
+  end
+  subgraph WH["Workspace: household (shared)"]
+    R3["Resources: family calendar, shared board, household VM"]
+    P3["Persona: household-agent"]
+    A3["Agent: 1 running copy"]
+    P3 --> A3
+  end
+  You -->|owns| WS
+  Wife -->|owns| WW
+  You -->|member| WH
+  Wife -->|member| WH
+  R3 -.->|explicit share, example| P2
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="two-layers" title="An agent's access comes from two layers" tone="planned" icon="shield-check" tag="🟡 Proposed">
+1. **Workspace** (the ceiling): the persona can only reach resources registered in its workspace, or shared into it.
+2. **Permission profile** (the slice): within that ceiling, which resources and tools the persona actually gets, and each tool's mode.
+
+You asked "or both?" The answer is both: the workspace sets the limit and the profile picks within it.
+</ex-card>
+<ex-card id="compute-boundary" title="Machines belong to one workspace" tone="decision" icon="cpu" tag="✅ D-15 · 🟡 VMs">
+Each machine or VM belongs to exactly one workspace, and so does everything on it: files, repos, caches, git and cloud logins. An agent runs only on its own workspace's machines. 🟡 Sharing hardware between workspaces means separate VMs, not separate OS users (council proposal).
+</ex-card>
+</ex-grid>
+
+<h2 id="together">3. Resources and agents working together</h2>
+
+🟡 All proposed. This answers "resources are by agent, right?" and "can agents in a workspace get each other to do things?"
+
+<ex-mermaid id="together-diagram">
+<script type="text/plain">
+flowchart LR
+  Gmail["Your Gmail: owned by you, registered in shravan, signed in once"]
+  CW["Persona: codex-worker"]
+  MA["Persona: mail-assistant"]
+  CWa["Agent: codex-worker 01b"]
+  MAa["Agent: mail-assistant 04a"]
+  Gmail -->|"slice: read = approved"| CW
+  Gmail -->|"slice: read = approved, send = ask you"| MA
+  CW --> CWa
+  MA --> MAa
+  CWa -.->|"may it request send-email?"| MAa
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="owned-vs-granted" title="One owner, registered once, sliced per persona" tone="planned" icon="folder" tag="🟡 Proposed">
+**Both are true.** Your Gmail has one owner, *you*. You register it once, into your personal workspace, sign in once and revoke once; its secrets stay in the credential broker. Registering it there doesn't make the workspace its owner, so your approval policy still applies. Each persona is *granted* its own slice: `codex-worker` may only read, while `mail-assistant` may also send if you approve.
+
+So "by agent" is right about what each agent **sees**, but not about who **owns** the account. If each agent owned its own Gmail connection, you would sign in again for every agent, and there will be many agents that come and go.
+
+**Today it really is by agent:** agent-vm grants each Google account owner a list of agent IDs (`allowedAgentIds`, `google-permission-policy-service.ts:146-156`). Granting to a persona instead is **wider consent, not a rename**: future agents inherit it. The grant must say which owner, workspace, persona version and limits it covers. Each agent stays the caller and keeps its own history, and widening a persona later never widens a grant you already gave.
+</ex-card>
+<ex-card id="agents-ask" title="Messaging is not permission to act" tone="planned" icon="chat-circle" tag="🟡 Proposed">
+Inside a workspace, agents message each other on the boards and threads their profiles allow. Getting another agent to **do** something takes three separate yeses:
+
+1. May A request **this action** from B? B offers specific actions, such as "send email"; being able to message B isn't enough.
+2. May B do it on this resource? This uses B's **own** slice, never A's.
+3. May the result go to this audience, such as this recipient or this board?
+
+`approved` only skips the per-call human step inside those checks. An approval request shows who asked, but that's provenance; it only counts once the asker's identity is verified.
+
+Across workspaces, agents can only talk through something shared, like the household board. The message is a request, never permission, and no agent works for a different person (✅ D-17).
+</ex-card>
+<ex-card id="weak-laundering" title="Risk: asking a stronger agent" tone="risk" icon="key" tag="❓ call F" span="all">
+If permission to *message* `mail-assistant` meant permission to have it *use any of its tools*, then any agent that can talk to it could get email sent, including a test agent asking it to email workspace files to an outside address. That's why messaging and requesting an action are separate: the requester needs permission for **that specific action**, and the result's audience is checked on its own. A list of "who may talk to this agent" is too broad on its own.
+</ex-card>
+</ex-grid>
+
+<h2 id="scenarios">4. Test it: what should happen?</h2>
+
+Read the **What happens** column. If one is wrong, the model is wrong at that point; the **Why** column names the rule to fix.
+
+| # | Situation | What happens | Why | Status |
+|---|---|---|---|---|
+| 1 | A launcher starts ten `codex-worker` agents | Each is enrolled automatically under `codex-worker`. You do nothing. | Agents are never enrolled by hand | ✅ D-6 |
+| 2 | `codex-worker#01b` reads your Gmail | Runs | Its slice says Gmail read = approved | 🟡 example slice |
+| 3 | `codex-worker#01b` tries to send an email itself | Refused: send isn't in its slice | Each persona gets only its own slice | 🟡 |
+| 4 | `mail-assistant` sends an email from your Gmail | You get an approval request on your phone or Mac. The agent waits, optionally up to a deadline. | Its slice says send = requires approval; you approve for your workspace's resources | ✅ D-8, D-9 · 🟡 approver rule |
+| 5 | `codex-worker#01b` asks `mail-assistant` to send an email | Only if `codex-worker` may request "send email" from `mail-assistant`. Then `mail-assistant` uses its own slice: send requires approval, so you're asked, and the request shows who asked. | Messaging isn't permission to act; the doer uses its own access | 🟡 · ❓ call F |
+| 6 | A test agent that may message `mail-assistant` asks it to email workspace files to an outside address | Refused: the test agent may message but not request sends, and an outside recipient isn't an allowed audience | Three separate yeses: request, resource, audience | 🟡 · ❓ call F |
+| 7 | You add a new Gmail-reading persona | No new sign-in. You grant the new persona a slice of the Gmail you already registered. | A resource is registered and signed in once by its owner | 🟡 |
+| 8 | `codex-worker#01b` tries to read your wife's Gmail | Refused | Her Gmail belongs to her workspace and isn't shared into yours | 🟡 |
+| 9 | Your wife's `home-assistant` reads her Gmail | Runs, or asks her, depending on its slice | Her workspace, her approvals | 🟡 |
+| 10 | `household-agent` adds an event to the family calendar | Runs, or asks a household approver, depending on its slice | The calendar belongs to the household workspace | 🟡 · ❓ either of you, or both? (call C) |
+| 11 | You ask `household-agent` to summarize *your* email | Refused: it has no access to your Gmail. Use your own agent. | It acts for the household, with household resources only. No agent works for a different person. | ✅ D-17 · 🟡 "acts for the household" |
+| 12 | Your wife's agent posts a request on the household board, and your `codex-worker` can read that board | Your agent may read it but doesn't act on it for her. Shared work goes to `household-agent`. | No agent works for a different person; a message is a request, not permission | ✅ D-17 · 🟡 |
+| 13 | `codex-worker` posts a summary of your private email on the household board | Needs your explicit OK; by default, anything derived from private data stays private | Having access to the email doesn't decide who may see the result | 🟡 |
+| 14 | `household-agent` tries to run on your laptop | Not allowed. It runs on the household VM; your laptop's files and logins belong to your workspace. | Machines belong to one workspace | ✅ D-15 |
+| 15 | Dot (an external agent) posts to a board and calls a tool through MCP portal | Allowed only for the boards and tools its persona's slice lists, with the same checks as any agent | External agents are registered by hand: one persona, one agent | ✅ D-11 |
+| 16 | A tool in `auto` mode, and the judge is unsure | Asks a human | The judge decides only inside fixed limits; unsure, unavailable or timed out means ask; critical tools always ask | ✅ D-9 · 🟡 the limits |
+| 17 | An agent's machine is offline for five hours | After the lease expires, its writes, wakes and schedules pause; reads continue; renewing resumes them | Leases renew every 15 min, maximum about 4 h | ✅ D-5 |
+| 18 | You revoke the `codex-worker` persona, or clone a VM with an enrolled agent inside | Every `codex-worker` agent stops at its next check. A clone must not be able to act as the original agent. | Revocation applies to the persona; an enrollment must not be copyable | 🟡 · ❓ how quickly checks see it; no clone design yet |
+
+<h2 id="weak-spots">5. Where this is most likely wrong</h2>
+
+These are the points where the Advisors' evidence is thinnest or today's code disagrees with the model.
+
+<ex-grid cols="2">
+<ex-card id="weak-admin" title="As admin, you can see everything" tone="risk" icon="key" tag="❓ call A">
+In one fleet, the admin and the backbone can forge identities, change personas and read plaintext. VMs and encryption don't change that. That is acceptable for a household that trusts you. It is not acceptable if a member needs privacy *from the admin*; then personal fleets with explicit sharing links are the stronger model.
+</ex-card>
+<ex-card id="weak-today" title="Today's code doesn't enforce this yet" tone="risk" icon="code" tag="current state">
+- agent-vm already checks a Google account's owner and allowed agent IDs before using it, and keeps credentialed runtimes apart per agent and account. That is per agent, not per persona or workspace.
+- Router workspaces are an organizational home, not yet a privacy boundary.
+- An approval answer is checked against a supplied identity, not an authenticated one (`interaction_history_store.rs:548-565`).
+- No production code in the tree mints MCP portal approval tokens since the OpenClaw plugin was removed (`f2fb4c05`). The signing helpers and test callers remain, and outside consumers weren't checked. Managed Hermes uses the controller ledger.
+
+Everything on this page is the target, not current behavior.
+</ex-card>
+<ex-card id="weak-operation-id" title="Approvals for outside harnesses" tone="question" icon="lock" tag="❓ unproven">
+To approve one exact call, the resource needs a stable operation ID from the caller. Matching by content or by time window is unsafe. How Codex, Claude Code or Dot would supply that ID is unknown. Until a harness can, protected tools stay unavailable to it.
+</ex-card>
+<ex-card id="weak-cloudflare" title="Agent credentials through Cloudflare" tone="question" icon="cloud" tag="❓ unproven">
+A launched agent must reach the cloud MCP gateway through Cloudflare Access with its own identity. Two candidates: a machine token plus an agent token, or a local proxy that attaches the agent's identity. Neither has been tried.
+</ex-card>
+<ex-card id="weak-vm-owner" title="Nobody owns building workspace VMs" tone="question" icon="hard-drives" tag="❓ no owner">
+agent-vm no longer runs agents (✅ D-14). The household VM still has to be created and kept running, with a launcher that may start household agents: an AgentStudio Host for terminal agents, or the Router's own host for headless ones. No product owns that today, and nothing assigns it to AgentStudio or agent-vm by default.
+</ex-card>
+<ex-card id="weak-naming" title="&quot;Workspace&quot; means two things" tone="question" icon="stack" tag="❓ call B">
+In agent-collaboration a workspace is an ownership area; in the AgentStudio daemon (E25), it is a UI layout. One of them has to be renamed.
+</ex-card>
+</ex-grid>
+
+<h2 id="call-check">6. How one tool call is checked</h2>
+
+The agent proves who it is; its access comes from its persona and that persona's workspace.
+
+<ex-flow cols="5">
+<ex-card id="step-agent" title="1. Agent calls" tone="planned" icon="robot">
+`codex-worker#01b` sends a call with its own short-lived credential.
+</ex-card>
+<ex-card id="step-verify" title="2. Who is it?" tone="planned" icon="key">
+Credential valid? Agent and persona not revoked?
+</ex-card>
+<ex-card id="step-persona" title="3. Which persona?" tone="planned" icon="users">
+The registry says: `codex-worker`, in workspace `shravan`.
+</ex-card>
+<ex-card id="step-profile" title="4. In its slice?" tone="planned" icon="shield-check">
+Is the tool in the profile, is the resource registered in this workspace or explicitly shared into it, and does its owner's grant allow it?
+</ex-card>
+<ex-card id="step-mode" title="5. Which mode?" tone="planned" icon="lock">
+approved → run · auto → judge · requires approval → ask an approver · blocked → refuse
+</ex-card>
+<ex-arrow from="step-agent" to="step-verify"></ex-arrow>
+<ex-arrow from="step-verify" to="step-persona"></ex-arrow>
+<ex-arrow from="step-persona" to="step-profile"></ex-arrow>
+<ex-arrow from="step-profile" to="step-mode"></ex-arrow>
+</ex-flow>
+
+Status: 🟡 the chain · ✅ the four modes (D-9).
+
+<h2 id="access">7. Access sits on the persona, not on each agent</h2>
+
+🟡 You asked "so its not an agent that hass access?". This is the proposed answer; confirm it or push back.
+
+| | Persona | Agent |
+|---|---|---|
+| What it is | a kind of agent, registered once in a workspace | one running copy |
+| Proves who it is | — | yes, with its own short-lived credential |
+| Holds access | **yes**: its slice (the permission profile) | inherits the persona's; can be narrowed, never widened |
+| Created by | the workspace's owners | a launcher, automatically |
+| Revoking it stops | every agent of that kind | just that one copy |
+
+Why not per agent: there will be many agents, and they come and go. Access set per agent would be unmanageable and drift. An external agent (Dot, Muse) follows the same model: one persona, one registered agent.
+
+<h2 id="products">8. Which product owns what</h2>
+
+🟡 This whole split is proposed.
+
+<ex-board cols="3">
+<ex-region id="agent-collaboration" title="agent-collaboration" tone="planned" icon="cloud">
+**Fleet backbone (central)**
+- the registry: persons, devices, machines, services, personas, agents
+- leases: who may write each shared store
+- mail delivery between installations
+- your inbox: approvals, asks and notices, recorded and shown
+- human sign-in, phone push
+
+**One installation per execution unit** (each serves one boundary)
+- agent sessions and launching, boards, agent-to-agent messages
+- which boards, workspaces and agents each persona may talk to
+</ex-region>
+<ex-region id="agentstudio" title="AgentStudio daemon" tone="planned" icon="terminal">
+**Host, one per execution unit**
+- terminals, sessions, repos, files
+- asks and notices from panes
+- launches the agents it starts in terminals
+
+**Gateway on your Mac and iPhone**
+- your view across your Hosts
+- read-only copies; commands go to the Host that owns them
+</ex-region>
+<ex-region id="agent-vm" title="agent-vm" tone="planned" icon="plug">
+**Resources and credentialed runtimes**
+- cloud MCP gateway, Tool Portal, computer MCP services
+- each persona's tool slice and approval modes
+- the final check before a tool runs, using an approval only once
+- credential broker: each account signed in once, secrets never with agents
+</ex-region>
+</ex-board>
+
+<ex-callout tone="decision" title="Rules that keep the products apart">
+- Proving who you are never grants permission. Each product keeps its own permission profiles, keyed by registry IDs.
+- The backbone records and delivers approvals but never decides them and never runs the action.
+- A name on a board post, or a session ID, never proves who is calling.
+- "Role" means purpose (a skill role) or, in agent-collaboration, a role assignment that gives a concrete agent specific domain authority (e.g. only a project lead creates workstreams). Access is a *permission profile*; joining a board thread is a *seat*. Access never replaces a role gate.
+</ex-callout>
+
+<h2 id="planes">9. Two kinds of traffic</h2>
+
+🟡 Proposed. Small control messages go through the backbone. Live and bulky traffic goes directly between machines over a private network.
+
+<ex-mermaid id="planes-diagram">
+<script type="text/plain">
+flowchart LR
+  Backbone["Fleet backbone"]
+  Router["Router installation"] --> Backbone
+  Host["AgentStudio Host"] --> Backbone
+  MCP["computer MCP service"] --> Backbone
+  GW["cloud MCP gateway"] --> Backbone
+  Mac["Gateway on Mac"] --> Backbone
+  Phone["Gateway on iPhone"] --> Backbone
+  Host == "terminals, files" ==> Mac
+  Host == "terminals, files" ==> Phone
+  GW == "tool calls" ==> MCP
+</script>
+</ex-mermaid>
+
+Thin arrows: each service keeps one outbound connection to the backbone. Thick arrows: direct traffic, never through the backbone. A suspended iPhone app holds no connection, so the backbone sends it a push notification to wake it.
+
+<h2 id="enrollment">10. Signing in and enrolling: who does what</h2>
+
+| Step | Who | How often | Status |
+|---|---|---|---|
+| Sign in as admin | you, through Cloudflare Access | once per session | 🟡 |
+| Add a machine or VM and assign it to a workspace | you approve a sign-in code shown on the machine | once per machine | 🟡 |
+| Invite a person, who then enrolls their own devices | you invite; they sign in | once per person and device | 🟡 |
+| Create a workspace; register and sign in its resources (MCP servers, accounts, boards) | the workspace's owners | once per resource | 🟡 |
+| Define a persona and give it a slice | the workspace's owners | once per kind of agent | ✅ D-7 · 🟡 who |
+| Register an external agent (Dot, Muse) | you, by hand | once each | ✅ D-11 |
+| Enroll an agent | **nobody**: the launcher does it under the persona | automatic | ✅ D-6 |
+| Approve an action | an approver named by the resource owner's policy | each time | 🟡 |
+
+<h2 id="interactions">11. What reaches you, and how approvals work</h2>
+
+<ex-tabs>
+<section label="Five kinds" icon="bell">
+
+✅ D-8. Who settles each one is 🟡 proposed.
+
+| Kind | Does the agent wait? | You answer with | Settled by |
+|---|---|---|---|
+| Approval | yes, optionally up to a deadline | approve or deny; expiring never counts as approval | the decision owner (agent-vm D3, open); the resource re-checks it and uses it once |
+| Ask | no | text, a choice or a form | whoever asked (Host or Router) |
+| Notification / status | no | nothing; you read it | your inbox |
+| Resource sign-in | yes | complete the provider's sign-in page | the credential broker |
+| Enrollment sign-in | yes | approve the new machine or device | the registry |
+
+</section>
+<section label="Tool modes" icon="shield-check">
+
+✅ D-9 (the four modes) · 🟡 the judge's limits
+
+| Mode | Who decides |
+|---|---|
+| approved | nobody; it always runs |
+| auto | a judge (Jev or a classifier), only inside fixed limits; unsure, unavailable or timed out means it asks a human |
+| requires approval | an approver named by the resource owner's policy |
+| blocked | nobody; it never runs, and no approval can override it |
+
+Tools marked critical go to a human whenever they are allowed to run; blocked stays blocked.
+
+</section>
+<section label="Approval path" icon="chat-circle">
+
+🟡 Proposed. ❓ Where the approval record lives, and whether an approved call continues by itself or waits for a retry, are open (agent-vm D3).
+
+<ex-mermaid id="approval-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant A as Agent
+  participant R as Resource (portal)
+  participant I as Your inbox (carries and shows)
+  participant D as Decision owner (D3, open)
+  participant P as Your phone or Mac
+  A->>R: tool call with a stable operation ID
+  R->>R: mode is requires approval, so record it as pending
+  R->>I: approval request (exact call, who asked, expiry)
+  I-->>P: push, then the request after you sign in
+  P->>I: approve (signed by your device)
+  I->>D: deliver your answer
+  D->>R: decision for that operation
+  A->>R: retry the same operation
+  R->>R: re-check, then use the approval once
+  R-->>A: result
+</script>
+</ex-mermaid>
+
+The decision goes straight to the resource, so no harness has to carry a private approval token.
+
+</section>
+</ex-tabs>
+
+<h2 id="leases">12. Leases</h2>
+
+<ex-card id="lease-card" title="Write leases renew every 15 minutes, up to about 4 hours" tone="decision" icon="clock" tag="✅ D-5 cadence · 🟡 pause rules (Router FL-9)">
+When a lease expires, writes, wakes and schedules that need it pause; reads continue; renewing resumes them. There is no queue, grace period or bypass, because "agents dont work if they not online". A lease decides who may write a shared store. It is not a time limit on a tool call or an approval.
+</ex-card>
+
+<h2 id="your-calls">13. Your calls</h2>
+
+<ex-grid cols="2">
+<ex-card id="decided" title="Already decided by you" tone="decision" icon="book-open" tag="✅">
+- One shared backbone (D-1).
+- Agents are never enrolled by hand (D-6).
+- Personas above agents (D-7).
+- No agent works for a different person (D-17).
+- Machines are private to one workspace (D-15).
+- Five kinds of interaction, four tool modes (D-8, D-9).
+- External agents are registered by hand, message, and use tools through MCP portal (D-11).
+- The iPhone runs its own Gateway (D-4); leases are 15 min / about 4 h (D-5).
+- agent-vm is about resources and credentialed runtimes (D-14).
+</ex-card>
+<ex-card id="open-calls" title="Waiting on you" tone="question" icon="user" tag="❓">
+- **A. One fleet run by you, or a fleet per person?** Recommended: one fleet now. Reopen if a member needs privacy from the admin.
+- **B. Which "workspace" gets renamed?** Recommended: the daemon's E25 becomes "composition" (its own noun). Not "layout", which already means split geometry inside the daemon.
+- **C. Household approvals: either of you, or both?** Recommended: either of you; add "both" only for specific actions that need it.
+- **D. Confirm the 🟡 core:** person + personal workspace; each resource has one owner (you, your wife or the household), registered once and sliced per persona; access on the persona; the household agent acts for the household only.
+- **E. Who builds and runs each workspace's VM?** No recommendation yet.
+- **F. Agents asking agents:** which actions may one agent request from another? Recommended: grant each requestable action explicitly, separately from permission to message, and check the result's audience on its own.
+- **G. Shares go to named personas, or any persona of the target workspace?** Recommended: named personas.
+- **H. Vocabulary:** capabilities (bundles of tools with modes, skills, instructions) compose into a persona (the definition), which runs as an agent session or a bot. Recommended: yes.
+- **L. Bot = a long-lived agent** with memory and an execution environment; an agent session is short-lived. Recommended: yes.
+- **M. AgentStudio apps (plus web) as your inbox** for all five kinds (new daemon scope). Recommended: yes.
+- **I. Approval modes for cloud → Mac calls:** set centrally, each machine only stricter? Recommended: yes (one prompt per action).
+- **J. Harness-native prompts** (Codex / Claude Code shell and file permissions) stay with each harness? Recommended: yes.
+- **K. Grok:** xAI-hosted, or a Grok model in your own harness?
+
+Full list with gains, costs and what waits: `decisions-and-open-questions.md`.
+</ex-card>
+</ex-grid>
+
+<ex-presentation id="walk-model" title="Check the model" description="The words, the picture, resources and agents together, the test situations, the weak spots and your calls.">
+<ex-step to="words">Start with the words and their status.</ex-step>
+<ex-step to="picture">See who owns what.</ex-step>
+<ex-step to="together">See how resources are sliced and how agents ask each other.</ex-step>
+<ex-step to="scenarios">Check each outcome. A wrong one marks where the model is wrong.</ex-step>
+<ex-step to="weak-spots">See where the evidence is thinnest.</ex-step>
+<ex-step to="your-calls">End with what is waiting on you.</ex-step>
+</ex-presentation>
+
+</ex-document>
+</body>
+</html>

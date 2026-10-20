@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 550" role="img" aria-labelledby="diagram-title diagram-description">
+<title id="diagram-title">Proposed portable service with per-host authority</title>
+<desc id="diagram-description">This unapproved option separates harness adapters, a shared decision presenter, Tool Portal and operation identity from host approval authority and execution. The host remains authoritative for dispatch, credentials and VM lifecycle. Dashed boxes mark proposed structure.</desc>
+<style>
+text {font-family:'IBM Plex Sans Condensed','Arial Narrow',sans-serif;fill:var(--ink,#e7ebf1)}
+.diagram-node {fill:var(--sheet,#171d26);stroke:var(--rule,#7b899a);stroke-width:2}
+.current {fill:var(--strong-bg,#1b2b40);stroke:var(--strong,#8ab8ef)}
+.proposed {fill:var(--change-bg,#3a2c14);stroke:var(--change,#f0b45a);stroke-dasharray:7 5}
+.authority {fill:var(--patch-bg,#2c2240);stroke:var(--patch,#c3a6f0)}
+.edge {fill:none;stroke:var(--accent,#6fc0ca);stroke-width:2.4;marker-end:url(#arrow)}
+.edge-label {font-size:16px;fill:var(--ink-soft,#a5afbd)}
+</style>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--accent,#6fc0ca)"/></marker></defs>
+<rect x="0" y="0" width="900" height="550" fill="var(--paper,#11161d)"/>
+<g><rect class="diagram-node proposed" x="20" y="30" width="270" height="74" rx="5"/><text x="155.0" y="61" text-anchor="middle" font-size="23" font-weight="600">Harness adapters</text><text x="155.0" y="85" text-anchor="middle" font-size="16">Hermes / Codex / Claude / Cursor / Pi</text></g>
+<g><rect class="diagram-node proposed" x="330" y="30" width="270" height="74" rx="5"/><text x="465.0" y="61" text-anchor="middle" font-size="23" font-weight="600">Shared presenter</text><text x="465.0" y="85" text-anchor="middle" font-size="16">human decision collection</text></g>
+<g><rect class="diagram-node proposed" x="175" y="215" width="350" height="74" rx="5"/><text x="350.0" y="246" text-anchor="middle" font-size="23" font-weight="600">Tool Portal service</text><text x="350.0" y="270" text-anchor="middle" font-size="16">authenticated policy + operation identity</text></g>
+<g><rect class="diagram-node authority" x="610" y="215" width="270" height="74" rx="5"/><text x="745.0" y="246" text-anchor="middle" font-size="23" font-weight="600">Host approval authority</text><text x="745.0" y="270" text-anchor="middle" font-size="16">record / reserve / arm</text></g>
+<g><rect class="diagram-node proposed" x="175" y="420" width="350" height="74" rx="5"/><text x="350.0" y="451" text-anchor="middle" font-size="23" font-weight="600">Configured backends</text><text x="350.0" y="475" text-anchor="middle" font-size="16">MCP / host actions / VM access</text></g>
+<g><rect class="diagram-node proposed" x="610" y="420" width="270" height="74" rx="5"/><text x="745.0" y="451" text-anchor="middle" font-size="23" font-weight="600">Execution host</text><text x="745.0" y="475" text-anchor="middle" font-size="16">owns VMs, credentials and effects</text></g>
+<path class="edge" d="M155 104 V166 H350 V215"/>
+<path class="edge" d="M465 104 V154 H745 V215"/><text class="edge-label" x="635" y="143" text-anchor="middle">exact decision</text>
+<path class="edge" d="M525 252 H610"/><text class="edge-label" x="568" y="231" text-anchor="middle">admission</text>
+<path class="edge" d="M350 289 V420"/>
+<path class="edge" d="M745 289 V420"/><text class="edge-label" x="825" y="368" text-anchor="middle">dispatch authority</text>
+<path class="edge" d="M525 457 H610"/>
+
+</svg>

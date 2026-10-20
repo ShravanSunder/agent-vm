@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP, portal and authorization package boundaries</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Gateway and components</a>
+<a href="distributed.html">Distributed authority</a>
+<a href="packages.html">Package boundaries</a>
+</nav></ex-nav>
+<ex-document id="content">
+<h1>Separate responsibilities before counting packages</h1>
+<ex-callout tone="tldr" title="A usable library needs explicit boundaries">
+Keep MCP protocol handling, tool routing and authorization authority independently understandable. Mac/Node and Worker host runners wire those pieces together. Package extraction is useful when it gives a real consumer a clean dependency boundary; it does not create distributed correctness by itself.
+</ex-callout>
+<ex-callout tone="question" title="Proposed decomposition, not an approved package migration">
+The owner confirmed a generic cloud MCP gateway above computer MCP servers, with Hermes as a possible client. Coordination is a separate MCP service. The module names below explain responsibilities. Except for explicitly named current packages, they are not existing exports or promised package names.
+</ex-callout>
+<h2 id="current-packages">What exists today</h2>
+<ex-markdown id="package-table"><script type="text/markdown">
+| Current package | Existing responsibility | Boundary that needs work |
+| --- | --- | --- |
+| `@agent-vm/tool-portal` | Cross-backend capability service, policy and approval coordination; Node standalone entrypoints | Portable core imports and host composition; current approval port uses managed Gateway contracts |
+| `@agent-vm/mcp-portal` | Upstream MCP client/runtime, scoped discovery, schemas and calls; separate standalone MCP proxy | HTTP client graph is mixed with stdio; its standalone policy/HMAC path differs from Tool Portal |
+| `@agent-vm/agent-portal-sdk` | Public contracts and client helpers | Versioned distributed operation/approval contracts must remain distinct from private dispatch authority |
+| `@agent-vm/config-contracts` | Config validation and derived policy shapes | Database activation must preserve complete profiles and current authority revisions |
+| `@agent-vm/secret-management` | Secret references and trusted host resolution | Worker bindings must not pull Node-only secret/process machinery into the portable graph |
+
+The browser approval UI is a client of protected operations. It does not become the policy authority merely by displaying decisions. Existing provider-consent and credential custody stays with its current owner unless a separate migration is selected.
+</script></ex-markdown>
+<h2 id="import-boundaries">Where the current imports mix responsibilities</h2>
+<ex-tree id="current-import-tree" title="Checked source paths, not a measured bundle" icon="git-branch"><script type="text/markdown">
+- Current Tool Portal root
+  - Standalone entrypoint exports
+    - Node HTTP listeners and their lifecycle
+    - Stdio server entry
+  - Tool Portal service
+    - Managed Gateway admission contracts
+    - Separate standalone approval coordinator
+- Current MCP Portal core export
+  - Shared upstream runtime
+    - Streamable HTTP and SSE transports
+    - Stdio client transport in the same module
+- Current configuration-contract root
+  - Schemas and policy shapes
+  - JSONC loading from a host file
+- Current SDK root
+  - Public contracts and surfaces
+  - Managed Tool VM helper with dynamic host imports when called
+</script></ex-tree>
+<ex-markdown id="import-boundary-notes"><script type="text/markdown">
+The upstream runtime already accepts client and transport factories. Preserve that useful seam before inventing another connection manager. The existing admission port also separates the caller from its controller-owned decision, but its contract still belongs to the managed domain; extracting it does not automatically create a generic public authority.
+
+The useful cut is between reusable behavior and host/domain composition. It can be implemented through deliberate module exports within existing packages. Merely adding a package named “core” would not fix these dependency paths. [Checked source paths and tradeoffs](../../../tmp/practices-research/2026-10-16-distributed-portals/portable-package-boundaries.md)
+</script></ex-markdown>
+<h2 id="worker-reality">Worker support needs precise API checks</h2>
+<ex-callout tone="note" title="Do not replace every Node API">
+Workers supports the relevant Node crypto APIs. It also provides Node HTTP server adapters, whose port values are Worker routing keys rather than host listeners. Process spawning remains a non-functional stub. The existing Node listener's hostname/TCP-address contract needs deliberate host adaptation; importing the module is not proof that this contract works in a Worker.
+</ex-callout>
+<ex-markdown id="worker-proof-notes"><script type="text/markdown">
+A Worker-native request adapter and a qualified Node HTTP compatibility adapter are both credible approaches. Before rewriting serving code, prove the actual selected import graph, compatibility settings and authenticated request path. No Worker bundle or request ran in this source investigation.
+
+[Worker Node compatibility](https://developers.cloudflare.com/workers/runtime-apis/nodejs/) · [Crypto support](https://developers.cloudflare.com/workers/runtime-apis/nodejs/crypto/) · [Node HTTP integration](https://developers.cloudflare.com/workers/runtime-apis/nodejs/http/#httpserverhandler)
+
+No established requirement forces a Rust rewrite. Keep the public MCP/authority contracts independent of the implementation language; a future Rust consumer can speak the same network protocol. Unix sockets remain useful for local process boundaries, while remote computer access needs the configured remote transport. Language and transport do not choose who owns approval truth.
+</script></ex-markdown>
+<h2 id="proposed-modules">Proposed module hierarchy</h2>
+<ex-tree id="component-tree" title="Generic MCP gateway composition" icon="package"><script type="text/markdown">
+- planned: Host runner — Node or Worker
+  - Gateway entry
+    - MCP request/response framing and presentation
+    - Authentication adapter for the target audience
+    - Separate control entry for approval/configuration rights
+  - Tool Portal service
+    - Caller-scoped discovery and description
+    - Configured binding resolution and input validation
+    - Invocation orchestration and normalized outcomes
+  - Authorization / operation authority client
+    - Current policy evaluation and assignment checks
+    - Exact approval request, decision and one-use consumption
+    - Operation lookup, observation and owner fencing
+  - Tool connectors
+    - MCP HTTP connector
+    - Composable-portal connector preserving inner catalog and operation meaning
+    - Host-only adapters kept outside the Worker import graph
+  - Host bindings
+    - Authority storage / remote authority connection
+    - Protected secrets, networking and lifecycle
+</script></ex-tree>
+<p>The tree shows composition, not a requirement that every item becomes an npm package, process or database. A resource server can enforce a bounded authority contract without hosting the whole gateway.</p>
+<h2 id="deployment-composition">The same library serves different deployment roles</h2>
+<ex-markdown id="composition-table"><script type="text/markdown">
+| Composition | Shared machinery | Host-specific wiring |
+| --- | --- | --- |
+| Cloud MCP gateway | MCP serving surface, Tool Portal, authorization/operation interfaces, configured routing | Worker request entry, protected bindings, HTTP provider clients and computer-portal clients |
+| Mac computer MCP | MCP serving surface, Tool Portal, authorization/operation interfaces, configured routing | Node HTTP lifecycle, Mac-native adapters, controlled CLI/process backends and configured execution services |
+| Other computer MCP | The same common responsibilities | Its supported host APIs, credentials and execution backends |
+| Agent-coordination MCP | May reuse authentication primitives if a concrete consumer needs them | Separate server behavior, domain state, lifecycle and priorities; outside this tool work |
+
+This is composition at two MCP levels. A Worker runner and a Mac runner instantiate different configured roles; they do not justify duplicating the portal engine. Ordinary remote MCP servers need only the ordinary provider connector. Our computer portals need an explicit composition contract so the cloud does not mistake an inner wrapper response for a completed leaf action.
+
+The current dependency is `@agent-vm/tool-portal` → `@agent-vm/mcp-portal`. That code dependency does not mean a separately running MCP Portal service must sit in front of every Tool Portal instance. A package, a deployed server and an authority domain are different boundaries. [Current Tool Portal manifest](../../../packages/tool-portal/package.json)
+</script></ex-markdown>
+<h2 id="options">Keep together or extract authorization?</h2>
+<ex-tabs>
+<section label="Option A · exported modules">
+<ex-board id="option-a" cols="2">
+<ex-region id="a-portal" title="Tool Portal package" icon="package" tone="planned">
+Separate exported modules for portal orchestration, authority contracts/rules and Node/Worker host composition. Other consumers import only the authority module.
+</ex-region>
+<ex-region id="a-mcp" title="MCP Portal package" icon="plug" tone="planned">
+Keep the HTTP MCP connector usable without importing stdio or CLI effects. Hosts combine it with Tool Portal through narrow interfaces.
+</ex-region>
+</ex-board>
+<ex-markdown id="option-a-tradeoff"><script type="text/markdown">
+**Gain:** fewer published packages and release relationships; use the existing package foundation.
+
+**Cost:** maintainers must enforce module/export dependency boundaries. Non-portal authorization consumers still depend on the Tool Portal package name and release train.
+
+**Fits if:** independent consumers need a narrow authority API but shared releases are acceptable. **Revisit if:** importing it pulls protocol/host machinery or release coupling becomes a real obstacle.
+</script></ex-markdown>
+</section>
+<section label="Option B · authority package">
+<ex-flow id="option-b" cols="3">
+<ex-card id="b-portal" title="Tool Portal" icon="plug" tone="planned">Discovery, binding selection and invocation orchestration.</ex-card>
+<ex-card id="b-authority" title="Authority package" icon="shield-check" tone="planned">Protocol-neutral authorization, exact approval and operation-admission contracts. Local and remote adapters share the same meaning.</ex-card>
+<ex-card id="b-consumer" title="Other MCP / API server" icon="globe" tone="planned">Uses the narrow authority contract and performs its own enforcement without a full Tool Portal.</ex-card>
+<ex-arrow from="b-portal" to="b-authority" label="API"></ex-arrow>
+<ex-arrow from="b-consumer" to="b-authority" label="API"></ex-arrow>
+</ex-flow>
+<ex-markdown id="option-b-tradeoff"><script type="text/markdown">
+**Gain:** explicit dependency boundary for independent MCP/API consumers; no portal orchestration dependency for them.
+
+**Cost:** a new public API and deliberate cutover across existing managed and standalone contracts. Maintainers must preserve each authority's ownership; extraction cannot relabel stored grants or merge independent ledgers.
+
+**Fits if:** independent consumers need this as a product-level library boundary. **Revisit if:** it becomes a generic authorization engine with no concrete consumer or merely forwards calls unchanged.
+</script></ex-markdown>
+</section>
+<section label="Baseline · no restructuring">
+<ex-callout tone="note" title="A credible bounded baseline">
+Keep current packages and single-owner contracts for existing deployments. This avoids migration work, but does not satisfy the requested portable Worker and distributed public-authority behavior. It is useful as the comparison baseline, not a claim that the new requirements are already met.
+</ex-callout>
+</section>
+</ex-tabs>
+<h2 id="recommendation">Recommendation and its limit</h2>
+<ex-callout tone="decision" title="Define the authority interface; defer publication count">
+Make the authority boundary independently consumable and host-neutral. Keep tool orchestration and MCP transport outside it. Then choose an exported module or a package from real consumer/dependency requirements. No need to create a separate service merely because there is a separate package.
+</ex-callout>
+<ex-markdown id="open-choice"><script type="text/markdown">
+The unresolved consumer question is concrete: **must another MCP/API server use our authorization and approval controls without running Tool Portal?** Both options can support it, but a separate publication boundary earns its cost when consumers need independent dependency/release ownership. The question remains open; silence is not a package selection.
+
+The scope stays MCP, Tool Portal and authorization. VM provisioning, fleet scheduling, native app implementations and agent coordination are outside this component discussion.
+</script></ex-markdown>
+<h2 id="work-needed">What is built and what remains</h2>
+<ex-markdown id="work-table"><script type="text/markdown">
+| Area | Source / measured now | Required work or decision |
+| --- | --- | --- |
+| Gateway / portal | Node MCP entrypoints and portal core exist | Generic host composition and clean Node/Worker boundaries |
+| Authorization | Existing managed controller owner and standalone evaluators | Neutral authority contract; preserve rather than conflate existing domains |
+| Distributed approval | Two-process probe observed independent consumption | Authoritative atomic transitions and replacement-owner fencing |
+| Configuration | Complete profile schemas; local snapshots | Database-managed activation, scope rights and freshness contract |
+| MCP | Remote upstreams work in the implementation | HTTP-only import path, selected protocol compatibility and host proof |
+| Recovery | Existing result/uncertainty vocabulary; future public-host design | Durable public operation lookup, admission and retained consumption state |
+| UI / control | Existing Google account-policy interface | General scoped decision/configuration clients after domain agreement |
+| Cloud-to-resource trust | Configured credentials and managed private context exist | Verified hop identity/delegation and resource enforcement; no copied-trust-context shortcut |
+
+No full Requirements/Specification/Program Design revision is accepted for this expanded scope yet. This explainer is the correctable component picture before that cycle.
+</script></ex-markdown>
+<h2 id="sources">Source anchors and proof</h2>
+<ex-markdown id="source-links"><script type="text/markdown">
+- [Tool Portal service and approval port](../../../packages/tool-portal/src/tool-portal-service.ts)
+- [Current standalone approval owner](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-approval.ts)
+- [MCP upstream runtime](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts)
+- [Existing portable-host package proposal](../../specs/2026-10-14-portable-tool-portal-hosts/program-design.md#package-changes)
+- [Distributed research and actual-source probe receipts](../../../tmp/practices-research/2026-10-16-distributed-portals/research-ledger.md)
+
+Theme, runtime and guide bind to Demistify `v1`, release `1.1.0`, source `0b6741af`. Browser/document proof covers this explanation only; no tool service or authority is deployed by opening it.
+</script></ex-markdown>
+<ex-presentation id="package-walk" title="Discuss the package split" description="Current owners, proposed responsibilities and two packaging alternatives without selecting one.">
+<ex-step to="current-packages">Locate existing responsibilities.</ex-step>
+<ex-step to="component-tree">Read the proposed module hierarchy.</ex-step>
+<ex-step to="options">Compare exported modules and a package.</ex-step>
+<ex-step to="recommendation">Separate the interface decision from publication count.</ex-step>
+</ex-presentation>
+</ex-document>
+</body>
+</html>

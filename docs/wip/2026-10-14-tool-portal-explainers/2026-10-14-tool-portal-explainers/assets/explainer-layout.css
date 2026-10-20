@@ -1,0 +1,138 @@
+.skip-link {
+	position: absolute;
+	top: -80px;
+	left: 24px;
+	z-index: 12000;
+	background: var(--sheet);
+	padding: 12px;
+	border: 2px solid var(--accent);
+}
+.skip-link:focus {
+	top: 12px;
+}
+.collection-nav {
+	margin-block: 28px 18px;
+	padding-top: 18px;
+	border-top: 1px solid var(--rule);
+}
+nav.toc button {
+	margin-top: 16px;
+}
+ex-tabs {
+	margin-top: 24px;
+}
+ex-tabs > section > ex-markdown > h2:first-child {
+	margin-top: 36px;
+}
+.ex-viewport {
+	height: 520px;
+}
+ex-markdown > table {
+	margin-block: 20px;
+}
+ex-callout {
+	margin-block: 20px;
+}
+ex-document h1 + p {
+	font-size: 20px;
+}
+.eyebrow {
+	margin-bottom: 12px;
+}
+.source-reader {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font: 13px/1.65 var(--mono);
+	padding: 20px;
+	background: var(--sheet);
+	border: 1px solid var(--rule);
+	max-height: 640px;
+	overflow: auto;
+}
+details {
+	margin-block: 20px;
+}
+summary {
+	cursor: pointer;
+	font-family: var(--display);
+	font-weight: 600;
+}
+svg {
+	overflow: visible;
+}
+@media (max-width: 640px) {
+	body {
+		padding: 0 12px;
+	}
+	.prototype-banner {
+		padding: 12px 0;
+	}
+	h1 {
+		font-size: 34px;
+	}
+	.wrap {
+		padding-top: 24px;
+	}
+	.ex-viewport {
+		height: 380px;
+	}
+}
+@media print {
+	:root[data-theme] {
+		--paper: #fff;
+		--sheet: #fff;
+		--ink: #18202b;
+		--ink-soft: #4a5566;
+		--rule: #b9c1cc;
+		--accent: #1d6672;
+		--strong: #1f5fa8;
+		--strong-bg: #e3edf9;
+		--patch: #6b48a8;
+		--patch-bg: #efe8f8;
+		--change: #9a5b00;
+		--change-bg: #fbefd9;
+		--keep-bg: #eceff3;
+	}
+	body {
+		padding: 0;
+		font-size: 11pt;
+	}
+	.wrap {
+		display: block;
+		padding: 0;
+		max-width: none;
+	}
+	nav.toc,
+	.prototype-banner,
+	.ex-tab-bar,
+	.ex-zoom-toolbar,
+	.skip-link,
+	#markdown-source {
+		display: none;
+	}
+	[role='tabpanel'][hidden] {
+		display: block !important;
+	}
+	.ex-viewport {
+		height: auto;
+		overflow: visible;
+		border: 0;
+	}
+	.ex-zoom-content {
+		transform: none !important;
+		padding: 0;
+	}
+	.ex-zoom-content svg {
+		height: auto;
+	}
+	h2 {
+		margin-top: 24px;
+	}
+	section,
+	table {
+		break-inside: avoid;
+	}
+	a {
+		color: inherit;
+	}
+}

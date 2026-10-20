@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" role="img" aria-labelledby="diagram-title diagram-description">
+<title id="diagram-title">The current managed capability path</title>
+<desc id="diagram-description">Managed Hermes reaches Tool Portal over a private socket. Tool Portal selects three backends. MCP Portal calls upstream MCP providers. Configured execution has a fixed target. Tool VM runner executes named operations over SSH.</desc>
+<style>
+text {font-family:'IBM Plex Sans Condensed','Arial Narrow',sans-serif;fill:var(--ink,#e7ebf1)}
+.diagram-node {fill:var(--sheet,#171d26);stroke:var(--rule,#7b899a);stroke-width:2}
+.current {fill:var(--strong-bg,#1b2b40);stroke:var(--strong,#8ab8ef)}
+.proposed {fill:var(--change-bg,#3a2c14);stroke:var(--change,#f0b45a);stroke-dasharray:7 5}
+.authority {fill:var(--patch-bg,#2c2240);stroke:var(--patch,#c3a6f0)}
+.edge {fill:none;stroke:var(--accent,#6fc0ca);stroke-width:2.4;marker-end:url(#arrow)}
+.edge-label {font-size:16px;fill:var(--ink-soft,#a5afbd)}
+</style>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--accent,#6fc0ca)"/></marker></defs>
+<rect x="0" y="0" width="900" height="560" fill="var(--paper,#11161d)"/>
+<g><rect class="diagram-node current" x="315" y="20" width="270" height="74" rx="5"/><text x="450.0" y="51" text-anchor="middle" font-size="23" font-weight="600">Hermes adapter</text><text x="450.0" y="75" text-anchor="middle" font-size="16">managed caller</text></g>
+<g><rect class="diagram-node current" x="315" y="145" width="270" height="74" rx="5"/><text x="450.0" y="176" text-anchor="middle" font-size="23" font-weight="600">Tool Portal</text><text x="450.0" y="200" text-anchor="middle" font-size="16">policy + capability routing</text></g>
+<g><rect class="diagram-node current" x="25" y="295" width="260" height="74" rx="5"/><text x="155.0" y="326" text-anchor="middle" font-size="23" font-weight="600">MCP Portal</text><text x="155.0" y="350" text-anchor="middle" font-size="16">provider backend</text></g>
+<g><rect class="diagram-node current" x="320" y="295" width="260" height="74" rx="5"/><text x="450.0" y="326" text-anchor="middle" font-size="23" font-weight="600">Configured execution</text><text x="450.0" y="350" text-anchor="middle" font-size="16">fixed action / CLI target</text></g>
+<g><rect class="diagram-node current" x="615" y="295" width="260" height="74" rx="5"/><text x="745.0" y="326" text-anchor="middle" font-size="23" font-weight="600">Tool VM runner</text><text x="745.0" y="350" text-anchor="middle" font-size="16">named VM operations</text></g>
+<g><rect class="diagram-node current" x="25" y="445" width="260" height="74" rx="5"/><text x="155.0" y="476" text-anchor="middle" font-size="23" font-weight="600">MCP providers</text><text x="155.0" y="500" text-anchor="middle" font-size="16">remote or local MCP</text></g>
+<g><rect class="diagram-node current" x="320" y="445" width="260" height="74" rx="5"/><text x="450.0" y="476" text-anchor="middle" font-size="23" font-weight="600">Execution target</text><text x="450.0" y="500" text-anchor="middle" font-size="16">host / credentialed VM / Tool VM</text></g>
+<g><rect class="diagram-node current" x="615" y="445" width="260" height="74" rx="5"/><text x="745.0" y="476" text-anchor="middle" font-size="23" font-weight="600">Leased Tool VM</text><text x="745.0" y="500" text-anchor="middle" font-size="16">SSH commands / files / processes</text></g>
+<path class="edge" d="M450 94 V145"/><text class="edge-label" x="550" y="122" text-anchor="middle">private socket</text>
+<path class="edge" d="M450 219 V254 H155 V295"/>
+<path class="edge" d="M450 219 V295"/>
+<path class="edge" d="M450 219 V254 H745 V295"/>
+<path class="edge" d="M155 369 V445"/><text class="edge-label" x="220" y="411" text-anchor="middle">MCP transport</text>
+<path class="edge" d="M450 369 V445"/><text class="edge-label" x="520" y="411" text-anchor="middle">configured target</text>
+<path class="edge" d="M745 369 V445"/><text class="edge-label" x="815" y="411" text-anchor="middle">strict SSH</text>
+
+</svg>

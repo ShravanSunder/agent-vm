@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tool Portal: core and split</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Your tools, available to your agents</a>
+<a href="build-plan.html">Build plan</a>
+<a href="core-and-split.html">Core and split</a>
+<a href="mcp-portal-explainer.html">MCP Gateway explained</a>
+<a href="tool-portal-explainer.html">Identity and approvals</a>
+<a href="requirements.html">Requirements</a>
+<a href="2026-10-14-portable-tool-portal-hosts.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="gateway-composition.html">Composition chapter</a>
+<a href="public-host-contracts.html">Contracts chapter</a>
+</nav></ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Tool Portal: core and split</h1>
+
+<ex-callout tone="tldr" title="The answer in five lines">
+- **Two core packages hold the logic.** `tool-access` decides who may use what. `tool-engine` serves tools to agents and runs each call through backends handed to it. Neither imports a platform, agent-vm or Gondolin.
+- **Two runtime packages bind that core to a platform:** `tool-host-node` for a Mac or Linux machine, `tool-host-cloudflare` for a Worker.
+- **Execution stays in agent-vm and is injected.** The Tool VM runner, managed VMs and Gondolin plug in as a backend. Tool Portal never sees a VM provider.
+- **A console service owns the UI** and talks to both Tool Portal and the fleet. Tool Portal serves only its control API; the request router and its model live in the console.
+- **Every one of the 117 current files has a destination.** About a fifth stay in agent-vm, a fifth retire, and the rest port into the four packages and the UI package.
+</ex-callout>
+
+<ex-callout tone="question" title="What needs you">
+- **Decided (F-58, relayed by the Router/board Lead):** the extracted packages and the console live in a new monorepo, `agent-collaboration/agent-fleet-tools`, beside `agent-fleet-sync`.
+- **Who hosts the access screens and the request router:** the console service (recommended), or Tool Portal for now.
+- **D8, the router model.** In a frozen test of 16 requests, Haiku matched 14 and one Jev setup matched 4. Jev was about five times faster, but twice it added a removal nobody asked for. The design works with either, because a manager always Accepts; which one to pilot is yours.
+- **D6** (where the audit log lives and how long it keeps entries) and **D7** (whether agents' per-call approvals appear in this UI) are still open.
+
+Marks: ✅ you decided it (F-n in the [Fleet decisions](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md)); 🟡 the Lead's design proposal.
+</ex-callout>
+
+<h2 id="packages">The packages</h2>
+
+Five packages, plus two things outside them. Each arrow shows who calls or composes whom. The split is ✅ F-51 and F-52; the console is 🟡 under your provisional F-57.
+
+<ex-mermaid id="package-map" data-width="canvas"><script type="text/plain">
+flowchart TB
+  pConsole["Console service (outside)"]
+  pNode["tool-host-node"]
+  pCf["tool-host-cloudflare"]
+  pExec["agent-vm (outside)"]
+  pUi["tool-access-ui"]
+  pPortal["tool-engine (core)"]
+  pAccess["tool-access (core)"]
+  pConsole -->|control API| pPortal
+  pConsole -->|composes| pUi
+  pNode -->|composes| pPortal
+  pCf -->|composes| pPortal
+  pExec -->|composes, injects backend| pPortal
+  pPortal -->|rules and contracts| pAccess
+</script></ex-mermaid>
+
+<ex-grid cols="3" data-width="canvas">
+<ex-card id="pConsole" tone="planned" icon="users" title="Console service (outside)">Owns the UI and composes `tool-access-ui`. Calls Tool Portal and the fleet. Runs the request router and its model. Owns no truth.</ex-card>
+<ex-card id="pPortal" tone="added" icon="stack" title="tool-engine · core">Dispatch, MCP gateway, outbound connectors and the control API.</ex-card>
+<ex-card id="pAccess" tone="added" icon="shield-check" title="tool-access · core">Contracts, the access assessment, approval rules and credential rules: usable without the engine.</ex-card>
+<ex-card id="pNode" tone="added" icon="terminal" title="tool-host-node · runtime">Node listeners, stdio, local stores, config loading, catalog build, native and CLI backends.</ex-card>
+<ex-card id="pCf" tone="added" icon="cloud" title="tool-host-cloudflare · runtime">Worker request binding, Access verification, Durable Object stores and a remote-executor backend.</ex-card>
+<ex-card id="pUi" tone="added" icon="package" title="tool-access-ui · browser">Components for Tool Portal's places and the proposal card. Imports no server code or model SDK.</ex-card>
+<ex-card id="pExec" tone="note" icon="cpu" title="agent-vm (outside)" span="all">Its managed composition builds Tool Portal the way a host does and injects the Tool VM runner backend. Managed VMs and Gondolin stay behind it; Tool Portal never sees a VM provider.</ex-card>
+</ex-grid>
+
+Each package entrypoint gets a check that its published files load without `node:*`, a host, agent-vm or Gondolin wherever the rules forbid them. That check is what lets the four packages move to another repo later.
+
+<h2 id="core">What the core does</h2>
+
+<ex-grid cols="2" data-width="canvas">
+<ex-card id="core-access" tone="added" icon="shield-check" title="tool-access">
+- **contracts:** every shape that crosses a boundary, published once as a language-neutral artifact. The manifest and generator move here from agent-portal-sdk.
+- **authorization:** `assessAccess`, plus today's pure policy helpers moved unchanged: tool selectors, namespaces, MCP approval policy and CLI allowances.
+- **approval-rules:** exact-intent decision rules and their interfaces. The old HMAC approval tokens retire.
+- **credentials:** what an integration needs and which account may be selected, without holding any secret.
+</ex-card>
+<ex-card id="core-portal" tone="added" icon="stack" title="tool-engine">
+- **dispatch:** plans each call and runs it through neutral backend, approval and operation interfaces.
+- **mcp-gateway:** what agents see over MCP: full and compact discovery, catalog and search.
+- **connectors:** calls out to registered HTTP MCP servers.
+- **control:** the control API (explain, propose, decide, read). It applies an accepted change once, together with its audit entry.
+</ex-card>
+</ex-grid>
+
+<h2 id="call">One tool call through the core</h2>
+
+<ex-mermaid id="call-flow" data-width="canvas"><script type="text/plain">
+sequenceDiagram
+  participant A as Agent
+  participant H as Host
+  participant G as Gateway
+  participant P as Approvals
+  participant B as Backend
+  A->>H: call, names a workspace
+  H->>H: verify caller
+  H->>G: verified call
+  G->>G: assessAccess(facts, exact call)
+  G->>P: challenge, if approval
+  P-->>G: exact receipt
+  G->>B: invoke with receipt
+  B->>B: own final checks
+  B-->>A: result
+</script></ex-mermaid>
+
+The host verifies the caller: from configuration now, from the fleet later. The gateway calls `assessAccess` in-process, a pure function over facts and the exact call, which answers usable, approval each call, blocked by policy, or not usable. Only approval each call goes to the approval authority, which returns a receipt bound to that exact call. The backend, injected by whoever composed the host, runs its own final checks before any effect. The result is completed, pending, denied or ambiguous. The console's access view calls the same `assessAccess`, so what an operator sees is what admission decides.
+
+<h2 id="seam">The seam that makes the split real</h2>
+
+Today Tool Portal's backend and approval interfaces carry agent-vm's managed types, so it can't leave agent-vm yet. The target replaces them with neutral interfaces, and agent-vm's adapter keeps its own checks. 🟡
+
+<ex-compare label="Backend and approval interfaces" data-width="canvas">
+<section id="seam-today" label="Today" icon="code">
+<section data-compare-row="backend"><h3>Backend call</h3><p>The backend receives agent-vm's managed dispatch authority, so the managed proof travels through Tool Portal.</p></section>
+<section data-compare-row="approval"><h3>Approval</h3><p>Tool Portal reserves and arms agent-vm's managed approval intents and reservations.</p></section>
+<section data-compare-row="accounts"><h3>Accounts</h3><p>Account availability takes agent-vm's managed invocation context.</p></section>
+<section data-compare-row="ids"><h3>Operation ids</h3><p>Managed operation ids and fingerprints are computed inside Tool Portal.</p></section>
+</section>
+<section id="seam-target" label="Target" icon="git-branch">
+<section data-compare-row="backend"><h3>Backend call</h3><p>The backend gets an operation key, the exact capability and arguments, a verified-context reference and an approval-receipt reference. agent-vm's adapter rebuilds its own dispatch authority and re-checks principal, snapshot and assignment. A failed check refuses.</p></section>
+<section data-compare-row="approval"><h3>Approval</h3><p>A neutral approval interface (challenge, decision, receipt) and operation interface. Reserve and arm stay at agent-vm's controller.</p></section>
+<section data-compare-row="accounts"><h3>Accounts</h3><p>Account facts come from the controller's Google policy service and broker, which stay their owners.</p></section>
+<section data-compare-row="ids"><h3>Operation ids</h3><p>Managed ids and their exact bytes stay at agent-vm's adapter. Public operation keys are a new contract; nothing is aliased.</p></section>
+</section>
+</ex-compare>
+
+<h2 id="port">Where today's code goes</h2>
+
+<ex-grid cols="3" data-width="canvas">
+<ex-stat value="~18" label="files to tool-access" note="schemas and pure policy helpers" tone="added"></ex-stat>
+<ex-stat value="~18" label="files to tool-engine" note="dispatch, MCP gateway, connectors" tone="added"></ex-stat>
+<ex-stat value="~26" label="files to tool-host-node" note="listeners, stdio, loaders, catalog build" tone="added"></ex-stat>
+<ex-stat value="~8" label="files to tool-access-ui" note="today's Hono pages rewritten in React" tone="changed"></ex-stat>
+<ex-stat value="~23" label="files stay in agent-vm" note="managed composition and backends" tone="note"></ex-stat>
+<ex-stat value="~24" label="files retire or split" note="mixed package roots, HMAC approvals" tone="removed"></ex-stat>
+</ex-grid>
+
+The counts come from the Researcher's [port inventory](../../wip/2026-10-19-tool-portal-port-inventory/port-inventory.md). It names a destination, port kind and candidate tests for every file and public export. Its placements are recommendations, and files it only scanned get read before they move.
+
+Five files mix portable rules with host or execution code, so they split by export rather than move whole:
+
+| File today | Splits into |
+| --- | --- |
+| `config-contracts/controller-configured-cli.ts` | CLI allowance rules (`tool-access`) and execution targets (agent-vm) |
+| `config-contracts/tool-portal-config.ts` | selector and profile rules (`tool-access`), managed shapes (agent-vm) and file loading (`tool-host-node`) |
+| `mcp-portal/upstream-mcp-client-runtime.ts` | HTTP client (`tool-engine/connectors`) and stdio (`tool-host-node`) |
+| `oauth-approval-ui/oauth-approval-renderer.tsx` | React pages (`tool-access-ui`) and the asset file reader (host) |
+| `mcp-portal/core/portal-tools.ts` | call handlers (`tool-engine`) and the catalog compiler (`tool-host-node`) |
+
+**Not ported, because nothing exists yet:** `assessAccess`, the control API and the Worker host.
+
+<h2 id="access">One answer for the access view and for admission</h2>
+
+An access path is one agent and one tool in one workspace. Its state is **usable**, **approval each call**, **blocked by policy**, or **not usable** with the first unmet condition (✅ F-42). When the answer depends on the call, such as which Gmail operation or which account, the view shows a breakdown plus the rule that decides each call. At admission, today's validators check the exact call's arguments, so a denied flag or input is caught even when the command itself is allowed. The order below is 🟡, taken from what admission already does:
+
+1. registration revoked (once workspaces are configured);
+2. not allowed in the workspace (once workspaces are configured);
+3. not given to the agent;
+4. the tool's own deny rule, including a denied command, flag or input: **blocked by policy**;
+5. account not granted;
+6. account policy paused while a change applies;
+7. the account policy's deny rule: **blocked by policy**;
+8. provider consent missing or expired;
+9. service unavailable;
+10. otherwise **approval each call** if any rule says ask, else **usable**.
+
+The first step of the build assesses today's agent profiles, which have no workspaces yet; steps 1 and 2 apply once the configuration adds workspaces, and the system never pretends a workspace allows something it has not recorded. One fact is new: today's Google evaluator reports a paused account policy as "unavailable". The account authority will now supply the paused state separately, so the view never shows a paused account as broken or as missing consent.
+
+<h2 id="where">Where it lives and when it moves</h2>
+
+1. Build the four packages inside agent-vm's workspace, with the import check on from the first commit.
+2. Rewire agent-vm's managed composition to the neutral interfaces. Its existing tests must pass through them.
+3. Move the four packages to `agent-fleet-tools` (F-58), where the console will live too. Because the import check already holds, this is a directory move, not a refactor.
+
+Dependencies run one way: agent-vm uses Tool Portal, never the reverse. So `tool-host-node` gets secrets through an interface that agent-vm fills, instead of importing agent-vm's secret library. Whether the credential broker leaves agent-vm's controller is a separate decision.
+
+Until the fleet's identity contract exists, configuration lists workspaces, member agents, managers and registrations (✅ F-53). Each manager is a verified person, checked by issuer and subject; a service token or session label is never a manager. Tool policy still changes only through a proposal and a manager's Accept.
+
+<h2 id="open">Still open</h2>
+
+| Item | Who decides | What waits on it |
+| --- | --- | --- |
+| D8: router model and fallback | you | the console's default model |
+| D6: audit store and how long entries are kept | you | every production security write |
+| D7: agents' per-call approvals in this UI | you | the Approvals place |
+| D2: verified fleet identity and membership | the fleet (agent-collaboration) | replacing configuration; fleet-owned edits |
+| Who stores a secret an operator types in | design gap | secret entry in Connections |
+
+<details>
+<summary>Sources</summary>
+
+- Program Design: [the packages](program-design.md#the-packages-and-why-each-exists), [the dispatch seam](program-design.md#the-dispatch-seam-neutral-backend-and-approval-interfaces), [porting map](program-design.md#porting-map), [access foundation](program-design.md#1-first-foundation-one-effect-free-access-assessment), [configuration stand-in](program-design.md#until-the-fleet-contract-exists-configuration-supplies-identity-and-membership).
+- Your decisions F-50 to F-57: [Fleet decisions](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md).
+- [Port inventory](../../wip/2026-10-19-tool-portal-port-inventory/port-inventory.md), source baseline 8535fdd4.
+- The router-model test: local experiment evidence from the 🦉 Advisor's run. It is not product proof.
+
+</details>
+
+</ex-document>
+</body>
+</html>
