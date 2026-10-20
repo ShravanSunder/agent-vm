@@ -24,6 +24,9 @@ export interface ManagedBackendPorts {
 	readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;
 	readonly toolVmRunner: ToolPortalBackendPort<'tool_vm_runner'>;
 }
+function assertNever(value: never): never {
+	throw new Error(`Unknown backend: ${String(value)}`);
+}
 export function createManagedEngineBackends(props: {
 	readonly config: GatewayRuntimeManagedToolPortalConfig;
 	readonly snapshot: GatewayRuntimePortalSemanticSnapshot;
@@ -36,9 +39,7 @@ export function createManagedEngineBackends(props: {
 	function entry(reference: string): { readonly context: ManagedEngineInvocationContext } {
 		return { context: props.context(reference) };
 	}
-	function assertNever(value: never): never {
-		throw new Error(`Unknown backend: ${String(value)}`);
-	}
+
 	function backendFor(kind: BackendKind): ManagedBackendPorts[keyof ManagedBackendPorts] {
 		switch (kind) {
 			case 'controller_execution':
@@ -85,32 +86,23 @@ export function createManagedEngineBackends(props: {
 				const response = PortalBackendListResultSchema.parse(
 					await backend.list(PortalListRequestSchema.parse(query), resolved.options),
 				);
-				return jsonValueSchema.parse({
-					...response,
-					items: response.items.map((item) =>
-						item.status === 'error'
-							? item
-							: {
-									...item,
-									value: {
-										...item.value,
-										namespaces: item.value.namespaces.filter((namespace) =>
-											Object.entries(config.profiles[resolved.profileId]?.namespaces ?? {}).some(
-												([name, policy]) =>
-													name === namespace &&
-													policy.backend.kind === kind &&
-													(
-														snapshot.surfaceEligibilityByProfile[resolved.profileId]?.[name] ?? []
-													).includes(selected.context.surfaceClass),
-											),
-										),
-										tools: item.value.tools.filter((tool) =>
-											visible(verifiedContextRef, kind, tool),
-										),
-									},
-								},
-					),
-				});
+				for (const item of response.items) {
+					if (item.status !== 'ok') continue;
+					item.value.namespaces = item.value.namespaces.filter((namespace) =>
+						Object.entries(config.profiles[resolved.profileId]?.namespaces ?? {}).some(
+							([name, policy]) =>
+								name === namespace &&
+								policy.backend.kind === kind &&
+								(snapshot.surfaceEligibilityByProfile[resolved.profileId]?.[name] ?? []).includes(
+									selected.context.surfaceClass,
+								),
+						),
+					);
+					item.value.tools = item.value.tools.filter((tool) =>
+						visible(verifiedContextRef, kind, tool),
+					);
+				}
+				return jsonValueSchema.parse(response);
 			},
 			describe: async ({ request: query, verifiedContextRef }) => {
 				const selected = entry(verifiedContextRef);
@@ -122,21 +114,13 @@ export function createManagedEngineBackends(props: {
 				const response = PortalBackendDescribeResultSchema.parse(
 					await backend.describe(PortalDescribeRequestSchema.parse(query), resolved.options),
 				);
-				return jsonValueSchema.parse({
-					...response,
-					items: response.items.map((item) =>
-						item.status === 'error'
-							? item
-							: {
-									...item,
-									value: {
-										tools: item.value.tools.filter((tool) =>
-											visible(verifiedContextRef, kind, tool),
-										),
-									},
-								},
-					),
-				});
+				for (const item of response.items) {
+					if (item.status === 'ok')
+						item.value.tools = item.value.tools.filter((tool) =>
+							visible(verifiedContextRef, kind, tool),
+						);
+				}
+				return jsonValueSchema.parse(response);
 			},
 			search: async ({ request: query, verifiedContextRef }) => {
 				const selected = entry(verifiedContextRef);
@@ -148,21 +132,13 @@ export function createManagedEngineBackends(props: {
 				const response = PortalBackendSearchResultSchema.parse(
 					await backend.search(PortalSearchRequestSchema.parse(query), resolved.options),
 				);
-				return jsonValueSchema.parse({
-					...response,
-					items: response.items.map((item) =>
-						item.status === 'error'
-							? item
-							: {
-									...item,
-									value: {
-										tools: item.value.tools.filter((tool) =>
-											visible(verifiedContextRef, kind, tool),
-										),
-									},
-								},
-					),
-				});
+				for (const item of response.items) {
+					if (item.status === 'ok')
+						item.value.tools = item.value.tools.filter((tool) =>
+							visible(verifiedContextRef, kind, tool),
+						);
+				}
+				return jsonValueSchema.parse(response);
 			},
 		});
 	}

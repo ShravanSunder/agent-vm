@@ -6,6 +6,12 @@ import {
 } from '@agent-collaboration/tool-access/contracts';
 import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 
+type ManagedExecutableBackend = Exclude<
+	GatewayRuntimeManagedToolPortalConfig['profiles'][string]['namespaces'][string]['backend'],
+	{ readonly kind: 'mcp_provider' }
+>;
+type ManagedCapabilityOperation = ManagedExecutableBackend['operations'][string];
+
 /** Project decision inputs; managed execution bindings remain with their owner. */
 export function projectManagedAccessProfile(props: {
 	readonly config: GatewayRuntimeManagedToolPortalConfig;
@@ -17,7 +23,9 @@ export function projectManagedAccessProfile(props: {
 	for (const [namespace, policy] of Object.entries(profile.namespaces)) {
 		const operations: AccessNamespacePolicy['operations'] = {};
 		if (policy.backend.kind !== 'mcp_provider') {
-			for (const [name, operation] of Object.entries(policy.backend.operations)) {
+			const managedOperations: Readonly<Record<string, ManagedCapabilityOperation>> =
+				policy.backend.operations;
+			for (const [name, operation] of Object.entries(managedOperations)) {
 				operations[name] = {
 					cliPolicy:
 						operation.kind === 'configured_cli'
