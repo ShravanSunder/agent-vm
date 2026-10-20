@@ -7,6 +7,7 @@ import {
 	PortalBackendListResultSchema,
 	PortalBackendSearchResultSchema,
 	PortalCallResultSchema,
+	type PortalCallRequest,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
@@ -43,11 +44,13 @@ function harness(
 	readonly adapter: ReturnType<typeof createManagedToolEngineAdapter>;
 	readonly effects: {
 		kind: string;
+		request: PortalCallRequest;
 		options: unknown;
 	}[];
 } {
 	const effects: {
 		kind: string;
+		request: PortalCallRequest;
 		options: unknown;
 	}[] = [];
 	const tools = [
@@ -64,7 +67,7 @@ function harness(
 		return {
 			backendKind,
 			call: async (request, invocationOptions) => {
-				effects.push({ kind: backendKind, options: invocationOptions });
+				effects.push({ kind: backendKind, request, options: invocationOptions });
 				const authority = invocationOptions.dispatchAuthority;
 				const operationId =
 					authority.kind === 'without-approval'
@@ -400,13 +403,42 @@ describe('managed dispatch authority', () => {
 		async (kind, namespace, name) => {
 			const subject = harness({ config: directConfig() });
 			const selectedCall = { ...call, namespace, name };
+			const reference = subject.adapter.register({
+				context: { trustedContext, surfaceClass: 'protected_uds' },
+				call: selectedCall,
+			});
+			const backend = subject.adapter.backends.get(kind);
+			if (backend === undefined) throw new Error('Missing backend.');
+			const invoke = vi.spyOn(backend, 'invoke');
 			expect(
-				await subject.adapter.call(
-					{ calls: [selectedCall] },
-					{ trustedContext, surfaceClass: 'protected_uds' },
-				),
-			).toMatchObject({ ok: true, items: [{ status: 'ok', value: { forwarded: kind } }] });
+				await subject.adapter.dispatcher.dispatch(subject.adapter.request(reference)),
+			).toMatchObject({ kind: 'completed', result: { status: 'ok', value: { forwarded: kind } } });
+			expect(invoke).toHaveBeenCalledOnce();
+			const invoked = invoke.mock.calls[0]?.[0];
+			if (invoked === undefined) throw new Error('Expected neutral invocation.');
+			expect({
+				capability: invoked.capability,
+				arguments: invoked.arguments,
+				bindingRevision: invoked.bindingRevision,
+				verifiedContextRef: invoked.verifiedContextRef,
+				approvalReceiptRef: invoked.approvalReceiptRef,
+				correlation: invoked.correlation,
+			}).toEqual({
+				capability: { namespace, tool: name },
+				arguments: { issue: 42 },
+				bindingRevision: { owner: 'managed-zone', revision: 'binding-gate-c-1' },
+				verifiedContextRef: reference,
+				approvalReceiptRef: null,
+				correlation: {
+					runId: 'run-gate-c',
+					sessionId: 'session-gate-c',
+					toolCallId: 'tool-call-gate-c',
+				},
+			});
 			expect(subject.effects).toHaveLength(1);
+			expect(subject.effects[0]?.request).toEqual({
+				calls: [{ id: 'original-item', namespace, name, arguments: { issue: 42 } }],
+			});
 			expect(subject.effects[0]).toMatchObject({
 				kind,
 				options: {
@@ -415,6 +447,10 @@ describe('managed dispatch authority', () => {
 					dispatchAuthority: { kind: 'without-approval', backendKind: kind },
 				},
 			});
+			if (kind === 'controller_execution')
+				expect(subject.effects[0]?.options).toMatchObject({
+					dispatchAuthority: { bindingRevision: 'binding-gate-c-1' },
+				});
 		},
 	);
 	it.each(['mcp_provider', 'controller_execution', 'tool_vm_runner'] as const)(

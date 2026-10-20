@@ -43,6 +43,7 @@ import {
 	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	GatewayControlRpcCommandResultMessageSchema,
+	GatewayRuntimeGatewayDispatchReservationSchema,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
@@ -602,108 +603,136 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 			]);
 		}
 	});
-	it.each(['forged-reservation', 'receipt-reference-replay'] as const)(
-		'refuses %s at the adapter/controller boundary',
-		async (scenario) => {
-			const directoryPath = await mkdtemp(
-				path.join(os.tmpdir(), 'agent-vm-s2-forged-reservation-'),
+	it.each([
+		'forged-reservation',
+		'wrong-fingerprint',
+		'wrong-approval-id',
+		'receipt-reference-replay',
+	] as const)('refuses %s at the adapter/controller boundary', async (scenario) => {
+		const directoryPath = await mkdtemp(path.join(os.tmpdir(), 'agent-vm-s2-forged-reservation-'));
+		const recordsTarget = {
+			directoryPath,
+			kind: 'controller-approval-records',
+			zoneId: gateway.zoneId,
+		} satisfies ControllerApprovalRecordsTarget;
+		const ledger = createControllerApprovalLedger({
+			challengeTtlMs: 300_000,
+			currentControllerEpoch: gateway.controllerEpoch,
+			now: () => BASE_TIME_MS,
+			recordsTarget,
+		});
+		const effects: RecordedMcpProviderInvocation[] = [];
+		const controllerReservations: string[] = [];
+		const offeredReservations: string[] = [];
+		const armDispatch = vi.fn(
+			async ({
+				reservation,
+			}: Pick<
+				Parameters<ReturnType<typeof createControllerApprovalLedger>['armDispatch']>[0],
+				'reservation'
+			>) => await ledger.armDispatch({ authorityContext, reservation }),
+		);
+		const adapter = createManagedToolEngineAdapter({
+			authority: 'zone-a',
+			configuration: {
+				config: toolPortalConfig,
+				revision: { owner: 'zone-a', revision: semanticSnapshot.profilePolicyRevision },
+			},
+			semanticSnapshot,
+			now: () => BASE_TIME_MS,
+			approvalPort: {
+				reserveDispatch: async ({ intent }) => {
+					const result = await ledger.requestApproval({ authorityContext, intent });
+					if (result.kind !== 'dispatch-reserved' || scenario === 'receipt-reference-replay')
+						return result;
+					controllerReservations.push(result.reservation.reservationId);
+					const reservation = GatewayRuntimeGatewayDispatchReservationSchema.parse({
+						...result.reservation,
+						...(scenario === 'forged-reservation'
+							? { reservationId: '99999999-9999-4999-8999-999999999999' }
+							: scenario === 'wrong-fingerprint'
+								? { fingerprint: `sha256:${'f'.repeat(64)}` }
+								: { approvalId: '99999999-9999-4999-8999-999999999999' }),
+					});
+					offeredReservations.push(reservation.reservationId);
+					return {
+						...result,
+						reservation,
+					};
+				},
+				armDispatch,
+			},
+			backendPorts: {
+				controllerExecution: unexpectedBackendPort('controller_execution', 'controller'),
+				mcpProvider: createRecordingMcpProviderBackend(effects),
+				toolVmRunner: unexpectedBackendPort('tool_vm_runner', 'runner'),
+			},
+		});
+		const createOrRead = vi.spyOn(adapter.operations, 'createOrRead');
+		try {
+			const pending = singleResultItem(
+				await adapter.call(portalCallRequest, {
+					trustedContext: trustedInvocationContext,
+					surfaceClass: 'protected_uds',
+				}),
 			);
-			const recordsTarget = {
-				directoryPath,
-				kind: 'controller-approval-records',
-				zoneId: gateway.zoneId,
-			} satisfies ControllerApprovalRecordsTarget;
-			const ledger = createControllerApprovalLedger({
-				challengeTtlMs: 300_000,
-				currentControllerEpoch: gateway.controllerEpoch,
-				now: () => BASE_TIME_MS,
-				recordsTarget,
+			if (pending.status !== 'approval_required') throw new Error('Expected real challenge');
+			await ledger.decide({
+				approvalId: pending.approvalChallenge.challengeId,
+				authorityContext,
+				decision: 'approve',
+				operator: operatorIdentity,
 			});
-			const effects: RecordedMcpProviderInvocation[] = [];
-			const adapter = createManagedToolEngineAdapter({
-				authority: 'zone-a',
-				configuration: {
-					config: toolPortalConfig,
-					revision: { owner: 'zone-a', revision: semanticSnapshot.profilePolicyRevision },
-				},
-				semanticSnapshot,
-				now: () => BASE_TIME_MS,
-				approvalPort: {
-					reserveDispatch: async ({ intent }) => {
-						const result = await ledger.requestApproval({ authorityContext, intent });
-						if (result.kind !== 'dispatch-reserved' || scenario !== 'forged-reservation')
-							return result;
-						return {
-							...result,
-							reservation: {
-								...result.reservation,
-								reservationId: '99999999-9999-4999-8999-999999999999',
-							},
-						};
-					},
-					armDispatch: async ({ reservation }) =>
-						await ledger.armDispatch({ authorityContext, reservation }),
-				},
-				backendPorts: {
-					controllerExecution: unexpectedBackendPort('controller_execution', 'controller'),
-					mcpProvider: createRecordingMcpProviderBackend(effects),
-					toolVmRunner: unexpectedBackendPort('tool_vm_runner', 'runner'),
-				},
-			});
-			try {
-				const pending = singleResultItem(
+			if (scenario !== 'receipt-reference-replay') {
+				expect(
 					await adapter.call(portalCallRequest, {
 						trustedContext: trustedInvocationContext,
 						surfaceClass: 'protected_uds',
 					}),
-				);
-				if (pending.status !== 'approval_required') throw new Error('Expected real challenge');
-				await ledger.decide({
-					approvalId: pending.approvalChallenge.challengeId,
-					authorityContext,
-					decision: 'approve',
-					operator: operatorIdentity,
-				});
-				if (scenario === 'forged-reservation') {
-					expect(
-						await adapter.call(portalCallRequest, {
-							trustedContext: trustedInvocationContext,
-							surfaceClass: 'protected_uds',
-						}),
-					).toMatchObject({ ok: false, items: [{ status: 'error' }] });
-					expect(effects).toEqual([]);
-					expect(await ledger.read(pending.approvalChallenge.challengeId)).not.toMatchObject({
-						kind: 'dispatch-armed',
-					});
-				} else {
-					const reference = adapter.register({
-						context: { trustedContext: trustedInvocationContext, surfaceClass: 'protected_uds' },
-						call:
-							portalCallRequest.calls[0] ??
-							(() => {
-								throw new Error('Missing call');
-							})(),
-					});
-					const backend = adapter.backends.get('mcp_provider');
-					if (backend === undefined) throw new Error('Missing MCP backend');
-					const observed: Parameters<typeof backend.invoke>[0][] = [];
-					const originalInvoke = backend.invoke;
-					vi.spyOn(backend, 'invoke').mockImplementation(async (invocation) => {
-						observed.push(invocation);
-						return await originalInvoke(invocation);
-					});
-					expect(await adapter.dispatcher.dispatch(adapter.request(reference))).toMatchObject({
-						kind: 'completed',
-					});
-					const original = observed[0];
-					if (original === undefined) throw new Error('Expected neutral invoke');
-					expect(await backend.invoke(original)).toMatchObject({ kind: 'not-dispatched' });
-					expect(effects).toHaveLength(1);
-					adapter.release(reference);
+				).toMatchObject({ ok: false, items: [{ status: 'error' }] });
+				if (scenario !== 'forged-reservation') {
+					expect(controllerReservations).toHaveLength(1);
+					expect(offeredReservations).toEqual(controllerReservations);
+					expect(await createOrRead.mock.results[1]?.value).toEqual({ kind: 'denied' });
+					expect(armDispatch).not.toHaveBeenCalled();
 				}
-			} finally {
-				await rm(directoryPath, { recursive: true, force: true });
+				expect(effects).toEqual([]);
+				expect(await ledger.read(pending.approvalChallenge.challengeId)).not.toMatchObject({
+					kind: 'dispatch-armed',
+				});
+			} else {
+				const reference = adapter.register({
+					context: { trustedContext: trustedInvocationContext, surfaceClass: 'protected_uds' },
+					call:
+						portalCallRequest.calls[0] ??
+						(() => {
+							throw new Error('Missing call');
+						})(),
+				});
+				const backend = adapter.backends.get('mcp_provider');
+				if (backend === undefined) throw new Error('Missing MCP backend');
+				const observed: Parameters<typeof backend.invoke>[0][] = [];
+				const originalInvoke = backend.invoke;
+				const challenge = vi.spyOn(adapter.approvals, 'challenge');
+				vi.spyOn(backend, 'invoke').mockImplementation(async (invocation) => {
+					observed.push(invocation);
+					return await originalInvoke(invocation);
+				});
+				expect(await adapter.dispatcher.dispatch(adapter.request(reference))).toMatchObject({
+					kind: 'completed',
+				});
+				const original = observed[0];
+				if (original === undefined) throw new Error('Expected neutral invoke');
+				const issued = await challenge.mock.results[0]?.value;
+				if (issued?.kind !== 'approved') throw new Error('Expected current approval receipt');
+				expect(original.approvalReceiptRef).toBe(issued.receipt.reference);
+				expect(original.verifiedContextRef).toBe(reference);
+				expect(await backend.invoke(original)).toMatchObject({ kind: 'not-dispatched' });
+				expect(effects).toHaveLength(1);
+				adapter.release(reference);
 			}
-		},
-	);
+		} finally {
+			await rm(directoryPath, { recursive: true, force: true });
+		}
+	});
 });
