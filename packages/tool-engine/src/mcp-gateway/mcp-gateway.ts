@@ -237,10 +237,27 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 		const session = await visibleSession();
 		if (session.catalog.discoveryFailures.length > 0)
 			throw new PortalCatalogPreparationError(session.catalog.discoveryFailures);
-		const tools: PreparedCatalogTool[] = [];
+		const tools = await Promise.all(
+			session.catalog.tools.map(
+				async (tool): Promise<PreparedCatalogTool> => ({
+					namespace: tool.namespace,
+					toolName: tool.toolName,
+					bindingRevision: requireCatalogBinding(session.bindings, tool.namespace, tool.toolName),
+					descriptor: {
+						name: await createCatalogToolPresentationName(tool.namespace, tool.toolName),
+						inputSchema: { ...structuredClone(tool.inputSchema), type: 'object' },
+						...(tool.description === undefined ? {} : { description: tool.description }),
+						...(tool.annotations === undefined
+							? {}
+							: { annotations: structuredClone(tool.annotations) }),
+						...(tool.title === undefined ? {} : { title: tool.title }),
+					},
+				}),
+			),
+		);
 		const exportedNames = new Set<string>();
-		for (const tool of session.catalog.tools) {
-			const exportedName = await createCatalogToolPresentationName(tool.namespace, tool.toolName);
+		for (const tool of tools) {
+			const exportedName = tool.descriptor.name;
 			if (exportedNames.has(exportedName)) {
 				throw new PortalCatalogPreparationError([
 					{
@@ -252,20 +269,6 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 				]);
 			}
 			exportedNames.add(exportedName);
-			tools.push({
-				namespace: tool.namespace,
-				toolName: tool.toolName,
-				bindingRevision: requireCatalogBinding(session.bindings, tool.namespace, tool.toolName),
-				descriptor: {
-					name: exportedName,
-					inputSchema: { ...structuredClone(tool.inputSchema), type: 'object' },
-					...(tool.description === undefined ? {} : { description: tool.description }),
-					...(tool.annotations === undefined
-						? {}
-						: { annotations: structuredClone(tool.annotations) }),
-					...(tool.title === undefined ? {} : { title: tool.title }),
-				},
-			});
 		}
 		return {
 			agentScopeId: portalAgentScopeKey(identity),
