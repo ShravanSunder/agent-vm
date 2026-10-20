@@ -75,5 +75,5 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 Bring these one at a time. None of them blocks writing this design.
 
 1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not: the first delivery ends at the new packages, running in agent-vm and in the standalone Node server. If "I can use it from anywhere now" is required, the Worker host comes back into this delivery.
-2. **Do tool calls need history that survives a restart?** The design assumes not. Today's server keeps no record per call, and you asked "why do we need to store anything". If that's right, the per-call store and the name-in-`_meta` requirement already built in S3b get removed.
+2. **Do tool calls need history that survives a restart?** The design assumes not. Today's server keeps no record per call, and you asked "why do we need to store anything". If that's right, the disk store built in S3b is replaced by what today's servers keep: a record in memory only for calls that need approval, lost on restart. The name-in-`_meta` requirement is removed.
 3. **Standalone approvals: keep today's or replace them?** There are two today: the old standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. The design keeps and adapts what exists, and leaves any new approval system to a later project.

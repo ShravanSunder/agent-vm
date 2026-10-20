@@ -81,7 +81,10 @@ The same path serves both modes and both hosts. Nothing reaches a backend except
 ## What's stored
 
 **Nothing new.**
-- **The standalone server** keeps sessions in memory and no record of each call, as today's `mcp-portal` does.
+- **The standalone server** keeps sessions in memory. For calls that **need approval**, it also keeps a record in memory, for the life of the process. That matches what today's standalone servers keep: the old Tool Portal's one-use token tombstones ([standalone-tool-portal-approval.ts:306](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-approval.ts#L306)) and the proxy's used-token list ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)).
+  - Each such record is keyed by the approval the call carries, so one approval runs one call, as today. It's lost on restart, as today.
+  - Calls that need no approval aren't recorded at all.
+  - This is how the standalone server's approvals reach the one dispatcher. The dispatcher needs a record and a receipt for any call that requires approval ([capability-dispatcher.ts:125](../../../packages/tool-engine/src/dispatch/capability-dispatcher.ts#L125)), so this in-memory record satisfies it without a disk store.
 - **agent-vm's controller** keeps what it keeps today: approvals, provider accounts and Tool VM leases. It stays the owner of that state, and the managed adapter uses it.
 - **`tool-engine` and `tool-access`** store nothing.
 
@@ -114,9 +117,9 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | Step | Status | Change under this design |
 | --- | --- | --- |
 | S1 `tool-access` | draft PR [#238](https://github.com/ShravanSunder/agent-vm/pull/238), built and reviewed | keep; `assessAccess` stays as built, but isn't expanded for the deferred UI |
-| S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240), built and reviewed | keep; the standalone host records nothing per call |
+| S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240), built and reviewed | keep its code. One rule in its docs and tests changes: a host may answer "not recorded" for calls that need no approval. Calls that need approval still need a record and a receipt, supplied in agent-vm by the controller and in the standalone server by the in-memory record (see "What's stored") |
 | S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241), built and reviewed | keep; rename the modes to `direct`/`indirect`; `direct` also lists the search tools |
-| S3b `tool-host-node` | branch at `51c98139`, no PR yet | keep the listeners, stdio, config, compiler and the review fixes; **remove** its per-call store and the requirement that direct calls carry a name in `_meta` (if the owner confirms question 2); **carry over** today's standalone approvals (which path depends on question 3) |
+| S3b `tool-host-node` | branch at `51c98139`, no PR yet | keep the listeners, stdio, config, compiler and the review fixes; **replace** its disk store with the in-memory approval record, and **remove** the requirement that direct calls carry a name in `_meta` (if the owner confirms question 2); **carry over** today's standalone approval verification (which path depends on question 3) |
 | S4 switch agent-vm over | not started | agent-vm runs on the new pieces, then the old packages are deleted |
 | S3c limits, S5 control API, S6 Worker host, sign-in, UI | cancelled | none |
 
