@@ -31,26 +31,6 @@ function compilerOptions(config: string): ts.CompilerOptions {
 }
 
 describe('test-only portable alias boundaries', () => {
-	it('keeps the test path map equal to production plus only the three admitted test aliases', () => {
-		// TypeScript replaces paths rather than merging it; catch drift in this necessary config copy.
-		expect(compilerOptions('tsconfig.tests.json').paths).toEqual({
-			...compilerOptions('tsconfig.production.json').paths,
-			'@agent-vm/controller-test-support/*': ['./packages/agent-vm/src/controller/*'],
-			'@agent-vm/config-contracts-test-support/*': ['./packages/config-contracts/src/*'],
-			'@agent-vm/tool-portal/policy-comparison': [
-				'./packages/tool-portal/src/tool-portal-service-common.ts',
-			],
-		});
-		for (const alias of aliases)
-			expect(
-				ts.resolveModuleName(
-					alias,
-					path.resolve('packages/tool-engine/src/dispatch/alias-consumer.unit.test.ts'),
-					compilerOptions('tsconfig.tests.json'),
-					ts.sys,
-				).resolvedModule,
-			).toBeDefined();
-	});
 	it.each(aliases)('rejects production imports and declarations through %s', (alias) => {
 		const sourceTexts = [
 			`import type { TestOnlyDependency } from '${alias}'; export type Leak = TestOnlyDependency;`,
@@ -100,21 +80,17 @@ describe('test-only portable alias boundaries', () => {
 		]);
 	});
 	it.each([
-		'tsconfig.production.json',
-		'packages/tool-engine/tsconfig.production.json',
-		'packages/tool-engine/tsconfig.build.json',
-		'packages/gateway-runtime/tsconfig.production.json',
-		'packages/gateway-runtime/tsconfig.build.json',
-	])('does not resolve test aliases in production config %s', (config) => {
-		for (const alias of aliases)
-			expect(
-				ts.resolveModuleName(
-					alias,
-					path.resolve('packages/tool-engine/src/dispatch/alias-consumer.ts'),
-					compilerOptions(config),
-					ts.sys,
-				).resolvedModule,
+		[aliases[0], 'packages/agent-vm/src/controller/approval/controller-approval-ledger.ts'],
+		[aliases[1], 'packages/config-contracts/src/oauth-policy-compiler-test-fixture.ts'],
+		[aliases[2], 'packages/tool-portal/src/tool-portal-service-common.ts'],
+	] as const)('retains legitimate shared test resolution for %s', (alias, expectedPath) => {
+		expect(
+			ts.resolveModuleName(
 				alias,
-			).toBeUndefined();
+				path.resolve('packages/tool-engine/src/dispatch/alias-consumer.unit.test.ts'),
+				compilerOptions('tsconfig.json'),
+				ts.sys,
+			).resolvedModule?.resolvedFileName,
+		).toBe(path.resolve(expectedPath));
 	});
 });

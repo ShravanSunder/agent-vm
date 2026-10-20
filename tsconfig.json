@@ -1,3 +1,10 @@
 {
-	"extends": "./tsconfig.tests.json"
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"jsx": "react-jsx",
+		"jsxImportSource": "hono/jsx",
+		"noEmit": true
+	},
+	"include": ["packages/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "vitest.setup.ts"],
+	"exclude": ["packages/**/contract-fixtures/**", "packages/**/dist/**", "node_modules"]
 }

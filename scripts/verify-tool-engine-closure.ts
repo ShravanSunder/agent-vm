@@ -76,6 +76,27 @@ async function declarationViolations(root: string): Promise<readonly string[]> {
 	return results.flat();
 }
 
+async function sourceViolations(directory: string): Promise<readonly string[]> {
+	const entries = await readdir(directory, { withFileTypes: true });
+	const results = await Promise.all(
+		entries.map(async (entry): Promise<readonly string[]> => {
+			const location = path.join(directory, entry.name);
+			if (entry.isDirectory()) return sourceViolations(location);
+			if (!entry.name.endsWith('.ts')) return [];
+			return collectToolEngineViolations({
+				filePath: path.relative(repositoryRoot, location),
+				sourceText: await readFile(location, 'utf8'),
+			});
+		}),
+	);
+	return results.flat();
+}
+
+export async function assertToolEngineSourceIsPortable(): Promise<void> {
+	const violations = await sourceViolations(path.join(repositoryRoot, 'packages/tool-engine/src'));
+	if (violations.length > 0) throw new Error(violations.join('\n'));
+}
+
 function loaderSource(): string {
 	return `import { registerHooks } from 'node:module';
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
@@ -189,6 +210,7 @@ async function installedCheck(root: string): Promise<void> {
 }
 
 export async function verifyToolEngineClosure(): Promise<void> {
+	await assertToolEngineSourceIsPortable();
 	const scratch = await mkdtemp(path.join(tmpdir(), '2026-10-s2-closure-'));
 	const evidence = path.resolve(argument('--evidence-dir') ?? path.join(scratch, 'evidence'));
 	await mkdir(evidence, { recursive: true });
