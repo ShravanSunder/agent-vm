@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 import {
 	connectClient,
+	decodedResult,
 	fixtureConfig,
 	fixtureDirectory,
 	headerCanary,
@@ -352,6 +353,15 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				},
 			});
 			expect(failed).toMatchObject({ isError: true });
+			expect(decodedResult(failed)).toMatchObject({
+				ok: false,
+				results: {
+					'stdio-error': {
+						ok: false,
+						error: { kind: 'ambiguous', reason: 'resource-authority-unconfirmed' },
+					},
+				},
+			});
 			expect(JSON.stringify({ catalog, failed, diagnostics })).not.toContain(secretCanary);
 			expect(alpha.effects.map((effect) => effect.arguments)).toEqual([{ value: 1 }]);
 			const effects = (await readFile(effectsPath, 'utf8'))

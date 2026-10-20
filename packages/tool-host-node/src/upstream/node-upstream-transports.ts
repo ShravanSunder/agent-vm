@@ -36,12 +36,14 @@ export const createNodeHttpUpstreamTransport: UpstreamMcpRuntimeOptions['createU
 	(server, transport) => {
 		const url = new URL(server.url);
 		if (transport === 'sse')
-			return new SSEClientTransport(url, {
-				...(server.eventSourceInit === undefined
-					? {}
-					: { eventSourceInit: server.eventSourceInit }),
-				...(server.requestInit === undefined ? {} : { requestInit: server.requestInit }),
-			});
+			return withOrderedUpstreamMessages(
+				new SSEClientTransport(url, {
+					...(server.eventSourceInit === undefined
+						? {}
+						: { eventSourceInit: server.eventSourceInit }),
+					...(server.requestInit === undefined ? {} : { requestInit: server.requestInit }),
+				}),
+			);
 		return new StreamableHTTPClientTransport(
 			url,
 			server.requestInit === undefined ? {} : { requestInit: server.requestInit },
@@ -65,36 +67,43 @@ export function createNodeStdioUpstreamTransport(
 		transport.stderr?.on('data', (chunk: Buffer | string): void => {
 			props.stderr?.(redactCredentialText(String(chunk), { exactValues: Object.values(env) }));
 		});
-		let deliveries = Promise.resolve();
-		const orderedTransport: Transport = {
-			start: async () => {
-				Object.assign(transport, {
-					onmessage: (message: JSONRPCMessage): void => {
-						// SDK 1.29 defers notification handlers. Preserve wire order across
-						// their microtasks before a coalesced result removes the progress token.
-						deliveries = deliveries
-							.then(() => {
-								orderedTransport.onmessage?.(message);
-							})
-							.catch((error: unknown) => {
-								orderedTransport.onerror?.(
-									error instanceof Error ? error : new Error('Stdio message delivery failed.'),
-								);
-							});
-					},
-					onerror: (error: Error): void => orderedTransport.onerror?.(error),
-					onclose: (): void => {
-						void deliveries.then(() => orderedTransport.onclose?.());
-					},
-				});
-				await transport.start();
-			},
-			send: async (message) => transport.send(message),
-			close: async () => {
-				await transport.close();
-				await deliveries;
-			},
-		};
-		return orderedTransport;
+		return withOrderedUpstreamMessages(transport);
 	};
+}
+
+function withOrderedUpstreamMessages(transport: Transport): Transport {
+	let deliveries = Promise.resolve();
+	const orderedTransport: Transport = {
+		start: async () => {
+			Object.assign(transport, {
+				onmessage: (message: JSONRPCMessage): void => {
+					// SDK 1.29 defers notification handlers. Preserve wire order across
+					// their microtasks before a coalesced result removes the progress token.
+					deliveries = deliveries
+						.then(() => {
+							orderedTransport.onmessage?.(message);
+						})
+						.catch((error: unknown) => {
+							orderedTransport.onerror?.(
+								error instanceof Error ? error : new Error('Upstream message delivery failed.'),
+							);
+						});
+				},
+				onerror: (error: Error): void => orderedTransport.onerror?.(error),
+				onclose: (): void => {
+					void deliveries.then(() => orderedTransport.onclose?.());
+				},
+			});
+			await transport.start();
+		},
+		send: async (message, options) => transport.send(message, options),
+		...(transport.setProtocolVersion === undefined
+			? {}
+			: { setProtocolVersion: (version: string): void => transport.setProtocolVersion?.(version) }),
+		close: async () => {
+			await transport.close();
+			await deliveries;
+		},
+	};
+	return orderedTransport;
 }

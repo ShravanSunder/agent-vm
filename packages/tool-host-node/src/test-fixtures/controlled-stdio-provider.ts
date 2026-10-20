@@ -56,7 +56,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 			},
 		});
 	return {
-		content: [{ type: 'text', text: `stdio:${String(request.params.arguments?.value)}` }],
+		content: [
+			{
+				type: 'text',
+				text:
+					request.params.name === 'fail'
+						? `provider tool failure ${process.env.PROVIDER_SECRET ?? ''}`
+						: `stdio:${String(request.params.arguments?.value)}`,
+			},
+		],
 		structuredContent: {
 			value: request.params.arguments?.value,
 			secret: process.env.PROVIDER_SECRET ?? '',

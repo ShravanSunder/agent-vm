@@ -86,7 +86,13 @@ describe('real Node outgoing stdio process boundary', () => {
 					toolName: 'fail',
 					arguments: { value: 4 },
 				}),
-			).rejects.toMatchObject({ details: { phase: 'call_tool', failureClass: 'tool_error' } });
+			).rejects.toMatchObject({
+				details: {
+					phase: 'call_tool',
+					failureClass: 'tool_error',
+					providerErrorMessage: 'provider tool failure [REDACTED]',
+				},
+			});
 			let entered: (() => void) | undefined;
 			const waiting = new Promise<void>((resolve) => {
 				entered = resolve;
