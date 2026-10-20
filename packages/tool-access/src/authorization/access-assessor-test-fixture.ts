@@ -108,7 +108,7 @@ export function googleFixture(): AssessAccessInput {
 					flags: [],
 				},
 			],
-			noOAuthPaths: [['--help']],
+			noOAuthPaths: [],
 			applicationIdsByFamily: {
 				documents: 'workspace-app',
 				communications: 'gmail-app',
