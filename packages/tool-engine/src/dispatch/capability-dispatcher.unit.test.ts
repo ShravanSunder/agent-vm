@@ -366,6 +366,45 @@ describe('neutral capability dispatch', () => {
 		});
 		expect(subject.invocations).toHaveLength(1);
 	});
+	it.each(['armed', 'ambiguous', 'result-expired', 'completed'] as const)(
+		'does not redispatch an existing %s operation at the same key and intent',
+		async (kind) => {
+			// Arrange: the operation authority already owns this exact original item.
+			const subject = harness();
+			vi.spyOn(subject.operations, 'createOrRead').mockImplementation(async ({ invocation }) => ({
+				kind: 'existing',
+				record: {
+					version: 'tool-operation-v1',
+					key: invocation.operationKey,
+					intentDigest: invocation.intentDigest,
+					createdAt: new Date(now).toISOString(),
+					updatedAt: new Date(now).toISOString(),
+					revision: 'held:1',
+					state:
+						kind === 'completed'
+							? { kind, result: { retained: 'original-result' } }
+							: kind === 'ambiguous'
+								? { kind, reason: 'previous-attempt-unconfirmed' }
+								: { kind },
+				},
+			}));
+			const transition = vi.spyOn(subject.operations, 'transition');
+			const challenge = vi.spyOn(subject.approvals, 'challenge');
+			// Act
+			const result = await subject.dispatcher.dispatch(request());
+			// Assert: retained state, never a fresh effect or approval/arm attempt.
+			expect(result).toEqual(
+				kind === 'completed'
+					? { kind: 'completed', result: { retained: 'original-result' } }
+					: kind === 'result-expired'
+						? { kind: 'result-expired' }
+						: { kind: 'ambiguous', reason: 'operation-may-have-dispatched' },
+			);
+			expect(subject.invocations).toEqual([]);
+			expect(transition).not.toHaveBeenCalled();
+			expect(challenge).not.toHaveBeenCalled();
+		},
+	);
 	it('keeps identical intentional items and principals distinct, and lookup never invokes', async () => {
 		const subject = harness();
 		await subject.dispatcher.dispatch(request());
