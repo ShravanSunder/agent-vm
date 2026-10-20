@@ -112,8 +112,11 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 9. A first Google sign-in held at two points while the owner removes that entry: (a) after the gate's read, before either of Better Auth's writes; (b) after both writes, before the bind. **Expect:** refused in both. Read back the `user`, `account`, `allowed_email` binding, `session` and `sign_in_audit` rows: no `user` or `account` row for that login remains, and there is no session.
 10. The same hold on the owner's first sign-in on an empty deployment, while a second, never-listed account tries. **Expect:** exactly one `deployment_owner` row naming the owner, and one `owner-bound` record.
 11. Case 9(b) with the cleanup batch made to fail. **Expect:** the `user` and `account` rows remain, unbound. The failure is recorded, and a later sign-in with that login is refused while its entry stays removed.
+12. Case 9(c): the first sign-in's check binds the entry, then the removal commits before the final check. **Expect:** refused. The `user`, `account` and binding remain as a removed Person, with no session. Re-adding the address reactivates that same Person id.
+13. Request A is refused at its final check and held before its cleanup batch. The owner re-adds the address, and request B signs in with the same provider account and is admitted. Then A's cleanup runs. **Expect:** B's Person id, `account` row, binding and session all survive; A's cleanup deletes nothing; A ends "not allowed".
+14. The reverse order: A's cleanup commits first, then B's bind runs against the deleted user. **Expect:** B's bind binds nothing, B is refused with no binding left pointing at a missing user, and B's retry creates a fresh Person.
 
-**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback.
+**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback. A cleanup that deletes by request alone fails case 13.
 
 **F. Decision freshness** (Tool Portal integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
 1. the live check passes, then the apply is held past `SD8`;
@@ -156,6 +159,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - before linking, the GitHub attempt shows the link message and D1 gains no `user` or `account` row;
   - after linking by redirect, a GitHub sign-in reaches Person A;
   - the ID-token linking form is refused and adds no `account` row;
+  - linking a login whose verified email differs succeeds when that email is allowlisted, and is refused with no `account` row when it isn't;
   - passkey registration with no session is refused;
   - every `account` row has null access-token, refresh-token and ID-token columns, after first sign-in, repeat sign-in and linking;
   - an `account` row seeded with token values before a repeat sign-in has those columns null afterwards.
