@@ -209,30 +209,35 @@ export async function verifyToolEngineClosure(): Promise<void> {
 		evidence,
 	});
 	if (pack.code !== 0) throw new Error('tool-engine pack failed');
-	const overrides: Record<string, string> = {};
-	for (const name of ['tool-access', 'oauth-broker-contracts']) {
-		const location = path.join(scratch, `${name}.tgz`);
-		const dependencyPack = await command({
-			executable: 'pnpm',
-			args: [
-				'--config.ignore-scripts=true',
-				'--dir',
-				path.join(repositoryRoot, 'packages', name),
-				'pack',
-				'--out',
-				location,
-			],
-			cwd: repositoryRoot,
-			label: `pack-${name}`,
-			evidence,
-		});
-		if (dependencyPack.code !== 0) throw new Error(`Dependency pack failed: ${name}`);
-		overrides[
-			name === 'tool-access'
-				? '@agent-collaboration/tool-access'
-				: '@agent-vm/oauth-broker-contracts'
-		] = `file:${location}`;
-	}
+	const dependencyOverrides = await Promise.all(
+		['tool-access', 'oauth-broker-contracts'].map(
+			async (name): Promise<readonly [string, string]> => {
+				const location = path.join(scratch, `${name}.tgz`);
+				const dependencyPack = await command({
+					executable: 'pnpm',
+					args: [
+						'--config.ignore-scripts=true',
+						'--dir',
+						path.join(repositoryRoot, 'packages', name),
+						'pack',
+						'--out',
+						location,
+					],
+					cwd: repositoryRoot,
+					label: `pack-${name}`,
+					evidence,
+				});
+				if (dependencyPack.code !== 0) throw new Error(`Dependency pack failed: ${name}`);
+				return [
+					name === 'tool-access'
+						? '@agent-collaboration/tool-access'
+						: '@agent-vm/oauth-broker-contracts',
+					`file:${location}`,
+				];
+			},
+		),
+	);
+	const overrides: Record<string, string> = Object.fromEntries(dependencyOverrides);
 
 	await writeFile(
 		path.join(scratch, 'package.json'),

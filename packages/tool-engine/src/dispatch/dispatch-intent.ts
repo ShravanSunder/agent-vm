@@ -7,7 +7,7 @@ export function canonicalDispatchJson(value: JsonValue): string {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value);
 	if (Array.isArray(value)) return `[${value.map(canonicalDispatchJson).join(',')}]`;
 	return `{${Object.keys(value)
-		.sort()
+		.toSorted()
 		.map((key) => `${JSON.stringify(key)}:${canonicalDispatchJson(value[key] ?? null)}`)
 		.join(',')}}`;
 }
