@@ -8,7 +8,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import type { PortalToolRecord } from '#mcp-gateway/catalog-types';
-import type { PortalSession } from '#mcp-gateway/portal-session';
+import type { PortalCatalogRefusal, PortalSession } from '#mcp-gateway/portal-session';
 
 export interface PortalToolSuccess {
 	readonly input: Readonly<Record<string, unknown>>;
@@ -175,6 +175,13 @@ export interface PortalToolHandlerCall {
 	readonly input: unknown;
 }
 
+export type PortalTypescriptHelperUnavailable =
+	| {
+			readonly kind: 'catalog_preparation_refused';
+			readonly refusals: readonly PortalCatalogRefusal[];
+	  }
+	| { readonly kind: 'helper_preparation_failed'; readonly namespace: string };
+
 export interface PortalToolRuntime {
 	readonly dispatchCall: (call: {
 		readonly arguments: JsonObject;
@@ -187,7 +194,7 @@ export interface PortalToolRuntime {
 	readonly preparedTypescriptHelper?: (
 		tool: PortalToolRecord,
 		session: PortalSession,
-	) => string | undefined;
+	) => string | PortalTypescriptHelperUnavailable | undefined;
 }
 
 export interface PortalToolHandlers {

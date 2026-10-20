@@ -70,8 +70,14 @@ export interface PortalSessionManager {
 	readonly invalidateSession: (identity: PortalAgentIdentity) => Promise<void>;
 }
 
+export interface PortalCatalogRefusal {
+	readonly kind: 'upstream_discovery_failed' | 'catalog_tool_name_collision';
+	readonly namespace: string;
+}
+
 export class PortalCatalogPreparationError extends Error {
 	readonly failedNamespaces: readonly string[];
+	readonly refusals: readonly PortalCatalogRefusal[];
 
 	constructor(failures: readonly PortalDiscoveryFailure[]) {
 		const failedNamespaces = [...new Set(failures.map((failure) => failure.namespace))].toSorted();
@@ -80,6 +86,15 @@ export class PortalCatalogPreparationError extends Error {
 		);
 		this.name = 'PortalCatalogPreparationError';
 		this.failedNamespaces = failedNamespaces;
+		this.refusals = failures.map(
+			(failure): PortalCatalogRefusal => ({
+				kind:
+					failure.kind === 'catalog_tool_name_collision'
+						? 'catalog_tool_name_collision'
+						: 'upstream_discovery_failed',
+				namespace: failure.namespace,
+			}),
+		);
 	}
 }
 

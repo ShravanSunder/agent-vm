@@ -13,6 +13,7 @@ import {
 	describeInputSchema,
 	callExecutionInputSchema,
 	type PortalToolRuntime,
+	type PortalTypescriptHelperUnavailable,
 	type PortalBatchResult,
 	type PortalToolResult,
 	type PortalToolResultMap,
@@ -288,7 +289,7 @@ function paginate<TItem>(
 function describeToolOutput(props: {
 	readonly includeJsonSchema: boolean;
 	readonly includeRelated: boolean;
-	readonly typescriptHelper: string | undefined;
+	readonly typescriptHelper: string | PortalTypescriptHelperUnavailable | undefined;
 	readonly includeZod: boolean;
 	readonly session: PortalSession;
 	readonly tool: PortalToolRecord;
@@ -318,8 +319,10 @@ function describeToolOutput(props: {
 	if (props.includeZod) {
 		result.zod = { experimental: true, source: 'z.fromJSONSchema(inputSchema)' };
 	}
-	if (props.typescriptHelper !== undefined) {
+	if (typeof props.typescriptHelper === 'string') {
 		result.typescriptHelper = props.typescriptHelper;
+	} else if (props.typescriptHelper !== undefined) {
+		result.typescriptHelperUnavailable = props.typescriptHelper;
 	}
 
 	return structuredClone(result);

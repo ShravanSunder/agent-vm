@@ -46,6 +46,11 @@ export interface PreparedGatewayCatalog {
 	readonly typescriptHelpersByToolRef?: Readonly<Record<string, string>>;
 	readonly tools: readonly PreparedCatalogTool[];
 }
+
+type DescribeCatalogPreparation =
+	| { readonly kind: 'prepared'; readonly catalog: PreparedGatewayCatalog }
+	| { readonly kind: 'unavailable'; readonly error: unknown };
+
 export interface McpGatewayOptions {
 	readonly caller: {
 		readonly identity: PortalAgentIdentity;
@@ -325,14 +330,25 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 				!parsed.data.requests.some((request) => request.includeTypescriptHelper)
 			)
 				return handlers.describe({ identity, input });
-			const catalog = await prepareCatalog();
+			let preparation: DescribeCatalogPreparation;
+			try {
+				preparation = { kind: 'prepared', catalog: await prepareCatalog() };
+			} catch (error) {
+				preparation = { kind: 'unavailable', error };
+			}
 			const describeHandlers = createPortalToolHandlers({
 				getSession: visibleSession,
 				dispatchCall,
-				preparedTypescriptHelper: (tool) =>
-					catalog.typescriptHelpersByToolRef?.[
+				preparedTypescriptHelper: (tool) => {
+					if (preparation.kind === 'unavailable') {
+						return preparation.error instanceof PortalCatalogPreparationError
+							? { kind: 'catalog_preparation_refused', refusals: preparation.error.refusals }
+							: { kind: 'helper_preparation_failed', namespace: tool.namespace };
+					}
+					return preparation.catalog.typescriptHelpersByToolRef?.[
 						encodeToolRef({ namespace: tool.namespace, toolName: tool.toolName })
-					],
+					];
+				},
 			});
 			return describeHandlers.describe({ identity, input });
 		},
