@@ -399,6 +399,28 @@ function googleExplainEntries(props: {
 			}
 		}
 	}
+	for (const path of props.commands.noOAuthPaths) {
+		const pathAccountKey = JSON.stringify([path, null]);
+		if (splitPaths.has(pathAccountKey)) continue;
+		splitPaths.add(pathAccountKey);
+		entries.push({
+			operationClass: { kind: 'cli-command', commandPath: path },
+			account: null,
+			state: stateFor({
+				input,
+				account: undefined,
+				classification: {
+					...foldCliContribution({
+						base,
+						input,
+						contribution: classifyCliPathContribution(props.cliPolicy, path),
+						requirements: [],
+					}),
+					accountRequired: false,
+				},
+			}),
+		});
+	}
 	return entries;
 }
 

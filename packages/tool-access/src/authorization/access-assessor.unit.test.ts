@@ -298,6 +298,8 @@ describe('account facts and binding', () => {
 		const operation = namespace(input).operations.run;
 		if (operation?.cliPolicy === null || operation?.cliPolicy === undefined)
 			throw new Error('Missing CLI policy');
+		if (operation.googleCommands === null) throw new Error('Missing Google set');
+		operation.googleCommands.noOAuthPaths = [['--help']];
 		operation.cliPolicy.commands.push({ path: ['--help'], flagRules: [] });
 		input.call = { arguments: { argv: ['--help'], reason: 'help' }, account: null, digest };
 		input.facts.accounts = [];
