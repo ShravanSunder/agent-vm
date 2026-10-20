@@ -15,8 +15,8 @@
 <ex-callout tone="tldr" title="The design in four lines">
 
 - **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher) and `tool-host-node` (runs it on a machine). agent-vm plugs in through its own adapter.
-- **Behaviour stays the same.** There are no new features, and nothing new is stored.
-- **Two modes:** `direct` lists every tool plus the search tools; `indirect` offers only the search tools.
+- **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal's MCP tools and the MCP proxy) keep their tools, results and approvals. There are no new features, nothing new stored, and no new limits.
+- **The proxy's two modes:** `direct` lists every tool plus the search tools; `indirect` offers only the search tools.
 - **Later:** code mode in both modes. The pruned work (Worker host, UI, sign-in, workspaces, audit and more) belongs to separate projects.
 </ex-callout>
 
@@ -24,7 +24,7 @@
 
 1. **Is a deployed Cloudflare Worker part of this delivery?** The design assumes not.
 2. **Do tool calls need history that survives a restart?** The design assumes not, since today's server keeps none.
-3. **Standalone approvals:** keep and adapt today's two signed-token paths, or replace them? The design keeps today's.
+3. **Retire either of today's two standalone approval paths?** The design keeps both, because each serves its own way in.
 </ex-callout>
 
 <ex-tabs data-width="reading">
