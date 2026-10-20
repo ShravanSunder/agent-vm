@@ -23,6 +23,7 @@ const portalPackageNames = new Set([
 	'mcp-portal',
 	'tool-portal',
 	'tool-access',
+	'tool-engine',
 ]);
 
 const controlContractPackageNames = new Set([
@@ -854,6 +855,7 @@ export function collectPortalArchitectureViolations(
 ): readonly string[] {
 	const violations = [
 		...props.files.flatMap(collectToolAccessViolations),
+		...props.files.flatMap(collectToolEngineViolations),
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
 		...props.files.flatMap(collectDependencyViolations),
 		...props.files.flatMap(collectAgentPortalSdkGatewayRuntimeImportViolations),
@@ -945,6 +947,59 @@ export function collectToolAccessViolations(file: PortalArchitectureSourceFile):
 			violations.push(
 				`${filePath}: tool-access execution-bearing contract field ${node.name.text}`,
 			);
+		}
+		ts.forEachChild(node, visit);
+	}
+	visit(source);
+	return violations;
+}
+
+export function isForbiddenToolEngineImport(specifier: string): boolean {
+	return (
+		specifier.startsWith('node:') ||
+		portableBuiltinNames.has(specifier) ||
+		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-host-[^/]+|tool-portal|mcp-portal|gateway-runtime|gateway-control-contracts|controller-execution-contracts)(?:\/|$)/u.test(
+			specifier,
+		) ||
+		specifier.startsWith('@gondolin/')
+	);
+}
+export function collectToolEngineViolations(file: PortalArchitectureSourceFile): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (!filePath.startsWith('packages/tool-engine/src/') || isTestSourceFile(filePath)) return [];
+	const violations: string[] = [];
+	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
+	function visit(node: ts.Node): void {
+		if (
+			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+			node.moduleSpecifier !== undefined &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			isForbiddenToolEngineImport(node.moduleSpecifier.text)
+		)
+			violations.push(`${filePath}: tool-engine forbidden import ${node.moduleSpecifier.text}`);
+		if (
+			ts.isImportTypeNode(node) &&
+			ts.isLiteralTypeNode(node.argument) &&
+			ts.isStringLiteral(node.argument.literal) &&
+			isForbiddenToolEngineImport(node.argument.literal.text)
+		)
+			violations.push(
+				`${filePath}: tool-engine forbidden type import ${node.argument.literal.text}`,
+			);
+		if (ts.isIdentifier(node) && node.text.startsWith('GatewayRuntime'))
+			violations.push(`${filePath}: tool-engine managed type ${node.text}`);
+		if (
+			ts.isCallExpression(node) &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+		) {
+			const argument = node.arguments[0];
+			if (
+				argument !== undefined &&
+				ts.isStringLiteral(argument) &&
+				isForbiddenToolEngineImport(argument.text)
+			)
+				violations.push(`${filePath}: tool-engine forbidden import ${argument.text}`);
 		}
 		ts.forEachChild(node, visit);
 	}
