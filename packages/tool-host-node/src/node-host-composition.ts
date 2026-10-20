@@ -96,13 +96,15 @@ export async function createNodeHostComposition(props: {
 				): Promise<Record<string, string>> {
 					return Object.fromEntries<string>(
 						await Promise.all(
-							Object.entries(values).map(async ([name, secret]) => {
-								const rawValue = await props.secrets.resolve(secret);
-								if (rawValue.length === 0)
-									throw new Error('Configured provider credential did not resolve.');
-								rawSecrets.push(rawValue);
-								return [name, formatSecretValue(secret, rawValue)];
-							}),
+							Object.entries(values).map(
+								async ([name, secret]): Promise<readonly [string, string]> => {
+									const rawValue = await props.secrets.resolve(secret);
+									if (rawValue.length === 0)
+										throw new Error('Configured provider credential did not resolve.');
+									rawSecrets.push(rawValue);
+									return [name, formatSecretValue(secret, rawValue)];
+								},
+							),
 						),
 					);
 				}
