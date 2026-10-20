@@ -128,4 +128,6 @@ Bring these one at a time, in this order. The first was sent as a brief on 2026-
 3. **Do tool calls need history that survives a restart?** The design assumes not. Today's servers keep no record per call. On the Worker, the one thing kept is which approval tokens have been used, until each expires, so an approval still works only once.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
+5. **Is a client profile set per credential acceptable as how the portal knows a client defers tool loading?** You asked for the case to come from the client's capabilities. No client is known to declare that today, though MCP would allow it through a namespaced extension. So the design reads such a declaration if one ever arrives, and otherwise uses a profile configured on each agent credential. The cost is one credential per kind of client an agent runs. **This blocks** nothing in the design, but it's the rule `client-deferred` rests on.
+
 **Needed from the owner before the Worker can be deployed:** a Cloudflare account and an API token for the deployment and its proof.

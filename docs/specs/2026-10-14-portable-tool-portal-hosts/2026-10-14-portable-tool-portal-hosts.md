@@ -15,7 +15,7 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 
 1. **Same tools and the same shapes.** With the same configuration and the same caller, each way in offers the same tools as today. Each tool has the same names, inputs and result shapes, and artifact reads work the same way.
 2. **Each client gets one of two cases, and both reach the same tools.**
-   - A client set up as deferring tool loading itself (`client-deferred`) gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
+   - A client whose credential is set up as deferring tool loading itself (`client-deferred`), or that declares a documented extension saying so, gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
    - Any other client (`portal-deferred`), including one whose support is unknown, gets `indirect`: only the four search tools are listed.
    - A caller gets the same case on every request, whatever other clients of the organization are connected.
    - The organization's portal connects to its tool servers and reads their tool lists when it starts, before any client's first call.
