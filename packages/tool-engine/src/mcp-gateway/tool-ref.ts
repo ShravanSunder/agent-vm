@@ -20,7 +20,8 @@ function decodeToolRefSegment(segment: string): string {
 		throw new Error('Invalid MCP toolRef.');
 	}
 
-	const decoded = new TextDecoder().decode(
+	// Preserve a leading BOM as identity data, matching Buffer's UTF-8 decoding.
+	const decoded = new TextDecoder('utf-8', { ignoreBOM: true }).decode(
 		Uint8Array.from(atob(segment.replaceAll('-', '+').replaceAll('_', '/')), (character) =>
 			character.charCodeAt(0),
 		),

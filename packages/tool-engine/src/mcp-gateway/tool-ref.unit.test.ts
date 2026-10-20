@@ -33,6 +33,8 @@ describe('frozen pre-extraction reference bytes', () => {
 		{ namespace: '雪', toolName: 'café:read', ref: 'mcp:6Zuq:Y2Fmw6k6cmVhZA' },
 		{ namespace: 'a:b', toolName: 'x/y', ref: 'mcp:YTpi:eC95' },
 		{ namespace: 'a\u0000', toolName: 'b', ref: 'mcp:YQA:Yg' },
+		{ namespace: '\uFEFFalpha', toolName: 'read', ref: 'mcp:77u_YWxwaGE:cmVhZA' },
+		{ namespace: 'alpha', toolName: '\uFEFFread', ref: 'mcp:YWxwaGE:77u_cmVhZA' },
 	])('encodes and independently decodes $ref', ({ namespace, toolName, ref }) => {
 		expect(encodeToolRef({ namespace, toolName })).toBe(ref);
 		expect(decodeToolRef(ref)).toEqual({ namespace, toolName });
