@@ -95,7 +95,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 
 ## Later, if wanted
 
-- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work. **Nothing here may block it:** the TypeScript generators and `describe`'s per-tool helper keep working on every host, including the Worker.
+- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work. **Nothing here may block it:** `describe`'s per-tool helper keeps working on every host, including the Worker, and the full catalog compiler keeps working where it runs today.
 
 ## Owner decisions on 2026-10-20
 

@@ -168,7 +168,7 @@ One object per organization, holding only that organization's auth state. It's t
 
 - **One short check per call, with no cache.** Removing an agent or withdrawing a grant stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one organization today.
 - **Tool calls and their streams run in the Worker, not in the object.** The object only does short reads and writes.
-- **Splitting when needed:** if one organization outgrows its object, the used-approval-token records split by agent into more objects. The sign-in record stays in one.
+- **Splitting when needed:** if one organization's used-approval-token records grow too large or too busy, they can split by agent into more objects. That spreads only the approval records: every call still makes its one check against the organization's object, so a very busy organization would have that check measured before anything else changes.
 - **Why approval state moves here:** today the proxy remembers used tokens in a list inside one process ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)). A Worker runs as many copies at once, so a list per copy couldn't stop a token being used twice. The object is the single place that records a use. This is approval state, not call history.
 - **People's accounts and sign-in sessions aren't kept here.** Once question 2 is answered, they live in the sign-in service's own database. Membership is written in one place only: this object.
 
@@ -176,13 +176,14 @@ One object per organization, holding only that organization's auth state. It's t
 
 Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). The Worker reads the same config, deployed with it.
 - **Secret values** come from Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
+- **Connections stay inside their organization.** Today a connection to a tool server is reused per agent and per server ([upstream-mcp-client-runtime.ts:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)), where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). On the Worker the organization is part of that key too, because the same agent or server name can appear in two organizations. A reused connection never skips the per-call check.
 - **1Password:** the Node host's `op` path doesn't run in a Worker. A 1Password service-account token would need a client that works in a Worker, which is unproven, so Cloudflare secrets are the default.
 
 ### Per-user and computer tools: designed, not built
 
 - **Per-user tools:**
   - The account a call uses comes from the person's grant, checked at the organization's object, never from a label the caller sends.
-  - Today, connections to tool servers are reused per agent and per server ([upstream-mcp-client-runtime.ts:643](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L643)). A per-user connection adds the person's account to that key, so one person's connection is never reused for someone else.
+  - A per-user connection adds the person's connected account, taken from the checked grant, to the organization's connection key above. So one person's connection is never reused for someone else, and every call through it is still checked against the current grant.
   - Where people's provider tokens are kept, and how they're refreshed and revoked, is decided with question 2.
 - **Computer tools:**
   - A private route (Cloudflare Tunnel or Workers VPC) only reaches the machine.
@@ -191,10 +192,9 @@ Today's proxy config already describes remote MCP servers, with headers whose va
 
 ### Code mode stays possible
 
-`describe` returns today's per-tool TypeScript helper, and the catalog compiler builds typed modules. Both use Node `crypto` and `json-schema-to-typescript` today ([catalog-typescript-compiler.ts:1](../../../packages/mcp-portal/src/catalog-typescript/catalog-typescript-compiler.ts#L1)).
-- **First choice:** run them in the Worker under Cloudflare's Node compatibility. Each helper is then built from the tool's live schema, as it is today.
-- **Only if that fails:** generate the helpers when the Worker is deployed. A tool server that changes a schema would then make its helper stale. So `describe` would compare the schema's hash with the one the helper was built from, and refuse rather than return a helper that doesn't match. Redeploying updates it.
-- Which choice works is checked on a real Worker build.
+There are two generators today, and only one is on the Worker's path.
+- **`describe`'s per-tool helper** is built from the tool's live record each time by a small generator ([portal-tools.ts:595](../../../packages/mcp-portal/src/core/portal-tools.ts#L595), [typescript-artifact.ts:1](../../../packages/mcp-portal/src/portal-config/typescript-artifact.ts#L1)). Its only Node dependency is one SHA-256 hash ([typescript-artifact.ts:20](../../../packages/mcp-portal/src/portal-config/typescript-artifact.ts#L20)). It moves to `tool-engine/mcp-gateway` on Web Crypto, with the same output bytes. So the Worker builds the helper live, as a machine does today.
+- **The full catalog compiler** is separate. It uses `json-schema-to-typescript` ([catalog-typescript-compiler.ts:8](../../../packages/mcp-portal/src/catalog-typescript/catalog-typescript-compiler.ts#L8)) and stays on `tool-host-node` for its existing users. When code mode is picked up, the first question is where that code runs; whether this compiler runs on a Worker is checked then.
 
 ### The analytics data point
 
@@ -231,7 +231,8 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | `mcp-portal` upstream client: HTTP and SSE | `tool-engine/connectors` |
 | `mcp-portal` upstream client: stdio and environment | `tool-host-node` |
 | `mcp-portal` proxy server, config, CLI and binary | `tool-host-node` |
-| `mcp-portal` TypeScript generators: the per-tool helper and the full catalog compiler | `tool-host-node`; both outputs stay byte-identical |
+| `mcp-portal` per-tool TypeScript helper, used by `describe` | `tool-engine/mcp-gateway`, on Web Crypto, so both hosts use it; output byte-identical |
+| `mcp-portal` full catalog compiler | `tool-host-node`; output byte-identical |
 | `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in, as today ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)): an in-memory list on a machine, the organization's object on the Worker |
 | `mcp-portal` call digest | `tool-access/contracts`; same bytes |
 | `mcp-portal` provider backend | `tool-engine/connectors`, used by agent-vm's adapter |
@@ -251,7 +252,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | --- | --- | --- |
 | S1 `tool-access` | draft PR [#238](https://github.com/ShravanSunder/agent-vm/pull/238) | keep; `assessAccess` stays as built, but isn't expanded for the deferred UI |
 | S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240) | keep its code. One rule in its docs and tests changes: a host may answer "not recorded" for calls that need no approval. Calls that need approval still need a record and a receipt (see "Approvals") |
-| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper; take in the agent bearer tokens and the approval token from S3b's host, on Web Crypto |
+| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper, with its generator moved into `mcp-gateway`; take in the agent bearer tokens and the approval token from S3b's host. All three run on Web Crypto |
 | S3b `tool-host-node` | branch at `51c98139`, no PR yet | **add** the standalone Tool Portal's two routes: its MCP route (`tool_portal_*`, `resources/read`, approval in metadata) and its JSON route (approval header, 64 KiB request limit). **Add** both approval routes; **replace** the disk store with the in-memory approval entries; **remove** the `_meta` name requirement and the new 4 MiB incoming-request check, which today's proxy doesn't have; **keep** the listeners, stdio, config, compiler and the review fixes |
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
 | S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check waits on question 1, and deploying waits on a Cloudflare account and API token |

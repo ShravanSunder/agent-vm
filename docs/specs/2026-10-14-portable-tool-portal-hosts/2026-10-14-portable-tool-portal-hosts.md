@@ -56,7 +56,7 @@ The Worker serves the MCP proxy's way in for organization tools. Its reference i
 13. **The Worker behaves like the proxy.**
     - With the same configuration and caller, it offers the same tools, in `direct` or `indirect` mode, with the same results and the same refusals, as checks 1 to 4 require of the proxy.
     - Its approval token works as the proxy's does (check 6). A token can be used only once, even when two copies of the Worker receive it at the same time.
-    - `describe` returns the same per-tool helper as on a machine, or refuses when it can't match the tool.
+    - `describe` returns the same per-tool helper as on a machine, built from the tool's current schema.
 14. **Only known callers, kept apart.**
     - The Worker refuses a caller it can't identify, including anyone reaching it by a way that skips Cloudflare Access.
     - An agent can't pass as another agent by sending another's name, session ID or client name.
