@@ -585,8 +585,10 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertToolEngineSourceIsPortable, verifyToolEngineClosure } =
+		await import('./verify-tool-engine-closure.ts');
+	await assertToolEngineSourceIsPortable();
 	if (process.argv.includes('--packed-engine')) {
-		const { verifyToolEngineClosure } = await import('./verify-tool-engine-closure.ts');
 		await verifyToolEngineClosure();
 	}
 	if (process.argv.includes('--packed-access')) {
