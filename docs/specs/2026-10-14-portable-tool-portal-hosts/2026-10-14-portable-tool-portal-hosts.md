@@ -14,11 +14,13 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 ## Each way in looks the same
 
 1. **Same tools and the same shapes.** With the same configuration and the same caller, each way in offers the same tools as today. Each tool has the same names, inputs and result shapes, and artifact reads work the same way.
-2. **The proxy's two modes reach the same tools.**
-   - In `direct` mode, every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
-   - In `indirect` mode, only the four search tools are listed.
+2. **Each client gets one of two cases, and both reach the same tools.**
+   - A client set up as deferring tool loading itself (`client-deferred`) gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
+   - Any other client (`portal-deferred`), including one whose support is unknown, gets `indirect`: only the four search tools are listed.
+   - A caller gets the same case on every request.
    - Either way the agent can reach exactly the same tools, and the same call gives the same result.
-   - The only change from today is that `direct` also offers the search tools.
+   - In `client-deferred`, the tool list comes in pages, each under the smallest cap a supported client enforces.
+   - The changes from today: `direct` also offers the search tools; the case is chosen per client instead of per server; and the list comes in pages.
 3. **Hidden stays hidden.** A tool the caller may not use can't be found or called through any way in, by its name, by a guessed name, or through the search tools.
 
 ## Calls behave the same

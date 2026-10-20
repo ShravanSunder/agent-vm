@@ -79,15 +79,51 @@ flowchart LR
 
 Every way in uses the same rules check and the same dispatcher. Nothing reaches a backend except through the dispatcher.
 
-## Direct and indirect
+## Who loads tools lazily: the client or the portal
 
-These apply to the MCP proxy.
-- **`direct`** lists every tool the agent may use as its own MCP tool, plus the four search tools.
-  - A call to a search tool goes to its search handler, and a call to any other tool name goes to that tool.
-  - Today's catalog mode listed only the tools, so offering the search tools as well is the one deliberate change.
-  - The routing matters: the S3b branch currently sends every `direct` call to the tool lookup, which would refuse the search tools ([node-mcp-server.ts:42](https://github.com/ShravanSunder/agent-vm/blob/tool-host-node/s3b-node-host/packages/tool-host-node/src/ingress/node-mcp-server.ts#L42)).
-- **`indirect`** lists only the four search tools: list, search, describe and call.
-- **Underneath, they're the same.** Both use the same rules and the same dispatcher.
+This applies to the MCP proxy, on a machine and on the Worker. The owner's direction (2026-10-20): there are exactly two cases, chosen for each client, and never a third.
+
+```ts
+// Exactly one of two cases, chosen for each caller.
+type ToolLoading =
+  | { readonly kind: 'client-deferred' } // the client loads tool definitions lazily itself
+  | { readonly kind: 'portal-deferred' }; // the portal does it, through its search tools
+```
+
+| Case | What the caller's `tools/list` shows | Today's name |
+| --- | --- | --- |
+| `client-deferred` | **`direct`:** every tool the caller may use, each as its own MCP tool, plus the four search tools | catalog |
+| `portal-deferred` | **`indirect`:** only the four search tools (list, search, describe and call); the caller finds and calls every tool through them | compact |
+
+- **Same tools either way.** "Every tool" means every tool this caller may use. The case changes only how tools are shown, never which ones the caller can reach. Both cases use the same rules, the same dispatcher, the same approvals and the same results.
+- **In `direct`, the search tools work too.** A call to a search tool goes to its search handler, and a call to any other name goes to that tool. Today's catalog mode listed only the tools, so offering the search tools as well is one deliberate change. The routing matters: the S3b branch currently sends every `direct` call to the tool lookup, which would refuse the search tools ([node-mcp-server.ts:42](https://github.com/ShravanSunder/agent-vm/blob/tool-host-node/s3b-node-host/packages/tool-host-node/src/ingress/node-mcp-server.ts#L42)).
+
+### Choosing the case
+
+Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-parser.ts:54](../../../packages/mcp-portal/src/cli/mcp-portal-cli-parser.ts#L54)). It becomes a choice per caller, made in `tool-engine/mcp-gateway`, from what's known about the caller's client, in this order:
+1. **A signal from the client itself.** MCP has no standard way for a client to say it defers tool loading: the 2026-07-28 client capabilities have no such field ([schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.ts#L716)), and no extension for it has been found. If one appears, it's read where the client declares capabilities, and it decides the case.
+2. **The caller's client profile in configuration.** The organization's configuration says, for each agent, which case its client takes. For example, an agent running Claude Code, which defers MCP tool definitions by default ([Claude Code MCP](https://code.claude.com/docs/en/mcp)), is set to `client-deferred`.
+3. **Otherwise `portal-deferred`.** A client that isn't known to defer never receives the full list.
+
+**When it's chosen.** 2026-07-28 MCP has no connect step: each request carries its version and the client's capabilities. Older clients still send `initialize` ([versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle)). So the case is chosen at `initialize` for older clients, and on each request for current ones. Because it comes from the caller's identity and configuration, it's the same answer every time. That also fits MCP's rule that a tool list may vary with the authorization on a request, but not from connection to connection ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)).
+- **The client's name isn't used.** The client reports it about itself, and it says nothing reliable about deferral.
+- **Behind Cloudflare's MCP Portal** (question 1), the Worker's client would be the Portal, not the agent's harness. The Portal's own capabilities say nothing about the harness, so the case would come from the configured profile of whichever credential the Portal sends.
+
+### The organization's portal starts once
+
+Each organization's portal connects to its configured tool servers and reads their tool lists when it starts, as today's proxy prepares its catalog ([portal-http-server.ts:269](../../../packages/mcp-portal/src/mcp-proxy/portal-http-server.ts#L269)). Both cases are answered from that same catalog.
+- **On a machine,** it starts with the process.
+- **On the Worker,** it starts with the first request that creates the organization's engine in an isolate. The engine, its catalog and its connections then last as long as that isolate; it doesn't reconnect for each call. A new isolate starts its own.
+
+### The tool list's size
+
+- **Client deferral doesn't shrink the download.** In `client-deferred`, the client keeps tool definitions out of the model's context, but it still downloads the whole tool list. So deferral alone doesn't fix a list that's too big for the client. The owner measured the full list at 4.56 MB or more, against a 1 MiB cap cited in "PR 153"; the client or transport that enforces it is still being located.
+- **The list is sent in pages.** MCP lets a server split `tools/list` into pages with a cursor ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)). Today the proxy returns every tool in one reply ([portal-mcp-server.ts:215](../../../packages/mcp-portal/src/mcp-proxy/portal-mcp-server.ts#L215)). In `client-deferred`, the portal sends the list in pages, each under the smallest cap a supported client enforces (1 MiB, as cited so far).
+- **Only clients that follow the pages can be set to `client-deferred`.** A client that doesn't follow pages stays `portal-deferred`, where `list` and `search` already return bounded pages ([portal-tools.ts:111](../../../packages/mcp-portal/src/core/portal-tools.ts#L111), [:120](../../../packages/mcp-portal/src/core/portal-tools.ts#L120)). Which clients defer and follow pages is being checked now, client by client.
+
+### `describe` and code mode
+
+Deferring tool loading isn't code mode: in both cases the caller still calls tools one at a time.
 - **`describe` keeps returning today's per-tool TypeScript helper** ([portal-tools.ts:595](../../../packages/mcp-portal/src/core/portal-tools.ts#L595)). The full catalog compiler stays too, for its existing users.
 - **Code mode, later.** Today's code already has most of one route to code mode:
   1. the catalog compiler builds typed TypeScript modules for the tools an agent may use;
@@ -265,7 +301,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | --- | --- | --- |
 | S1 `tool-access` | draft PR [#238](https://github.com/ShravanSunder/agent-vm/pull/238) | keep; `assessAccess` stays as built, but isn't expanded for the deferred UI |
 | S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240) | keep its code. One rule in its docs and tests changes: a host may answer "not recorded" for calls that need no approval. Calls that need approval still need a record and a receipt (see "Approvals") |
-| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper, with its generator moved into `mcp-gateway`; take in the agent bearer tokens and the approval token from S3b's host. All three run on Web Crypto |
+| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; choose `client-deferred` or `portal-deferred` per caller from its configured profile, defaulting to `portal-deferred`; send `tools/list` in pages in `client-deferred`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper, with its generator moved into `mcp-gateway`; take in the agent bearer tokens and the approval token from S3b's host. All three run on Web Crypto |
 | S3b `tool-host-node` | branch at `51c98139`, no PR yet | **add** the standalone Tool Portal's two routes: its MCP route (`tool_portal_*`, `resources/read`, approval in metadata) and its JSON route (approval header, 64 KiB request limit). **Add** both approval routes; **replace** the disk store with the in-memory approval entries; **remove** the `_meta` name requirement and the new 4 MiB incoming-request check, which today's proxy doesn't have; **keep** the listeners, stdio, config, compiler and the review fixes |
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
 | S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check waits on question 1, and deploying waits on a Cloudflare account and API token |

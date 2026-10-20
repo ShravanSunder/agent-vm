@@ -16,7 +16,7 @@
 
 - **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher), `tool-host-node` (runs it on a machine) and `tool-host-cloudflare` (runs the MCP proxy on a Worker). agent-vm plugs in through its own adapter.
 - **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal and the MCP proxy) keep their tools, results, approvals and limits.
-- **The proxy's two modes:** `direct` lists every tool plus the search tools; `indirect` offers only the search tools.
+- **Two cases, chosen for each client:** a client that loads tools lazily itself gets `direct` (every tool plus the search tools, sent in pages); any other client gets `indirect`, where the portal does the lazy loading through its search tools.
 - **The one addition is a deployed, secured Cloudflare Worker** serving the proxy for organization tools. Each organization has its own Durable Object for sign-in and used approvals, and each call sends one data point to Analytics Engine. Per-user and computer tools are designed for, and built after your decisions.
 - **Later:** code mode in both modes. UI, people sign-in, workspaces and audit belong to separate projects.
 </ex-callout>

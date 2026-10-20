@@ -50,9 +50,11 @@ This work has two parts:
 
    When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Deleting the packages doesn't change any of the three ways in.
 
-2. **The proxy's two ways of showing tools get clearer names:**
-   - **`direct`**: every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is the one deliberate change.
-   - **`indirect`**: only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
+2. **The proxy shows tools one of two ways, chosen for each client.** Each organization's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself:
+   - **The client defers (`client-deferred`), so it gets `direct`:** every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is a deliberate change.
+   - **The portal defers (`portal-deferred`), so it gets `indirect`:** only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
+   - **Exactly these two cases.** A client not known to defer gets `portal-deferred`. Either way the agent reaches the same tools, under the same permissions and approvals.
+   - **A big tool list still has to fit the client.** The full list has been measured at 4.56 MB or more, so in `client-deferred` it's sent in pages the client can take.
 
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
    - **It refuses every caller it can't identify,** and it tells agents apart. How agents reach it, and how they prove who they are, is the first open question below.
@@ -101,6 +103,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 
 - **Scope:** take apart and recompose, with no new features: "decompose and rethink composition and system ground up not add more features."
 - **Mode names:** `direct` and `indirect`.
+- **Deferred tool loading** (09:52 and 09:54 ET, relayed by Sun): it's per MCP portal, meaning per organization, and "each MCP portal instance connects to its downstream MCPs at startup". What it exposes is "DYNAMIC, decided per connecting client": "if the client supports deferred MCP/tool loading → give it everything (full tool list) and let the client defer. If the client doesn't → the portal does the deferred loading itself." It's modelled as a union, `client-deferred | portal-deferred`, chosen from the client's capabilities. Proof: real runs of both paths, checked by an independent Verifier.
 - **Code mode:** in both modes eventually, "should be possible later, just don't block us".
 - **Pruning:** everything listed under "Not in this work".
 - **Cloudflare Worker:** "yes deployed secured cf worker is part of the delivery".
