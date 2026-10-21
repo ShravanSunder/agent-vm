@@ -283,3 +283,23 @@ One layer at a time, from the bottom. At each layer:
 
 Every layer is pushed with its proof, the Lead has accepted each one, and a
 structure scan of the touched packages shows no rule above broken.
+
+## Rulings during execution
+
+- `tool-access` copies `tool-engine`'s `#` alias setup: an `imports` map in
+  package.json and extensionless specifiers, with no tsconfig, build or test
+  config changes unless proof shows one is needed.
+- Worker-vs-Node parity tests reach the Node host only through
+  `@agent-collaboration/tool-host-node`'s public entry, as a devDependency of
+  `tool-host-cloudflare`. Their Node config is the Worker test's own fixture
+  (`test-fixtures/node-parity-host-config.ts`). The Worker's production bundle
+  has no `tool-host-node` input. The design's "may not import `tool-host-node`"
+  covers production code.
+- When a planned `models/` file turns out to hold functions too, the pure types
+  and constants go to `models/`. Each function goes to the job folder that uses
+  it, in a file named for that job, never `helpers` or `utils`.
+- shadcn's generated primitives under `tool-access-ui/src/components/ui/` stay
+  as generated. The 600-line rule doesn't apply to them (`sidebar.tsx` is 699
+  lines).
+- This pass has no paired Verifier. The Lead verifies each layer from its
+  proof.
