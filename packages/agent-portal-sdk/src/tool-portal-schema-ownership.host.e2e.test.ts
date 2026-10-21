@@ -1,0 +1,93 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, symlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+
+import { expect, it } from 'vitest';
+
+const executeFile = promisify(execFile);
+
+it('keeps packed SDK and access schemas and refinement registry identical', async () => {
+	const directory = await mkdtemp(path.join(os.tmpdir(), '2026-10-s3d-schema-pack-'));
+	const repositoryRoot = process.cwd();
+	try {
+		await Promise.all(
+			['tool-access', 'agent-portal-sdk'].map(async (packageDirectory) => {
+				const archivePath = path.join(directory, `${packageDirectory}.tgz`);
+				await executeFile(
+					'mise',
+					[
+						'exec',
+						'node@24.7.0',
+						'--',
+						'pnpm',
+						'--dir',
+						`packages/${packageDirectory}`,
+						'pack',
+						'--out',
+						archivePath,
+					],
+					{
+						cwd: repositoryRoot,
+						env: { ...process.env, npm_config_ignore_scripts: 'true' },
+					},
+				);
+				const unpackedPath = path.join(directory, packageDirectory);
+				await mkdir(unpackedPath);
+				await executeFile('tar', ['-xzf', archivePath, '-C', unpackedPath]);
+			}),
+		);
+		const dependencies = [
+			'zod',
+			'@agent-vm/oauth-broker-contracts',
+			'@modelcontextprotocol/sdk',
+			'@optique/core',
+			'@optique/run',
+			'@optique/zod',
+		];
+		await Promise.all(
+			[...dependencies, '@agent-collaboration/tool-access'].map(async (dependency) => {
+				const link = path.join(directory, 'node_modules', dependency);
+				await mkdir(path.dirname(link), { recursive: true });
+				await symlink(
+					dependency === '@agent-collaboration/tool-access'
+						? path.join(directory, 'tool-access/package')
+						: path.join(repositoryRoot, 'packages/agent-portal-sdk/node_modules', dependency),
+					link,
+					'dir',
+				);
+			}),
+		);
+		const oracle: unknown = JSON.parse(
+			await readFile(
+				new URL('./tool-portal-schema-d25be046.snapshot.json', import.meta.url),
+				'utf8',
+			),
+		);
+		const script = `
+import { createHash } from 'node:crypto';
+const sdk = await import(${JSON.stringify(path.join(directory, 'agent-portal-sdk/package/dist/index.js'))});
+const access = await import(${JSON.stringify(path.join(directory, 'tool-access/package/dist/contracts/index.js'))});
+const shared = Object.entries(access).filter(([name, value]) => name in sdk && name.endsWith('Schema'));
+const hash = createHash('sha256').update(JSON.stringify(sdk.createPortableContractSchemaManifest())).digest('hex');
+console.log(JSON.stringify({ exports: Object.keys(sdk).toSorted(), manifestBytes: hash, sharedCount: shared.length, differentInstances: shared.filter(([name, value]) => sdk[name] !== value).map(([name]) => name) }));
+`;
+		const { stdout } = await executeFile(
+			'mise',
+			['exec', 'node@24.7.0', '--', 'node', '--input-type=module', '--eval', script],
+			{ cwd: repositoryRoot },
+		);
+		const result: unknown = JSON.parse(stdout);
+		expect(result).toMatchObject({
+			differentInstances: [],
+			manifestBytes: Reflect.get(Object(oracle), 'manifestBytes'),
+		});
+		expect(result).toMatchObject({
+			exports: Reflect.get(Object(Reflect.get(Object(oracle), 'exports')), 'sdkRoot'),
+		});
+		expect(Reflect.get(Object(result), 'sharedCount')).toBeGreaterThan(40);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});

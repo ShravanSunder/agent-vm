@@ -1,13 +1,6 @@
-import { z } from 'zod';
-
-export const NamespaceNameSchema = z.string().min(1);
-export const CapabilityNameSchema = z.string().min(1);
-
-export const CapabilityReferenceSchema = z
-	.object({
-		namespace: NamespaceNameSchema,
-		name: CapabilityNameSchema,
-	})
-	.strict();
-
-export type CapabilityReference = z.infer<typeof CapabilityReferenceSchema>;
+export {
+	NamespaceNameSchema,
+	CapabilityNameSchema,
+	CapabilityReferenceSchema,
+} from '@agent-collaboration/tool-access/contracts';
+export type { CapabilityReference } from '@agent-collaboration/tool-access/contracts';

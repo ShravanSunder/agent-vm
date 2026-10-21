@@ -44,6 +44,9 @@ importers:
 
   packages/agent-portal-sdk:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
