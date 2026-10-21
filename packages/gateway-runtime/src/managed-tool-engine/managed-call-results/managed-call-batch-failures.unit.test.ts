@@ -1,13 +1,13 @@
 import { PortalCallResultSchema, type PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { GatewayRuntimeApprovalAdmissionResultSchema } from '@agent-vm/gateway-control-contracts';
-import * as callProjection from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-projection.js';
+import * as callProjection from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-projection.js';
 import { createManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
 import {
 	semanticSnapshot,
 	toolPortalConfig,
 	trustedContext,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

@@ -23,7 +23,7 @@ import {
 	semanticSnapshot,
 	toolPortalConfig,
 	trustedContext,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 

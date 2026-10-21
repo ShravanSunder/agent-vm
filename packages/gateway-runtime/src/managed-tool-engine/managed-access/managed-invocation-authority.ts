@@ -6,17 +6,13 @@ import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-con
 import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimePortalSemanticSnapshot,
-	type GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
+import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
 import {
 	ToolPortalManagedServiceInvocationOptionsSchema,
 	type ToolPortalInvocationOptions,
 } from '@agent-vm/tool-portal';
 
-export interface ManagedEngineInvocationContext {
-	readonly surfaceClass: 'mcp' | 'protected_uds';
-	readonly trustedContext: GatewayRuntimeTrustedInvocationContext;
-}
 /** Rebuild authority from the controller projection on every resource entry. */
 export function resolveManagedEngineInvocation(props: {
 	readonly config: GatewayRuntimeManagedToolPortalConfig;

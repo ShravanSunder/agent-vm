@@ -3,11 +3,11 @@ import {
 	assessAccessInput,
 	type AssessAccessInput,
 } from '@agent-collaboration/tool-access/contracts';
-import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/access-profile-projection.js';
+import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
 import {
 	semanticSnapshot,
 	toolPortalConfig,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import { describe, expect, it } from 'vitest';
 
 // Oracle: Program Design §1 and J13. Fixture is the existing managed three-backend configuration.

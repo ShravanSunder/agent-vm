@@ -14,8 +14,8 @@ import {
 	ambiguousDispatchItem,
 	failedDispatchItem,
 	notDispatchedItem,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results.js';
-import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-results.js';
+import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
 import { deterministicOperationId } from '@agent-vm/tool-portal/dispatch-authority';
 export function createManagedPortalCallProjection(props: {
 	readonly request: ManagedToolEngineAdapter['request'];
