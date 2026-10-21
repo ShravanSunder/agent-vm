@@ -14,9 +14,9 @@ command uses Node 24.7.0 through mise. Run the quality gate before the suites:
 | Command, preceded by `mise exec node@24.7.0 --` | Result | Exit |
 | --- | --- | --- |
 | `pnpm check` | 16 gates passed: build, architecture/exports/contracts/taxonomy/version guards, lint, format, type-aware lint, all package typechecks | 0 |
-| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 451 tests, 39 files passed | 0 |
+| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 453 tests, 39 files passed | 0 |
 | `pnpm vitest run --project integration packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 35 tests, 3 files passed | 0 |
-| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 49 tests, 12 files passed, no skips | 0 |
+| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 52 tests, 13 files passed, no skips | 0 |
 
 The quality gate includes `pnpm typecheck`, `pnpm lint`, `pnpm lint:types` and
 `pnpm fmt:check`; each exited 0. Lint warnings remain; no lint errors remain.
@@ -82,7 +82,7 @@ same actual Durable Object in a third heap. This does not use a mocked DO.
 - Replay across heaps: two named copy heaps have distinct observed isolate IDs,
   share the authority DO and produce exactly one effect for a concurrent approval
   token. Removal through one copy immediately refuses the other copy's request.
-- Socket cleanup: the same live PIDs 45597 and 45598 return from warm ESTABLISHED
+- Socket cleanup: the same live PIDs 87268 and 87294 return from warm ESTABLISHED
   counts 12 and 7 to 12 and 7, with zero CLOSE_WAIT and zero upstream background
   streams after sequential/concurrent success, failure, abort and stream workloads.
   An observing factory forwards all protocol/transport operations to native SDK
@@ -216,3 +216,63 @@ wrapper or new public contract was added. The helper's internal export is absent
 from the package's public index. Final logs after this production correction are
 `final-correction-check.log`, `final-correction-unit.log`,
 `final-correction-integration.log` and `final-correction-host.log`.
+
+## Validation failures participate in the Worker limits
+
+At frozen 08ccddf7 the paired Verifier observed a product failure: 8,000 malformed
+call descriptors in a 24,011-byte argument object produced 17,207,674 wire bytes,
+exceeding 16 MiB despite zero upstream effects. The Lead authorized a bounded
+Worker-only repair. Permanent pre-fix host cases reproduced that failure and a
+50-item validation reply at exactly 16 MiB plus one; both failed their independent
+wire-size assertions (`validation-budget-pre-fix-red.log`, two failures, exit 1).
+
+The raw array length now precedes every descriptor validation. A batch count
+refusal skips the shared mapper's descriptor parsing and per-call analytics:
+there are no admitted calls. The final Worker projection now counts actual
+validation failures, issue lists and scalar errors alongside successful outputs,
+including JSON-RPC ID and SDK-added resultType/serverInfo. Fitting literal output
+is unchanged. Oversized item output becomes the existing too_large_result while
+fitting siblings remain. A scalar error that cannot fit gets a small too-large
+batch refusal. There is no new request-ID cap. The shared gateway, tool-access and
+Node host are unchanged by this repair.
+
+Permanent real local-workerd observations, all with zero upstream effects:
+
+| Case | Observed wire bytes |
+| --- | --- |
+| 51 raw malformed entries (164 argument bytes) | 610, too_many_calls |
+| Exact 8,000-entry reproducer (24,011 argument bytes) | 610, too_many_calls |
+| 50 validation failures just under budget | 16,777,215, original literal output retained |
+| Same failures exactly at budget | 16,777,216, original literal output retained |
+| Same failures proposed one byte over | 16,441,828; 49 original failures and one too_large_result |
+| Oversized scalar validation failure with 50 raw entries | 16,777,238 before, 624 after |
+
+The failure fixture uses an 83,763-character enum, well below the upstream limit;
+its call arguments and RPC-ID padding are below the 4 MiB request limit. Two
+small actual old-proxy responses independently calibrate the diagnostic size;
+no production size constant/helper supplies the expected limit. Scalar calibration
+also uses actual old-proxy responses and independently asserts the request fits.
+
+The current real Node proxy route is compared with the original proxy's complete
+literal MCP output for all three large-error paths. It remains uncapped here:
+16,777,273 bytes for 50 item failures, 17,207,677 for the malformed 8,000-call
+array, and 16,777,238 for the scalar error. This is expected: these are Worker
+limits. Both Node and Worker produce zero upstream effects in these cases.
+
+Two wrong builds fail separately, then exact source hashes are restored:
+
+- Validation before raw counting: unit getter controls observe 51/8,000 descriptor
+  reads instead of zero; host refusals lose too_many_calls even though the final
+  budget still bounds the response. Both unit/host selected runs exit 1.
+- Failure output excluded from the final budget: the actual 50-item wire reply is
+  16,777,217 bytes; its independent bound assertion fails, exit 1.
+
+Raw commands, patches and exits are retained in `validation-budget-mutations.json`,
+`late-raw-batch-count-{unit,host}-red.log`,
+`failure-results-excluded-from-budget-host-red.log` and their `.diff` files.
+Final ordered runs are `validation-fix-{check,unit,integration,host}.log`:
+16 quality gates, 453 unit tests/39 files, 35 integration tests/3 files and
+52 host tests/13 files, no host skips, all exit 0. Existing normal old/new parity,
+three-request heavy overlap, native close, socket baseline, analytics and shared
+DO observations pass in that full host run. The prior independent proof remains
+anchored to its own frozen commits; this new delta awaits paired observation.

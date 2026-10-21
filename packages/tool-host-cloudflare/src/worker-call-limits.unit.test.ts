@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createBatchScheduler } from '#worker-host/worker-call-limits';
+import {
+	createBatchScheduler,
+	createWorkerRequestLimits,
+	projectBoundedWorkerToolResult,
+} from '#worker-host/worker-call-limits';
 
 describe('whole-call Worker batch scheduling', () => {
 	it('admits six whole calls and releases the next six only on completion', async () => {
@@ -29,4 +33,32 @@ describe('whole-call Worker batch scheduling', () => {
 		expect(peak).toBe(6);
 		expect(running).toBe(0);
 	});
+});
+
+describe('raw batch admission precedes all descriptor validation', () => {
+	it.each([51, 8000])(
+		'counts %s raw entries without reading descriptors, including the refusal projection',
+		(count) => {
+			let descriptorReads = 0;
+			const malformed = Object.defineProperty({}, 'id', {
+				get: () => {
+					descriptorReads += 1;
+					return 'unexpected-descriptor-read';
+				},
+			});
+			const input = { calls: Array.from({ length: count }, () => malformed) };
+			const refused = createWorkerRequestLimits().begin(input, 'proof');
+			expect(descriptorReads).toBe(0);
+			expect(refused?.errors[0]?.kind).toBe('too_many_calls');
+			if (refused === undefined) throw new Error('Expected a raw batch refusal.');
+			const projected = projectBoundedWorkerToolResult({
+				operation: 'mcp_portal_call',
+				input,
+				result: refused,
+				requestId: 'proof',
+			});
+			expect(JSON.stringify(projected.response)).toContain('too_many_calls');
+			expect(descriptorReads).toBe(0);
+		},
+	);
 });

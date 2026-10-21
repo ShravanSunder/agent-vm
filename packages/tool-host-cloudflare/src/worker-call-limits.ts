@@ -35,7 +35,7 @@ import {
 	type PortalBatchResult,
 	type PortalToolResult,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { SERVER_INFO_META_KEY } from '@modelcontextprotocol/server';
+import { SERVER_INFO_META_KEY, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 export const workerProtocolIdentity = { name: 'tool-host-cloudflare', version: '0.0.153' };
@@ -76,15 +76,17 @@ export function createWorkerRequestLimits(): WorkerRequestLimits {
 		begin: (value, id) => {
 			input = value;
 			requestId = id;
-			const parsed = z.object({ calls: z.array(budgetCallSchema) }).safeParse(value);
-			if (!parsed.success) return undefined;
-			if (parsed.data.calls.length > workerBatchCalls)
+			const rawCalls =
+				typeof value === 'object' && value !== null && 'calls' in value ? value.calls : undefined;
+			if (Array.isArray(rawCalls) && rawCalls.length > workerBatchCalls)
 				return {
 					ok: false,
 					diagnostics: [],
 					results: {},
 					errors: [{ kind: 'too_many_calls', message: 'Worker batches allow at most 50 calls.' }],
 				};
+			const parsed = z.object({ calls: z.array(budgetCallSchema) }).safeParse(value);
+			if (!parsed.success) return undefined;
 			for (const call of parsed.data.calls)
 				retained[call.id] = {
 					ok: false,
@@ -160,4 +162,45 @@ export function projectWorkerLimitRefusals(result: PortalBatchResult): PortalBat
 			}),
 		),
 	};
+}
+
+/** Include validation failures and issue lists in the final wire budget, not only upstream results. */
+export function projectBoundedWorkerToolResult(props: {
+	readonly operation: Parameters<typeof projectProxyMcpResult>[0]['operation'];
+	readonly input: unknown;
+	readonly result: PortalBatchResult;
+	readonly requestId: string | number;
+}): { readonly result: PortalBatchResult; readonly response: CallToolResult } {
+	// A raw-count refusal must not revalidate descriptors in the shared projection.
+	const projectionInput = props.result.errors.some((error) => error.kind === 'too_many_calls')
+		? {}
+		: props.input;
+	const project = (result: PortalBatchResult, input: unknown = projectionInput): CallToolResult =>
+		projectProxyMcpResult({
+			operation: props.operation,
+			input,
+			result: projectWorkerLimitRefusals(result),
+		});
+	const fits = (response: CallToolResult): boolean =>
+		serializedWorkerReplyBytes(response, props.requestId) <= workerReplyBytes;
+	const original = project(props.result);
+	if (fits(original)) return { result: props.result, response: original };
+	// Preserve fitting siblings and request order; replace only items that push this reply over budget.
+	if (props.result.errors.length === 0) {
+		const results: Record<string, PortalToolResult> = { ...props.result.results };
+		for (const id of Object.keys(results).toReversed()) {
+			results[id] = { ok: false, input: {}, error: { kind: 'failed', reason: 'too-large' } };
+			const bounded: PortalBatchResult = { ...props.result, ok: false, results };
+			const response = project(bounded);
+			if (fits(response)) return { result: bounded, response };
+		}
+	}
+	// Scalar validation errors, diagnostics or even identifiers may themselves exceed the reply budget.
+	const refused: PortalBatchResult = {
+		ok: false,
+		diagnostics: [],
+		results: {},
+		errors: [{ kind: 'too_large_result', message: 'Tool result exceeds the Worker reply limit.' }],
+	};
+	return { result: refused, response: project(refused, {}) };
 }

@@ -1,6 +1,6 @@
 import { jsonObjectSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	projectProxyMcpResult,
+	type ProxyMcpOperation,
 	type McpGateway,
 	type McpToolMode,
 	type PortalBatchResult,
@@ -10,15 +10,16 @@ import { Server, type CallToolResult } from '@modelcontextprotocol/server';
 import type { WorkerRequestLimits } from '#worker-host/worker-call-limits';
 import {
 	workerProtocolIdentity,
-	projectWorkerLimitRefusals,
+	projectBoundedWorkerToolResult,
 } from '#worker-host/worker-call-limits';
 
 function toolResult(
-	operation: Parameters<typeof projectProxyMcpResult>[0]['operation'],
+	operation: ProxyMcpOperation,
 	input: unknown,
 	result: PortalBatchResult,
+	requestId: string | number,
 ): CallToolResult {
-	return projectProxyMcpResult({ operation, input, result: projectWorkerLimitRefusals(result) });
+	return projectBoundedWorkerToolResult({ operation, input, result, requestId }).response;
 }
 /** One fresh protocol server per HTTP request; gateway/cache lifetime belongs to the organization. */
 export function createWorkerMcpServer(props: {
@@ -38,16 +39,38 @@ export function createWorkerMcpServer(props: {
 		const startedAt = Date.now();
 		switch (request.params.name) {
 			case 'mcp_portal_list':
-				return toolResult('mcp_portal_list', input, await props.gateway.list(input));
+				return toolResult(
+					'mcp_portal_list',
+					input,
+					await props.gateway.list(input),
+					context.mcpReq.id,
+				);
 			case 'mcp_portal_search':
-				return toolResult('mcp_portal_search', input, await props.gateway.search(input));
+				return toolResult(
+					'mcp_portal_search',
+					input,
+					await props.gateway.search(input),
+					context.mcpReq.id,
+				);
 			case 'mcp_portal_describe':
-				return toolResult('mcp_portal_describe', input, await props.gateway.describe(input));
+				return toolResult(
+					'mcp_portal_describe',
+					input,
+					await props.gateway.describe(input),
+					context.mcpReq.id,
+				);
 			case 'mcp_portal_call': {
 				const refused = props.limits.begin(input, context.mcpReq.id);
 				const result = refused ?? (await props.gateway.call(input));
-				props.recordCalls(input, result, startedAt);
-				return toolResult('mcp_portal_call', input, result);
+				const bounded = projectBoundedWorkerToolResult({
+					operation: 'mcp_portal_call',
+					input,
+					result,
+					requestId: context.mcpReq.id,
+				});
+				// A batch-count refusal admits no calls and performs no per-call validation or analytics.
+				if (refused === undefined) props.recordCalls(input, bounded.result, startedAt);
+				return bounded.response;
 			}
 			default:
 				if (props.mode === 'indirect')
@@ -74,8 +97,14 @@ export function createWorkerMcpServer(props: {
 						? {}
 						: { _meta: jsonObjectSchema.parse(request.params['_meta']) }),
 				});
-				props.recordCalls(normalized, result, startedAt);
-				return toolResult('direct', input, result);
+				const bounded = projectBoundedWorkerToolResult({
+					operation: 'direct',
+					input,
+					result,
+					requestId: context.mcpReq.id,
+				});
+				props.recordCalls(normalized, bounded.result, startedAt);
+				return bounded.response;
 		}
 	});
 	return server;
