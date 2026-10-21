@@ -1,7 +1,4 @@
-import { DurableObject } from 'cloudflare:workers';
-
-/** Scaffold only; authorization storage is implemented in the S6 object slice. */
-export class OrganizationAuthorization extends DurableObject {}
+export { OrganizationAuthorization } from '#worker-host/organization-authorization';
 
 export default {
 	fetch(): Response {
