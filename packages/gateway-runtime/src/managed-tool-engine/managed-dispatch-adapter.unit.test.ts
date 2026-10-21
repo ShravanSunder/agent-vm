@@ -1,5 +1,5 @@
 import { jsonObjectSchema } from '@agent-collaboration/tool-access/contracts';
-import type { DispatchInvocation } from '@agent-collaboration/tool-engine/dispatch';
+import type { DispatchInvocation } from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	CapabilityDescriptorSchema,
 	CapabilitySummarySchema,

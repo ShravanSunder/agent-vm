@@ -1,7 +1,7 @@
 import type {
 	DispatchInvocation,
 	DispatchRequest,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,

@@ -7,7 +7,7 @@ import type {
 	DispatchRequest,
 	OperationPort,
 	ToolBackend,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
 import type { ManagedGoogleReadyPreflight } from '@agent-vm/oauth-broker-contracts';

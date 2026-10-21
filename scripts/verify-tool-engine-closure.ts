@@ -146,7 +146,7 @@ console.log('emitted import closure: '+visited.size+' modules, '+edges+' static/
 }
 
 const requiredExports: Readonly<Record<string, readonly string[]>> = {
-	'./dispatch': [
+	'./capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
 		'operationKeySchema',
@@ -333,8 +333,8 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
-		const contract = path.join(root, 'dist/dispatch/index.js');
-		const declaration = path.join(root, 'dist/dispatch/index.d.ts');
+		const contract = path.join(root, 'dist/capability-dispatch/index.js');
+		const declaration = path.join(root, 'dist/capability-dispatch/index.d.ts');
 		const original = await readFile(contract, 'utf8');
 		const originalDeclaration = await readFile(declaration, 'utf8');
 		const fixtureSources = [
@@ -398,7 +398,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 			},
 		];
 		await writeFile(
-			path.join(root, 'dist/dispatch/s2-transitive-poison.js'),
+			path.join(root, 'dist/capability-dispatch/s2-transitive-poison.js'),
 			"export async function lazyPoison() { return import('node:fs'); }\n",
 		);
 		await fixtureSources.reduce<Promise<void>>(async (previous, fixture): Promise<void> => {
@@ -418,7 +418,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 						`${originalDeclaration}\nexport * from './s2-type-poison.js';\n`,
 					);
 					await writeFile(
-						path.join(root, 'dist/dispatch/s2-type-poison.d.ts'),
+						path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'),
 						"import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts'; export type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n",
 					);
 				}
@@ -429,7 +429,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 				await replaceArtifact(contract, original);
 				await replaceArtifact(declaration, originalDeclaration);
 				if (fixture.name === 'transitive-type')
-					await unlink(path.join(root, 'dist/dispatch/s2-type-poison.d.ts'));
+					await unlink(path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'));
 			}
 			const green = await check(`${fixture.name}-green`);
 			if (green.code !== 0) throw new Error(`Fixture ${fixture.name} restoration failed`);

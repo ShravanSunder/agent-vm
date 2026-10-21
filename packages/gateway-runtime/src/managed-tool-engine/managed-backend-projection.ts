@@ -3,7 +3,7 @@ import type {
 	BackendKind,
 	DispatchRequest,
 	ToolBackend,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	PortalBackendDescribeResultSchema,
 	PortalBackendListResultSchema,
