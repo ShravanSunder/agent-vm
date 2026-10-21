@@ -22,17 +22,23 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import { createCatalogToolPresentationName } from '#mcp-gateway/catalog-tool-presentation-name';
-import { listPortalCoreToolDescriptors } from '#mcp-gateway/compact-tool-descriptors';
+import {
+	approvedTokenPort,
+	authorizeGatewayCalls,
+	type GatewayApprovalTokens,
+	type VerifiedCallApproval,
+} from '#mcp-gateway/gateway-approval';
+import { listPortalCoreToolDescriptors } from '#mcp-gateway/indirect-tool-descriptors';
 import {
 	PortalCatalogPreparationError,
 	type PortalSession,
 	type PortalSessionManager,
 } from '#mcp-gateway/portal-session';
-import { describeInputSchema } from '#mcp-gateway/portal-tool-contracts';
 import { createPortalToolHandlers, type PortalBatchResult } from '#mcp-gateway/portal-tools';
 import { createSearchIndex } from '#mcp-gateway/search-index';
 import { buildToolGraph } from '#mcp-gateway/tool-graph';
-import { encodeToolRef } from '#mcp-gateway/tool-ref';
+import { paginateMcpTools, type McpToolListPage } from '#mcp-gateway/tool-list-pagination';
+import type { McpToolMode } from '#mcp-gateway/tool-loading';
 
 export interface PreparedCatalogTool {
 	readonly namespace: string;
@@ -43,13 +49,8 @@ export interface PreparedCatalogTool {
 export interface PreparedGatewayCatalog {
 	readonly agentScopeId: string;
 	readonly sourceHash: string;
-	readonly typescriptHelpersByToolRef?: Readonly<Record<string, string>>;
 	readonly tools: readonly PreparedCatalogTool[];
 }
-
-type DescribeCatalogPreparation =
-	| { readonly kind: 'prepared'; readonly catalog: PreparedGatewayCatalog }
-	| { readonly kind: 'unavailable'; readonly error: unknown };
 
 export interface McpGatewayOptions {
 	readonly caller: {
@@ -67,11 +68,12 @@ export interface McpGatewayOptions {
 	readonly prepareCatalog: (input: PreparedGatewayCatalog) => Promise<PreparedGatewayCatalog>;
 	readonly operations: OperationPort;
 	readonly approvals: ApprovalPort;
+	readonly approvalTokens?: GatewayApprovalTokens;
 	readonly backends: ReadonlyMap<BackendKind, ToolBackend<BackendKind>>;
 	readonly now: () => number;
 }
 export interface McpGateway {
-	readonly listTools: (mode: 'catalog' | 'compact') => Promise<readonly Tool[]>;
+	readonly listTools: (mode: McpToolMode, cursor?: string) => Promise<McpToolListPage>;
 	readonly list: (input: unknown) => Promise<PortalBatchResult>;
 	readonly search: (input: unknown) => Promise<PortalBatchResult>;
 	readonly describe: (input: unknown) => Promise<PortalBatchResult>;
@@ -80,6 +82,7 @@ export interface McpGateway {
 		readonly name: string;
 		readonly arguments: JsonObject;
 		readonly item: string;
+		readonly _meta?: JsonObject;
 		readonly catalog: PreparedGatewayCatalog;
 	}) => Promise<PortalBatchResult>;
 	readonly prepareCatalog: () => Promise<PreparedGatewayCatalog>;
@@ -189,6 +192,7 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	async function dispatchCall(
 		call: {
+			readonly approval?: VerifiedCallApproval;
 			readonly namespace: string;
 			readonly toolName: string;
 			readonly arguments: JsonObject;
@@ -209,7 +213,17 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 			)
 				return refused();
 			enteredDispatcher = true;
-			return await dispatcher.dispatch({
+			const selectedDispatcher =
+				call.approval === undefined
+					? dispatcher
+					: createCapabilityDispatcher({
+							assessAccess,
+							operations: options.operations,
+							approvals: approvedTokenPort(call.approval),
+							backends: options.backends,
+							now: options.now,
+						});
+			return await selectedDispatcher.dispatch({
 				authority: options.caller.authority,
 				principal: options.caller.principal,
 				item: call.requestId,
@@ -224,16 +238,32 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 		}
 	}
 	const handlers = createPortalToolHandlers({ getSession: visibleSession, dispatchCall });
-	async function callBound(input: unknown): Promise<PortalBatchResult> {
+	async function callBound(
+		input: unknown,
+		expectedBinding?: PreparedCatalogTool['bindingRevision'],
+	): Promise<PortalBatchResult> {
 		let session: Awaited<ReturnType<typeof visibleSession>> | undefined;
 		const boundHandlers = createPortalToolHandlers({
 			getSession: async () => {
 				session = await visibleSession();
 				return session;
 			},
+			authorizeCalls: async (calls, token) =>
+				authorizeGatewayCalls({
+					calls,
+					token,
+					tokens: options.approvalTokens,
+					agentId: identity.agentId,
+					now: options.now,
+					accessFor,
+					assessAccess,
+				}),
 			dispatchCall: async (call) => {
 				const binding = session?.bindings.get(JSON.stringify([call.namespace, call.toolName]));
-				return binding === undefined ? refused() : dispatchCall(call, binding);
+				return binding === undefined ||
+					(expectedBinding !== undefined && !sameRevision(expectedBinding, binding))
+					? refused()
+					: dispatchCall(call, binding);
 			},
 		});
 		return boundHandlers.call({ identity, input });
@@ -290,13 +320,7 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 			return { ...current, tools: [] };
 		return {
 			...current,
-			typescriptHelpersByToolRef: Object.fromEntries(
-				current.tools.flatMap((tool) => {
-					const ref = encodeToolRef({ namespace: tool.namespace, toolName: tool.toolName });
-					const helper = prepared.typescriptHelpersByToolRef?.[ref];
-					return helper === undefined ? [] : [[ref, helper]];
-				}),
-			),
+
 			tools: current.tools.filter((tool) =>
 				prepared.tools.some(
 					(entry) =>
@@ -313,45 +337,24 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	return {
 		prepareCatalog,
-		listTools: async (mode) => {
-			z.enum(['catalog', 'compact']).parse(mode);
-			if (mode === 'catalog') return (await prepareCatalog()).tools.map((tool) => tool.descriptor);
+		listTools: async (mode, cursor) => {
+			z.enum(['direct', 'indirect']).parse(mode);
 			const session = await visibleSession();
-			return listPortalCoreToolDescriptors(
+			const searchTools = listPortalCoreToolDescriptors(
 				[...new Set(session.catalog.tools.map((tool) => tool.namespace))].toSorted(),
+			);
+			if (mode === 'indirect') {
+				if (cursor !== undefined) throw new Error('Indirect tools/list has no cursor.');
+				return { tools: [...searchTools] };
+			}
+			return paginateMcpTools(
+				[...(await prepareCatalog()).tools.map((tool) => tool.descriptor), ...searchTools],
+				cursor,
 			);
 		},
 		list: async (input) => handlers.list({ identity, input }),
 		search: async (input) => handlers.search({ identity, input }),
-		describe: async (input) => {
-			const parsed = describeInputSchema.safeParse(input);
-			if (
-				!parsed.success ||
-				!parsed.data.requests.some((request) => request.includeTypescriptHelper)
-			)
-				return handlers.describe({ identity, input });
-			let preparation: DescribeCatalogPreparation;
-			try {
-				preparation = { kind: 'prepared', catalog: await prepareCatalog() };
-			} catch (error) {
-				preparation = { kind: 'unavailable', error };
-			}
-			const describeHandlers = createPortalToolHandlers({
-				getSession: visibleSession,
-				dispatchCall,
-				preparedTypescriptHelper: (tool) => {
-					if (preparation.kind === 'unavailable') {
-						return preparation.error instanceof PortalCatalogPreparationError
-							? { kind: 'catalog_preparation_refused', refusals: preparation.error.refusals }
-							: { kind: 'helper_preparation_failed', namespace: tool.namespace };
-					}
-					return preparation.catalog.typescriptHelpersByToolRef?.[
-						encodeToolRef({ namespace: tool.namespace, toolName: tool.toolName })
-					];
-				},
-			});
-			return describeHandlers.describe({ identity, input });
-		},
+		describe: async (input) => handlers.describe({ identity, input }),
 		call: callBound,
 		callDirect: async (input) => {
 			const envelope = z
@@ -359,23 +362,34 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 					name: z.string().min(1),
 					arguments: z.record(z.string(), z.unknown()),
 					item: z.string().min(1),
+					_meta: z.record(z.string(), z.unknown()).optional(),
 					catalog: z.unknown(),
 				})
 				.safeParse(input);
 			if (!envelope.success) return refusedBatch();
+			// Search tools keep their handlers even in the direct projection.
+			switch (input.name) {
+				case 'mcp_portal_list':
+					return handlers.list({ identity, input: input.arguments });
+				case 'mcp_portal_search':
+					return handlers.search({ identity, input: input.arguments });
+				case 'mcp_portal_describe':
+					return handlers.describe({ identity, input: input.arguments });
+				case 'mcp_portal_call':
+					return callBound(input.arguments);
+			}
 			let enteredHandler = false;
 			try {
 				const catalog = await checkedCatalog(input.catalog);
 				const selected = catalog.tools.find((tool) => tool.descriptor.name === input.name);
 				if (selected === undefined) return refusedBatch();
-				const directHandlers = createPortalToolHandlers({
-					getSession: visibleSession,
-					dispatchCall: async (call) => dispatchCall(call, selected.bindingRevision),
-				});
+
 				enteredHandler = true;
-				return await directHandlers.call({
-					identity,
-					input: {
+				return await callBound(
+					{
+						...(typeof input['_meta']?.['agent-vm/tool-portal-approval-token'] === 'string'
+							? { portalApprovalToken: input['_meta']['agent-vm/tool-portal-approval-token'] }
+							: {}),
 						calls: [
 							{
 								id: input.item,
@@ -385,7 +399,8 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 							},
 						],
 					},
-				});
+					selected.bindingRevision,
+				);
 			} catch {
 				return {
 					ok: false,

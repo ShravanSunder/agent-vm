@@ -5,6 +5,7 @@ import type {
 import { jsonObjectSchema } from '@agent-collaboration/tool-access/contracts';
 
 import type { PortalToolRecord } from '#mcp-gateway/catalog-types';
+import type { PortalCallAuthorization } from '#mcp-gateway/gateway-approval';
 import { validatePortalToolArguments } from '#mcp-gateway/portal-call-validation';
 import type { PortalSession, PortalDiscoveryFailure } from '#mcp-gateway/portal-session';
 import {
@@ -13,7 +14,6 @@ import {
 	describeInputSchema,
 	callExecutionInputSchema,
 	type PortalToolRuntime,
-	type PortalTypescriptHelperUnavailable,
 	type PortalBatchResult,
 	type PortalToolResult,
 	type PortalToolResultMap,
@@ -37,6 +37,7 @@ import {
 	type ToolSummary,
 	type ToolSchemaHint,
 } from '#mcp-gateway/tool-summary';
+import { generateTypescriptCatalogArtifact } from '#mcp-gateway/typescript-artifact';
 export { portalToolInputSchemas } from '#mcp-gateway/portal-tool-contracts';
 export type * from '#mcp-gateway/portal-tool-contracts';
 const describeBeforeCallSchemaHint = {
@@ -289,7 +290,7 @@ function paginate<TItem>(
 function describeToolOutput(props: {
 	readonly includeJsonSchema: boolean;
 	readonly includeRelated: boolean;
-	readonly typescriptHelper: string | PortalTypescriptHelperUnavailable | undefined;
+	readonly typescriptHelper: string | undefined;
 	readonly includeZod: boolean;
 	readonly session: PortalSession;
 	readonly tool: PortalToolRecord;
@@ -321,8 +322,6 @@ function describeToolOutput(props: {
 	}
 	if (typeof props.typescriptHelper === 'string') {
 		result.typescriptHelper = props.typescriptHelper;
-	} else if (props.typescriptHelper !== undefined) {
-		result.typescriptHelperUnavailable = props.typescriptHelper;
 	}
 
 	return structuredClone(result);
@@ -419,11 +418,10 @@ function searchRequestResult(session: PortalSession, request: SearchRequest): Po
 	return itemOutput({ input: request, output: { tools } });
 }
 
-function describeRequestResult(
+async function describeRequestResult(
 	session: PortalSession,
 	request: DescribeRequest,
-	runtime: PortalToolRuntime,
-): PortalToolResult {
+): Promise<PortalToolResult> {
 	const selectorResult = selectorsFromInput(request.tools, request.refs);
 	if (!selectorResult.ok) {
 		return itemError({ error: selectorResult.error, input: request });
@@ -443,17 +441,19 @@ function describeRequestResult(
 		});
 	}
 
-	const tools = selectedTools.map((tool) =>
-		describeToolOutput({
-			includeJsonSchema: request.includeJsonSchema,
-			includeRelated: request.includeRelated,
-			typescriptHelper: request.includeTypescriptHelper
-				? runtime.preparedTypescriptHelper?.(tool, session)
-				: undefined,
-			includeZod: request.includeZod,
-			session,
-			tool,
-		}),
+	const tools = await Promise.all(
+		selectedTools.map(async (tool) =>
+			describeToolOutput({
+				includeJsonSchema: request.includeJsonSchema,
+				includeRelated: request.includeRelated,
+				typescriptHelper: request.includeTypescriptHelper
+					? await generateTypescriptCatalogArtifact({ tools: [tool] })
+					: undefined,
+				includeZod: request.includeZod,
+				session,
+				tool,
+			}),
+		),
 	);
 	return itemOutput({ input: request, output: { tools } });
 }
@@ -503,14 +503,22 @@ function preparePortalCall(
 	return { input: request, tool, validatedArguments: validatedArgumentsResult.data };
 }
 
-async function executePreparedPortalCall(
-	call: PreparedPortalCall,
-	identity: PortalAgentIdentity,
-	runtime: PortalToolRuntime,
-): Promise<PortalToolResult> {
+async function executePreparedPortalCall(props: {
+	readonly call: PreparedPortalCall;
+	readonly identity: PortalAgentIdentity;
+	readonly runtime: PortalToolRuntime;
+	readonly authorization: PortalCallAuthorization | undefined;
+}): Promise<PortalToolResult> {
+	const { call, identity, runtime, authorization } = props;
 	const input = { ...call.input, arguments: call.validatedArguments };
+	if (authorization?.kind === 'refused')
+		return itemError({
+			input,
+			error: { kind: 'approval_token_invalid', reason: authorization.reason },
+		});
 	try {
 		const result = await runtime.dispatchCall({
+			...(authorization?.kind === 'token-approved' ? { approval: authorization.approval } : {}),
 			arguments: call.validatedArguments,
 			identity,
 			namespace: call.tool.namespace,
@@ -539,6 +547,7 @@ function isPreparedPortalCall(
 }
 
 async function addExecutableCallResults(props: {
+	readonly authorizations: ReadonlyMap<string, PortalCallAuthorization>;
 	readonly identity: PortalAgentIdentity;
 	readonly preparedCalls: readonly PreparedPortalCall[];
 	readonly results: Record<string, PortalToolResult>;
@@ -546,11 +555,12 @@ async function addExecutableCallResults(props: {
 }): Promise<void> {
 	await Promise.all(
 		props.preparedCalls.map(async (preparedCall): Promise<void> => {
-			props.results[preparedCall.input.id] = await executePreparedPortalCall(
-				preparedCall,
-				props.identity,
-				props.runtime,
-			);
+			props.results[preparedCall.input.id] = await executePreparedPortalCall({
+				call: preparedCall,
+				identity: props.identity,
+				runtime: props.runtime,
+				authorization: props.authorizations.get(preparedCall.input.id),
+			});
 		}),
 	);
 }
@@ -603,7 +613,21 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 					if (typeof id === 'string') results[id] = preparedResult;
 				}
 			}
+			let authorizations: ReadonlyMap<string, PortalCallAuthorization>;
+			try {
+				authorizations =
+					(await runtime.authorizeCalls?.(executableCalls, parsedInput.data.portalApprovalToken)) ??
+					new Map();
+			} catch {
+				authorizations = new Map(
+					executableCalls.map((entry) => [
+						entry.input.id,
+						{ kind: 'refused', reason: 'approval-unavailable' },
+					]),
+				);
+			}
 			await addExecutableCallResults({
+				authorizations,
 				identity: call.identity,
 				preparedCalls: executableCalls,
 				results,
@@ -625,10 +649,12 @@ export function createPortalToolHandlers(runtime: PortalToolRuntime): PortalTool
 			const session = await runtime.getSession(call.identity);
 			return portalBatchResult(
 				Object.fromEntries(
-					parsedInput.data.requests.map((request) => [
-						request.id,
-						describeRequestResult(session, request, runtime),
-					]),
+					await Promise.all(
+						parsedInput.data.requests.map(async (request) => [
+							request.id,
+							await describeRequestResult(session, request),
+						]),
+					),
 				),
 				discoveryDiagnostics(session),
 			);

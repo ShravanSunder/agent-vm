@@ -1,131 +1,84 @@
+import { generateTypescriptCatalogArtifact as legacyArtifact } from '@agent-vm/mcp-portal/portal-config';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
-import {
-	createHarness,
-	output,
-	retainCatalog,
-} from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
+import { createHarness, inputSchema, output } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
+import { generateTypescriptCatalogArtifact } from '#mcp-gateway/typescript-artifact';
 
-// Literal consumer output from the fixture's declared schemas and metadata.
-const healthyRead = {
-	annotations: { readOnlyHint: true, category: { label: 'original' } },
+const tool = {
 	namespace: 'alpha',
-	related: [],
-	schemaHint: { message: 'Full input schema included.', next: 'call_ready' },
 	toolName: 'read',
-	toolRef: 'mcp:YWxwaGE:cmVhZA',
-	inputSchema: {
-		type: 'object',
-		properties: { value: { type: 'integer' } },
-		required: ['value'],
-		additionalProperties: false,
-	},
+	inputSchema,
 	outputSchema: { type: 'object', properties: { result: { type: 'integer' } } },
+	annotations: { readOnlyHint: true, category: { label: 'original' } },
 };
-const describeBatch = {
-	requests: [
-		{
-			id: 'helper',
-			tools: [{ namespace: 'alpha', toolName: 'read' }],
-			includeTypescriptHelper: true,
-		},
-		{ id: 'plain', tools: [{ namespace: 'alpha', toolName: 'read' }] },
-	],
-};
-const refusals = [
-	{ discovery: 'incomplete', kind: 'upstream_discovery_failed', namespace: 'beta' },
-	{ discovery: 'duplicate', kind: 'catalog_tool_name_collision', namespace: 'alpha' },
-] as const;
 
-describe('compact describe helper containment', () => {
-	it.each(refusals)(
-		'keeps healthy describe items when $discovery refuses full helpers',
-		async ({ discovery, kind, namespace }) => {
+describe('live per-tool TypeScript helpers', () => {
+	it.each(['complete', 'incomplete', 'duplicate'] as const)(
+		'describe uses the legacy bytes from the live tool with %s discovery',
+		async (discovery) => {
 			const harness = createHarness(undefined, discovery);
-			const publisher = vi.fn(retainCatalog);
+			const publisher = vi.fn(() => {
+				throw new Error('full compiler is not needed');
+			});
 			harness.setPrepared(publisher);
-
-			const result = await harness.gateway.describe(describeBatch);
-
-			expect(result.ok).toBe(true);
-			expect(result.errors).toEqual([]);
-			expect(output(result, 'helper')).toEqual({
-				tools: [
+			const result = await harness.gateway.describe({
+				requests: [
 					{
-						...healthyRead,
-						typescriptHelperUnavailable: {
-							kind: 'catalog_preparation_refused',
-							refusals: [{ kind, namespace }],
-						},
+						id: 'helper',
+						tools: [{ namespace: 'alpha', toolName: 'read' }],
+						includeTypescriptHelper: true,
 					},
+					{ id: 'plain', tools: [{ namespace: 'alpha', toolName: 'read' }] },
 				],
 			});
-			expect(output(result, 'plain')).toEqual({ tools: [healthyRead] });
+			const described = z
+				.object({ tools: z.array(z.object({ typescriptHelper: z.string() })) })
+				.parse(output(result, 'helper'));
+			expect(described.tools[0]?.typescriptHelper).toBe(legacyArtifact({ tools: [tool] }));
+			expect(JSON.stringify(output(result, 'plain'))).not.toContain('typescriptHelper');
 			expect(publisher).not.toHaveBeenCalled();
-			if (discovery === 'incomplete')
-				expect(result.diagnostics).toMatchObject([
-					{ kind: 'upstream_discovery_failed', namespace: 'beta' },
-				]);
-			else expect(result.diagnostics).toEqual([]);
-			await expect(harness.gateway.prepareCatalog()).rejects.toMatchObject({
-				name: 'PortalCatalogPreparationError',
-			});
-			await expect(harness.gateway.listTools('catalog')).rejects.toMatchObject({
-				name: 'PortalCatalogPreparationError',
-			});
 		},
 	);
-
-	it('returns exact prepared helper bytes with a complete allowed catalog', async () => {
-		const harness = createHarness();
-		harness.setPrepared((catalog) => ({
-			...catalog,
-			typescriptHelpersByToolRef: { 'mcp:YWxwaGE:cmVhZA': '// prepared helper bytes\n' },
-		}));
-
-		const result = await harness.gateway.describe(describeBatch);
-
-		expect(result.ok).toBe(true);
-		expect(output(result, 'helper')).toEqual({
-			tools: [{ ...healthyRead, typescriptHelper: '// prepared helper bytes\n' }],
-		});
-		expect(output(result, 'plain')).toEqual({ tools: [healthyRead] });
-		expect(result.diagnostics).toEqual([]);
+	it('keeps generator bytes for reordered, escaped and Unicode tool schemas', async () => {
+		const tools = [
+			tool,
+			{
+				namespace: '☃ / namespace',
+				toolName: 'écho"\\',
+				title: '你好',
+				description: '\nmultiline\t',
+				inputSchema: {
+					type: 'object',
+					properties: {
+						z: { type: 'string', enum: ['é', '\n"'] },
+						a: { type: 'array', items: { type: 'integer' } },
+					},
+				},
+				metadata: { nested: [null, { label: '☃' }] },
+			},
+		];
+		await Promise.all(
+			[tools, tools.toReversed()].map(async (ordered) =>
+				expect(await generateTypescriptCatalogArtifact({ tools: ordered })).toBe(
+					legacyArtifact({ tools: ordered }),
+				),
+			),
+		);
 	});
-
-	it.each(refusals)(
-		'keeps helper-free describe independent of $discovery full preparation',
-		async ({ discovery }) => {
-			const harness = createHarness(undefined, discovery);
-			const publisher = vi.fn(retainCatalog);
-			harness.setPrepared(publisher);
-
-			const result = await harness.gateway.describe({ requests: [describeBatch.requests[1]] });
-
-			expect(result.ok).toBe(true);
-			expect(output(result, 'plain')).toEqual({ tools: [healthyRead] });
-			expect(publisher).not.toHaveBeenCalled();
-		},
-	);
-
-	it('contains a prepared-port exception without leaking text or rejecting a healthy sibling', async () => {
-		const harness = createHarness();
-		harness.setPrepared(() => {
-			throw new Error('compiler private detail canary');
-		});
-
-		const result = await harness.gateway.describe(describeBatch);
-
-		expect(result.ok).toBe(true);
-		expect(output(result, 'helper')).toEqual({
-			tools: [
+	it('keeps a hidden tool out of helpers and does not invoke a backend', async () => {
+		const h = createHarness();
+		const result = await h.gateway.describe({
+			requests: [
 				{
-					...healthyRead,
-					typescriptHelperUnavailable: { kind: 'helper_preparation_failed', namespace: 'alpha' },
+					id: 'hidden',
+					tools: [{ namespace: 'alpha', toolName: 'hidden' }],
+					includeTypescriptHelper: true,
 				},
 			],
 		});
-		expect(output(result, 'plain')).toEqual({ tools: [healthyRead] });
-		expect(JSON.stringify(result)).not.toContain('compiler private detail canary');
+		expect(result.ok).toBe(false);
+		expect(JSON.stringify(result)).not.toContain('Generated by');
+		expect(h.effects).toEqual([]);
 	});
 });

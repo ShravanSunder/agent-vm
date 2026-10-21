@@ -24,3 +24,31 @@ Shared TypeScript aliases support the managed parity and integration tests.
 Production source may not import them: the architecture and package-export gates
 check source imports, and the packed closure checks emitted declarations as well
 as runtime dependencies. All three alias controls remain in the packed proof.
+
+`mcp-gateway` uses `direct` for native tools plus the four search tools, and
+`indirect` for the four search tools alone. Hosts choose per client with
+`toolLoadingMode(resolveToolLoading(address))`: `?tools=direct` selects direct;
+the plain address selects indirect. The host owns startup discovery and protocol
+serving; this package does not infer client behavior from its name.
+
+`listTools(mode, cursor?)` returns an MCP result page (`tools`, `nextCursor?`).
+Direct pages contain whole tools and are at most 1 MiB of serialized UTF-8 JSON,
+including the cursor. An indivisible tool over that budget is refused. Hosts
+return the page and pass the next request's cursor back unchanged. Indirect lists
+remain four tools; list and search retain their existing bounded result pages.
+
+`callDirect` routes the search names to their handlers and native names to the
+same dispatcher as `call`. Native approval metadata uses
+`_meta['agent-vm/tool-portal-approval-token']`; indirect calls use
+`portalApprovalToken`. Neither changes the upstream tool's arguments. Configure
+`approvalTokens` with the caller's signing key and an awaited `consumeTokenId`
+port. It must atomically record first use before answering `ok: true`; refusal,
+an error or no answer runs no token-approved calls. Machines can use one
+`createInMemoryApprovalTokenUse` instance per agent/signing-key scope, retained
+for the process lifetime. Its default capacity remains 4,096 live token IDs.
+Worker hosts must supply their shared authority instead.
+
+Bearer derivation, token signing/verification and the per-tool TypeScript helper
+are asynchronous Web Crypto APIs. Their bytes match the legacy implementations.
+`describe` builds its helper from the live authorized tool record; it does not
+invoke the host's full catalog compiler. That compiler remains outside this package.

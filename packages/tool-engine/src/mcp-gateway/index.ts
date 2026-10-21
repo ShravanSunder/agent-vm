@@ -13,3 +13,11 @@ export * from '#mcp-gateway/search-index';
 export * from '#mcp-gateway/tool-summary';
 export * from '#mcp-gateway/tool-graph';
 export * from '#mcp-gateway/zod-schema-loader';
+
+export * from '#mcp-gateway/agent-bearer-token';
+export * from '#mcp-gateway/hmac-token';
+export * from '#mcp-gateway/approval-token-use';
+export * from '#mcp-gateway/typescript-artifact';
+export * from '#mcp-gateway/tool-loading';
+export * from '#mcp-gateway/tool-list-pagination';
+export type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';

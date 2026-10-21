@@ -82,7 +82,7 @@ export class PortalCatalogPreparationError extends Error {
 	constructor(failures: readonly PortalDiscoveryFailure[]) {
 		const failedNamespaces = [...new Set(failures.map((failure) => failure.namespace))].toSorted();
 		super(
-			`MCP Portal catalog preparation failed for namespace(s): ${failedNamespaces.join(', ')}. Run live MCP validation or use compact mode for partial discovery diagnostics.`,
+			`MCP Portal catalog preparation failed for namespace(s): ${failedNamespaces.join(', ')}. Run live MCP validation or use indirect mode for partial discovery diagnostics.`,
 		);
 		this.name = 'PortalCatalogPreparationError';
 		this.failedNamespaces = failedNamespaces;
