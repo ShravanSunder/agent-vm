@@ -129,3 +129,5 @@ export type {
 	OrganizationToolCatalog,
 	OrganizationToolCatalogSnapshot,
 } from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
+
+export type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';

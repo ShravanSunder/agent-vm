@@ -8,13 +8,8 @@ import type {
 	PortalBatchResult,
 	PortalToolResult,
 } from '#mcp-gateway/portal-tools/models/portal-tool-contracts';
+import type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';
 
-export type ProxyMcpOperation =
-	| 'mcp_portal_list'
-	| 'mcp_portal_search'
-	| 'mcp_portal_describe'
-	| 'mcp_portal_call'
-	| 'direct';
 interface ProxyItemError {
 	readonly code: string;
 	readonly message: string;

@@ -1,10 +1,29 @@
+import type { Tool } from '@modelcontextprotocol/server';
+
 import { discoveryFailureFromError } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
 import type { AgentCatalogViewRuntime } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
 import type {
 	OrganizationToolCatalog,
 	OrganizationToolCatalogSnapshot,
-	CatalogState,
 } from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
+
+type NamespaceTools = ReadonlyMap<string, readonly Tool[]>;
+type DiscoveryFailures = ReadonlyMap<string, PortalDiscoveryFailure>;
+type CatalogState =
+	| { readonly kind: 'unlisted' }
+	| { readonly kind: 'complete'; readonly tools: NamespaceTools; readonly expiresAt: number }
+	| {
+			readonly kind: 'incomplete';
+			readonly candidate: NamespaceTools;
+			readonly failures: DiscoveryFailures;
+	  }
+	| {
+			readonly kind: 'refresh-failed';
+			readonly candidate: NamespaceTools;
+			readonly failures: DiscoveryFailures;
+			readonly complete: NamespaceTools;
+	  };
 
 /** One organization's discovery; caller views never own upstream listing or retry state. */
 export function createOrganizationToolCatalog(props: {

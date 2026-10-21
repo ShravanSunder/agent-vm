@@ -5,10 +5,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 
-import {
-	projectProxyMcpResult,
-	type ProxyMcpOperation,
-} from '#mcp-gateway/proxy-results/proxy-mcp-result';
+import type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';
+import { projectProxyMcpResult } from '#mcp-gateway/proxy-results/proxy-mcp-result';
 
 const identity = createPortalAgentIdentity({
 	agentId: 'agent-a',

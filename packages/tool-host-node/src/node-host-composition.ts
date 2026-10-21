@@ -25,28 +25,28 @@ import {
 } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { ToolSchema } from '@modelcontextprotocol/core';
 
-import { mcpConfigToResolvedProviders } from '#node-host/configuration/mcp-config';
+import { mcpConfigToResolvedProviders } from '#node-host/host-configuration/mcp-config';
 import {
 	nodeHostConfigSchema,
 	type NodeHostConfig,
-} from '#node-host/configuration/node-host-config';
+} from '#node-host/host-configuration/models/node-host-config';
 import {
-	formatSecretValue,
 	type SecretValue,
 	type FormattedSecretValue,
-} from '#node-host/configuration/secret-value';
+} from '#node-host/host-configuration/models/secret-value';
+import { formatSecretValue } from '#node-host/host-configuration/secret-value';
+import { compileNodeHostCredentialSet } from '#node-host/mcp-proxy-server/bearer-credentials';
 import {
-	compileNodeHostCredentialSet,
 	type NodeHostBearerCredentialSet,
 	type CompiledNodeHostCredential,
-} from '#node-host/ingress/bearer-credentials';
-import { openNodeOperationStore } from '#node-host/operations/node-operation-store';
+} from '#node-host/mcp-proxy-server/models/bearer-credentials';
+import { openNodeOperationStore } from '#node-host/operation-records/node-operation-store';
 import {
 	createNodeHttpUpstreamTransport,
 	createNodeStdioUpstreamTransport,
-} from '#node-host/upstream/node-upstream-transports';
-import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/upstream/stdio-upstream-errors';
-import { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
+} from '#node-host/stdio-upstream-servers/node-upstream-transports';
+import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/stdio-upstream-servers/stdio-upstream-errors';
+import { createNodeStdioUpstreamRuntime } from '#node-host/stdio-upstream-servers/stdio-upstream-runtime';
 
 export interface NodeHostSecretResolutionPort {
 	readonly resolve: (secret: SecretValue) => Promise<string>;

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { startNodeHost } from '#node-host/node-host-startup';
-import { createNodeHostDiagnosticLogger } from '#node-host/observability/node-host-diagnostics';
+import { createNodeHostDiagnosticLogger } from '#node-host/host-observability/node-host-diagnostics';
 import {
 	configureProcessLogging,
 	createPortalServerLogger,
 	type ProcessLoggingHandle,
-} from '#node-host/observability/process-logging';
+} from '#node-host/host-observability/process-logging';
+import { startNodeHost } from '#node-host/node-host-startup';
 
 const configPath = process.argv[2];
 if (configPath === undefined || process.argv.length !== 3) {
