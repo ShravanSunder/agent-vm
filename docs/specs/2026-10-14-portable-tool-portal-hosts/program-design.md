@@ -353,7 +353,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
 | S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check needs agent sign-in from the sign-in service; deploying uses the existing Cloudflare CLI login |
 | Agent sign-in | designed, awaiting review | the sign-in design's `U8` and `R15` to `R17` ([people sign-in](../2026-10-20-people-sign-in/requirements.md)); S6's caller check depends on it |
-| Admin panel (`tool-control-ui`) | being designed | in the first version (owner, 2026-10-20): a request bar that shows or proposes, and editable proposal forms you accept, built from shadcn components. Designed in `docs/wip/2026-10-20-admin-panel-design/` |
+| Admin panel (`@agent-collaboration/tool-access-ui`, fleet F-63) | designed; Lead-checked | in the first version (owner, 2026-10-20): a request bar that shows or proposes, and editable proposal forms you accept, built from shadcn components ([panel design](../../wip/2026-10-20-admin-panel-design/design.md); Designer and Critic, 2 rounds). The full field inventory of the configuration editors is still open; it follows the configuration contract |
 | S3c limits, S5 control API | cancelled | none |
 
 The stack's branches start from `33914cbe`. `master` now also has the 2.5G VM memory change (#242), which the stack takes in when building resumes.
