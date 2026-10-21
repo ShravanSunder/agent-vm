@@ -511,6 +511,16 @@ async function executePreparedPortalCall(props: {
 }): Promise<PortalToolResult> {
 	const { call, identity, runtime, authorization } = props;
 	const input = { ...call.input, arguments: call.validatedArguments };
+	if (authorization?.kind === 'token-missing')
+		return itemError({
+			input,
+			error: {
+				kind: 'approval_token_missing',
+				message: 'An MCP Portal approval token is required before this MCP Portal call can run.',
+				namespace: call.tool.namespace,
+				toolName: call.tool.toolName,
+			},
+		});
 	if (authorization?.kind === 'refused')
 		return itemError({
 			input,
