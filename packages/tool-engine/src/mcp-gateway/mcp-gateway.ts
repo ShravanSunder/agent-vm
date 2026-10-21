@@ -17,7 +17,7 @@ import {
 	type ToolBackend,
 	type ResourceResult,
 	createCapabilityDispatcher,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 

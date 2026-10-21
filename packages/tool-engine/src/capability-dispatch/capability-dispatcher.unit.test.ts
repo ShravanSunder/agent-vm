@@ -13,7 +13,7 @@ import {
 	type OperationPort,
 	type OperationRecord,
 	type ToolBackend,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
 import { toolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import { describe, expect, it, vi } from 'vitest';

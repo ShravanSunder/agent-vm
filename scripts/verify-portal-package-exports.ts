@@ -9,7 +9,7 @@ import ts from 'typescript';
 const requiredPortalPackageExports = [
 	'@agent-collaboration/tool-engine/mcp-gateway',
 	'@agent-collaboration/tool-engine/connectors',
-	'@agent-collaboration/tool-engine/dispatch',
+	'@agent-collaboration/tool-engine/capability-dispatch',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -65,7 +65,7 @@ const requiredPortalNamedExports = {
 		'redactUpstreamResponse',
 		'UpstreamMcpError',
 	],
-	'@agent-collaboration/tool-engine/dispatch': [
+	'@agent-collaboration/tool-engine/capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
 		'operationKeySchema',

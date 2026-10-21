@@ -12,7 +12,7 @@ import type {
 	ToolBackend,
 	BackendKind,
 	OperationRecord,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	signApprovalToken,
 	hashCallArguments,

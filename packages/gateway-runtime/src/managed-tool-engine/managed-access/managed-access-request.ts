@@ -5,7 +5,7 @@ import {
 	jsonObjectSchema,
 	type AccountFact,
 } from '@agent-collaboration/tool-access/contracts';
-import type { DispatchRequest } from '@agent-collaboration/tool-engine/dispatch';
+import type { DispatchRequest } from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';

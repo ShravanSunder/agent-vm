@@ -50,8 +50,8 @@ export default defineConfig({
 				'packages/tool-portal/src/tool-portal-service-common.ts',
 			),
 			'@agent-vm/controller-test-support': repoPath('packages/agent-vm/src/controller'),
-			'@agent-collaboration/tool-engine/dispatch': repoPath(
-				'packages/tool-engine/src/dispatch/index.ts',
+			'@agent-collaboration/tool-engine/capability-dispatch': repoPath(
+				'packages/tool-engine/src/capability-dispatch/index.ts',
 			),
 			'@agent-collaboration/tool-access/contracts': repoPath(
 				'packages/tool-access/src/contracts/index.ts',

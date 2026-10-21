@@ -3,7 +3,7 @@ export default defineConfig({
 	clean: true,
 	dts: true,
 	entry: {
-		'dispatch/index': 'src/dispatch/index.ts',
+		'capability-dispatch/index': 'src/capability-dispatch/index.ts',
 		'mcp-gateway/index': 'src/mcp-gateway/index.ts',
 		'connectors/index': 'src/connectors/index.ts',
 	},

@@ -7,7 +7,7 @@ import type {
 	ApprovalPort,
 	DispatchInvocation,
 	ApprovalReceipt,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 
 import type {
 	GatewayApprovalTokens,

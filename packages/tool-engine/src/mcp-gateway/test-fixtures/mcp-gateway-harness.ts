@@ -11,7 +11,7 @@ import type {
 	ApprovalPort,
 	ToolBackend,
 	BackendKind,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import { z } from 'zod';
 
 import { createAgentCatalogViewCache } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';

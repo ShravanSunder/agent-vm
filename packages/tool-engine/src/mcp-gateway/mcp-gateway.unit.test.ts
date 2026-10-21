@@ -1,4 +1,4 @@
-import type { ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
+import type { ResourceResult } from '@agent-collaboration/tool-engine/capability-dispatch';
 import { describe, it, vi, expect } from 'vitest';
 
 import * as callValidation from '#mcp-gateway/portal-tools/portal-call-validation';

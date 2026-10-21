@@ -187,7 +187,7 @@ const requiredExports: Readonly<Record<string, readonly string[]>> = {
 		'createAgentCatalogViewCache',
 	],
 	'./connectors': ['createUpstreamMcpClientRuntime', 'redactUpstreamResponse', 'UpstreamMcpError'],
-	'./dispatch': [
+	'./capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
 		'operationKeySchema',
@@ -204,7 +204,7 @@ let count=0;
 for(const subpath of ${JSON.stringify(subpaths)}) {
  const module=await import('@agent-collaboration/tool-engine'+subpath.slice(1));
  for(const name of required[subpath]??[])if(!(name in module))throw new Error('missing named export '+name);
- if(subpath==='./dispatch') {
+ if(subpath==='./capability-dispatch') {
  const key=module.operationKeySchema.parse({authority:'packed',principal:'agent',item:'original'});
  if(key.item!=='original')throw new Error('operation key changed');
  const revision={owner:'packed',revision:'v1'};

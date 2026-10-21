@@ -3,7 +3,7 @@ import type {
 	PortalAgentIdentity,
 } from '@agent-collaboration/tool-access/authorization';
 import { jsonObjectSchema, type JsonObject } from '@agent-collaboration/tool-access/contracts';
-import type { ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
+import type { ResourceResult } from '@agent-collaboration/tool-engine/capability-dispatch';
 import { z } from 'zod';
 
 import type { AgentCatalogView } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';

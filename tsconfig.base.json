@@ -34,7 +34,9 @@
 				"./packages/tool-portal/src/tool-portal-service-common.ts"
 			],
 			"@agent-vm/controller-test-support/*": ["./packages/agent-vm/src/controller/*"],
-			"@agent-collaboration/tool-engine/dispatch": ["./packages/tool-engine/src/dispatch/index.ts"],
+			"@agent-collaboration/tool-engine/capability-dispatch": [
+				"./packages/tool-engine/src/capability-dispatch/index.ts"
+			],
 			"@agent-collaboration/tool-access/contracts": [
 				"./packages/tool-access/src/contracts/index.ts"
 			],

@@ -8,14 +8,14 @@
 	],
 	"type": "module",
 	"imports": {
-		"#dispatch/*": "./src/dispatch/*.ts",
+		"#capability-dispatch/*": "./src/capability-dispatch/*.ts",
 		"#mcp-gateway/*": "./src/mcp-gateway/*.ts",
 		"#connectors/*": "./src/connectors/*.ts"
 	},
 	"exports": {
-		"./dispatch": {
-			"types": "./dist/dispatch/index.d.ts",
-			"import": "./dist/dispatch/index.js"
+		"./capability-dispatch": {
+			"types": "./dist/capability-dispatch/index.d.ts",
+			"import": "./dist/capability-dispatch/index.js"
 		},
 		"./mcp-gateway": {
 			"types": "./dist/mcp-gateway/index.d.ts",
