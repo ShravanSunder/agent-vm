@@ -14,7 +14,7 @@ command uses Node 24.7.0 through mise. Run the quality gate before the suites:
 | Command, preceded by `mise exec node@24.7.0 --` | Result | Exit |
 | --- | --- | --- |
 | `pnpm check` | 16 gates passed: build, architecture/exports/contracts/taxonomy/version guards, lint, format, type-aware lint, all package typechecks | 0 |
-| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 447 tests, 38 files passed | 0 |
+| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 451 tests, 39 files passed | 0 |
 | `pnpm vitest run --project integration packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 35 tests, 3 files passed | 0 |
 | `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 49 tests, 12 files passed, no skips | 0 |
 
@@ -82,7 +82,7 @@ same actual Durable Object in a third heap. This does not use a mocked DO.
 - Replay across heaps: two named copy heaps have distinct observed isolate IDs,
   share the authority DO and produce exactly one effect for a concurrent approval
   token. Removal through one copy immediately refuses the other copy's request.
-- Socket cleanup: the same live PIDs 34948 and 34949 return from warm ESTABLISHED
+- Socket cleanup: the same live PIDs 45597 and 45598 return from warm ESTABLISHED
   counts 12 and 7 to 12 and 7, with zero CLOSE_WAIT and zero upstream background
   streams after sequential/concurrent success, failure, abort and stream workloads.
   An observing factory forwards all protocol/transport operations to native SDK
@@ -150,7 +150,7 @@ The paired Verifier independently observed the original e0a1767a target passing
 16 quality gates, 447 unit tests, 35 integration tests and 46 host tests, and ran
 ten red/restored wrong builds. It found no product bug, but identified four
 missing permanent assertions. The Lead required all four before acceptance.
-This correction changes only tests, fixture configuration and this proof report;
+The four-gap correction f43f7a4e changes only tests, fixture configuration and this proof report;
 production Worker, tool-engine and tool-access sources are unchanged from that
 observed target. The original runtime, version and bundle evidence is retained
 with that explicit dependency comparison.
@@ -186,3 +186,33 @@ suite has no skips. Artifacts: `correction-mutation-status.json`, seven matching
 evidence directory. Ordered rerun logs are `correction-check.log`,
 `correction-unit.log`, `correction-integration.log` and `correction-host.log`.
 The earlier final-* logs refer to the original freeze and are retained separately.
+
+## Awaited response cleanup correction
+
+A subsequent PR comment identified response cleanup concerns. A permanent unit
+case reproduced the actual bodyless-response defect: the returned response
+settled while its asynchronous cleanup was held behind an explicit barrier
+(`bodyless-cleanup-pre-fix-red.log`, 1 failure, exit 1). The existing helper now
+awaits bodyless cleanup. Stream EOF/error/cancel paths share a single pending
+cleanup promise, so cancellation also waits when EOF has already started closing.
+Four permanent deterministic tests cover bodyless completion, EOF completion,
+concurrent cancellation/EOF and stream error; no provider or SDK behavior is
+mocked or claimed by these unit tests. Existing local workerd native-client and
+socket proofs cover the real provider path separately.
+
+Two restored wrong builds fail: fire-and-forget bodyless cleanup and replacing
+the pending promise with the former boolean. The first attempt at the cancellation
+control was insensitive; draining promise work under a fake clock while cleanup
+remained explicitly blocked made the boolean mutant fail its intended early-settle
+assertion. The corrected red logs are `bodyless-cleanup-fire-forget-red.log` and
+`cleanup-pending-boolean-red.log`; corresponding diffs and the passing four-test
+`request-cleanup-unit-green.log` are retained locally.
+
+The comment's separate ordinary throwing-fetch claim was not reproduced. In the
+pinned SDK 2.3.1, `fetchFace` catches `handle` and factory failures and returns a
+JSON error response. Its earlier `closed` throw does not apply to this fresh,
+request-local handler, which is never closed before fetch. No speculative request
+wrapper or new public contract was added. The helper's internal export is absent
+from the package's public index. Final logs after this production correction are
+`final-correction-check.log`, `final-correction-unit.log`,
+`final-correction-integration.log` and `final-correction-host.log`.

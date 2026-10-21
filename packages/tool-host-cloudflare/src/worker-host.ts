@@ -171,19 +171,19 @@ export function workerAgentVerifier(props: {
 }
 
 /** Keep request-scoped clients alive through streamed results, then close on EOF, error or cancellation. */
-function responseWithRequestCleanup(response: Response, close: () => Promise<void>): Response {
+export async function responseWithRequestCleanup(
+	response: Response,
+	close: () => Promise<void>,
+): Promise<Response> {
 	const body = response.body;
 	if (body === null) {
-		void close();
+		await close();
 		return response;
 	}
 	const reader = body.getReader();
-	let closed = false;
-	async function closeOnce(): Promise<void> {
-		if (!closed) {
-			closed = true;
-			await close();
-		}
+	let completion: Promise<void> | undefined;
+	function closeOnce(): Promise<void> {
+		return (completion ??= Promise.resolve().then(close));
 	}
 	return new Response(
 		new ReadableStream<Uint8Array>({
