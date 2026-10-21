@@ -9,6 +9,7 @@ import {
 	organizationOne,
 	portalAudience,
 	signingKeyHex,
+	organizationTwoSigningKeyHex,
 	startControlledMcpIssuer,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import { startWorkerdSocketGuard } from '#worker-host/test-fixtures/workerd-socket-guard';
@@ -34,7 +35,8 @@ it('independent Worker heaps share real organization storage and admit one appro
 		ORGANIZATION_CONFIGURATIONS: JSON.stringify(organizationConfigurations(fixture.url)),
 		ONE_CREDENTIAL: 'one-secret-canary',
 		TWO_CREDENTIAL: 'two-secret-canary',
-		APPROVAL_KEY: signingKeyHex,
+		ONE_APPROVAL_KEY: signingKeyHex,
+		TWO_APPROVAL_KEY: organizationTwoSigningKeyHex,
 	};
 	const runtime = new Miniflare(
 		convertV4MiniflareOptions({

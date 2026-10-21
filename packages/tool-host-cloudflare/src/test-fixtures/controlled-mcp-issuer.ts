@@ -7,6 +7,7 @@ export const organizationOne = '11111111-1111-4111-8111-111111111111';
 export const organizationTwo = '22222222-2222-4222-8222-222222222222';
 export const portalAudience = 'https://portal-test.invalid/mcp';
 export const signingKeyHex = '12'.repeat(32);
+export const organizationTwoSigningKeyHex = '34'.repeat(32);
 const rpcSchema = z.object({
 	id: z.union([z.string(), z.number()]).optional(),
 	method: z.string(),
@@ -217,9 +218,13 @@ function toolCatalog(count: number, descriptionBytes: number): readonly Record<s
 }
 
 export function organizationConfigurations(url: string): unknown {
-	const configuration = (organizationName: string, binding: string): unknown => ({
+	const configuration = (
+		organizationName: string,
+		binding: string,
+		approvalKeyBinding: string,
+	): unknown => ({
 		organizationName,
-		approvalKeyBinding: 'APPROVAL_KEY',
+		approvalKeyBinding,
 		mcp: {
 			schemaVersion: 1,
 			providers: {
@@ -258,7 +263,7 @@ export function organizationConfigurations(url: string): unknown {
 		},
 	});
 	return {
-		[organizationOne]: configuration('organization-one', 'ONE_CREDENTIAL'),
-		[organizationTwo]: configuration('organization-two', 'TWO_CREDENTIAL'),
+		[organizationOne]: configuration('organization-one', 'ONE_CREDENTIAL', 'ONE_APPROVAL_KEY'),
+		[organizationTwo]: configuration('organization-two', 'TWO_CREDENTIAL', 'TWO_APPROVAL_KEY'),
 	};
 }

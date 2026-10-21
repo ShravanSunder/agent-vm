@@ -1,8 +1,9 @@
 import { hashCallArguments } from '@agent-collaboration/tool-access/contracts';
 import { signApprovalToken } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
-import { organizationOne } from '#worker-host/test-fixtures/controlled-mcp-issuer';
+import { organizationOne, organizationTwo } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import {
 	rpcResult,
 	startLocalWorkerHarness,
@@ -40,6 +41,82 @@ describe('Worker awaits its organization approval authority in local workerd', (
 	afterAll(async () => {
 		await harness?.close();
 	});
+	it.each([
+		{ mode: 'indirect', carrier: 'input' },
+		{ mode: 'direct', carrier: 'input' },
+		{ mode: 'direct', carrier: 'metadata' },
+	] as const)(
+		'$mode/$carrier: rejects another organization approval key and admits its own key',
+		async ({ mode, carrier }) => {
+			const tokenB = await harness.fixture.sign({ organizationId: organizationTwo });
+			const path = mode === 'direct' ? '/mcp?tools=direct' : '/mcp';
+			const listed = await rpcResult(
+				await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct', token: tokenB }),
+			);
+			const nativeName = z
+				.object({ tools: z.array(z.object({ name: z.string() })) })
+				.parse(listed)
+				.tools.find((tool) => tool.name.startsWith('same-server__ask__'))?.name;
+			if (nativeName === undefined) throw new Error('Missing independently listed approval tool.');
+			const value = `${mode}-${carrier}-organization-key`;
+			const claims = {
+				agentId: 'agent-one',
+				jti: crypto.randomUUID(),
+				issuedAtMs: Date.now(),
+				expiresAtMs: Date.now() + 60_000,
+				calls: [
+					{
+						namespace: 'same-server',
+						toolName: 'ask',
+						argumentsHash: await hashCallArguments({ value }),
+					},
+				],
+			};
+			// The claims and call are identical. Only the organization's signing key changes.
+			const approvalA = await signApprovalToken({ ...claims, key: new Uint8Array(32).fill(0x12) });
+			const approvalB = await signApprovalToken({ ...claims, key: new Uint8Array(32).fill(0x34) });
+			const requestFor = (approval: string): Readonly<Record<string, unknown>> =>
+				carrier === 'input'
+					? {
+							name: 'mcp_portal_call',
+							arguments: {
+								portalApprovalToken: approval,
+								calls: [
+									{ id: 'ask', namespace: 'same-server', toolName: 'ask', arguments: { value } },
+								],
+							},
+						}
+					: {
+							name: nativeName,
+							arguments: { value },
+							_meta: {
+								'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+								'io.modelcontextprotocol/clientCapabilities': {},
+								'agent-vm/tool-portal-approval-token': approval,
+							},
+						};
+			const before = harness.fixture.calls.length;
+			const ownA = await rpcResult(
+				await harness.rpc('tools/call', requestFor(approvalA), { path }),
+			);
+			expect(ownA.isError).toBeUndefined();
+			expect(harness.fixture.calls).toHaveLength(before + 1);
+			expect(harness.fixture.calls.at(-1)?.credential).toBe('one-secret-canary');
+			const foreign = await rpcResult(
+				await harness.rpc('tools/call', requestFor(approvalA), { path, token: tokenB }),
+			);
+			expect(harness.fixture.calls).toHaveLength(before + 1);
+			expect(foreign.isError).toBe(true);
+			expect(JSON.stringify(foreign)).toContain('approval_token_invalid');
+			// A signature refusal must not consume B's identical token ID.
+			const ownB = await rpcResult(
+				await harness.rpc('tools/call', requestFor(approvalB), { path, token: tokenB }),
+			);
+			expect(ownB.isError).toBeUndefined();
+			expect(harness.fixture.calls).toHaveLength(before + 2);
+			expect(harness.fixture.calls.at(-1)?.credential).toBe('two-secret-canary');
+		},
+	);
 	it('runs exactly one concurrent use and refuses replay', async () => {
 		const input = await approvedAsk('one-use');
 		const before = harness.fixture.calls.length;

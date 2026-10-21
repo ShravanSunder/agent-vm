@@ -11,6 +11,7 @@ import {
 	organizationTwo,
 	portalAudience,
 	signingKeyHex,
+	organizationTwoSigningKeyHex,
 	startControlledMcpIssuer,
 	type ControlledMcpIssuer,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
@@ -66,7 +67,8 @@ export async function startLocalWorkerHarness(
 				),
 				ONE_CREDENTIAL: 'one-secret-canary',
 				TWO_CREDENTIAL: 'two-secret-canary',
-				APPROVAL_KEY: signingKeyHex,
+				ONE_APPROVAL_KEY: signingKeyHex,
+				TWO_APPROVAL_KEY: organizationTwoSigningKeyHex,
 			},
 			experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
 		},

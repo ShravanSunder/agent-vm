@@ -21,6 +21,7 @@ describe('Worker organization engines and stateless MCP in local workerd', () =>
 		expect(harness.fixture.discoveryCredentials).toEqual([]);
 		const result = await rpcResult(await harness.rpc('server/discover'));
 		expect(result.cacheScope).toBe('private');
+		expect(result.supportedVersions).toEqual(['2026-07-28']);
 		expect(harness.fixture.discoveryCredentials).toEqual(['one-secret-canary']);
 		expect(harness.fixture.calls).toEqual([]);
 	});

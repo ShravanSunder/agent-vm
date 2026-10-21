@@ -16,7 +16,7 @@ command uses Node 24.7.0 through mise. Run the quality gate before the suites:
 | `pnpm check` | 16 gates passed: build, architecture/exports/contracts/taxonomy/version guards, lint, format, type-aware lint, all package typechecks | 0 |
 | `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 447 tests, 38 files passed | 0 |
 | `pnpm vitest run --project integration packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 35 tests, 3 files passed | 0 |
-| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 46 tests, 12 files passed, no skips | 0 |
+| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 49 tests, 12 files passed, no skips | 0 |
 
 The quality gate includes `pnpm typecheck`, `pnpm lint`, `pnpm lint:types` and
 `pnpm fmt:check`; each exited 0. Lint warnings remain; no lint errors remain.
@@ -48,7 +48,9 @@ same actual Durable Object in a third heap. This does not use a mocked DO.
   two agents each. Missing, forged, expired, wrong-audience and organization-less
   tokens have no effect. Sending another organization, agent and session in the
   address/headers retains the token sender's credential and policy. A second
-  agent's denied call has no effect. A warm removed agent's next request is 401.
+  agent's denied call has no effect. A warm removed agent's next request is 401. Distinct organization approval keys
+  refuse an A-signed approval in B with zero effects; identical B-signed claims
+  succeed, using both input/address modes and native-direct metadata.
   A live test issuer serves a real JWKS; tokens are really signed and verified.
 - Row 15: independent literal oracles test request and upstream responses at
   4 MiB minus one, exactly 4 MiB and plus one. Exact successful upstream output
@@ -73,13 +75,14 @@ same actual Durable Object in a third heap. This does not use a mocked DO.
 - Pagination: 170 large-schema tools plus four search tools produce five serialized
   engine pages: 1031722, 1031725, 1031690, 1031687 and 492255 bytes, each within
   the 1 MiB engine result budget. Protocol-added metadata is checked separately.
-- Outage: healthy tools keep working with one startup server down; incomplete
+- Outage: both healthy providers are listed and called with one of three startup
+  servers down; incomplete
   direct catalog returns 503; the failed server is retried on access. A complete
   catalog is reused for 60 s and retained after a failed refresh, including direct.
 - Replay across heaps: two named copy heaps have distinct observed isolate IDs,
   share the authority DO and produce exactly one effect for a concurrent approval
   token. Removal through one copy immediately refuses the other copy's request.
-- Socket cleanup: the same live PIDs 71012 and 71013 return from warm ESTABLISHED
+- Socket cleanup: the same live PIDs 34948 and 34949 return from warm ESTABLISHED
   counts 12 and 7 to 12 and 7, with zero CLOSE_WAIT and zero upstream background
   streams after sequential/concurrent success, failure, abort and stream workloads.
   An observing factory forwards all protocol/transport operations to native SDK
@@ -140,3 +143,46 @@ unverified: real sign-in integration, deployed Worker, separate deployed copies
 sharing objects, real Analytics Engine, third-party client/model deferral context,
 and CI-only VM/Hermes proof. Deployment remains blocked by B4. Local distinct heaps
 sharing actual DO storage are observed; they do not establish deployed behavior.
+
+## Permanent-proof correction after independent verification
+
+The paired Verifier independently observed the original e0a1767a target passing
+16 quality gates, 447 unit tests, 35 integration tests and 46 host tests, and ran
+ten red/restored wrong builds. It found no product bug, but identified four
+missing permanent assertions. The Lead required all four before acceptance.
+This correction changes only tests, fixture configuration and this proof report;
+production Worker, tool-engine and tool-access sources are unchanged from that
+observed target. The original runtime, version and bundle evidence is retained
+with that explicit dependency comparison.
+
+The corrected permanent suite:
+
+1. Captures the actual SDK 1.29 fetch response and asserts HTTP 400, exact error
+   -32022, supported versions [2026-07-28] and zero effects, without replacing
+   any SDK or HTTP behavior. Discover also pins the supported version.
+2. Compares malformed empty calls, duplicate-ID batch errors and mixed requests
+   in both modes against the original proxy. Independent assertions require
+   scalar wrappers for both error branches, literal mixed item order 2/1/0,
+   success/failure/success statuses and two actual effects on each host.
+3. Uses three configured providers. During one outage, the compact list contains
+   both healthy namespaces and both produce effects; direct list reports exactly
+   the failed namespace with 503. Recovery exposes all ten tools, and the recovered
+   provider itself executes before the existing TTL/retained-complete controls.
+4. Gives organizations distinct approval key bindings and values. A's token works
+   in A, cannot produce any B effect, and B's own token then works with identical
+   claims/call/token ID. The invalid signature does not consume B's valid token.
+   This covers input tokens on both addresses and metadata on native direct calls,
+   matching the two existing carrier contracts.
+
+Seven additional wrong builds each exit 1 for the intended assertion: one global
+organization approval key (foreign call produces an extra effect); wrong legacy
+HTTP status; wrong legacy error code; wrong supported-version list; operation-only
+item mapping; sorting numeric request IDs; and keeping only the first healthy
+provider. Exact sources are restored in finally and hash-checked. The supervisor
+uses 40-second per-mutant deadlines and the unmodified 2,000-socket guard.
+The selected red runs skip unrelated cases intentionally; the restored full host
+suite has no skips. Artifacts: `correction-mutation-status.json`, seven matching
+`*-red.log` / `.diff` files and `run-correction-wrong-builds.py` under the local
+evidence directory. Ordered rerun logs are `correction-check.log`,
+`correction-unit.log`, `correction-integration.log` and `correction-host.log`.
+The earlier final-* logs refer to the original freeze and are retained separately.

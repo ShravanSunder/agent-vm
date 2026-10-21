@@ -20,10 +20,19 @@ describe('row10 Worker protocol raw-wire controls', () => {
 		await harness?.close();
 	});
 	it('refuses the real SDK1.29 initialize before any effect', async () => {
+		const exchanges: { readonly status: number; readonly body: unknown }[] = [];
 		const client = new Client({ name: 'legacy-control', version: '1' });
 		const transport = new StreamableHTTPClientTransport(
 			new URL(`http://${harness.worker.address}:${String(harness.worker.port)}/mcp`),
-			{ requestInit: { headers: { authorization: `Bearer ${harness.token}` } } },
+			{
+				requestInit: { headers: { authorization: `Bearer ${harness.token}` } },
+				// Observe the actual SDK request/response; no protocol interaction is replaced.
+				fetch: async (input, init) => {
+					const response = await fetch(input, init);
+					exchanges.push({ status: response.status, body: await response.clone().json() });
+					return response;
+				},
+			},
 		);
 		// SDK1.29's optional sessionId declaration conflicts with exactOptionalPropertyTypes.
 		// Forward the real transport through its structural public interface, without a cast.
@@ -36,7 +45,12 @@ describe('row10 Worker protocol raw-wire controls', () => {
 			send: async (message, options) => transport.send(message, options),
 			close: async () => transport.close(),
 		};
-		await expect(client.connect(exactTransport)).rejects.toThrow(/32022|2026-07-28/u);
+		await expect(client.connect(exactTransport)).rejects.toThrow();
+		expect(exchanges).toHaveLength(1);
+		expect(exchanges[0]?.status).toBe(400);
+		expect(exchanges[0]?.body).toMatchObject({
+			error: { code: -32022, data: { supported: ['2026-07-28'] } },
+		});
 		await client.close();
 		expect(harness.fixture.calls).toHaveLength(0);
 	});
