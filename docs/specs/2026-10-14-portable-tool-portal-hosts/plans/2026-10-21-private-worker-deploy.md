@@ -66,12 +66,18 @@ must come back empty.
 1. After #246's structure pass is accepted: port the controlled MCP server and
    issuer to a Worker (`tool-host-cloudflare/deployed-checks/`), and add the
    deployed-check runner and the placeholder templates (Sol Implementer).
-2. Write the private deploy file, deploy the helper, then `a` and `b`.
-3. Put Access in front of `a` and `b`. **Needs the owner:** the Wrangler login
-   has no Access permission. Either the owner turns on "Protect this Worker
-   behind Access" (All traffic) for both Workers in the dashboard and creates
-   one service token, or the owner gives a token scoped to Access apps and
-   policies for this account. Until then, nothing is deployed.
+2. Write the private deploy file, then deploy the helper, then `a` and `b`
+   with `workers_dev` on. Step 3 follows straight away, before anyone is told
+   the addresses, and nothing runs against `a` or `b` until Access is in front.
+3. Put Access in front of `a` and `b` through the `cf` CLI, whose login has
+   `access:write`. The Wrangler login has no Access scope, so `cf` does this
+   step:
+   - `cf zero-trust access service-tokens create` for the checks' token;
+   - `cf zero-trust access applications create`, one self-hosted application
+     per copy, with a `worker` destination;
+   - a policy allowing the owner and that service token.
+
+   The service token's secret goes straight into the private deploy file.
 4. Run rows 13–16's deployed cases from sunclaw.
 5. Remove everything with `wrangler delete` for all three Workers and delete
    the Access application and service token.
