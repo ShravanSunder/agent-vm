@@ -120,11 +120,12 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
 - **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
 - **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
-- **First version:** agents with their own access, configured tools and today's approvals (fleet F-23, F-35, F-53, F-56). Per-user tools, under today's permission model, and the chat-led change flow (fleet F-41 to F-49) come next.
 
 ## Questions for the owner
 
 Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
+
+6. **What's in the first version?** This is the Lead's reading of your decisions, not your answer yet. The first version is agents acting with their own access, configured tools and today's approvals (fleet F-23, F-35, F-53, F-56); per-user tools, under today's permission model, and the chat-led change flow (fleet F-41 to F-49) come next. Confirm it or change it.
 
 1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).
 2. **Answered on 2026-10-20: Better Auth** (see owner decisions).

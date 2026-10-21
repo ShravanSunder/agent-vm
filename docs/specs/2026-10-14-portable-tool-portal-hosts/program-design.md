@@ -243,6 +243,7 @@ Today's proxy config already describes remote MCP servers, with headers whose va
   - a one-call approval when the policy says Ask, which expires if not answered, as today's do.
   - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the organization's object, and its connection is reused only for that agent and account.
   - Changing these settings is the request bar with Accept or Deny (fleet F-41 to F-49), in the separate control UI. Temporary grants and temporary revocation are recorded owner interest (fleet F-61), not part of this design.
+  - Who must approve in each case (an agent on its own, a person's own account, someone else's shared resource, several resources at once, a configuration change) is worked out in the [October 15 approval target-state proposal](../../wip/2026-10-15-portal-approval-research/s1-approval-target-state.md). It's a proposal: when per-user tools are designed, it's reconciled with the adopted fleet F-27 (managers may give team accounts) and F-35 (no one else's personal accounts; "on behalf of" is a label).
 - **Computer tools:**
   - Computers are registered on our side. The Worker reaches them through a Cloudflare Tunnel protected by Cloudflare Access, using a key the Worker holds, like Tailscale.
   - The computer's MCP server still checks the Worker's own credential.
