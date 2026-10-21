@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-engine/mcp-gateway',
@@ -56,6 +57,14 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/tool-host-core': [
+		'createHostedMcpProxy',
+		'createOrganizationAuthority',
+		'createVolatileAuthorityStore',
+		'decideApprovalTokenUse',
+		'agentAdmissionRow',
+		'organizationConfigurationSchema',
+	],
 	'@agent-collaboration/tool-host-node': [
 		'startNodeHost',
 		'openNodeOperationStore',
@@ -302,6 +311,7 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-access/contracts',
@@ -619,6 +629,11 @@ async function main(): Promise<void> {
 	const { assertToolEngineSourceIsPortable, verifyToolEngineClosure } =
 		await import('./verify-tool-engine-closure.ts');
 	await assertToolEngineSourceIsPortable();
+	const { assertToolHostCoreSourceIsPortable, verifyToolHostCoreClosure } =
+		await import('./verify-tool-host-core-closure.ts');
+	await assertToolHostCoreSourceIsPortable();
+	if (process.argv.includes('--packed-host-core') || process.argv.includes('--packed-engine'))
+		await verifyToolHostCoreClosure();
 	if (process.argv.includes('--packed-engine')) {
 		await verifyToolEngineClosure();
 	}

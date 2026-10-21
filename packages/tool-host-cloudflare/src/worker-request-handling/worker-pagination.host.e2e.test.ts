@@ -1,3 +1,4 @@
+import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
@@ -8,7 +9,6 @@ import {
 	rpcResult,
 	portalRead,
 } from '#worker-host/test-fixtures/local-worker-harness';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 it('pages170 large schemas under1MiB and serves both real SDKv2 client cases together', async () => {
 	const harness = await startLocalWorkerHarness({
