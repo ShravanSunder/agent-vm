@@ -10,7 +10,7 @@ This is the plan for proving the sixteen checks in the [Specification](2026-10-1
 
 **VM tests run in GitHub CI only,** never locally. VM memory there is 2.5G (#242).
 
-**Worker tests run twice:** first in Cloudflare's own runtime on a machine (workerd, through `wrangler`'s local mode), then on the deployed Worker. Deploying uses the owner's existing Cloudflare CLI login. Behaviour that only a real deployment shows (several copies of the Worker at once, Access in front, real Analytics Engine writes, real memory) is proven only on the deployed Worker.
+**Worker tests run twice:** first in Cloudflare's own runtime on a machine (workerd, through `wrangler`'s local mode), then on the deployed Worker. Deploying uses the owner's existing Cloudflare CLI login. Behaviour that only a real deployment shows (several copies of the Worker at once, real sign-in tokens, real Analytics Engine writes, real memory) is proven only on the deployed Worker.
 
 | # | Check | How it's proven | It fails if… |
 | --- | --- | --- | --- |
