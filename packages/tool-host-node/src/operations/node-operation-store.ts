@@ -1,5 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
-import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import {
 	operationRecordSchema,
@@ -10,17 +9,12 @@ import {
 	type OperationLookupResult,
 } from '@agent-collaboration/tool-engine/dispatch';
 
-import { createCrashDurableRecordStore } from '#node-host/operations/crash-durable-record-store';
-import { acquireNodeStoreOwnershipLock } from '#node-host/operations/node-store-ownership-lock';
-
 export interface NodeOperationStore extends OperationPort {
 	readonly close: () => Promise<void>;
 }
 
 function operationRecordId(key: OperationKey): string {
-	return createHash('sha256')
-		.update(JSON.stringify([key.authority, key.principal, key.item]))
-		.digest('hex');
+	return JSON.stringify([key.authority, key.principal, key.item]);
 }
 
 function transitionIsAllowed(
@@ -49,111 +43,73 @@ function assertNever(value: never): never {
 	throw new Error('Unsupported operation state.');
 }
 
-/** One fenced writer owns durable records; callers receive only currently authorized records. */
+/** Approval entries last for this host process only; unprotected calls are not recorded. */
 export async function openNodeOperationStore(props: {
 	readonly directory: string;
 	readonly authority: string;
 	readonly authorize: (key: OperationKey, verifiedContextRef: string) => boolean;
 	readonly now?: () => number;
 }): Promise<NodeOperationStore> {
-	const ownership = await acquireNodeStoreOwnershipLock({ runtimeDirectory: props.directory });
-	const records = createCrashDurableRecordStore({
-		recordSchema: operationRecordSchema,
-		recordsDirectoryPath: path.join(props.directory, 'tool-operations-v1'),
-	});
+	const records = new Map<string, OperationRecord>();
 	const now = props.now ?? Date.now;
 	let closed = false;
-	const activeMutations = new Set<Promise<unknown>>();
 	function admitted(key: OperationKey, contextRef: string): boolean {
 		return !closed && key.authority === props.authority && props.authorize(key, contextRef);
 	}
-	async function tracked<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
-		const pending = operation();
-		activeMutations.add(pending);
-		try {
-			return await pending;
-		} finally {
-			activeMutations.delete(pending);
-		}
-	}
 	return {
-		createOrRead: async ({ invocation }): Promise<OperationCreateResult> => {
+		createOrRead: async ({ invocation, requiresApproval }): Promise<OperationCreateResult> => {
 			if (!admitted(invocation.operationKey, invocation.verifiedContextRef))
 				return { kind: 'denied' };
-			try {
-				return await tracked(async () =>
-					records.mutateRecord<OperationCreateResult>(
-						operationRecordId(invocation.operationKey),
-						(current) => {
-							if (current !== null)
-								return {
-									nextRecord: current,
-									result:
-										current.intentDigest === invocation.intentDigest
-											? { kind: 'existing', record: current }
-											: { kind: 'conflict' },
-								};
-							const timestamp = new Date(now()).toISOString();
-							const record = operationRecordSchema.parse({
-								version: 'tool-operation-v1',
-								key: invocation.operationKey,
-								intentDigest: invocation.intentDigest,
-								createdAt: timestamp,
-								updatedAt: timestamp,
-								revision: randomUUID(),
-								state: { kind: 'ready' },
-							});
-							return { nextRecord: record, result: { kind: 'created', record } };
-						},
-					),
-				);
-			} catch {
-				return { kind: 'unavailable' };
-			}
+			if (!requiresApproval) return { kind: 'untracked' };
+			const identifier = operationRecordId(invocation.operationKey);
+			const current = records.get(identifier);
+			if (current !== undefined)
+				return current.intentDigest === invocation.intentDigest
+					? { kind: 'existing', record: current }
+					: { kind: 'conflict' };
+			const timestamp = new Date(now()).toISOString();
+			const record = operationRecordSchema.parse({
+				version: 'tool-operation-v1',
+				key: invocation.operationKey,
+				intentDigest: invocation.intentDigest,
+				createdAt: timestamp,
+				updatedAt: timestamp,
+				revision: randomUUID(),
+				state: { kind: 'ready' },
+			});
+			records.set(identifier, record);
+			return { kind: 'created', record };
 		},
 		lookup: async (request): Promise<OperationLookupResult> => {
 			if (request.version !== 'tool-operation-v1') return { kind: 'unsupported-version' };
 			if (!admitted(request.key, request.verifiedContextRef)) return { kind: 'denied' };
-			try {
-				const record = await records.loadRecord(operationRecordId(request.key));
-				return record === null ? { kind: 'not-found' } : { kind: 'found', record };
-			} catch {
-				return { kind: 'unavailable' };
-			}
+			const record = records.get(operationRecordId(request.key));
+			return record === undefined ? { kind: 'not-found' } : { kind: 'found', record };
 		},
 		transition: async ({ invocation, expectedRevision, next }): Promise<OperationLookupResult> => {
 			if (!admitted(invocation.operationKey, invocation.verifiedContextRef))
 				return { kind: 'denied' };
-			try {
-				return await tracked(async () =>
-					records.mutateRecord<OperationLookupResult>(
-						operationRecordId(invocation.operationKey),
-						(current) => {
-							if (current === null) return { nextRecord: null, result: { kind: 'not-found' } };
-							if (
-								current.intentDigest !== invocation.intentDigest ||
-								current.revision !== expectedRevision ||
-								!transitionIsAllowed(current.state, next)
-							)
-								return { nextRecord: current, result: { kind: 'conflict' } };
-							const record = operationRecordSchema.parse({
-								...current,
-								revision: randomUUID(),
-								updatedAt: new Date(now()).toISOString(),
-								state: next,
-							});
-							return { nextRecord: record, result: { kind: 'found', record } };
-						},
-					),
-				);
-			} catch {
-				return { kind: 'unavailable' };
-			}
+			const identifier = operationRecordId(invocation.operationKey);
+			const current = records.get(identifier);
+			if (current === undefined) return { kind: 'not-found' };
+			if (
+				current.intentDigest !== invocation.intentDigest ||
+				current.revision !== expectedRevision ||
+				!transitionIsAllowed(current.state, next)
+			)
+				return { kind: 'conflict' };
+			const record = operationRecordSchema.parse({
+				...current,
+				revision: randomUUID(),
+				updatedAt: new Date(now()).toISOString(),
+				state: next,
+			});
+			records.set(identifier, record);
+			return { kind: 'found', record };
 		},
 		close: async (): Promise<void> => {
 			closed = true;
-			await Promise.allSettled(activeMutations);
-			await ownership.release();
+			records.clear();
 		},
 	};
 }

@@ -45,3 +45,19 @@ describe('Node host restricted dependency guard', () => {
 		).toEqual([]);
 	});
 });
+
+describe('Node inbound protocol session policy', () => {
+	it.each([
+		'const sessions = new Map<string, unknown>();',
+		'const protocolSessions = new Map();',
+		'const transport = { sessionIdGenerator: () => "session" };',
+		'const session = request.headers["Mcp-Session-Id"];',
+	])('rejects surviving protocol session state: %s', (sourceText) => {
+		expect(
+			collectToolHostNodeViolations({
+				filePath: 'packages/tool-host-node/src/ingress/node-http-server.ts',
+				sourceText,
+			}),
+		).not.toEqual([]);
+	});
+});

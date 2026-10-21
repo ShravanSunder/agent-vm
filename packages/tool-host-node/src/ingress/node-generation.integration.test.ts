@@ -33,7 +33,7 @@ function receiptFor(invocation: DispatchInvocation, reference: string): Approval
 
 for (const exposure of ['compact', 'catalog'] as const) {
 	describe(`${exposure}: current authority generation at real ingress`, () => {
-		it('rejects a previous-generation approval, admits the exact current receipt, and keeps completed history reusable at the same key', async () => {
+		it('rejects a previous-generation approval, admits the exact current receipt, and leaves unprotected history unrecorded', async () => {
 			const directory = await fixtureDirectory();
 			const alpha = await startControlledProvider('alpha');
 			const beta = await startControlledProvider('beta');
@@ -97,13 +97,20 @@ for (const exposure of ['compact', 'catalog'] as const) {
 			const secrets = { resolve: async (): Promise<string> => 'test-only-secret' };
 			let host = await startNodeHost({ configPath, secrets, approvals });
 			if (host.http === undefined) throw new Error('Missing HTTP ingress');
-			let connection = await connectClient(host.http.endpoint, 'credential-a');
+			const address = (endpoint: URL): URL => {
+				const selected = new URL(endpoint);
+				if (exposure === 'catalog') selected.searchParams.set('tools', 'direct');
+				return selected;
+			};
+			let connection = await connectClient(address(host.http.endpoint), 'credential-a');
 			try {
 				expect(
 					decodedResult(await connection.client.callTool(request('ask', 'pending-item'))),
 				).toMatchObject({ ok: false });
 				expect(alpha.effects).toEqual([]);
-				const completed = await connection.client.callTool(request('read', 'completed-item'));
+				expect(
+					decodedResult(await connection.client.callTool(request('read', 'completed-item'))),
+				).toMatchObject({ ok: true });
 				const key = { authority: config.authority, principal: 'agent-a', item: 'completed-item' };
 				const originalContext = compileNodeHostCredentialSet(config.auth).credentials[0]
 					?.credentialId;
@@ -113,10 +120,7 @@ for (const exposure of ['compact', 'catalog'] as const) {
 					key,
 					verifiedContextRef: originalContext,
 				});
-				expect(before).toMatchObject({
-					kind: 'found',
-					record: { key, state: { kind: 'completed' } },
-				});
+				expect(before).toEqual({ kind: 'not-found' });
 				await connection.client.close();
 				await host.retire();
 				const replacement = {
@@ -127,7 +131,7 @@ for (const exposure of ['compact', 'catalog'] as const) {
 				mode = 'old-receipt';
 				host = await startNodeHost({ configPath, secrets, approvals });
 				if (host.http === undefined) throw new Error('Missing replacement HTTP ingress');
-				connection = await connectClient(host.http.endpoint, 'credential-a');
+				connection = await connectClient(address(host.http.endpoint), 'credential-a');
 				const oldReply = await connection.client.callTool(request('ask', 'pending-item'));
 				expect(alpha.effects.filter((effect) => effect.name === 'ask')).toEqual([]);
 				expect(decodedResult(oldReply)).toMatchObject({ ok: false });
@@ -136,7 +140,7 @@ for (const exposure of ['compact', 'catalog'] as const) {
 					decodedResult(await connection.client.callTool(request('ask', 'pending-item'))),
 				).toMatchObject({ ok: true });
 				expect(current?.verifiedContextRef).not.toBe(previous?.verifiedContextRef);
-				expect(current?.operationKey).toEqual(previous?.operationKey);
+				if (exposure === 'compact') expect(current?.operationKey).toEqual(previous?.operationKey);
 				expect(alpha.effects.filter((effect) => effect.name === 'ask')).toHaveLength(1);
 				const replacementContext = compileNodeHostCredentialSet(replacement.auth).credentials[0]
 					?.credentialId;
@@ -149,10 +153,10 @@ for (const exposure of ['compact', 'catalog'] as const) {
 						verifiedContextRef: replacementContext,
 					}),
 				).toEqual(before);
-				expect(await connection.client.callTool(request('read', 'completed-item'))).toEqual(
-					completed,
-				);
-				expect(alpha.effects.filter((effect) => effect.name === 'read')).toHaveLength(1);
+				expect(
+					decodedResult(await connection.client.callTool(request('read', 'completed-item'))),
+				).toMatchObject({ ok: true });
+				expect(alpha.effects.filter((effect) => effect.name === 'read')).toHaveLength(2);
 			} finally {
 				await connection.client.close();
 				await host.retire();

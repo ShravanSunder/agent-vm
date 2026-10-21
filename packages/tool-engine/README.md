@@ -52,3 +52,8 @@ Bearer derivation, token signing/verification and the per-tool TypeScript helper
 are asynchronous Web Crypto APIs. Their bytes match the legacy implementations.
 `describe` builds its helper from the live authorized tool record; it does not
 invoke the host's full catalog compiler. That compiler remains outside this package.
+
+`projectProxyMcpResult({ operation, input, result })` preserves the MCP proxy's
+text-wrapped core result for both hosts. Scalar and malformed calls retain their
+wrapper; valid calls produce ordered items, with `catalog-call` as the direct
+call's public item ID. Protocol response metadata is supplied by the host SDK.

@@ -33,6 +33,24 @@ export function collectToolHostNodeViolations(
 	const violations: string[] = [];
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
 	function visit(node: ts.Node): void {
+		const inbound = filePath.startsWith('packages/tool-host-node/src/ingress/');
+		if (
+			inbound &&
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			/session/iu.test(node.name.text) &&
+			node.initializer !== undefined &&
+			ts.isNewExpression(node.initializer) &&
+			ts.isIdentifier(node.initializer.expression) &&
+			node.initializer.expression.text === 'Map'
+		)
+			violations.push(`${filePath}: inbound MCP protocol session map is forbidden`);
+		if (
+			inbound &&
+			((ts.isStringLiteral(node) && node.text.toLowerCase() === 'mcp-session-id') ||
+				(ts.isIdentifier(node) && node.text === 'sessionIdGenerator'))
+		)
+			violations.push(`${filePath}: inbound MCP protocol session reuse is forbidden`);
 		if (
 			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 			node.moduleSpecifier !== undefined &&

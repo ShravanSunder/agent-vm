@@ -1,73 +1,79 @@
+import { randomUUID } from 'node:crypto';
+
 import { jsonObjectSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	type McpGateway,
-	type PortalBatchResult,
+	type McpToolMode,
+	projectProxyMcpResult,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-	CallToolRequestSchema,
-	ListToolsRequestSchema,
-	type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
-
-import { extractDirectOperationItem } from '#node-host/ingress/direct-operation-item';
+import { Server, type CallToolResult } from '@modelcontextprotocol/server';
 
 function refusal(message: string): CallToolResult {
 	return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-function toolResult(result: PortalBatchResult): CallToolResult {
-	return {
-		content: [{ type: 'text', text: JSON.stringify(result) }],
-		structuredContent: { ...result },
-		...(result.ok ? {} : { isError: true }),
-	};
-}
-
 export async function createNodeMcpServer(props: {
 	readonly gateway: McpGateway;
-	readonly exposure: 'catalog' | 'compact';
+	readonly mode: McpToolMode;
 }): Promise<Server> {
-	// Refuse full-catalog startup on incomplete discovery or duplicate exported names.
-	const catalog = props.exposure === 'catalog' ? await props.gateway.prepareCatalog() : undefined;
 	const server = new Server(
 		{ name: 'tool-host-node', version: '0.0.153' },
-		{ capabilities: { tools: { listChanged: false } } },
+		{
+			capabilities: { tools: { listChanged: false } },
+			cacheHints: {
+				'server/discover': { cacheScope: 'private', ttlMs: 60_000 },
+			},
+		},
 	);
-	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools: await props.gateway.listTools(props.exposure),
+	server.setRequestHandler('tools/list', async (request) => ({
+		...(await props.gateway.listTools(props.mode, request.params?.cursor)),
 	}));
-	server.setRequestHandler(CallToolRequestSchema, async (request) => {
+	server.setRequestHandler('tools/call', async (request) => {
 		try {
-			if (catalog !== undefined) {
-				const item = extractDirectOperationItem(request.params['_meta']);
-				if (item === null)
-					return refusal(
-						'Supply a bounded operation item in _meta["tool-portal/operation-item"] or connect in compact exposure mode.',
-					);
-				const argumentsResult = jsonObjectSchema.safeParse(request.params.arguments ?? {});
-				if (!argumentsResult.success) return refusal('Invalid tool arguments.');
-				return toolResult(
-					await props.gateway.callDirect({
-						catalog,
-						name: request.params.name,
-						arguments: argumentsResult.data,
-						item,
-					}),
-				);
-			}
 			const input = request.params.arguments ?? {};
 			switch (request.params.name) {
 				case 'mcp_portal_list':
-					return toolResult(await props.gateway.list(input));
+					return projectProxyMcpResult({
+						operation: 'mcp_portal_list',
+						input,
+						result: await props.gateway.list(input),
+					});
 				case 'mcp_portal_search':
-					return toolResult(await props.gateway.search(input));
+					return projectProxyMcpResult({
+						operation: 'mcp_portal_search',
+						input,
+						result: await props.gateway.search(input),
+					});
 				case 'mcp_portal_describe':
-					return toolResult(await props.gateway.describe(input));
+					return projectProxyMcpResult({
+						operation: 'mcp_portal_describe',
+						input,
+						result: await props.gateway.describe(input),
+					});
 				case 'mcp_portal_call':
-					return toolResult(await props.gateway.call(input));
-				default:
-					return refusal('Unknown or denied tool.');
+					return projectProxyMcpResult({
+						operation: 'mcp_portal_call',
+						input,
+						result: await props.gateway.call(input),
+					});
+				default: {
+					if (props.mode !== 'direct')
+						return refusal(`Unknown MCP Portal tool: ${request.params.name}`);
+					const catalog = await props.gateway.prepareCatalog();
+					if (!catalog.tools.some((tool) => tool.descriptor.name === request.params.name))
+						return refusal(`Unknown MCP Portal catalog tool: ${request.params.name}`);
+					return projectProxyMcpResult({
+						operation: 'direct',
+						input,
+						result: await props.gateway.callDirect({
+							catalog,
+							name: request.params.name,
+							arguments: jsonObjectSchema.parse(input),
+							item: randomUUID(),
+							_meta: jsonObjectSchema.parse(request.params['_meta'] ?? {}),
+						}),
+					});
+				}
 			}
 		} catch {
 			return refusal('Tool request unavailable.');
