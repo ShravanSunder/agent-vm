@@ -1,0 +1,39 @@
+{
+	"name": "@agent-collaboration/tool-host-core",
+	"version": "0.0.153",
+	"description": "Runtime-neutral hosted MCP proxy with injected authority, analytics and host ports.",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"imports": {
+		"#tool-host-core/*": "./src/*.ts"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-host-core/src"
+	},
+	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"@agent-collaboration/tool-engine": "workspace:*",
+		"@modelcontextprotocol/core": "2.3.1",
+		"@modelcontextprotocol/server": "2.3.1",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0",
+		"jose": "6.1.0",
+		"vitest": "^4.1.5"
+	}
+}

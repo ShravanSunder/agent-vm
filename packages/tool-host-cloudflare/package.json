@@ -28,6 +28,7 @@
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-collaboration/tool-engine": "workspace:*",
+		"@agent-collaboration/tool-host-core": "workspace:*",
 		"@modelcontextprotocol/core": "2.3.1",
 		"@modelcontextprotocol/sdk": "1.29.0",
 		"@modelcontextprotocol/server": "2.3.1",

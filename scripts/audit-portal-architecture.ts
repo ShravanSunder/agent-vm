@@ -29,6 +29,7 @@ const portalPackageNames = new Set([
 	'tool-portal',
 	'tool-access',
 	'tool-engine',
+	'tool-host-core',
 	'tool-host-node',
 ]);
 
@@ -863,6 +864,7 @@ export function collectPortalArchitectureViolations(
 	const violations = [
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),
+		...props.files.flatMap(collectToolHostCoreViolations),
 		...props.files.flatMap(collectToolHostNodeViolations),
 		...props.files.flatMap(collectProductionTestAliasViolations),
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
@@ -889,6 +891,7 @@ const portableBuiltinNames = new Set(builtinModules.map((name) => name.replace(/
 export function isForbiddenToolAccessImport(specifier: string): boolean {
 	return (
 		specifier.startsWith('node:') ||
+		specifier.startsWith('cloudflare:') ||
 		portableBuiltinNames.has(specifier) ||
 		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-engine|tool-host-[^/]+|tool-portal|mcp-portal|gateway-runtime)(?:\/|$)/u.test(
 			specifier,
@@ -1026,6 +1029,7 @@ export function isForbiddenToolEngineImport(specifier: string): boolean {
 		specifier === 'typescript' ||
 		specifier === 'json-schema-to-typescript' ||
 		specifier.startsWith('node:') ||
+		specifier.startsWith('cloudflare:') ||
 		portableBuiltinNames.has(specifier) ||
 		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-host-[^/]+|tool-portal|mcp-portal|gateway-runtime|gateway-control-contracts|controller-execution-contracts|controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(
 			specifier,
@@ -1033,57 +1037,135 @@ export function isForbiddenToolEngineImport(specifier: string): boolean {
 		specifier.startsWith('@gondolin/')
 	);
 }
-export function collectToolEngineViolations(file: PortalArchitectureSourceFile): readonly string[] {
+export function isForbiddenToolHostCoreImport(specifier: string): boolean {
+	return (
+		specifier === 'pkce-challenge' ||
+		specifier.includes('/pkce-challenge/') ||
+		specifier === '@cloudflare/workers-types' ||
+		specifier.startsWith('@cloudflare/workers-types/') ||
+		specifier === 'typescript' ||
+		specifier === 'json-schema-to-typescript' ||
+		specifier.startsWith('node:') ||
+		specifier.startsWith('cloudflare:') ||
+		portableBuiltinNames.has(specifier) ||
+		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-host-(?!core(?:\/|$))[^/]+|tool-portal|mcp-portal|gateway-runtime|gateway-control-contracts|controller-execution-contracts|controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(
+			specifier,
+		) ||
+		specifier.startsWith('@gondolin/')
+	);
+}
+const workerGlobalNames = new Set([
+	'DurableObject',
+	'DurableObjectNamespace',
+	'DurableObjectState',
+	'DurableObjectStorage',
+	'DurableObjectTransaction',
+	'DurableObjectStub',
+	'DurableObjectId',
+	'ExecutionContext',
+	'ExportedHandler',
+	'Fetcher',
+	'WorkerGlobalScope',
+	'WebSocketPair',
+	'HTMLRewriter',
+	'KVNamespace',
+	'R2Bucket',
+	'D1Database',
+	'AnalyticsEngineDataset',
+	'Queue',
+	'MessageBatch',
+	'ScheduledEvent',
+	'ScheduledController',
+	'RequestInitCfProperties',
+	'IncomingRequestCfProperties',
+	'CacheStorage',
+	'caches',
+	'Cloudflare',
+	'EmailMessage',
+	'ForwardableEmailMessage',
+]);
+
+function collectPortableEngineViolations(
+	file: PortalArchitectureSourceFile,
+	packageName: 'tool-engine' | 'tool-host-core',
+	forbiddenImport: (specifier: string) => boolean,
+): readonly string[] {
 	const filePath = normalizedFilePath(file.filePath);
-	if (!filePath.startsWith('packages/tool-engine/src/') || isTestSourceFile(filePath)) return [];
+	if (!filePath.startsWith(`packages/${packageName}/src/`) || isTestSourceFile(filePath)) return [];
 	const violations: string[] = [];
+
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
 	function visit(node: ts.Node): void {
+		if (
+			packageName === 'tool-host-core' &&
+			ts.isImportDeclaration(node) &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			node.moduleSpecifier.text.startsWith('@modelcontextprotocol/sdk/client/')
+		)
+			violations.push(`${filePath}: tool-host-core must inject SDK client transports`);
+
+		if (
+			packageName === 'tool-host-core' &&
+			ts.isIdentifier(node) &&
+			workerGlobalNames.has(node.text)
+		)
+			violations.push(`${filePath}: tool-host-core Workers global ${node.text}`);
 		if (
 			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 			node.moduleSpecifier !== undefined &&
 			ts.isStringLiteral(node.moduleSpecifier) &&
-			isForbiddenToolEngineImport(node.moduleSpecifier.text)
+			forbiddenImport(node.moduleSpecifier.text)
 		)
-			violations.push(`${filePath}: tool-engine forbidden import ${node.moduleSpecifier.text}`);
+			violations.push(`${filePath}: ${packageName} forbidden import ${node.moduleSpecifier.text}`);
 		if (
 			ts.isImportEqualsDeclaration(node) &&
 			ts.isExternalModuleReference(node.moduleReference) &&
 			node.moduleReference.expression !== undefined &&
 			ts.isStringLiteral(node.moduleReference.expression) &&
-			isForbiddenToolEngineImport(node.moduleReference.expression.text)
+			forbiddenImport(node.moduleReference.expression.text)
 		)
 			violations.push(
-				`${filePath}: tool-engine forbidden import ${node.moduleReference.expression.text}`,
+				`${filePath}: ${packageName} forbidden import ${node.moduleReference.expression.text}`,
 			);
 		if (
 			ts.isImportTypeNode(node) &&
 			ts.isLiteralTypeNode(node.argument) &&
 			ts.isStringLiteral(node.argument.literal) &&
-			isForbiddenToolEngineImport(node.argument.literal.text)
+			forbiddenImport(node.argument.literal.text)
 		)
 			violations.push(
-				`${filePath}: tool-engine forbidden type import ${node.argument.literal.text}`,
+				`${filePath}: ${packageName} forbidden type import ${node.argument.literal.text}`,
 			);
 		if (ts.isIdentifier(node) && node.text.startsWith('GatewayRuntime'))
-			violations.push(`${filePath}: tool-engine managed type ${node.text}`);
+			violations.push(`${filePath}: ${packageName} managed type ${node.text}`);
 		if (
 			ts.isCallExpression(node) &&
 			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
 				(ts.isIdentifier(node.expression) && node.expression.text === 'require'))
 		) {
 			const argument = node.arguments[0];
-			if (
-				argument !== undefined &&
-				ts.isStringLiteral(argument) &&
-				isForbiddenToolEngineImport(argument.text)
-			)
-				violations.push(`${filePath}: tool-engine forbidden import ${argument.text}`);
+			if (argument !== undefined && ts.isStringLiteral(argument) && forbiddenImport(argument.text))
+				violations.push(`${filePath}: ${packageName} forbidden import ${argument.text}`);
 		}
 		ts.forEachChild(node, visit);
 	}
+	if (packageName === 'tool-host-core') {
+		for (const reference of source.typeReferenceDirectives) {
+			if (reference.fileName === '@cloudflare/workers-types')
+				violations.push(`${filePath}: tool-host-core forbidden types ${reference.fileName}`);
+		}
+	}
 	visit(source);
 	return violations;
+}
+
+export function collectToolEngineViolations(file: PortalArchitectureSourceFile): readonly string[] {
+	return collectPortableEngineViolations(file, 'tool-engine', isForbiddenToolEngineImport);
+}
+export function collectToolHostCoreViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	return collectPortableEngineViolations(file, 'tool-host-core', isForbiddenToolHostCoreImport);
 }
 
 async function collectFilesUnderDirectory(directoryPath: string): Promise<readonly string[]> {

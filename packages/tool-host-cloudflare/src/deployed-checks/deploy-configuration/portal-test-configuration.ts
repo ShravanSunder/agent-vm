@@ -1,5 +1,6 @@
+import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+
 import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 export function portalTestConfigurations(configuration: PrivateDeployFile): unknown {
 	return Object.fromEntries(

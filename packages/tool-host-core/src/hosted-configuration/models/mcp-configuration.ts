@@ -1,0 +1,134 @@
+// Same provider configuration format as the proxy; filesystem loading stays on Node.
+import { z } from 'zod';
+
+import {
+	formattedSecretValueSchema,
+	type FormattedSecretValue,
+} from '#tool-host-core/hosted-configuration/models/secret-values';
+
+const namespaceDiscoverySummaryMaximumCodePoints = 500;
+const namespaceDiscoverySummarySchema = z
+	.string()
+	.min(1)
+	.refine(
+		(summary) => Array.from(summary).length <= namespaceDiscoverySummaryMaximumCodePoints,
+		`Namespace discovery summary must contain at most ${String(namespaceDiscoverySummaryMaximumCodePoints)} Unicode characters.`,
+	)
+	.meta({ maxLength: namespaceDiscoverySummaryMaximumCodePoints });
+
+export const namespaceDiscoverySchema = z
+	.object({
+		summary: namespaceDiscoverySummarySchema.optional(),
+	})
+	.strict();
+
+export type NamespaceDiscovery = z.infer<typeof namespaceDiscoverySchema>;
+
+const remoteTransportUrlSchema = z.url().refine(
+	(value) => {
+		const protocol = new URL(value).protocol;
+		return protocol === 'http:' || protocol === 'https:';
+	},
+	{ message: 'Remote MCP transport URLs must use http or https.' },
+);
+
+const connectionTimeoutMsSchema = z.number().int().min(1).max(300_000);
+
+const streamableHttpTransportSchema = z
+	.object({
+		kind: z.literal('streamable-http'),
+		url: remoteTransportUrlSchema,
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
+		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+const sseTransportSchema = z
+	.object({
+		kind: z.literal('sse'),
+		url: remoteTransportUrlSchema,
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
+		headers: z.record(z.string(), formattedSecretValueSchema).default({}),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+const stdioTransportSchema = z
+	.object({
+		kind: z.literal('stdio'),
+		command: z.string().min(1),
+		args: z.array(z.string()).default([]),
+		connectionTimeoutMs: connectionTimeoutMsSchema.optional(),
+		cwd: z.string().min(1).optional(),
+		env: z.record(z.string(), formattedSecretValueSchema).default({}),
+		networkAccess: z.enum(['declared', 'none']).optional(),
+		requiredEgressHosts: z.array(z.string().min(1)).default([]),
+	})
+	.strict();
+
+export const mcpSecretPolicySchema = z
+	.object({
+		hosts: z.array(z.string()).default([]),
+		injection: z.enum(['env', 'http-mediation']),
+	})
+	.strict()
+	.superRefine((policy, context) => {
+		if (policy.injection === 'http-mediation' && policy.hosts.length === 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'http-mediation secret policies must declare at least one host.',
+				path: ['hosts'],
+			});
+		}
+		if (policy.injection === 'env' && policy.hosts.length > 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'env secret policies must not declare hosts.',
+				path: ['hosts'],
+			});
+		}
+	});
+
+export const mcpProviderSchema = z
+	.object({
+		kind: z.literal('mcp'),
+		namespace: z.string().min(1),
+		discovery: namespaceDiscoverySchema.default({}),
+		secretPolicies: z.record(z.string().min(1), mcpSecretPolicySchema).default({}),
+		transport: z.discriminatedUnion('kind', [
+			streamableHttpTransportSchema,
+			sseTransportSchema,
+			stdioTransportSchema,
+		]),
+	})
+	.strict();
+
+export const mcpConfigSchema = z
+	.object({
+		$schema: z.string().min(1).optional(),
+		schemaVersion: z.literal(1),
+		providers: z.record(z.string().min(1), mcpProviderSchema).default({}),
+	})
+	.strict();
+
+export type McpConfig = z.infer<typeof mcpConfigSchema>;
+export type McpProvider = z.infer<typeof mcpProviderSchema>;
+
+export type ResolvedMcpProvider =
+	| {
+			readonly connectionTimeoutMs?: number;
+			readonly headers: Readonly<Record<string, FormattedSecretValue>>;
+			readonly namespace: string;
+			readonly transport: 'streamable-http' | 'sse';
+			readonly url: string;
+	  }
+	| {
+			readonly args: readonly string[];
+			readonly command: string;
+			readonly connectionTimeoutMs?: number;
+			readonly cwd?: string;
+			readonly env: Readonly<Record<string, FormattedSecretValue>>;
+			readonly namespace: string;
+			readonly transport: 'stdio';
+	  };

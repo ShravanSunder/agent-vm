@@ -1,12 +1,11 @@
 import { resolveToolLoading } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { checkHostedCaller } from '@agent-collaboration/tool-host-core';
 import { expect, it } from 'vitest';
-
-import { checkWorkerCaller } from '#worker-host/caller-authorization/caller-check';
 
 it('runId is inert for both loading modes, token organization, sender and caller response', async () => {
 	const evaluate = async (query: string): Promise<unknown> => ({
 		loading: resolveToolLoading(`https://portal.invalid/mcp?${query}`),
-		caller: await checkWorkerCaller({
+		caller: await checkHostedCaller({
 			request: new Request(`https://portal.invalid/mcp?${query}`, {
 				headers: { authorization: 'Bearer controlled' },
 			}),

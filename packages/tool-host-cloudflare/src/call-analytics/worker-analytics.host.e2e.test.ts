@@ -1,3 +1,4 @@
+import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -10,7 +11,6 @@ import {
 	startLocalWorkerHarness,
 	type LocalWorkerHarness,
 } from '#worker-host/test-fixtures/local-worker-harness';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 const pointSchema = z.object({
 	indexes: z.array(z.string()).length(1),

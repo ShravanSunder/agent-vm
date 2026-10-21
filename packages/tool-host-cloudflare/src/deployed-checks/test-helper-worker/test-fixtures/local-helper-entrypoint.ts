@@ -1,6 +1,6 @@
 import helperWorker from '#worker-host/deployed-checks/test-helper-worker/test-helper-worker';
 export { TestObservations } from '#worker-host/deployed-checks/test-helper-worker/test-helper-worker';
-import { OrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
+import { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 export { OrganizationAuthorization };
 
 export default {

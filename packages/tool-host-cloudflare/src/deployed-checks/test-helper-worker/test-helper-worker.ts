@@ -1,6 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import type { OrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
 import { handleHelperRequest } from '#worker-host/deployed-checks/test-helper-worker/helper-routes';
 import {
 	helperOrganizationsSchema,
@@ -14,6 +13,7 @@ import {
 	emptyObservations,
 	finishObservation,
 } from '#worker-host/deployed-checks/test-helper-worker/observation-counters';
+import type { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 
 interface HelperBindings {
 	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;

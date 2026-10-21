@@ -147,13 +147,18 @@ console.log('emitted import closure: '+visited.size+' modules, '+edges+' static/
 `;
 }
 
-function declarationScannerSource(): string {
+export function declarationScannerSource(
+	props: {
+		readonly forbiddenImportSource?: string;
+		readonly packageLabel?: string;
+	} = {},
+): string {
 	return `import {readFile,realpath} from 'node:fs/promises';
 import {builtinModules} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
-${isForbiddenToolEngineImport.toString()}
+${props.forbiddenImportSource ?? isForbiddenToolEngineImport.toString()}
 const pending=JSON.parse(process.argv[2]); const visited=new Set();let edges=0;
 while(pending.length){
  const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
@@ -176,7 +181,7 @@ while(pending.length){
  }
 }
 if(visited.size===0)throw new Error('empty declaration closure');console.log('declaration import closure: '+visited.size+' modules, '+edges+' type edges');
-`;
+`.replaceAll('tool-engine', props.packageLabel ?? 'tool-engine');
 }
 
 const requiredExports: Readonly<Record<string, readonly string[]>> = {
