@@ -21,6 +21,7 @@ export interface PortalCatalogSnapshot {
 	readonly agentScopeId: string;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 	readonly generatedAt: string;
+	readonly organizationCatalogState?: 'complete' | 'incomplete';
 	readonly sourceHash: string;
 	readonly tools: readonly PortalToolRecord[];
 }
@@ -243,6 +244,7 @@ export function createPortalSessionManager(
 		const graph = buildToolGraph({ skills: options.skills ?? [], tools: sortedTools });
 		const catalog = {
 			agentScopeId: identity.agentScopeId,
+			...(organization === undefined ? {} : { organizationCatalogState: organization.kind }),
 			discoveryFailures,
 			generatedAt: new Date(getNow()).toISOString(),
 			sourceHash: await createSourceHash(sortedTools),

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
@@ -62,7 +63,7 @@ function normalizeOrigin(origin: string): string {
 }
 
 function normalizeConfiguredHost(host: string): string {
-	const parsedHost = parseHostHeader(host);
+	const parsedHost = parseHostHeader(isIP(host) === 6 ? `[${host}]` : host);
 	if (parsedHost === null) throw new TypeError(`Invalid Node Tool Portal allowed Host: ${host}`);
 	return parsedHost;
 }

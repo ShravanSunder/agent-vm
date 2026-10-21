@@ -74,3 +74,10 @@ refreshes retain the previous complete snapshot with diagnostics. Passing this
 source to `createPortalSessionManager` builds caller views from the organization
 snapshot without owning another discovery cache. Hosts perform the first read
 before accepting clients and keep protocol-specific refusals at their ingress.
+
+A complete organization snapshot can carry refresh-failure diagnostics. Its
+completeness is passed to catalog preparation separately from those diagnostics,
+so both addresses keep serving its tools while the failed namespace is retried.
+Only a snapshot that has never completed refuses direct listing. This deliberately
+changes the old new-session refusal after a failed refresh: stateless clients now
+retain the availability that connected clients previously kept.

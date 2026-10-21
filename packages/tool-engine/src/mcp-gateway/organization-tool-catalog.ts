@@ -7,6 +7,7 @@ import {
 } from '#mcp-gateway/portal-session';
 
 export interface OrganizationToolCatalogSnapshot {
+	readonly kind: 'complete' | 'incomplete';
 	readonly toolsByNamespace: ReadonlyMap<string, readonly Tool[]>;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 }
@@ -44,16 +45,18 @@ export function createOrganizationToolCatalog(props: {
 	function snapshot(): OrganizationToolCatalogSnapshot {
 		switch (state.kind) {
 			case 'unlisted':
-				return { toolsByNamespace: new Map(), discoveryFailures: [] };
+				return { kind: 'complete', toolsByNamespace: new Map(), discoveryFailures: [] };
 			case 'complete':
-				return { toolsByNamespace: state.tools, discoveryFailures: [] };
+				return { kind: 'complete', toolsByNamespace: state.tools, discoveryFailures: [] };
 			case 'incomplete':
 				return {
+					kind: 'incomplete',
 					toolsByNamespace: state.candidate,
 					discoveryFailures: [...state.failures.values()],
 				};
 			case 'refresh-failed':
 				return {
+					kind: 'complete',
 					toolsByNamespace: state.complete,
 					discoveryFailures: [...state.failures.values()],
 				};

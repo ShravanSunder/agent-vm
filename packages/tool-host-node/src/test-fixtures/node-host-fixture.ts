@@ -41,6 +41,7 @@ export interface ControlledProvider {
 		readonly selectedHeader: string | undefined;
 	}[];
 	readonly close: () => Promise<void>;
+	readonly setDiscoveryFailure: (failed: boolean) => void;
 	readonly setCallResult: (result: CallToolResult) => void;
 	readonly breakCalls: () => void;
 	readonly duplicateDiscovery: () => void;
@@ -57,6 +58,7 @@ export async function startControlledProvider(
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
+	let discoveryFailed = false;
 	let breakCalls = false;
 	let callResult: CallToolResult | undefined;
 	let enteredCall: (() => void) | undefined;
@@ -75,6 +77,8 @@ export async function startControlledProvider(
 				listings.push(label);
 				enteredDiscovery?.();
 				await discoveryGate;
+				if (discoveryFailed)
+					throw new Error(`discovery unavailable ${secretCanary} ${headerCanary}`);
 				return {
 					tools:
 						catalog ??
@@ -153,6 +157,9 @@ export async function startControlledProvider(
 			await new Promise<void>((resolve, reject) =>
 				http.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
+		},
+		setDiscoveryFailure: (failed) => {
+			discoveryFailed = failed;
 		},
 		setCallResult: (result) => {
 			callResult = result;

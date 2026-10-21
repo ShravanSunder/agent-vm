@@ -186,8 +186,7 @@ it('starts with two healthy providers, reports the third, refuses incomplete dir
 			expect(alpha.listings).toHaveLength(1);
 			expect(beta.listings).toHaveLength(1);
 			expect(recovered.listings).toHaveLength(1);
-			await recovered.close();
-			recovered = undefined;
+			recovered.setDiscoveryFailure(true);
 			now += 1;
 			const stale = await connection.client.callTool({
 				name: 'mcp_portal_list',
@@ -195,6 +194,9 @@ it('starts with two healthy providers, reports the third, refuses incomplete dir
 			});
 			const retained = JSON.stringify(decodedResult(stale));
 			expect(retained).toContain('gamma');
+			expect(decodedResult(stale)).toMatchObject({
+				diagnostics: expect.arrayContaining([expect.objectContaining({ namespace: 'gamma' })]),
+			});
 			expect(successfulOutput(stale, 'stale')).toMatchObject({
 				namespaces: expect.arrayContaining(['gamma']),
 				tools: expect.arrayContaining([
@@ -203,13 +205,41 @@ it('starts with two healthy providers, reports the third, refuses incomplete dir
 			});
 			expect(alpha.listings).toHaveLength(2);
 			expect(beta.listings).toHaveLength(2);
-			recovered = await startControlledProvider('gamma', undefined, Number(new URL(gammaUrl).port));
+			const retainedDirect = await fetch(directUrl, {
+				method: 'POST',
+				headers,
+				body: JSON.stringify(body),
+			});
+			expect(retainedDirect.status).toBe(200);
+			const directCatalog = z
+				.object({ result: z.object({ tools: z.array(z.object({ name: z.string() })) }) })
+				.parse(await retainedDirect.json());
+			expect(directCatalog.result.tools.map((tool) => tool.name)).toEqual(
+				listed.result.tools.map((tool) => tool.name),
+			);
+			const gammaRead = directCatalog.result.tools.find((tool) =>
+				tool.name.startsWith('gamma__read__'),
+			);
+			if (gammaRead === undefined) throw new Error('Missing retained gamma tool');
+			const direct = await connectClient(directUrl, 'credential-a');
+			try {
+				const dispatched = await direct.client.callTool({
+					name: gammaRead.name,
+					arguments: { value: 55 },
+				});
+				expect(decodedResult(dispatched)).toMatchObject({ ok: true });
+				expect(recovered.effects.map((effect) => effect.arguments)).toEqual([{ value: 55 }]);
+			} finally {
+				await direct.client.close();
+			}
+			const listingsBeforeRecovery = recovered.listings.length;
+			recovered.setDiscoveryFailure(false);
 			const refreshed = await connection.client.callTool({
 				name: 'mcp_portal_list',
 				arguments: { requests: [{ id: 'refreshed' }] },
 			});
 			expect(decodedResult(refreshed)).toMatchObject({ diagnostics: [] });
-			expect(recovered.listings).toHaveLength(1);
+			expect(recovered.listings).toHaveLength(listingsBeforeRecovery + 1);
 			expect(alpha.listings).toHaveLength(2);
 			expect(beta.listings).toHaveLength(2);
 		} finally {
