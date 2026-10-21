@@ -14,8 +14,8 @@ import {
 	type OperationRecord,
 	type ToolBackend,
 } from '@agent-collaboration/tool-engine/dispatch';
-import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/access-profile-projection.js';
-import { toolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
+import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
+import { toolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 
 const revision = { owner: 'controller', revision: 'policy:1' };

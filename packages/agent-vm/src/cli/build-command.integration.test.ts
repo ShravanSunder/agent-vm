@@ -80,7 +80,7 @@ function createSharedToolVmSystemConfig(options: {
 					{
 						cpus: 2,
 						imageProfile: profileName,
-						memory: '2G',
+						memory: '2560M',
 					},
 				]),
 			]),
@@ -154,7 +154,7 @@ function createTestSystemConfigInput(): SystemConfigInput {
 					type: 'hermes',
 					imageProfile: 'hermes',
 					cpus: 2,
-					memory: '2G',
+					memory: '2560M',
 					config: './config/test/hermes.yaml',
 					port: 18791,
 					profileSecretProjectionsByAgent: {
@@ -826,7 +826,7 @@ describe('runBuildCommand', () => {
 							{
 								cpus: 2,
 								imageProfile: profileName,
-								memory: '2G',
+								memory: '2560M',
 							},
 						]),
 				]),
@@ -1009,7 +1009,7 @@ describe('runBuildCommand', () => {
 					},
 					toolVmProfiles: {
 						standard: { cpus: 1, imageProfile: 'first', memory: '1G' },
-						second: { cpus: 2, imageProfile: 'second', memory: '2G' },
+						second: { cpus: 2, imageProfile: 'second', memory: '2560M' },
 					},
 				},
 				{ systemConfigPath: path.join(configDirectory, 'system.json') },

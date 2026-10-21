@@ -20,7 +20,7 @@ import {
 	state,
 	notUsable,
 	blocked,
-} from './access-assessor-test-fixture.js';
+} from '#tool-access/authorization/access-assessor-test-fixture';
 describe('10-step first-unmet order', () => {
 	const rows: readonly {
 		name: string;

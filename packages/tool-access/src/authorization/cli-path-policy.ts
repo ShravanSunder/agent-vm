@@ -1,8 +1,8 @@
-import type { ConfiguredCliPolicy } from '../contracts/cli-allowance-policy.js';
 import {
 	evaluateCliAllowanceInvocation,
 	validateCliAllowanceInvocation,
-} from './cli-allowances/index.js';
+} from '#tool-access/authorization/cli-allowances/index';
+import type { ConfiguredCliPolicy } from '#tool-access/contracts/cli-allowance-policy';
 
 export type CliPathContribution = 'deny' | 'ask' | 'none';
 

@@ -255,7 +255,7 @@ async function createGatewayImageCacheFixture(
 						imageProfile: 'hermes',
 						cpus: 2,
 						config: path.join(gatewayConfigDirectory, 'gateway.json'),
-						memory: '2G',
+						memory: '2560M',
 						port: 18791,
 					},
 					id: 'coding-agent',

@@ -21,7 +21,7 @@ import {
 	googleFixture,
 	cliFixture,
 	blocked,
-} from './access-assessor-test-fixture.js';
+} from '#tool-access/authorization/access-assessor-test-fixture';
 function freeze(value: unknown): void {
 	if (value === null || typeof value !== 'object') return;
 	for (const child of Object.values(value)) freeze(child);

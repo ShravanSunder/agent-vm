@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	evaluateCliAllowanceInvocation,
 	validateCliAllowanceInvocation,
-} from './cli-allowance-validator.js';
+} from '#tool-access/authorization/cli-allowances/cli-allowance-validator';
 
 const allowance = {
 	commands: [{ path: ['gmail', 'search'], flagRules: [] }],
