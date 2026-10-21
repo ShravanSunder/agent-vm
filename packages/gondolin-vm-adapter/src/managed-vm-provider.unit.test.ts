@@ -491,7 +491,7 @@ describe('createGondolinManagedVmProvider', () => {
 				},
 			],
 			mounts: { '/tmp': { kind: 'memory' } },
-			resources: { cpuCount: 2, memory: '2G' },
+			resources: { cpuCount: 2, memory: '2560M' },
 			rootfsMode: 'cow',
 			runtimeRootfsSize: '4G',
 			sessionLabel: 'session-1',
@@ -509,7 +509,7 @@ describe('createGondolinManagedVmProvider', () => {
 				cpus: 2,
 				env: { SAFE: 'guest-visible' },
 				imagePath: '/images/test',
-				memory: '2G',
+				memory: '2560M',
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '4G',
 				secrets: {

@@ -99,7 +99,7 @@ describe('requireZone', () => {
 								profilesByAgent: { main: 'main' },
 								imageProfile: 'hermes',
 								cpus: 2,
-								memory: '2G',
+								memory: '2560M',
 								config: './config/shravan/hermes.json',
 								port: 18791,
 								stateDir: './state/shravan',

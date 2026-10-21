@@ -313,7 +313,7 @@ describe('gateway control lifecycle event integration', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,

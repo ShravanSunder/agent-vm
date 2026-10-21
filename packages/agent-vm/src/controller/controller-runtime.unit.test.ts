@@ -611,7 +611,7 @@ const systemConfig = {
 			gateway: {
 				type: 'hermes',
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: 18791,
 				config: path.join(controllerRuntimeTestRoot, 'config', 'shravan', 'hermes.yaml'),
