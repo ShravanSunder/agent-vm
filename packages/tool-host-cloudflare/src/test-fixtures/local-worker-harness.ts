@@ -14,6 +14,7 @@ import {
 	startControlledMcpIssuer,
 	type ControlledMcpIssuer,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
+import { startWorkerdSocketGuard } from '#worker-host/test-fixtures/workerd-socket-guard';
 
 export type LocalWorkerResponse = Awaited<ReturnType<Unstable_DevWorker['fetch']>>;
 export interface LocalWorkerHarness {
@@ -26,6 +27,7 @@ export interface LocalWorkerHarness {
 		params?: Readonly<Record<string, unknown>>,
 		options?: {
 			readonly token?: string;
+			readonly id?: string;
 			readonly path?: string;
 			readonly headers?: Readonly<Record<string, string>>;
 			readonly signal?: AbortSignal;
@@ -37,8 +39,10 @@ export async function startLocalWorkerHarness(
 	options: {
 		readonly setup?: (fixture: ControlledMcpIssuer) => void;
 		readonly configurations?: (url: string) => unknown;
+		readonly fixedClock?: number;
 	} = {},
 ): Promise<LocalWorkerHarness> {
+	const socketGuard = startWorkerdSocketGuard();
 	const fixture = await startControlledMcpIssuer();
 	options.setup?.(fixture);
 	const stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-worker-'));
@@ -54,6 +58,7 @@ export async function startLocalWorkerHarness(
 			logLevel: 'error',
 			vars: {
 				SIGN_IN_ISSUER: fixture.url,
+				...(options.fixedClock === undefined ? {} : { FIXED_CLOCK: String(options.fixedClock) }),
 				SIGN_IN_JWKS_URL: `${fixture.url}/jwks`,
 				TOOL_PORTAL_AUDIENCE: portalAudience,
 				ORGANIZATION_CONFIGURATIONS: JSON.stringify(
@@ -67,12 +72,15 @@ export async function startLocalWorkerHarness(
 		},
 	);
 	const fetchLocalWorker = worker.fetch;
-	worker.fetch = async (input, init) =>
-		fetchLocalWorker(input, {
+	worker.fetch = async (input, init) => {
+		socketGuard.check();
+		return fetchLocalWorker(input, {
 			...init,
 			headers: Object.assign({}, init?.headers, { connection: 'close' }),
+			signal: init?.signal ?? AbortSignal.timeout(30_000),
 		});
-	process.stderr.write('S6 proof stage runtime-ready\n');
+	};
+
 	async function control(input: Readonly<Record<string, unknown>>): Promise<void> {
 		const response = await worker.fetch('/__proof', {
 			method: 'POST',
@@ -89,7 +97,7 @@ export async function startLocalWorkerHarness(
 			),
 		),
 	);
-	process.stderr.write('S6 proof stage admission-ready\n');
+
 	const token = await fixture.sign();
 	return {
 		worker,
@@ -111,7 +119,7 @@ export async function startLocalWorkerHarness(
 				},
 				body: JSON.stringify({
 					jsonrpc: '2.0',
-					id: 'proof',
+					id: options.id ?? 'proof',
 					method,
 					params: {
 						_meta: {
@@ -123,7 +131,11 @@ export async function startLocalWorkerHarness(
 				}),
 			}),
 		close: async () => {
-			await worker.stop();
+			try {
+				await socketGuard.stop();
+			} finally {
+				await worker.stop();
+			}
 			await fixture.close();
 			await rm(stateDirectory, { recursive: true, force: true });
 		},

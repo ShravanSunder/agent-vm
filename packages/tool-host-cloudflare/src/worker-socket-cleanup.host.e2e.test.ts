@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
 	portalRead,
@@ -10,45 +8,11 @@ import {
 	type LocalWorkerHarness,
 } from '#worker-host/test-fixtures/local-worker-harness';
 import { waitForProtocolRetryInterval } from '#worker-host/test-fixtures/protocol-observation-interval';
-
-const executeFile = promisify(execFile);
+import {
+	ownedWorkerdPids,
+	workerdSockets as sockets,
+} from '#worker-host/test-fixtures/workerd-socket-guard';
 let harness: LocalWorkerHarness;
-interface SocketSnapshot {
-	readonly pid: number;
-	readonly established: number;
-	readonly closeWait: number;
-}
-async function ownedWorkerdPids(): Promise<number[]> {
-	const { stdout } = await executeFile('ps', ['-axo', 'pid,ppid,command']);
-	return stdout.split('\n').flatMap((line) => {
-		const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/u);
-		return match?.[1] !== undefined &&
-			Number(match[2]) === process.pid &&
-			match[3]?.includes('/workerd serve')
-			? [Number(match[1])]
-			: [];
-	});
-}
-async function sockets(pids: readonly number[]): Promise<SocketSnapshot[]> {
-	return Promise.all(
-		pids.map(async (pid) => {
-			const { stdout } = await executeFile('lsof', [
-				'-nP',
-				'-a',
-				'-p',
-				String(pid),
-				'-iTCP',
-				'-F',
-				'pT',
-			]);
-			return {
-				pid,
-				established: stdout.split('\n').filter((line) => line === 'TST=ESTABLISHED').length,
-				closeWait: stdout.split('\n').filter((line) => line === 'TST=CLOSE_WAIT').length,
-			};
-		}),
-	);
-}
 describe('request-owned MCP socket cleanup in still-live local workerd', () => {
 	beforeAll(async () => {
 		harness = await startLocalWorkerHarness({
@@ -121,6 +85,14 @@ describe('request-owned MCP socket cleanup in still-live local workerd', () => {
 		);
 		expect(await ownedWorkerdPids()).toEqual(pids);
 		expect(harness.fixture.activeBackgroundStreams()).toBe(0);
+		const closures = z
+			.array(z.object({ id: z.number(), closed: z.number() }))
+			.parse(await (await harness.worker.fetch('/__clients')).json());
+		expect(closures.length).toBeGreaterThan(20);
+		expect(
+			closures.every((client) => client.closed === 1),
+			JSON.stringify(closures),
+		).toBe(true);
 		for (const snapshot of after) {
 			const before = baseline.find((entry) => entry.pid === snapshot.pid);
 			expect(before).toBeDefined();

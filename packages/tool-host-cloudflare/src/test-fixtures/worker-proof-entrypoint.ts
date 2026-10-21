@@ -4,6 +4,10 @@ import { z } from 'zod';
 import type { WorkerBindings } from '#worker-host/index';
 import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/organization-authorization';
 import {
+	createObservedNativeClient,
+	nativeClientClosures,
+} from '#worker-host/test-fixtures/native-client-observation';
+import {
 	deployedConfigurationSource,
 	workerSecretBindings,
 } from '#worker-host/worker-configuration';
@@ -41,6 +45,7 @@ export class OrganizationAuthorization extends ProductionOrganizationAuthorizati
 }
 interface ProofBindings extends WorkerBindings {
 	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
+	readonly FIXED_CLOCK?: string;
 }
 const controlSchema = z.discriminatedUnion('kind', [
 	z.strictObject({
@@ -58,12 +63,23 @@ const controlSchema = z.discriminatedUnion('kind', [
 	z.strictObject({ kind: z.literal('wait-recording'), organizationId: z.string() }),
 ]);
 let host: WorkerHost | undefined;
+let testNow: number | undefined;
 const logs: WorkerObservationLog[] = [];
 const points: unknown[] = [];
 let failAnalytics = false;
 // Control routes exist only in this separate test entry, never in the production entrypoint.
 export default {
 	async fetch(request: Request, bindings: ProofBindings): Promise<Response> {
+		// Parity-only deterministic diagnostic clock; not used by the production entrypoint.
+		if (bindings.FIXED_CLOCK !== undefined) {
+			testNow ??= Number(bindings.FIXED_CLOCK);
+			Date.now = () => testNow ?? 0;
+		}
+		if (new URL(request.url).pathname === '/__clock') {
+			testNow = Number(new URL(request.url).searchParams.get('now'));
+			return Response.json({ ok: true });
+		}
+		if (new URL(request.url).pathname === '/__clients') return Response.json(nativeClientClosures);
 		if (new URL(request.url).pathname === '/__points') return Response.json(points);
 		if (new URL(request.url).pathname === '/__fail-analytics') {
 			failAnalytics = new URL(request.url).searchParams.has('fail');
@@ -92,6 +108,7 @@ export default {
 			return Response.json({ ok: true });
 		}
 		host ??= createWorkerHost({
+			createClient: createObservedNativeClient,
 			analytics: {
 				writeDataPoint: (point) => {
 					if (failAnalytics) throw new Error('binding-secret-canary');

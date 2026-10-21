@@ -82,6 +82,22 @@ describe('row10 Worker protocol raw-wire controls', () => {
 		).toBe(code);
 		expect(harness.fixture.calls).toHaveLength(before);
 	});
+	it.each(['', 'different-resource'])(
+		'refuses resources/read with missing or mismatched Mcp-Name (%s)',
+		async (name) => {
+			const before = harness.fixture.calls.length;
+			const response = await harness.rpc(
+				'resources/read',
+				{ uri: 'proof://resource' },
+				{ headers: { 'Mcp-Name': name } },
+			);
+			expect(response.status).toBe(400);
+			expect(
+				z.object({ error: z.object({ code: z.number() }) }).parse(await response.json()).error.code,
+			).toBe(-32020);
+			expect(harness.fixture.calls).toHaveLength(before);
+		},
+	);
 	it.each(['GET', 'DELETE'])('refuses %s with405', async (method) => {
 		const response = await harness.worker.fetch('/mcp', {
 			method,

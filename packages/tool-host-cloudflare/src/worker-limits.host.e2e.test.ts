@@ -7,11 +7,11 @@ import {
 	startLocalWorkerHarness,
 	type LocalWorkerHarness,
 } from '#worker-host/test-fixtures/local-worker-harness';
-import {
-	workerRequestBodyBytes,
-	workerReplyBytes,
-	workerUpstreamResponseBytes,
-} from '#worker-host/worker-call-limits';
+import { waitForProtocolRetryInterval } from '#worker-host/test-fixtures/protocol-observation-interval';
+// Independent oracle: these values are the governing Worker contract, not product imports.
+const workerRequestBodyBytes = 4 * 1024 * 1024;
+const workerUpstreamResponseBytes = 4 * 1024 * 1024;
+const workerReplyBytes = 16 * 1024 * 1024;
 
 let harness: LocalWorkerHarness;
 function calls(count: number): Readonly<Record<string, unknown>> {
@@ -55,20 +55,22 @@ describe('Worker limits through local workerd', () => {
 			'Mcp-Name': 'mcp_portal_call',
 		};
 		const before = harness.fixture.calls.length;
-		const allowed = await harness.worker.fetch('/mcp', {
-			method: 'POST',
-			headers,
-			body: body + ' '.repeat(workerRequestBodyBytes - body.length),
-		});
-		await rpcResult(allowed);
-		expect(harness.fixture.calls).toHaveLength(before + 1);
+		for (const offset of [-1, 0]) {
+			const allowed = await harness.worker.fetch('/mcp', {
+				method: 'POST',
+				headers,
+				body: body + ' '.repeat(workerRequestBodyBytes + offset - body.length),
+			});
+			await rpcResult(allowed);
+			expect(harness.fixture.calls).toHaveLength(before + offset + 2);
+		}
 		const refused = await harness.worker.fetch('/mcp', {
 			method: 'POST',
 			headers,
 			body: body + ' '.repeat(workerRequestBodyBytes + 1 - body.length),
 		});
 		expect(refused.status).toBe(413);
-		expect(harness.fixture.calls).toHaveLength(before + 1);
+		expect(harness.fixture.calls).toHaveLength(before + 2);
 	});
 	it('allows50 calls and rejects51 before any effect', async () => {
 		const before = harness.fixture.calls.length;
@@ -79,6 +81,7 @@ describe('Worker limits through local workerd', () => {
 		expect(harness.fixture.calls).toHaveLength(before + 50);
 	});
 	it('keeps no more than6 of12 slow calls in flight until each response completes', async () => {
+		harness.fixture.setEarlyCallHeaders(true);
 		const firstWave = Promise.withResolvers<void>();
 		const secondWave = Promise.withResolvers<void>();
 		let active = 0;
@@ -97,6 +100,8 @@ describe('Worker limits through local workerd', () => {
 		});
 		const running = harness.rpc('tools/call', calls(12)).then(rpcResult);
 		await firstWave.promise;
+		// Headers have already arrived; allow queued real socket requests to reach the body barrier.
+		await waitForProtocolRetryInterval();
 		expect(entered).toBe(6);
 		expect(active).toBe(6);
 		for (const release of releases.splice(0)) release();
@@ -106,29 +111,78 @@ describe('Worker limits through local workerd', () => {
 		expect(peak).toBe(6);
 		expect(entered).toBe(12);
 		expect(active).toBe(0);
+		harness.fixture.setEarlyCallHeaders(false);
 	});
 	it('measures each upstream result before redaction at4MiB', async () => {
 		const envelopeBytes = JSON.stringify({ content: [{ type: 'text', text: '' }] }).length;
-		harness.fixture.setCall(async () => ({
-			content: [{ type: 'text', text: 'x'.repeat(workerUpstreamResponseBytes - envelopeBytes) }],
-		}));
-		const allowed = await rpcResult(await harness.rpc('tools/call', portalRead()));
-		expect(JSON.stringify(allowed)).not.toContain('upstream-unavailable');
+		for (const offset of [-1, 0]) {
+			const expectedText = 'x'.repeat(workerUpstreamResponseBytes - envelopeBytes + offset);
+			harness.fixture.setCall(async () => ({ content: [{ type: 'text', text: expectedText }] }));
+			const allowed = await rpcResult(await harness.rpc('tools/call', portalRead()));
+			expect(allowed.isError).toBeUndefined();
+			// Successful output must survive intact, not merely avoid one particular error kind.
+			const content = z
+				.object({ content: z.tuple([z.object({ text: z.string() })]) })
+				.parse(allowed);
+			const core = z
+				.object({
+					items: z.array(
+						z.object({
+							status: z.literal('success'),
+							structuredContent: z.object({
+								result: z.object({
+									content: z.array(z.object({ type: z.literal('text'), text: z.string() })),
+								}),
+							}),
+						}),
+					),
+				})
+				.parse(JSON.parse(content.content[0].text));
+			expect(core.items[0]?.structuredContent.result.content).toEqual([
+				{ type: 'text', text: expectedText },
+			]);
+			expect(expectedText.length + envelopeBytes).toBe(workerUpstreamResponseBytes + offset);
+		}
 		harness.fixture.setCall(async () => ({
 			content: [
 				{ type: 'text', text: 'x'.repeat(workerUpstreamResponseBytes - envelopeBytes + 1) },
 			],
 		}));
 		const refused = await rpcResult(await harness.rpc('tools/call', portalRead()));
-		expect(JSON.stringify(refused)).toContain('too_large_result');
+		expect(refused.isError).toBe(true);
+		expect(JSON.stringify(refused)).toContain('upstream_call_failed');
+		expect(JSON.stringify(refused).length).toBeLessThan(4096);
 		// A response consisting of a credential is large BEFORE exact-value redaction shrinks it.
 		harness.fixture.setCall(async () => ({
 			content: [{ type: 'text', text: 'one-secret-canary'.repeat(300_000) }],
 		}));
 		const redactedTooLarge = await rpcResult(await harness.rpc('tools/call', portalRead()));
-		expect(JSON.stringify(redactedTooLarge)).toContain('too_large_result');
+		expect(redactedTooLarge.isError).toBe(true);
+		expect(JSON.stringify(redactedTooLarge)).toContain('upstream_call_failed');
 		expect(JSON.stringify(redactedTooLarge)).not.toContain('one-secret-canary');
 	});
+	it('admits just under16MiB and replaces a call just over the whole serialized reply budget', async () => {
+		harness.fixture.setCall(async () => ({ content: [{ type: 'text', text: '' }] }));
+		const empty = await (await harness.rpc('tools/call', calls(2))).text();
+		// The frozen proxy projection places each result in content and structuredContent.
+		// Two calls therefore add four ASCII bytes per character of equal result payload.
+		const count = Math.floor((workerReplyBytes - new TextEncoder().encode(empty).byteLength) / 4);
+		harness.fixture.setCall(async () => ({ content: [{ type: 'text', text: 'x'.repeat(count) }] }));
+		const allowed = await (await harness.rpc('tools/call', calls(2))).text();
+		expect(allowed).not.toContain('too_large_result');
+		expect(new TextEncoder().encode(allowed).byteLength).toBeGreaterThan(workerReplyBytes - 4);
+		expect(new TextEncoder().encode(allowed).byteLength).toBeLessThanOrEqual(workerReplyBytes);
+
+		const remainder = workerReplyBytes - new TextEncoder().encode(allowed).byteLength;
+		const exactId = 'proof' + 'p'.repeat(remainder);
+		const exact = await (await harness.rpc('tools/call', calls(2), { id: exactId })).text();
+		expect(exact).not.toContain('too_large_result');
+		expect(new TextEncoder().encode(exact).byteLength).toBe(workerReplyBytes);
+		const refused = await (await harness.rpc('tools/call', calls(2), { id: exactId + 'p' })).text();
+		expect(refused).toContain('too_large_result');
+		expect(new TextEncoder().encode(refused).byteLength).toBeLessThanOrEqual(workerReplyBytes);
+	});
+
 	it('returns too-large items as accumulated replies pass16MiB and survives overlapping requests', async () => {
 		harness.fixture.setCall(async () => ({
 			content: [{ type: 'text', text: 'x'.repeat(3 * 1024 * 1024) }],

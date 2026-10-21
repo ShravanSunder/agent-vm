@@ -5,7 +5,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { unstable_dev, type Unstable_DevWorker } from 'wrangler';
 
+import { startWorkerdSocketGuard } from '#worker-host/test-fixtures/workerd-socket-guard';
+
 let worker: Unstable_DevWorker;
+let guard: ReturnType<typeof startWorkerdSocketGuard>;
 let stateDirectory: string;
 async function control(input: Readonly<Record<string, unknown>>): Promise<unknown> {
 	const response = await worker.fetch('/', { method: 'POST', body: JSON.stringify(input) });
@@ -14,6 +17,7 @@ async function control(input: Readonly<Record<string, unknown>>): Promise<unknow
 }
 describe('organization authorization in local workerd', () => {
 	beforeAll(async () => {
+		guard = startWorkerdSocketGuard();
 		stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-object-'));
 		process.env.WRANGLER_LOG_PATH = path.join(stateDirectory, 'wrangler.log');
 		process.env.WRANGLER_SEND_METRICS = 'false';
@@ -30,7 +34,11 @@ describe('organization authorization in local workerd', () => {
 		);
 	});
 	afterAll(async () => {
-		await worker?.stop();
+		try {
+			await guard?.stop();
+		} finally {
+			await worker?.stop();
+		}
 		if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
 	});
 	it('reads current admission and keeps identical agent IDs apart by organization', async () => {
