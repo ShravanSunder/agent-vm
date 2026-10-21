@@ -58,8 +58,8 @@ packages/tool-host-core/src/
 │   ├── agent-admission-rules.ts
 │   ├── volatile-authority-store.ts   in-memory store for tests (Fleet's "volatile store")
 │   └── models/                       OrganizationAuthorityStore (atomic read-modify-write), Clock
-├── organization-engines/        organization-engine, request-operation-entries, proxy-profile-policy,
-│                                http-upstream-transports (the SDK's fetch transports run anywhere)
+├── organization-engines/        organization-engine, request-operation-entries, proxy-profile-policy;
+│                                the upstream transport factory is INJECTED (as the design says)
 ├── request-limits/              batch scheduler, reply budget, trimming order, refusal projection;
 │                                limit VALUES injected as HostedProxyLimits
 ├── call-analytics/              semantic CallAnalytics events and batch derivation; AnalyticsSink port
@@ -75,6 +75,7 @@ packages/tool-host-cloudflare/src/
 │                                    ctx.storage.transaction per decision, calling the core rules
 ├── analytics-engine-sink/           CallAnalytics → writeDataPoint (indexes, blobs, doubles, byte truncation)
 ├── worker-bindings/                 env → ConfigurationSource and SecretSource
+├── worker-upstream-transports.ts    the SDK v1 SSE and StreamableHTTP client transports, injected into the core
 ├── worker-limits.ts                 Cloudflare limit values: 4 MiB body, 4 MiB upstream, 16 MiB reply, 50, 6
 ├── test-fixtures/
 └── deployed-checks/                 (from #247)
@@ -123,3 +124,23 @@ packages/tool-host-cloudflare/src/
 One PR stacked on #246: branch `tool-host-core/runtime-neutral-hosting` from
 `e9db67f5`, base `tool-host-cloudflare/s6-worker`. tsconfig.base.json gains
 only the `@agent-collaboration/tool-host-core` path entry (owner-approved).
+
+## Amendment (2026-10-21, after the Implementer's closure finding)
+
+- **Upstream transports stay with the runtime.** The design says "the
+  transports stay injected by the host", so `worker-upstream-transports.ts`
+  stays in `tool-host-cloudflare` and the core takes
+  `createUpstreamMcpTransport` as a port. Nothing in `tool-host-core` imports
+  `@modelcontextprotocol/sdk/client/*`. The earlier tree that put them in the
+  core was wrong.
+- **The MCP SDK server stays in the core,** with an explicit proof boundary.
+  The SDK runs anywhere through conditional exports:
+  1. a strict direct-import ban in `tool-host-core`'s own source, the same as
+     `tool-engine` (no `node:`, builtins, `cloudflare:`, hosts, agent-vm or
+     Workers types);
+  2. a browser/workerd-condition closure with zero `node:` inputs;
+  3. a Node-condition closure that may contain only the SDK's own conditional
+     shim (`@modelcontextprotocol/server/dist/shimsNode.mjs` → `node:process`),
+     and nothing else;
+  4. runtime proof on both: plain-Node core tests and the Worker's workerd
+     e2e-host suite.
