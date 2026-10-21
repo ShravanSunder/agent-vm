@@ -52,7 +52,7 @@ function createDestroySystemConfig(tempDirectory: string, stateDir: string): Sys
 				gateway: {
 					type: 'hermes',
 					imageProfile: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: 18791,
 					config: './config/shravan/hermes.json',
@@ -212,7 +212,7 @@ describe('runControllerDestroy', () => {
 					gateway: {
 						type: 'hermes',
 						imageProfile: 'hermes',
-						memory: '2G',
+						memory: '2560M',
 						cpus: 2,
 						port: 18791,
 						config: './config/shravan/hermes.json',

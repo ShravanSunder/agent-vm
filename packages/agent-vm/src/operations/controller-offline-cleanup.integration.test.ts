@@ -81,7 +81,7 @@ function createSystemConfig(
 				default: {
 					cpus: 1,
 					imageProfile: 'default',
-					memory: '2G',
+					memory: '2560M',
 				},
 			},
 			tcpPool: {

@@ -38,7 +38,7 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				config: path.join(temporaryDirectory, 'hermes.json'),
 				cpus: 2,
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				port: 18_791,
 				stateDir: stateDirectory,
 				type: 'hermes',
@@ -91,7 +91,7 @@ describe('validateControllerSelectedToolVmDirectory', () => {
 				config: path.join(temporaryDirectory, 'hermes.yaml'),
 				cpus: 2,
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				port: 18_793,
 				profilesByAgent: { main: 'researcher' },
 				profileSecretProjectionsByAgent: {
