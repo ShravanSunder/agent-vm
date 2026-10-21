@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import {
+	redactUpstreamResponse,
 	redactCredentialText,
 	redactThrownError,
-	redactUpstreamResponse,
 } from '#connectors/upstream-response-middleware';
 
 describe('upstream response middleware', () => {

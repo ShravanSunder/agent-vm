@@ -1,50 +1,50 @@
 import { normalizeHeaders } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
+import type { NormalizedUpstreamMcpServer } from '#connectors/models/upstream-mcp-server';
 import {
 	createUpstreamMcpError,
+	transportSummaryFromServer,
 	isUpstreamMcpError,
 	messageFromUnknownError,
-	transportSummaryFromServer,
 } from '#connectors/upstream-mcp-errors';
 import {
-	createSdkClient,
-	defaultConnectionTimeoutMs,
-	defaultMaxResponseBytes,
-	cacheKey,
-	rootAgentScopeId,
-	transportAttempts,
-	redactionValuesFromServer,
-	timeoutMsForServer,
-	elapsedMsSince,
-	safeFailureFromUnknown,
-	assertUpstreamResponseSize,
-	isCallerAbortError,
-	withTimeout,
-	createRuntimeAbortSignal,
-	listAllTools,
-	closeClientAfterFailure,
-	closeClientForTeardown,
-	closeErrorContextFromCacheKey,
-	redactToolCatalog,
-	isMcpToolErrorResult,
-	providerErrorMessageFromMcpToolError,
 	type UpstreamMcpRuntimeOptions,
 	type UpstreamMcpClientRuntime,
-	type UpstreamMcpClientLike,
-	type NormalizedUpstreamMcpServer,
 	type CachedClient,
 	type PendingClient,
+	type UpstreamMcpClientLike,
+	createSdkClient,
+	defaultMaxResponseBytes,
+	redactionValuesFromServer,
+	rootAgentScopeId,
+	closeClientAfterFailure,
 	type UpstreamMcpCloseErrorContext,
+	closeClientForTeardown,
+	transportAttempts,
+	createRuntimeAbortSignal,
+	withTimeout,
+	timeoutMsForServer,
+	safeFailureFromUnknown,
+	elapsedMsSince,
+	cacheKey,
 	type UpstreamToolCall,
+	defaultConnectionTimeoutMs,
+	assertUpstreamResponseSize,
+	isMcpToolErrorResult,
+	providerErrorMessageFromMcpToolError,
+	isCallerAbortError,
+	closeErrorContextFromCacheKey,
 	type ListToolsCall,
+	redactToolCatalog,
+	listAllTools,
 } from '#connectors/upstream-mcp-protocol';
 import {
 	redactCredentialText,
-	redactThrownError,
 	redactUpstreamResponse,
+	redactThrownError,
 } from '#connectors/upstream-response-middleware';
-export type * from '#connectors/upstream-mcp-protocol';
+
 export function createUpstreamMcpClientRuntime(
 	options: UpstreamMcpRuntimeOptions,
 ): UpstreamMcpClientRuntime {

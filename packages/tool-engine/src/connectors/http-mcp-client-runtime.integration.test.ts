@@ -3,16 +3,16 @@ import { createServer as createHttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import {
-	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
+	fakeUpstreamNamespace,
 } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, afterEach, vi, it, expect } from 'vitest';
 
-import type { UpstreamMcpRuntimeOptions } from '#connectors/upstream-mcp-client-runtime';
 import { createUpstreamMcpClientRuntime as createRuntime } from '#connectors/upstream-mcp-client-runtime';
+import type { UpstreamMcpRuntimeOptions } from '#connectors/upstream-mcp-protocol';
 
 function portFromServerAddress(address: AddressInfo | string | null): number {
 	if (typeof address === 'object' && address !== null) {
@@ -20,6 +20,7 @@ function portFromServerAddress(address: AddressInfo | string | null): number {
 	}
 	throw new Error('test HTTP server did not expose a TCP port');
 }
+
 describe('upstream MCP HTTP transport', () => {
 	afterEach(() => {
 		vi.unstubAllEnvs();
@@ -205,6 +206,7 @@ describe('upstream MCP HTTP transport', () => {
 		},
 	);
 });
+
 function createUpstreamMcpClientRuntime(
 	options: Omit<UpstreamMcpRuntimeOptions, 'createUpstreamMcpTransport'> & {
 		readonly createTransport?: UpstreamMcpRuntimeOptions['createUpstreamMcpTransport'];

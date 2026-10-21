@@ -1,7 +1,7 @@
 import type {
-	NormalizedUpstreamMcpServer,
 	UpstreamMcpTransportKind,
-} from '#connectors/upstream-mcp-client-runtime';
+	NormalizedUpstreamMcpServer,
+} from '#connectors/models/upstream-mcp-server';
 
 export type UpstreamMcpFailurePhase = 'call_tool' | 'connect' | 'list_tools';
 

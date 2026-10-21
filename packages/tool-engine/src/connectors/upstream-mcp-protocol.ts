@@ -1,35 +1,20 @@
 import type { JsonObject } from '@agent-collaboration/tool-access/contracts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
-import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { type Progress, type Tool, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
 
+import type {
+	NormalizedUpstreamMcpServer,
+	UpstreamMcpTransportKind,
+} from '#connectors/models/upstream-mcp-server';
 import {
-	messageFromUnknownError,
 	type UpstreamMcpFailureClass,
+	messageFromUnknownError,
 } from '#connectors/upstream-mcp-errors';
 import {
 	redactThrownError,
 	redactUpstreamCatalogValue,
 } from '#connectors/upstream-response-middleware';
-
-export type UpstreamMcpTransportKind = 'auto-http' | 'sse' | 'streamable-http';
-
-interface BaseUpstreamMcpServer {
-	readonly connectionTimeoutMs?: number;
-	readonly namespace: string;
-	readonly transport: UpstreamMcpTransportKind;
-}
-
-export interface RemoteUpstreamMcpServer extends BaseUpstreamMcpServer {
-	readonly eventSourceInit?: SSEClientTransportOptions['eventSourceInit'];
-	readonly headers?: Readonly<Record<string, string>>;
-	readonly requestInit?: RequestInit;
-	readonly transport: 'auto-http' | 'sse' | 'streamable-http';
-	readonly url: string;
-}
-
-export type NormalizedUpstreamMcpServer = RemoteUpstreamMcpServer;
 
 export interface ListToolsCall {
 	readonly agentScopeId: string;
@@ -137,7 +122,9 @@ export interface PendingClient {
 }
 
 export const defaultConnectionTimeoutMs = 12_000;
+
 export const defaultMaxResponseBytes = 4 * 1_024 * 1_024;
+
 const maxProviderErrorMessageCharacters = 2_000;
 
 export function isObjectRecord(value: unknown): value is Record<string, unknown> {

@@ -58,7 +58,7 @@ const requiredPortalNamedExports = {
 		'createMcpGateway',
 		'encodeToolRef',
 		'decodeToolRef',
-		'createPortalSessionManager',
+		'createAgentCatalogViewCache',
 	],
 	'@agent-collaboration/tool-engine/connectors': [
 		'createUpstreamMcpClientRuntime',

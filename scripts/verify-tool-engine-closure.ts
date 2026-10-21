@@ -184,7 +184,7 @@ const requiredExports: Readonly<Record<string, readonly string[]>> = {
 		'createMcpGateway',
 		'encodeToolRef',
 		'decodeToolRef',
-		'createPortalSessionManager',
+		'createAgentCatalogViewCache',
 	],
 	'./connectors': ['createUpstreamMcpClientRuntime', 'redactUpstreamResponse', 'UpstreamMcpError'],
 	'./dispatch': [

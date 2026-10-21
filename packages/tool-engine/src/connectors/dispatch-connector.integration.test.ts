@@ -1,36 +1,37 @@
-async function unavailable(): Promise<{ kind: 'unavailable' }> {
-	return { kind: 'unavailable' };
-}
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 
 import { createPortalAgentIdentity } from '@agent-collaboration/tool-access/authorization';
 import {
-	assessAccessInput,
 	jsonValueSchema,
 	type AssessAccessInput,
+	assessAccessInput,
 } from '@agent-collaboration/tool-access/contracts';
-import {
-	type ToolBackend,
-	type BackendKind,
-	type DispatchInvocation,
-	type OperationRecord,
+import type {
+	DispatchInvocation,
+	ToolBackend,
+	BackendKind,
+	OperationRecord,
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
-	createMcpGateway,
-	createPortalSessionManager,
-	createInMemoryApprovalTokenUse,
 	signApprovalToken,
 	hashCallArguments,
+	createMcpGateway,
+	createAgentCatalogViewCache,
+	createInMemoryApprovalTokenUse,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { describe, expect, it } from 'vitest';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { describe, it, expect } from 'vitest';
 
 import { createUpstreamMcpClientRuntime } from '#connectors/upstream-mcp-client-runtime';
+
+async function unavailable(): Promise<{ kind: 'unavailable' }> {
+	return { kind: 'unavailable' };
+}
 
 // Real dispatcher + assessor + connector + SDK HTTP. The controlled provider is the external fixture.
 describe('dispatch to a selected credentialed HTTP MCP connector', () => {
@@ -190,7 +191,7 @@ describe('dispatch to a selected credentialed HTTP MCP connector', () => {
 					verifiedContextRef: 'verified-a',
 				},
 				hostBinding: { workspaceLayer: 'not-configured', config: revision },
-				sessions: createPortalSessionManager({
+				sessions: createAgentCatalogViewCache({
 					accessPolicy: {
 						defaultPolicy: 'allow-all',
 						enabledNamespacesByAgent: {},
