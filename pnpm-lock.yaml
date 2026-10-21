@@ -636,6 +636,9 @@ importers:
 
   packages/tool-portal:
     dependencies:
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk

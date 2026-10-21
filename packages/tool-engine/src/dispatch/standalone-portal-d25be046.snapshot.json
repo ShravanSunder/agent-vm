@@ -1,0 +1,297 @@
+{
+	"baseline": "d25be0465427008f1b55f44264ba72fe102e6b92",
+	"bundleSha256": "04325f8d54fb2ba4173cdc1e8b44d01eb873f341212adbb9683e0427f912f265",
+	"owningGeneration": "standalone-portal-admission:30f6a87142850eb84ca8fd6af3ad305455f9d9846d433273f0425cdc5b81a65c",
+	"operationIds": {
+		"read": "2dc52356-45b5-5f2f-a505-c169ce80ebb4",
+		"denied": "a016e6f8-658b-57d7-b185-54f1fe0d1a59",
+		"write": "a95177c6-7439-5a71-b1b7-14e0a06a6212",
+		"failed": "6129aae6-0d2b-5e55-a10d-6dffe8b0a098",
+		"uncertain": "2c35cb35-e187-5dcc-add1-e378eb89c527"
+	},
+	"requests": {
+		"list": {
+			"requests": [
+				{
+					"id": "list",
+					"limit": 20
+				}
+			]
+		},
+		"search": {
+			"requests": [
+				{
+					"id": "search",
+					"limit": 10,
+					"query": "search-suffix",
+					"schemaDetail": "summary"
+				}
+			]
+		},
+		"describe": {
+			"requests": [
+				{
+					"id": "describe",
+					"includeJsonSchema": true,
+					"includeRelated": true,
+					"includeTypescriptHelper": true,
+					"includeZod": false,
+					"refs": ["example:read"]
+				}
+			]
+		},
+		"call": {
+			"calls": [
+				{
+					"id": "read",
+					"namespace": "example",
+					"name": "read",
+					"arguments": {
+						"message": "fixed"
+					}
+				},
+				{
+					"id": "denied",
+					"namespace": "example",
+					"name": "denied",
+					"arguments": {
+						"message": "fixed"
+					}
+				},
+				{
+					"id": "write",
+					"namespace": "example",
+					"name": "write",
+					"arguments": {
+						"message": "fixed"
+					}
+				},
+				{
+					"id": "failed",
+					"namespace": "example",
+					"name": "failed",
+					"arguments": {
+						"message": "fixed"
+					}
+				},
+				{
+					"id": "uncertain",
+					"namespace": "example",
+					"name": "uncertain",
+					"arguments": {
+						"message": "fixed"
+					}
+				}
+			]
+		}
+	},
+	"results": {
+		"list": {
+			"auditCorrelationId": "audit-list",
+			"items": [
+				{
+					"id": "list",
+					"status": "ok",
+					"value": {
+						"namespaces": ["example"],
+						"nextCursor": "7",
+						"tools": [
+							{
+								"callDisposition": {
+									"kind": "without-approval"
+								},
+								"description": "🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁…",
+								"descriptionTruncated": true,
+								"input": {
+									"optional": [],
+									"propertyCount": 0,
+									"required": [],
+									"type": "object"
+								},
+								"namespace": "example",
+								"safety": {},
+								"name": "read",
+								"toolRef": "example:read"
+							}
+						],
+						"namespaceDiscovery": [
+							{
+								"summary": "Example tools.",
+								"namespace": "example"
+							}
+						]
+					}
+				}
+			],
+			"ok": true
+		},
+		"search": {
+			"items": [
+				{
+					"id": "search",
+					"status": "ok",
+					"value": {
+						"tools": [
+							{
+								"callDisposition": {
+									"kind": "without-approval"
+								},
+								"description": "🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁…",
+								"descriptionTruncated": true,
+								"input": {
+									"optional": [],
+									"propertyCount": 0,
+									"required": [],
+									"type": "object"
+								},
+								"namespace": "example",
+								"safety": {},
+								"name": "read",
+								"toolRef": "example:read"
+							}
+						],
+						"namespaceDiscovery": [
+							{
+								"summary": "Example tools.",
+								"namespace": "example"
+							}
+						]
+					}
+				}
+			],
+			"ok": true
+		},
+		"describe": {
+			"items": [
+				{
+					"id": "describe",
+					"status": "ok",
+					"value": {
+						"tools": [
+							{
+								"annotations": {},
+								"callDisposition": {
+									"kind": "without-approval"
+								},
+								"description": "🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁🦁 search-suffix",
+								"namespace": "example",
+								"related": [],
+								"name": "read",
+								"toolRef": "example:read",
+								"typescriptHelper": "export function read(): Promise<void>;"
+							}
+						],
+						"namespaceDiscovery": [
+							{
+								"summary": "Example tools.",
+								"namespace": "example"
+							}
+						]
+					}
+				}
+			],
+			"ok": true
+		},
+		"call": {
+			"items": [
+				{
+					"id": "read",
+					"operationId": "2dc52356-45b5-5f2f-a505-c169ce80ebb4",
+					"owningGeneration": "backend-generation",
+					"status": "ok",
+					"outcome": {
+						"kind": "completed",
+						"completion": "succeeded",
+						"certainty": "proven",
+						"retryClass": "forbidden"
+					},
+					"value": {
+						"input": {
+							"message": "fixed"
+						},
+						"tool": "read"
+					}
+				},
+				{
+					"error": {
+						"code": "capability_denied",
+						"message": "Capability is not allowed by the active Tool Portal policy.",
+						"safeDiagnostic": {
+							"code": "capability_denied",
+							"level": "error",
+							"safeMessage": "Capability is not allowed."
+						}
+					},
+					"id": "denied",
+					"operationId": "a016e6f8-658b-57d7-b185-54f1fe0d1a59",
+					"outcome": {
+						"certainty": "proven",
+						"kind": "not-dispatched",
+						"retryClass": "safe-before-dispatch"
+					},
+					"owningGeneration": "standalone-portal-admission:30f6a87142850eb84ca8fd6af3ad305455f9d9846d433273f0425cdc5b81a65c",
+					"status": "error"
+				},
+				{
+					"approvalChallenge": {
+						"challengeId": "1887db43-77bc-438b-9cc8-fad7e4a2606d",
+						"expiresAt": "2026-10-21T00:05:00.000Z"
+					},
+					"error": {
+						"code": "approval_required",
+						"message": "Capability execution requires operator approval.",
+						"safeDiagnostic": {
+							"code": "approval_required",
+							"level": "warn",
+							"safeMessage": "Capability execution requires operator approval."
+						}
+					},
+					"id": "write",
+					"operationId": "a95177c6-7439-5a71-b1b7-14e0a06a6212",
+					"outcome": {
+						"certainty": "proven",
+						"kind": "not-dispatched",
+						"retryClass": "safe-before-dispatch"
+					},
+					"owningGeneration": "standalone-portal-admission:30f6a87142850eb84ca8fd6af3ad305455f9d9846d433273f0425cdc5b81a65c",
+					"status": "approval_required"
+				},
+				{
+					"id": "failed",
+					"operationId": "6129aae6-0d2b-5e55-a10d-6dffe8b0a098",
+					"owningGeneration": "backend-generation",
+					"status": "error",
+					"error": {
+						"code": "execution_failed",
+						"message": "Fixture tool refused."
+					},
+					"outcome": {
+						"kind": "completed",
+						"completion": "failed",
+						"certainty": "proven",
+						"retryClass": "forbidden"
+					},
+					"value": {
+						"refused": true
+					}
+				},
+				{
+					"id": "uncertain",
+					"operationId": "2c35cb35-e187-5dcc-add1-e378eb89c527",
+					"owningGeneration": "backend-generation",
+					"status": "error",
+					"error": {
+						"code": "execution_failed",
+						"message": "Fixture transport lost."
+					},
+					"outcome": {
+						"kind": "ambiguous",
+						"certainty": "side-effects-and-termination-unknown",
+						"retryClass": "forbidden"
+					}
+				}
+			],
+			"ok": false
+		}
+	}
+}
