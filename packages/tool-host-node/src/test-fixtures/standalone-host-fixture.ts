@@ -9,6 +9,7 @@ import {
 	assessAccessInput,
 	hashCallArguments,
 	type PortalArtifactReadRequest,
+	type JsonObject,
 	type PortalCallRequest,
 } from '@agent-collaboration/tool-access/contracts';
 import { createUpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/connectors';
@@ -69,6 +70,7 @@ export async function createStandaloneHostFixture(
 	namespace = 'example',
 	semanticRevisions: StandaloneSemanticRevisions = standaloneSemanticRevisions,
 	getCredentialSet: () => NodeHostBearerCredentialSet = () => standaloneCredentials,
+	projectAccessArguments: (argumentsValue: JsonObject) => JsonObject = (value) => value,
 ): Promise<{
 	readonly service: ReturnType<typeof createNodeStandaloneToolPortalService>;
 	readonly artifactReader: StandaloneToolPortalArtifactReader;
@@ -218,7 +220,7 @@ export async function createStandaloneHostFixture(
 				assessAccessInput.parse({
 					capability: { namespace: call.namespace, tool: call.name },
 					call: {
-						arguments: call.arguments,
+						arguments: projectAccessArguments(call.arguments),
 						account: null,
 						digest: Buffer.from(
 							(await hashCallArguments(call.arguments)).replaceAll('-', '+').replaceAll('_', '/'),

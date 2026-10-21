@@ -74,8 +74,8 @@ export function createNodeStandaloneToolPortalService(props: {
 								invocation.operationKey.item !== plan.operationId ||
 								invocation.capability.namespace !== plan.call.namespace ||
 								invocation.capability.tool !== plan.call.name ||
-								JSON.stringify(jsonValueSchema.parse(invocation.arguments)) !==
-									JSON.stringify(plan.call.arguments)
+								canonicalDispatchJson(jsonValueSchema.parse(invocation.arguments)) !==
+									canonicalDispatchJson(plan.call.arguments)
 							)
 								return false;
 							const access = await current.accessForCall(plan.call);
