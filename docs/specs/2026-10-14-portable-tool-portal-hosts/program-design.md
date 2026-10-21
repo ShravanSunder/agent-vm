@@ -179,7 +179,7 @@ A mode is a per-tool setting, not the state of a call, and a timed-out approval 
 | --- | --- | --- | --- |
 | a team tool (the organization's credentials) | the agent is in the organization (new, on the Worker); its profile includes the tool and sets its mode (built today) | the agent's configured approver | built today, except the organization check |
 | a team account | a manager gave the workspace's agents that account | the configured approver | decided (fleet F-27) |
-| a person's own account | the owner consented to this agent; read and write modes, within hard limits | the account's owner (owner decision, 2026-10-20). Today it's the configured approver, through Hermes or Discord | consent and modes built today; owner as approver decided |
+| a person's own account | the owner consented to this agent; read and write modes, within hard limits | the account's owner (owner decision, 2026-10-20), unless they've set the action to auto (the judge, asking them when unsure), approved, or approved until a time, which they can change easily. Today it's the configured approver, through Hermes or Discord | consent and modes built today; owner as approver decided |
 | someone else's account, for the requester | not allowed: "on behalf of" is a label (fleet F-35) | | decided |
 | several resources in one call | each resource's own yes | each resource's approver | proposed only |
 | changing a tool's mode or a profile | the configured policy manager for that agent (fleet F-23); a chat proposal with Accept or Deny | that manager | decided (fleet F-23, F-41, F-43); detail proposed |
