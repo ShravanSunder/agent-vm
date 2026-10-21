@@ -148,7 +148,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - make an allowlist batch fail; neither the change nor its record may land.
 
 **J. Agent sign-in and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
-- **Register:** through `T5`'s agent-management handler, add a test agent to organization O1. Then read the E9 row straight from D1: `grant_types` is exactly `["client_credentials"]`, `client_credentials_scopes` is exactly `["tool-portal:agent"]`, metadata is `{ kind: "agent", organizationId: O1 }`, and the client id is absent from the deployed `cachedTrustedClients`.
+- **Register:** through `T5`'s agent-management handler, add a test agent to organization O1. Then read the E9 row straight from D1: `grant_types` is exactly `["client_credentials"]`, `client_credentials_scopes` is exactly `["tool-portal:agent"]`, metadata is `{ kind: "agent", organizationId: O1 }`, its only `oauthClientResource` link is Tool Portal's Worker, and the client id is absent from the deployed `cachedTrustedClients`. A token request for another resource is refused `invalid_target`.
 - **Forbidden grant:** start an authorization-code request with the agent's client id, as the stand-in client would. **Expect:** refused, with no code issued.
 - **Use:** get a `client_credentials` token; its `organization_id` reads O1. Call one tool through `T5`. **Expect:** the call runs, against O1's tools. Then:
   - present the same token for another audience: `wrong-audience`;
@@ -159,11 +159,12 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - request a new token: `invalid_client`;
   - read the handler's status: "removal complete", the object's agent row, the disabled E9 row, and one audit record naming the acting Person.
 - **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove the agent. **Expect:** status "pending"; a call with any token is refused `removed-agent`; a new token request still succeeds, which is the named gap. Retry. **Expect:** status "complete", then a new token request is refused `invalid_client`.
-- **Held races** (on `T3`, with the hold seam from E):
-  1. a token request held after the credential check while the disable commits, then released. **Expect:** `invalid_client`, and no usable token.
+- **Held races and a conflicting claim** (on `T3`, with the hold seam from E):
+  1. a token request held **after Better Auth has signed the token** (past the credential check and `customAccessTokenClaims`), immediately before the handler's final D1 check; the disable commits while it is held, then it is released. **Expect:** `invalid_client`, and no token in the response.
   2. a token issued before removal, used after step 1 and before step 2. **Expect:** `removed-agent`.
+  3. a resource custom claim on `T3` that sets `organization_id` to O2, then a token request by O1's agent. **Expect:** `invalid_client`; no token routed to O2 is released.
 
-**Read:** each response, the E9 and audit rows, the object's agent row, and the handler's status. A client registered with authorization code as well fails the readback and the forbidden-grant attempt. A Worker that caches the agent list fails the warm call. A client listed in the trusted cache fails the warm token request. A handler that reports "complete" after one write fails the between-writes case.
+**Read:** each response, the E9 and audit rows, the object's agent row, and the handler's status. A client registered with authorization code as well fails the readback and the forbidden-grant attempt. A Worker that caches the agent list fails the warm call. A client listed in the trusted cache fails the warm token request. A build with only the early checks fails case 1, and a final check that skips the organization comparison fails case 3. A handler that reports "complete" after one write fails the between-writes case.
 
 ## Rows
 
@@ -333,14 +334,17 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - `T5` accepts the agent's token for its own audience and refuses it for another; the person verifier refuses it as `not-a-person`; the agent check refuses a person's token as `not-an-agent`;
   - after removal, on the same warm instances, the old token's call is refused `removed-agent` and a new token request gets `invalid_client`;
   - between the writes, calls are refused and status is pending; after retry, status is complete and token requests are refused;
-  - both held races end refused.
+  - all three held and conflicting-claim cases end refused.
 
   Wrong builds that fail it:
   - a client registered with authorization code as well as client credentials (readback, forbidden grant);
   - a verifier that accepts a token without checking `sid` (G, the person-token check);
   - a Worker that caches the agent list (warm call);
   - an agent client in the trusted-client cache (warm token request);
-  - a handler that reports complete after one write (between writes).
+  - a handler that reports complete after one write (between writes);
+  - a final check deleted, leaving only the early checks (held case 1);
+  - a final check that skips the organization comparison (held case 3);
+  - an agent client without its resource link (readback, and its own token request fails `invalid_target`).
 - **Reuses:** none yet.
 - **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring, and D1's hosted replication timing (only `T3` holds steps in order).
 
