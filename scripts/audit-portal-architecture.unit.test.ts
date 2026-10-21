@@ -351,7 +351,7 @@ describe('portal architecture audit', () => {
 		]);
 	});
 
-	it('keeps discovery merges in the engine and managed call routing in its adapter', () => {
+	it('keeps the new engine merger and the F-60 original independent until S4', () => {
 		// Arrange / Act
 		const violations = collectPortalArchitectureViolations({
 			files: [
@@ -366,7 +366,8 @@ describe('portal architecture audit', () => {
 				},
 				{
 					filePath: 'packages/tool-portal/src/tool-portal-result-router.ts',
-					sourceText: 'export async function routePortalCall(): Promise<unknown> { return {}; }\n',
+					sourceText:
+						'export async function routePortalCall(): Promise<unknown> { return {}; }\nexport async function mergeToolPortalList(): Promise<unknown> { return {}; }\n',
 				},
 				{
 					filePath: 'packages/tool-engine/src/dispatch/portal-discovery-merger.ts',

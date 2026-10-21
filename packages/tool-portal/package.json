@@ -52,7 +52,6 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-portal/src"
 	},
 	"dependencies": {
-		"@agent-collaboration/tool-engine": "workspace:*",
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/controller-execution-contracts": "workspace:*",
