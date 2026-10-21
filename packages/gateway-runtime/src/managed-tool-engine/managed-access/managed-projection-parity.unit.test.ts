@@ -10,16 +10,16 @@ import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
 	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
-import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/access-profile-projection.js';
-import { compositionToolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/composition-profile-test-fixture.js';
+import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
+import { compositionToolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/composition-profile-test-fixture.js';
 import {
 	toolPortalConfig,
 	semanticSnapshot,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-profile-test-fixture.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import {
 	createPreparedCliConfig,
 	createPreparedGoogleConfig,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/prepared-policy-test-fixture.js';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/prepared-policy-test-fixture.js';
 import { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison';
 import { describe, expect, it } from 'vitest';
 

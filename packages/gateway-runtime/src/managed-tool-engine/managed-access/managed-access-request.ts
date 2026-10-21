@@ -9,11 +9,9 @@ import type { DispatchRequest } from '@agent-collaboration/tool-engine/dispatch'
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
-import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/access-profile-projection.js';
-import {
-	resolveManagedEngineInvocation,
-	type ManagedEngineInvocationContext,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-invocation-authority.js';
+import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
+import { resolveManagedEngineInvocation } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-invocation-authority.js';
+import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
 import { hashCallArguments } from '@agent-vm/mcp-portal/portal-auth/hmac-token';
 export function createManagedAccessRequest(props: {
 	readonly authority: string;
