@@ -10,8 +10,9 @@ revision does not create a new key. Resource-owned context and receipt reference
 are selectors, never permissions. The resource must validate them before effects.
 
 Every admitted call enters `OperationPort.createOrRead`. Only calls needing no
-approval can use the managed authority's explicit `untracked` result. Such calls
-carry no reuse or recovery guarantee. Public host stores must retain their records.
+approval may use any host authority's explicit `untracked` (not recorded) result.
+Such calls carry no reuse or recovery guarantee. Calls requiring approval must
+have an operation record and a matching, current receipt before dispatch.
 An unavailable store, invalid facts or an approval mismatch never invokes a backend.
 
 The managed adapter currently lives in gateway-runtime's new `managed-tool-engine`
