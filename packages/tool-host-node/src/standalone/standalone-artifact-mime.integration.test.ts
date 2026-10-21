@@ -71,20 +71,24 @@ it('preserves the pre-existing old/new SDK rejection of schema-valid artifact by
 		const oldError: unknown = await oldClient.artifacts
 			.read(request)
 			.catch((error: unknown) => error);
-		const error: unknown = await client.artifacts.read(request).catch((error: unknown) => error);
+		const currentError: unknown = await client.artifacts
+			.read(request)
+			.catch((error: unknown) => error);
 		expect(oldError).toBeInstanceOf(TypeError);
-		expect(error).toBeInstanceOf(TypeError);
-		if (!(oldError instanceof Error) || !(error instanceof Error))
+		expect(currentError).toBeInstanceOf(TypeError);
+		if (!(oldError instanceof Error) || !(currentError instanceof Error))
 			throw new Error('Expected matching SDK errors.');
-		expect(error.message).toBe(oldError.message);
-		expect(error.message).toBe('Tool Portal MCP artifact read returned an invalid resource.');
+		expect(currentError.message).toBe(oldError.message);
+		expect(currentError.message).toBe(
+			'Tool Portal MCP artifact read returned an invalid resource.',
+		);
 		expect(reads).toBe(4);
 		expect(provider.effects).toHaveLength(0);
 		process.stdout.write(
 			JSON.stringify({
 				case: 'optional artifact MIME parity',
 				old: oldError.message,
-				current: error.message,
+				current: currentError.message,
 				reads,
 				effects: provider.effects.length,
 			}) + '\n',
