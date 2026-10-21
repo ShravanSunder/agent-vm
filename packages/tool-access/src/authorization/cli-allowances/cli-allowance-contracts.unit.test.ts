@@ -7,7 +7,7 @@ import {
 	QuickCliAllowanceInputSchema,
 	evaluateCliAllowanceInvocation,
 	resolveCliAllowanceTimeout,
-} from './index.js';
+} from '#tool-access/authorization/cli-allowances/index';
 
 const cliAllowance = CliAllowanceSchema.parse({
 	calls: {

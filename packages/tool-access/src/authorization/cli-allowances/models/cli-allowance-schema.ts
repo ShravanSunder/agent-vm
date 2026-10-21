@@ -27,7 +27,7 @@ import {
 	type ConfiguredCliPolicy,
 	type ConfiguredCliStdinPolicy,
 	type ConfiguredCliTimeoutPolicy,
-} from '../../../contracts/cli-allowance-policy.js';
+} from '#tool-access/contracts/cli-allowance-policy';
 
 export const CliArgvTokenSchema = configuredCliArgvTokenSchema;
 export const CliPatternRuleSchema = configuredCliPatternRuleSchema;

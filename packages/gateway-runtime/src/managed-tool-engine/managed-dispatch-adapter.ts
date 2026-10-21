@@ -12,14 +12,12 @@ import {
 	createCapabilityDispatcher,
 	type ApprovalPort,
 	type ApprovalReceipt,
-	type BackendKind,
 	type DispatchInvocation,
 	type DispatchRequest,
 	type OperationPort,
 	type OperationRecord,
 	type ResourceResult,
-	type ToolBackend,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	PortalCallResultSchema,
 	type PortalCallRequest,
@@ -41,18 +39,19 @@ import {
 	type GatewayRuntimeToolPortalDispatchAuthority,
 } from '@agent-vm/gateway-control-contracts';
 import type { GatewayRuntimeApprovalDecisionOperations } from '@agent-vm/gateway-runtime';
-import { createManagedAccessRequest } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access-request.js';
+import { createManagedAccessRequest } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-access-request.js';
+import { resolveManagedGoogleBinding } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-google-binding.js';
+import {
+	assertManagedNeutralBinding,
+	resolveManagedEngineInvocation,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-invocation-authority.js';
+import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
 import {
 	createManagedEngineBackends,
 	type ManagedBackendPorts,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-backend-projection.js';
-import { createManagedPortalCallProjection } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-projection.js';
-import { resolveManagedGoogleBinding } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-google-binding.js';
-import {
-	assertManagedNeutralBinding,
-	resolveManagedEngineInvocation,
-	type ManagedEngineInvocationContext,
-} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-invocation-authority.js';
+import { createManagedPortalCallProjection } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-projection.js';
+import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
 import {
 	managedGoogleReadyPreflightSchema,
 	type ManagedGoogleReadyPreflight,
@@ -76,25 +75,6 @@ interface ManagedDispatchEntry {
 	backendItem: PortalCallResult['items'][number] | null;
 }
 
-export interface ManagedToolEngineAdapter {
-	readonly backends: ReadonlyMap<BackendKind, ToolBackend<BackendKind>>;
-	readonly operations: OperationPort;
-	readonly approvals: ApprovalPort;
-	readonly assessAccess: ReturnType<typeof createAccessAssessor>;
-	readonly dispatcher: ReturnType<typeof createCapabilityDispatcher>;
-	readonly register: (props: {
-		readonly context: ManagedEngineInvocationContext;
-		readonly call: PortalCallRequest['calls'][number];
-		readonly accounts?: readonly AccountFact[];
-		readonly managedGoogle?: ManagedGoogleReadyPreflight;
-	}) => string;
-	readonly release: (reference: string) => void;
-	readonly request: (reference: string) => DispatchRequest;
-	readonly call: (
-		request: PortalCallRequest,
-		context: ManagedEngineInvocationContext,
-	) => Promise<PortalCallResult>;
-}
 function assertNever(value: never): never {
 	throw new Error(`Unknown managed dispatch variant: ${String(value)}`);
 }

@@ -293,7 +293,7 @@ const defaultSystemConfig = (
 			adminAccess: { mode: 'none' },
 			gateway: {
 				type: gatewayType,
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: defaultGatewayIngressPort,
 				config: pathProfile.gatewayConfig(zoneId, gatewayType),

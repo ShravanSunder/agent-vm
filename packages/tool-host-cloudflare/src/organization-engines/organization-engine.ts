@@ -8,27 +8,27 @@ import {
 	jsonValueSchema,
 	type JsonObject,
 } from '@agent-collaboration/tool-access/contracts';
-import {
-	createUpstreamMcpClientRuntime,
-	type UpstreamMcpClientRuntime,
-	type UpstreamMcpRuntimeOptions,
-} from '@agent-collaboration/tool-engine/connectors';
 import type {
 	ApprovalPort,
 	BackendKind,
 	ToolBackend,
 	DispatchInvocation,
 	ResourceResult,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createMcpGateway,
 	createOrganizationToolCatalog,
 	proxyUpstreamFailureFromError,
-	createPortalSessionManager,
+	createAgentCatalogViewCache,
 	portalToolRecordSchema,
 	type ConsumeApprovalTokenId,
 	type McpGateway,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import {
+	createUpstreamMcpClientRuntime,
+	type UpstreamMcpClientRuntime,
+	type UpstreamMcpRuntimeOptions,
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { z } from 'zod';
 
 import {
@@ -135,7 +135,7 @@ export async function createOrganizationEngine(props: {
 		now: Date.now,
 	});
 	let snapshot = await organizationCatalog.read();
-	const sessions = createPortalSessionManager({
+	const sessions = createAgentCatalogViewCache({
 		runtime: catalogRuntime,
 		catalogTtlMs: 60_000,
 		organizationCatalog: { read: async () => snapshot },

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { JsonObject, JsonValue } from '@agent-collaboration/tool-access/contracts';
 import { buildZodValidatorFromJsonSchema } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { createCatalogToolPresentationName } from '@agent-collaboration/tool-engine/mcp-gateway';
 import type {
 	GeneratedToolRuntimeDiagnostic,
 	GeneratedToolRuntimeValidation,
@@ -9,7 +10,7 @@ import type {
 } from '@agent-vm/agent-portal-sdk/generated-tools';
 import { compile, type JSONSchema } from 'json-schema-to-typescript';
 
-import { createCatalogToolPresentationName } from '#node-host/catalog-typescript/catalog-tool-presentation-name';
+import { validateDeclarationOnlyTypeFragment } from '#node-host/catalog-typescript/declaration-fragment-validation';
 import type {
 	CompileCatalogTypescriptModulesInput,
 	CompiledCatalogTypescriptBundle,
@@ -17,8 +18,7 @@ import type {
 	CompiledCatalogTypescriptNamespace,
 	CompiledCatalogTypescriptTool,
 	NormalizedCatalogToolDefinition,
-} from '#node-host/catalog-typescript/catalog-typescript-types';
-import { validateDeclarationOnlyTypeFragment } from '#node-host/catalog-typescript/declaration-fragment-validation';
+} from '#node-host/catalog-typescript/models/catalog-typescript-types';
 import { createSafeSchemaProjection } from '#node-host/catalog-typescript/safe-schema-projection';
 
 export const CatalogTypescriptGeneratorVersion = '2';
@@ -157,28 +157,30 @@ function prepareToolNames(
 	});
 }
 
-function createFingerprintInput(
+async function createFingerprintInput(
 	normalizedTools: readonly CanonicalCatalogToolDefinition[],
-): string {
+): Promise<string> {
 	const toolsByNamespace = Map.groupBy(normalizedTools, (tool) => tool.namespace);
-	const mappedTools = [...toolsByNamespace]
-		.toSorted(([left], [right]) => compareCanonicalText(left, right))
-		.flatMap(([namespace, namespaceTools]) => {
-			const modulePath = namespaceModulePath(namespace);
-			return prepareToolNames(namespaceTools).map((preparedTool) => ({
-				description: preparedTool.tool.description,
-				exportedFunctionName: preparedTool.exportedFunctionName,
-				exportedInputTypeName: preparedTool.exportedInputTypeName,
-				inputSchema: preparedTool.tool.inputSchema,
-				modulePath,
-				name: preparedTool.tool.name,
-				namespace,
-				registeredName: createCatalogToolPresentationName(
-					preparedTool.tool.namespace,
-					preparedTool.tool.name,
-				),
-			}));
-		});
+	const mappedTools = await Promise.all(
+		[...toolsByNamespace]
+			.toSorted(([left], [right]) => compareCanonicalText(left, right))
+			.flatMap(([namespace, namespaceTools]) => {
+				const modulePath = namespaceModulePath(namespace);
+				return prepareToolNames(namespaceTools).map(async (preparedTool) => ({
+					description: preparedTool.tool.description,
+					exportedFunctionName: preparedTool.exportedFunctionName,
+					exportedInputTypeName: preparedTool.exportedInputTypeName,
+					inputSchema: preparedTool.tool.inputSchema,
+					modulePath,
+					name: preparedTool.tool.name,
+					namespace,
+					registeredName: await createCatalogToolPresentationName(
+						preparedTool.tool.namespace,
+						preparedTool.tool.name,
+					),
+				}));
+			}),
+	);
 	return JSON.stringify({
 		generatorVersion: CatalogTypescriptGeneratorVersion,
 		sdkContractVersion: GeneratedToolsSdkContractVersion,
@@ -187,10 +189,10 @@ function createFingerprintInput(
 }
 
 /** Computes the definition identity without running schema compilation. */
-export function fingerprintCatalogTypescriptInput(
+export async function fingerprintCatalogTypescriptInput(
 	input: CompileCatalogTypescriptModulesInput,
-): string {
-	return sha256(createFingerprintInput(normalizeTools(input.tools)));
+): Promise<string> {
+	return sha256(await createFingerprintInput(normalizeTools(input.tools)));
 }
 
 function classifyRuntimeValidation(inputSchema: JsonObject): {
@@ -410,7 +412,7 @@ export async function compileCatalogTypescriptModules(
 	const namespaces = compiledNamespaces.map((entry) => entry.namespace);
 	const compiledTools = namespaces.flatMap((namespace) => namespace.tools);
 
-	const definitionFingerprint = sha256(createFingerprintInput(normalizedTools));
+	const definitionFingerprint = sha256(await createFingerprintInput(normalizedTools));
 	return {
 		definitionFingerprint,
 		files,
@@ -421,14 +423,16 @@ export async function compileCatalogTypescriptModules(
 			sdkContractVersion: GeneratedToolsSdkContractVersion,
 			tools: compiledTools,
 		},
-		nativeTools: normalizedTools
-			.map((tool) => ({
-				description: tool.description,
-				inputSchema: tool.inputSchema,
-				namespace: tool.namespace,
-				registeredName: createCatalogToolPresentationName(tool.namespace, tool.name),
-				toolName: tool.name,
-			}))
-			.toSorted((left, right) => compareCanonicalText(left.registeredName, right.registeredName)),
+		nativeTools: (
+			await Promise.all(
+				normalizedTools.map(async (tool) => ({
+					description: tool.description,
+					inputSchema: tool.inputSchema,
+					namespace: tool.namespace,
+					registeredName: await createCatalogToolPresentationName(tool.namespace, tool.name),
+					toolName: tool.name,
+				})),
+			)
+		).toSorted((left, right) => compareCanonicalText(left.registeredName, right.registeredName)),
 	};
 }

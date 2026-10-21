@@ -1,2 +1,2 @@
-export * from './cli-allowance-validator.js';
-export * from './models/cli-allowance-schema.js';
+export * from '#tool-access/authorization/cli-allowances/cli-allowance-validator';
+export * from '#tool-access/authorization/cli-allowances/models/cli-allowance-schema';

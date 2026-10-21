@@ -1,6 +1,6 @@
 # Tool engine
 
-`@agent-collaboration/tool-engine/dispatch` admits capabilities through the shared
+`@agent-collaboration/tool-engine/capability-dispatch` admits capabilities through the shared
 access assessor, an operation authority, an approval authority and an injected
 resource backend. It has no Node or managed-VM imports.
 
@@ -71,7 +71,7 @@ policy when this optional detail is present.
 lifetime. Incomplete discovery keeps healthy providers and retries failed ones on
 the next read. Complete catalogs refresh after the configured lifetime; failed
 refreshes retain the previous complete snapshot with diagnostics. Passing this
-source to `createPortalSessionManager` builds caller views from the organization
+source to `createAgentCatalogViewCache` builds caller views from the organization
 snapshot without owning another discovery cache. Hosts perform the first read
 before accepting clients and keep protocol-specific refusals at their ingress.
 

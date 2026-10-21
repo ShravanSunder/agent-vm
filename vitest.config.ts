@@ -39,8 +39,8 @@ export default defineConfig({
 			'@agent-collaboration/tool-engine/mcp-gateway': repoPath(
 				'packages/tool-engine/src/mcp-gateway/index.ts',
 			),
-			'@agent-collaboration/tool-engine/connectors': repoPath(
-				'packages/tool-engine/src/connectors/index.ts',
+			'@agent-collaboration/tool-engine/upstream-mcp-connectors': repoPath(
+				'packages/tool-engine/src/upstream-mcp-connectors/index.ts',
 			),
 			'@agent-vm/gateway-runtime/managed-tool-engine': repoPath(
 				'packages/gateway-runtime/src/managed-tool-engine',
@@ -50,8 +50,8 @@ export default defineConfig({
 				'packages/tool-portal/src/tool-portal-service-common.ts',
 			),
 			'@agent-vm/controller-test-support': repoPath('packages/agent-vm/src/controller'),
-			'@agent-collaboration/tool-engine/dispatch': repoPath(
-				'packages/tool-engine/src/dispatch/index.ts',
+			'@agent-collaboration/tool-engine/capability-dispatch': repoPath(
+				'packages/tool-engine/src/capability-dispatch/index.ts',
 			),
 			'@agent-collaboration/tool-access/contracts': repoPath(
 				'packages/tool-access/src/contracts/index.ts',

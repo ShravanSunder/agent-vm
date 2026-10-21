@@ -1,4 +1,7 @@
-import type { DispatchInvocation, ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
+import type {
+	DispatchInvocation,
+	ResourceResult,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { PortalBatchResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { describe, expect, it } from 'vitest';
 

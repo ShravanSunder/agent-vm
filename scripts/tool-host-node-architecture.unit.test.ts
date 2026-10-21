@@ -14,7 +14,7 @@ describe('Node host restricted dependency guard', () => {
 		'json-schema-to-typescript',
 		'@agent-vm/oauth-broker-contracts',
 		'@agent-vm/agent-portal-sdk/generated-tools',
-		'@agent-collaboration/tool-engine/dispatch',
+		'@agent-collaboration/tool-engine/capability-dispatch',
 	])('allows its runtime or explicit contract dependency %s', (specifier) => {
 		expect(isForbiddenToolHostNodeImport(specifier)).toBe(false);
 	});
@@ -55,7 +55,7 @@ describe('Node inbound protocol session policy', () => {
 	])('rejects surviving protocol session state: %s', (sourceText) => {
 		expect(
 			collectToolHostNodeViolations({
-				filePath: 'packages/tool-host-node/src/ingress/node-http-server.ts',
+				filePath: 'packages/tool-host-node/src/mcp-proxy-server/node-http-server.ts',
 				sourceText,
 			}),
 		).not.toEqual([]);

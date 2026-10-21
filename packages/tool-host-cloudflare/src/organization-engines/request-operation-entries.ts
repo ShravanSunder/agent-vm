@@ -1,4 +1,7 @@
-import type { OperationPort, OperationRecord } from '@agent-collaboration/tool-engine/dispatch';
+import type {
+	OperationPort,
+	OperationRecord,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 
 /** Protected calls keep their dispatcher receipt entries only for this request. The DO owns replay. */
 export function createRequestOperationEntries(): OperationPort {
