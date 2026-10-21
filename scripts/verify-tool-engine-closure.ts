@@ -186,7 +186,11 @@ const requiredExports: Readonly<Record<string, readonly string[]>> = {
 		'decodeToolRef',
 		'createAgentCatalogViewCache',
 	],
-	'./connectors': ['createUpstreamMcpClientRuntime', 'redactUpstreamResponse', 'UpstreamMcpError'],
+	'./upstream-mcp-connectors': [
+		'createUpstreamMcpClientRuntime',
+		'redactUpstreamResponse',
+		'UpstreamMcpError',
+	],
 	'./capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
@@ -218,7 +222,7 @@ for(const subpath of ${JSON.stringify(subpaths)}) {
  } else if(subpath==='./mcp-gateway') {
  if(module.encodeToolRef({namespace:'雪',toolName:'café:read'})!=='mcp:6Zuq:Y2Fmw6k6cmVhZA')throw new Error('packed reference bytes changed');
  const identity=module.decodeToolRef('mcp:YWxwaGE:cmVhZA');if(identity.namespace!=='alpha'||identity.toolName!=='read')throw new Error('packed reference decode changed');
- } else if(subpath==='./connectors') {
+ } else if(subpath==='./upstream-mcp-connectors') {
  const redacted=module.redactUpstreamResponse({nested:{token:'secret'}});if(redacted.nested.token!=='[REDACTED]')throw new Error('packed redaction failed');
  const runtime=module.createUpstreamMcpClientRuntime({servers:[],createUpstreamMcpTransport:()=>{throw new Error('no configured transport');}});
  await runtime.closeAgentScope('packed');

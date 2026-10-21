@@ -6,11 +6,11 @@ import {
 	createDeferred,
 	fakeTransport,
 	createUpstreamMcpClientRuntime,
-} from '#connectors/test-fixtures/upstream-mcp-client-fixture';
+} from '#upstream-mcp-connectors/test-fixtures/upstream-mcp-client-fixture';
 import type {
 	UpstreamMcpClientLike,
 	UpstreamListToolsResult,
-} from '#connectors/upstream-mcp-protocol';
+} from '#upstream-mcp-connectors/upstream-mcp-protocol';
 
 describe('upstream MCP session lifecycle', () => {
 	afterEach(() => {

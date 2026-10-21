@@ -5,7 +5,7 @@ export default defineConfig({
 	entry: {
 		'capability-dispatch/index': 'src/capability-dispatch/index.ts',
 		'mcp-gateway/index': 'src/mcp-gateway/index.ts',
-		'connectors/index': 'src/connectors/index.ts',
+		'upstream-mcp-connectors/index': 'src/upstream-mcp-connectors/index.ts',
 	},
 	format: 'esm',
 	outExtensions: () => ({ dts: '.d.ts', js: '.js' }),

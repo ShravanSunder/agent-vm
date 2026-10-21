@@ -145,8 +145,8 @@
 			"@agent-collaboration/tool-engine/mcp-gateway": [
 				"./packages/tool-engine/src/mcp-gateway/index.ts"
 			],
-			"@agent-collaboration/tool-engine/connectors": [
-				"./packages/tool-engine/src/connectors/index.ts"
+			"@agent-collaboration/tool-engine/upstream-mcp-connectors": [
+				"./packages/tool-engine/src/upstream-mcp-connectors/index.ts"
 			]
 		}
 	}

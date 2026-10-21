@@ -6,11 +6,6 @@ import {
 } from '@agent-collaboration/tool-access/authorization';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
-import {
-	upstreamMcpFailureDetailsFromUnknown,
-	formatUpstreamMcpFailureMessage,
-	messageFromUnknownError,
-} from '#connectors/upstream-mcp-errors';
 import type {
 	PortalCatalogRefusal,
 	PortalDiscoveryFailure,
@@ -25,6 +20,11 @@ import {
 } from '#mcp-gateway/agent-catalog-views/models/catalog-types';
 import { createSearchIndex } from '#mcp-gateway/tool-search/search-index';
 import { buildToolGraph } from '#mcp-gateway/tool-search/tool-graph';
+import {
+	upstreamMcpFailureDetailsFromUnknown,
+	formatUpstreamMcpFailureMessage,
+	messageFromUnknownError,
+} from '#upstream-mcp-connectors/upstream-mcp-errors';
 
 export class PortalCatalogPreparationError extends Error {
 	readonly failedNamespaces: readonly string[];

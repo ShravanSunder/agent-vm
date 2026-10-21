@@ -11,8 +11,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { describe, afterEach, vi, it, expect } from 'vitest';
 
-import { createUpstreamMcpClientRuntime as createRuntime } from '#connectors/upstream-mcp-client-runtime';
-import type { UpstreamMcpRuntimeOptions } from '#connectors/upstream-mcp-protocol';
+import { createUpstreamMcpClientRuntime as createRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
+import type { UpstreamMcpRuntimeOptions } from '#upstream-mcp-connectors/upstream-mcp-protocol';
 
 function portFromServerAddress(address: AddressInfo | string | null): number {
 	if (typeof address === 'object' && address !== null) {

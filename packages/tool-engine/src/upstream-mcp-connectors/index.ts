@@ -1,4 +1,4 @@
-export { createUpstreamMcpClientRuntime } from '#connectors/upstream-mcp-client-runtime';
+export { createUpstreamMcpClientRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
 export {
 	type UpstreamMcpFailurePhase,
 	type UpstreamMcpFailureClass,
@@ -12,7 +12,7 @@ export {
 	createUpstreamMcpError,
 	upstreamMcpFailureDetailsFromUnknown,
 	formatUpstreamMcpFailureMessage,
-} from '#connectors/upstream-mcp-errors';
+} from '#upstream-mcp-connectors/upstream-mcp-errors';
 export {
 	type RedactionOptions,
 	isCredentialConfigKey,
@@ -22,12 +22,12 @@ export {
 	redactUpstreamCatalogValue,
 	redactThrownError,
 	toRedactedJsonValue,
-} from '#connectors/upstream-response-middleware';
+} from '#upstream-mcp-connectors/upstream-response-middleware';
 export type {
 	UpstreamMcpTransportKind,
 	RemoteUpstreamMcpServer,
 	NormalizedUpstreamMcpServer,
-} from '#connectors/models/upstream-mcp-server';
+} from '#upstream-mcp-connectors/models/upstream-mcp-server';
 export {
 	type ListToolsCall,
 	type UpstreamToolCall,
@@ -66,4 +66,4 @@ export {
 	closeClientForTeardown,
 	closeErrorContextFromCacheKey,
 	redactToolCatalog,
-} from '#connectors/upstream-mcp-protocol';
+} from '#upstream-mcp-connectors/upstream-mcp-protocol';

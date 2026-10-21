@@ -27,7 +27,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, it, expect } from 'vitest';
 
-import { createUpstreamMcpClientRuntime } from '#connectors/upstream-mcp-client-runtime';
+import { createUpstreamMcpClientRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
 
 async function unavailable(): Promise<{ kind: 'unavailable' }> {
 	return { kind: 'unavailable' };

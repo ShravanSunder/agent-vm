@@ -6,15 +6,15 @@ import { type Progress, type Tool, ToolSchema } from '@modelcontextprotocol/sdk/
 import type {
 	NormalizedUpstreamMcpServer,
 	UpstreamMcpTransportKind,
-} from '#connectors/models/upstream-mcp-server';
+} from '#upstream-mcp-connectors/models/upstream-mcp-server';
 import {
 	type UpstreamMcpFailureClass,
 	messageFromUnknownError,
-} from '#connectors/upstream-mcp-errors';
+} from '#upstream-mcp-connectors/upstream-mcp-errors';
 import {
 	redactThrownError,
 	redactUpstreamCatalogValue,
-} from '#connectors/upstream-response-middleware';
+} from '#upstream-mcp-connectors/upstream-response-middleware';
 
 export interface ListToolsCall {
 	readonly agentScopeId: string;

@@ -1,13 +1,13 @@
 import { normalizeHeaders } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
-import type { NormalizedUpstreamMcpServer } from '#connectors/models/upstream-mcp-server';
+import type { NormalizedUpstreamMcpServer } from '#upstream-mcp-connectors/models/upstream-mcp-server';
 import {
 	createUpstreamMcpError,
 	transportSummaryFromServer,
 	isUpstreamMcpError,
 	messageFromUnknownError,
-} from '#connectors/upstream-mcp-errors';
+} from '#upstream-mcp-connectors/upstream-mcp-errors';
 import {
 	type UpstreamMcpRuntimeOptions,
 	type UpstreamMcpClientRuntime,
@@ -38,12 +38,12 @@ import {
 	type ListToolsCall,
 	redactToolCatalog,
 	listAllTools,
-} from '#connectors/upstream-mcp-protocol';
+} from '#upstream-mcp-connectors/upstream-mcp-protocol';
 import {
 	redactCredentialText,
 	redactUpstreamResponse,
 	redactThrownError,
-} from '#connectors/upstream-response-middleware';
+} from '#upstream-mcp-connectors/upstream-response-middleware';
 
 export function createUpstreamMcpClientRuntime(
 	options: UpstreamMcpRuntimeOptions,

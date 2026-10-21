@@ -4,7 +4,7 @@ import {
 	redactUpstreamResponse,
 	redactCredentialText,
 	redactThrownError,
-} from '#connectors/upstream-response-middleware';
+} from '#upstream-mcp-connectors/upstream-response-middleware';
 
 describe('upstream response middleware', () => {
 	it('redacts credential-shaped text from nested result content', () => {

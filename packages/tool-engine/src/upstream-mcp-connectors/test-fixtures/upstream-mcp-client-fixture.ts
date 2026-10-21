@@ -5,9 +5,9 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type {
 	RemoteUpstreamMcpServer,
 	NormalizedUpstreamMcpServer,
-} from '#connectors/models/upstream-mcp-server';
-import { createUpstreamMcpClientRuntime as createRuntime } from '#connectors/upstream-mcp-client-runtime';
-import type { UpstreamMcpRuntimeOptions } from '#connectors/upstream-mcp-protocol';
+} from '#upstream-mcp-connectors/models/upstream-mcp-server';
+import { createUpstreamMcpClientRuntime as createRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
+import type { UpstreamMcpRuntimeOptions } from '#upstream-mcp-connectors/upstream-mcp-protocol';
 
 export function createServer(
 	overrides: Partial<RemoteUpstreamMcpServer> = {},

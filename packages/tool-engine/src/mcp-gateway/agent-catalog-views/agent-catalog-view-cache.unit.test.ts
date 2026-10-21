@@ -1,12 +1,12 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, it, vi, expect } from 'vitest';
 
-import { UpstreamMcpError } from '#connectors/upstream-mcp-errors';
 import { createAgentCatalogViewCache } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
 import {
 	createPortalAgentIdentity,
 	createDeferred,
 } from '#mcp-gateway/agent-catalog-views/test-fixtures/agent-catalog-view-fixture';
+import { UpstreamMcpError } from '#upstream-mcp-connectors/upstream-mcp-errors';
 
 describe('portal sessions', () => {
 	it('keeps healthy namespaces available but does not cache degraded discovery results', async () => {

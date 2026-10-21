@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
-import { createUpstreamMcpClientRuntime } from '#connectors/upstream-mcp-client-runtime';
-import type { UpstreamMcpClientLike } from '#connectors/upstream-mcp-protocol';
+import { createUpstreamMcpClientRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
+import type { UpstreamMcpClientLike } from '#upstream-mcp-connectors/upstream-mcp-protocol';
 
 describe('connector credential redaction at callback boundaries', () => {
 	it('redacts exact configured credentials from close diagnostics and progress', async () => {
