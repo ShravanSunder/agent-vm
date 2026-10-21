@@ -58,7 +58,7 @@ This work has two parts:
 
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
    - **It refuses every caller it can't identify,** and it tells agents apart. Agents sign in with our own login, Better Auth, not Cloudflare Access.
-   - **Sign-in comes into this work.** The sign-in service (`@agent-collaboration/auth`, [people sign-in](../2026-10-20-people-sign-in/requirements.md)) runs Better Auth in its own Worker and gives people and agents tokens for the tool Worker. Its design admits people only today; letting agents sign in as themselves is a change to it.
+   - **Sign-in comes into this work.** The sign-in service (`@agent-collaboration/auth`, [people sign-in](../2026-10-20-people-sign-in/requirements.md)) runs Better Auth in its own Worker and gives people and agents tokens for the tool Worker. Its design now adds agents signing in as themselves (its `U8` and `R15` to `R17`), awaiting independent review.
    - **Cloudflare is for machines only.** The Worker reaches registered computers through Cloudflare (Tunnel and Access), like Tailscale.
    - **Its limits fit Workers and Durable Objects,** within the paid Workers plan the owner pays for.
    - **When one Worker or one Durable Object isn't enough,** the work can be split across several (sharding), once measurement shows it's needed.

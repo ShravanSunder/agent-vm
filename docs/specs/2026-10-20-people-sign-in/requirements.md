@@ -2,7 +2,7 @@
 
 [Specification](2026-10-20-people-sign-in.md) · [Fleet decisions](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md) · [Tool Portal design](../2026-10-14-portable-tool-portal-hosts/program-design.md)
 
-People who run and use our fleet apps sign in with **Google, GitHub or a passkey**, through a sign-in service we host ourselves on Cloudflare Workers with D1. Each of our services gets proof of who the person is that is good **only for that service**. Machines, VMs, the VPN and the personal fleet keep using Cloudflare; this service is for people only.
+People who run and use our fleet apps sign in with **Google, GitHub or a passkey**, through a sign-in service we host ourselves on Cloudflare Workers with D1. Each of our services gets proof of who the person is that is good **only for that service**. Machines, VMs, the VPN and the personal fleet keep using Cloudflare. People sign in through this service, and since 2026-10-20 so do agents, each as itself.
 
 ## Who this is for
 
@@ -37,8 +37,9 @@ flowchart LR
 | `U3` | public-app users | Public apps let anyone register. | F-64: "2. publich" | authorized |
 | `U4` | relying services | Each service receives proof of the person that is valid only for that service. | F-64: "we can use only scoped audiences and better auth" | authorized |
 | `U5` | owner | Self-hosted on Cloudflare Workers with D1, with no sign-in subscription, paying only for what is used. | F-64: "what is teh backend? cloudflare? workers?", accepting the Workers and D1 research; owner on 2026-10-18: "I don't want to pay beyond what I need" | authorized |
-| `U6` | owner | Machines, VMs, the VPN and the personal fleet keep using Cloudflare; this service is for people only. | F-65: "cloduflare works for vm vpn access for persnao fleet not admin/members login" | authorized |
+| `U6` | owner | Machines, VMs, the VPN and the personal fleet keep using Cloudflare, not this service. | F-65: "cloduflare works for vm vpn access for persnao fleet not admin/members login"; owner 2026-10-20: Cloudflare is for "registration for computer control ... kinda like tailscale" | authorized |
 | `U7` | owner | Every change to who may sign in is recorded and attributable. | F-28: "and ahve some event log trace always  for all security and perm cahgnes for audit" | authorized |
+| `U8` | owner, managers | Each agent signs in as itself through this service, and each of our services gets proof of the agent that's valid only for that service. | owner 2026-10-20: "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system" | authorized |
 
 Priority: `U1`, `U2`, `U4`, `U6` and `U7` first (private apps). `U3` (public apps) follows; the order is the Lead's proposal, not yet confirmed by the owner (SD2).
 
@@ -66,3 +67,4 @@ Priority: `U1`, `U2`, `U4`, `U6` and `U7` first (private apps). `U3` (public app
 | `SD6` | Workers Free or Paid | owner, after measurement | Free, if measured CPU fits |
 | `SD7` | Whether a new person may register with a passkey first, or must first sign in with Google or GitHub | owner | Google or GitHub first, then add passkeys (Lead proposal; Better Auth supports either) |
 | `SD8` | How old a privileged decision's confirmation that the person is still active may be when the decision takes effect | owner, with D5 | 5 seconds (Lead proposal) |
+| `SD9` | Who may register and remove an agent's sign-in: the organization's owner only, or its managers too | owner | owner and managers (Lead proposal; fleet F-23 has managers configure agents) |

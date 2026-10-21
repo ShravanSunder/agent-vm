@@ -301,6 +301,24 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reuses:** none.
 - **Unverified:** retention and readers of the record (Tool Portal D6).
 
+### `U8` — agents sign in as themselves
+
+- **Obligations:** `R15`, `R16`, `R17` · proof obligation `V11` · seam: trace row R15–R17.
+- **Proven by:** real tokens from the sign-in Worker presented to Tool Portal's Worker and to the console.
+- **Reference:** Spec C4.
+- **Target and journey:** `T1`, plus Tool Portal's Worker in local workerd and when deployed. Needed: a journey that registers a test agent client, gets its token, calls the Worker, removes the client and calls again.
+- **Passes when:**
+  - the Worker accepts the agent's token for its own audience and refuses one for another audience;
+  - the console, and any check that needs a person, refuses the agent's token; the agent check refuses a person's token;
+  - after removal, the agent's next token request fails and the Worker refuses its next call, even with a token not yet expired.
+
+  Wrong builds that fail it:
+  - a verifier that accepts a token without checking `sid`;
+  - a Worker that caches the agent list;
+  - a client registered with authorization code as well as client credentials.
+- **Reuses:** none yet.
+- **Unverified:** the agent's host storing its credential, which each host proves with its own wiring.
+
 ## What the plan must add
 
 - **Journeys, all lasting:** `verify-auth` with `bootstrap`, `provider-sign-in`, `passkey`, `proof-audience`, `removal` and `audit`, as scripts in the project's scripts location.

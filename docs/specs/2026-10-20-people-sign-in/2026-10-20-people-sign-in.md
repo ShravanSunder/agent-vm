@@ -49,6 +49,8 @@ The sign-in service never serves machines or agents (`U6`). It does not decide w
 | `E6` Relying service | One of our services that receives proof of a person, identified by its audience identifier (the console; Tool Portal's control API). | registered in one E1; receives many E7 | Proof for one relying service is never valid for another | registered, retired |
 | `E7` Person proof | Evidence issued to one relying service that one Person is signed in, valid for that service only and for a bounded time. | names one E2 and one E6; issued during one E5 | Represents a person, never a service or machine | valid, expired, withdrawn |
 | `E8` Allowlist entry | One provider-verified email address approved for a private deployment, compared case-insensitively. An unverified address never matches. | belongs to one private E1; admits at most one E2, the Person it first admitted | Changes are recorded (`R12`). A Person in a private deployment is active exactly while at least one E8 admits them and every E8 that admits them is allowed | allowed, removed |
+| `E9` Agent client | One agent registered to sign in as itself in one deployment, identified by its client id; registered for one organization. | belongs to one E1; receives many E10 | Signs in only with its own registered credential; never a Person | active, removed |
+| `E10` Agent proof | Evidence issued to one relying service that one agent client signed in, valid for that service only and for a bounded time. | names one E9 and one E6 | Represents an agent, never a person; never accepted as an E7 | valid, expired |
 
 ```mermaid
 flowchart TB
@@ -82,11 +84,14 @@ flowchart TB
 | `R7` | An E7 MUST stand for a Person. A credential identifying a service, machine or agent MUST NOT be issued as, or accepted as, an E7. | U4, U6 | E6, E7 | P3→O3 · C1, C3 | V5 |
 | `R8` | Linking a second Google or GitHub login to a Person MUST be an explicit action by that signed-in Person. It MUST NOT happen because email addresses match. If an unlinked login carries a verified email that already belongs to a Person, the sign-in MUST be refused with a "link it from your account" outcome, creating nothing. | U1, U4 | E2, E3 | P1→O1 · C1 | V6 |
 | `R9` | When a relying service takes a privileged decision for a Person (Tool Portal's Accept or Deny), it MUST be able to confirm at decision time that the Person is still active and the session still current. A valid E7 signature alone MUST NOT be enough. The decision MUST take effect only while that confirmation is younger than the bound `SD8`; past it, the relying service confirms again or refuses. | U2, U4 | E2, E5, E7 | P2, P3→O2, O3 · C1 | V3 |
-| `R10` | Machine, VM, VPN and personal-fleet access MUST NOT depend on this service, and this service MUST NOT issue proofs to machines or agents. | U6 | E1, E7 | boundary (U6), no problem row · C3 | V7 |
+| `R10` | Machine, VM, VPN and personal-fleet access MUST NOT depend on this service, and this service MUST NOT issue proofs to machines or VMs. Agents sign in only as agents (`R15` to `R17`). | U6 | E1, E7 | boundary (U6), no problem row · C3 | V7 |
 | `R11` | Each deployment MUST run on the owner's Cloudflare account with its own D1 database, with no third-party sign-in subscription. | U5 | E1 | P1→O1 | V8 |
 | `R12` | Every change to who may sign in, or how, MUST be recorded with who made it, what changed and when. That covers allowlist entries; a Person's removal and reactivation; linked logins and passkeys added or removed; relying-service and client registrations and their authority; and the deployment's owner. A change whose record cannot be written MUST NOT happen. Sign-in successes and refusals MUST be recorded for the owner to review. Credentials, proofs and passkey material MUST NOT appear in any record. | U7 | E2–E4, E6, E8 | P2→O2 · C1 | V9 |
 | `R13` | Signing out MUST end that session's ability to obtain new E7s. No proof-renewal grant may outlive the Person's sign-out. | U2, U4 | E5, E7 | P2→O2 · C1 | V3 |
 | `R14` | A private deployment's first administrator MUST be the person whose provider-verified email the owner configured for that deployment. No one else can become administrator by signing in first, and until that person signs in nobody else can sign in. | U2 | E1, E2, E8 | P2→O2 · C1 | V10 |
+| `R15` | An agent MUST sign in as itself, with its own registered credential, and receive an E10 for one relying service that names the deployment, the agent's client id and an expiry. A relying service MUST refuse an E10 issued for another relying service. | U8 | E9, E10, E6 | agent sign-in, C4 | V11 |
+| `R16` | An E10 MUST NOT be issued as, or accepted as, an E7, and an E7 MUST NOT be accepted where an E10 is required. | U8, U4 | E7, E10 | C4 | V11 |
+| `R17` | When an E9 is removed, it MUST be unable to obtain new E10s at once, and a relying service that checks its own record on every call (Tool Portal does) MUST refuse that agent on its next call. | U8 | E9, E10 | C4 | V11 |
 
 ## Worked examples
 
@@ -108,6 +113,10 @@ Carol registers with GitHub on the public deployment and adds a passkey. A proof
 ### C3 — Machines
 
 A VM reaching the personal fleet over the VPN, and a machine calling the Router, go through Cloudflare. Neither ever receives or presents a proof from this service.
+
+### C4 — Agents
+
+The organization's owner (or a manager, `SD9`) registers the home agent as an agent client and gives its credential to the agent's host, never to a tool call. The agent signs in with that credential and gets a proof for Tool Portal's Worker only. The Worker accepts it for that agent; the console refuses it, and so does any check that needs a person. When the owner removes the agent, its next token request fails and the Worker refuses its next call.
 
 ## Failure behavior
 
@@ -144,3 +153,4 @@ A VM reaching the personal fleet over the VPN, and a machine calling the Router,
 | `V8` | Each deployment runs on the owner's Workers with its own D1, with no external sign-in vendor. | deployment configuration |
 | `V9` | Each change `R12` lists has its record, and a change whose record can't be written doesn't happen. No record contains a credential or proof. | C1 step 1 and every change kind in `R12`, with planted test secrets |
 | `V10` | On an empty private deployment, only the configured owner's verified email can sign in, and that person becomes administrator; any other first arrival is refused. | C1 before step 1; a fresh private deployment |
+| `V11` | An agent's proof is accepted only by the service it names, never as a person's proof; a person's proof is never accepted as an agent's; a removed agent gets no new proof and is refused on its next call. | C4; Tool Portal's Worker caller check |

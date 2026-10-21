@@ -158,6 +158,8 @@ Both token shapes live in `tool-access/contracts`, so every relying service veri
 5. `exp` (`expired`);
 6. `sid` is present (`not-a-person`, `R7`). In the stock flow, tokens issued without a person's session, such as `client_credentials` tokens, carry no `sid` and have `sub` set to the client id ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). No extension grant is installed.
 
+**Agent proof (`R15` to `R17`).** Each agent is a registered client (E9) with only the `client_credentials` grant. Its token has `sub` set to its client id and no `sid` ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). A second verifier in `tool-access/contracts`, beside the person verifier, checks steps 1 to 5 as above, then that `sid` is **absent** (`not-an-agent`) and that the client id is a registered, active agent client. It projects an `AgentProof { deployment, clientId, audience, expiresAt }`. The person verifier keeps requiring `sid`, so an agent proof is never a person proof (`R7`, `R16`). The agent's host keeps the client credential, never a tool argument. Removing the client stops new tokens at once, and Tool Portal's Worker refuses that agent on its next call, because it checks its organization's record on every call (`R17`). Who may register and remove agent clients is `SD9`.
+
 `freshness.kind: "live"` appears only after a live check, with the time that check read the Person and session (`checkedAt`). Tool Portal's `decide` refuses a `signature` result. The apply that changes state ([Tool Portal Program Design, application](../2026-10-14-portable-tool-portal-hosts/program-design.md#2-chat-led-change-propose-decide-apply)) takes effect only while `checkedAt` is within `SD8`, measured at that commit (`R9`).
 
 Relying services request exactly one `resource` and no `openid` scope. Better Auth produces an array `aud` when several resources or `openid` are requested ([resources.ts:360](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/resources.ts#L360), [resources.ts:500](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/resources.ts#L500)). The verifier refuses every array, so such a token is valid nowhere. A relying service that later needs an ID token is a change to this contract.
@@ -298,10 +300,10 @@ flowchart LR
   - **Why the request handler.** It is last by construction, while a global after-hook can be overwritten by plugin after-hooks ([dispatch.ts:269](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/dispatch.ts#L269)). It covers only HTTP, so nothing in the Worker calls Better Auth endpoints as raw functions.
   - **Session-authenticated routes need no check of their own.** That covers passkey registration, consent, explicit linking, unlinking and admin. Once a removal commits, no session of that Person exists. A request already in flight, holding a session read before the removal, is ordered before it; whatever it writes is recorded (`R12`) and can't create a new session.
   - **The ID-token form of `/link-social` is refused** by the request handler. That branch links without calling `validateUserInfo` ([account.ts:250](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/account.ts#L250)). Only the redirect form is offered.
-- **Token profile (`R6`, `R7`):**
+- **Token profile (`R6`, `R7`, `R15`, `R16`):**
   - Relying services request one resource and no `openid`.
-  - The verifier refuses array audiences and tokens without `sid`.
-  - No client is registered with the `client_credentials` grant.
+  - The person verifier refuses array audiences and tokens without `sid`.
+  - Only agent clients are registered with the `client_credentials` grant, and they have no other grant. People's flows keep authorization code only.
 - **Explicit linking (`R8`):**
   - Implicit account linking is disabled (`account.accountLinking.disableImplicitLinking`).
   - `accountLinking.enabled` stays true so explicit linking still works ([init-options.ts:1212](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L1212)).
@@ -336,11 +338,12 @@ flowchart LR
 | U4, U6 | R7: proofs stand for people only · C1, C3 | E6, E7 | OAuth provider; person-proof verifier | client grant types: authorization code only; the verifier requires `sid` | Worker client registration; `personTokenClaimsSchema` | none | a token without `sid` is refused as not-a-person | present a token issued without a person's session at Tool Portal |
 | U1, U4 | R8: explicit linking only · C1 | E2, E3 | Better Auth core; request handler | `disableImplicitLinking`; the ID-token linking form refused | library models | link created only by explicit redirect linking | refusal says how to link | second provider with the same email; an ID-token link attempt |
 | U2, U4 | R9: live check for privileged decisions · C1 | E2, E5, E7 | person-proof verifier; request handler; Tool Portal `decide` | introspection answered after the final check; `checkedAt` within `SD8` at the apply | `PersonProofVerification` with `freshness.kind: "live"` | none | `unavailable`, signature-only or stale means refused | revoke a session, then Accept; hold an Accept past `SD8` between its check and apply |
-| U6 | R10: machines never use sign-in · C3 | E1, E7 | sign-in Worker configuration | no machine clients registered | none: absence | none | none: not applicable | machine and VM access with the Worker offline |
+| U6 | R10: machines and VMs never use sign-in · C3 | E1, E7 | sign-in Worker configuration | no machine or VM clients registered | none: absence | none | none: not applicable | machine and VM access with the Worker offline |
 | U5 | R11: owner's Workers and D1, no vendor · the deployment configuration contract | E1 | sign-in Worker configuration | deployment configuration | `deploymentConfigSchema` | none | none: not applicable | inspect the deployment configuration |
 | U7 | R12: every change recorded, no secrets · C1 | E2–E4, E6, E8 | Audit writer; request handler | one batch for our changes; a before-change record for Better Auth's changes | `signInAuditRecordSchema` (Worker) | append-only | no change without a record; an unwritable before-change record refuses the change | drive every change kind in `R12`, read the records, hold an audit-write failure, search for planted secrets |
 | U2, U4 | R13: sign-out ends new proofs · C1 | E5, E7 | OAuth provider; request handler | no `offline_access`; the final check reads `sid` | library models | Session signed out | none: not applicable | sign out, then request a token and introspect an earlier one; a token request held after signing while sign-out commits |
 | U2 | R14: the configured owner is the first administrator · C1 setup | E1, E2, E8 | Allowlist gate | seed entry for `ownerEmail`; conditional owner bind | `deploymentConfigSchema`, `deploymentOwnerSchema` | owner bound once | anyone else's first arrival is "not allowed" | fresh deployment: another account first, then the owner |
+| U8 | R15–R17: agents sign in as themselves; agent proof is never person proof; removal stops new proofs and the next call · C4 | E9, E10 | OAuth provider; agent verifier; Tool Portal's Worker caller check | `client_credentials` only for agent clients; agent verifier requires no `sid` and an active client; the person verifier requires `sid` | `agentTokenClaimsSchema`, `AgentProof` (`tool-access/contracts`) | E9 active or removed | `refused` with wrong-audience, not-an-agent, not-a-person or removed-agent | V11: real tokens across the Worker and the console; a removed agent's next call |
 
 Coverage:
 - R1–R14 are covered by the rows above.
@@ -357,3 +360,4 @@ Coverage:
 - **`SD6`:** measured CPU on Workers Free.
 - **`SD7`:** passkey-first registration.
 - **`SD8`:** how old a decision's live check may be at its apply.
+- **`SD9`:** who may register and remove an agent's sign-in. The Lead proposes owner and managers.

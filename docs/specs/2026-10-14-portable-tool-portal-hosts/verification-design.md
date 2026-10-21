@@ -36,7 +36,7 @@ This is the plan for proving the sixteen checks in the [Specification](2026-10-1
 - **Real third-party MCP servers.** Tests use controlled test servers; Gmail, GitHub and others aren't called.
 - **Clients beyond the Portal SDK, the MCP SDK client and Hermes.** Other harnesses are expected to work because the protocols are unchanged, but none is tested here.
 - **Code mode.** It's not in this work.
-- **Agent sign-in itself.** The sign-in service proves it in its own Verification Design once that design admits agents; rows 13 to 16 use its real tokens.
+- **Agent sign-in itself.** The sign-in service proves it in its own Verification Design (its `U8` section); rows 13 to 16 use its real tokens.
 - **Per-user and computer tools.** They aren't built in this work.
 - **1Password service-account tokens inside a Worker.** Cloudflare secrets are used instead.
 - **Which clients defer and follow pages, beyond Claude Code.** Codex defers by default but refuses a list over 2,048 tools; Hermes defers only when configured to; Cursor documents neither. Each is set to `client-deferred` only after a real run like row 2's, against a catalog its limits cover.
