@@ -82,7 +82,7 @@ Sources:
 | # | Question | Why it matters | Who decides | State | Source |
 |---|---|---|---|---|---|
 | Q-E1 | How does the local Router bind a calling connection to a session (per-session token, or the connecting process's ID), and what persona rule applies to terminal-started sessions? | turns a session address into an attestation | agent-collaboration | open | concepts §6.6 (WIP) |
-| Q-E2 | How does an agent's credential reach the cloud MCP gateway through Cloudflare Access? | agent identity at the gateway | agent-vm (D2) | open | T-1, T-2 |
+| Q-E2 | How does an agent's credential reach the cloud MCP gateway? | agent identity at the gateway | agent-vm (D2) | **answered 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (Tool Portal requirements, owner decisions 1–2; people sign-in spec E9/E10, R15–R16) | T-1, T-2 |
 | Q-E3 | How do bots outside our machines (vendor-hosted, registered per F-10) prove who they are? | registered external bots | agent-collaboration + agent-vm | open | T-8 |
 | Q-E4 | Who may authorize a launcher, and what does enrollment consent cover? | launcher enrollment | owner | open | T-5 |
 | Q-E5 | How fast must revocation reach each checkpoint? | revocation freshness | owner (tolerance) | open | T-6 |
