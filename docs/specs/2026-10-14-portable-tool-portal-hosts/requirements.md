@@ -160,3 +160,8 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
    - **Waits on this:** the connector part of the SDK move. The MCP routes we serve can move first.
 
 **Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
+9. **What should aborting a Portal SDK call over HTTP do?** Today the SDK cancels the work, then keeps the response open for a short grace period to collect the call's final result (`resultGraceAfterAbortMs`). MCP 2026-07-28 over HTTP cancels by closing that request's stream, so both can't happen at once (checked with a real SDK test in S3d).
+   - **The Lead recommends A:** the work stops at once, and the caller gets today's "grace expired, outcome uncertain" result, as if the grace period were zero. It follows the protocol you chose, and nothing keeps running after a cancel.
+   - **The alternative, B:** keep the stream open through the grace period, then close it. The caller may still get the final result, but the work keeps running until then.
+   - **Unchanged either way:** stdio and agent-vm's private connection keep today's grace.
+   - **What happens if you defer:** A is in the S3d draft PR provisionally, and B is a small swap.
