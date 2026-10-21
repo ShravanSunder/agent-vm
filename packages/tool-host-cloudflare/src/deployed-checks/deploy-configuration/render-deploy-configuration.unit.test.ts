@@ -10,6 +10,7 @@ import {
 } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import {
 	renderDeployConfiguration,
+	parseRenderSelection,
 	substituteTemplate,
 } from '#worker-host/deployed-checks/deploy-configuration/render-deploy-configuration';
 import { privateDeployFixture } from '#worker-host/deployed-checks/deploy-configuration/test-fixtures/private-deploy-fixture';
@@ -54,7 +55,10 @@ describe('private deployment renderer', () => {
 	});
 	it('renders shared authorization bindings and separates all secrets from Worker public variables', async () => {
 		const directory = await temporaryDirectory();
-		await renderDeployConfiguration(privateDeployFixture(directory), directory);
+		await renderDeployConfiguration(privateDeployFixture(directory), directory, {
+			worker: 'all',
+			workersDev: true,
+		});
 		const read = async (file: string): Promise<string> =>
 			readFile(path.join(directory, file), 'utf8');
 		const portalA = await read('portal-a.json');
@@ -85,6 +89,25 @@ describe('private deployment renderer', () => {
 		expect(await read('portal-a.secrets.json')).toContain('unit-alpha-credential');
 		expect((await stat(path.join(directory, 'portal-a.secrets.json'))).mode & 0o777).toBe(0o600);
 		expect(helper).not.toContain('__HELPER');
+	});
+	it('defaults to dark deployment and changes only the selected Worker', async () => {
+		const directory = await temporaryDirectory();
+		await renderDeployConfiguration(privateDeployFixture(directory), directory);
+		expect(
+			JSON.parse(await readFile(path.join(directory, 'portal-a.json'), 'utf8')).workers_dev,
+		).toBe(false);
+		await renderDeployConfiguration(
+			privateDeployFixture(directory),
+			directory,
+			parseRenderSelection(['--worker=a', '--workers-dev=true']),
+		);
+		expect(
+			JSON.parse(await readFile(path.join(directory, 'portal-a.json'), 'utf8')).workers_dev,
+		).toBe(true);
+		expect(
+			JSON.parse(await readFile(path.join(directory, 'portal-b.json'), 'utf8')).workers_dev,
+		).toBe(false);
+		expect(() => parseRenderSelection(['--workers-dev=invalid'])).toThrow();
 	});
 	it('substitutes JSON values without string interpolation and refuses unfilled placeholders', () => {
 		expect(

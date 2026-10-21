@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { controlledResponseStream } from '#worker-host/deployed-checks/test-helper-worker/controlled-response-stream';
 import {
 	admissionInputSchema,
 	controlledCallSchema,
@@ -79,23 +80,7 @@ export async function handleHelperRequest(
 			credential: organization.credential,
 			toolName: name,
 		});
-		try {
-			if (input.hold) await observations.hold(input.callId);
-			const envelopeBytes = JSON.stringify({ content: [{ type: 'text', text: '' }] }).length;
-			result = {
-				content: [
-					{
-						type: 'text',
-						text:
-							input.responseBytes > 0
-								? 'x'.repeat(Math.max(0, input.responseBytes - envelopeBytes))
-								: input.value,
-					},
-				],
-			};
-		} finally {
-			await observations.finish(input.callId);
-		}
+		return controlledResponseStream({ rpcId: rpc.id, input, observations });
 	} else return new Response(null, { status: 202 });
 	return Response.json({ jsonrpc: '2.0', id: rpc.id, result });
 }

@@ -39,8 +39,7 @@ it('row 13: AFTER LEAD REDEPLOY, replay still adds no effect', async () => {
 	);
 	if (
 		results.some(
-			(result) =>
-				result.isError !== true || !JSON.stringify(result).includes('replayed'),
+			(result) => result.isError !== true || !JSON.stringify(result).includes('replayed'),
 		)
 	)
 		throw new Error('Approval replay was not refused after redeploy.');

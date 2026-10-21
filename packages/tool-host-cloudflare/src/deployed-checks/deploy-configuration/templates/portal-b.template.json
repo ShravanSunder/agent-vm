@@ -4,7 +4,7 @@
 	"main": "__PORTAL_ENTRY__",
 	"compatibility_date": "2025-09-24",
 	"compatibility_flags": ["global_fetch_strictly_public"],
-	"workers_dev": true,
+	"workers_dev": "__WORKERS_DEV__",
 	"preview_urls": false,
 	"routes": [],
 	"durable_objects": {

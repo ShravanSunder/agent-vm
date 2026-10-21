@@ -13,6 +13,7 @@ import {
 } from '#worker-host/deployed-checks/test-helper-worker/models/helper-contracts';
 
 export interface PortalRequestOptions {
+	readonly token?: string;
 	readonly copy?: 'a' | 'b';
 	readonly organization?: PrivateOrganization;
 	readonly agentId?: string;
@@ -103,7 +104,9 @@ export async function portalRpc(
 			'CF-Access-Client-Secret': configuration.access.clientSecret,
 			...(options.noToken
 				? {}
-				: { authorization: `Bearer ${await agentToken(configuration, options)}` }),
+				: {
+						authorization: `Bearer ${options.token ?? (await agentToken(configuration, options))}`,
+					}),
 			'content-type': 'application/json',
 			accept: 'application/json, text/event-stream',
 			'MCP-Protocol-Version': '2026-07-28',

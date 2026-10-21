@@ -4,7 +4,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
-import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
+import {
+	renderSelectionSchema,
+	type PrivateDeployFile,
+	type RenderSelection,
+} from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
 import { portalTestConfigurations } from '#worker-host/deployed-checks/deploy-configuration/portal-test-configuration';
 import {
 	readPrivateDeployFile,
@@ -12,6 +16,16 @@ import {
 } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 
 const templateDirectory = fileURLToPath(new URL('templates/', import.meta.url));
+export function parseRenderSelection(argumentsValue: readonly string[]): RenderSelection {
+	const options: Record<string, unknown> = {};
+	for (const argument of argumentsValue) {
+		if (argument.startsWith('--worker=')) options.worker = argument.slice('--worker='.length);
+		else if (argument === '--workers-dev=true' || argument === '--workers-dev=false')
+			options.workersDev = argument === '--workers-dev=true';
+		else throw new Error('Use --worker=all|a|b|helper and --workers-dev=false|true.');
+	}
+	return renderSelectionSchema.parse(options);
+}
 export function substituteTemplate(
 	template: string,
 	replacements: Readonly<Record<string, unknown>>,
@@ -26,12 +40,14 @@ export function substituteTemplate(
 export async function renderDeployConfiguration(
 	configuration: PrivateDeployFile,
 	outputDirectory: string,
+	selection: RenderSelection = renderSelectionSchema.parse({}),
 ): Promise<void> {
 	const destination = await requireOutsideGitWorkTree(outputDirectory);
 	await mkdir(destination, { recursive: true, mode: 0o700 });
 	await chmod(destination, 0o700);
 	const { ['d']: _privateScalar, ...publicKey } = configuration.privateSigningJwk;
 	const common = {
+		__WORKERS_DEV__: selection.workersDev,
 		__ACCOUNT_ID__: configuration.accountId,
 		__PORTAL_A_NAME__: configuration.portalA.name,
 		__PORTAL_ENTRY__: fileURLToPath(new URL('../../index.ts', import.meta.url)),
@@ -70,40 +86,54 @@ export async function renderDeployConfiguration(
 	};
 	await Promise.all(
 		[
-			{ file: 'portal-a', name: configuration.portalA.name, secrets: portalSecrets },
-			{ file: 'portal-b', name: configuration.portalB.name, secrets: portalSecrets },
-			{ file: 'test-helper', name: configuration.helper.name, secrets: helperSecrets },
-		].map(async (entry): Promise<void> => {
-			const template = await readFile(
-				path.join(templateDirectory, `${entry.file}.template.json`),
-				'utf8',
-			);
-			await Promise.all(
-				['json', 'secrets.json'].map(
-					async (suffix): Promise<string> =>
-						requireOutsideGitWorkTree(path.join(destination, `${entry.file}.${suffix}`)),
-				),
-			);
-			await writeFile(
-				path.join(destination, `${entry.file}.json`),
-				JSON.stringify(
-					substituteTemplate(template, { ...common, __WORKER_NAME__: entry.name }),
-					null,
-					2,
-				),
-				{ mode: 0o600 },
-			);
-			await writeFile(
-				path.join(destination, `${entry.file}.secrets.json`),
-				JSON.stringify(entry.secrets),
-				{ mode: 0o600 },
-			);
-		}),
+			{ worker: 'a', file: 'portal-a', name: configuration.portalA.name, secrets: portalSecrets },
+			{ worker: 'b', file: 'portal-b', name: configuration.portalB.name, secrets: portalSecrets },
+			{
+				worker: 'helper',
+				file: 'test-helper',
+				name: configuration.helper.name,
+				secrets: helperSecrets,
+			},
+		]
+			.filter((entry) => selection.worker === 'all' || selection.worker === entry.worker)
+			.map(async (entry): Promise<void> => {
+				const template = await readFile(
+					path.join(templateDirectory, `${entry.file}.template.json`),
+					'utf8',
+				);
+				await Promise.all(
+					['json', 'secrets.json'].map(
+						async (suffix): Promise<string> =>
+							requireOutsideGitWorkTree(path.join(destination, `${entry.file}.${suffix}`)),
+					),
+				);
+				await writeFile(
+					path.join(destination, `${entry.file}.json`),
+					JSON.stringify(
+						substituteTemplate(template, { ...common, __WORKER_NAME__: entry.name }),
+						null,
+						2,
+					),
+					{ mode: 0o600 },
+				);
+				await writeFile(
+					path.join(destination, `${entry.file}.secrets.json`),
+					JSON.stringify(entry.secrets),
+					{ mode: 0o600 },
+				);
+				await Promise.all(
+					['json', 'secrets.json'].map(
+						async (suffix): Promise<void> =>
+							chmod(path.join(destination, `${entry.file}.${suffix}`), 0o600),
+					),
+				);
+			}),
 	);
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 	await renderDeployConfiguration(
 		await readPrivateDeployFile(),
 		z.string().min(1).parse(process.argv[2]),
+		parseRenderSelection(process.argv.slice(3)),
 	);
 }

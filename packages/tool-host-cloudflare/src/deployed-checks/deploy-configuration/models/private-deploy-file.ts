@@ -12,6 +12,11 @@ const httpsOriginSchema = z.url().refine((value) => {
 		parsed.password === ''
 	);
 });
+const privateWorkerSchema = z.strictObject({
+	name: workerNameSchema,
+	origin: httpsOriginSchema,
+	workerId: z.string().min(1).optional(),
+});
 export const privateOrganizationSchema = z.strictObject({
 	label: workerNameSchema,
 	organizationId: z.uuid(),
@@ -22,9 +27,9 @@ export const privateDeployFileSchema = z
 	.strictObject({
 		runId: z.string().regex(/^[a-z0-9-]{8,70}$/u),
 		accountId: z.string().regex(/^[a-f0-9]{32}$/u),
-		portalA: z.strictObject({ name: workerNameSchema, origin: httpsOriginSchema }),
-		portalB: z.strictObject({ name: workerNameSchema, origin: httpsOriginSchema }),
-		helper: z.strictObject({ name: workerNameSchema, origin: httpsOriginSchema }),
+		portalA: privateWorkerSchema,
+		portalB: privateWorkerSchema,
+		helper: privateWorkerSchema,
 		analyticsDataset: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/u),
 		audience: z.string().min(1),
 		agentId: z.string().min(1),
@@ -38,7 +43,14 @@ export const privateDeployFileSchema = z
 			['d']: z.string().min(1),
 		}),
 		admissionSecret: z.string().min(16),
-		access: z.strictObject({ clientId: z.string().min(1), clientSecret: z.string().min(1) }),
+		access: z.strictObject({
+			clientId: z.string().min(1),
+			clientSecret: z.string().min(1),
+			ownerEmail: z.email().optional(),
+			serviceTokenId: z.string().min(1).optional(),
+			applicationAId: z.string().min(1).optional(),
+			applicationBId: z.string().min(1).optional(),
+		}),
 		organizations: z.tuple([privateOrganizationSchema, privateOrganizationSchema]),
 		evidenceDirectory: z.string().min(1),
 		logFile: z.string().min(1),
@@ -48,6 +60,7 @@ export const privateDeployFileSchema = z
 		if (
 			value.organizations[0].organizationId === value.organizations[1].organizationId ||
 			value.organizations[0].credential === value.organizations[1].credential ||
+			value.organizations[0].approvalKeyHex === value.organizations[1].approvalKeyHex ||
 			value.organizations[0].label === value.organizations[1].label ||
 			value.agentId === value.otherAgentId ||
 			new Set([value.portalA.name, value.portalB.name, value.helper.name]).size !== 3
@@ -59,3 +72,9 @@ export const privateDeployFileSchema = z
 	});
 export type PrivateDeployFile = z.infer<typeof privateDeployFileSchema>;
 export type PrivateOrganization = z.infer<typeof privateOrganizationSchema>;
+
+export const renderSelectionSchema = z.strictObject({
+	worker: z.enum(['all', 'a', 'b', 'helper']).default('all'),
+	workersDev: z.boolean().default(false),
+});
+export type RenderSelection = z.infer<typeof renderSelectionSchema>;
