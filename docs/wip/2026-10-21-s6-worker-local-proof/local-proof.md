@@ -14,9 +14,9 @@ command uses Node 24.7.0 through mise. Run the quality gate before the suites:
 | Command, preceded by `mise exec node@24.7.0 --` | Result | Exit |
 | --- | --- | --- |
 | `pnpm check` | 16 gates passed: build, architecture/exports/contracts/taxonomy/version guards, lint, format, type-aware lint, all package typechecks | 0 |
-| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 453 tests, 39 files passed | 0 |
+| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 456 tests, 39 files passed | 0 |
 | `pnpm vitest run --project integration packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 35 tests, 3 files passed | 0 |
-| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 52 tests, 13 files passed, no skips | 0 |
+| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 54 tests, 13 files passed, no skips | 0 |
 
 The quality gate includes `pnpm typecheck`, `pnpm lint`, `pnpm lint:types` and
 `pnpm fmt:check`; each exited 0. Lint warnings remain; no lint errors remain.
@@ -82,8 +82,8 @@ same actual Durable Object in a third heap. This does not use a mocked DO.
 - Replay across heaps: two named copy heaps have distinct observed isolate IDs,
   share the authority DO and produce exactly one effect for a concurrent approval
   token. Removal through one copy immediately refuses the other copy's request.
-- Socket cleanup: the same live PIDs 87268 and 87294 return from warm ESTABLISHED
-  counts 12 and 7 to 12 and 7, with zero CLOSE_WAIT and zero upstream background
+- Socket cleanup: the same live PIDs 55116 and 55117 return from warm ESTABLISHED
+  counts 13 and 7 to 13 and 7, with zero CLOSE_WAIT and zero upstream background
   streams after sequential/concurrent success, failure, abort and stream workloads.
   An observing factory forwards all protocol/transport operations to native SDK
   clients and checks every created client closes exactly once.
@@ -276,3 +276,56 @@ Final ordered runs are `validation-fix-{check,unit,integration,host}.log`:
 three-request heavy overlap, native close, socket baseline, analytics and shared
 DO observations pass in that full host run. The prior independent proof remains
 anchored to its own frozen commits; this new delta awaits paired observation.
+
+## Mixed replies preserve executed results
+
+A subsequent PR review identified a mixed-overflow ordering defect at 83fee53f.
+The read-only real-workerd probe used 49 large validation failures with numeric
+IDs and one successful call. Its proposed wire size was 16,777,217 bytes; reverse
+Object.keys traversal discarded the successful result, despite one observed
+effect, while retaining all 49 large validation errors. The returned size was
+16,609,496 bytes. The ESM probe exited 0 and preserved frozen source; its earlier
+CommonJS import failure is retained separately as setup failure, not product proof.
+The permanent real-path case then failed on success status (exit 1) before repair.
+
+The Lead approved an explicit policy: trim definite no-effect items first, then
+ran/unknown failures, and completed results last. Within each class use input
+request order. The Worker now records request-local invocation-started facts at
+its existing backend invocation boundary; it does not infer no-effect from an
+item's `ok` flag or error kind. A failed or thrown invocation retains its fact.
+The final projector stably partitions explicit request IDs into those three
+classes. Shared engine/access and Node code remain unchanged.
+
+The permanent real-workerd mixed case runs with the successful call first and
+last in the request. Both produce exactly one effect, retain its successful
+result, trim validation ID 0, preserve response request order and compare every
+untrimmed serialized item's bytes against the original proxy. The bounded reply
+is 16,441,828 bytes in both cases. The actual current Node route keeps the entire
+original literal result, producing 16,777,275 bytes and its one expected effect.
+This Node comparison remains independent of the Worker's trimming policy.
+
+Sensitivity controls, all followed by exact restoration:
+
+- Reverse Object.keys trimming fails both mixed host cases: success becomes failed.
+- Dropping invocation facts fails both ambiguous/thrown unit controls and the
+  success-first real host case, even though the success-last case still passes.
+- Taking order from result object properties fails the competing literal class
+  order assertion, including numeric IDs.
+- Treating every `!ok` item as no-effect fails the same assertion with an early
+  uncertain ran item competing against later validation/approval refusals.
+
+The policy unit intentionally places uncertain ran items first in input order;
+otherwise a mistaken `!ok` classifier could accidentally produce the right order.
+No effect or provider interaction is claimed from that unit test: the real mixed
+host case and invocation-boundary tests supply those separate observations.
+
+Evidence: `mixed-reply-probe-83fee53f.log`,
+`mixed-budget-permanent-pre-fix-red.log`, `mixed-trim-mutations.json`, its four
+matching patches and five intended-red unit/host logs. Each source mutation is
+restored in finally with its hash checked. Final ordered logs are
+`mixed-fix-{check,unit,integration,host}.log`: 16 quality gates, 456 unit tests in
+39 files, 35 integration tests in 3 files, and 54 local host tests in 13 files,
+no host skips, all exit 0. Prior malformed-array, exact-failure-byte boundaries,
+scalar fallback, analytics, normal parity, heavy overlap, shared DO, native close
+and live-PID socket controls pass in this full run. The new frozen delta still
+needs paired independent observation; no deployed or acceptance claim follows.

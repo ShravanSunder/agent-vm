@@ -60,6 +60,7 @@ const budgetCallSchema = z.object({
 });
 export interface WorkerRequestLimits {
 	readonly begin: (input: unknown, id: string | number) => PortalBatchResult | undefined;
+	readonly callHasStarted: (itemId: string) => boolean;
 	readonly invoke: (
 		invocation: DispatchInvocation,
 		call: () => Promise<ResourceResult>,
@@ -72,7 +73,9 @@ export function createWorkerRequestLimits(): WorkerRequestLimits {
 	let input: unknown;
 	let requestId: string | number = '';
 	const retained: Record<string, PortalToolResult> = {};
+	const startedCalls = new Set<string>();
 	return {
+		callHasStarted: (itemId) => startedCalls.has(itemId),
 		begin: (value, id) => {
 			input = value;
 			requestId = id;
@@ -97,6 +100,8 @@ export function createWorkerRequestLimits(): WorkerRequestLimits {
 		},
 		invoke: async (invocation, call) =>
 			scheduler.run(async () => {
+				// Crossing this invocation boundary may cause an effect, even if its outcome is failed or unknown.
+				startedCalls.add(invocation.operationKey.item);
 				const outcome = await call();
 				if (outcome.kind !== 'completed') return outcome;
 				const result = outcome.result;
@@ -164,13 +169,48 @@ export function projectWorkerLimitRefusals(result: PortalBatchResult): PortalBat
 	};
 }
 
-/** Include validation failures and issue lists in the final wire budget, not only upstream results. */
-export function projectBoundedWorkerToolResult(props: {
+interface WorkerToolResultProjection {
 	readonly operation: Parameters<typeof projectProxyMcpResult>[0]['operation'];
 	readonly input: unknown;
 	readonly result: PortalBatchResult;
-	readonly requestId: string | number;
-}): { readonly result: PortalBatchResult; readonly response: CallToolResult } {
+	readonly callHasStarted: (itemId: string) => boolean;
+}
+
+/** Stable request order within no-effect, ran/unknown, and completed classes. */
+export function workerReplyTrimOrder(props: WorkerToolResultProjection): readonly string[] {
+	let requestIds: string[];
+	if (props.operation === 'direct') {
+		// The Worker assigns exactly one item to a native direct call.
+		requestIds = Object.entries(props.result.results).map(([id]) => id);
+	} else {
+		const ids = z.array(z.object({ id: z.string() }));
+		const requested =
+			props.operation === 'mcp_portal_call'
+				? z.object({ calls: ids }).safeParse(props.input)
+				: z.object({ requests: ids }).safeParse(props.input);
+		if (!requested.success) return [];
+		const requests = 'calls' in requested.data ? requested.data.calls : requested.data.requests;
+		requestIds = requests.map((request) => request.id);
+	}
+	const noEffect: string[] = [];
+	const ranOrUnknown: string[] = [];
+	const completed: string[] = [];
+	for (const id of requestIds) {
+		const item = props.result.results[id];
+		if (item === undefined) continue;
+		if (!props.callHasStarted(id)) noEffect.push(id);
+		else if (item.ok) completed.push(id);
+		else ranOrUnknown.push(id);
+	}
+	return [...noEffect, ...ranOrUnknown, ...completed];
+}
+
+/** Include every emitted item; preserve completed effects until no-effect output has been trimmed. */
+export function projectBoundedWorkerToolResult(
+	props: WorkerToolResultProjection & {
+		readonly requestId: string | number;
+	},
+): { readonly result: PortalBatchResult; readonly response: CallToolResult } {
 	// A raw-count refusal must not revalidate descriptors in the shared projection.
 	const projectionInput = props.result.errors.some((error) => error.kind === 'too_many_calls')
 		? {}
@@ -185,10 +225,10 @@ export function projectBoundedWorkerToolResult(props: {
 		serializedWorkerReplyBytes(response, props.requestId) <= workerReplyBytes;
 	const original = project(props.result);
 	if (fits(original)) return { result: props.result, response: original };
-	// Preserve fitting siblings and request order; replace only items that push this reply over budget.
+	// Trim certain no-effect output first; an executed call result is the last thing to discard.
 	if (props.result.errors.length === 0) {
 		const results: Record<string, PortalToolResult> = { ...props.result.results };
-		for (const id of Object.keys(results).toReversed()) {
+		for (const id of workerReplyTrimOrder(props)) {
 			results[id] = { ok: false, input: {}, error: { kind: 'failed', reason: 'too-large' } };
 			const bounded: PortalBatchResult = { ...props.result, ok: false, results };
 			const response = project(bounded);

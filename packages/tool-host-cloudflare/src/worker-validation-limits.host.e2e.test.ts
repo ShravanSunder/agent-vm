@@ -63,6 +63,65 @@ function items(
 		.parse(JSON.parse(text)).items;
 }
 
+async function startNodeComparison(
+	url: string,
+	directory: string,
+): Promise<{
+	readonly call: (
+		argumentsValue: Record<string, unknown>,
+		id: string,
+	) => Promise<{ readonly status: number; readonly text: string }>;
+	readonly retire: () => Promise<void>;
+}> {
+	const config = fixtureConfig(directory, [`${url}/mcp`, `${url}/mcp`]);
+	const provider = config.mcp.providers.alpha;
+	const profile = config.profiles['profile-a'];
+	const policy = profile?.profile.namespaces.alpha;
+	if (provider === undefined || profile === undefined || policy === undefined)
+		throw new Error('Missing Node comparison configuration.');
+	provider.namespace = 'same-server';
+	delete profile.profile.namespaces.alpha;
+	profile.profile.namespaces['same-server'] = policy;
+	const configPath = path.join(directory, 'node.json');
+	await writeFile(configPath, JSON.stringify(config));
+	const node = await startNodeHost({
+		configPath,
+		secrets: { resolve: async () => 'one-secret-canary' },
+	});
+	if (node.http === undefined) throw new Error('Missing actual Node proxy listener.');
+	const call = async (
+		argumentsValue: Record<string, unknown>,
+		id: string,
+	): Promise<{ readonly status: number; readonly text: string }> => {
+		if (node?.http === undefined) throw new Error('Missing Node proxy.');
+		const response = await fetch(node.http.endpoint, {
+			method: 'POST',
+			headers: {
+				authorization: 'Bearer credential-a',
+				'content-type': 'application/json',
+				'MCP-Protocol-Version': '2026-07-28',
+				'Mcp-Method': 'tools/call',
+				'Mcp-Name': 'mcp_portal_call',
+			},
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				id,
+				method: 'tools/call',
+				params: {
+					name: 'mcp_portal_call',
+					arguments: argumentsValue,
+					_meta: {
+						'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+						'io.modelcontextprotocol/clientCapabilities': {},
+					},
+				},
+			}),
+		});
+		return { status: response.status, text: await response.text() };
+	};
+	return { call, retire: node.retire };
+}
+
 it.each([51, 8000])(
 	'refuses raw%s malformed calls before effects or an oversized reply',
 	async (count) => {
@@ -127,7 +186,7 @@ it('budgets 50 validation failures at16MiB minus/plus1 and leaves the real Node 
 		return oldResultFor(input);
 	};
 
-	let node: Awaited<ReturnType<typeof startNodeHost>> | undefined;
+	let node: Awaited<ReturnType<typeof startNodeComparison>> | undefined;
 	try {
 		// Calibrate using two actual original-proxy responses. No production size helper is the oracle.
 		const small = await oldResultAt(256);
@@ -179,55 +238,8 @@ it('budgets 50 validation failures at16MiB minus/plus1 and leaves the real Node 
 		expect(boundedItems.filter((item) => item.error.code === 'input_validation')).toHaveLength(49);
 		expect(harness.fixture.calls).toHaveLength(0);
 
-		const config = fixtureConfig(directory, [
-			`${harness.fixture.url}/mcp`,
-			`${harness.fixture.url}/mcp`,
-		]);
-		const provider = config.mcp.providers.alpha;
-		const profile = config.profiles['profile-a'];
-		const policy = profile?.profile.namespaces.alpha;
-		if (provider === undefined || profile === undefined || policy === undefined)
-			throw new Error('Missing Node comparison configuration.');
-		provider.namespace = 'same-server';
-		delete profile.profile.namespaces.alpha;
-		profile.profile.namespaces['same-server'] = policy;
-		const configPath = path.join(directory, 'node.json');
-		await writeFile(configPath, JSON.stringify(config));
-		node = await startNodeHost({
-			configPath,
-			secrets: { resolve: async () => 'one-secret-canary' },
-		});
-		if (node.http === undefined) throw new Error('Missing actual Node proxy listener.');
-		const nodeCall = async (
-			argumentsValue: Record<string, unknown>,
-			id: string,
-		): Promise<{ readonly status: number; readonly text: string }> => {
-			if (node?.http === undefined) throw new Error('Missing Node proxy.');
-			const response = await fetch(node.http.endpoint, {
-				method: 'POST',
-				headers: {
-					authorization: 'Bearer credential-a',
-					'content-type': 'application/json',
-					'MCP-Protocol-Version': '2026-07-28',
-					'Mcp-Method': 'tools/call',
-					'Mcp-Name': 'mcp_portal_call',
-				},
-				body: JSON.stringify({
-					jsonrpc: '2.0',
-					id,
-					method: 'tools/call',
-					params: {
-						name: 'mcp_portal_call',
-						arguments: argumentsValue,
-						_meta: {
-							'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-							'io.modelcontextprotocol/clientCapabilities': {},
-						},
-					},
-				}),
-			});
-			return { status: response.status, text: await response.text() };
-		};
+		node = await startNodeComparison(harness.fixture.url, directory);
+		const nodeCall = node.call;
 		const nodeResponse = await nodeCall(input, underId + 'p'.repeat(64));
 		const nodeText = nodeResponse.text;
 		expect(nodeResponse.status).toBe(200);
@@ -284,3 +296,100 @@ it('budgets 50 validation failures at16MiB minus/plus1 and leaves the real Node 
 		await rm(directory, { recursive: true, force: true });
 	}
 });
+
+it.each(['first', 'last'] as const)(
+	'%s: trims no-effect validation items before a completed mixed-batch result in request order',
+	async (position) => {
+		const harness = await startLocalWorkerHarness();
+		const directory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-mixed-budget-'));
+		let reference: Awaited<ReturnType<typeof startLegacyProxyReference>> | undefined;
+		let node: Awaited<ReturnType<typeof startNodeComparison>> | undefined;
+		try {
+			const value = 'e'.repeat(83763);
+			harness.fixture.setCatalog([
+				{
+					name: 'read',
+					inputSchema: {
+						type: 'object',
+						properties: { value: { type: 'string', enum: [value] } },
+						required: ['value'],
+						additionalProperties: false,
+					},
+				},
+			]);
+			const invalidCalls = Array.from({ length: 49 }, (_, index) => ({
+				id: String(index),
+				namespace: 'same-server',
+				toolName: 'read',
+				arguments: { value: 'invalid' },
+			}));
+			const successCall = {
+				id: 'success',
+				namespace: 'same-server',
+				toolName: 'read',
+				arguments: { value },
+			};
+			const input = {
+				calls:
+					position === 'first' ? [successCall, ...invalidCalls] : [...invalidCalls, successCall],
+			};
+			reference = await startLegacyProxyReference(harness.fixture.url, 'indirect');
+			const expected = z
+				.record(z.string(), z.unknown())
+				.parse(await reference.client.callTool({ name: 'mcp_portal_call', arguments: input }));
+			const padding = replyLimit + 1 - expectedWorkerBytes(expected, 'proof');
+			expect(padding).toBeGreaterThanOrEqual(0);
+			const id = 'proof' + 'p'.repeat(padding);
+			expect(bytes(JSON.stringify({ input, id }))).toBeLessThan(4 * 1024 * 1024 - 4096);
+			expect(expectedWorkerBytes(expected, id)).toBe(replyLimit + 1);
+			await reference.close();
+			reference = undefined;
+			const beforeWorker = harness.fixture.calls.length;
+			const response = await harness.rpc(
+				'tools/call',
+				{ name: 'mcp_portal_call', arguments: input },
+				{ id },
+			);
+			const text = await response.text();
+			expect(response.status).toBe(200);
+			expect(bytes(text)).toBeLessThanOrEqual(replyLimit);
+			expect(harness.fixture.calls).toHaveLength(beforeWorker + 1);
+			const core = (
+				result: Record<string, unknown>,
+			): { readonly items: readonly Record<string, unknown>[] } => {
+				const text = z.object({ content: z.tuple([z.object({ text: z.string() })]) }).parse(result)
+					.content[0].text;
+				return z
+					.object({ items: z.array(z.record(z.string(), z.unknown())) })
+					.parse(JSON.parse(text));
+			};
+			const actualItems = core(callResult(text)).items;
+			const expectedItems = core(expected).items;
+			expect(actualItems.map((item) => item.requestId)).toEqual(input.calls.map((call) => call.id));
+			expect(actualItems.find((item) => item.requestId === 'success')?.status).toBe('success');
+			expect(actualItems.find((item) => item.requestId === '0')).toMatchObject({
+				requestId: '0',
+				status: 'failed',
+				error: { code: 'too_large_result' },
+			});
+			// Every untrimmed item, including the completed effect's result, retains its original literal bytes.
+			const untrimmedBytes = (entries: readonly Record<string, unknown>[]): readonly string[] =>
+				entries.filter((item) => item.requestId !== '0').map((item) => JSON.stringify(item));
+			expect(untrimmedBytes(actualItems)).toEqual(untrimmedBytes(expectedItems));
+			node = await startNodeComparison(harness.fixture.url, directory);
+			const nodeResponse = await node.call(input, id + 'p'.repeat(64));
+			expect(nodeResponse.status).toBe(200);
+			expect(bytes(nodeResponse.text)).toBeGreaterThan(replyLimit);
+			expect(surfaceOf(callResult(nodeResponse.text))).toEqual(expected);
+			expect(harness.fixture.calls).toHaveLength(beforeWorker + 2);
+			process.stdout.write(
+				`${JSON.stringify({ mixedBudget: { proposed: replyLimit + 1, actual: bytes(text), effects: 1, position, success: actualItems.find((item) => item.requestId === 'success')?.status, trimmed: '0', unchangedNode: bytes(nodeResponse.text) } })}\n`,
+			);
+		} finally {
+			await reference?.close();
+			await node?.retire();
+			await harness.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+	},
+);

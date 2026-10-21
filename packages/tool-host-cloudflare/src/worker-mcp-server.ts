@@ -18,8 +18,10 @@ function toolResult(
 	input: unknown,
 	result: PortalBatchResult,
 	requestId: string | number,
+	callHasStarted: WorkerRequestLimits['callHasStarted'],
 ): CallToolResult {
-	return projectBoundedWorkerToolResult({ operation, input, result, requestId }).response;
+	return projectBoundedWorkerToolResult({ operation, input, result, requestId, callHasStarted })
+		.response;
 }
 /** One fresh protocol server per HTTP request; gateway/cache lifetime belongs to the organization. */
 export function createWorkerMcpServer(props: {
@@ -44,6 +46,7 @@ export function createWorkerMcpServer(props: {
 					input,
 					await props.gateway.list(input),
 					context.mcpReq.id,
+					props.limits.callHasStarted,
 				);
 			case 'mcp_portal_search':
 				return toolResult(
@@ -51,6 +54,7 @@ export function createWorkerMcpServer(props: {
 					input,
 					await props.gateway.search(input),
 					context.mcpReq.id,
+					props.limits.callHasStarted,
 				);
 			case 'mcp_portal_describe':
 				return toolResult(
@@ -58,6 +62,7 @@ export function createWorkerMcpServer(props: {
 					input,
 					await props.gateway.describe(input),
 					context.mcpReq.id,
+					props.limits.callHasStarted,
 				);
 			case 'mcp_portal_call': {
 				const refused = props.limits.begin(input, context.mcpReq.id);
@@ -67,6 +72,7 @@ export function createWorkerMcpServer(props: {
 					input,
 					result,
 					requestId: context.mcpReq.id,
+					callHasStarted: props.limits.callHasStarted,
 				});
 				// A batch-count refusal admits no calls and performs no per-call validation or analytics.
 				if (refused === undefined) props.recordCalls(input, bounded.result, startedAt);
@@ -102,6 +108,7 @@ export function createWorkerMcpServer(props: {
 					input,
 					result,
 					requestId: context.mcpReq.id,
+					callHasStarted: props.limits.callHasStarted,
 				});
 				props.recordCalls(normalized, bounded.result, startedAt);
 				return bounded.response;
