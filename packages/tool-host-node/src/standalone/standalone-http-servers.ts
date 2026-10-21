@@ -10,11 +10,11 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
-import type { NodeHostBearerCredentialSet } from '#node-host/ingress/bearer-credentials';
+import type { NodeHostBearerCredentialSet } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import {
 	startNodeAuthenticatedHttpServer,
 	type NodeAuthenticatedHttpServer,
-} from '#node-host/ingress/node-authenticated-http-server';
+} from '#node-host/mcp-proxy-server/node-authenticated-http-server';
 import { createStandaloneToolPortalMcpServer } from '#node-host/standalone/standalone-mcp-server';
 import type {
 	StandaloneToolPortalArtifactReader,

@@ -10,7 +10,7 @@ import type {
 	CliInvocationFlagPredicate,
 	CliInvocationMatcher,
 	CliPatternRule,
-} from './models/cli-allowance-schema.js';
+} from '#tool-access/authorization/cli-allowances/models/cli-allowance-schema';
 
 export type CliAllowanceEvaluationResult =
 	| {

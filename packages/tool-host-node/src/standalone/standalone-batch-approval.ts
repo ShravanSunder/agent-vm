@@ -2,7 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { NodeHostAuthenticatedEnvelopeSchema as StandaloneToolPortalAuthenticatedEnvelopeSchema } from '#node-host/ingress/bearer-credentials';
+import { NodeHostAuthenticatedEnvelopeSchema as StandaloneToolPortalAuthenticatedEnvelopeSchema } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 
 export const STANDALONE_TOOL_PORTAL_APPROVAL_AUDIENCE = 'tool-portal:approval:v1';
 export const STANDALONE_TOOL_PORTAL_APPROVAL_META_KEY = 'agent-vm/tool-portal-approval-token';

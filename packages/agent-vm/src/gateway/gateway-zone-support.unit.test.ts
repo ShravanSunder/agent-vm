@@ -15,7 +15,7 @@ function createGatewayZone(ingress?: GatewayZone['gateway']['ingress']): Gateway
 			profileSecretProjectionsByAgent: { main: {} },
 			profilesByAgent: { main: 'main' },
 			imageProfile: 'hermes',
-			memory: '2G',
+			memory: '2560M',
 			cpus: 2,
 			port: 18791,
 			config: './gateways/shravan/hermes.json',

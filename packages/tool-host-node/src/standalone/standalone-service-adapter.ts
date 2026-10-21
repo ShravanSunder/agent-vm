@@ -12,7 +12,7 @@ import {
 	type DispatchInvocation,
 	type StandalonePortalCallItem,
 	type StandalonePortalInvocation,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 
 import type { StandaloneToolPortalApprovalCoordinator } from '#node-host/standalone/standalone-batch-approval';
 import { prepareStandaloneBatchDispatch } from '#node-host/standalone/standalone-batch-dispatch';

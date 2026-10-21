@@ -600,7 +600,7 @@ function collectToolPortalSemanticRouterViolations(
 	}
 	return toolPortalSemanticRouterHelperNames.flatMap((helperName) => {
 		const owner = helperName.startsWith('merge')
-			? 'packages/tool-engine/src/dispatch/portal-discovery-merger.ts'
+			? 'packages/tool-engine/src/capability-dispatch/portal-discovery-merger.ts'
 			: 'packages/tool-portal/src/tool-portal-result-router.ts';
 		// F-60 keeps the original independent merger until S4 removes the old package.
 		const originalPreCutoverMerger =

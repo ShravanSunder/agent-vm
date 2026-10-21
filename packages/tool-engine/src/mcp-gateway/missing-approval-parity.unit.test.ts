@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { projectProxyMcpResult } from '#mcp-gateway/proxy-mcp-result';
+import { projectProxyMcpResult } from '#mcp-gateway/proxy-results/proxy-mcp-result';
 import { createHarness } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
 
 it.each(['direct', 'indirect'] as const)(

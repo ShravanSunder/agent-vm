@@ -10,7 +10,7 @@ import {
 	type StandalonePortalCallPlan,
 	type StandalonePortalPreparedBatch,
 	type ToolBackend,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 
 import {
 	deriveStandaloneToolPortalApprovalBatchFingerprint,

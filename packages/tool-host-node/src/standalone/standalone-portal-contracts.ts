@@ -11,7 +11,7 @@ import type {
 	PortalSearchResult,
 } from '@agent-collaboration/tool-access/contracts';
 
-import type { NodeHostAuthenticatedEnvelope } from '#node-host/ingress/bearer-credentials';
+import type { NodeHostAuthenticatedEnvelope } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 
 export interface StandaloneToolPortalInvocationOptions {
 	readonly approvalToken?: string;

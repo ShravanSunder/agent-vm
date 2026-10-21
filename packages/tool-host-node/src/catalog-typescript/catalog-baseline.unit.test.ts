@@ -1,9 +1,12 @@
+import { createCatalogToolPresentationName } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { generateTypescriptCatalogArtifact } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { createCatalogToolPresentationName } from '#node-host/catalog-typescript/catalog-tool-presentation-name';
-import { compileCatalogTypescriptModules } from '#node-host/catalog-typescript/catalog-typescript-compiler';
-import { generateTypescriptCatalogArtifact } from '#node-host/configuration/typescript-artifact';
+import {
+	compileCatalogTypescriptModules,
+	fingerprintCatalogTypescriptInput,
+} from '#node-host/catalog-typescript/catalog-typescript-compiler';
 import {
 	baselineInput,
 	baselineBundleJson,
@@ -11,19 +14,22 @@ import {
 } from '#node-host/test-fixtures/catalog-v2-baseline';
 // Oracle copied byte-for-byte from the committed S3a frozen baseline, never regenerated.
 describe('frozen compiler v2 baseline', () => {
-	it('pins the legacy TypeScript helper artifact source bytes', () => {
+	it('pins the legacy TypeScript helper artifact source bytes', async () => {
 		const tools = baselineInput.tools.map((tool) => ({
 			namespace: tool.namespace,
 			toolName: tool.name,
 			inputSchema: tool.inputSchema,
 		}));
-		expect(generateTypescriptCatalogArtifact({ tools })).toBe(baselineArtifactSource);
-		expect(generateTypescriptCatalogArtifact({ tools: tools.toReversed() })).toBe(
+		expect(await generateTypescriptCatalogArtifact({ tools })).toBe(baselineArtifactSource);
+		expect(await generateTypescriptCatalogArtifact({ tools: tools.toReversed() })).toBe(
 			baselineArtifactSource,
 		);
 	});
 	it('pins module sources, manifest, native names, fingerprints, file paths, lengths, hashes and versions', async () => {
 		const expected: unknown = JSON.parse(baselineBundleJson);
+		expect(await fingerprintCatalogTypescriptInput(baselineInput)).toBe(
+			'a61c3ff1d9806028ca41523237939dadc7f1015f03b0e7a9987ee198a9cc8ad3',
+		);
 		expect(
 			z
 				.object({

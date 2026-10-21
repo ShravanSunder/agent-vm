@@ -59,7 +59,7 @@ const systemConfig = {
 			gateway: {
 				type: 'hermes',
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: 18791,
 				config: './shravan/hermes.yaml',
@@ -87,7 +87,7 @@ const systemConfig = {
 			gateway: {
 				type: 'hermes',
 				imageProfile: 'hermes',
-				memory: '2G',
+				memory: '2560M',
 				cpus: 2,
 				port: 18792,
 				config: './alevtina/hermes.yaml',
@@ -403,7 +403,7 @@ function getHermesZone(): GatewayZone & {
 			config: './hermes/config.yaml',
 			cpus: 2,
 			imageProfile: 'hermes',
-			memory: '2G',
+			memory: '2560M',
 			port: 18_793,
 			profilesByAgent: { main: 'main' },
 			profileSecretProjectionsByAgent: {

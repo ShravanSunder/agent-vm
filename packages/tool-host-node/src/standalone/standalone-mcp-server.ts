@@ -20,7 +20,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
-import type { NodeHostAuthenticatedEnvelope } from '#node-host/ingress/bearer-credentials';
+import type { NodeHostAuthenticatedEnvelope } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import { STANDALONE_TOOL_PORTAL_APPROVAL_META_KEY } from '#node-host/standalone/standalone-batch-approval';
 import type {
 	StandaloneToolPortalArtifactReader,

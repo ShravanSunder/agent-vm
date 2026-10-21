@@ -39,7 +39,7 @@ describe('test-only portable alias boundaries', () => {
 		];
 		for (const sourceText of sourceTexts) {
 			for (const filePath of [
-				'packages/tool-engine/src/dispatch/alias-consumer.ts',
+				'packages/tool-engine/src/capability-dispatch/alias-consumer.ts',
 				'packages/gateway-runtime/src/managed-tool-engine/alias-consumer.ts',
 			])
 				expect(
@@ -58,7 +58,7 @@ describe('test-only portable alias boundaries', () => {
 				collectPortalArchitectureViolations({
 					files: [
 						{
-							filePath: 'packages/tool-engine/src/dispatch/alias-consumer.unit.test.ts',
+							filePath: 'packages/tool-engine/src/capability-dispatch/alias-consumer.unit.test.ts',
 							sourceText,
 						},
 					],
@@ -72,11 +72,11 @@ describe('test-only portable alias boundaries', () => {
 			'utf8',
 		);
 		const violations = collectToolEngineViolations({
-			filePath: 'packages/tool-engine/src/dispatch/controller-type-import.ts',
+			filePath: 'packages/tool-engine/src/capability-dispatch/controller-type-import.ts',
 			sourceText,
 		});
 		expect(violations).toEqual([
-			'packages/tool-engine/src/dispatch/controller-type-import.ts: tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
+			'packages/tool-engine/src/capability-dispatch/controller-type-import.ts: tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
 		]);
 	});
 	it.each([
@@ -87,7 +87,7 @@ describe('test-only portable alias boundaries', () => {
 		expect(
 			ts.resolveModuleName(
 				alias,
-				path.resolve('packages/tool-engine/src/dispatch/alias-consumer.unit.test.ts'),
+				path.resolve('packages/tool-engine/src/capability-dispatch/alias-consumer.unit.test.ts'),
 				compilerOptions('tsconfig.json'),
 				ts.sys,
 			).resolvedModule?.resolvedFileName,

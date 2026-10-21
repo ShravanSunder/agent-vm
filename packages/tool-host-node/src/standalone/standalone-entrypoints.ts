@@ -3,7 +3,7 @@ import type { Transport } from '@modelcontextprotocol/server';
 import type {
 	NodeHostAuthenticatedEnvelope,
 	NodeHostBearerCredentialSet,
-} from '#node-host/ingress/bearer-credentials';
+} from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import {
 	startStandaloneToolPortalHttpServer,
 	startStandaloneToolPortalMcpHttpServer,

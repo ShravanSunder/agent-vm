@@ -18,8 +18,8 @@ import { z } from 'zod';
 import {
 	nodeHostConfigSchema,
 	type NodeHostConfig,
-} from '#node-host/configuration/node-host-config';
-import { compileNodeHostCredentialSet } from '#node-host/ingress/bearer-credentials';
+} from '#node-host/host-configuration/models/node-host-config';
+import { compileNodeHostCredentialSet } from '#node-host/mcp-proxy-server/bearer-credentials';
 
 export const secretCanary = 'provider-secret-canary-841';
 export const headerCanary = 'provider-header-canary-243';

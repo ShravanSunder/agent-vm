@@ -6,7 +6,7 @@ import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/s
 import {
 	NodeHostAuthenticatedEnvelopeSchema,
 	type NodeHostAuthenticatedEnvelope,
-} from '#node-host/ingress/bearer-credentials';
+} from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import { createStandaloneToolPortalMcpServer } from '#node-host/standalone/standalone-mcp-server';
 import type {
 	StandaloneToolPortalArtifactReader,

@@ -4,7 +4,7 @@ import { ToolPortalMcpClient } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-
 import { createNodeToolPortalMcpTransport } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport';
 import { expect, it } from 'vitest';
 
-import type { NodeHostBearerCredentialSet } from '#node-host/ingress/bearer-credentials';
+import type { NodeHostBearerCredentialSet } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import {
 	createStandaloneToolPortalApprovalToken,
 	type StandaloneToolPortalApprovalBatchIntent,

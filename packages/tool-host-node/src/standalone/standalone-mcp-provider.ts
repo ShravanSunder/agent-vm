@@ -13,17 +13,17 @@ import {
 	type PortalCallRequest,
 	type SafeDiagnostic,
 } from '@agent-collaboration/tool-access/contracts';
-import type { UpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/connectors';
 import type {
 	StandalonePortalCallItem,
 	ToolPortalDiscoveryBackendPort,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createPortalToolHandlers,
 	proxyUpstreamFailureFromError,
 	type PortalBatchResult,
-	type PortalSession,
+	type AgentCatalogView,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import type { UpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 
 import type { StandaloneToolPortalInvocationOptions } from '#node-host/standalone/standalone-portal-contracts';
 import {
@@ -116,7 +116,7 @@ function discoveryResult(batch: PortalBatchResult, mergeBatch: boolean): unknown
 /** MCP resource adapter. Caller/session filtering is supplied by the host's shared catalog port. */
 export function createStandaloneMcpProviderBackend(props: {
 	readonly identity: PortalAgentIdentity;
-	readonly getSession: () => Promise<PortalSession>;
+	readonly getView: () => Promise<AgentCatalogView>;
 	readonly runtime: UpstreamMcpClientRuntime;
 	readonly owningGeneration: string;
 }): {
@@ -128,7 +128,7 @@ export function createStandaloneMcpProviderBackend(props: {
 	) => Promise<StandalonePortalCallItem>;
 } {
 	const readers = createPortalToolHandlers({
-		getSession: props.getSession,
+		getView: props.getView,
 		dispatchCall: async () => {
 			throw new Error('Discovery cannot invoke a capability.');
 		},
@@ -178,7 +178,7 @@ export function createStandaloneMcpProviderBackend(props: {
 		invoke: async (call, operationId, options) => {
 			let attempted = false;
 			const caller = createPortalToolHandlers({
-				getSession: props.getSession,
+				getView: props.getView,
 				dispatchCall: async (input) => {
 					attempted = true;
 					try {

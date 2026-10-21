@@ -12,17 +12,17 @@ import {
 	type JsonObject,
 	type PortalCallRequest,
 } from '@agent-collaboration/tool-access/contracts';
-import { createUpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/connectors';
 import {
 	createOrganizationToolCatalog,
-	createPortalSessionManager,
+	createAgentCatalogViewCache,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { createUpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { ToolSchema } from '@modelcontextprotocol/core';
 
 import {
 	NodeHostAuthenticatedEnvelopeSchema,
 	type NodeHostBearerCredentialSet,
-} from '#node-host/ingress/bearer-credentials';
+} from '#node-host/mcp-proxy-server/models/bearer-credentials';
 import {
 	createStandaloneToolPortalApprovalCoordinator,
 	type StandaloneToolPortalApprovalBatchIntent,
@@ -34,12 +34,12 @@ import {
 import { createStandaloneMcpProviderBackend } from '#node-host/standalone/standalone-mcp-provider';
 import type { StandaloneToolPortalArtifactReader } from '#node-host/standalone/standalone-portal-contracts';
 import { createNodeStandaloneToolPortalService } from '#node-host/standalone/standalone-service-adapter';
+import { createNodeHttpUpstreamTransport } from '#node-host/stdio-upstream-servers/node-upstream-transports';
 import {
 	headerCanary,
 	secretCanary,
 	type ControlledProvider,
 } from '#node-host/test-fixtures/node-host-fixture';
-import { createNodeHttpUpstreamTransport } from '#node-host/upstream/node-upstream-transports';
 
 export const standaloneKey = 'standalone-fixture-signing-key';
 export const standaloneRevision = { owner: 'standalone-fixture', revision: '1' };
@@ -102,7 +102,7 @@ export async function createStandaloneHostFixture(
 		now,
 	});
 	await catalog.read();
-	const sessions = createPortalSessionManager({
+	const sessions = createAgentCatalogViewCache({
 		accessPolicy: {
 			enabledNamespaces: [namespace],
 			enabledNamespacesByAgent: {},
@@ -199,7 +199,7 @@ export async function createStandaloneHostFixture(
 				source: 'mcp-proxy-bearer',
 			});
 			scopes.add(portalAgentScopeKey(identity));
-			const session = await sessions.getSession(identity);
+			const session = await sessions.getView(identity);
 			const names = session.catalog.tools.map((tool) => tool.toolName);
 			const principal = [
 				'standalone-v1',
@@ -211,7 +211,7 @@ export async function createStandaloneHostFixture(
 			const providerBackend = createStandaloneMcpProviderBackend({
 				identity,
 				runtime,
-				getSession: async () => sessions.getSession(identity),
+				getView: async () => sessions.getView(identity),
 				owningGeneration: 'controlled-resource-generation',
 			});
 			const accessForCall = async (

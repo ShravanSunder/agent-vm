@@ -1,15 +1,15 @@
 import type { Readable, Writable } from 'node:stream';
 
-import type { ApprovalPort } from '@agent-collaboration/tool-engine/dispatch';
+import type { ApprovalPort } from '@agent-collaboration/tool-engine/capability-dispatch';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
-import { loadNodeHostConfig } from '#node-host/configuration/node-host-config';
-import { compileNodeHostCredentialSet } from '#node-host/ingress/bearer-credentials';
+import { loadNodeHostConfig } from '#node-host/host-configuration/node-host-config';
+import { compileNodeHostCredentialSet } from '#node-host/mcp-proxy-server/bearer-credentials';
 import {
 	startNodeHostMcpHttpServer,
 	type NodeHostMcpHttpServer,
-} from '#node-host/ingress/node-http-server';
-import { createNodeMcpServer } from '#node-host/ingress/node-mcp-server';
+} from '#node-host/mcp-proxy-server/node-http-server';
+import { createNodeMcpServer } from '#node-host/mcp-proxy-server/node-mcp-server';
 import {
 	createNodeHostComposition,
 	type NodeHostComposition,
