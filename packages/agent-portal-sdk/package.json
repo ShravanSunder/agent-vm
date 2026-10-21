@@ -99,7 +99,8 @@
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
-		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@modelcontextprotocol/client": "2.3.1",
+		"@modelcontextprotocol/core": "2.3.1",
 		"@optique/core": "^1.2.0",
 		"@optique/run": "^1.2.0",
 		"@optique/zod": "^1.2.0",

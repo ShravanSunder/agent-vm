@@ -41,7 +41,8 @@ it('keeps packed SDK and access schemas and refinement registry identical', asyn
 		const dependencies = [
 			'zod',
 			'@agent-vm/oauth-broker-contracts',
-			'@modelcontextprotocol/sdk',
+			'@modelcontextprotocol/client',
+			'@modelcontextprotocol/core',
 			'@optique/core',
 			'@optique/run',
 			'@optique/zod',

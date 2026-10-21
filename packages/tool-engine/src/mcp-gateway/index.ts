@@ -31,3 +31,5 @@ export * from '#mcp-gateway/proxy-mcp-result';
 export * from '#mcp-gateway/proxy-upstream-failure';
 
 export * from '#mcp-gateway/organization-tool-catalog';
+export { createPortalToolHandlers } from '#mcp-gateway/portal-tools';
+export type { PortalToolRuntime, PortalToolHandlers } from '#mcp-gateway/portal-tools';

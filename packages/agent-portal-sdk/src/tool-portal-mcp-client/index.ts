@@ -47,6 +47,8 @@ export interface ToolPortalMcpTransport {
 			readonly name: string;
 		},
 		options?: {
+			/** Node HTTP has zero effective grace: MCP 2026-07-28 cancellation closes the response stream.
+			 * Stdio and private local transports retain the requested canonical-result grace window. */
 			readonly resultGraceAfterAbortMs?: number;
 			readonly signal?: AbortSignal;
 		},
@@ -56,6 +58,8 @@ export interface ToolPortalMcpTransport {
 	readonly readResource: (
 		request: PortalArtifactReadResourceRequest,
 		options?: {
+			/** Node HTTP has zero effective grace: MCP 2026-07-28 cancellation closes the response stream.
+			 * Stdio and private local transports retain the requested canonical-result grace window. */
 			readonly resultGraceAfterAbortMs?: number;
 			readonly signal?: AbortSignal;
 		},
@@ -68,6 +72,8 @@ export interface ToolPortalMcpClientOptions {
 
 export interface ToolPortalClientRequestOptions {
 	readonly approvalToken?: string;
+	/** Node HTTP has zero effective grace: MCP 2026-07-28 cancellation closes the response stream.
+	 * Stdio and private local transports retain the requested canonical-result grace window. */
 	readonly resultGraceAfterAbortMs?: number;
 	readonly signal?: AbortSignal;
 }

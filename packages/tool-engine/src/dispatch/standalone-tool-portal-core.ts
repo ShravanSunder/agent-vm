@@ -85,8 +85,9 @@ export function createStandaloneToolPortalCore<TOptions, TReadOptions>(
 			const orderedPlans = parsed.calls.flatMap((call) =>
 				plans.filter((plan) => plan.call.id === call.id),
 			);
-			if (orderedPlans.length > 0) {
-				const prepared = await invocation.prepareBatch(orderedPlans);
+			async function dispatchGroup(group: readonly StandalonePortalCallPlan[]): Promise<void> {
+				if (group.length === 0) return;
+				const prepared = await invocation.prepareBatch(group);
 				const dispatcher = createCapabilityDispatcher({
 					assessAccess,
 					operations: prepared.operations,
@@ -96,7 +97,7 @@ export function createStandaloneToolPortalCore<TOptions, TReadOptions>(
 				});
 				try {
 					await Promise.all(
-						orderedPlans.map(async (plan) => {
+						group.map(async (plan) => {
 							const identity = {
 								id: plan.call.id,
 								operationId: plan.operationId,
@@ -144,6 +145,8 @@ export function createStandaloneToolPortalCore<TOptions, TReadOptions>(
 					prepared.release();
 				}
 			}
+			await dispatchGroup(orderedPlans.filter((plan) => !plan.requiresApproval));
+			await dispatchGroup(orderedPlans.filter((plan) => plan.requiresApproval));
 			return PortalCallResultSchema.parse({
 				items: parsed.calls.map((call) => itemsById.get(call.id)),
 				ok: parsed.calls.every((call) => itemsById.get(call.id)?.status === 'ok'),

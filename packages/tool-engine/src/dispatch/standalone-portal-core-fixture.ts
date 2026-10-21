@@ -204,7 +204,10 @@ export function createStandaloneCoreFixture(identity?: {
 				},
 			],
 			prepareBatch: async (plans): Promise<StandalonePortalPreparedBatch> => {
-				batches.push(plans.filter((plan) => plan.requiresApproval).map((plan) => plan.operationId));
+				if (plans.some((plan) => plan.requiresApproval))
+					batches.push(
+						plans.filter((plan) => plan.requiresApproval).map((plan) => plan.operationId),
+					);
 				const records = new Map<string, OperationRecord>();
 				const items = new Map<string, StandalonePortalCallItem>();
 				const receipts = new Map<string, ApprovalReceipt>();

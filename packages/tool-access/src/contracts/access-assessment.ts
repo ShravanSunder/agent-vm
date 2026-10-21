@@ -11,6 +11,10 @@ import { configuredCliArgvTokenSchema, configuredCliPolicySchema } from './cli-a
 import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
 import { jsonValueSchema } from './json-value.js';
 import {
+	CapabilityNameSchema,
+	NamespaceNameSchema,
+} from './portal-contracts/contract-primitives/models/capability-reference-schema.js';
+import {
 	toolPortalBackendKindSchema,
 	toolPortalToolSelectorSchema,
 	toolPortalCallPolicySchema,
@@ -19,7 +23,10 @@ import {
 const boundedId = z.string().min(1).max(256);
 export const revisionRef = z.strictObject({ owner: boundedId, revision: boundedId });
 export const accountRef = z.strictObject({ oauthAccountId: oauthAccountIdSchema });
-export const capabilityRef = z.strictObject({ namespace: boundedId, tool: boundedId });
+export const capabilityRef = z.strictObject({
+	namespace: NamespaceNameSchema,
+	tool: CapabilityNameSchema,
+});
 export const callDigest = z.string().regex(/^[a-f0-9]{64}$/u);
 export const hostAccessBinding = z.strictObject({
 	workspaceLayer: z.enum(['not-configured', 'configured']),
@@ -52,7 +59,7 @@ export const policyRuleRef = z.strictObject({
 		'cli-allowance',
 		'account-policy',
 	]),
-	ruleId: boundedId,
+	ruleId: CapabilityNameSchema,
 });
 export const operationClassRef = z.discriminatedUnion('kind', [
 	z.strictObject({
@@ -74,7 +81,7 @@ export const accessNamespacePolicy = z.strictObject({
 		z.strictObject({ kind: z.literal('account-policy') }),
 	]),
 	operations: z.record(
-		boundedId,
+		CapabilityNameSchema,
 		z.strictObject({
 			cliPolicy: configuredCliPolicySchema.nullable(),
 			googleCommands: compiledGoogleCommandSetSchema.nullable(),
@@ -83,7 +90,7 @@ export const accessNamespacePolicy = z.strictObject({
 });
 export const accessProfileProjection = z.strictObject({
 	profileId: boundedId,
-	namespaces: z.record(boundedId, accessNamespacePolicy),
+	namespaces: z.record(NamespaceNameSchema, accessNamespacePolicy),
 });
 export const accountFact = z
 	.strictObject({

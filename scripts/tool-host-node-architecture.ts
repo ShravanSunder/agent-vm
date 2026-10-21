@@ -33,7 +33,9 @@ export function collectToolHostNodeViolations(
 	const violations: string[] = [];
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
 	function visit(node: ts.Node): void {
-		const inbound = filePath.startsWith('packages/tool-host-node/src/ingress/');
+		const inbound =
+			filePath.startsWith('packages/tool-host-node/src/ingress/') ||
+			filePath.startsWith('packages/tool-host-node/src/standalone/');
 		if (
 			inbound &&
 			ts.isVariableDeclaration(node) &&

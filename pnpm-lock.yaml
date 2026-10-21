@@ -50,9 +50,12 @@ importers:
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
+      '@modelcontextprotocol/core':
+        specifier: 2.3.1
+        version: 2.3.1
       '@optique/core':
         specifier: ^1.2.0
         version: 1.2.0
