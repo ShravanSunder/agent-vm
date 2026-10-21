@@ -23,6 +23,31 @@ const row = {
 	double3: 100,
 };
 describe('deployed analytics and log assertion sensitivity', () => {
+	it('accepts a current-run refused call whose server is unknown', () => {
+		expect(() =>
+			assertAnalyticsShape(
+				{ data: [{ ...row, blob4: 'unknown', blob6: 'refused', blob7: 'authorization' }] },
+				configuration,
+			),
+		).not.toThrow();
+	});
+	it.each([
+		{ index1: '33333333-3333-4333-8333-333333333333' },
+		{ blob1: 'foreign-run:alpha' },
+		{ blob2: 'foreign-agent' },
+	])('rejects foreign run membership %j even when the server is unknown', (foreignMembership) => {
+		expect(() =>
+			assertAnalyticsShape(
+				{ data: [{ ...row, blob4: 'unknown', ...foreignMembership }] },
+				configuration,
+			),
+		).toThrow('do not belong');
+	});
+	it('still applies the byte bound to server text after checking run membership', () => {
+		expect(() =>
+			assertAnalyticsShape({ data: [{ ...row, blob4: '工具'.repeat(100) }] }, configuration),
+		).toThrow('byte bounds');
+	});
 	it('accepts current-run shape and rejects empty, old-run, wrong-type and oversized Unicode rows', () => {
 		expect(() => assertAnalyticsShape({ data: [row] }, configuration)).not.toThrow();
 		expect(() => assertAnalyticsShape({ data: [] }, configuration)).toThrow();

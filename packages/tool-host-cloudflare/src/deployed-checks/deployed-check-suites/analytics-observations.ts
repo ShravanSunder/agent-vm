@@ -18,8 +18,7 @@ export function assertAnalyticsShape(value: unknown, configuration: PrivateDeplo
 		if (
 			organization === undefined ||
 			row.blob1 !== `${configuration.runId}:${organization.label}` ||
-			![configuration.agentId, configuration.otherAgentId].includes(row.blob2) ||
-			row.blob4 !== 'same-server'
+			![configuration.agentId, configuration.otherAgentId].includes(row.blob2)
 		)
 			throw new Error('Analytics rows do not belong to this deployed check run.');
 		const blobs = [
