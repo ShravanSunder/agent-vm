@@ -260,7 +260,7 @@ One object per organization, holding only that organization's auth state. It's t
 ### Organization tools
 
 Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). Each organization's engine reads its own copy of that config.
-- **Where the configuration lives** (the Lead's reading, owner question 6): in the organization's database, as versions. The Worker reads the current version, so a change applies on the next call with no redeploy. That's what the admin panel will change, through a request bar and forms you accept. Until the panel exists, edits go through one owner-only command. Profiles, agents' profiles and modes keep today's meaning (fleet D-9; [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)).
+- **Where the configuration lives** (the Lead's reading, owner question 6): in the organization's database, as versions. The Worker reads the current version, so a change applies on the next call with no redeploy. That's what the admin panel changes, through a request bar and editable forms you accept; the panel is in the first version. Profiles, agents' profiles and modes keep today's meaning (fleet D-9; [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)).
 - **Secret values** come from that organization's Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
 - **Connections are reused only inside the organization's engine,** per agent and per server as today, where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). A reused connection never skips the per-call check.
 - **1Password:** the Node host's `op` path doesn't run in a Worker. A 1Password service-account token would need a client that works in a Worker, which is unproven, so Cloudflare secrets are the default.
@@ -353,7 +353,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
 | S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check needs agent sign-in from the sign-in service; deploying uses the existing Cloudflare CLI login |
 | Agent sign-in | needed | the sign-in service's design ([people sign-in](../2026-10-20-people-sign-in/requirements.md)) admits people only today; it adds agents signing in as themselves, which S6's caller check depends on |
-| Admin panel (`tool-control-ui`) | designed next | its own design pass: a request bar plus forms you accept (owner, 2026-10-20) |
+| Admin panel (`tool-control-ui`) | being designed | in the first version (owner, 2026-10-20): a request bar that shows or proposes, and editable proposal forms you accept, built from shadcn components. Designed in `docs/wip/2026-10-20-admin-panel-design/` |
 | S3c limits, S5 control API | cancelled | none |
 
 The stack's branches start from `33914cbe`. `master` now also has the 2.5G VM memory change (#242), which the stack takes in when building resumes.
