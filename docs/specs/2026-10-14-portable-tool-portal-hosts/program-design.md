@@ -168,7 +168,7 @@ Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-par
   - the catalog records which servers failed, with diagnostics, and keeps the healthy ones;
   - an incomplete catalog isn't treated as final: the next request that needs it lists the failed servers again;
   - a complete catalog is reused for today's 60 seconds and refreshed on the next access after that, with no timer;
-  - if a refresh of a complete catalog fails, the complete one stays in use, with diagnostics;
+  - if a refresh of a complete catalog fails, the complete one stays in use, with diagnostics, on both addresses. **This differs from today on purpose:** today's `?tools=direct` refused a new session in that state, but clients already connected kept their own catalog ([portal-core.ts:232](../../../packages/mcp-portal/src/core/portal-core.ts#L232), [portal-session.ts:236](../../../packages/mcp-portal/src/portal-session.ts#L236)). 2026-07-28 has no sessions, so refusing would cut off every connected direct client after one failed refresh. Serving the retained catalog keeps today's availability for those clients (the Lead's reading, open to the owner);
   - in `portal-deferred` (the plain address), callers get the healthy servers' tools;
   - in `client-deferred` (`?tools=direct`), a `tools/list` that still finds the catalog incomplete after that retry is refused with today's bounded diagnostics (the failed server names) and HTTP 503, as a full-catalog session is today.
 
