@@ -6,3 +6,4 @@ export * from './json-value.js';
 export * from './mcp-approval-profile.js';
 export * from './tool-selectors.js';
 export * from './call-argument-digest.js';
+export * from './agent-proof.js';
