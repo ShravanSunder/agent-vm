@@ -119,7 +119,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. Later that day the owner also decided agents sign in with Better Auth from the start, not Cloudflare Access (see **Sign-in** below); that replaces an earlier plan of Access plus agent keys first.
 - **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
 - **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
-- **Approved with a time limit** ("so we have approved with time limit too"): a mode can carry an end time. Approved until a time is a temporary grant; blocked until a time is a temporary revocation (fleet F-61, now decided). After the first version.
+- **Approved with a time limit** ("so we have approved with time limit too"): approved can carry an end time, a temporary grant, after which the tool goes back to its previous mode. "Blocked until a time not required", so F-61's temporary revocation is dropped. Not in the first version.
 - **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
 
 ## Questions for the owner
@@ -130,7 +130,7 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
    - per-user tools, under today's permission model;
    - the chat-led change flow (fleet F-41 to F-49), in the separate control UI.
    - the **auto** mode, with its judge (D-9), once where the judge runs (T-16) is settled;
-   - **time limits on modes** (approved until, blocked until).
+   - **approved until a time** (temporary grants).
 7. **Does an agent ever act on behalf of a person?** Fleet F-35 says "on behalf of" is only a label, and an agent never uses a requester's accounts. On 2026-10-15 you said approval and control are "per agent, or on behalf of user". The design follows F-35 until you say otherwise.
 
 1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).

@@ -171,7 +171,7 @@ The dispatcher needs a record and a receipt for any call that requires approval 
 
 A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes. That critical tools always go to a person is part of the proposed judge rules.
 
-**Modes can have an end time** (owner, 2026-10-20, turning fleet F-61's interest into a decision): **approved until** a set time is a temporary grant, and **blocked until** a set time is a temporary revocation. When the time passes, the tool goes back to its previous mode. This is new, so it isn't in the first version; when it comes is owner question 6. A blocking ask with a time limit, which lets an agent carry on with a reason (fleet D-8), is a different thing: it's about one question the agent asks, not a tool's mode. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
+**Approved can have an end time** (owner, 2026-10-20, turning part of fleet F-61's interest into a decision): **approved until** a set time is a temporary grant, and when the time passes the tool goes back to its previous mode. Blocked has no end time: "blocked until a time not required". This is new, so it isn't in the first version; when it comes is owner question 6. A blocking ask with a time limit, which lets an agent carry on with a reason (fleet D-8), is a different thing: it's about one question the agent asks, not a tool's mode. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
 
 **Who must say yes, by what the call touches:**
 
