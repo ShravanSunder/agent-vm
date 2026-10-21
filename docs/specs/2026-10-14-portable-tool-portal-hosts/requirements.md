@@ -114,6 +114,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Organizations:** "organizations are isolated for auth only"; "you have owner and org members. that's it. owners can allow people to log in or allow auth related stuff"; "segregated by durable objects".
 - **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
 - **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
+- **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. The first version uses Cloudflare Access plus each agent's own key; Better Auth replaces those keys afterwards, as its own project ([people sign-in](../2026-10-20-people-sign-in/requirements.md)), changing only the Worker's caller check.
 - **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". The first question below asks whether that still holds for agents.
 
 ## Questions for the owner
@@ -124,7 +125,7 @@ Bring these one at a time, in this order. The first was sent as a brief on 2026-
    - Cloudflare documents that the Portal sends one stored admin credential upstream for service-token sessions. So, for agents using service tokens, the Worker can't tell them apart through it, and per-user servers are excluded for those sessions. One upstream registration per agent might work around this. That's unproven, and proving it needs the owner's Cloudflare account.
    - Directly behind Access, the Worker tells agents apart by each agent's own credential, as today's proxy does with its agent bearer tokens.
    - **This blocks:** the Worker's caller check, and per-user tools.
-2. **Who issues people's sign-in and agent tokens for real: our own auth service (Better Auth), or fleet?** Both advisors and the Router/board Lead now recommend Better Auth (Router decision 718): fleet has no token contract in time, and connecting fleet's agents to Better Auth is later fleet work, not in this path. **This blocks:** per-user tools, and selling this as a product without the owner's Cloudflare Access.
+2. **Answered on 2026-10-20: Better Auth** (see owner decisions).
 3. **Do tool calls need history that survives a restart?** The design assumes not. Today's servers keep no record per call. On the Worker, the one thing kept is which approval tokens have been used, until each expires, so an approval still works only once.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
