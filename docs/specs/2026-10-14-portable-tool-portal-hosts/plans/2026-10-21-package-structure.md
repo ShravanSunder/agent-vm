@@ -163,8 +163,10 @@ managed-tool-engine/
 ├── managed-call-results/
 │   ├── managed-call-projection.ts
 │   └── managed-call-results.ts
+├── models/managed-tool-engine-adapter.ts   the adapter interface (breaks the adapter ↔ call-projection cycle)
 └── test-fixtures/
     ├── composition-profile-test-fixture.ts
+    ├── managed-approval-dispatch-test-fixture.ts
     ├── managed-profile-test-fixture.ts
     └── prepared-policy-test-fixture.ts
 ```
@@ -303,3 +305,12 @@ structure scan of the touched packages shows no rule above broken.
   lines).
 - This pass has no paired Verifier. The Lead verifies each layer from its
   proof.
+- `managed-dispatch-adapter.ts` and `managed-call-projection.ts` imported each
+  other. The `ManagedToolEngineAdapter` interface moves to
+  `managed-tool-engine/models/managed-tool-engine-adapter.ts`.
+- `managed-approval-dispatch.integration.test.ts` (738 lines, one test) keeps
+  its one test. Its shared setup moves unchanged into
+  `test-fixtures/managed-approval-dispatch-test-fixture.ts`.
+- `tsconfig.base.json` holds the `tool-engine` entry paths. The repo's
+  monorepo rules require the owner's permission to edit it, so the
+  `capability-dispatch` and `upstream-mcp-connectors` renames wait for that.
