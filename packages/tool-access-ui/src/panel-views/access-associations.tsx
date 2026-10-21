@@ -33,11 +33,11 @@ import {
 } from '@tool-access-ui/components/ui/table';
 import {
 	allAccessFilters,
-	modeBadgeVariant,
 	type PanelSnapshot,
 	type AccessFilters,
 	type AccessRow,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import { modeBadgeVariant } from '@tool-access-ui/panel-views/rule-display-labels';
 import type { ReactElement } from 'react';
 interface AccessProps {
 	readonly snapshot: PanelSnapshot;

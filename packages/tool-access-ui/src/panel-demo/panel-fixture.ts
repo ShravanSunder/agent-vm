@@ -1,13 +1,13 @@
-import { initialAccess, connectedAccounts } from '@tool-access-ui/panel-fixture-data';
+import { initialAccess, connectedAccounts } from '@tool-access-ui/panel-demo/panel-fixture-data';
+import { filterAssociations } from '@tool-access-ui/panel-state/association-filters';
 import {
 	allAccessFilters,
-	filterAssociations,
 	type ToolAccessPanelPort,
 	type PanelSnapshot,
 	type ProposalDraft,
 	type AccessRow,
 	type AuditEntry,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
 /** STAND-IN: browser-memory demonstration only. No auth, durable audit, provider or host.
  * Reload creates a new fixture. Never use this implementation to enforce access. */
 export function createToolAccessPanelFixture(): ToolAccessPanelPort {

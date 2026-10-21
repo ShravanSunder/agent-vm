@@ -21,7 +21,10 @@ import {
 	TableBody,
 	TableCell,
 } from '@tool-access-ui/components/ui/table';
-import type { PanelSnapshot, ConnectedAccount } from '@tool-access-ui/panel-view-types';
+import type {
+	PanelSnapshot,
+	ConnectedAccount,
+} from '@tool-access-ui/panel-state/models/panel-view-types';
 import type { ReactElement } from 'react';
 export function AccountsView({
 	snapshot,

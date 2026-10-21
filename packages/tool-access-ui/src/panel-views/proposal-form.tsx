@@ -36,10 +36,12 @@ import {
 } from '@tool-access-ui/components/ui/select';
 import {
 	approvalModes,
+	type ProposalDraft,
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import {
 	modeBadgeVariant,
 	describeRuleScope,
-	type ProposalDraft,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-views/rule-display-labels';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 export type ProposalActivity =

@@ -1,6 +1,3 @@
-import { AccessAssociations } from '@tool-access-ui/access-associations';
-import { AccountsView, AuditView } from '@tool-access-ui/account-and-audit-views';
-import { AccountDetails } from '@tool-access-ui/account-details';
 import { Alert, AlertTitle, AlertDescription } from '@tool-access-ui/components/ui/alert';
 import { Button } from '@tool-access-ui/components/ui/button';
 import {
@@ -29,14 +26,20 @@ import {
 	TableCell,
 } from '@tool-access-ui/components/ui/table';
 import { TooltipProvider } from '@tool-access-ui/components/ui/tooltip';
-import { OrganizationNavigation, destinations } from '@tool-access-ui/organization-navigation';
 import type {
 	ToolAccessPanelPort,
 	ConnectedAccount,
 	AccessRow,
-} from '@tool-access-ui/panel-view-types';
-import { ProposalForm } from '@tool-access-ui/proposal-form';
-import { usePanelModel } from '@tool-access-ui/use-panel-model';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import { usePanelModel } from '@tool-access-ui/panel-state/use-panel-model';
+import { AccessAssociations } from '@tool-access-ui/panel-views/access-associations';
+import { AccountsView, AuditView } from '@tool-access-ui/panel-views/account-and-audit-views';
+import { AccountDetails } from '@tool-access-ui/panel-views/account-details';
+import {
+	OrganizationNavigation,
+	destinations,
+} from '@tool-access-ui/panel-views/organization-navigation';
+import { ProposalForm } from '@tool-access-ui/panel-views/proposal-form';
 import { Search } from 'lucide-react';
 import { useState, type ReactElement } from 'react';
 export interface ToolAccessPanelProps {

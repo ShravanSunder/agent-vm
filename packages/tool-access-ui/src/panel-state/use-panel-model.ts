@@ -1,9 +1,6 @@
-import type { Destination } from '@tool-access-ui/organization-navigation';
-import { routePanelRequest } from '@tool-access-ui/panel-request-router';
+import { filterAssociations } from '@tool-access-ui/panel-state/association-filters';
 import {
 	allAccessFilters,
-	assertNever,
-	filterAssociations,
 	type AccessFilters,
 	type AccessRow,
 	type ChangeIntent,
@@ -11,8 +8,11 @@ import {
 	type ProposalDraft,
 	type ScanResult,
 	type ToolAccessPanelPort,
-} from '@tool-access-ui/panel-view-types';
-import type { ProposalActivity } from '@tool-access-ui/proposal-form';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import { routePanelRequest } from '@tool-access-ui/panel-state/panel-request-router';
+import { assertNever } from '@tool-access-ui/panel-state/panel-state-exhaustiveness';
+import type { Destination } from '@tool-access-ui/panel-views/organization-navigation';
+import type { ProposalActivity } from '@tool-access-ui/panel-views/proposal-form';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 type PanelLoad =

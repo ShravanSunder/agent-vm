@@ -3,7 +3,7 @@ import {
 	type AccessFilters,
 	type AccessRow,
 	type ChangeIntent,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
 export type RoutedRequest =
 	| { readonly kind: 'show'; readonly filters: AccessFilters }
 	| { readonly kind: 'scan' }

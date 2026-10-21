@@ -1,11 +1,11 @@
-import { createToolAccessPanelFixture } from '@tool-access-ui/panel-fixture';
-import { routePanelRequest } from '@tool-access-ui/panel-request-router';
+import { createToolAccessPanelFixture } from '@tool-access-ui/panel-demo/panel-fixture';
 import {
 	allAccessFilters,
 	approvalModes,
-	modeBadgeVariant,
 	type ProposalDraft,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import { routePanelRequest } from '@tool-access-ui/panel-state/panel-request-router';
+import { modeBadgeVariant } from '@tool-access-ui/panel-views/rule-display-labels';
 import { describe, expect, it } from 'vitest';
 async function proposal(
 	port: ReturnType<typeof createToolAccessPanelFixture>,

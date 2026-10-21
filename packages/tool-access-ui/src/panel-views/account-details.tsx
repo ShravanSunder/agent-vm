@@ -33,8 +33,8 @@ import {
 import {
 	type ConnectedAccount,
 	type AccessRow,
-	modeBadgeVariant,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+import { modeBadgeVariant } from '@tool-access-ui/panel-views/rule-display-labels';
 import { useState, type ReactElement } from 'react';
 import { toast } from 'sonner';
 interface AccountDetailsProps {

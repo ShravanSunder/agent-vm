@@ -3,8 +3,8 @@ export type { ToolAccessPanelProps } from '@tool-access-ui/tool-access-panel';
 export {
 	approvalModes,
 	allAccessFilters,
-	modeBadgeVariant,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
+export { modeBadgeVariant } from '@tool-access-ui/panel-views/rule-display-labels';
 export type {
 	ToolAccessPanelPort,
 	PanelSnapshot,
@@ -21,4 +21,4 @@ export type {
 	AcceptResult,
 	ScanEntry,
 	ScanResult,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';

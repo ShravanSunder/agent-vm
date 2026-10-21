@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { createToolAccessPanelFixture } from '@tool-access-ui/panel-fixture';
+import { createToolAccessPanelFixture } from '@tool-access-ui/panel-demo/panel-fixture';
 import {
 	allAccessFilters,
 	type AcceptResult,
 	type PanelSnapshot,
 	type ToolAccessPanelPort,
-} from '@tool-access-ui/panel-view-types';
+} from '@tool-access-ui/panel-state/models/panel-view-types';
 import { ToolAccessPanel } from '@tool-access-ui/tool-access-panel';
 // @vitest-environment jsdom
 import { createElement } from 'react';

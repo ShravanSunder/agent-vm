@@ -1,4 +1,7 @@
-import type { AccessRow, ConnectedAccount } from '@tool-access-ui/panel-view-types';
+import type {
+	AccessRow,
+	ConnectedAccount,
+} from '@tool-access-ui/panel-state/models/panel-view-types';
 export const initialAccess: readonly AccessRow[] = [
 	{
 		id: 'web-search',

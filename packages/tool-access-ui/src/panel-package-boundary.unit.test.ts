@@ -45,6 +45,6 @@ describe('panel package boundary', (): void => {
 		])
 			expect(forbiddenPanelImport(specifier)).toBe(true);
 		expect(forbiddenPanelImport('react')).toBe(false);
-		expect(forbiddenPanelImport('@tool-access-ui/panel-view-types')).toBe(false);
+		expect(forbiddenPanelImport('@tool-access-ui/panel-state/models/panel-view-types')).toBe(false);
 	});
 });
