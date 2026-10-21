@@ -61,10 +61,10 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 - **Requests that don't fit 2026-07-28 are refused before anything runs,** each with its own error:
   - a 2025-era `initialize` (no 2026-07-28 metadata): HTTP 400 with `-32022` and the supported versions;
   - a 2026-07-28 request missing its required `_meta` (protocol version, client capabilities): 400 with `-32602` ([metadata](https://modelcontextprotocol.io/specification/2026-07-28/basic/index#meta));
-  - `MCP-Protocol-Version`, `Mcp-Method` or `Mcp-Name` missing, or not matching the body: 400 with `-32020` ([server validation](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-validation));
+  - a required header missing or not matching the body: 400 with `-32020` ([server validation](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-validation)). `MCP-Protocol-Version` and `Mcp-Method` are required on every request; `Mcp-Name` only on `tools/call`, `resources/read` and `prompts/get` ([standard headers](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#standard-request-headers)), so `server/discover` and `tools/list` don't carry it;
   - `GET` and `DELETE`: 405.
   - An `Mcp-Session-Id` a client sends is ignored and never echoed.
-  - stdio has no headers or status codes; the same metadata checks apply to each message.
+  - stdio has no headers or status codes. A message that claims 2026-07-28 but lacks required metadata gets `-32602`; a message that claims no version at all is treated as 2025-era and gets `-32022`.
 - **`server/discover` is mandatory for servers.** The SDK handler provides it.
 - Responses may still stream as server-sent events within one request; only protocol sessions and the standalone `GET` stream are gone.
 
