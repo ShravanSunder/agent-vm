@@ -6,7 +6,7 @@ import {
 	evaluateCliAllowanceInvocation,
 	type CliAllowance,
 	type CliAllowanceBaseline,
-} from './index.js';
+} from '#tool-access/authorization/cli-allowances/index';
 
 function parseAllowance(overrides: Partial<CliAllowance> = {}): CliAllowance {
 	return CliAllowanceSchema.parse({

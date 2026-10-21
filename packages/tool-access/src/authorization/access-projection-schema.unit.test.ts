@@ -4,7 +4,7 @@ import {
 } from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { fixture, namespace } from './access-assessor-test-fixture.js';
+import { fixture, namespace } from '#tool-access/authorization/access-assessor-test-fixture';
 
 describe('projection call-policy non-overlap at exported boundaries', () => {
 	it.each([

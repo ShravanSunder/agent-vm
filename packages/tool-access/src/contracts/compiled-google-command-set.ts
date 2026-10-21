@@ -5,7 +5,7 @@ import {
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import { googleOAuthApplicationIdSchema } from './google-application-id.js';
+import { googleOAuthApplicationIdSchema } from '#tool-access/contracts/google-application-id';
 
 /** Code-compiled effective data. The authored CLI schema deliberately has no such field. */
 export const compiledGoogleCommandSetSchema = z

@@ -7,7 +7,7 @@ import {
 import {
 	compiledGoogleCommandSetSchema,
 	type CompiledGoogleCommandSet,
-} from '../contracts/compiled-google-command-set.js';
+} from '#tool-access/contracts/compiled-google-command-set';
 export function resolveCompiledGoogleCommand(
 	set: CompiledGoogleCommandSet,
 	argv: readonly string[],

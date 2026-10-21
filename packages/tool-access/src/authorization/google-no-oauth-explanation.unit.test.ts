@@ -17,7 +17,7 @@ import {
 	namespace,
 	notUsable,
 	state,
-} from './access-assessor-test-fixture.js';
+} from '#tool-access/authorization/access-assessor-test-fixture';
 
 function helpFixture(
 	mode: 'source' | 'static',
