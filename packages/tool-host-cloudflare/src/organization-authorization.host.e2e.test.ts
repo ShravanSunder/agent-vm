@@ -22,8 +22,8 @@ describe('organization authorization in local workerd', () => {
 			{
 				config: 'packages/tool-host-cloudflare/wrangler.local.jsonc',
 				local: true,
-			persist: true,
-			persistTo: stateDirectory,
+				persist: true,
+				persistTo: stateDirectory,
 				logLevel: 'error',
 				experimental: { disableExperimentalWarning: true },
 			},

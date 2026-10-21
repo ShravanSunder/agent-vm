@@ -1,7 +1,45 @@
-export { OrganizationAuthorization } from '#worker-host/organization-authorization';
+import { z } from 'zod';
+
+import { OrganizationAuthorization } from '#worker-host/organization-authorization';
+import {
+	deployedConfigurationSource,
+	workerSecretBindings,
+} from '#worker-host/worker-configuration';
+import { createWorkerHost, workerAgentVerifier, type WorkerHost } from '#worker-host/worker-host';
+
+export { OrganizationAuthorization, createWorkerHost };
+export type { WorkerHost };
+export interface WorkerBindings extends Readonly<Record<string, unknown>> {
+	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
+	readonly ORGANIZATION_CONFIGURATIONS: string;
+	readonly SIGN_IN_ISSUER: string;
+	readonly SIGN_IN_JWKS_URL: string;
+	readonly TOOL_PORTAL_AUDIENCE: string;
+}
+let host: WorkerHost | undefined;
 
 export default {
-	fetch(): Response {
-		return new Response('Tool Portal is not configured.', { status: 503 });
+	async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {
+		try {
+			host ??= createWorkerHost({
+				verifier: workerAgentVerifier({
+					deployment: z.url().parse(bindings.SIGN_IN_ISSUER),
+					audience: z.string().min(1).parse(bindings.TOOL_PORTAL_AUDIENCE),
+					jwksUrl: z.url().parse(bindings.SIGN_IN_JWKS_URL),
+				}),
+				configurations: deployedConfigurationSource(
+					JSON.parse(bindings.ORGANIZATION_CONFIGURATIONS),
+				),
+				secrets: workerSecretBindings(bindings),
+				organizations: {
+					forOrganization: (organizationId) =>
+						bindings.ORGANIZATIONS.get(bindings.ORGANIZATIONS.idFromName(organizationId)),
+				},
+			});
+			return await host.fetch(request);
+		} catch {
+			console.error(JSON.stringify({ event: 'worker-request-unavailable' }));
+			return Response.json({ error: 'worker-unavailable' }, { status: 503 });
+		}
 	},
 };
