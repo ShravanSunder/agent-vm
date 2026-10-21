@@ -57,8 +57,9 @@ packages/tool-engine/src/
 │   ├── index.ts
 │   ├── capability-dispatcher.ts
 │   ├── dispatch-intent.ts
-│   ├── resource-failure-detail.ts
-│   └── models/dispatch-contracts.ts
+│   └── models/
+│       ├── dispatch-contracts.ts
+│       └── resource-failure-detail.ts   pure schema the contracts use
 ├── standalone-tool-portal/              public entry …/standalone-tool-portal (S3d's files from dispatch/)
 │   ├── index.ts
 │   ├── standalone-tool-portal-core.ts
