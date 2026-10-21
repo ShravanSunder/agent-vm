@@ -98,7 +98,13 @@ async function executePreparedPortalCall(props: {
 	if (authorization?.kind === 'refused')
 		return itemError({
 			input,
-			error: { kind: 'approval_token_invalid', reason: authorization.reason },
+			error: {
+				kind: 'approval_token_invalid',
+				message: `MCP Portal approval token is invalid: ${authorization.reason}.`,
+				namespace: call.tool.namespace,
+				reason: authorization.reason,
+				toolName: call.tool.toolName,
+			},
 		});
 	try {
 		const result = await runtime.dispatchCall({
