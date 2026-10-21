@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	collectToolAccessViolations,
 	isForbiddenToolAccessImport,
-} from '../../../../scripts/audit-portal-architecture.js';
+} from './audit-portal-architecture.js';
 
 describe('tool-access source and declaration guard', () => {
 	it.each([

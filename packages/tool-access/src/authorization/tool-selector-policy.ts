@@ -2,7 +2,7 @@
 import type {
 	ToolPortalToolSelector,
 	ToolPortalNamespaceCallPolicy,
-} from '../contracts/tool-selectors.js';
+} from '#tool-access/contracts/tool-selectors';
 export function toolPortalSelectorAllowsOperation(
 	selector: ToolPortalToolSelector,
 	operationName: string,

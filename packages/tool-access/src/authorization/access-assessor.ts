@@ -1,6 +1,18 @@
 import type { GoogleAccountInvocationPolicyResult } from '@agent-vm/oauth-broker-contracts';
 
 import {
+	evaluateCliAllowanceInvocation,
+	validateCliAllowanceInvocation,
+} from '#tool-access/authorization/cli-allowances/index';
+import {
+	classifyCliPathContribution,
+	cliPolicyHasConditionalMatchers,
+	type CliPathContribution,
+} from '#tool-access/authorization/cli-path-policy';
+import { resolveCompiledGoogleCommand } from '#tool-access/authorization/compiled-google-command-resolution';
+import { mcpPortalCallPolicyDecision } from '#tool-access/authorization/mcp-approval-policy';
+import { toolPortalSelectorAllowsOperation } from '#tool-access/authorization/tool-selector-policy';
+import {
 	assessAccessInput,
 	hostAccessBinding,
 	openConfiguredCliInputSchema,
@@ -18,20 +30,8 @@ import {
 	type PolicyRuleRef,
 	type CompiledGoogleCommandSet,
 	type ConfiguredCliPolicy,
-} from '../contracts/index.js';
-import { resolvedMcpPortalProfileSchema } from '../contracts/mcp-approval-profile.js';
-import {
-	evaluateCliAllowanceInvocation,
-	validateCliAllowanceInvocation,
-} from './cli-allowances/index.js';
-import {
-	classifyCliPathContribution,
-	cliPolicyHasConditionalMatchers,
-	type CliPathContribution,
-} from './cli-path-policy.js';
-import { resolveCompiledGoogleCommand } from './compiled-google-command-resolution.js';
-import { mcpPortalCallPolicyDecision } from './mcp-approval-policy.js';
-import { toolPortalSelectorAllowsOperation } from './tool-selector-policy.js';
+} from '#tool-access/contracts/index';
+import { resolvedMcpPortalProfileSchema } from '#tool-access/contracts/mcp-approval-profile';
 
 export function assertNever(value: never): never {
 	throw new Error(`Unhandled access variant: ${JSON.stringify(value)}`);

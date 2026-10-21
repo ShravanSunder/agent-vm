@@ -20,7 +20,7 @@ import {
 	googleFixture,
 	namespace,
 	state,
-} from './access-assessor-test-fixture.js';
+} from '#tool-access/authorization/access-assessor-test-fixture';
 
 type AccessEntry = Extract<AccessAssessment, { kind: 'call-dependent' }>['entries'][number];
 type CallsMode = 'source' | 'static';
