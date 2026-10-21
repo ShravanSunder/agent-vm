@@ -31,6 +31,14 @@ covers the deployed half of verification rows 13–16.
   (`/mcp`, which needs a shared test secret) and its counters. It holds only
   test data. The private signing keys stay on sunclaw, where the checks mint
   tokens.
+- **Admitting test agents.** The production Worker has no agent-management
+  route. That route waits on owner question SD9 (who may add or remove
+  agents). Its organization object only offers the narrow
+  `setAgentAdmission` method. The test-helper Worker binds `a`'s
+  `OrganizationAuthorization` class with `script_name` and calls that method
+  through an `/admission` route that needs its own shared secret. Only the
+  sunclaw checks use it, to list and remove test agents. No production code
+  changes, and no management route reaches the portal.
 - The portal copies set the `global_fetch_strictly_public` compatibility flag,
   so they can reach the helper's `workers.dev` address (otherwise error 1042).
 - **Two test organizations** with test agents, test credentials and the test
