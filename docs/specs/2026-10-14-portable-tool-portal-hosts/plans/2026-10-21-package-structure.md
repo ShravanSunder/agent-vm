@@ -314,3 +314,9 @@ structure scan of the touched packages shows no rule above broken.
 - `tsconfig.base.json` holds the `tool-engine` entry paths. The repo's
   monorepo rules require the owner's permission to edit it, so the
   `capability-dispatch` and `upstream-mcp-connectors` renames wait for that.
+- tool-host-node's catalog compiler had a synchronous copy (Node crypto) of
+  the engine's asynchronous presentation-name rule. The engine's version is now
+  the only one. The compiler path (`fingerprintCatalogTypescriptInput` and its
+  callers) becomes `async` inside tool-host-node, an unreleased package with no
+  outside caller, while the output bytes stay identical. gateway-runtime still
+  imports the old `mcp-portal` compiler. S4 adapts it when it switches over.
