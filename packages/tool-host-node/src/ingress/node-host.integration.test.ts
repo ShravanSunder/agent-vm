@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http';
 
-import type { ApprovalPort } from '@agent-collaboration/tool-engine/dispatch';
+import type { ApprovalPort } from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	CLIENT_CAPABILITIES_META_KEY,
 	PROTOCOL_VERSION_META_KEY,

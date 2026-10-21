@@ -1,6 +1,6 @@
 import type { Readable, Writable } from 'node:stream';
 
-import type { ApprovalPort } from '@agent-collaboration/tool-engine/dispatch';
+import type { ApprovalPort } from '@agent-collaboration/tool-engine/capability-dispatch';
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
 import { loadNodeHostConfig } from '#node-host/configuration/node-host-config';

@@ -1,4 +1,4 @@
-import type { ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
+import type { ResourceResult } from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { McpGateway, PortalBatchResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';

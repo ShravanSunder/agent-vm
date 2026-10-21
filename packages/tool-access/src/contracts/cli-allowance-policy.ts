@@ -2,7 +2,7 @@
 import { oauthAccountIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import { jsonObjectSchema } from './json-value.js';
+import { jsonObjectSchema } from '#tool-access/contracts/json-value';
 export const configuredCliArgvTokenSchema = z
 	.string()
 	.min(1)

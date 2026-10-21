@@ -2,7 +2,7 @@ import type {
 	ApprovalPort,
 	ApprovalReceipt,
 	DispatchInvocation,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import { describe, expect, it } from 'vitest';
 
 import { compileNodeHostCredentialSet } from '#node-host/ingress/bearer-credentials';

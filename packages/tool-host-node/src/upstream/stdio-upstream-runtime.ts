@@ -2,7 +2,7 @@ import {
 	redactCredentialText,
 	redactThrownError,
 	redactUpstreamResponse,
-} from '@agent-collaboration/tool-engine/connectors';
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
 import { withNodeStdioEnvironment } from '#node-host/upstream/node-upstream-transports';

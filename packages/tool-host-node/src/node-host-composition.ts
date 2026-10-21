@@ -5,24 +5,24 @@ import {
 } from '@agent-collaboration/tool-access/authorization';
 import { assessAccessInput, jsonValueSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	createUpstreamMcpClientRuntime,
-	type UpstreamMcpClientRuntime,
-} from '@agent-collaboration/tool-engine/connectors';
-import {
 	type ApprovalPort,
 	type ToolBackend,
 	type BackendKind,
 	type OperationPort,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createMcpGateway,
 	createOrganizationToolCatalog,
 	proxyUpstreamFailureFromError,
 	proxyUpstreamFailureResult,
 	createInMemoryApprovalTokenUse,
-	createPortalSessionManager,
+	createAgentCatalogViewCache,
 	type McpGateway,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import {
+	createUpstreamMcpClientRuntime,
+	type UpstreamMcpClientRuntime,
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { ToolSchema } from '@modelcontextprotocol/core';
 
 import { mcpConfigToResolvedProviders } from '#node-host/configuration/mcp-config';
@@ -200,7 +200,7 @@ export async function createNodeHostComposition(props: {
 		now: Date.now,
 	});
 	await organizationCatalog.read();
-	const sessions = createPortalSessionManager({
+	const sessions = createAgentCatalogViewCache({
 		accessPolicy: {
 			enabledNamespaces: [...runtimeByNamespace.keys()],
 			enabledNamespacesByAgent: {},
@@ -326,7 +326,7 @@ export async function createNodeHostComposition(props: {
 		},
 		closeSession: async (identity) => {
 			allScopes.delete(portalAgentScopeKey(identity));
-			await sessions.invalidateSession(identity);
+			await sessions.invalidateView(identity);
 		},
 		close: async () => {
 			if (closed) return;

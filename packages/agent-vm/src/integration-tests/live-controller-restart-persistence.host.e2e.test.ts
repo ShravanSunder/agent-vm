@@ -144,7 +144,7 @@ function createSystemConfig(
 					profileSecretProjectionsByAgent: { shravan: {} },
 					profilesByAgent: { shravan: 'shravan' },
 					imageProfile: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: controllerPort + 100,
 					config: hermesConfigPath,

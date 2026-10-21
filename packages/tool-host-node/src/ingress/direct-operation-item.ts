@@ -1,4 +1,4 @@
-import { operationKeySchema } from '@agent-collaboration/tool-engine/dispatch';
+import { operationKeySchema } from '@agent-collaboration/tool-engine/capability-dispatch';
 
 export function extractDirectOperationItem(
 	metadata: Readonly<Record<string, unknown>> | undefined,

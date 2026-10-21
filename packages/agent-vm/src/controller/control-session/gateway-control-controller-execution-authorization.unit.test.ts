@@ -328,7 +328,7 @@ async function createSystemConfigFixture(
 					config: path.join(testRoot, 'config', 'zone-a', 'hermes.json'),
 					cpus: 2,
 					imageProfile: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					port: 18_791,
 					stateDir: path.join(testRoot, 'zone-a', 'state'),
 					type: 'hermes',

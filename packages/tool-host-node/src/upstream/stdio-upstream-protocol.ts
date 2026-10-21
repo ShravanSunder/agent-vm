@@ -2,7 +2,7 @@ import type { JsonObject } from '@agent-collaboration/tool-access/contracts';
 import {
 	redactThrownError,
 	redactUpstreamCatalogValue,
-} from '@agent-collaboration/tool-engine/connectors';
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';

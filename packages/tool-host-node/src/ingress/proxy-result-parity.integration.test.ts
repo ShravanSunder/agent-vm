@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 
-import * as dispatch from '@agent-collaboration/tool-engine/dispatch';
+import * as dispatch from '@agent-collaboration/tool-engine/capability-dispatch';
 import { createPortalCore, createUpstreamMcpClientRuntime } from '@agent-vm/mcp-portal/core';
 import { createPortalHttpApp } from '@agent-vm/mcp-portal/mcp-proxy';
 import { deriveAgentBearerToken } from '@agent-vm/mcp-portal/portal-auth/agent-bearer-token';

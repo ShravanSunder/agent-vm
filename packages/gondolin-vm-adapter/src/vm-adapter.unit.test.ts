@@ -982,7 +982,7 @@ describe('createManagedVm', () => {
 				cpus: 2,
 				env: { MANAGED_VM_LOG_LEVEL: 'debug' },
 				imagePath: '/vm-images/gateways/managed',
-				memory: '2G',
+				memory: '2560M',
 				rootfsMode: 'memory',
 				secrets: {
 					OPENAI_API_KEY: {
@@ -1021,7 +1021,7 @@ describe('createManagedVm', () => {
 				MANAGED_VM_LOG_LEVEL: 'debug',
 			},
 			httpHooks: {},
-			memory: '2G',
+			memory: '2560M',
 			rootfs: {
 				mode: 'memory',
 			},

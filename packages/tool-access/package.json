@@ -7,6 +7,9 @@
 		"dist"
 	],
 	"type": "module",
+	"imports": {
+		"#tool-access/*": "./src/*.ts"
+	},
 	"exports": {
 		"./contracts": {
 			"types": "./dist/contracts/index.d.ts",

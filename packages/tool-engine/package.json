@@ -8,22 +8,22 @@
 	],
 	"type": "module",
 	"imports": {
-		"#dispatch/*": "./src/dispatch/*.ts",
+		"#capability-dispatch/*": "./src/capability-dispatch/*.ts",
 		"#mcp-gateway/*": "./src/mcp-gateway/*.ts",
-		"#connectors/*": "./src/connectors/*.ts"
+		"#upstream-mcp-connectors/*": "./src/upstream-mcp-connectors/*.ts"
 	},
 	"exports": {
-		"./dispatch": {
-			"types": "./dist/dispatch/index.d.ts",
-			"import": "./dist/dispatch/index.js"
+		"./capability-dispatch": {
+			"types": "./dist/capability-dispatch/index.d.ts",
+			"import": "./dist/capability-dispatch/index.js"
 		},
 		"./mcp-gateway": {
 			"types": "./dist/mcp-gateway/index.d.ts",
 			"import": "./dist/mcp-gateway/index.js"
 		},
-		"./connectors": {
-			"types": "./dist/connectors/index.d.ts",
-			"import": "./dist/connectors/index.js"
+		"./upstream-mcp-connectors": {
+			"types": "./dist/upstream-mcp-connectors/index.d.ts",
+			"import": "./dist/upstream-mcp-connectors/index.js"
 		}
 	},
 	"publishConfig": {

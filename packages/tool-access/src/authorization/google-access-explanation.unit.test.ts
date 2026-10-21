@@ -16,7 +16,7 @@ import {
 	googleFixture,
 	namespace,
 	state,
-} from './access-assessor-test-fixture.js';
+} from '#tool-access/authorization/access-assessor-test-fixture';
 
 function googleOperation(
 	input: AssessAccessInput,

@@ -1,7 +1,7 @@
 import {
 	redactCredentialText,
 	type UpstreamMcpRuntimeOptions,
-} from '@agent-collaboration/tool-engine/connectors';
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';

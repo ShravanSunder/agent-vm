@@ -7,7 +7,7 @@ import {
 	type OperationRecord,
 	type OperationCreateResult,
 	type OperationLookupResult,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 
 export interface NodeOperationStore extends OperationPort {
 	readonly close: () => Promise<void>;
