@@ -180,6 +180,12 @@ if(visited.size===0)throw new Error('empty declaration closure');console.log('de
 }
 
 const requiredExports: Readonly<Record<string, readonly string[]>> = {
+	'./standalone-tool-portal': [
+		'createStandaloneToolPortalCore',
+		'mergeToolPortalList',
+		'mergeToolPortalSearch',
+		'mergeToolPortalDescribe',
+	],
 	'./mcp-gateway': [
 		'createMcpGateway',
 		'encodeToolRef',
@@ -219,6 +225,17 @@ for(const subpath of ${JSON.stringify(subpaths)}) {
  const dispatcher=module.createCapabilityDispatcher({assessAccess:createAccessAssessor({workspaceLayer:'not-configured',config:revision}),operations:{createOrRead:async()=>({kind:'untracked'}),lookup:unavailable,transition:unavailable},approvals:{challenge:unavailable,decision:unavailable,receipt:unavailable},backends:new Map([['mcp_provider',backend]]),now:()=>0});
  const result=await dispatcher.dispatch({authority:'packed',principal:'agent',item:'original',verifiedContextRef:'packed-context',correlation:{},access});
  if(result.kind!=='completed'||result.result!=='packed-ok'||invokes!==1)throw new Error('packed dispatch did not reach its backend exactly once');
+ } else if(subpath==='./standalone-tool-portal') {
+ const revision={owner:'packed',revision:'v1'};
+ const forbiddenEffect=()=>{throw new Error('empty discovery must not prepare or invoke a call');};
+ const core=module.createStandaloneToolPortalCore({binding:{workspaceLayer:'not-configured',config:revision},now:()=>0,resolveInvocation:async()=>({authority:'packed',principal:'agent',verifiedContextRef:'packed-context',owningGeneration:'packed-generation',correlation:{},entries:[],readOptions:undefined,accessForCall:forbiddenEffect,operationId:forbiddenEffect,prepareBatch:forbiddenEffect})});
+ const list=await core.list({requests:[{id:'packed-list'}]},undefined);
+ const search=await core.search({requests:[{id:'packed-search',query:'packed'}]},undefined);
+ const describe=await core.describe({requests:[{id:'packed-describe',tools:[{namespace:'example',name:'read'}]}]},undefined);
+ const expectedList={items:[{id:'packed-list',status:'ok',value:{namespaces:[],tools:[],namespaceDiscovery:[]}}],ok:true};
+ const expectedSearch={items:[{id:'packed-search',status:'ok',value:{tools:[],namespaceDiscovery:[]}}],ok:true};
+ const expectedDescribe={items:[{id:'packed-describe',status:'ok',value:{tools:[],namespaceDiscovery:[]}}],ok:true};
+ if(JSON.stringify(list)!==JSON.stringify(expectedList)||JSON.stringify(search)!==JSON.stringify(expectedSearch)||JSON.stringify(describe)!==JSON.stringify(expectedDescribe))throw new Error('packed standalone discovery did not retain empty-entry results');
  } else if(subpath==='./mcp-gateway') {
  if(module.encodeToolRef({namespace:'雪',toolName:'café:read'})!=='mcp:6Zuq:Y2Fmw6k6cmVhZA')throw new Error('packed reference bytes changed');
  const identity=module.decodeToolRef('mcp:YWxwaGE:cmVhZA');if(identity.namespace!=='alpha'||identity.toolName!=='read')throw new Error('packed reference decode changed');

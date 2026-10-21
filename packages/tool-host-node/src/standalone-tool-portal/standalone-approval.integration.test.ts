@@ -8,12 +8,12 @@ import type { NodeHostBearerCredentialSet } from '#node-host/mcp-proxy-server/mo
 import {
 	createStandaloneToolPortalApprovalToken,
 	type StandaloneToolPortalApprovalBatchIntent,
-} from '#node-host/standalone/standalone-batch-approval';
+} from '#node-host/standalone-tool-portal/standalone-batch-approval';
 import {
 	startStandaloneToolPortalHttpServer,
 	startStandaloneToolPortalMcpHttpServer,
 	STANDALONE_TOOL_PORTAL_HTTP_APPROVAL_HEADER,
-} from '#node-host/standalone/standalone-http-servers';
+} from '#node-host/standalone-tool-portal/standalone-http-servers';
 import { startControlledProvider } from '#node-host/test-fixtures/node-host-fixture';
 import {
 	createStandaloneHostFixture,

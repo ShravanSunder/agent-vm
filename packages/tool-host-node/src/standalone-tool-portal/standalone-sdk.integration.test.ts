@@ -7,8 +7,8 @@ import { ToolPortalMcpClient } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-
 import { createNodeToolPortalMcpTransport } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport';
 import { describe, expect, it } from 'vitest';
 
-import { createStandaloneToolPortalApprovalToken } from '#node-host/standalone/standalone-batch-approval';
-import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone/standalone-http-servers';
+import { createStandaloneToolPortalApprovalToken } from '#node-host/standalone-tool-portal/standalone-batch-approval';
+import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone-tool-portal/standalone-http-servers';
 import {
 	startControlledProvider,
 	secretCanary,

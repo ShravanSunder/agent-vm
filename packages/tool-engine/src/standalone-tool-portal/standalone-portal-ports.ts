@@ -18,7 +18,7 @@ import type {
 	OperationPort,
 	ToolBackend,
 } from '#capability-dispatch/models/dispatch-contracts';
-import type { ToolPortalDiscoveryEntry } from '#capability-dispatch/portal-discovery-merger';
+import type { ToolPortalDiscoveryEntry } from '#standalone-tool-portal/portal-discovery-merger';
 
 export type StandalonePortalCallItem = PortalCallResult['items'][number];
 export interface StandalonePortalCallPlan {

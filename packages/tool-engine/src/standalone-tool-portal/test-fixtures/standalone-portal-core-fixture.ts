@@ -15,8 +15,8 @@ import type {
 	StandalonePortalCallItem,
 	StandalonePortalInvocation,
 	StandalonePortalPreparedBatch,
-} from '#capability-dispatch/standalone-portal-ports';
-import { createStandaloneToolPortalCore } from '#capability-dispatch/standalone-tool-portal-core';
+} from '#standalone-tool-portal/standalone-portal-ports';
+import { createStandaloneToolPortalCore } from '#standalone-tool-portal/standalone-tool-portal-core';
 
 export const fixtureRevision = { owner: 'fixture-host', revision: '1' };
 const fixtureNow = Date.parse('2026-10-21T00:00:00.000Z');

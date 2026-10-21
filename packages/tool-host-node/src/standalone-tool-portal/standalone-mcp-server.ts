@@ -21,11 +21,11 @@ import {
 import { z } from 'zod';
 
 import type { NodeHostAuthenticatedEnvelope } from '#node-host/mcp-proxy-server/models/bearer-credentials';
-import { STANDALONE_TOOL_PORTAL_APPROVAL_META_KEY } from '#node-host/standalone/standalone-batch-approval';
 import type {
 	StandaloneToolPortalArtifactReader,
 	StandaloneToolPortalProjectionService,
-} from '#node-host/standalone/standalone-portal-contracts';
+} from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import { STANDALONE_TOOL_PORTAL_APPROVAL_META_KEY } from '#node-host/standalone-tool-portal/standalone-batch-approval';
 
 export const STANDALONE_TOOL_PORTAL_MCP_TOOL_NAMES = [
 	'tool_portal_list',

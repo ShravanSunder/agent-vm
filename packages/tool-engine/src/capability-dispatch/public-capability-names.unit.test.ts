@@ -9,11 +9,11 @@ import {
 	operationKeySchema,
 	resourceResultSchema,
 } from '#capability-dispatch/models/dispatch-contracts';
+import { proxyUpstreamFailureResult } from '#mcp-gateway/proxy-results/proxy-upstream-failure';
 import {
 	createStandaloneCoreFixture,
 	fixtureRevision,
-} from '#capability-dispatch/standalone-portal-core-fixture';
-import { proxyUpstreamFailureResult } from '#mcp-gateway/proxy-results/proxy-upstream-failure';
+} from '#standalone-tool-portal/test-fixtures/standalone-portal-core-fixture';
 
 describe('dispatch public names and opaque references', () => {
 	it('retains 1024-character operation-key fields and refuses each at 1025', () => {

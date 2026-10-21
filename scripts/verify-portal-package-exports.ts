@@ -12,6 +12,7 @@ const requiredPortalPackageExports = [
 	'@agent-collaboration/tool-engine/mcp-gateway',
 	'@agent-collaboration/tool-engine/upstream-mcp-connectors',
 	'@agent-collaboration/tool-engine/capability-dispatch',
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',

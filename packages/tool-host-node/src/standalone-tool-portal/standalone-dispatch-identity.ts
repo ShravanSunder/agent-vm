@@ -2,14 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { PortalCallRequest } from '@agent-collaboration/tool-access/contracts';
 
-export interface StandaloneSemanticRevisions {
-	readonly activeRevision: string;
-	readonly bindingRevision: string;
-	readonly catalogRevision: string;
-	readonly profilePolicyRevision: string;
-	readonly providerRevision: string;
-	readonly schemaRevision: string;
-}
+import type { StandaloneSemanticRevisions } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
 
 export function canonicalStandaloneAuthorityJson(value: unknown): string {
 	if (value === null || typeof value === 'boolean' || typeof value === 'string')

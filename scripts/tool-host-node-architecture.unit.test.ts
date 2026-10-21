@@ -55,7 +55,7 @@ describe('Node inbound protocol session policy', () => {
 	])('rejects surviving protocol session state: %s', (sourceText) => {
 		for (const filePath of [
 			'packages/tool-host-node/src/mcp-proxy-server/node-http-server.ts',
-			'packages/tool-host-node/src/standalone/standalone-http-servers.ts',
+			'packages/tool-host-node/src/standalone-tool-portal/standalone-http-servers.ts',
 		]) {
 			expect(collectToolHostNodeViolations({ filePath, sourceText })).not.toEqual([]);
 		}

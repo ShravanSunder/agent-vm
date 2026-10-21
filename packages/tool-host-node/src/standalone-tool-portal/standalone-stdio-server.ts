@@ -7,11 +7,11 @@ import {
 	NodeHostAuthenticatedEnvelopeSchema,
 	type NodeHostAuthenticatedEnvelope,
 } from '#node-host/mcp-proxy-server/models/bearer-credentials';
-import { createStandaloneToolPortalMcpServer } from '#node-host/standalone/standalone-mcp-server';
 import type {
 	StandaloneToolPortalArtifactReader,
 	StandaloneToolPortalProjectionService,
-} from '#node-host/standalone/standalone-portal-contracts';
+} from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import { createStandaloneToolPortalMcpServer } from '#node-host/standalone-tool-portal/standalone-mcp-server';
 
 function deepFreeze<TValue>(value: TValue): TValue {
 	if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;

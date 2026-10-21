@@ -10,6 +10,11 @@ import type {
 	PortalSearchRequest,
 	PortalSearchResult,
 } from '@agent-collaboration/tool-access/contracts';
+import type { DispatchInvocation } from '@agent-collaboration/tool-engine/capability-dispatch';
+import type {
+	StandalonePortalInvocation,
+	StandalonePortalCallItem,
+} from '@agent-collaboration/tool-engine/standalone-tool-portal';
 
 import type { NodeHostAuthenticatedEnvelope } from '#node-host/mcp-proxy-server/models/bearer-credentials';
 
@@ -48,4 +53,26 @@ export interface StandaloneToolPortalArtifactReader {
 		};
 		readonly request: PortalArtifactReadRequest;
 	}) => Promise<PortalArtifactReadResult>;
+}
+
+export interface StandaloneSemanticRevisions {
+	readonly activeRevision: string;
+	readonly bindingRevision: string;
+	readonly catalogRevision: string;
+	readonly profilePolicyRevision: string;
+	readonly providerRevision: string;
+	readonly schemaRevision: string;
+}
+
+/** The embedding resource supplies current facts; it retains managed context, CLI and OAuth ownership. */
+export interface NodeStandaloneInvocation extends Omit<
+	StandalonePortalInvocation<StandaloneToolPortalInvocationOptions>,
+	'prepareBatch'
+> {
+	readonly semanticRevisions: StandaloneSemanticRevisions;
+	readonly invoke: (props: {
+		readonly call: PortalCallRequest['calls'][number];
+		readonly invocation: DispatchInvocation;
+		readonly options: StandaloneToolPortalInvocationOptions;
+	}) => Promise<StandalonePortalCallItem>;
 }

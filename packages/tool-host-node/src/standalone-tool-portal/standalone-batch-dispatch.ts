@@ -1,24 +1,26 @@
 import { jsonValueSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	standalonePortalAmbiguous,
-	standalonePortalNotDispatched,
 	type ApprovalReceipt,
 	type BackendKind,
 	type DispatchInvocation,
 	type OperationRecord,
+	type ToolBackend,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
+import {
+	standalonePortalAmbiguous,
+	standalonePortalNotDispatched,
 	type StandalonePortalCallItem,
 	type StandalonePortalCallPlan,
 	type StandalonePortalPreparedBatch,
-	type ToolBackend,
-} from '@agent-collaboration/tool-engine/capability-dispatch';
+} from '@agent-collaboration/tool-engine/standalone-tool-portal';
 
+import type { StandaloneToolPortalInvocationOptions } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import type { NodeStandaloneInvocation } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
 import {
 	deriveStandaloneToolPortalApprovalBatchFingerprint,
 	type StandaloneToolPortalApprovalBatchIntent,
 	type StandaloneToolPortalApprovalCoordinator,
-} from '#node-host/standalone/standalone-batch-approval';
-import type { StandaloneToolPortalInvocationOptions } from '#node-host/standalone/standalone-portal-contracts';
-import type { NodeStandaloneInvocation } from '#node-host/standalone/standalone-service-adapter';
+} from '#node-host/standalone-tool-portal/standalone-batch-approval';
 
 interface PreparedBatchProps {
 	readonly plans: readonly StandalonePortalCallPlan[];

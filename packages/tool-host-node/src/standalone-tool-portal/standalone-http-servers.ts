@@ -15,11 +15,11 @@ import {
 	startNodeAuthenticatedHttpServer,
 	type NodeAuthenticatedHttpServer,
 } from '#node-host/mcp-proxy-server/node-authenticated-http-server';
-import { createStandaloneToolPortalMcpServer } from '#node-host/standalone/standalone-mcp-server';
 import type {
 	StandaloneToolPortalArtifactReader,
 	StandaloneToolPortalProjectionService,
-} from '#node-host/standalone/standalone-portal-contracts';
+} from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import { createStandaloneToolPortalMcpServer } from '#node-host/standalone-tool-portal/standalone-mcp-server';
 
 export const STANDALONE_TOOL_PORTAL_HTTP_APPROVAL_HEADER = 'x-agent-vm-tool-portal-approval-token';
 const standaloneJsonRequest = z.discriminatedUnion('operation', [

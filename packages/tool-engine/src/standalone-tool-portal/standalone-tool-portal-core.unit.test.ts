@@ -13,12 +13,12 @@ import {
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { createStandaloneToolPortalCore } from '#standalone-tool-portal/standalone-tool-portal-core';
 import {
 	createStandaloneCoreFixture,
 	fixtureRevision,
 	type CoreFixtureOptions,
-} from '#capability-dispatch/standalone-portal-core-fixture';
-import { createStandaloneToolPortalCore } from '#capability-dispatch/standalone-tool-portal-core';
+} from '#standalone-tool-portal/test-fixtures/standalone-portal-core-fixture';
 
 const verified = { authenticatedRef: 'host-verified-agent' };
 const call = { id: 'call', namespace: 'example', name: 'read', arguments: {} };

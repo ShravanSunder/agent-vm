@@ -5,8 +5,8 @@ import { createNodeToolPortalMcpTransport } from '@agent-vm/agent-portal-sdk/too
 import { startStandaloneToolPortalMcpHttpServer as startOldMcp } from '@agent-vm/tool-portal';
 import { expect, it } from 'vitest';
 
-import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone/standalone-http-servers';
-import type { StandaloneToolPortalArtifactReader } from '#node-host/standalone/standalone-portal-contracts';
+import type { StandaloneToolPortalArtifactReader } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone-tool-portal/standalone-http-servers';
 import { startControlledProvider } from '#node-host/test-fixtures/node-host-fixture';
 import { createNodeToolPortalMcpTransport as createOldTransport } from '#node-host/test-fixtures/old-node-tool-portal-mcp-transport';
 import {

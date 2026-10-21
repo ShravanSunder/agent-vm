@@ -23,17 +23,15 @@ import {
 	NodeHostAuthenticatedEnvelopeSchema,
 	type NodeHostBearerCredentialSet,
 } from '#node-host/mcp-proxy-server/models/bearer-credentials';
+import { type StandaloneSemanticRevisions } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import type { StandaloneToolPortalArtifactReader } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
 import {
 	createStandaloneToolPortalApprovalCoordinator,
 	type StandaloneToolPortalApprovalBatchIntent,
-} from '#node-host/standalone/standalone-batch-approval';
-import {
-	deriveStandaloneOperationId,
-	type StandaloneSemanticRevisions,
-} from '#node-host/standalone/standalone-dispatch-identity';
-import { createStandaloneMcpProviderBackend } from '#node-host/standalone/standalone-mcp-provider';
-import type { StandaloneToolPortalArtifactReader } from '#node-host/standalone/standalone-portal-contracts';
-import { createNodeStandaloneToolPortalService } from '#node-host/standalone/standalone-service-adapter';
+} from '#node-host/standalone-tool-portal/standalone-batch-approval';
+import { deriveStandaloneOperationId } from '#node-host/standalone-tool-portal/standalone-dispatch-identity';
+import { createStandaloneMcpProviderBackend } from '#node-host/standalone-tool-portal/standalone-mcp-provider';
+import { createNodeStandaloneToolPortalService } from '#node-host/standalone-tool-portal/standalone-service-adapter';
 import { createNodeHttpUpstreamTransport } from '#node-host/stdio-upstream-servers/node-upstream-transports';
 import {
 	headerCanary,

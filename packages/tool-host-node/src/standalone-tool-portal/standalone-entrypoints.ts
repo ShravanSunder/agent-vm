@@ -4,16 +4,16 @@ import type {
 	NodeHostAuthenticatedEnvelope,
 	NodeHostBearerCredentialSet,
 } from '#node-host/mcp-proxy-server/models/bearer-credentials';
+import type {
+	StandaloneToolPortalArtifactReader,
+	StandaloneToolPortalProjectionService,
+} from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
 import {
 	startStandaloneToolPortalHttpServer,
 	startStandaloneToolPortalMcpHttpServer,
 	type StandaloneToolPortalHttpServer,
-} from '#node-host/standalone/standalone-http-servers';
-import type {
-	StandaloneToolPortalArtifactReader,
-	StandaloneToolPortalProjectionService,
-} from '#node-host/standalone/standalone-portal-contracts';
-import { startStandaloneToolPortalMcpStdioServer } from '#node-host/standalone/standalone-stdio-server';
+} from '#node-host/standalone-tool-portal/standalone-http-servers';
+import { startStandaloneToolPortalMcpStdioServer } from '#node-host/standalone-tool-portal/standalone-stdio-server';
 
 interface StandaloneHttpEntrypointConfig {
 	readonly address: { readonly host: string; readonly port: number };

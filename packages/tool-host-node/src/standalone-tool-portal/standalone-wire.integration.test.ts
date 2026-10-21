@@ -16,7 +16,7 @@ import { z } from 'zod';
 import {
 	startStandaloneToolPortalHttpServer,
 	startStandaloneToolPortalMcpHttpServer,
-} from '#node-host/standalone/standalone-http-servers';
+} from '#node-host/standalone-tool-portal/standalone-http-servers';
 import {
 	startControlledProvider,
 	toolInputSchema,

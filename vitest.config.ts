@@ -36,6 +36,9 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-collaboration/tool-engine/standalone-tool-portal': repoPath(
+				'packages/tool-engine/src/standalone-tool-portal/index.ts',
+			),
 			'@agent-collaboration/tool-engine/mcp-gateway': repoPath(
 				'packages/tool-engine/src/mcp-gateway/index.ts',
 			),

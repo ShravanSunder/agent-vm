@@ -13,23 +13,23 @@ import {
 	type PortalCallRequest,
 	type SafeDiagnostic,
 } from '@agent-collaboration/tool-access/contracts';
-import type {
-	StandalonePortalCallItem,
-	ToolPortalDiscoveryBackendPort,
-} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createPortalToolHandlers,
 	proxyUpstreamFailureFromError,
 	type PortalBatchResult,
 	type AgentCatalogView,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import type {
+	StandalonePortalCallItem,
+	ToolPortalDiscoveryBackendPort,
+} from '@agent-collaboration/tool-engine/standalone-tool-portal';
 import type { UpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 
-import type { StandaloneToolPortalInvocationOptions } from '#node-host/standalone/standalone-portal-contracts';
+import type { StandaloneToolPortalInvocationOptions } from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
 import {
 	portalErrorFromUnknown,
 	safeDiagnosticForCode,
-} from '#node-host/standalone/standalone-provider-errors';
+} from '#node-host/standalone-tool-portal/standalone-provider-errors';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);

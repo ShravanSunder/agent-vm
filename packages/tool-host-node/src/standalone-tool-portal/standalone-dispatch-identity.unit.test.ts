@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 import {
 	deriveStandaloneDirectFingerprint,
 	deriveStandaloneOperationId,
-} from '#node-host/standalone/standalone-dispatch-identity';
+} from '#node-host/standalone-tool-portal/standalone-dispatch-identity';
 
 it('keeps the old canonical direct fingerprint with exactly the six semantic revisions', () => {
 	const snapshot = {

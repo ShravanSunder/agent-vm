@@ -4,36 +4,17 @@ import { createAccessAssessor } from '@agent-collaboration/tool-access/authoriza
 import {
 	jsonValueSchema,
 	type HostAccessBinding,
-	type PortalCallRequest,
 } from '@agent-collaboration/tool-access/contracts';
-import {
-	canonicalDispatchJson,
-	createStandaloneToolPortalCore,
-	type DispatchInvocation,
-	type StandalonePortalCallItem,
-	type StandalonePortalInvocation,
-} from '@agent-collaboration/tool-engine/capability-dispatch';
+import { canonicalDispatchJson } from '@agent-collaboration/tool-engine/capability-dispatch';
+import { createStandaloneToolPortalCore } from '@agent-collaboration/tool-engine/standalone-tool-portal';
 
-import type { StandaloneToolPortalApprovalCoordinator } from '#node-host/standalone/standalone-batch-approval';
-import { prepareStandaloneBatchDispatch } from '#node-host/standalone/standalone-batch-dispatch';
-import type { StandaloneSemanticRevisions } from '#node-host/standalone/standalone-dispatch-identity';
 import type {
+	NodeStandaloneInvocation,
 	StandaloneToolPortalInvocationOptions,
 	StandaloneToolPortalProjectionService,
-} from '#node-host/standalone/standalone-portal-contracts';
-
-/** The embedding resource supplies current facts; it retains managed context, CLI and OAuth ownership. */
-export interface NodeStandaloneInvocation extends Omit<
-	StandalonePortalInvocation<StandaloneToolPortalInvocationOptions>,
-	'prepareBatch'
-> {
-	readonly semanticRevisions: StandaloneSemanticRevisions;
-	readonly invoke: (props: {
-		readonly call: PortalCallRequest['calls'][number];
-		readonly invocation: DispatchInvocation;
-		readonly options: StandaloneToolPortalInvocationOptions;
-	}) => Promise<StandalonePortalCallItem>;
-}
+} from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+import type { StandaloneToolPortalApprovalCoordinator } from '#node-host/standalone-tool-portal/standalone-batch-approval';
+import { prepareStandaloneBatchDispatch } from '#node-host/standalone-tool-portal/standalone-batch-dispatch';
 
 export function createNodeStandaloneToolPortalService(props: {
 	readonly binding: HostAccessBinding;

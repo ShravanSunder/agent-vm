@@ -1,4 +1,4 @@
-import type { StandalonePortalCallItem } from '#capability-dispatch/standalone-portal-ports';
+import type { StandalonePortalCallItem } from '#standalone-tool-portal/standalone-portal-ports';
 
 export interface StandalonePortalOperationIdentity {
 	readonly id: string;

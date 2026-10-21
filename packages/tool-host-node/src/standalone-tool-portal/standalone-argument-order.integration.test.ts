@@ -2,7 +2,7 @@ import { ToolPortalMcpClient } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-
 import { createNodeToolPortalMcpTransport } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport';
 import { expect, it } from 'vitest';
 
-import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone/standalone-http-servers';
+import { startStandaloneToolPortalMcpHttpServer } from '#node-host/standalone-tool-portal/standalone-http-servers';
 import {
 	startControlledProvider,
 	toolInputSchema,

@@ -14,18 +14,18 @@ import {
 	mergeToolPortalDescribe,
 	mergeToolPortalList,
 	mergeToolPortalSearch,
-} from '#capability-dispatch/portal-discovery-merger';
+} from '#standalone-tool-portal/portal-discovery-merger';
 import {
 	standalonePortalAmbiguous,
 	standalonePortalCapabilityDenied,
 	standalonePortalNotDispatched,
-} from '#capability-dispatch/standalone-portal-call-results';
+} from '#standalone-tool-portal/standalone-portal-call-results';
 import type {
 	CreateStandaloneToolPortalCoreProps,
 	StandalonePortalCallItem,
 	StandalonePortalCallPlan,
 	StandaloneToolPortalCore,
-} from '#capability-dispatch/standalone-portal-ports';
+} from '#standalone-tool-portal/standalone-portal-ports';
 
 /** Aggregates Portal wire results; host ports supply facts and resource authority to S2. */
 export function createStandaloneToolPortalCore<TOptions, TReadOptions>(

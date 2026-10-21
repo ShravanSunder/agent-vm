@@ -11,7 +11,7 @@ import {
 	STANDALONE_TOOL_PORTAL_APPROVAL_AUDIENCE,
 	type StandaloneToolPortalApprovalBatchIntent,
 	type StandaloneToolPortalApprovalCoordinator,
-} from '#node-host/standalone/standalone-batch-approval';
+} from '#node-host/standalone-tool-portal/standalone-batch-approval';
 
 const serviceGeneration = 'standalone-service:1';
 const principal = {

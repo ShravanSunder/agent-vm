@@ -370,7 +370,7 @@ describe('portal architecture audit', () => {
 						'export async function routePortalCall(): Promise<unknown> { return {}; }\nexport async function mergeToolPortalList(): Promise<unknown> { return {}; }\n',
 				},
 				{
-					filePath: 'packages/tool-engine/src/capability-dispatch/portal-discovery-merger.ts',
+					filePath: 'packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts',
 					sourceText:
 						'export async function mergePortalList(): Promise<unknown> { return {}; }\nexport async function mergeToolPortalList(): Promise<unknown> { return {}; }\n',
 				},
@@ -385,7 +385,7 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/gateway-runtime/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
-			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-engine/src/capability-dispatch/portal-discovery-merger.ts',
+			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts',
 			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
 		]);
 	});
