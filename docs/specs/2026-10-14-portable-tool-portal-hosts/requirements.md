@@ -91,7 +91,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - Routing calls between machines in the fleet. The Worker reaching a computer's own MCP server is a computer tool, above.
 - A stored record of every call, and recovery of calls after a restart. Today's servers keep no such record.
 - Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.
-- New screens: an access view, changing access by chat, entering secrets and approval settings. They're the separate control UI, after the core (fleet F-49, F-56).
+- The admin panel itself: the separate control UI package (fleet F-49, F-51, F-56), with its own design pass next. This work keeps the configuration ready for it.
 - A full audit trail of permission and security changes.
 - An agent acting with someone else's accounts. "On behalf of" stays a label in the log (fleet F-30, F-35).
 - A control API for proposing and deciding changes.
@@ -119,6 +119,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. Later that day the owner also decided agents sign in with Better Auth from the start, not Cloudflare Access (see **Sign-in** below); that replaces an earlier plan of Access plus agent keys first.
 - **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
 - **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
+- **Admin panel** (2026-10-20): "i think i want everything to be configurable via admin panel", then option C: "request bar to search and make changes as proposal and user to accept with form. so agent makes the change user sees and accepts". It refines fleet F-41 and F-43: the panel has a request bar for search and proposals, and each proposal is shown as a form you accept. "we can design it more", so it gets its own design pass.
 - **Approved with a time limit** ("so we have approved with time limit too"): approved can carry an end time, a temporary grant, after which the tool goes back to its previous mode. "Blocked until a time not required", so F-61's temporary revocation is dropped. Not in the first version.
 - **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
 
@@ -130,7 +131,10 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
    - per-user tools, under today's permission model;
    - the chat-led change flow (fleet F-41 to F-49), in the separate control UI.
    - the **auto** mode, with its judge (D-9), once where the judge runs (T-16) is settled;
-   - **approved until a time** (temporary grants).
+   - **approved until a time** (temporary grants);
+   - the **admin panel**: a request bar plus forms you accept.
+
+   The Lead also reads the first version as keeping each organization's configuration in its database, as versions, so the panel can sit on top without redeploys. Until the panel exists, edits go through one owner-only command.
 7. **Does an agent ever act on behalf of a person?** Fleet F-35 says "on behalf of" is only a label, and an agent never uses a requester's accounts. On 2026-10-15 you said approval and control are "per agent, or on behalf of user". The design follows F-35 until you say otherwise.
 
 1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).

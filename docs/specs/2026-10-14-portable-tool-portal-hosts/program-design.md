@@ -260,6 +260,7 @@ One object per organization, holding only that organization's auth state. It's t
 ### Organization tools
 
 Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). Each organization's engine reads its own copy of that config.
+- **Where the configuration lives** (the Lead's reading, owner question 6): in the organization's database, as versions. The Worker reads the current version, so a change applies on the next call with no redeploy. That's what the admin panel will change, through a request bar and forms you accept. Until the panel exists, edits go through one owner-only command. Profiles, agents' profiles and modes keep today's meaning (fleet D-9; [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)).
 - **Secret values** come from that organization's Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
 - **Connections are reused only inside the organization's engine,** per agent and per server as today, where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). A reused connection never skips the per-call check.
 - **1Password:** the Node host's `op` path doesn't run in a Worker. A 1Password service-account token would need a client that works in a Worker, which is unproven, so Cloudflare secrets are the default.
