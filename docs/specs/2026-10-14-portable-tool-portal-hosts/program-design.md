@@ -100,24 +100,16 @@ type ToolLoading =
 
 ### Choosing the case
 
-Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-parser.ts:54](../../../packages/mcp-portal/src/cli/mcp-portal-cli-parser.ts#L54)). It becomes a choice per client, made in `tool-engine/mcp-gateway` from how the client is configured. Owner question 5 picks between two ways of carrying that configuration:
-
-| | **A. The address the client is given (recommended)** | **B. A profile on the client's credential** |
-| --- | --- | --- |
-| How | Each organization's portal has two addresses: the default one, which is `portal-deferred`, and `…/direct`, which is `client-deferred`. Whoever sets up a client gives it the address that matches it. | The organization's configuration says, for each agent credential, which kind of client uses it and so which case it takes. |
-| Gains | Who you are (the credential) stays separate from how tools are shown (the address). One credential per agent. It's the same idea as Cloudflare's per-client `optimize_context` setting ([MCP Portal](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/#optimize-context)). | Uses a lookup the server already does for every caller. |
-| Costs | One documented input. Behind Cloudflare's MCP Portal (question 1), the address configured in the Portal has to be proven to carry the choice. | An extra credential, with its own rotation, for each kind of client an agent runs. |
-
-Either way:
-- **The default is `portal-deferred`.** A client given the default address, or a credential with no profile, never receives the full list.
+Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-parser.ts:54](../../../packages/mcp-portal/src/cli/mcp-portal-cli-parser.ts#L54)). It becomes a choice per client, made in `tool-engine/mcp-gateway` from the address the client connects to (owner, 2026-10-20):
+- **`…/mcp?tools=direct` gives `client-deferred`;** the plain address gives `portal-deferred`. Whoever sets up a client gives it the address that matches it. Cloudflare's own MCP Portal works the same way: a client adds `optimize_context` to the portal address ([MCP Portal](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/#optimize-context)). A query parameter works with every client because it's part of the address; a header would need each client to support custom headers.
+- **The default is `portal-deferred`.** A client on the plain address never receives the full list.
 - **A wrong choice can't grant anything.** It only changes how tools are shown; the caller's tools and approvals stay the same.
-- **The case is stable.** It comes from configuration, never from a guess, so a client gets the same case on every request. For example, Claude Code defers MCP tool definitions by default ([Claude Code MCP](https://code.claude.com/docs/en/mcp)), so it's set up as `client-deferred`.
-- **Configuration doesn't prove the client defers.** The real-client check in Verification row 2 does.
+- **The case is stable:** a client uses the same address for every request. For example, Claude Code defers MCP tool definitions by default ([Claude Code MCP](https://code.claude.com/docs/en/mcp)), so it's given the `?tools=direct` address.
+- **The address doesn't prove the client defers.** The real-client check in Verification row 2 does.
 - **Why not the client's own signal:** MCP's core capabilities have no field for deferring tool loading ([schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.ts#L716)). MCP does let a client declare namespaced extensions ([extension negotiation](https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle#extension-negotiation)), but no client is known to declare one for this. Honouring such a signal is later work. It needs its own rule for keeping a caller's case stable, because a signal sent on some requests and not others would otherwise flip the case.
 
-**When it's chosen.** 2026-07-28 MCP has no connect step: each request carries its version and the client's capabilities. Older clients still send `initialize` ([versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle)). So the case is chosen at `initialize` for older clients, and on each request for current ones. Because it comes from configuration (the address a request is sent to, or the credential on it), it's the same answer every time. That also fits MCP's rule that a tool list must not vary from connection to connection ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)).
+**When it's chosen.** 2026-07-28 MCP has no connect step: each request carries its version and the client's capabilities. Older clients still send `initialize` ([versioning](https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle)). So the case is chosen at `initialize` for older clients, and on each request for current ones. Because it comes from the address each request is sent to, it's the same answer every time. That also fits MCP's rule that a tool list must not vary from connection to connection ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)).
 - **The client's name isn't used.** The client reports it about itself, and it says nothing reliable about deferral.
-- **Behind Cloudflare's MCP Portal** (question 1), the Worker's client would be the Portal, not the agent's harness. The Portal's own capabilities say nothing about the harness, so the case would come from the address or credential the Portal itself is configured with.
 
 ### The organization's portal starts once
 
@@ -192,23 +184,25 @@ The Worker serves the MCP proxy's way in, in `direct` or `indirect` mode, with t
 
 ```mermaid
 flowchart LR
-  A[agent or MCP client] -->|question 1: through the MCP Portal, or direct| G[Cloudflare Access]
-  G --> W[Worker · tool-host-cloudflare · caller check]
+  S[sign-in service · Better Auth, its own Worker] -.->|issues each agent a token| A[agent or MCP client]
+  A -->|its sign-in token| W[Worker · tool-host-cloudflare · caller check]
   W -->|one short check per call| O[(organization's Durable Object · one per organization)]
   W --> E[tool-engine · direct or indirect, then the dispatcher]
   E -->|organization tools| R[remote MCP servers · organization credentials from Cloudflare secrets]
-  E -.->|per-user tools, later| P[a person's own account]
-  E -.->|computer tools, later| C[a machine's MCP server, reached privately]
+  E -.->|per-user tools, later| P[an account its owner consented to this agent]
+  E -.->|computer tools, later · Cloudflare Tunnel and Access| C[a registered computer's MCP server]
   W -->|one data point per call| AE[(Analytics Engine)]
 ```
 
 ### The caller check
 
-One function at the Worker's edge answers "who is calling, and for whom". It returns the organization, the agent and, for a per-user call, the person's grant, or it refuses the call. Nothing else in the Worker reads Cloudflare Access headers or tokens. So the answers to questions 1 and 2 in the [Requirements](requirements.md#questions-for-the-owner) change only this function.
-- **An agent is known by its own credential,** never by a name, session ID, client name or tool argument it supplies.
-- **A person is present only through that person's grant** (below), never because the caller names them. The fleet's existing "on behalf of" field records who asked; it grants nothing (fleet F-35), and it stays that way.
-- **Until question 1 is answered,** the check is designed against today's proxy agent bearer tokens, sent behind Access. That's a stand-in, and it's unverified through the MCP Portal.
-- **Access is checked, not assumed.** On every request the Worker verifies Cloudflare's signed Access assertion against our Access issuer and this application's audience, as agent-vm's controller already does ([cloudflare-access-identity-verifier.ts:137](../../../packages/agent-vm/src/controller/oauth/cloudflare-access-identity-verifier.ts#L137)). A missing, forged or wrong-audience assertion is refused, even alongside a valid agent token. The Worker's `workers.dev` and preview addresses are also turned off.
+One function at the Worker's edge answers "which agent, of which organization, is calling". It returns the organization and the agent, or it refuses the call. Nothing else in the Worker reads tokens, so a change of sign-in touches only this function.
+- **Agents sign in with our own login, Better Auth** (owner, 2026-10-20). The sign-in service ([`@agent-collaboration/auth`](../2026-10-20-people-sign-in/requirements.md)) runs in its own Worker and gives each agent a token for this Worker. Better Auth's OAuth provider supports a client signing in as itself (`client_credentials`), with the client as the token's subject.
+- **The check verifies that token:** signed by our sign-in service, meant for this Worker (its audience), not expired, and naming an agent the organization's object still lists. A missing, forged, expired or wrong-audience token is refused.
+- **Cloudflare Access isn't in front of the Worker.** Cloudflare stays for machines: the Worker reaches registered computers through it (computer tools, below), like Tailscale.
+- **An agent is known only by its token,** never by a name, session ID, client name or tool argument it sends.
+- **An agent always acts with its own access.** The fleet's "on behalf of" field records who asked; it's a label in the log and grants nothing (fleet F-30, F-35).
+- **The sign-in design admits people only today** (its `R7` and `R10`). Letting agents sign in as themselves is a change to that design, made alongside this one.
 - **Each organization gets its own engine.** Each organization has its own configuration (today's proxy config format, unchanged), its own secrets and its own approval signing key, all deployed with the Worker. The organization this check verified picks the engine that handles the call; nothing the caller sends can pick it. So tools, server settings, connections and the approval key never cross organizations. Today one runtime picks servers by name alone ([upstream-mcp-client-runtime.ts:532](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L532)) and reuses connections per agent and server ([:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)). Two organizations can use the same agent or server names, so they can't share one runtime.
 
 ### The organization's Durable Object
@@ -218,11 +212,11 @@ One object per organization, holding only that organization's auth state. It's t
 | What it holds | Written by | Checked |
 | --- | --- | --- |
 | the owner, and who may sign in | the owner | at sign-in |
-| the organization's agents, by a fingerprint of each one's credential, never the credential itself | the owner | before every call |
-| per-user tools, later: each person's grants (the person, the agent, the account, the allowed actions, and the expiry) | that person, who can withdraw it | before every per-user call |
+| the organization's agents, by their sign-in client IDs | the owner | before every call |
+| per-user tools, later: account owners' consents and Deny/Ask/Allow overrides, as in today's permission model | each account's owner | before every per-user call |
 | approval tokens already used, each kept until it expires | the Worker, when it accepts a token | before every approved call |
 
-- **One short check per call, with no cache.** Removing an agent or withdrawing a grant stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one organization today.
+- **One short check per call, with no cache.** Removing an agent or withdrawing a consent stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one organization today.
 - **Tool calls and their streams run in the Worker, not in the object.** The object only does short reads and writes.
 - **Splitting when needed:** if one organization's used-approval-token records grow too large or too busy, they can split by agent into more objects. That spreads only the approval records: every call still makes its one check against the organization's object, so a very busy organization would have that check measured before anything else changes.
 - **Why approval state moves here:** today the proxy remembers used tokens in a list inside one process ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)). A Worker runs as many copies at once, so a list per copy couldn't stop a token being used twice. The object is the single place that records a use. This is approval state, not call history.
@@ -232,7 +226,7 @@ One object per organization, holding only that organization's auth state. It's t
   3. Only "first use" lets the calls run. "Already used", an error or no answer means none of them run.
 
   Today the token check calls a plain function for this ([hmac-token.ts:204](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L204)). It becomes an awaited step on both hosts; a machine keeps today's in-memory list behind it. The token's bytes don't change. A token signed with one organization's key fails the signature check in another.
-- **People's accounts and sign-in sessions aren't kept here.** Once question 2 is answered, they live in the sign-in service's own database. Membership is written in one place only: this object.
+- **People's and agents' sign-in records aren't kept here.** They live in the sign-in service's own database. Membership is written in one place only: this object.
 
 ### Organization tools
 
@@ -243,13 +237,15 @@ Today's proxy config already describes remote MCP servers, with headers whose va
 
 ### Per-user and computer tools: designed, not built
 
-- **Per-user tools:**
-  - The account a call uses comes from the person's grant, checked at the organization's object, never from a label the caller sends.
-  - A per-user connection adds the person's connected account, taken from the checked grant, to its engine's connection key. So one person's connection is never reused for someone else, and every call through it is still checked against the current grant.
-  - Where people's provider tokens are kept, and how they're refreshed and revoked, is decided with question 2.
+- **Per-user tools use today's permission model unchanged** ([agent account and tool permissions](../2026-09-04-agent-account-and-tool-permissions/requirements.md), [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)):
+  - an account's owner consents, in the browser, to a specific agent using it, which gives a separate credential for that agent and account;
+  - Deny, Ask or Allow, set separately for reads and writes, from the agent's profile defaults or the owner's overrides, within the operator's hard limits;
+  - a one-call approval when the policy says Ask, which expires if not answered, as today's do.
+  - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the organization's object, and its connection is reused only for that agent and account.
+  - Changing these settings is the request bar with Accept or Deny (fleet F-41 to F-49), in the separate control UI. Temporary grants and temporary revocation are recorded owner interest (fleet F-61), not part of this design.
 - **Computer tools:**
-  - A private route (Cloudflare Tunnel or Workers VPC) only reaches the machine.
-  - The machine's MCP server still checks the Worker's own credential.
+  - Computers are registered on our side. The Worker reaches them through a Cloudflare Tunnel protected by Cloudflare Access, using a key the Worker holds, like Tailscale.
+  - The computer's MCP server still checks the Worker's own credential.
   - Approvals for a computer's tools stay with whoever approves them today.
 
 ### Code mode stays possible
@@ -320,10 +316,10 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | --- | --- | --- |
 | S1 `tool-access` | draft PR [#238](https://github.com/ShravanSunder/agent-vm/pull/238) | keep; `assessAccess` stays as built, but isn't expanded for the deferred UI |
 | S2 dispatcher and agent-vm's adapter | draft PR [#240](https://github.com/ShravanSunder/agent-vm/pull/240) | keep its code. One rule in its docs and tests changes: a host may answer "not recorded" for calls that need no approval. Calls that need approval still need a record and a receipt (see "Approvals") |
-| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; choose `client-deferred` or `portal-deferred` per client from its configured setup (question 5), defaulting to `portal-deferred`; send `tools/list` in pages in `client-deferred`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper, with its generator moved into `mcp-gateway`; take in the agent bearer tokens and the approval token from S3b's host. All three run on Web Crypto |
+| S3a gateway and connectors | draft PR [#241](https://github.com/ShravanSunder/agent-vm/pull/241) | rename the modes to `direct` and `indirect`; choose `client-deferred` or `portal-deferred` per client from its address (`?tools=direct`), defaulting to `portal-deferred`; send `tools/list` in pages in `client-deferred`; in `direct`, list **and route** the four search tools; accept both approval-token forms again (`portalApprovalToken` in `mcp_portal_call`, and the approval metadata on `direct` calls); make `describe` return today's per-tool helper, with its generator moved into `mcp-gateway`; take in the agent bearer tokens and the approval token from S3b's host. All three run on Web Crypto |
 | S3b `tool-host-node` | branch at `51c98139`, no PR yet | **add** the standalone Tool Portal's two routes: its MCP route (`tool_portal_*`, `resources/read`, approval in metadata) and its JSON route (approval header, 64 KiB request limit). **Add** both approval routes; **replace** the disk store with the in-memory approval entries; **remove** the `_meta` name requirement and the new 4 MiB incoming-request check, which today's proxy doesn't have; **keep** the listeners, stdio, config, compiler and the review fixes |
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
-| S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check waits on question 1, and deploying uses the existing Cloudflare CLI login |
+| S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above. Its caller check needs agent sign-in from the sign-in service; deploying uses the existing Cloudflare CLI login |
 | S3c limits, S5 control API, sign-in, UI | cancelled | none |
 
 The stack's branches start from `33914cbe`. `master` now also has the 2.5G VM memory change (#242), which the stack takes in when building resumes.

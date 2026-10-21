@@ -15,8 +15,8 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 
 1. **Same tools and the same shapes.** With the same configuration and the same caller, each way in offers the same tools as today. Each tool has the same names, inputs and result shapes, and artifact reads work the same way.
 2. **Each client gets one of two cases, and both reach the same tools.**
-   - A client set up as deferring tool loading itself (`client-deferred`) gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
-   - Any other client (`portal-deferred`), including one set up with the default, gets `indirect`: only the four search tools are listed.
+   - A client that connects with `?tools=direct` (`client-deferred`, for clients that defer tool loading themselves) gets `direct`: every tool the agent may use is listed as its own MCP tool, and the four search tools (list, search, describe, call) are listed too and work.
+   - A client on the plain address (`portal-deferred`) gets `indirect`: only the four search tools are listed.
    - A caller gets the same case on every request, whatever other clients of the organization are connected.
    - The organization's portal connects to its tool servers and reads their tool lists when it starts, before any client's first call.
    - Either way the agent can reach exactly the same tools, and the same call gives the same result.
@@ -61,7 +61,7 @@ The Worker serves the MCP proxy's way in for organization tools. Its reference i
     - Its approval token works as the proxy's does (check 6). A token can be used only once, even when two copies of the Worker receive it at the same time, and no call runs if its use can't be recorded.
     - `describe` returns the same per-tool helper as on a machine, built from the tool's current schema.
 14. **Only known callers, kept apart.**
-    - The Worker refuses a caller it can't identify. That includes a request carrying a valid agent token but a missing, forged or wrong-audience Access assertion, and anyone reaching it by a way that skips Cloudflare Access.
+    - The Worker refuses a caller it can't identify: a request with no sign-in token, or with one that's forged, expired or meant for another service.
     - An agent can't gain another agent's tools, connections or effects by sending another's name, session ID or client name. Such labels are ignored, and the call runs, or is refused, as the agent's own credential allows.
     - One organization's callers can't list or call another organization's tools, use its credentials or connections, or read its auth data, even when both organizations use the same agent or server names.
     - Removing an agent from its organization stops that agent's next call.
@@ -72,4 +72,4 @@ The Worker serves the MCP proxy's way in for organization tools. Its reference i
 
 - Everything under "Not in this work" in the [Requirements](requirements.md#not-in-this-work).
 - Code mode, which comes later.
-- Per-user and computer tools, which wait on the owner's questions 1 and 2 and on their private connection. Only the design's openings for them are in this work.
+- Per-user and computer tools, which come after the first version. Only the design's openings for them are in this work.

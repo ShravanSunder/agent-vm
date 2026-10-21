@@ -16,18 +16,18 @@
 
 - **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher), `tool-host-node` (runs it on a machine) and `tool-host-cloudflare` (runs the MCP proxy on a Worker). agent-vm plugs in through its own adapter.
 - **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal and the MCP proxy) keep their tools, results, approvals and limits.
-- **Two cases, chosen for each client:** a client that loads tools lazily itself gets `direct` (every tool plus the search tools, sent in pages); any other client gets `indirect`, where the portal does the lazy loading through its search tools.
-- **The one addition is a deployed, secured Cloudflare Worker** serving the proxy for organization tools. Each organization has its own Durable Object for sign-in and used approvals, and each call sends one data point to Analytics Engine. Per-user and computer tools are designed for, and built after your decisions.
-- **Later:** code mode in both modes. UI, people sign-in, workspaces and audit belong to separate projects.
+- **The first version adds a deployed Cloudflare Worker** for team tools. Agents sign in with our own login (Better Auth, in its own sign-in Worker), each organization has one Durable Object for membership and used approvals, and each call sends one data point to Analytics Engine.
+- **Each client picks how tools are shown by its address:** `?tools=direct` gives the full list, for clients that search it themselves; the plain address gives only the search tools.
+- **Next:** per-user tools under today's permission model, computers reached through Cloudflare like Tailscale, and the chat-led change flow in the separate control UI. Code mode later, not blocked.
 </ex-callout>
 
-<ex-callout tone="question" title="Choices for you">
+<ex-callout tone="question" title="Decided on 2026-10-20">
 
-1. **How do agents connect to the cloud tool server?** Through Cloudflare's ready-made MCP Portal, which forwards every call with one shared key so the Worker can't tell agents apart, or **straight to our Worker behind Cloudflare Access, each agent with its own key (recommended)**.
-2. **Who hands out real logins and agent keys?** Decided: **Better Auth**. The first version uses Cloudflare Access plus each agent's own key.
-3. **How does the server know a client can take the full tool list?** **Two web addresses, the normal one and `/direct`, picked when the client is set up (recommended)**, or a setting on each agent's key, which needs a separate key per kind of client.
+1. **Agents connect straight to our Worker and sign in with Better Auth,** not through Cloudflare's MCP Portal or Access. Cloudflare is only for reaching registered computers, like Tailscale.
+2. **Better Auth issues logins and agent tokens,** from its own sign-in Worker.
+3. **A URL parameter** (`?tools=direct`) picks how tools are shown.
 
-Already assumed unless you say otherwise: no saved history of tool calls, and both of today's approval methods are kept. Deploying uses your existing Cloudflare CLI login.
+Still assumed unless you say otherwise: no saved history of tool calls, and both of today's approval methods are kept. Deploying uses your existing Cloudflare CLI login.
 </ex-callout>
 
 <ex-tabs data-width="reading">

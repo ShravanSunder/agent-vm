@@ -50,14 +50,16 @@ This work has two parts:
 
    When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Deleting the packages doesn't change any of the three ways in.
 
-2. **The proxy shows tools one of two ways, chosen for each client.** Each organization's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself:
+2. **The proxy shows tools one of two ways, chosen for each client.** Each organization's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself, which the client's address says (`?tools=direct`):
    - **The client defers (`client-deferred`), so it gets `direct`:** every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is a deliberate change.
    - **The portal defers (`portal-deferred`), so it gets `indirect`:** only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
    - **Exactly these two cases.** A client not known to defer gets `portal-deferred`. Either way the agent reaches the same tools, under the same permissions and approvals.
    - **A big tool list still has to fit the client.** The full list has been measured at about 4.56 MB across 170 tools (Router PR #153), so in `client-deferred` it's sent in pages the client can take.
 
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
-   - **It refuses every caller it can't identify,** and it tells agents apart. How agents reach it, and how they prove who they are, is the first open question below.
+   - **It refuses every caller it can't identify,** and it tells agents apart. Agents sign in with our own login, Better Auth, not Cloudflare Access.
+   - **Sign-in comes into this work.** The sign-in service (`@agent-collaboration/auth`, [people sign-in](../2026-10-20-people-sign-in/requirements.md)) runs Better Auth in its own Worker and gives people and agents tokens for the tool Worker. Its design admits people only today; letting agents sign in as themselves is a change to it.
+   - **Cloudflare is for machines only.** The Worker reaches registered computers through Cloudflare (Tunnel and Access), like Tailscale.
    - **Its limits fit Workers and Durable Objects,** within the paid Workers plan the owner pays for.
    - **When one Worker or one Durable Object isn't enough,** the work can be split across several (sharding), once measurement shows it's needed.
    - Things a Worker can't run (stdio servers, configured CLIs, Tool VMs) stay on the Node host and agent-vm.
@@ -66,15 +68,15 @@ This work has two parts:
    - the **owner**, who decides who may sign in and handles auth settings, nothing more;
    - **members**.
 
-   Each organization has its own Durable Object, which is the one place its auth data lives. Being the owner grants no tool access and no access to anyone's personal accounts.
+   Each organization has its own Durable Object, which holds who belongs to it and its sign-in settings; the logins themselves are kept by the sign-in service. Being the owner grants no tool access and no access to anyone's personal accounts.
 
 5. **Three kinds of tools, by whose credentials they use:**
 
    | Kind | What it is | When it can be built |
    | --- | --- | --- |
    | **Organization tools** | remote MCP servers set up for the organization, called with the organization's credentials. Today's proxy already does this with its configured servers and secret headers. | in this work |
-   | **Per-user tools** | a person's own account, such as their own Google sign-in. A call runs only as that person, for an agent that person has allowed. | after the first two questions below; the design must not block it |
-   | **Computer tools** | an MCP server on a machine or VM, which the Worker reaches privately. The Worker never runs them. | after the private connection and the machine's own sign-in are chosen; the design must not block it |
+   | **Per-user tools** | a person's own account, such as their Google account, that its owner has consented to a specific agent. It uses today's permission model: the owner's consent, Deny/Ask/Allow for reads and writes, and one-call approvals. An agent always acts with its own access; "on behalf of" is only a label in the log (fleet F-35). | next, after the first version; the design must not block it |
+   | **Computer tools** | an MCP server on a registered computer or VM, which the Worker reaches through Cloudflare (Tunnel and Access), like Tailscale. The Worker never runs them. | next, after the first version; the design must not block it |
 
 6. **Analytics and observability.**
    - Each call sends one data point to Cloudflare Workers Analytics Engine: who called, which tool, the outcome and the timing. Analytics Engine samples data, which the owner accepted, so it's a view of usage, not a complete history.
@@ -89,9 +91,9 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - Routing calls between machines in the fleet. The Worker reaching a computer's own MCP server is a computer tool, above.
 - A stored record of every call, and recovery of calls after a restart. Today's servers keep no such record.
 - Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.
-- New screens: an access view, changing access by chat, entering secrets and approval settings.
+- New screens: an access view, changing access by chat, entering secrets and approval settings. They're the separate control UI, after the core (fleet F-49, F-56).
 - A full audit trail of permission and security changes.
-- The people sign-in service. It's its own project ([people sign-in](../2026-10-20-people-sign-in/requirements.md)).
+- An agent acting with someone else's accounts. "On behalf of" stays a label in the log (fleet F-30, F-35).
 - A control API for proposing and deciding changes.
 - New limits or hardening beyond today's limits, except the Worker's own limits.
 
@@ -115,24 +117,20 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
 - **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
 - **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. The first version uses Cloudflare Access plus each agent's own key; Better Auth replaces those keys afterwards, as its own project ([people sign-in](../2026-10-20-people-sign-in/requirements.md)), changing only the Worker's caller check.
-- **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". The first question below asks whether that still holds for agents.
+- **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
+- **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
+- **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
+- **First version:** agents with their own access, configured tools and today's approvals (fleet F-23, F-35, F-53, F-56). Per-user tools, under today's permission model, and the chat-led change flow (fleet F-41 to F-49) come next.
 
 ## Questions for the owner
 
-Bring these one at a time, in this order. The first was sent as a brief on 2026-10-20.
+Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
 
-1. **How do agents reach the Worker: through Cloudflare's managed MCP Portal, or directly behind Cloudflare Access?**
-   - Cloudflare documents that the Portal sends one stored admin credential upstream for service-token sessions. So, for agents using service tokens, the Worker can't tell them apart through it, and per-user servers are excluded for those sessions. One upstream registration per agent might work around this. That's unproven, and proving it needs the owner's Cloudflare account.
-   - Directly behind Access, the Worker tells agents apart by each agent's own credential, as today's proxy does with its agent bearer tokens.
-   - **This blocks:** the Worker's caller check, and per-user tools.
+1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).
 2. **Answered on 2026-10-20: Better Auth** (see owner decisions).
 3. **Do tool calls need history that survives a restart?** The design assumes not. Today's servers keep no record per call. On the Worker, the one thing kept is which approval tokens have been used, until each expires, so an approval still works only once.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
-5. **How does the portal know a client defers tool loading?** You asked for the case to come from the client's capabilities. No client declares that today, though MCP would allow a namespaced extension for it later. So the case comes from how the client is set up, in one of two ways:
-   - **A (recommended): the address the client is given.** The portal has a default address, where it defers, and a `…/direct` address for clients that defer themselves. One credential per agent, and identity stays separate from presentation.
-   - **B: a profile on each agent credential.** It costs an extra credential per kind of client an agent runs.
-
-   Either way, a client on the default never gets the full list, and a wrong choice can't grant any tool. **This blocks** building `client-deferred`, not the rest of the design.
+5. **Answered on 2026-10-20:** a URL parameter, `?tools=direct` (see owner decisions).
 
 **Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
