@@ -25,3 +25,5 @@ export {
 	type McpToolListPage,
 } from '#mcp-gateway/tool-list-pagination';
 export type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';
+
+export * from '#mcp-gateway/proxy-mcp-result';
