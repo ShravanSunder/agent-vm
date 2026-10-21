@@ -86,6 +86,7 @@ export function createWorkerHost(props: {
 			const handler = createMcpHandler(
 				async () => {
 					const engine = await organizationEngine(caller.organizationId);
+					await engine.refresh();
 					const requestEngine = engine.gatewayFor({
 						agentClientId: caller.agentClientId,
 						invoke: limits.invoke,

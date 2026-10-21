@@ -29,8 +29,6 @@ export function createBatchScheduler(): {
 export function serializedBytes(value: unknown): number {
 	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
-import { jsonValueSchema } from '@agent-collaboration/tool-access/contracts';
-import { upstreamMcpFailureDetailsFromUnknown } from '@agent-collaboration/tool-engine/connectors';
 import type { DispatchInvocation, ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	projectProxyMcpResult,
@@ -64,7 +62,7 @@ export interface WorkerRequestLimits {
 	readonly begin: (input: unknown, id: string | number) => PortalBatchResult | undefined;
 	readonly invoke: (
 		invocation: DispatchInvocation,
-		call: () => Promise<unknown>,
+		call: () => Promise<ResourceResult>,
 	) => Promise<ResourceResult>;
 }
 
@@ -97,20 +95,9 @@ export function createWorkerRequestLimits(): WorkerRequestLimits {
 		},
 		invoke: async (invocation, call) =>
 			scheduler.run(async () => {
-				let value: unknown;
-				try {
-					value = await call();
-				} catch (error) {
-					const failure = upstreamMcpFailureDetailsFromUnknown(error);
-					return {
-						kind: 'failed',
-						reason:
-							failure?.causeMessage?.startsWith('MCP upstream response exceeded') === true
-								? 'upstream-response-too-large'
-								: 'upstream-unavailable',
-					};
-				}
-				const result = jsonValueSchema.parse(value);
+				const outcome = await call();
+				if (outcome.kind !== 'completed') return outcome;
+				const result = outcome.result;
 				const id = invocation.operationKey.item;
 				const previous = retained[id];
 				retained[id] = {

@@ -21,6 +21,8 @@ import type {
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	createMcpGateway,
+	createOrganizationToolCatalog,
+	proxyUpstreamFailureFromError,
 	createPortalSessionManager,
 	portalToolRecordSchema,
 	type ConsumeApprovalTokenId,
@@ -40,6 +42,7 @@ import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-tran
 
 export interface OrganizationEngine {
 	readonly configuration: OrganizationConfiguration;
+	readonly refresh: () => Promise<void>;
 	readonly trustedTool: (namespace: string, toolName: string) => boolean;
 	readonly requiresApproval: (agentId: string, namespace: string, toolName: string) => boolean;
 	readonly gatewayFor: (props: {
@@ -47,7 +50,7 @@ export interface OrganizationEngine {
 		readonly consumeTokenId: ConsumeApprovalTokenId;
 		readonly invoke?: (
 			invocation: DispatchInvocation,
-			call: () => Promise<unknown>,
+			call: () => Promise<ResourceResult>,
 		) => Promise<ResourceResult>;
 	}) => { readonly gateway: McpGateway; readonly close: () => Promise<void> };
 }
@@ -101,36 +104,35 @@ export async function createOrganizationEngine(props: {
 			maxResponseBytes: 4 * 1024 * 1024,
 		});
 	}
-	// Discovery is request-local I/O; only its plain catalog survives the request.
-	const discoveryRuntime = createRequestRuntime();
-	const catalogByNamespace = await (async () => {
-		try {
-			return new Map(
-				await Promise.all(
-					providers.map(
-						async (provider) =>
-							[
-								provider.namespace,
-								await discoveryRuntime.listTools({
-									namespace: provider.namespace,
-									agentScopeId: '$organization-catalog',
-								}),
-							] as const,
-					),
-				),
-			);
-		} finally {
-			await discoveryRuntime.closeAgentScope('$organization-catalog');
-		}
-	})();
+	// A discovery refresh owns its runtime only until that refresh ends; cached state is plain data.
+	const discoveryRuntimes = new Map<string, UpstreamMcpClientRuntime>();
 	const catalogRuntime = {
-		listTools: async ({ namespace }: { readonly namespace: string }) =>
-			catalogByNamespace.get(namespace) ?? [],
-		closeAgentScope: async (): Promise<void> => {},
+		listTools: async (call: { readonly namespace: string; readonly agentScopeId: string }) => {
+			let runtime = discoveryRuntimes.get(call.agentScopeId);
+			if (runtime === undefined) {
+				runtime = createRequestRuntime();
+				discoveryRuntimes.set(call.agentScopeId, runtime);
+			}
+			return runtime.listTools(call);
+		},
+		closeAgentScope: async (scope: string): Promise<void> => {
+			const runtime = discoveryRuntimes.get(scope);
+			discoveryRuntimes.delete(scope);
+			await runtime?.closeAgentScope(scope);
+		},
 	};
+	const organizationCatalog = createOrganizationToolCatalog({
+		namespaces: providers.map((provider) => provider.namespace),
+		runtime: catalogRuntime,
+		discoveryScope: '$organization-catalog',
+		catalogTtlMs: 60_000,
+		now: Date.now,
+	});
+	let snapshot = await organizationCatalog.read();
 	const sessions = createPortalSessionManager({
 		runtime: catalogRuntime,
-		catalogTtlMs: Number.MAX_SAFE_INTEGER,
+		catalogTtlMs: 60_000,
+		organizationCatalog: { read: async () => snapshot },
 		upstreamNamespaces: providers.map((provider) => provider.namespace),
 		accessPolicy: {
 			enabledNamespaces: providers.map((provider) => provider.namespace),
@@ -141,13 +143,18 @@ export async function createOrganizationEngine(props: {
 	const revision = { owner: props.organizationId, revision: 'deployed-v1' };
 	return {
 		configuration,
+		refresh: async () => {
+			snapshot = await organizationCatalog.read();
+		},
 		trustedTool: (namespace, toolName) =>
-			catalogByNamespace.get(namespace)?.some((tool) => tool.name === toolName) === true,
+			snapshot.toolsByNamespace.get(namespace)?.some((tool) => tool.name === toolName) === true,
 		requiresApproval: (agentId, namespace, toolName) => {
 			const assignment = configuration.portal.agents[agentId];
 			const profile =
 				assignment === undefined ? undefined : configuration.portal.profiles[assignment.profile];
-			const tool = catalogByNamespace.get(namespace)?.find((entry) => entry.name === toolName);
+			const tool = snapshot.toolsByNamespace
+				.get(namespace)
+				?.find((entry) => entry.name === toolName);
 			return (
 				profile !== undefined &&
 				mcpPortalCallPolicyDecision(resolveWorkerProxyProfile(profile), {
@@ -177,17 +184,27 @@ export async function createOrganizationEngine(props: {
 				search: async () => ({}),
 				describe: async () => ({}),
 				invoke: async (invocation) => {
-					const call = async (): Promise<unknown> =>
-						runtime.callTool({
-							agentScopeId: scope,
-							namespace: invocation.capability.namespace,
-							toolName: invocation.capability.tool,
-							arguments: invocation.arguments satisfies JsonObject,
-							requestId: invocation.operationKey.item,
-						});
-					return invoke === undefined
-						? { kind: 'completed', result: jsonValueSchema.parse(await call()) }
-						: invoke(invocation, call);
+					const call = async (): Promise<ResourceResult> => {
+						try {
+							const result = await runtime.callTool({
+								agentScopeId: scope,
+								namespace: invocation.capability.namespace,
+								toolName: invocation.capability.tool,
+								arguments: invocation.arguments satisfies JsonObject,
+								requestId: invocation.operationKey.item,
+							});
+							return { kind: 'completed', result: jsonValueSchema.parse(result) };
+						} catch (error) {
+							const failure = proxyUpstreamFailureFromError({
+								namespace: invocation.capability.namespace,
+								toolName: invocation.capability.tool,
+								error,
+							});
+							if (failure === null) throw error;
+							return failure;
+						}
+					};
+					return invoke === undefined ? call() : invoke(invocation, call);
 				},
 			};
 			const gateway = createMcpGateway({
@@ -206,7 +223,7 @@ export async function createOrganizationEngine(props: {
 				backends: new Map([['mcp_provider', backend]]),
 				now: Date.now,
 				resolveAccess: async ({ capability, call }) => {
-					const descriptor = catalogByNamespace
+					const descriptor = snapshot.toolsByNamespace
 						.get(capability.namespace)
 						?.find((tool) => tool.name === capability.tool);
 					return assessAccessInput.parse({
