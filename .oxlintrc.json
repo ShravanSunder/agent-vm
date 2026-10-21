@@ -72,7 +72,7 @@
 	},
 	"overrides": [
 		{
-			"files": ["packages/oauth-approval-ui/src/**/*.tsx"],
+			"files": ["packages/oauth-approval-ui/src/**/*.tsx", "packages/tool-access-ui/src/**/*.tsx"],
 			"rules": {
 				"react/react-in-jsx-scope": "off"
 			}

@@ -36,6 +36,7 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@tool-access-ui': repoPath('packages/tool-access-ui/src'),
 			'@agent-vm/agent-portal-sdk/generated-tools': repoPath(
 				'packages/agent-portal-sdk/src/generated-tools/index.ts',
 			),
