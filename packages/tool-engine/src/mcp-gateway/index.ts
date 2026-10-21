@@ -19,5 +19,9 @@ export * from '#mcp-gateway/hmac-token';
 export * from '#mcp-gateway/approval-token-use';
 export * from '#mcp-gateway/typescript-artifact';
 export * from '#mcp-gateway/tool-loading';
-export * from '#mcp-gateway/tool-list-pagination';
+export {
+	paginateMcpTools,
+	maximumToolListPageBytes,
+	type McpToolListPage,
+} from '#mcp-gateway/tool-list-pagination';
 export type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';

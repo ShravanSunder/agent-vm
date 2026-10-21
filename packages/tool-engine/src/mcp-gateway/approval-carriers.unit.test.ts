@@ -163,3 +163,42 @@ for (const carrier of ['input', 'metadata'] as const) {
 		});
 	});
 }
+
+// Legacy approval evaluation authorizes these siblings independently of the token.
+describe('mixed approval batches keep independent unprotected work', () => {
+	it.each(['invalid', 'replayed'] as const)(
+		'keeps the unprotected sibling when the protected token is %s',
+		async (kind) => {
+			const h = createHarness(undefined, 'complete', {
+				approvalTokens: { key, consumeTokenId: createInMemoryApprovalTokenUse({ now: () => 0 }) },
+			});
+			const protectedCall = {
+				id: 'protected',
+				namespace: 'alpha',
+				toolName: 'ask',
+				arguments: { value: 42 },
+			};
+			const valid = await tokenFor([protectedCall]);
+			if (kind === 'replayed')
+				expect(
+					(await h.gateway.call({ calls: [protectedCall], portalApprovalToken: valid })).ok,
+				).toBe(true);
+			const before = h.effects.length;
+			const result = await h.gateway.call({
+				calls: [
+					{ id: 'free', namespace: 'alpha', toolName: 'read', arguments: { value: 42 } },
+					{ ...protectedCall, id: 'new-protected-item' },
+				],
+				portalApprovalToken: kind === 'invalid' ? 'invalid.token' : valid,
+			});
+			expect(result.results.free?.ok).toBe(true);
+			expect(result.results['new-protected-item']).toMatchObject({
+				ok: false,
+				error: { kind: 'approval_token_invalid' },
+			});
+			expect(h.effects.slice(before).map((effect) => effect.capability)).toEqual([
+				{ namespace: 'alpha', tool: 'read' },
+			]);
+		},
+	);
+});

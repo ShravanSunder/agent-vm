@@ -84,7 +84,7 @@ export async function authorizeGatewayCalls(props: {
 					},
 				});
 	if (!verification.ok || approval === undefined) {
-		for (const call of props.calls)
+		for (const { call } of protectedCalls)
 			authorizations.set(call.input.id, {
 				kind: 'refused',
 				reason: verification.ok ? 'replay-store-unavailable' : verification.reason,

@@ -1,8 +1,12 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHarness } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
-import { paginateMcpTools, maximumToolListPageBytes } from '#mcp-gateway/tool-list-pagination';
+import {
+	paginateMcpTools,
+	maximumToolListPageBytes,
+	serializedToolListPageBytes,
+} from '#mcp-gateway/tool-list-pagination';
 import { resolveToolLoading, toolLoadingMode } from '#mcp-gateway/tool-loading';
 
 function serializedBytes(value: unknown): number {
@@ -38,6 +42,23 @@ describe('serialized tools/list pages', () => {
 		expect(sizes.length).toBeGreaterThan(1);
 		expect(seen).toEqual(whole);
 	});
+	it('serializes each considered tool once and never re-serializes a growing page', () => {
+		const tools: Tool[] = Array.from({ length: 30 }, (_, index) => ({
+			name: `tool-${index}`,
+			inputSchema: { type: 'object' },
+			description: '☃'.repeat(15000),
+		}));
+		const stringify = vi.spyOn(JSON, 'stringify');
+		try {
+			const page = paginateMcpTools(tools);
+			const measured = stringify.mock.calls.map(([value]) =>
+				tools.findIndex((tool) => tool === value),
+			);
+			expect(measured).toEqual(Array.from({ length: page.tools.length + 1 }, (_, index) => index));
+		} finally {
+			stringify.mockRestore();
+		}
+	});
 	it('counts the cursor and accepts exactly one MiB while refusing one byte more', () => {
 		const base: Tool = { name: 'near-boundary', inputSchema: { type: 'object' }, description: '' };
 		const overhead = serializedBytes({ tools: [base], nextCursor: '1' });
@@ -51,6 +72,49 @@ describe('serialized tools/list pages', () => {
 		expect(() =>
 			paginateMcpTools([{ ...exact, description: `${exact.description}x` }, next]),
 		).toThrow('exceeds');
+	});
+	it('matches full JSON serialization across cursor widths and final-page omission', () => {
+		const base: Tool = { name: 'tool-000', inputSchema: { type: 'object' }, description: '☃"\\\n' };
+		const overhead = serializedBytes({ tools: [base], nextCursor: '100' });
+		const largeTools = Array.from({ length: 102 }, (_, index) => ({
+			...base,
+			name: `tool-${String(index).padStart(3, '0')}`,
+			description: `${base.description}${'x'.repeat(1024 * 1024 - overhead)}`,
+		}));
+		const examples = [
+			paginateMcpTools([], undefined),
+			paginateMcpTools([
+				{ name: 'one', inputSchema: { type: 'object' } },
+				{ name: 'two', inputSchema: { type: 'object' } },
+			]),
+			...['8', '9', '98', '99', '100', '101'].map((cursor) => paginateMcpTools(largeTools, cursor)),
+		];
+		expect(examples.slice(2).map((page) => page.nextCursor)).toEqual([
+			'9',
+			'10',
+			'99',
+			'100',
+			'101',
+			undefined,
+		]);
+		for (const [index, cursor] of ['8', '9', '98', '99', '100', '101'].entries()) {
+			const offset = Number(cursor);
+			const expected = {
+				tools: largeTools.slice(offset, offset + 1),
+				...(offset + 1 < largeTools.length ? { nextCursor: String(offset + 1) } : {}),
+			};
+			expect(JSON.stringify(examples[index + 2])).toBe(JSON.stringify(expected));
+		}
+
+		for (const page of examples) {
+			const measured = serializedToolListPageBytes({
+				serializedToolsBytes: page.tools.reduce((total, tool) => total + serializedBytes(tool), 0),
+				toolCount: page.tools.length,
+				nextCursor: page.nextCursor,
+			});
+			expect(measured).toBe(serializedBytes(page));
+			expect(measured).toBeLessThanOrEqual(1024 * 1024);
+		}
 	});
 	it.each(['-1', '1.5', '01', 'oops', '9007199254740992', '3'])(
 		'refuses an invalid cursor %s',
