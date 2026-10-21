@@ -63,6 +63,8 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 - `cacheScope` is `"private"`, because the list depends on who's asking.
 - `ttlMs` is 60,000 (the Lead's choice, reversible). A configuration change reaches a caching client within a minute.
 - The order is deterministic, which 2026-07-28 recommends: configuration order, then tool name.
+- The standalone Tool Portal's artifact reads (`resources/read`) carry `cacheScope: "private"` and `ttlMs: 0`: an artifact belongs to the caller who made it, and a client shouldn't keep it.
+- `server/discover` answers come from the SDK handler; a test checks that they carry the cache fields too.
 
 **Approvals don't change.** The approval token still travels as `portalApprovalToken` in the call's input, or under the vendor `_meta` key `agent-vm/tool-portal-approval-token`. 2026-07-28 allows vendor metadata. Its own required metadata (protocol version, client capabilities) is separate, and the SDK handles it. **MRTR isn't adopted.** 2026-07-28's multi-round-trip requests (`input_required`, then a retry) could carry an approval prompt. That would be a new approval flow, so it's the owner's call, not part of this move. Either way, the one-use check stays on the server, as the protocol itself requires ([MRTR](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)).
 
