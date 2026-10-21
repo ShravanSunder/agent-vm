@@ -40,7 +40,13 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
 ## agent-vm keeps working
 
 9. **Managed tools unchanged.** agent-vm's own tools (native tools, configured CLIs and Tool VMs), its approvals, its private gateway connection and its controller's authority all work end to end after the switch, as they do today.
-10. **Same clients.** The Portal SDK, Hermes, and other MCP clients that work today connect and call tools the same way.
+10. **MCP 2026-07-28 clients only** (owner, 2026-10-21).
+    - Clients that speak MCP 2026-07-28, including the Portal SDK on the new client and Claude Code, connect and call the same tools in the same way.
+    - A 2025-era request (an `initialize`, or no protocol version) gets MCP's unsupported-version error and runs nothing.
+    - There are no protocol sessions: no `Mcp-Session-Id` is issued or needed, and `GET` gets 405.
+    - Every `tools/list` page carries `ttlMs` and `cacheScope: "private"`, because the list depends on the caller.
+    - agent-vm's private connection, which Hermes uses inside agent-vm, isn't MCP and works as today.
+    - Whether connections out to tool servers must also be 2026-07-28 is owner question 8.
 
 ## The pieces stay separate
 

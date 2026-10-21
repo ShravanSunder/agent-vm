@@ -17,15 +17,18 @@
 - **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher), `tool-host-node` (runs it on a machine) and `tool-host-cloudflare` (runs the MCP proxy on a Worker). agent-vm plugs in through its own adapter.
 - **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal and the MCP proxy) keep their tools, results, approvals and limits.
 - **The first version adds a deployed Cloudflare Worker** for team tools. Agents sign in with our own login (Better Auth, in its own sign-in Worker), each organization has one Durable Object for membership and used approvals, and each call sends one data point to Analytics Engine.
+- **MCP 2026-07-28 only, stateless** (owner, 2026-10-21): every MCP route uses the SDK v2 handler and refuses 2025-era clients. agent-vm's private connection isn't MCP and doesn't change.
 - **Each client picks how tools are shown by its address:** `?tools=direct` gives the full list, for clients that search it themselves; the plain address gives only the search tools.
 - **Next:** per-user tools under today's permission model, computers reached through Cloudflare like Tailscale, and the chat-led change flow in the separate control UI. Code mode later, not blocked.
 </ex-callout>
 
-<ex-callout tone="question" title="Decided on 2026-10-20">
+<ex-callout tone="question" title="Decided on 2026-10-20 and 2026-10-21">
 
 1. **Agents connect straight to our Worker and sign in with Better Auth,** not through Cloudflare's MCP Portal or Access. Cloudflare is only for reaching registered computers, like Tailscale.
 2. **Better Auth issues logins and agent tokens,** from its own sign-in Worker.
 3. **A URL parameter** (`?tools=direct`) picks how tools are shown.
+
+4. **MCP 2026-07-28 only, stateless** (2026-10-21). Open: whether our connections out to tool servers must also be 2026-07-28 (question 8; the Lead recommends yes).
 
 Still assumed unless you say otherwise: no saved history of tool calls, and both of today's approval methods are kept. Deploying uses your existing Cloudflare CLI login.
 </ex-callout>

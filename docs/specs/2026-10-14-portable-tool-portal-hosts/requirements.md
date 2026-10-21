@@ -23,7 +23,7 @@ This work has two parts:
 
 ## What must stay the same
 
-1. **The three ways in keep working unchanged.** Callers reach tools three ways today, and each keeps its tool names, inputs, results and artifact reads:
+1. **The three ways in keep working unchanged.** Callers reach tools three ways today, and each keeps its tool names, inputs, results and artifact reads. The MCP routes move to MCP 2026-07-28 (owner, 2026-10-21; below):
    - **agent-vm's private connection** between its gateway and its portal (portal, artifact and catalog operations). It isn't MCP.
    - **the standalone Tool Portal:** its MCP tools (`tool_portal_*`, plus reading artifacts as MCP resources), which the Portal SDK uses, and its JSON-over-HTTP endpoint.
    - **the MCP proxy's tools** (`mcp_portal_*`, or one MCP tool per configured tool).
@@ -33,7 +33,7 @@ This work has two parts:
    - in each standalone server, through its own signed approval token, as today. Both of today's paths are kept.
 4. Provider credentials never reach agents.
 5. agent-vm's controller keeps its authority over its own tools, VMs and credentials.
-6. Any client that works today keeps working, including the Portal SDK.
+6. Clients that speak MCP 2026-07-28 work, including the Portal SDK once it moves to the new client. A client that speaks only 2025-era MCP is refused (owner, 2026-10-21). agent-vm's private connection isn't MCP and doesn't change.
 7. Today's limits stay as they are, at the entry point where each applies. They're listed in the [Program Design](program-design.md#limits-today). The Worker has its own limits, listed there too.
 
 ## What changes
@@ -124,6 +124,16 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Approved with a time limit** ("so we have approved with time limit too"): approved can carry an end time, a temporary grant, after which the tool goes back to its previous mode. "Blocked until a time not required", so F-61's temporary revocation is dropped. Not in the first version.
 - **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
 
+## Owner decision on 2026-10-21
+
+- **MCP 2026-07-28 only, stateless** (said to the Advisor, pointing at [Cloudflare's MCP v2 post](https://blog.cloudflare.com/mcp-v2/)): "we only want to support mcp 2 stateless" (typed as "fhy we only want to skupoed mcp 2 stateless"). Every MCP route we serve speaks only the 2026-07-28 protocol: no `initialize`, no protocol sessions, no `Mcp-Session-Id`. A 2025-era client is refused. This replaces "any client that works today keeps working" for MCP. It doesn't touch agent-vm's private connection, which Hermes uses inside agent-vm and which isn't MCP ([managed_gateway_bootstrap.py:919](../../../python/agent-vm-hermes-adapter/src/agent_vm_hermes_adapter/managed_gateway_bootstrap.py#L919)).
+  - **Who this affects today:**
+    - **Claude Code** speaks it by default since 2.1.274 (HTTP) and 2.1.292 (stdio), unless a user opts out ([changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21274)).
+    - **Codex** 0.163.0 speaks it only with its `mcp_2026_07_28` feature turned on, plus a per-server marker for stdio servers ([features](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/features/src/lib.rs#L1541)).
+    - **Our Portal SDK clients** (Node and Python) move to the new SDKs.
+    - **Clients on MCP SDK v1** can't connect.
+  - **Whether our own connections out to tool servers must also be 2026-07-28** is question 8.
+
 ## Questions for the owner
 
 Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
@@ -143,5 +153,10 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
 5. **Answered on 2026-10-20:** a URL parameter, `?tools=direct` (see owner decisions).
+8. **May the portal still call tool servers that speak only 2025-era MCP?** Your direction covers the MCP we serve. Our connections out to tool servers are a separate choice, because those servers aren't ours.
+   - **The Lead recommends no:** connect only with 2026-07-28. A server that hasn't upgraded is refused when the portal starts, with a clear reason, and none of its tools are offered. It matches "only", and it keeps one protocol to prove.
+   - **It costs:** any configured tool server that still speaks only 2025 MCP stops working until it upgrades.
+   - **The alternative:** let each configured server fall back to 2025 MCP until a set date.
+   - **Waits on this:** the connector part of the SDK move. The MCP routes we serve can move first.
 
 **Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
