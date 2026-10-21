@@ -61,21 +61,35 @@ describe('serialized tools/list pages', () => {
 	});
 	it('counts the cursor and accepts exactly one MiB while refusing one byte more', () => {
 		const base: Tool = { name: 'near-boundary', inputSchema: { type: 'object' }, description: '' };
-		const overhead = serializedBytes({ tools: [base], nextCursor: '1' });
+		const overhead = serializedBytes({
+			cacheScope: 'private',
+			ttlMs: 60000,
+			tools: [base],
+			nextCursor: '1',
+		});
 		const exact = { ...base, description: 'x'.repeat(maximumToolListPageBytes - overhead) };
 		const next: Tool = { name: 'next', inputSchema: { type: 'object' } };
 		const page = paginateMcpTools([exact, next]);
 		expect(serializedBytes(page)).toBe(1024 * 1024);
 		expect(page.tools).toEqual([exact]);
 		expect(page.nextCursor).toBe('1');
-		expect(paginateMcpTools([exact, next], page.nextCursor)).toEqual({ tools: [next] });
+		expect(paginateMcpTools([exact, next], page.nextCursor)).toEqual({
+			tools: [next],
+			cacheScope: 'private',
+			ttlMs: 60000,
+		});
 		expect(() =>
 			paginateMcpTools([{ ...exact, description: `${exact.description}x` }, next]),
 		).toThrow('exceeds');
 	});
 	it('matches full JSON serialization across cursor widths and final-page omission', () => {
 		const base: Tool = { name: 'tool-000', inputSchema: { type: 'object' }, description: '☃"\\\n' };
-		const overhead = serializedBytes({ tools: [base], nextCursor: '100' });
+		const overhead = serializedBytes({
+			cacheScope: 'private',
+			ttlMs: 60000,
+			tools: [base],
+			nextCursor: '100',
+		});
 		const largeTools = Array.from({ length: 102 }, (_, index) => ({
 			...base,
 			name: `tool-${String(index).padStart(3, '0')}`,
@@ -101,6 +115,8 @@ describe('serialized tools/list pages', () => {
 			const offset = Number(cursor);
 			const expected = {
 				tools: largeTools.slice(offset, offset + 1),
+				cacheScope: 'private',
+				ttlMs: 60000,
 				...(offset + 1 < largeTools.length ? { nextCursor: String(offset + 1) } : {}),
 			};
 			expect(JSON.stringify(examples[index + 2])).toBe(JSON.stringify(expected));
@@ -168,4 +184,19 @@ describe('per-client tool loading from its address', () => {
 		expect(selection).toEqual({ kind });
 		expect(toolLoadingMode(selection)).toBe(mode);
 	});
+});
+
+it('keeps a complete modern cacheable page inside the budget at the exact boundary', () => {
+	const base: Tool = { name: 'boundary', inputSchema: { type: 'object' }, description: '' };
+	const fullOverhead = serializedBytes({ tools: [base], cacheScope: 'private', ttlMs: 60_000 });
+	const page = paginateMcpTools([
+		{ ...base, description: 'x'.repeat(maximumToolListPageBytes - fullOverhead) },
+	]);
+	expect(page).toMatchObject({ cacheScope: 'private', ttlMs: 60_000 });
+	expect(serializedBytes(page)).toBe(1024 * 1024);
+	expect(() =>
+		paginateMcpTools([
+			{ ...base, description: 'x'.repeat(maximumToolListPageBytes - fullOverhead + 1) },
+		]),
+	).toThrow('exceeds');
 });
