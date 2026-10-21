@@ -377,6 +377,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | `mcp-portal` upstream client: HTTP and SSE | `tool-engine/connectors` |
 | `mcp-portal` upstream client: stdio and environment | `tool-host-node` |
 | `mcp-portal` proxy server, config, CLI and binary | `tool-host-node` |
+| `mcp-portal` proxy's MCP result projection (the core result as MCP content and `structuredContent`, and the direct-call item) | `tool-engine/mcp-gateway`, one pure function both hosts use; output byte-identical |
 | `mcp-portal` per-tool TypeScript helper, used by `describe` | `tool-engine/mcp-gateway`, on Web Crypto, so both hosts use it; output byte-identical |
 | `mcp-portal` full catalog compiler | `tool-host-node`; output byte-identical |
 | `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)), but becomes awaited: an in-memory list on a machine, the organization's object on the Worker |
