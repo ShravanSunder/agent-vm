@@ -3,17 +3,32 @@ import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type NodeHostConfig, loadNodeHostConfig } from '#node-host/configuration/node-host-config';
 import { startNodeHost } from '#node-host/node-host-startup';
 import {
 	fixtureConfig,
+	startControlledProvider,
 	fixtureDirectory,
 	writeFixtureConfig,
 } from '#node-host/test-fixtures/node-host-fixture';
 
-const unusedUrls = ['https://one.example/mcp', 'https://two.example/mcp'] as const;
+let providers: readonly [
+	Awaited<ReturnType<typeof startControlledProvider>>,
+	Awaited<ReturnType<typeof startControlledProvider>>,
+];
+let unusedUrls: readonly [string, string];
+beforeEach(async () => {
+	providers = await Promise.all([
+		startControlledProvider('alpha'),
+		startControlledProvider('beta'),
+	]);
+	unusedUrls = [providers[0].url, providers[1].url];
+});
+afterEach(async () => {
+	await Promise.all(providers.map(async (provider) => provider.close()));
+});
 const resolver = { resolve: async (): Promise<string> => 'fixture-only-secret' };
 const invalidConfigurations: readonly {
 	readonly name: string;
@@ -86,7 +101,7 @@ describe('real Node host loader and startup boundary', () => {
 		await writeFile(configPath, '{ malformed }');
 		await expect(loadNodeHostConfig(configPath)).rejects.toThrow(/Invalid JSONC/u);
 	});
-	it('refuses an injected resolver that returns an empty string before serving and releases the writer fence', async () => {
+	it('refuses an injected resolver that returns an empty string before serving and can start after correction', async () => {
 		const directory = await fixtureDirectory();
 		const configPath = await writeFixtureConfig(fixtureConfig(directory, unusedUrls), directory);
 		let resolutions = 0;
@@ -108,7 +123,7 @@ describe('real Node host loader and startup boundary', () => {
 		const recovered = await startNodeHost({ configPath, secrets: resolver });
 		await recovered.retire();
 	});
-	it('rolls back the writer fence when a required injected secret cannot resolve', async () => {
+	it('rolls back when a required injected secret cannot resolve', async () => {
 		const directory = await fixtureDirectory();
 		const configPath = await writeFixtureConfig(fixtureConfig(directory, unusedUrls), directory);
 		await expect(
@@ -125,7 +140,7 @@ describe('real Node host loader and startup boundary', () => {
 		expect(recovered.http?.endpoint.protocol).toBe('http:');
 		await recovered.retire();
 	});
-	it('rolls back after listener startup fails, so the same store can start after the port conflict is removed', async () => {
+	it('rolls back after listener startup fails, so the same configuration can start after the port conflict is removed', async () => {
 		const occupied = createServer();
 		occupied.listen(0, '127.0.0.1');
 		await once(occupied, 'listening');

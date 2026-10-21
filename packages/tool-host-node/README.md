@@ -1,51 +1,54 @@
 # Node Tool Portal host
 
-`@agent-collaboration/tool-host-node` composes the portable Tool Portal engine with
-Node HTTP, stdio, filesystem configuration, catalog compilation and durable
-operation records. It selects HTTP/SSE or stdio upstream runtimes from trusted
-provider configuration. The engine owns admission and dispatch.
+`@agent-collaboration/tool-host-node` runs the portable MCP proxy on Node 24.
+It loads trusted configuration, resolves provider credentials, discovers the
+organization's catalog before opening its listener, and routes calls through
+`tool-engine`'s dispatcher. HTTP/SSE and stdio upstream clients retain SDK v1
+until the outbound protocol decision is settled.
 
-Build the workspace with `mise exec node@24.7.0 -- pnpm build`. The built CLI is
-`node packages/tool-host-node/dist/bin/tool-host-node.js <configuration.jsonc>`.
-HTTP startup prints a JSON readiness record; MCP initialization verifies serving
-readiness. Stdio stdout contains only protocol messages.
+Build with `mise exec node@24.7.0 -- pnpm build`. Run the built CLI with
+`mise exec node@24.7.0 -- node packages/tool-host-node/dist/bin/tool-host-node.js <configuration.jsonc>`.
+HTTP startup prints a JSON readiness record. Stdio stdout carries only MCP
+messages.
 
-The configuration requires an authority, revision, explicit store directory,
-complete profiles, credential assignments, MCP providers, exposure mode and
-listener. HTTP plaintext binds loopback only and checks configured Host/Origin
-bounds. This slice supports the `not-configured` workspace binding and registered
-MCP providers. Unsupported bindings refuse startup. Unix sockets are deferred.
+Inbound HTTP and stdio accept MCP 2026-07-28 only. Each HTTP request authenticates
+independently, and a stdio connection uses its configured agent. HTTP binds
+loopback and checks the configured Host and Origin policy. It issues no MCP
+session IDs; incoming session IDs are ignored. GET and DELETE return 405.
 
-`startNodeHost` accepts an injected `secrets.resolve` port. Its input is the copied
-secret-reference contract; credentials stay in privileged transport headers or
-environment variables. The CLI supplies an environment-only resolver. Other
-secret stores require an embedding application's resolver. An omitted approval
-port refuses protected work as unavailable; it does not grant approval.
+The plain MCP address selects `indirect`: four `mcp_portal_*` search and call
+tools. Adding `?tools=direct` selects `direct`: the caller's tools plus those
+same four tools. The address chooses presentation, and cannot change access.
+The configuration's exposure field is retained; HTTP presentation follows the
+request address and stdio uses indirect presentation. Every list result has
+`cacheScope: "private"` and `ttlMs: 60000`. Direct pages hold whole tools and
+limit the serialized result, including cursor and cache fields, to 1 MiB.
+JSON-RPC framing is outside that budget. Incoming MCP requests have no added
+body-size cap.
 
-Compact `mcp_portal_call` uses each `calls[].id` as its operation item. In catalog
-exposure, every native call must supply a nonempty, bounded string in
-`_meta['tool-portal/operation-item']`. Missing or malformed metadata refuses the
-call before dispatch. Connect in compact exposure mode if the client cannot carry
-that metadata. Independent actions require different items; retries and
-reconnects retain the original item. JSON-RPC IDs and session IDs never choose
-operation identity. Tests cover SDK 1.29.0 Streamable HTTP and explicit JSON-RPC
-`2025-06-18` stdio clients. They do not establish native IDE client behavior.
-
-The public store keeps every usable operation. It uses the repository's copied
-crash-durable record mechanism and SQLite ownership fence, with no controller
-dependency. Conditional arm transitions permit one portal dispatch. A lost reply
-after arm remains ambiguous; lookup never dispatches. This does not promise
-exactly-once effects from third-party providers. Caller-scoped lookup rechecks
-the injected current context. The opaque credential admission identity includes the
-configured service generation, so prior-generation approval receipts refuse after
-a restart. The stable authority/agent/item operation key and its history survive
-that change. Store or writer-fence failure prevents new work.
+`startNodeHost` accepts `secrets.resolve`; the CLI provides an environment
+resolver. Provider secrets stay in privileged headers or environment variables
+and are redacted from catalogs, results and diagnostics. An embedding application
+may supply `approvalKeysByAgent` for the proxy's signed approval tokens, or the
+existing `approvals` port. An absent approval authority refuses protected work.
+Tokens arrive in `portalApprovalToken` on `mcp_portal_call`, or in
+`_meta['agent-vm/tool-portal-approval-token']` on a direct call. The host keeps
+one-use token tracking and protected-call entries in memory for its process
+lifetime. Unprotected calls are unrecorded and may run again when retried.
+The retained `storeDirectory` configuration field creates no files.
+Direct calls require no operation-item metadata.
 
 The `catalog-typescript` entrypoint preserves generator v2 and SDK contract v1
-bytes. The copied MCP-provider schema retains `agent-vm:mcp:1`. Frozen fixtures
-come from the unchanged original generators. Package proof permits exactly
-`@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` as contract/client
-dependencies until S4 relocates that artifact. Other `@agent-vm` packages,
-Gondolin and secret-management are forbidden. Third-party computed loaders are
-statically unenumerated; packed-consumer inventory and runtime blocking cover
-that limit.
+bytes. The copied provider schema retains `agent-vm:mcp:1`. Production imports
+permit `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` until
+the later package cutover. Other agent-vm packages and VM providers are forbidden.
+Standalone `tool_portal_*`, JSON and artifact routes and the Portal SDK's Node
+client migration belong to the following standalone-core slice.
+
+If a provider is down during startup discovery, healthy providers remain available
+on the plain address and discovery diagnostics identify the failed namespace.
+The next catalog-dependent request retries only failed providers. Direct
+`tools/list` returns bounded HTTP 503 diagnostics while discovery is incomplete.
+A complete catalog refreshes on the first access after 60 seconds; a failed
+refresh keeps the previous complete tools and adds diagnostics. There is no
+background retry or refresh timer.

@@ -3,11 +3,7 @@ import {
 	portalAgentScopeKey,
 	type PortalAgentIdentity,
 } from '@agent-collaboration/tool-access/authorization';
-import {
-	assessAccessInput,
-	jsonValueSchema,
-	jsonObjectSchema,
-} from '@agent-collaboration/tool-access/contracts';
+import { assessAccessInput, jsonValueSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	createUpstreamMcpClientRuntime,
 	type UpstreamMcpClientRuntime,
@@ -20,13 +16,15 @@ import {
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	createMcpGateway,
+	createOrganizationToolCatalog,
+	proxyUpstreamFailureFromError,
+	proxyUpstreamFailureResult,
+	createInMemoryApprovalTokenUse,
 	createPortalSessionManager,
-	encodeToolRef,
 	type McpGateway,
-	type PreparedGatewayCatalog,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { ToolSchema } from '@modelcontextprotocol/core';
 
-import { compileCatalogTypescriptModules } from '#node-host/catalog-typescript/catalog-typescript-compiler';
 import { mcpConfigToResolvedProviders } from '#node-host/configuration/mcp-config';
 import {
 	nodeHostConfigSchema,
@@ -47,6 +45,7 @@ import {
 	createNodeHttpUpstreamTransport,
 	createNodeStdioUpstreamTransport,
 } from '#node-host/upstream/node-upstream-transports';
+import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/upstream/stdio-upstream-errors';
 import { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
 
 export interface NodeHostSecretResolutionPort {
@@ -70,10 +69,20 @@ export async function createNodeHostComposition(props: {
 	readonly config: NodeHostConfig;
 	readonly secrets: NodeHostSecretResolutionPort;
 	readonly approvals?: ApprovalPort;
+	readonly approvalKeysByAgent?: ReadonlyMap<string, Uint8Array>;
 	readonly onDiagnostic?: (event: 'upstream-close-failed' | 'upstream-stderr') => void;
 }): Promise<NodeHostComposition> {
 	const config = nodeHostConfigSchema.parse(structuredClone(props.config));
 	const credentials = compileNodeHostCredentialSet(config.auth);
+	const approvalTokensByAgent = new Map(
+		[...(props.approvalKeysByAgent ?? [])].map(([agentId, key]) => [
+			agentId,
+			{
+				key: new Uint8Array(key),
+				consumeTokenId: createInMemoryApprovalTokenUse({ now: Date.now }),
+			},
+		]),
+	);
 	const runtimeByNamespace = new Map<string, UpstreamMcpClientRuntime>();
 	const allScopes = new Set<string>();
 	const allowedContext = new Map(
@@ -116,7 +125,7 @@ export async function createNodeHostComposition(props: {
 				let runtime: UpstreamMcpClientRuntime;
 				if (provider.transport === 'stdio') {
 					const env = await resolveValues(provider.env);
-					runtime = createNodeStdioUpstreamRuntime({
+					const stdioRuntime = createNodeStdioUpstreamRuntime({
 						servers: [
 							{
 								namespace: provider.namespace,
@@ -134,6 +143,11 @@ export async function createNodeHostComposition(props: {
 							stderr: () => props.onDiagnostic?.('upstream-stderr'),
 						}),
 					});
+					runtime = {
+						...stdioRuntime,
+						listTools: async (call) =>
+							(await stdioRuntime.listTools(call)).map((tool) => ToolSchema.parse(tool)),
+					};
 				} else {
 					const headers = await resolveValues(provider.headers);
 					runtime = createUpstreamMcpClientRuntime({
@@ -177,6 +191,15 @@ export async function createNodeHostComposition(props: {
 			);
 		},
 	};
+	// One organization catalog is read before a listener can admit any client.
+	const organizationCatalog = createOrganizationToolCatalog({
+		namespaces: [...runtimeByNamespace.keys()],
+		runtime,
+		discoveryScope: `startup:${config.authority}`,
+		catalogTtlMs: 60_000,
+		now: Date.now,
+	});
+	await organizationCatalog.read();
 	const sessions = createPortalSessionManager({
 		accessPolicy: {
 			enabledNamespaces: [...runtimeByNamespace.keys()],
@@ -185,32 +208,11 @@ export async function createNodeHostComposition(props: {
 		},
 		upstreamNamespaces: [...runtimeByNamespace.keys()],
 		catalogTtlMs: 60_000,
+		organizationCatalog,
 		runtime,
 	});
 	let closed = false;
-	async function prepareCatalog(catalog: PreparedGatewayCatalog): Promise<PreparedGatewayCatalog> {
-		const bundle = await compileCatalogTypescriptModules({
-			tools: catalog.tools.map((tool) => ({
-				namespace: tool.namespace,
-				name: tool.toolName,
-				inputSchema: jsonObjectSchema.parse(tool.descriptor.inputSchema),
-				...(tool.descriptor.description === undefined
-					? {}
-					: { description: tool.descriptor.description }),
-			})),
-		});
-		return {
-			...catalog,
-			typescriptHelpersByToolRef: Object.fromEntries(
-				bundle.manifest.tools.flatMap((tool) => {
-					const source = bundle.files.find((file) => file.path === tool.modulePath)?.source;
-					return source === undefined
-						? []
-						: [[encodeToolRef({ namespace: tool.namespace, toolName: tool.name }), source]];
-				}),
-			),
-		};
-	}
+
 	return {
 		config,
 		operations,
@@ -224,6 +226,7 @@ export async function createNodeHostComposition(props: {
 			if (closed || !allowedContext.has(credential.credentialId))
 				throw new Error('Host is unavailable.');
 			const principal = credential.principal;
+			const approvalTokens = approvalTokensByAgent.get(principal.agentId);
 			const profile = config.profiles[principal.toolPortalProfileId];
 			if (profile === undefined) throw new Error('Missing configured assignment.');
 			const identity = createPortalAgentIdentity({
@@ -247,14 +250,27 @@ export async function createNodeHostComposition(props: {
 						invocation.verifiedContextRef !== credential.credentialId
 					)
 						return { kind: 'not-dispatched', reason: 'caller-unavailable' };
-					const result = await runtime.callTool({
-						agentScopeId: scope,
-						namespace: invocation.capability.namespace,
-						toolName: invocation.capability.tool,
-						arguments: invocation.arguments,
-						requestId: invocation.operationKey.item,
-					});
-					return { kind: 'completed', result: jsonValueSchema.parse(result) };
+					try {
+						const result = await runtime.callTool({
+							agentScopeId: scope,
+							namespace: invocation.capability.namespace,
+							toolName: invocation.capability.tool,
+							arguments: invocation.arguments,
+							requestId: invocation.operationKey.item,
+						});
+						return { kind: 'completed', result: jsonValueSchema.parse(result) };
+					} catch (error) {
+						const target = {
+							namespace: invocation.capability.namespace,
+							toolName: invocation.capability.tool,
+						};
+						const knownHttpFailure = proxyUpstreamFailureFromError({ ...target, error });
+						if (knownHttpFailure !== null) return knownHttpFailure;
+						const stdioFailure = stdioFailureDetailsFromUnknown(error);
+						if (stdioFailure !== null)
+							return proxyUpstreamFailureResult({ ...target, failure: stdioFailure });
+						throw error;
+					}
 				},
 			};
 			return createMcpGateway({
@@ -266,8 +282,9 @@ export async function createNodeHostComposition(props: {
 				},
 				hostBinding: { workspaceLayer: config.workspaceLayer, config: config.revision },
 				sessions,
-				prepareCatalog,
+				prepareCatalog: async (catalog) => catalog,
 				operations,
+				...(approvalTokens === undefined ? {} : { approvalTokens }),
 				approvals: props.approvals ?? {
 					challenge: unavailableApproval,
 					receipt: unavailableApproval,

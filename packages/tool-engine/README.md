@@ -52,3 +52,32 @@ Bearer derivation, token signing/verification and the per-tool TypeScript helper
 are asynchronous Web Crypto APIs. Their bytes match the legacy implementations.
 `describe` builds its helper from the live authorized tool record; it does not
 invoke the host's full catalog compiler. That compiler remains outside this package.
+
+`projectProxyMcpResult({ operation, input, result })` preserves the MCP proxy's
+text-wrapped core result for both hosts. Scalar and malformed calls retain their
+wrapper; valid calls produce ordered items, with `catalog-call` as the direct
+call's public item ID. Protocol response metadata is supplied by the host SDK.
+
+Proxy backends map known connector errors with `proxyUpstreamFailureFromError`
+(or `proxyUpstreamFailureResult` after a host's nominal error extractor). The
+optional `mcp-upstream-failure` detail retains redacted legacy diagnostics;
+transport addresses and raw causes are excluded. Provider `isError` responses
+and connect failures are `failed`; losing a response during `call_tool` remains
+`ambiguous`. The gateway exposes the legacy `upstream_call_failed` item error
+for either outcome. Managed adapters keep their existing certainty and retry
+policy when this optional detail is present.
+
+`createOrganizationToolCatalog` owns shared startup discovery and its request-driven
+lifetime. Incomplete discovery keeps healthy providers and retries failed ones on
+the next read. Complete catalogs refresh after the configured lifetime; failed
+refreshes retain the previous complete snapshot with diagnostics. Passing this
+source to `createPortalSessionManager` builds caller views from the organization
+snapshot without owning another discovery cache. Hosts perform the first read
+before accepting clients and keep protocol-specific refusals at their ingress.
+
+A complete organization snapshot can carry refresh-failure diagnostics. Its
+completeness is passed to catalog preparation separately from those diagnostics,
+so both addresses keep serving its tools while the failed namespace is retried.
+Only a snapshot that has never completed refuses direct listing. This deliberately
+changes the old new-session refusal after a failed refresh: stateless clients now
+retain the availability that connected clients previously kept.

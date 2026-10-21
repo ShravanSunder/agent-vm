@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
 	createServer,
 	type IncomingMessage,
@@ -8,12 +7,12 @@ import {
 import type { AddressInfo } from 'node:net';
 
 import {
-	createPortalAgentIdentity,
-	type PortalAgentIdentity,
-} from '@agent-collaboration/tool-access/authorization';
-import { PortalCatalogPreparationError } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+	resolveToolLoading,
+	toolLoadingMode,
+	PortalCatalogPreparationError,
+} from '@agent-collaboration/tool-engine/mcp-gateway';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { createMcpHandler } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import {
@@ -24,7 +23,6 @@ import {
 	finishNodeHostCredentialRequest,
 	fixedNodeHostCredentialPrincipals,
 	parseNodeHostBearerToken,
-	type CompiledNodeHostCredential,
 	type NodeHostBearerCredentialSet,
 	type NodeHostCredentialSetState,
 	waitForNodeHostCredentialDrainDeadline,
@@ -62,14 +60,6 @@ export interface NodeHostMcpHttpServer {
 	readonly retire: (props?: { readonly drainTimeoutMs?: number }) => Promise<void>;
 }
 
-interface ActiveMcpSession {
-	readonly identity: PortalAgentIdentity;
-	readonly credentialId: string;
-	readonly credentialSetIdentity: string;
-	readonly mcpServer: Awaited<ReturnType<typeof createNodeMcpServer>>;
-	readonly transport: StreamableHTTPServerTransport;
-}
-
 function validateRoutePath(routePath: string): void {
 	if (
 		!routePath.startsWith('/') ||
@@ -91,7 +81,6 @@ function validatePlaintextListenerHostname(hostname: string): void {
 
 type StandaloneMcpErrorKind =
 	| 'catalog_preparation_failed'
-	| 'body_too_large'
 	| 'internal_error'
 	| 'invalid_request'
 	| 'not_found'
@@ -130,22 +119,19 @@ function stopHttpServerAdmission(httpServer: HttpServer): Promise<void> {
 }
 
 class NodeRequestBodyError extends Error {
-	constructor(readonly kind: 'body_too_large' | 'invalid_request') {
+	constructor(readonly kind: 'invalid_request') {
 		super(kind);
 		this.name = 'NodeRequestBodyError';
 	}
 }
 
-async function readBoundedRequestBody(request: IncomingMessage): Promise<unknown> {
+async function readRequestBody(request: IncomingMessage): Promise<unknown> {
 	if (request.method !== 'POST') return undefined;
 	const chunks: Buffer[] = [];
-	let length = 0;
 	for await (const chunk of request) {
 		const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-		length += bytes.length;
-		if (length <= 4 * 1024 * 1024) chunks.push(bytes);
+		chunks.push(bytes);
 	}
-	if (length > 4 * 1024 * 1024) throw new NodeRequestBodyError('body_too_large');
 	let body: unknown;
 	try {
 		body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -172,85 +158,8 @@ export async function startNodeHostMcpHttpServer(
 	const highestCredentialVersionByAgent = new Map(
 		Object.entries(activeCredentialVersionsByAgent(activeCredentialSet)),
 	);
-	const sessions = new Map<string, ActiveMcpSession>();
 	let retiring = false;
 	let retirement: Promise<void> | undefined;
-
-	async function closeSessionsForCredentialSet(identity: string): Promise<void> {
-		const matchingSessions = [...sessions.entries()].filter(
-			([, session]) => session.credentialSetIdentity === identity,
-		);
-		await Promise.all(
-			matchingSessions.map(async ([sessionId, session]) => {
-				sessions.delete(sessionId);
-				await session.mcpServer.close();
-				await props.composition.closeSession(session.identity);
-			}),
-		);
-	}
-
-	async function createSession(
-		credential: CompiledNodeHostCredential,
-		credentialState: NodeHostCredentialSetState,
-	): Promise<ActiveMcpSession> {
-		const sessionId = randomUUID();
-		const identity = createPortalAgentIdentity({
-			agentId: credential.principal.agentId,
-			agentScopeId: credential.principal.agentId,
-			source: 'mcp-proxy-bearer',
-			sessionId,
-		});
-		const transport = new StreamableHTTPServerTransport({
-			enableJsonResponse: true,
-			onsessionclosed: (closedSessionId) => {
-				sessions.delete(closedSessionId);
-				void props.composition
-					.closeSession(identity)
-					.catch(() => props.onDiagnostic?.('server-failed'));
-			},
-			onsessioninitialized: (initializedSessionId) => {
-				sessions.set(initializedSessionId, activeSession);
-			},
-			sessionIdGenerator: () => sessionId,
-		});
-		let mcpServer: Awaited<ReturnType<typeof createNodeMcpServer>>;
-		try {
-			mcpServer = await createNodeMcpServer({
-				gateway: props.composition.gatewayFor(credential, sessionId),
-				exposure: props.exposure,
-			});
-		} catch (error) {
-			await props.composition.closeSession(identity);
-			throw error;
-		}
-		const activeSession: ActiveMcpSession = {
-			identity,
-			credentialId: credential.credentialId,
-			credentialSetIdentity: credentialState.identity,
-			mcpServer,
-			transport,
-		};
-		const bridge: Transport = {
-			start: async () => {
-				Object.assign(transport, {
-					onmessage: bridge.onmessage,
-					onclose: bridge.onclose,
-					onerror: bridge.onerror,
-				});
-				await transport.start();
-			},
-			send: async (message, options) => transport.send(message, options),
-			close: async () => transport.close(),
-		};
-		try {
-			await mcpServer.connect(bridge);
-		} catch (error) {
-			await mcpServer.close();
-			await transport.close();
-			throw error;
-		}
-		return activeSession;
-	}
 
 	async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
 		if (!nodeHostHttpRequestIsAllowed(request, requestPolicy)) {
@@ -258,7 +167,7 @@ export async function startNodeHostMcpHttpServer(
 			return;
 		}
 		const requestUrl = new URL(request.url ?? '/', 'http://tool-portal.invalid');
-		if (requestUrl.pathname !== props.routePath || requestUrl.search.length > 0) {
+		if (requestUrl.pathname !== props.routePath) {
 			writeJsonErrorResponse(response, 404, 'not_found');
 			return;
 		}
@@ -279,36 +188,54 @@ export async function startNodeHostMcpHttpServer(
 		props.onDiagnostic?.('authentication-allowed');
 		credentialState.inFlightRequests += 1;
 		try {
-			const parsedBody = await readBoundedRequestBody(request);
+			const parsedBody = await readRequestBody(request);
 			if (retiring || credentialState !== activeCredentialSet) {
 				writeJsonErrorResponse(response, 401, 'unauthorized');
 				return;
 			}
-			const sessionIdHeader = request.headers['mcp-session-id'];
-			const sessionId = typeof sessionIdHeader === 'string' ? sessionIdHeader : undefined;
-			if (sessionId !== undefined) {
-				const session = sessions.get(sessionId);
-				if (
-					session === undefined ||
-					session.credentialSetIdentity !== credentialState.identity ||
-					session.credentialId !== credential.credentialId
-				) {
-					writeJsonErrorResponse(response, 401, 'unauthorized');
-					return;
-				}
-				await session.transport.handleRequest(request, response, parsedBody);
-				return;
-			}
-			const session = await createSession(credential, credentialState);
-			if (retiring || credentialState !== activeCredentialSet) {
-				await session.mcpServer.close();
-				writeJsonErrorResponse(response, 401, 'unauthorized');
-				return;
-			}
-			await session.transport.handleRequest(request, response, parsedBody);
-			if (session.transport.sessionId === undefined) {
-				await session.mcpServer.close();
-			}
+			const mode = toolLoadingMode(resolveToolLoading(requestUrl));
+			const preparation: { error?: PortalCatalogPreparationError } = {};
+			const handler = createMcpHandler(
+				async () => {
+					const gateway = props.composition.gatewayFor(credential);
+					// The SDK calls the factory only after version, metadata and header validation.
+					if (mode === 'direct' && request.headers['mcp-method'] === 'tools/list')
+						await gateway.prepareCatalog();
+					return createNodeMcpServer({ gateway, mode });
+				},
+				{
+					legacy: 'reject',
+					onerror: (error) => {
+						if (error instanceof PortalCatalogPreparationError) preparation.error = error;
+					},
+				},
+			);
+			await toNodeHandler({
+				fetch: async (fetchRequest, options) => {
+					const result = await handler.fetch(fetchRequest, options);
+					if (preparation.error === undefined) return result;
+					return Response.json(
+						{
+							ok: false,
+							error: {
+								kind: 'catalog_preparation_failed',
+								failedNamespaces: preparation.error.failedNamespaces,
+								refusals: preparation.error.refusals,
+							},
+						},
+						{ status: 503 },
+					);
+				},
+			})(
+				{
+					method: request.method ?? 'POST',
+					url: request.url ?? '/',
+					headers: request.headers,
+					[Symbol.asyncIterator]: () => request[Symbol.asyncIterator](),
+				},
+				response,
+				parsedBody,
+			);
 		} finally {
 			finishNodeHostCredentialRequest(credentialState);
 		}
@@ -317,7 +244,7 @@ export async function startNodeHostMcpHttpServer(
 	const httpServer = createServer((request, response) => {
 		void handleRequest(request, response).catch((error: unknown) => {
 			if (!response.headersSent && error instanceof NodeRequestBodyError) {
-				writeJsonErrorResponse(response, error.kind === 'body_too_large' ? 413 : 400, error.kind);
+				writeJsonErrorResponse(response, 400, error.kind);
 				return;
 			}
 			if (!response.headersSent && error instanceof PortalCatalogPreparationError) {
@@ -384,7 +311,6 @@ export async function startNodeHostMcpHttpServer(
 		activeCredentialSet = nextCredentialSet;
 		props.composition.activateCredentials(credentialSet);
 		await waitForNodeHostCredentialDrainDeadline(previousCredentialSet, drainTimeoutMs);
-		await closeSessionsForCredentialSet(previousCredentialSet.identity);
 		credentialStates.delete(previousCredentialSet);
 	}
 
@@ -405,12 +331,7 @@ export async function startNodeHostMcpHttpServer(
 						await waitForNodeHostCredentialDrainDeadline(credentialState, drainTimeoutMs),
 				),
 			);
-			const sessionClosures = [...sessions.values()].map(
-				async (session) => await session.mcpServer.close(),
-			);
-			sessions.clear();
 			httpServer.closeAllConnections();
-			await Promise.allSettled(sessionClosures);
 			await listenerClosed;
 		})();
 		return retirement;

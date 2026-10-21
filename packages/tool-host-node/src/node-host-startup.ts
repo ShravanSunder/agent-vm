@@ -1,7 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 
 import type { ApprovalPort } from '@agent-collaboration/tool-engine/dispatch';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
 import { loadNodeHostConfig } from '#node-host/configuration/node-host-config';
 import { compileNodeHostCredentialSet } from '#node-host/ingress/bearer-credentials';
@@ -26,6 +26,7 @@ export async function startNodeHost(props: {
 	readonly configPath: string;
 	readonly secrets: NodeHostSecretResolutionPort;
 	readonly approvals?: ApprovalPort;
+	readonly approvalKeysByAgent?: ReadonlyMap<string, Uint8Array>;
 	readonly input?: Readable;
 	readonly output?: Writable;
 	readonly onDiagnostic?: (event: string) => void;
@@ -34,6 +35,9 @@ export async function startNodeHost(props: {
 	const composition = await createNodeHostComposition({
 		config,
 		secrets: props.secrets,
+		...(props.approvalKeysByAgent === undefined
+			? {}
+			: { approvalKeysByAgent: props.approvalKeysByAgent }),
 		...(props.approvals === undefined ? {} : { approvals: props.approvals }),
 		...(props.onDiagnostic === undefined ? {} : { onDiagnostic: props.onDiagnostic }),
 	});
@@ -63,11 +67,10 @@ export async function startNodeHost(props: {
 			(entry) => entry.principal.agentId === agentId,
 		);
 		if (credential === undefined) throw new Error('Missing stdio identity.');
-		const server = await createNodeMcpServer({
-			gateway: composition.gatewayFor(credential),
-			exposure: config.exposure,
-		});
-		const transport = new StdioServerTransport(props.input, props.output);
+		const server = serveStdio(
+			() => createNodeMcpServer({ gateway: composition.gatewayFor(credential), mode: 'indirect' }),
+			{ legacy: 'reject', transport: new StdioServerTransport(props.input, props.output) },
+		);
 		let retirement: Promise<void> | undefined;
 		const retire = (): Promise<void> => {
 			retirement ??= (async () => {
@@ -83,7 +86,6 @@ export async function startNodeHost(props: {
 		input.once('end', () => {
 			void retire().catch(() => props.onDiagnostic?.('server-failed'));
 		});
-		await server.connect(transport);
 		return { composition, retire };
 	} catch (error) {
 		await composition.close();

@@ -1,6 +1,9 @@
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { request as httpRequest } from 'node:http';
 
+import {
+	CLIENT_CAPABILITIES_META_KEY,
+	PROTOCOL_VERSION_META_KEY,
+} from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 
 import { nodeHostConfigSchema } from '#node-host/configuration/node-host-config';
@@ -24,7 +27,9 @@ const secrets = {
 };
 function endpoint(host: RunningNodeHost): URL {
 	if (host.http === undefined) throw new Error('Missing HTTP host');
-	return host.http.endpoint;
+	const address = new URL(host.http.endpoint);
+	if (host.composition.config.exposure === 'catalog') address.searchParams.set('tools', 'direct');
+	return address;
 }
 const permittedCall = {
 	name: 'mcp_portal_call',
@@ -133,141 +138,99 @@ describe('Node host real admission and preparation races', () => {
 			await beta.close();
 		}
 	});
-	it('overlaps requests across two handlers while the provider effect is held; records one effect and never blindly dispatches again', async () => {
-		const directory = await fixtureDirectory();
-		const alpha = await startControlledProvider('alpha');
-		const beta = await startControlledProvider('beta');
-		const held = alpha.holdCalls();
-		const configPath = await writeFixtureConfig(
-			fixtureConfig(directory, [alpha.url, beta.url]),
-			directory,
-		);
-		const host = await startNodeHost({ configPath, secrets });
-		const first = await connectClient(endpoint(host), 'credential-a');
-		const second = await connectClient(endpoint(host), 'credential-a');
-		try {
-			const pending = first.client.callTool(permittedCall);
-			await held.entered;
-			expect(decodedResult(await second.client.callTool(permittedCall))).toMatchObject({
-				ok: false,
-				results: {
-					overlap: {
-						ok: false,
-						error: { kind: 'ambiguous', reason: 'operation-may-have-dispatched' },
-					},
-				},
-			});
-			expect(alpha.effects).toHaveLength(1);
-			held.release();
-			const completed = await pending;
-			expect(successfulOutput(completed, 'overlap')).toMatchObject({
-				namespace: 'alpha',
-				toolName: 'read',
-			});
-			expect(await second.client.callTool(permittedCall)).toEqual(completed);
-			expect(alpha.effects).toHaveLength(1);
-		} finally {
-			held.release();
-			await first.client.close();
-			await second.client.close();
-			await host.retire();
-			await alpha.close();
-			await beta.close();
-		}
-	});
-	it('fails closed before effect when the real record store is unavailable; keeps a permitted sibling independent of another failed item', async () => {
+	it('permits a mixed batch sibling, then refuses work after the in-memory authority closes', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
 		const config = fixtureConfig(directory, [alpha.url, beta.url]);
 		const configPath = await writeFixtureConfig(config, directory);
 		const host = await startNodeHost({ configPath, secrets });
-		const a = await connectClient(endpoint(host), 'credential-a');
+		const client = await connectClient(endpoint(host), 'credential-a');
 		try {
-			const mixed = await a.client.callTool({
+			const mixed = await client.client.callTool({
 				name: 'mcp_portal_call',
 				arguments: {
 					calls: [
+						{ id: 'denied', namespace: 'alpha', toolName: 'hidden', arguments: { value: 0 } },
 						{
-							id: 'denied-sibling',
-							namespace: 'alpha',
-							toolName: 'hidden',
-							arguments: { value: 0 },
-						},
-						{
-							id: 'permitted-sibling',
+							id: 'permitted',
 							namespace: 'alpha',
 							toolName: 'read',
-							arguments: { value: 7, profile: 'a legitimate tool argument' },
+							arguments: { value: 7, profile: 'legitimate argument' },
 						},
 					],
 				},
 			});
 			expect(decodedResult(mixed)).toMatchObject({
 				ok: false,
-				results: {
-					'denied-sibling': { ok: false },
-					'permitted-sibling': { ok: true, output: { namespace: 'alpha', toolName: 'read' } },
-				},
+				results: { denied: { ok: false }, permitted: { ok: true } },
 			});
 			expect(alpha.effects.map((effect) => effect.arguments)).toEqual([
-				{ value: 7, profile: 'a legitimate tool argument' },
+				{ value: 7, profile: 'legitimate argument' },
 			]);
-			const known = host.composition.operations;
 			expect(
-				await known.lookup({
+				await host.composition.operations.lookup({
 					version: 'tool-operation-v1',
-					key: { authority: config.authority, principal: 'agent-a', item: 'absent' },
+					key: { authority: config.authority, principal: 'agent-a', item: 'permitted' },
 					verifiedContextRef: fixtureContextRef(config),
 				}),
 			).toEqual({ kind: 'not-found' });
-		} finally {
-			await a.client.close();
-			await host.retire();
-		}
-		const blockedDirectory = await fixtureDirectory();
-		const blockedConfig = fixtureConfig(blockedDirectory, [alpha.url, beta.url]);
-		const blockedPath = await writeFixtureConfig(blockedConfig, blockedDirectory);
-		const blocked = await startNodeHost({ configPath: blockedPath, secrets });
-		await writeFile(
-			path.join(blockedConfig.storeDirectory, 'tool-operations-v1'),
-			'storage is unavailable',
-		);
-		const b = await connectClient(endpoint(blocked), 'credential-a');
-		try {
-			expect(decodedResult(await b.client.callTool(permittedCall))).toMatchObject({
-				ok: false,
-				results: {
-					overlap: { ok: false, error: { kind: 'not-dispatched', reason: 'unavailable' } },
-				},
-			});
+			await host.composition.close();
+			await expect(client.client.callTool(permittedCall)).rejects.toThrow();
 			expect(alpha.effects).toHaveLength(1);
 		} finally {
-			await b.client.close();
-			await blocked.retire();
-			await alpha.close();
-			await beta.close();
+			await client.client.close();
+			await host.retire();
+			await Promise.all([alpha.close(), beta.close()]);
 		}
 	});
-	it('rejects a credential retired during pending full catalog/client construction and permits the rotated credential', async () => {
+
+	it('rechecks credentials after a held body, drains old requests, and admits the rotated credential', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
-		const held = alpha.holdDiscovery();
-		const config = fixtureConfig(directory, [alpha.url, beta.url], 'catalog');
+		const config = fixtureConfig(directory, [alpha.url, beta.url]);
 		const configPath = await writeFixtureConfig(config, directory);
 		const host = await startNodeHost({ configPath, secrets });
 		try {
-			const pending = connectClient(endpoint(host), 'credential-a').then(
-				() => ({ kind: 'unexpected-success' }),
-				(error: unknown) => ({
-					kind: 'rejected',
-					message: error instanceof Error ? error.message : String(error),
-					code: typeof error === 'object' && error !== null && 'code' in error ? error.code : null,
-				}),
-			);
-			await held.entered;
 			if (host.http === undefined) throw new Error('Missing HTTP listener');
+			const body = JSON.stringify({
+				jsonrpc: '2.0',
+				id: 88,
+				method: 'tools/call',
+				params: {
+					...permittedCall,
+					_meta: { [PROTOCOL_VERSION_META_KEY]: '2026-07-28', [CLIENT_CAPABILITIES_META_KEY]: {} },
+				},
+			});
+			let finish: (() => void) | undefined;
+			const reply = new Promise<number>((resolve, reject) => {
+				const request = httpRequest(
+					endpoint(host),
+					{
+						method: 'POST',
+						headers: {
+							authorization: 'Bearer credential-a',
+							'content-type': 'application/json',
+							accept: 'application/json, text/event-stream',
+							'content-length': Buffer.byteLength(body),
+							'MCP-Protocol-Version': '2026-07-28',
+							'Mcp-Method': 'tools/call',
+							'Mcp-Name': 'mcp_portal_call',
+						},
+					},
+					(response) => {
+						response.resume();
+						response.once('end', () => resolve(response.statusCode ?? 0));
+					},
+				);
+				request.once('error', reject);
+				request.write(body.slice(0, 1));
+				finish = () => request.end(body.slice(1));
+			});
+			// A completed request on the same listener is an event barrier after the held request's headers.
+			const probe = await connectClient(endpoint(host), 'credential-a');
+			await probe.client.close();
 			const rotated = {
 				...config.auth,
 				credentials: config.auth.credentials.map((credential) => ({
@@ -277,116 +240,121 @@ describe('Node host real admission and preparation races', () => {
 				})),
 			};
 			const rotation = host.http.activateCredentialSet(rotated);
-			held.release();
-			expect(await pending).toMatchObject({
-				kind: 'rejected',
-				code: 401,
-			});
+			finish?.();
+			expect(await reply).toBe(401);
 			await rotation;
+			await expect(connectClient(endpoint(host), 'credential-a')).rejects.toThrow();
 			const fresh = await connectClient(endpoint(host), 'credential-a-rotated');
 			try {
-				expect((await fresh.client.listTools()).tools.map((tool) => tool.name)).toEqual([
-					'alpha__ask__645775a667',
-					'alpha__fail__f7bc995a6f',
-					'alpha__read__151160dc30',
-				]);
+				expect(decodedResult(await fresh.client.callTool(permittedCall))).toMatchObject({
+					ok: true,
+				});
 			} finally {
 				await fresh.client.close();
 			}
-			expect(alpha.effects).toEqual([]);
+			expect(alpha.effects).toHaveLength(1);
 		} finally {
-			held.release();
 			await host.retire();
-			await alpha.close();
-			await beta.close();
+			await Promise.all([alpha.close(), beta.close()]);
 		}
 	});
-	it('surfaces duplicate full catalog refusal at HTTP ingress and retains S3a-R3 per-tool helper state in compact describe', async () => {
+
+	it('drains a real in-flight provider response before retirement completes', async () => {
+		const directory = await fixtureDirectory();
+		const alpha = await startControlledProvider('alpha');
+		const beta = await startControlledProvider('beta');
+		const held = alpha.holdCalls();
+		const configPath = await writeFixtureConfig(
+			fixtureConfig(directory, [alpha.url, beta.url]),
+			directory,
+		);
+		const host = await startNodeHost({ configPath, secrets });
+		const client = await connectClient(endpoint(host), 'credential-a');
+		try {
+			const pending = client.client.callTool(permittedCall);
+			await held.entered;
+			let retired = false;
+			const retirement = host.retire().then(() => {
+				retired = true;
+			});
+			expect(retired).toBe(false);
+			held.release();
+			expect(decodedResult(await pending)).toMatchObject({ ok: true });
+			await retirement;
+			expect(retired).toBe(true);
+			expect(alpha.effects).toHaveLength(1);
+		} finally {
+			held.release();
+			await client.client.close();
+			await host.retire();
+			await Promise.all([alpha.close(), beta.close()]);
+		}
+	});
+
+	it('refuses duplicate direct names and starts with bounded refusal when all configured servers are down', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
 		alpha.duplicateDiscovery();
-		const config = fixtureConfig(directory, [alpha.url, beta.url], 'catalog');
-		const configPath = await writeFixtureConfig(config, directory);
+		const configPath = await writeFixtureConfig(
+			fixtureConfig(directory, [alpha.url, beta.url], 'catalog'),
+			directory,
+		);
 		const host = await startNodeHost({ configPath, secrets });
+		const client = await connectClient(endpoint(host), 'credential-a');
 		try {
-			await expect(connectClient(endpoint(host), 'credential-a')).rejects.toMatchObject({
-				code: 503,
-			});
-			expect(alpha.effects).toEqual([]);
+			await expect(client.client.listTools()).rejects.toThrow();
+			expect(alpha.effects).toHaveLength(0);
 		} finally {
+			await client.client.close();
 			await host.retire();
-			await alpha.close();
-			await beta.close();
+			await Promise.all([alpha.close(), beta.close()]);
 		}
-		const partialDirectory = await fixtureDirectory();
-		const healthy = await startControlledProvider('alpha');
-		const unavailable = await startControlledProvider('beta');
-		const partial = fixtureConfig(partialDirectory, [healthy.url, unavailable.url]);
-		const own = partial.profiles['profile-a'];
-		const foreign = partial.profiles['profile-b'];
-		if (own === undefined || foreign === undefined) throw new Error('Missing fixture profiles');
-		const partialConfig = nodeHostConfigSchema.parse({
-			...partial,
-			profiles: {
-				...partial.profiles,
-				'profile-a': {
-					...own,
-					profile: {
-						...own.profile,
-						namespaces: { ...own.profile.namespaces, ...foreign.profile.namespaces },
-					},
-				},
-			},
-		});
-		await unavailable.close();
-		const partialPath = await writeFixtureConfig(partialConfig, partialDirectory);
-		const partialHost = await startNodeHost({ configPath: partialPath, secrets });
-		const a = await connectClient(endpoint(partialHost), 'credential-a');
+		const unavailable = await startNodeHost({ configPath, secrets });
+		if (unavailable.http === undefined) throw new Error('Missing all-down listener');
+		const indirect = await connectClient(unavailable.http.endpoint, 'credential-a');
 		try {
-			const described = await a.client.callTool({
-				name: 'mcp_portal_describe',
-				arguments: {
-					requests: [
-						{
-							id: 'helper',
-							tools: [{ namespace: 'alpha', toolName: 'read' }],
-							includeTypescriptHelper: true,
-						},
-						{ id: 'plain', tools: [{ namespace: 'alpha', toolName: 'read' }] },
-					],
-				},
+			const empty = await indirect.client.callTool({
+				name: 'mcp_portal_list',
+				arguments: { requests: [{ id: 'empty' }] },
 			});
-			expect(decodedResult(described)).toMatchObject({
-				ok: true,
-				errors: [],
-				results: {
-					helper: {
-						ok: true,
-						output: {
-							tools: [
-								{
-									namespace: 'alpha',
-									toolName: 'read',
-									typescriptHelperUnavailable: {
-										kind: 'catalog_preparation_refused',
-										refusals: [{ kind: 'upstream_discovery_failed', namespace: 'beta' }],
-									},
-								},
-							],
+			expect(successfulOutput(empty, 'empty')).toMatchObject({ namespaces: [], tools: [] });
+			expect(decodedResult(empty)).toMatchObject({
+				diagnostics: expect.arrayContaining([
+					expect.objectContaining({ namespace: 'alpha' }),
+					expect.objectContaining({ namespace: 'beta' }),
+				]),
+			});
+			const direct = await fetch(endpoint(unavailable), {
+				method: 'POST',
+				headers: {
+					authorization: 'Bearer credential-a',
+					'content-type': 'application/json',
+					accept: 'application/json, text/event-stream',
+					'MCP-Protocol-Version': '2026-07-28',
+					'Mcp-Method': 'tools/list',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 5,
+					method: 'tools/list',
+					params: {
+						_meta: {
+							[PROTOCOL_VERSION_META_KEY]: '2026-07-28',
+							[CLIENT_CAPABILITIES_META_KEY]: {},
 						},
 					},
-					plain: { ok: true, output: { tools: [{ namespace: 'alpha', toolName: 'read' }] } },
-				},
+				}),
 			});
-			expect(successfulOutput(described, 'plain')).not.toHaveProperty(
-				'tools.0.typescriptHelperUnavailable',
-			);
-			expect(healthy.effects).toEqual([]);
+			expect(direct.status).toBe(503);
+			expect(await direct.json()).toMatchObject({
+				error: { kind: 'catalog_preparation_failed', failedNamespaces: ['alpha', 'beta'] },
+			});
+			expect(alpha.effects).toHaveLength(0);
+			expect(beta.effects).toHaveLength(0);
 		} finally {
-			await a.client.close();
-			await partialHost.retire();
-			await healthy.close();
+			await indirect.client.close();
+			await unavailable.retire();
 		}
 	});
 });

@@ -5,6 +5,10 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { startNodeHost, nodeHostConfigSchema } from '@agent-collaboration/tool-host-node';
+import {
+	CLIENT_CAPABILITIES_META_KEY,
+	PROTOCOL_VERSION_META_KEY,
+} from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -80,11 +84,17 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				}),
 			]);
 			const contender = startHostProcess(configPath);
-			const contenderOutput: string[] = [];
-			contender.child.stdout.on('data', (chunk: Buffer) => contenderOutput.push(String(chunk)));
-			expect(await contender.exited).toEqual([1, null]);
-			expect(contenderOutput).toEqual([]);
-			expect(contender.stderr.join('')).toContain('Tool host startup refused.');
+			const contenderLines = createInterface({ input: contender.child.stdout });
+			try {
+				const [readyLine] = await once(contenderLines, 'line');
+				expect(JSON.parse(String(readyLine))).toMatchObject({ event: 'ready' });
+				contender.child.kill('SIGTERM');
+				expect(await contender.exited).toEqual([0, null]);
+			} finally {
+				contenderLines.close();
+				if (contender.child.exitCode === null) contender.child.kill('SIGTERM');
+				await contender.exited;
+			}
 			const a = await connectClient(new URL(ready.endpoint), 'credential-a');
 			const b = await connectClient(new URL(ready.endpoint), 'credential-b');
 			try {
@@ -114,7 +124,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				} finally {
 					await reconnect.client.close();
 				}
-				expect(alpha.effects).toHaveLength(1);
+				expect(alpha.effects).toHaveLength(2);
 				await b.client.callTool({
 					name: 'mcp_portal_call',
 					arguments: {
@@ -163,7 +173,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 							'persist-across-reconnect',
 						),
 					).toMatchObject({ namespace: 'alpha', toolName: 'read' });
-					expect(alpha.effects).toHaveLength(1);
+					expect(alpha.effects).toHaveLength(3);
 				} finally {
 					await client.client.close();
 				}
@@ -182,7 +192,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 			await beta.close();
 		}
 	}, 15_000);
-	it('binds spawned stdio to its configured identity; preserves compact item across JSON-RPC ids and exits on EOF', async () => {
+	it('binds spawned stdio to its configured identity; serves modern requests across JSON-RPC ids and exits on EOF', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
@@ -216,7 +226,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				pending.set(id, { resolve, reject }),
 			);
 			processHandle.child.stdin.write(
-				`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`,
+				`${JSON.stringify({ jsonrpc: '2.0', id, method, params: method === 'initialize' ? params : { ...z.record(z.string(), z.unknown()).parse(params), _meta: { [PROTOCOL_VERSION_META_KEY]: '2026-07-28', [CLIENT_CAPABILITIES_META_KEY]: {} } } })}\n`,
 			);
 			return z.record(z.string(), z.unknown()).parse(
 				await Promise.race([
@@ -233,7 +243,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				capabilities: {},
 				clientInfo: { name: 'pretend-agent-b', version: '1' },
 			});
-			expect(initialized.error).toBeUndefined();
+			expect(initialized.error).toMatchObject({ code: -32022 });
 			processHandle.child.stdin.write(
 				`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
 			);
@@ -263,7 +273,7 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				arguments: { principal: 'agent-b', ...call.arguments },
 			});
 			expect(spoof).toMatchObject({ result: { isError: true } });
-			expect(alpha.effects).toHaveLength(1);
+			expect(alpha.effects).toHaveLength(3);
 			expect(beta.effects).toEqual([]);
 			processHandle.child.stdin.end();
 			expect(await processHandle.exited).toEqual([0, null]);
@@ -358,7 +368,16 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				results: {
 					'stdio-error': {
 						ok: false,
-						error: { kind: 'ambiguous', reason: 'resource-authority-unconfirmed' },
+						error: {
+							kind: 'upstream_call_failed',
+							namespace: 'beta',
+							toolName: 'fail',
+							upstream: {
+								failureClass: 'tool_error',
+								phase: 'call_tool',
+								transport: { kind: 'stdio' },
+							},
+						},
 					},
 				},
 			});

@@ -13,6 +13,7 @@ import {
 	upstreamMcpFailureDetailsFromUnknown,
 } from '#connectors/upstream-mcp-errors';
 import { portalToolRecordSchema, type PortalToolRecord } from '#mcp-gateway/catalog-types';
+import type { OrganizationToolCatalog } from '#mcp-gateway/organization-tool-catalog';
 import { createSearchIndex, type SearchIndex } from '#mcp-gateway/search-index';
 import { buildToolGraph, type SkillGraphInput, type ToolGraph } from '#mcp-gateway/tool-graph';
 
@@ -20,6 +21,7 @@ export interface PortalCatalogSnapshot {
 	readonly agentScopeId: string;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 	readonly generatedAt: string;
+	readonly organizationCatalogState?: 'complete' | 'incomplete';
 	readonly sourceHash: string;
 	readonly tools: readonly PortalToolRecord[];
 }
@@ -57,6 +59,7 @@ export interface PortalSessionRuntime {
 export interface PortalSessionManagerOptions {
 	readonly accessPolicy: PortalAccessPolicyConfig;
 	readonly catalogTtlMs: number;
+	readonly organizationCatalog?: OrganizationToolCatalog;
 	readonly discoveryFailures?: readonly PortalDiscoveryFailure[];
 	readonly now?: () => number;
 	readonly runtime: PortalSessionRuntime;
@@ -141,7 +144,10 @@ async function createSourceHash(tools: readonly PortalToolRecord[]): Promise<str
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function discoveryFailureFromError(namespace: string, error: unknown): PortalDiscoveryFailure {
+export function discoveryFailureFromError(
+	namespace: string,
+	error: unknown,
+): PortalDiscoveryFailure {
 	const upstreamDetails = upstreamMcpFailureDetailsFromUnknown(error);
 	if (upstreamDetails !== null) {
 		return {
@@ -191,15 +197,28 @@ export function createPortalSessionManager(
 		const discoveryFailures: PortalDiscoveryFailure[] = [...(options.discoveryFailures ?? [])];
 		const allowedNamespaces = policy.allowedNamespaces;
 
-		const namespaceToolGroups = await Promise.allSettled(
-			allowedNamespaces.map(async (namespace) => ({
-				mcpTools: await options.runtime.listTools({
-					agentScopeId: portalAgentScopeKey(identity),
-					namespace,
-				}),
-				namespace,
-			})),
-		);
+		const organization = await options.organizationCatalog?.read();
+		if (organization !== undefined)
+			discoveryFailures.push(
+				...organization.discoveryFailures.filter((failure) =>
+					allowedNamespaces.includes(failure.namespace),
+				),
+			);
+		const namespaceToolGroups =
+			organization === undefined
+				? await Promise.allSettled(
+						allowedNamespaces.map(async (namespace) => ({
+							mcpTools: await options.runtime.listTools({
+								agentScopeId: portalAgentScopeKey(identity),
+								namespace,
+							}),
+							namespace,
+						})),
+					)
+				: allowedNamespaces.map((namespace) => ({
+						status: 'fulfilled' as const,
+						value: { namespace, mcpTools: organization.toolsByNamespace.get(namespace) ?? [] },
+					}));
 		for (const [index, namespaceToolGroup] of namespaceToolGroups.entries()) {
 			if (namespaceToolGroup.status === 'rejected') {
 				const namespace = allowedNamespaces[index] ?? 'unknown';
@@ -225,6 +244,7 @@ export function createPortalSessionManager(
 		const graph = buildToolGraph({ skills: options.skills ?? [], tools: sortedTools });
 		const catalog = {
 			agentScopeId: identity.agentScopeId,
+			...(organization === undefined ? {} : { organizationCatalogState: organization.kind }),
 			discoveryFailures,
 			generatedAt: new Date(getNow()).toISOString(),
 			sourceHash: await createSourceHash(sortedTools),
@@ -241,6 +261,7 @@ export function createPortalSessionManager(
 
 	return {
 		async getSession(identity: PortalAgentIdentity): Promise<PortalSession> {
+			if (options.organizationCatalog !== undefined) return buildSession(identity);
 			const key = portalAgentScopeKey(identity);
 			const now = getNow();
 			const cached = sessions.get(key);

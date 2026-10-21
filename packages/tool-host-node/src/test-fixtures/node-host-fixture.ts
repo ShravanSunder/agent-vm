@@ -4,12 +4,15 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+	type CallToolResult,
+	CallToolRequestSchema,
+	ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import {
@@ -30,6 +33,7 @@ export const toolInputSchema = {
 
 export interface ControlledProvider {
 	readonly url: string;
+	readonly listings: string[];
 	readonly effects: {
 		readonly name: string;
 		readonly arguments: unknown;
@@ -37,15 +41,26 @@ export interface ControlledProvider {
 		readonly selectedHeader: string | undefined;
 	}[];
 	readonly close: () => Promise<void>;
+	readonly setDiscoveryFailure: (failed: boolean) => void;
+	readonly setCallResult: (result: CallToolResult) => void;
+	readonly breakCalls: () => void;
 	readonly duplicateDiscovery: () => void;
 	readonly holdCalls: () => { readonly entered: Promise<void>; readonly release: () => void };
 	readonly holdDiscovery: () => { readonly entered: Promise<void>; readonly release: () => void };
 }
 
-export async function startControlledProvider(label: string): Promise<ControlledProvider> {
+export async function startControlledProvider(
+	label: string,
+	catalog?: readonly import('@modelcontextprotocol/sdk/types.js').Tool[],
+	port = 0,
+): Promise<ControlledProvider> {
+	const listings: string[] = [];
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
+	let discoveryFailed = false;
+	let breakCalls = false;
+	let callResult: CallToolResult | undefined;
 	let enteredCall: (() => void) | undefined;
 	let callGate: Promise<void> = Promise.resolve();
 	let enteredDiscovery: (() => void) | undefined;
@@ -59,16 +74,21 @@ export async function startControlledProvider(label: string): Promise<Controlled
 			);
 			servers.add(server);
 			server.setRequestHandler(ListToolsRequestSchema, async () => {
+				listings.push(label);
 				enteredDiscovery?.();
 				await discoveryGate;
+				if (discoveryFailed)
+					throw new Error(`discovery unavailable ${secretCanary} ${headerCanary}`);
 				return {
-					tools: (duplicates ? ['read', 'read'] : ['read', 'ask', 'blocked', 'hidden', 'fail']).map(
-						(name) => ({
-							name,
-							inputSchema: toolInputSchema,
-							description: `${label} ${secretCanary} ${headerCanary}`,
-						}),
-					),
+					tools:
+						catalog ??
+						(duplicates ? ['read', 'read'] : ['read', 'ask', 'blocked', 'hidden', 'fail']).map(
+							(name) => ({
+								name,
+								inputSchema: toolInputSchema,
+								description: `${label} ${secretCanary} ${headerCanary}`,
+							}),
+						),
 				};
 			});
 			server.setRequestHandler(CallToolRequestSchema, async (call) => {
@@ -81,8 +101,15 @@ export async function startControlledProvider(label: string): Promise<Controlled
 				});
 				enteredCall?.();
 				await callGate;
+				if (breakCalls) response.destroy();
+				if (callResult !== undefined) return callResult;
 				return {
-					content: [{ type: 'text', text: `${label}:${String(call.params.arguments?.value)}` }],
+					content: [
+						{
+							type: 'text',
+							text: `${label}:${String(call.params.arguments?.value)}${call.params.name === 'fail' ? ` ${secretCanary} ${headerCanary}` : ''}`,
+						},
+					],
 					structuredContent: {
 						provider: label,
 						value: call.params.arguments?.value,
@@ -116,12 +143,13 @@ export async function startControlledProvider(label: string): Promise<Controlled
 			response.end();
 		});
 	});
-	http.listen(0, '127.0.0.1');
+	http.listen(port, '127.0.0.1');
 	await once(http, 'listening');
 	const address = http.address();
 	if (address === null || typeof address === 'string') throw new Error('Missing provider address');
 	return {
 		url: `http://127.0.0.1:${address.port}/mcp`,
+		listings,
 		effects,
 		close: async () => {
 			await Promise.all([...servers].map(async (server) => server.close()));
@@ -129,6 +157,15 @@ export async function startControlledProvider(label: string): Promise<Controlled
 			await new Promise<void>((resolve, reject) =>
 				http.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
+		},
+		setDiscoveryFailure: (failed) => {
+			discoveryFailed = failed;
+		},
+		setCallResult: (result) => {
+			callResult = result;
+		},
+		breakCalls: () => {
+			breakCalls = true;
 		},
 		duplicateDiscovery: () => {
 			duplicates = true;
@@ -255,35 +292,20 @@ export async function fixtureDirectory(): Promise<string> {
 	return mkdtemp(path.join(tmpdir(), '2026-10-tool-host-node-'));
 }
 
-function isSdkTransport(value: unknown): value is Transport {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		'start' in value &&
-		typeof value.start === 'function' &&
-		'send' in value &&
-		typeof value.send === 'function' &&
-		'close' in value &&
-		typeof value.close === 'function'
-	);
-}
-
 export async function connectClient(
 	endpoint: URL,
 	token: string,
 	brand = 'test-client',
 ): Promise<{ readonly client: Client; readonly transport: StreamableHTTPClientTransport }> {
-	const client = new Client({ name: brand, version: '1.0.0' });
+	const client = new Client(
+		{ name: brand, version: '1.0.0' },
+		{ versionNegotiation: { mode: { pin: '2026-07-28' } } },
+	);
 	const transport = new StreamableHTTPClientTransport(endpoint, {
 		requestInit: { headers: { Authorization: `Bearer ${token}` } },
 	});
-	// SDK 1.29.0's exact-optional sessionId declaration differs from Transport's.
-	// Narrow the real instance through the same runtime transport check used by connectors.
-
-	const candidate: unknown = transport;
-	if (!isSdkTransport(candidate)) throw new Error('Invalid client transport');
 	try {
-		await client.connect(candidate);
+		await client.connect(transport);
 		return { client, transport };
 	} catch (error) {
 		await client.close();
@@ -295,7 +317,46 @@ export function decodedResult(result: unknown): Record<string, unknown> {
 	const parsed = z
 		.object({ content: z.array(z.object({ type: z.literal('text'), text: z.string() })) })
 		.parse(result);
-	return z.record(z.string(), z.unknown()).parse(JSON.parse(parsed.content[0]?.text ?? 'null'));
+	const core = z
+		.object({
+			structuredContent: z.record(z.string(), z.unknown()).optional(),
+			auditEvents: z.array(z.unknown()).optional(),
+			items: z
+				.array(
+					z.discriminatedUnion('status', [
+						z.object({
+							status: z.literal('success'),
+							requestId: z.string(),
+							structuredContent: z.unknown(),
+						}),
+						z.object({
+							status: z.literal('failed'),
+							requestId: z.string(),
+							error: z.object({ code: z.string() }).passthrough(),
+						}),
+					]),
+				)
+				.optional(),
+		})
+		.parse(JSON.parse(parsed.content[0]?.text ?? 'null'));
+	if (core.structuredContent !== undefined) return core.structuredContent;
+	return {
+		ok: !(core.items ?? []).some((item) => item.status === 'failed'),
+		errors: [],
+		diagnostics: core.auditEvents ?? [],
+		results: Object.fromEntries(
+			(core.items ?? []).map((item) => [
+				item.requestId,
+				item.status === 'success'
+					? { ok: true, input: { id: item.requestId }, output: item.structuredContent }
+					: {
+							ok: false,
+							input: { id: item.requestId },
+							error: { ...item.error, kind: item.error.code },
+						},
+			]),
+		),
+	};
 }
 
 export function successfulOutput(result: unknown, item: string): Record<string, unknown> {

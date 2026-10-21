@@ -1,6 +1,3 @@
-import { writeFile } from 'node:fs/promises';
-import path from 'node:path';
-
 import {
 	dispatchInvocationSchema,
 	type DispatchInvocation,
@@ -8,7 +5,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { openNodeOperationStore } from '#node-host/operations/node-operation-store';
-import { fixtureDirectory, revision } from '#node-host/test-fixtures/node-host-fixture';
+const revision = { owner: 'fixture', revision: 'v1' };
 
 function invocation(item = 'one'): DispatchInvocation {
 	return dispatchInvocationSchema.parse({
@@ -37,11 +34,10 @@ function invocation(item = 'one'): DispatchInvocation {
 	});
 }
 
-describe('fenced crash-durable public Node operation records', () => {
-	it('serializes overlapping creates and conditional arms, preserves records after orderly reopen, scopes lookup and conflicts on changed intent', async () => {
-		const directory = await fixtureDirectory();
+describe('process-local approval operation entries', () => {
+	it('records only protected calls, serializes creates and arms, scopes lookup and forgets entries on close', async () => {
 		const options = {
-			directory,
+			directory: 'unused',
 			authority: 'authority',
 			authorize: (key: { readonly principal: string }, context: string): boolean =>
 				key.principal === 'caller-a' && context === 'verified-a',
@@ -49,9 +45,19 @@ describe('fenced crash-durable public Node operation records', () => {
 		};
 		const store = await openNodeOperationStore(options);
 		const call = invocation();
+		expect(await store.createOrRead({ invocation: call, requiresApproval: false })).toEqual({
+			kind: 'untracked',
+		});
+		expect(
+			await store.lookup({
+				version: 'tool-operation-v1',
+				key: call.operationKey,
+				verifiedContextRef: 'verified-a',
+			}),
+		).toEqual({ kind: 'not-found' });
 		const created = await Promise.all(
 			Array.from({ length: 8 }, async () =>
-				store.createOrRead({ invocation: call, requiresApproval: false }),
+				store.createOrRead({ invocation: call, requiresApproval: true }),
 			),
 		);
 		expect(created.map((result) => result.kind).toSorted()).toEqual([
@@ -63,7 +69,7 @@ describe('fenced crash-durable public Node operation records', () => {
 		expect(
 			await store.createOrRead({
 				invocation: { ...call, intentDigest: 'b'.repeat(64) },
-				requiresApproval: false,
+				requiresApproval: true,
 			}),
 		).toEqual({ kind: 'conflict' });
 		const arms = await Promise.all(
@@ -92,9 +98,6 @@ describe('fenced crash-durable public Node operation records', () => {
 			record: { state: { kind: 'completed', result: { literal: 42 } } },
 		});
 		expect(
-			await store.createOrRead({ invocation: invocation('two'), requiresApproval: false }),
-		).toMatchObject({ kind: 'created', record: { key: { item: 'two' } } });
-		expect(
 			await store.lookup({
 				version: 'tool-operation-v1',
 				key: call.operationKey,
@@ -108,41 +111,18 @@ describe('fenced crash-durable public Node operation records', () => {
 				verifiedContextRef: 'verified-a',
 			}),
 		).toEqual({ kind: 'unsupported-version' });
-		await expect(openNodeOperationStore(options)).rejects.toThrow(/store-already-active/u);
 		await store.close();
-		const reopened = await openNodeOperationStore(options);
-		try {
-			expect(
-				await reopened.lookup({
-					version: 'tool-operation-v1',
-					key: call.operationKey,
-					verifiedContextRef: 'verified-a',
-				}),
-			).toMatchObject({
-				kind: 'found',
-				record: {
-					createdAt: '1970-01-01T00:00:00.000Z',
-					state: { kind: 'completed', result: { literal: 42 } },
-				},
-			});
-		} finally {
-			await reopened.close();
-		}
-	});
-	it('returns unavailable when record storage cannot write; never returns untracked', async () => {
-		const directory = await fixtureDirectory();
-		const store = await openNodeOperationStore({
-			directory,
-			authority: 'authority',
-			authorize: () => true,
+		expect(await store.createOrRead({ invocation: call, requiresApproval: true })).toEqual({
+			kind: 'denied',
 		});
-		await writeFile(path.join(directory, 'tool-operations-v1'), 'not a directory');
-		try {
-			expect(
-				await store.createOrRead({ invocation: invocation(), requiresApproval: false }),
-			).toEqual({ kind: 'unavailable' });
-		} finally {
-			await store.close();
-		}
+		const replacement = await openNodeOperationStore(options);
+		expect(
+			await replacement.lookup({
+				version: 'tool-operation-v1',
+				key: call.operationKey,
+				verifiedContextRef: 'verified-a',
+			}),
+		).toEqual({ kind: 'not-found' });
+		await replacement.close();
 	});
 });

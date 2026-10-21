@@ -270,7 +270,10 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	async function currentCatalog(): Promise<PreparedGatewayCatalog> {
 		const session = await visibleSession();
-		if (session.catalog.discoveryFailures.length > 0)
+		if (
+			session.catalog.discoveryFailures.length > 0 &&
+			session.catalog.organizationCatalogState !== 'complete'
+		)
 			throw new PortalCatalogPreparationError(session.catalog.discoveryFailures);
 		const tools = await Promise.all(
 			session.catalog.tools.map(
