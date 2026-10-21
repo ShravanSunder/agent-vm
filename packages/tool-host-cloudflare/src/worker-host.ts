@@ -2,7 +2,9 @@ import {
 	createAgentTokenVerifier,
 	type AgentTokenVerifier,
 } from '@agent-collaboration/tool-access/contracts';
+import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/connectors';
 import {
+	PortalCatalogPreparationError,
 	resolveToolLoading,
 	toolLoadingMode,
 	type ConsumeApprovalTokenId,
@@ -44,6 +46,7 @@ export function createWorkerHost(props: {
 	readonly secrets: WorkerSecretBindings;
 	readonly log?: (event: WorkerObservationLog) => void;
 	readonly analytics: CallAnalyticsBinding;
+	readonly createClient?: UpstreamMcpRuntimeOptions['createClient'];
 }): WorkerHost {
 	const engines = new Map<string, Promise<OrganizationEngine>>();
 	const isolateId = crypto.randomUUID();
@@ -57,6 +60,7 @@ export function createWorkerHost(props: {
 				organizationId,
 				configuration,
 				secrets: props.secrets,
+				...(props.createClient === undefined ? {} : { createClient: props.createClient }),
 			}),
 		);
 		engines.set(organizationId, created);
@@ -83,6 +87,7 @@ export function createWorkerHost(props: {
 			log({ event: 'request-started', isolateId, requestId, activeRequests });
 			const limits = createWorkerRequestLimits();
 			let closeGateway: (() => Promise<void>) | undefined;
+			let catalogError: PortalCatalogPreparationError | undefined;
 			const handler = createMcpHandler(
 				async () => {
 					const engine = await organizationEngine(caller.organizationId);
@@ -96,6 +101,8 @@ export function createWorkerHost(props: {
 								.consumeApprovalToken(`${caller.agentClientId}:${tokenId}`, expiresAtMs),
 					});
 					closeGateway = requestEngine.close;
+					if (mode === 'direct' && request.headers.get('Mcp-Method') === 'tools/list')
+						await requestEngine.gateway.prepareCatalog();
 					return createWorkerMcpServer({
 						gateway: requestEngine.gateway,
 						mode,
@@ -117,9 +124,28 @@ export function createWorkerHost(props: {
 							}),
 					});
 				},
-				{ legacy: 'reject', maxRequestBodySize: workerRequestBodyBytes },
+				{
+					legacy: 'reject',
+					maxRequestBodySize: workerRequestBodyBytes,
+					onerror: (error) => {
+						if (error instanceof PortalCatalogPreparationError) catalogError = error;
+					},
+				},
 			);
-			const response = await handler.fetch(request);
+			let response = await handler.fetch(request);
+			if (catalogError !== undefined) {
+				await response.body?.cancel();
+				response = Response.json(
+					{
+						ok: false,
+						error: {
+							kind: 'catalog_preparation_failed',
+							failedNamespaces: catalogError.failedNamespaces,
+						},
+					},
+					{ status: 503 },
+				);
+			}
 			return responseWithRequestCleanup(response, async () => {
 				try {
 					await closeGateway?.();

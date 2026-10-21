@@ -11,6 +11,7 @@ import {
 import {
 	createUpstreamMcpClientRuntime,
 	type UpstreamMcpClientRuntime,
+	type UpstreamMcpRuntimeOptions,
 } from '@agent-collaboration/tool-engine/connectors';
 import type {
 	ApprovalPort,
@@ -65,6 +66,7 @@ export async function createOrganizationEngine(props: {
 	readonly organizationId: string;
 	readonly configuration: OrganizationConfiguration;
 	readonly secrets: WorkerSecretBindings;
+	readonly createClient?: UpstreamMcpRuntimeOptions['createClient'];
 }): Promise<OrganizationEngine> {
 	const { configuration } = props;
 	const rawSecrets: string[] = [];
@@ -99,6 +101,7 @@ export async function createOrganizationEngine(props: {
 	function createRequestRuntime(): UpstreamMcpClientRuntime {
 		return createUpstreamMcpClientRuntime({
 			servers: providers,
+			...(props.createClient === undefined ? {} : { createClient: props.createClient }),
 			additionalRedactionValues: rawSecrets,
 			createUpstreamMcpTransport: createWorkerUpstreamTransport,
 			maxResponseBytes: 4 * 1024 * 1024,

@@ -49,11 +49,17 @@ export function recordBatchCallAnalytics(props: {
 				.safeParse(item.error);
 			if (
 				needsApproval &&
-				(error.data?.kind === 'approval_token_invalid' || error.data?.kind === 'not-dispatched')
+				(error.data?.kind === 'approval_token_invalid' ||
+					error.data?.kind === 'approval_token_missing' ||
+					error.data?.kind === 'not-dispatched')
 			) {
 				outcome = 'needs approval';
 				failureKind = 'approval';
-			} else if (error.data?.kind === 'failed' || error.data?.kind === 'ambiguous') {
+			} else if (
+				error.data?.kind === 'failed' ||
+				error.data?.kind === 'ambiguous' ||
+				error.data?.kind === 'upstream_call_failed'
+			) {
 				outcome = 'failed';
 				failureKind =
 					error.data.reason === 'too-large' || error.data.reason === 'upstream-response-too-large'
