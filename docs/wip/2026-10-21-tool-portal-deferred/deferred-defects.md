@@ -11,3 +11,15 @@ Fixed instead of deferred, because the new code would otherwise break a publishe
 | Found | Defect | Fix |
 | --- | --- | --- |
 | 2026-10-21, S3d | Today's standalone approval coordinator emits a 32-hex `challengeId`, while the Portal SDK schema requires a UUID | the new Node host formats a deterministic UUID from the same fingerprint; token bytes are unchanged |
+
+## Order-sensitive assertion on concurrent effects (test defect)
+
+`packages/tool-engine/src/mcp-gateway/approval-carriers.unit.test.ts:73`
+(from S3a, #241) compares the order of upstream effects with the order of the
+calls in the batch. The calls in one batch run concurrently by design, so under
+load they can finish in either order: `[43, 42]` instead of `[42, 43]`. Seen
+once on 2026-10-21 in a loaded Implementer run at b8c80560; it passed 6/6 when
+rerun. **Fix in its own layer:** compare the effects' arguments as a multiset,
+and keep the exactly-once count and the receipt assertion. This doesn't weaken
+proof, because order isn't a requirement. Not changed during the structure
+pass.
