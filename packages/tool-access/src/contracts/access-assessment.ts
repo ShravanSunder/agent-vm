@@ -7,14 +7,17 @@ import {
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import { configuredCliArgvTokenSchema, configuredCliPolicySchema } from './cli-allowance-policy.js';
-import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
-import { jsonValueSchema } from './json-value.js';
+import {
+	configuredCliArgvTokenSchema,
+	configuredCliPolicySchema,
+} from '#tool-access/contracts/cli-allowance-policy';
+import { compiledGoogleCommandSetSchema } from '#tool-access/contracts/compiled-google-command-set';
+import { jsonValueSchema } from '#tool-access/contracts/json-value';
 import {
 	toolPortalBackendKindSchema,
 	toolPortalToolSelectorSchema,
 	toolPortalCallPolicySchema,
-} from './tool-selectors.js';
+} from '#tool-access/contracts/tool-selectors';
 
 const boundedId = z.string().min(1).max(256);
 export const revisionRef = z.strictObject({ owner: boundedId, revision: boundedId });

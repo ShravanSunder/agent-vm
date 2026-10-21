@@ -53,7 +53,7 @@ function createZoneWithSecrets(secrets: Record<string, ZoneSecretConfig>): ZoneC
 			profileSecretProjectionsByAgent: { main: {} },
 			profilesByAgent: { main: 'main' },
 			imageProfile: 'hermes',
-			memory: '2G',
+			memory: '2560M',
 			cpus: 2,
 			port: 18791,
 			config: './config/sunfam/hermes.json',

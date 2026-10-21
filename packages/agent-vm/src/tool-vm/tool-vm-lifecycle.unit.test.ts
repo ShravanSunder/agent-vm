@@ -326,7 +326,7 @@ async function createToolVmSystemConfig(): Promise<LoadedSystemConfig> {
 						type: 'hermes',
 						imageProfile: 'hermes',
 						cpus: 2,
-						memory: '2G',
+						memory: '2560M',
 						config: './config/shravan/hermes.json',
 						profileSecretProjectionsByAgent: {
 							sun: {
