@@ -321,3 +321,10 @@ structure scan of the touched packages shows no rule above broken.
   callers) becomes `async` inside tool-host-node, an unreleased package with no
   outside caller, while the output bytes stay identical. gateway-runtime still
   imports the old `mcp-portal` compiler. S4 adapts it when it switches over.
+- A type or schema moves into a job folder's `models/` only when it is a data
+  shape or schema used by more than one file, when it creates an import cycle,
+  or when a `models/` file would otherwise import an implementation. A
+  function's own Props or options interface, or a type used by one file, stays
+  next to that function. The repo's ts-rules say "Colocate type definitions
+  near their usage". tool-host-node's root composition and startup interfaces
+  stay at the package root.
