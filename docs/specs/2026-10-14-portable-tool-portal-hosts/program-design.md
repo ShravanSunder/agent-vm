@@ -165,26 +165,27 @@ The dispatcher needs a record and a receipt for any call that requires approval 
 | Mode | Who decides | Today |
 | --- | --- | --- |
 | **approved** | nobody; it runs | `allowWithoutApprovalTools`, `withoutApproval` namespaces, trusted read-only ([mcp-portal-approval-policy.ts:57](../../../packages/config-contracts/src/mcp-portal-approval-policy.ts#L57)) |
-| **auto** | a judge (Jev or a classifier) inside fixed limits set outside the model. It approves, escalates to a person, or denies; when it's unsure, unavailable or times out, it escalates; each decision is recorded | new; where it runs is still open (T-16) |
+| **auto** | a judge (Jev or a classifier) inside fixed limits set outside the model | new. The mode is decided; the judge's rules are proposed (approve, escalate to a person or deny; escalate when unsure, unavailable or timed out; record each decision), and where it runs is open (T-16) |
 | **requires approval** | a person: the approver in the resource owner's policy | `alwaysAskTools`, `writeTools`, `requiresApproval` namespaces |
 | **blocked** | nobody; it never runs, and no approval overrides it | everything else |
 
-Critical tools always go to a person when they're allowed to run. A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes.
+A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes. That critical tools always go to a person is part of the proposed judge rules.
 
-**Modes can have an end time** (owner, 2026-10-20, turning fleet F-61's interest into a decision): **approved until** a set time is a temporary grant, and **blocked until** a set time is a temporary revocation. When the time passes, the tool goes back to its previous mode. This is new, so it comes after the first version, together with the change flow that sets it. A blocking ask with a time limit, which lets an agent carry on with a reason (fleet D-8), is a different thing: it's about one question the agent asks, not a tool's mode. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
+**Modes can have an end time** (owner, 2026-10-20, turning fleet F-61's interest into a decision): **approved until** a set time is a temporary grant, and **blocked until** a set time is a temporary revocation. When the time passes, the tool goes back to its previous mode. This is new, so it isn't in the first version; when it comes is owner question 6. A blocking ask with a time limit, which lets an agent carry on with a reason (fleet D-8), is a different thing: it's about one question the agent asks, not a tool's mode. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
 
 **Who must say yes, by what the call touches:**
 
 | What the call touches | What must already allow it | Who decides "requires approval" | Status |
 | --- | --- | --- | --- |
-| a team tool (the organization's credentials) | the agent is in the organization; its profile includes the tool; the tool's mode | the agent's configured approver | built today |
+| a team tool (the organization's credentials) | the agent is in the organization (new, on the Worker); its profile includes the tool and sets its mode (built today) | the agent's configured approver | built today, except the organization check |
 | a team account | a manager gave the workspace's agents that account | the configured approver | decided (fleet F-27) |
 | a person's own account | the owner consented to this agent; read and write modes, within hard limits | today through Hermes or Discord; the October 15 proposal sends it to the account's owner | built today; approver routing proposed |
 | someone else's account, for the requester | not allowed: "on behalf of" is a label (fleet F-35) | | decided |
 | several resources in one call | each resource's own yes | each resource's approver | proposed only |
-| changing modes or account rules | the account's owner who is also a configured editor; a chat proposal with Accept or Deny | that editor | decided (fleet F-41, F-43); detail proposed |
+| changing a tool's mode or a profile | the configured policy manager for that agent (fleet F-23); a chat proposal with Accept or Deny | that manager | decided (fleet F-23, F-41, F-43); detail proposed |
+| changing a person's account rules | that account's owner, who is also a configured editor for the agent | that owner | built today (website); the chat form is decided (F-41, F-43) |
 
-**Across all rows:** any blocked gate stops the call; every "requires approval" gate needs its own yes; an approval covers one call, once, and lasts five minutes from when it's requested; approving never changes a tool's mode. The first version keeps today's three modes. Auto, with its judge, is decided but new, so it follows once where the judge runs (T-16) is settled.
+**Across all rows:** any blocked gate stops the call; every "requires approval" gate needs its own yes; and approving never changes a tool's mode. Each existing approval keeps its own reach and deadline: the managed controller's covers one call and lasts five minutes from when it's requested ([controller-runtime.ts:182](../../../packages/agent-vm/src/controller/controller-runtime.ts#L182)); the standalone Tool Portal's covers an exact batch of 1 to 50 calls with a configured lifetime ([standalone-tool-portal-approval.ts:140](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-approval.ts#L140)); and the proxy's token carries its own expiry within a maximum ([hmac-token.ts:11](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L11)). Which of auto, time limits, per-user tools and the change flow come after the first version, and in what order, is owner question 6.
 
 ## What's stored
 
@@ -268,7 +269,7 @@ Today's proxy config already describes remote MCP servers, with headers whose va
 - **Per-user tools use today's permission model unchanged** ([agent account and tool permissions](../2026-09-04-agent-account-and-tool-permissions/requirements.md), [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)):
   - an account's owner consents, in the browser, to a specific agent using it, which gives a separate credential for that agent and account;
   - Deny, Ask or Allow, set separately for reads and writes, within the operator's hard limits. A rule the owner hasn't overridden follows the agent's profile default live, so changing the default changes it;
-  - a one-call approval when the policy says Ask. As today, it lasts five minutes from when it's requested, whether or not it's been answered ([controller-runtime.ts:182](../../../packages/agent-vm/src/controller/controller-runtime.ts#L182)).
+  - a one-call approval when the policy says Ask. In the managed controller it lasts five minutes from when it's requested, whether or not it's been answered ([controller-runtime.ts:182](../../../packages/agent-vm/src/controller/controller-runtime.ts#L182)).
   - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the organization's object, and its connection is reused only for that agent and account.
   - Changing a person's account rules needs that account's owner who is also a configured editor for the agent; signing in alone grants neither. Today's changes are revisioned and recorded, and that stays. Making changes through the request bar with Accept or Deny (fleet F-41 to F-49) is the separate control UI. Temporary grants and temporary revocation are recorded owner interest (fleet F-61), not part of this design.
   - Today's approval pieces stay separate: the rules that say whether a call needs approval, the record that decides it and uses it once, and the prompt in Hermes, Discord or elsewhere. Per-user tools don't add a shared approval service.
