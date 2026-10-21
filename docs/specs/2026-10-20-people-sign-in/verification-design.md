@@ -129,7 +129,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 **G. Focused rules** (unit, no journey):
 - *The verifier's token rules*, with real JOSE signing over test keys. Each of these must give its own reason: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another service, an `aud` array containing this service (from `openid` and from two resources), expired, and `sid` missing. A token that is correct in every way verifies.
-- *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, wrong `aud`, expired, a `sid` present (`not-an-agent`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof`. The person verifier refuses that same token as `not-a-person`.
+- *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, wrong `aud`, expired, a `sid` present or `organization_id` missing (`not-an-agent`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof`. The person verifier refuses that same token as `not-a-person`.
 - *The allowlist gate:*
   - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches;
   - **derived active state:**
@@ -150,7 +150,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 **J. Agent sign-in and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
 - **Register:** through `T5`'s agent-management handler, add a test agent to organization O1. Then read the E9 row straight from D1: `grant_types` is exactly `["client_credentials"]`, `client_credentials_scopes` is exactly `["tool-portal:agent"]`, metadata is `{ kind: "agent", organizationId: O1 }`, and the client id is absent from the deployed `cachedTrustedClients`.
 - **Forbidden grant:** start an authorization-code request with the agent's client id, as the stand-in client would. **Expect:** refused, with no code issued.
-- **Use:** get a `client_credentials` token and call one tool through `T5`. **Expect:** the call runs. Then:
+- **Use:** get a `client_credentials` token; its `organization_id` reads O1. Call one tool through `T5`. **Expect:** the call runs, against O1's tools. Then:
   - present the same token for another audience: `wrong-audience`;
   - present it to the person verifier, which is what the console will run: `not-a-person`;
   - present Person A's Tool Portal token to `T5`'s agent check: `not-an-agent`.
