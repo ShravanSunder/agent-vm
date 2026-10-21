@@ -54,6 +54,8 @@ interface PanelModel {
 export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 	const [load, setLoad] = useState<PanelLoad>({ kind: 'loading' });
 	const [filters, setFilters] = useState<AccessFilters>(allAccessFilters);
+	// Async write results need the selection made while the host was pending.
+	const latestFilters = useRef(allAccessFilters);
 	const [destination, setDestination] = useState<Destination>('access');
 	const [proposal, setProposal] = useState<ProposalState>({ kind: 'none' });
 	const [scan, setScan] = useState<ScanState>({ kind: 'hidden' });
@@ -78,6 +80,10 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 			active = false;
 		};
 	}, [port, filters, reload]);
+	function selectFilters(nextFilters: AccessFilters): void {
+		latestFilters.current = nextFilters;
+		setFilters(nextFilters);
+	}
 	async function propose(intent: ChangeIntent): Promise<void> {
 		if (proposalActive.current) {
 			setFeedback('Accept or deny the current proposal before making another.');
@@ -105,7 +111,13 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 			setProposal({ kind: 'failed', intent, message: errorMessage(error) });
 		}
 	}
+	function clearFailedProposal(): void {
+		setProposal(
+			(current): ProposalState => (current.kind === 'failed' ? { kind: 'none' } : current),
+		);
+	}
 	async function showScan(): Promise<void> {
+		clearFailedProposal();
 		setScan({ kind: 'loading' });
 		setDestination('access');
 		try {
@@ -120,10 +132,11 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 			return;
 		}
 		if (load.kind !== 'ready') return;
+		clearFailedProposal();
 		const route = routePanelRequest(request, load.snapshot.associations);
 		switch (route.kind) {
 			case 'show':
-				setFilters(route.filters);
+				selectFilters(route.filters);
 				setDestination('access');
 				setScan({ kind: 'hidden' });
 				setFeedback('View updated. No settings changed.');
@@ -170,13 +183,20 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 		setProposal({ ...proposal, activity: { kind: 'saving' } });
 		try {
 			const result = await port.acceptProposal(draft);
+			// Reads begun during the write also precede this confirmed result.
+			readSequence.current += 1;
+			// Reload uses the current render's filters, including changes made while awaiting the host.
+			setReload((value): number => value + 1);
 			switch (result.kind) {
 				case 'accepted':
 					setLoad({
 						kind: 'ready',
 						snapshot: {
 							...result.snapshot,
-							visibleAssociations: filterAssociations(result.snapshot.associations, filters),
+							visibleAssociations: filterAssociations(
+								result.snapshot.associations,
+								latestFilters.current,
+							),
 						},
 					});
 					proposalActive.current = false;
@@ -203,7 +223,10 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 						kind: 'ready',
 						snapshot: {
 							...result.snapshot,
-							visibleAssociations: filterAssociations(result.snapshot.associations, filters),
+							visibleAssociations: filterAssociations(
+								result.snapshot.associations,
+								latestFilters.current,
+							),
 						},
 					});
 					const current = result.snapshot.associations.find(
@@ -291,7 +314,7 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 		proposal,
 		scan,
 		feedback,
-		setFilters,
+		setFilters: selectFilters,
 		setDestination,
 		submitRequest,
 		proposeRow,

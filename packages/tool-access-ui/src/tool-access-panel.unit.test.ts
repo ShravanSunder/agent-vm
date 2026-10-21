@@ -399,4 +399,123 @@ describe('ToolAccessPanel', (): void => {
 			'Maya Gmail · Calendar assistant · Gmail',
 		);
 	});
+	it('keeps confirmed rows and audit when a read begun during acceptance resolves afterwards', async (): Promise<void> => {
+		const fixture = createToolAccessPanelFixture();
+		const acceptGate = Promise.withResolvers<void>();
+		const staleReadGate = Promise.withResolvers<void>();
+		const staleReadStarted = Promise.withResolvers<void>();
+		const refreshReadGate = Promise.withResolvers<void>();
+		let readCount = 0;
+		let holdNextRead = false;
+		const port: ToolAccessPanelPort = {
+			...fixture,
+			async read(filters) {
+				readCount += 1;
+				const captured = await fixture.read(filters);
+				if (holdNextRead) {
+					holdNextRead = false;
+					staleReadStarted.resolve();
+					await staleReadGate.promise;
+				} else if (readCount > 2) {
+					await refreshReadGate.promise;
+				}
+				return captured;
+			},
+			async acceptProposal(draft) {
+				await acceptGate.promise;
+				return await fixture.acceptProposal(draft);
+			},
+		};
+		await mountPanel(port);
+		await request('Approve Send email');
+		await click('Accept change');
+		holdNextRead = true;
+		await perform((): void => {
+			fireEvent.click(screen.getByLabelText('Tool', { exact: true }));
+		});
+		await perform((): void => {
+			const option = screen.getByRole('option', { name: 'Send email' });
+			fireEvent.pointerDown(option, { pointerType: 'mouse' });
+			fireEvent.click(option);
+		});
+		await staleReadStarted.promise;
+		expect(modeFor(await fixture.read(allAccessFilters))).toBe('requires approval');
+		await act(async (): Promise<void> => {
+			acceptGate.resolve();
+			await acceptGate.promise;
+		});
+		expect(modeFor(await fixture.read(allAccessFilters))).toBe('approved');
+		expect(within(accessTable()).getAllByRole('row')).toHaveLength(2);
+		const confirmedRow = within(accessTable()).getByText('Send email').closest('tr');
+		if (!confirmedRow) throw new Error('Confirmed Send email row missing');
+		expect(within(confirmedRow).getByText('approved')).toBeTruthy();
+		await act(async (): Promise<void> => {
+			staleReadGate.resolve();
+			await staleReadGate.promise;
+		});
+		expect(screen.getByLabelText('Tool', { exact: true }).textContent).toContain('Send email');
+		expect(within(accessTable()).getAllByRole('row')).toHaveLength(2);
+		expect(within(accessTable()).getByText('approved')).toBeTruthy();
+		expect(within(accessTable()).queryByText('requires approval')).toBeNull();
+		await click('Audit log');
+		expect(screen.getByRole('table', { name: 'Audit events' }).textContent).toContain(
+			'requires approval → approved',
+		);
+		expect((await fixture.read(allAccessFilters)).audit).toHaveLength(1);
+		await act(async (): Promise<void> => {
+			refreshReadGate.resolve();
+			await refreshReadGate.promise;
+		});
+	});
+	it.each([
+		'Show Read email',
+		'Show scan',
+		'Block email',
+		'Delete every credential',
+		'scan button',
+	])(
+		'clears a failed proposal when a later %s request is handled',
+		async (nextRequest: string): Promise<void> => {
+			const fixture = createToolAccessPanelFixture();
+			const before = await fixture.read(allAccessFilters);
+			let attempts = 0;
+			const port: ToolAccessPanelPort = {
+				...fixture,
+				async proposeChange() {
+					attempts += 1;
+					return { kind: 'rejected', message: 'Old request failed.' };
+				},
+			};
+			await mountPanel(port);
+			await request('Block Send email');
+			expect(screen.getByRole('alert').textContent).toContain('Old request failed.');
+			if (nextRequest === 'scan button') await click('Show scan');
+			else await request(nextRequest);
+			expect(screen.queryByRole('alert')).toBeNull();
+			expect(screen.queryByRole('button', { name: 'Retry request' })).toBeNull();
+			expect(attempts).toBe(1);
+			expect(await fixture.read(allAccessFilters)).toEqual(before);
+		},
+	);
+	it('retries only the newer failure after a previous failed request is replaced', async (): Promise<void> => {
+		const fixture = createToolAccessPanelFixture();
+		const targets: string[] = [];
+		const port: ToolAccessPanelPort = {
+			...fixture,
+			async proposeChange(intent) {
+				targets.push(intent.rowId);
+				if (targets.length <= 2) return { kind: 'rejected', message: `Failed ${intent.rowId}` };
+				return await fixture.proposeChange(intent);
+			},
+		};
+		await mountPanel(port);
+		await request('Block Send email');
+		await request('Block Read email');
+		expect(screen.getByRole('alert').textContent).toContain('Failed gmail-read');
+		expect(screen.getByRole('alert').textContent).not.toContain('Failed gmail-send');
+		await click('Retry request');
+		expect(targets).toEqual(['gmail-send', 'gmail-read', 'gmail-read']);
+		expect(screen.getByLabelText('Proposal editor').textContent).toContain('Read email');
+		expect((await fixture.read(allAccessFilters)).audit).toEqual([]);
+	});
 });
