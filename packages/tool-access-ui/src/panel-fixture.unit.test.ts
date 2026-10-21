@@ -76,5 +76,8 @@ describe('in-memory stand-in contract', (): void => {
 		expect(routePanelRequest('Block email', read.associations).kind).toBe('clarify');
 		expect(routePanelRequest('Show scan', read.associations).kind).toBe('scan');
 		expect(routePanelRequest('Run a shell', read.associations).kind).toBe('unsupported');
+		expect(routePanelRequest('Tell me about Change team calendar', read.associations).kind).toBe(
+			'unsupported',
+		);
 	});
 });

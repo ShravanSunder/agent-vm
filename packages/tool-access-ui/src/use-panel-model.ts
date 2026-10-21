@@ -22,6 +22,7 @@ type PanelLoad =
 type ProposalState =
 	| { readonly kind: 'none' }
 	| { readonly kind: 'preparing' }
+	| { readonly kind: 'failed'; readonly intent: ChangeIntent; readonly message: string }
 	| { readonly kind: 'open'; readonly draft: ProposalDraft; readonly activity: ProposalActivity };
 type ScanState =
 	| { readonly kind: 'hidden' }
@@ -48,6 +49,7 @@ interface PanelModel {
 	readonly readCurrent: () => Promise<void>;
 	readonly showScan: () => Promise<void>;
 	readonly retryRead: () => void;
+	readonly retryProposal: () => void;
 }
 export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 	const [load, setLoad] = useState<PanelLoad>({ kind: 'loading' });
@@ -93,16 +95,14 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 					break;
 				case 'rejected':
 					proposalActive.current = false;
-					setProposal({ kind: 'none' });
-					setFeedback(result.message);
+					setProposal({ kind: 'failed', intent, message: result.message });
 					break;
 				default:
 					assertNever(result);
 			}
 		} catch (error) {
 			proposalActive.current = false;
-			setProposal({ kind: 'none' });
-			setFeedback(errorMessage(error));
+			setProposal({ kind: 'failed', intent, message: errorMessage(error) });
 		}
 	}
 	async function showScan(): Promise<void> {
@@ -282,6 +282,9 @@ export function usePanelModel(port: ToolAccessPanelPort): PanelModel {
 		}
 	}
 	return {
+		retryProposal: (): void => {
+			if (proposal.kind === 'failed') void propose(proposal.intent);
+		},
 		load,
 		filters,
 		destination,

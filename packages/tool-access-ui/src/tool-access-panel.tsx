@@ -120,6 +120,17 @@ export function ToolAccessPanel({ port }: ToolAccessPanelProps): ReactElement {
 								</Button>
 							</CardFooter>
 						</Card>
+						{model.proposal.kind === 'failed' && (
+							<Alert variant="destructive">
+								<AlertTitle>Request failed</AlertTitle>
+								<AlertDescription>
+									{model.proposal.message} No proposal was accepted.
+								</AlertDescription>
+								<Button variant="outline" onClick={model.retryProposal}>
+									Retry request
+								</Button>
+							</Alert>
+						)}
 						{model.proposal.kind === 'preparing' && (
 							<Skeleton aria-label="Preparing proposal" className="h-20" />
 						)}
@@ -207,7 +218,9 @@ export function ToolAccessPanel({ port }: ToolAccessPanelProps): ReactElement {
 									snapshot={snapshot}
 									filters={model.filters}
 									onFilter={model.setFilters}
-									proposalOpen={model.proposal.kind !== 'none'}
+									proposalOpen={
+										model.proposal.kind === 'open' || model.proposal.kind === 'preparing'
+									}
 									onPropose={model.proposeRow}
 								/>
 								<Card>
@@ -235,11 +248,11 @@ export function ToolAccessPanel({ port }: ToolAccessPanelProps): ReactElement {
 				<AccountDetails
 					key={account.name}
 					account={account}
-					proposalOpen={model.proposal.kind !== 'none'}
+					proposalOpen={model.proposal.kind === 'open' || model.proposal.kind === 'preparing'}
 					rows={snapshot.associations}
 					onClose={(): void => setAccount(null)}
 					onPropose={(row: AccessRow): void => {
-						if (model.proposal.kind === 'none') {
+						if (model.proposal.kind === 'none' || model.proposal.kind === 'failed') {
 							setAccount(null);
 							model.proposeRow(row);
 						}

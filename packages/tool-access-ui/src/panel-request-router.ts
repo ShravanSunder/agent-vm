@@ -16,7 +16,8 @@ export function routePanelRequest(request: string, rows: readonly AccessRow[]): 
 	if (!text) return { kind: 'unsupported', message: 'Enter a request, or choose an example.' };
 	if (/^show scan[.!]?$/.test(text)) return { kind: 'scan' };
 	const matches = rows.filter((row): boolean => text.includes(row.tool.toLowerCase()));
-	const isEdit = /\b(block|approve|change|set|allow|edit)\b/.test(text);
+	// Show is an explicit read intent even when the tool name itself contains a verb.
+	const isEdit = /^(block|approve|change|set|allow|edit)\b/.test(text);
 	if (isEdit) {
 		const row = matches.length === 1 ? matches[0] : undefined;
 		if (!row)

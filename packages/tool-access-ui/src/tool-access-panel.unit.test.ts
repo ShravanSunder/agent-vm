@@ -101,6 +101,50 @@ describe('ToolAccessPanel', (): void => {
 		expect(await port.read(allAccessFilters)).toEqual(before);
 		expect(fetch).not.toHaveBeenCalled();
 	});
+	it('keeps Show read-only when an exact tool name contains an edit verb', async (): Promise<void> => {
+		const port = createToolAccessPanelFixture();
+		const before = await port.read(allAccessFilters);
+		await mountPanel(port);
+		await request('Show Change team calendar');
+		expect(screen.queryByText('Review proposed change')).toBeNull();
+		expect(within(accessTable()).getAllByRole('row')).toHaveLength(2);
+		expect(within(accessTable()).getByText('Change team calendar')).toBeTruthy();
+		expect(await port.read(allAccessFilters)).toEqual(before);
+	});
+	it.each(['rejected', 'thrown'])(
+		'shows a recoverable Alert for %s proposal preparation without changing access',
+		async (failure: string): Promise<void> => {
+			const fixture = createToolAccessPanelFixture();
+			const before = await fixture.read(allAccessFilters);
+			let attempts = 0;
+			const port: ToolAccessPanelPort = {
+				...fixture,
+				async proposeChange(intent) {
+					attempts += 1;
+					if (attempts === 1) {
+						if (failure === 'thrown') throw new Error('Proposal service unavailable.');
+						return { kind: 'rejected', message: 'Proposal service unavailable.' };
+					}
+					return await fixture.proposeChange(intent);
+				},
+			};
+			await mountPanel(port);
+			await request('Show Read email');
+			await request('Block Send email');
+			expect(within(accessTable()).getAllByRole('row')).toHaveLength(2);
+			expect(screen.getByRole('alert').classList.contains('text-destructive')).toBe(true);
+			expect(screen.getByRole('alert').textContent).toContain('Proposal service unavailable.');
+			expect(screen.getByLabelText('Request').getAttribute('value')).toBe('Block Send email');
+			expect(await fixture.read(allAccessFilters)).toEqual(before);
+			await click('Retry request');
+			expect(screen.getByText('Review proposed change')).toBeTruthy();
+			expect(screen.getByLabelText('Change note').getAttribute('value')).toBe('Block Send email');
+			expect(screen.queryByRole('alert')).toBeNull();
+			expect(attempts).toBe(2);
+			expect(await fixture.read(allAccessFilters)).toEqual(before);
+		},
+	);
+
 	it('keeps ambiguous and unsupported requests effect-free and retains the existing view', async (): Promise<void> => {
 		const port = createToolAccessPanelFixture();
 		await mountPanel(port);
