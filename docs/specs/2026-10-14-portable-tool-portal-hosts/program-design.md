@@ -53,15 +53,24 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 
 **Inbound, every MCP route:**
 - Built with the SDK v2 handler, `createMcpHandler` from `@modelcontextprotocol/server` 2.3.1, with **`legacy: "reject"`**. Its default, `"stateless"`, still serves 2025 clients ([createMcpHandler.ts:119](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/server/src/server/createMcpHandler.ts#L119)).
-- One protocol server per request, with no protocol session.
-- On a machine it's mounted with `toNodeHandler` from `@modelcontextprotocol/node`; on the Worker, the same handler serves the `fetch`.
-- stdio uses `serveStdio` with `legacy: "reject"` ([serveStdio.ts:84](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/server/src/server/serveStdio.ts#L84)).
+- **Over HTTP,** one protocol server per request, with no protocol session.
+- **Over stdio,** `serveStdio` with `legacy: "reject"` keeps one server for the life of the connection ([serveStdio.ts:84](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/server/src/server/serveStdio.ts#L84)). Each message still carries its own version and capabilities, and there's no protocol session.
+- **On a machine, the host reads the request body itself, as today's proxy does,** and passes it as `parsedBody` to the function `toNodeHandler` (from `@modelcontextprotocol/node`) returns. Given a parsed body, neither the adapter nor the handler applies its own 4 MiB body limit ([toNodeHandler.ts:47](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/middleware/node/src/toNodeHandler.ts#L47), [createMcpHandler.ts:210](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/server/src/server/createMcpHandler.ts#L210)). That limit can't be switched off any other way, and mounting the handler on the raw request would add a limit today's proxy doesn't have (check 8).
+- **On the Worker,** the same handler serves the `fetch`, under the Worker's own 4 MiB request limit ([Limits on the Worker](#limits-on-the-worker)).
 - Today's session maps go: the proxy's ([portal-http-server.ts:126](../../../packages/mcp-portal/src/mcp-proxy/portal-http-server.ts#L126)) and the standalone Tool Portal's ([standalone-tool-portal-mcp-http-server.ts:143](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-mcp-http-server.ts#L143)). Each request is authenticated on its own.
+- **Requests that don't fit 2026-07-28 are refused before anything runs,** each with its own error:
+  - a 2025-era `initialize` (no 2026-07-28 metadata): HTTP 400 with `-32022` and the supported versions;
+  - a 2026-07-28 request missing its required `_meta` (protocol version, client capabilities): 400 with `-32602` ([metadata](https://modelcontextprotocol.io/specification/2026-07-28/basic/index#meta));
+  - `MCP-Protocol-Version`, `Mcp-Method` or `Mcp-Name` missing, or not matching the body: 400 with `-32020` ([server validation](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-validation));
+  - `GET` and `DELETE`: 405.
+  - An `Mcp-Session-Id` a client sends is ignored and never echoed.
+  - stdio has no headers or status codes; the same metadata checks apply to each message.
+- **`server/discover` is mandatory for servers.** The SDK handler provides it.
 - Responses may still stream as server-sent events within one request; only protocol sessions and the standalone `GET` stream are gone.
 
 **What our results add:** every complete `tools/list` page carries `ttlMs` and `cacheScope`, as 2026-07-28 requires ([caching](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)).
 - `cacheScope` is `"private"`, because the list depends on who's asking.
-- `ttlMs` is 60,000 (the Lead's choice, reversible). A configuration change reaches a caching client within a minute.
+- `ttlMs` is 60,000 (the Lead's choice, reversible). A client may reuse a list for up to a minute, and normally fetches it again the next time it needs it after that. That's a freshness hint, not a delivery guarantee.
 - The order is deterministic, which 2026-07-28 recommends: configuration order, then tool name.
 - The standalone Tool Portal's artifact reads (`resources/read`) carry `cacheScope: "private"` and `ttlMs: 0`: an artifact belongs to the caller who made it, and a client shouldn't keep it.
 - `server/discover` answers come from the SDK handler; a test checks that they carry the cache fields too.
@@ -75,7 +84,8 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 
 **Clients and packages:**
 - The Portal SDK's Node client moves to `@modelcontextprotocol/client` with the version pinned.
-- Its Python client moves to `mcp` 2.x. That also fixes a clash inside agent-vm's Hermes image, which installs our `mcp<2` requirement ([pyproject.toml:10](../../../python/agent-vm-agent-portal-sdk/pyproject.toml#L10)) beside Hermes's own `mcp==2.0.0`. Which version the built image ends up with hasn't been checked.
+- Its Python client moves to `mcp` 2.x with 2026-07-28 pinned. Raising the version range alone would keep today's `initialize()` ([standard_mcp_transport.py:66](../../../python/agent-vm-agent-portal-sdk/src/agent_vm_agent_portal_sdk/standard_mcp_transport.py#L66)).
+- It also removes a clash inside agent-vm's Hermes image whenever Hermes's optional MCP extra is installed: that extra needs `mcp==2.0.0`, and our package needs `mcp<2` ([pyproject.toml:10](../../../python/agent-vm-agent-portal-sdk/pyproject.toml#L10)). Both install into the same environment. Which version the built image ends up with hasn't been checked, and the Hermes version pin itself doesn't change.
 - `tool-engine` uses SDK v1 only for types in `mcp-gateway`, and for the client in `connectors`. Both move to the v2 packages; the transports stay injected by the host.
 
 **Clients that can connect:**
