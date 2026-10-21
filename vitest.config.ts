@@ -202,6 +202,17 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
+					name: 'e2e-deployed',
+					include: ['packages/**/*.deployed.e2e.test.ts'],
+					globalSetup: [],
+					fileParallelism: false,
+					maxWorkers: 1,
+					testTimeout: 300_000,
+				},
+			},
+			{
+				extends: true,
+				test: {
 					name: 'unit',
 					pool: 'threads',
 					include: [
@@ -260,7 +271,7 @@ export default defineConfig({
 				test: {
 					name: 'e2e-inventory',
 					include: ['packages/**/*.e2e.test.ts'],
-					exclude: ['**/*.host.e2e.test.ts'],
+					exclude: ['**/*.host.e2e.test.ts', '**/*.deployed.e2e.test.ts'],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 2,

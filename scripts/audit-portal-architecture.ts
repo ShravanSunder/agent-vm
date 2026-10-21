@@ -193,6 +193,7 @@ function isTestSourceFile(filePath: string): boolean {
 		filePath.endsWith('.unit.spec.ts') ||
 		filePath.endsWith('.integration.test.ts') ||
 		filePath.endsWith('.host.e2e.test.ts') ||
+		filePath.endsWith('.deployed.e2e.test.ts') ||
 		filePath.endsWith('.vm.e2e.test.ts') ||
 		filePath.endsWith('.hermes.e2e.test.ts') ||
 		filePath.endsWith('.secrets.e2e.test.ts') ||
