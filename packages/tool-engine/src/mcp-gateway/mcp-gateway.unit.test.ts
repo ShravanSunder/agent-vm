@@ -23,9 +23,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			const harness = createHarness(undefined, 'incomplete');
 			harness.setPrepared(publisher);
 			const preparation =
-				path === 'prepare'
-					? harness.gateway.prepareCatalog()
-					: harness.gateway.listTools('catalog');
+				path === 'prepare' ? harness.gateway.prepareCatalog() : harness.gateway.listTools('direct');
 			await expect(preparation).rejects.toThrowError(
 				new PortalCatalogPreparationError([
 					{
@@ -39,7 +37,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 				name: 'PortalCatalogPreparationError',
 				failedNamespaces: ['beta'],
 				message:
-					'MCP Portal catalog preparation failed for namespace(s): beta. Run live MCP validation or use compact mode for partial discovery diagnostics.',
+					'MCP Portal catalog preparation failed for namespace(s): beta. Run live MCP validation or use indirect mode for partial discovery diagnostics.',
 			});
 			expect(publisher).not.toHaveBeenCalled();
 		},
@@ -51,15 +49,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			const publisher = vi.fn(retainCatalog);
 			harness.setPrepared(publisher);
 			const preparation =
-				path === 'prepare'
-					? harness.gateway.prepareCatalog()
-					: harness.gateway.listTools('catalog');
+				path === 'prepare' ? harness.gateway.prepareCatalog() : harness.gateway.listTools('direct');
 			await expect(preparation).rejects.toBeInstanceOf(PortalCatalogPreparationError);
 			await expect(preparation).rejects.toMatchObject({
 				name: 'PortalCatalogPreparationError',
 				failedNamespaces: ['alpha'],
 				message:
-					'MCP Portal catalog preparation failed for namespace(s): alpha. Run live MCP validation or use compact mode for partial discovery diagnostics.',
+					'MCP Portal catalog preparation failed for namespace(s): alpha. Run live MCP validation or use indirect mode for partial discovery diagnostics.',
 			});
 			expect(publisher).not.toHaveBeenCalled();
 		},
@@ -68,9 +64,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		const harness = createHarness();
 		const publisher = vi.fn(retainCatalog);
 		harness.setPrepared(publisher);
-		expect((await harness.gateway.listTools('catalog')).map((tool) => tool.name)).toEqual(
-			frozenNames,
-		);
+		expect((await harness.gateway.listTools('direct')).tools.map((tool) => tool.name)).toEqual([
+			...frozenNames,
+			'mcp_portal_list',
+			'mcp_portal_search',
+			'mcp_portal_describe',
+			'mcp_portal_call',
+		]);
 		expect(publisher).toHaveBeenCalledOnce();
 	});
 	it('keeps healthy compact discovery, describe and calls available with failure diagnostics', async () => {
@@ -91,7 +91,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 				{ kind: 'upstream_discovery_failed', namespace: 'beta' },
 			]);
 		}
-		expect((await harness.gateway.listTools('compact')).map((tool) => tool.name)).toEqual([
+		expect((await harness.gateway.listTools('indirect')).tools.map((tool) => tool.name)).toEqual([
 			'mcp_portal_list',
 			'mcp_portal_search',
 			'mcp_portal_describe',
@@ -113,14 +113,20 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		).toEqual(['alpha.read', 'beta.read']);
 		const catalog = await gateway.prepareCatalog();
 		expect(catalog.tools.map((tool) => tool.descriptor.name)).toEqual(frozenNames);
-		expect((await gateway.listTools('catalog')).map((tool) => tool.name)).toEqual(frozenNames);
-		expect((await gateway.listTools('compact')).map((tool) => tool.name)).toEqual([
+		expect((await gateway.listTools('direct')).tools.map((tool) => tool.name)).toEqual([
+			...frozenNames,
 			'mcp_portal_list',
 			'mcp_portal_search',
 			'mcp_portal_describe',
 			'mcp_portal_call',
 		]);
-		expect((await gateway.listTools('compact'))[0]?.description).toBe(
+		expect((await gateway.listTools('indirect')).tools.map((tool) => tool.name)).toEqual([
+			'mcp_portal_list',
+			'mcp_portal_search',
+			'mcp_portal_describe',
+			'mcp_portal_call',
+		]);
+		expect((await gateway.listTools('indirect')).tools[0]?.description).toBe(
 			'List authorized MCP namespaces and compact tool summaries. Allowed namespaces for this agent: alpha, beta.',
 		);
 		expect(
@@ -152,13 +158,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			),
 		).toEqual([]);
 	});
-	it.each(['compact', 'direct'] as const)(
+	it.each(['indirect', 'direct'] as const)(
 		'runs the allowed control in %s and records the literal normalized digest and effect',
 		async (mode) => {
 			const h = createHarness();
 			const catalog = await h.gateway.prepareCatalog();
 			const result =
-				mode === 'compact'
+				mode === 'indirect'
 					? await h.gateway.call(callInput())
 					: await h.gateway.callDirect({
 							name: 'alpha__read__151160dc30',
@@ -211,13 +217,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			'dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3',
 		]);
 	});
-	it.each(['compact', 'direct'] as const)(
+	it.each(['indirect', 'direct'] as const)(
 		'pending approval and invalid arguments cause zero effects in %s',
 		async (mode) => {
 			const h = createHarness();
 			const catalog = await h.gateway.prepareCatalog();
 			const pending =
-				mode === 'compact'
+				mode === 'indirect'
 					? await h.gateway.call(callInput('ask'))
 					: await h.gateway.callDirect({
 							name: 'alpha__ask__645775a667',
@@ -237,7 +243,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 				},
 			});
 			const invalid =
-				mode === 'compact'
+				mode === 'indirect'
 					? await h.gateway.call(callInput('read', 'invalid', {}))
 					: await h.gateway.callDirect({
 							name: 'alpha__read__151160dc30',
@@ -315,14 +321,14 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		).toBe(false);
 		expect(h.effects).toEqual([]);
 	});
-	it.each(['compact', 'direct'] as const)(
+	it.each(['indirect', 'direct'] as const)(
 		'holds a binding that changes during %s preparation',
 		async (mode) => {
 			const h = createHarness();
 			const catalog = await h.gateway.prepareCatalog();
 			h.changeDuringAdmission();
 			const result =
-				mode === 'compact'
+				mode === 'indirect'
 					? await h.gateway.call(callInput())
 					: await h.gateway.callDirect({
 							name: 'alpha__read__151160dc30',
@@ -358,7 +364,12 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 				...catalog,
 				...(kind === 'foreign-caller' ? { agentScopeId: 'scope-b' } : { sourceHash: 'wrong' }),
 			}));
-			expect(await h.gateway.listTools('catalog')).toEqual([]);
+			expect((await h.gateway.listTools('direct')).tools.map((tool) => tool.name)).toEqual([
+				'mcp_portal_list',
+				'mcp_portal_search',
+				'mcp_portal_describe',
+				'mcp_portal_call',
+			]);
 			expect(
 				(
 					await h.gateway.callDirect({
@@ -426,13 +437,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		expect(result.results.pending).toMatchObject({ ok: false, error: { kind: 'pending' } });
 		expect(result.results.permitted).toMatchObject({ ok: true, output: { result: { value: 42 } } });
 	});
-	it.each(['compact', 'direct'] as const)(
+	it.each(['indirect', 'direct'] as const)(
 		'rejects an unauthorized effect from a direct-backend bypass in %s',
 		async (mode) => {
 			const h = createHarness();
 			const catalog = await h.gateway.prepareCatalog();
 			const result =
-				mode === 'compact'
+				mode === 'indirect'
 					? await h.gateway.call(callInput('ask'))
 					: await h.gateway.callDirect({
 							name: 'alpha__ask__645775a667',
@@ -447,32 +458,6 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			});
 		},
 	);
-	it('serves host-prepared helper bytes only after caller/catalog validation', async () => {
-		const h = createHarness();
-		h.setPrepared((catalog) => ({
-			...catalog,
-			typescriptHelpersByToolRef: { 'mcp:YWxwaGE:cmVhZA': '// frozen prepared helper' },
-		}));
-		const result = await h.gateway.describe({
-			requests: [{ id: 'r', refs: ['mcp:YWxwaGE:cmVhZA'], includeTypescriptHelper: true }],
-		});
-		expect(output(result, 'r')).toMatchObject({
-			tools: [{ typescriptHelper: '// frozen prepared helper' }],
-		});
-		h.setPrepared((catalog) => ({
-			...catalog,
-			agentScopeId: 'scope-b',
-			typescriptHelpersByToolRef: { 'mcp:YWxwaGE:cmVhZA': 'foreign-helper' },
-		}));
-		expect(
-			JSON.stringify(
-				await h.gateway.describe({
-					requests: [{ id: 'r', refs: ['mcp:YWxwaGE:cmVhZA'], includeTypescriptHelper: true }],
-				}),
-			),
-		).not.toContain('foreign-helper');
-		expect(h.effects).toEqual([]);
-	});
 
 	for (const throwAt of [
 		'digest',
@@ -481,7 +466,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		'backend',
 		'backend-after-effect',
 	] as const)
-		it.each(['compact', 'direct'] as const)(
+		it.each(['indirect', 'direct'] as const)(
 			`preserves a completed sibling when ${throwAt} throws in %s`,
 			async (mode) => {
 				const h = createHarness(
@@ -526,7 +511,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 						arguments: { value: 42 },
 					};
 					const results =
-						mode === 'compact'
+						mode === 'indirect'
 							? [await h.gateway.call({ calls: [good, bad] })]
 							: await Promise.all([
 									h.gateway.callDirect({
@@ -588,13 +573,13 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		{ kind: 'result-expired' },
 	];
 	for (const outcome of outcomes)
-		it.each(['compact', 'direct'] as const)(
+		it.each(['indirect', 'direct'] as const)(
 			`preserves every field of ${outcome.kind} in %s`,
 			async (mode) => {
 				const h = createHarness();
 				h.setResult(outcome);
 				const result =
-					mode === 'compact'
+					mode === 'indirect'
 						? await h.gateway.call(callInput())
 						: await h.gateway.callDirect({
 								name: 'alpha__read__151160dc30',

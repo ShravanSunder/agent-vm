@@ -14,6 +14,7 @@ import {
 } from '@agent-collaboration/tool-engine/dispatch';
 import { z } from 'zod';
 
+import type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';
 import {
 	createMcpGateway,
 	type McpGateway,
@@ -51,6 +52,10 @@ export function retainCatalog(catalog: PreparedGatewayCatalog): PreparedGatewayC
 export function createHarness(
 	throwAt?: 'access' | 'backend' | 'backend-after-effect',
 	discovery: 'complete' | 'incomplete' | 'duplicate' = 'complete',
+	options: {
+		readonly approvalTokens?: GatewayApprovalTokens;
+		readonly toolDescription?: string;
+	} = {},
 ): GatewayTestHarness {
 	const effects: DispatchInvocation[] = [];
 	const inputDigests: string[] = [];
@@ -149,12 +154,22 @@ export function createHarness(
 					throw new Error('beta discovery unavailable');
 				const names =
 					discovery === 'duplicate' ? ['read', 'read'] : ['read', 'ask', 'denied', 'hidden'];
-				return names.map((name) => ({
-					name,
-					inputSchema,
-					outputSchema: { type: 'object' as const, properties: { result: { type: 'integer' } } },
-					annotations: { readOnlyHint: true, category: { label: 'original' } },
-				}));
+				const description =
+					options.toolDescription === undefined ? {} : { description: options.toolDescription };
+				return names.map((name) =>
+					Object.assign(
+						{
+							name,
+							inputSchema,
+							outputSchema: {
+								type: 'object' as const,
+								properties: { result: { type: 'integer' } },
+							},
+							annotations: { readOnlyHint: true, category: { label: 'original' } },
+						},
+						description,
+					),
+				);
 			},
 		},
 		upstreamNamespaces: ['alpha', 'beta'],
@@ -170,6 +185,7 @@ export function createHarness(
 		sessions,
 		operations,
 		approvals,
+		...(options.approvalTokens === undefined ? {} : { approvalTokens: options.approvalTokens }),
 		backends: new Map([['mcp_provider', backend]]),
 		now: () => 0,
 		prepareCatalog: async (catalog) => preparedTransform(catalog),

@@ -101,6 +101,7 @@ export type OperationRefusal = {
 };
 export type OperationCreateResult =
 	| OperationRefusal
+	// Any host may decline recording only when requiresApproval is false.
 	| { readonly kind: 'untracked' }
 	| { readonly kind: 'created' | 'existing'; readonly record: OperationRecord };
 export type OperationLookupResult =

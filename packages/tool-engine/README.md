@@ -10,8 +10,9 @@ revision does not create a new key. Resource-owned context and receipt reference
 are selectors, never permissions. The resource must validate them before effects.
 
 Every admitted call enters `OperationPort.createOrRead`. Only calls needing no
-approval can use the managed authority's explicit `untracked` result. Such calls
-carry no reuse or recovery guarantee. Public host stores must retain their records.
+approval may use any host authority's explicit `untracked` (not recorded) result.
+Such calls carry no reuse or recovery guarantee. Calls requiring approval must
+have an operation record and a matching, current receipt before dispatch.
 An unavailable store, invalid facts or an approval mismatch never invokes a backend.
 
 The managed adapter currently lives in gateway-runtime's new `managed-tool-engine`
@@ -23,3 +24,31 @@ Shared TypeScript aliases support the managed parity and integration tests.
 Production source may not import them: the architecture and package-export gates
 check source imports, and the packed closure checks emitted declarations as well
 as runtime dependencies. All three alias controls remain in the packed proof.
+
+`mcp-gateway` uses `direct` for native tools plus the four search tools, and
+`indirect` for the four search tools alone. Hosts choose per client with
+`toolLoadingMode(resolveToolLoading(address))`: `?tools=direct` selects direct;
+the plain address selects indirect. The host owns startup discovery and protocol
+serving; this package does not infer client behavior from its name.
+
+`listTools(mode, cursor?)` returns an MCP result page (`tools`, `nextCursor?`).
+Direct pages contain whole tools and are at most 1 MiB of serialized UTF-8 JSON,
+including the cursor. An indivisible tool over that budget is refused. Hosts
+return the page and pass the next request's cursor back unchanged. Indirect lists
+remain four tools; list and search retain their existing bounded result pages.
+
+`callDirect` routes the search names to their handlers and native names to the
+same dispatcher as `call`. Native approval metadata uses
+`_meta['agent-vm/tool-portal-approval-token']`; indirect calls use
+`portalApprovalToken`. Neither changes the upstream tool's arguments. Configure
+`approvalTokens` with the caller's signing key and an awaited `consumeTokenId`
+port. It must atomically record first use before answering `ok: true`; refusal,
+an error or no answer runs no token-approved calls. Machines can use one
+`createInMemoryApprovalTokenUse` instance per agent/signing-key scope, retained
+for the process lifetime. Its default capacity remains 4,096 live token IDs.
+Worker hosts must supply their shared authority instead.
+
+Bearer derivation, token signing/verification and the per-tool TypeScript helper
+are asynchronous Web Crypto APIs. Their bytes match the legacy implementations.
+`describe` builds its helper from the live authorized tool record; it does not
+invoke the host's full catalog compiler. That compiler remains outside this package.

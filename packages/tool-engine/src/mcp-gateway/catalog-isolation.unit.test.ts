@@ -68,7 +68,7 @@ describe('published catalog object isolation', () => {
 			}
 			const published =
 				surface === 'native'
-					? await harness.gateway.listTools('catalog')
+					? (await harness.gateway.listTools('direct')).tools
 					: (await harness.gateway.prepareCatalog()).tools.map((tool) => tool.descriptor);
 			const tool = published.find((entry) => entry.name === 'alpha__read__151160dc30');
 			if (tool === undefined) throw new Error('Expected allowed descriptor');
@@ -84,7 +84,7 @@ describe('published catalog object isolation', () => {
 				error: { kind: 'input_validation' },
 			});
 			expect(harness.effects).toHaveLength(1);
-			const fresh = (await harness.gateway.listTools('catalog')).find(
+			const fresh = (await harness.gateway.listTools('direct')).tools.find(
 				(entry) => entry.name === tool.name,
 			);
 			expect(fresh?.inputSchema).toEqual(inputSchema);
@@ -96,10 +96,7 @@ describe('published catalog object isolation', () => {
 		'isolates published compact schemas and metadata from %s mutations',
 		async (surface) => {
 			const harness = createHarness();
-			harness.setPrepared((catalog) => ({
-				...catalog,
-				typescriptHelpersByToolRef: { 'mcp:YWxwaGE:cmVhZA': '// immutable helper' },
-			}));
+
 			const tool =
 				surface === 'search'
 					? await searchedTool(harness.gateway)
@@ -121,7 +118,10 @@ describe('published catalog object isolation', () => {
 				properties: { result: { type: 'integer' } },
 			});
 			expect(fresh.annotations).toEqual({ readOnlyHint: true, category: { label: 'original' } });
-			expect(fresh.typescriptHelper).toBe('// immutable helper');
+			expect(fresh.typescriptHelper).toEqual(
+				(await describedTool(harness.gateway, true)).typescriptHelper,
+			);
+			expect(fresh.typescriptHelper).not.toContain('corrupted');
 			expect(fresh.schemaHint).toEqual({
 				message: 'Full input schema included.',
 				next: 'call_ready',
@@ -131,10 +131,10 @@ describe('published catalog object isolation', () => {
 
 	it('isolates published compact wrapper schemas from later listings', async () => {
 		const { gateway } = createHarness();
-		const descriptors = await gateway.listTools('compact');
+		const descriptors = (await gateway.listTools('indirect')).tools;
 		const originals = structuredClone(descriptors);
 		for (const descriptor of descriptors)
 			mutableRecord(descriptor.inputSchema.properties).injected = { type: 'boolean' };
-		expect(await gateway.listTools('compact')).toEqual(originals);
+		expect((await gateway.listTools('indirect')).tools).toEqual(originals);
 	});
 });

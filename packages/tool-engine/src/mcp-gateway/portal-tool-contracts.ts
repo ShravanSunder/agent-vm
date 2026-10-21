@@ -8,7 +8,8 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import type { PortalToolRecord } from '#mcp-gateway/catalog-types';
-import type { PortalCatalogRefusal, PortalSession } from '#mcp-gateway/portal-session';
+import type { PortalCallAuthorization, VerifiedCallApproval } from '#mcp-gateway/gateway-approval';
+import type { PortalSession } from '#mcp-gateway/portal-session';
 
 export interface PortalToolSuccess {
 	readonly input: Readonly<Record<string, unknown>>;
@@ -117,7 +118,9 @@ export const describeInputSchema = z
 	.object({ requests: z.array(describeRequestSchema).min(1) })
 	.strict();
 const callInputSchema = z.object({ calls: z.array(callRequestSchema).min(1) }).strict();
-export const callExecutionInputSchema = callInputSchema;
+export const callExecutionInputSchema = callInputSchema.extend({
+	portalApprovalToken: z.string().min(1).optional(),
+});
 
 export type ListRequest = z.infer<typeof listRequestSchema>;
 export type SearchRequest = z.infer<typeof searchRequestSchema>;
@@ -175,15 +178,9 @@ export interface PortalToolHandlerCall {
 	readonly input: unknown;
 }
 
-export type PortalTypescriptHelperUnavailable =
-	| {
-			readonly kind: 'catalog_preparation_refused';
-			readonly refusals: readonly PortalCatalogRefusal[];
-	  }
-	| { readonly kind: 'helper_preparation_failed'; readonly namespace: string };
-
 export interface PortalToolRuntime {
 	readonly dispatchCall: (call: {
+		readonly approval?: VerifiedCallApproval;
 		readonly arguments: JsonObject;
 		readonly identity: PortalAgentIdentity;
 		readonly namespace: string;
@@ -191,10 +188,10 @@ export interface PortalToolRuntime {
 		readonly toolName: string;
 	}) => Promise<ResourceResult>;
 	readonly getSession: (identity: PortalAgentIdentity) => Promise<PortalSession>;
-	readonly preparedTypescriptHelper?: (
-		tool: PortalToolRecord,
-		session: PortalSession,
-	) => string | PortalTypescriptHelperUnavailable | undefined;
+	readonly authorizeCalls?: (
+		calls: readonly PreparedPortalCall[],
+		token: string | undefined,
+	) => Promise<ReadonlyMap<string, PortalCallAuthorization>>;
 }
 
 export interface PortalToolHandlers {
