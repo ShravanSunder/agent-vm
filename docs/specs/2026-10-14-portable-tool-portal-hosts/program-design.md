@@ -266,7 +266,7 @@ Each limit stays at its own way in, with its current meaning. No new limits are 
 
 ## The Cloudflare Worker
 
-The Worker serves the MCP proxy's way in, in `direct` or `indirect` mode, with today's tools, results and approval token. `tool-host-cloudflare` is to the Worker what `tool-host-node` is to a machine: it takes connections, checks who's calling and loads config, then hands every call to `tool-engine`. `tool-engine` already has no Node-only code ([package.json](https://github.com/ShravanSunder/agent-vm/blob/tool-engine/s3a-mcp-gateway/packages/tool-engine/package.json), with no `node:` imports in its source), and its connectors use the MCP SDK's HTTP client. Neither has been run on a Worker yet.
+The Worker serves the MCP proxy's way in, in `direct` or `indirect` mode, with today's tools, results and approval token. `tool-host-cloudflare` is to the Worker what `tool-host-node` is to a machine: it takes connections, checks who's calling and loads config, then hands every call to `tool-engine`. `tool-engine` already has no Node-only code ([package.json](https://github.com/ShravanSunder/agent-vm/blob/tool-engine/s3a-mcp-gateway/packages/tool-engine/package.json), with no `node:` imports in its source), and its connectors use the MCP SDK's HTTP client. Both run in Cloudflare's own runtime on a machine: S6's local proof (#246) passes the Worker's host suite in workerd. Neither has run on a deployed Worker yet; the private test deploy is planned in [plans/2026-10-21-private-worker-deploy.md](plans/2026-10-21-private-worker-deploy.md).
 
 ```mermaid
 flowchart LR
