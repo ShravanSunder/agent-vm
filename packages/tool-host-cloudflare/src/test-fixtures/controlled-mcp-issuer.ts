@@ -31,6 +31,9 @@ export interface ControlledMcpIssuer {
 	readonly close: () => Promise<void>;
 	setTools: (count: number, descriptionBytes?: number) => void;
 	setCall: (handler: (call: RecordedCall) => Promise<unknown>) => void;
+	setCatalog: (tools: readonly Record<string, unknown>[]) => void;
+	setBackgroundStreams: (enabled: boolean) => void;
+	readonly activeBackgroundStreams: () => number;
 }
 
 /** Test-only sign-in issuer/JWKS stand-in plus controlled legacy MCP server. No real sign-in proof. */
@@ -44,14 +47,26 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 	const discoveryCredentials: string[] = [];
 	const initializations: string[] = [];
 	let tools = toolCatalog(4, 0);
+	let backgroundStreams = false;
+	let activeBackgroundStreams = 0;
 	let callHandler = async (call: RecordedCall): Promise<unknown> => ({
 		content: [{ type: 'text', text: String(call.arguments.value ?? 'ok') }],
 	});
 	const server: HttpServer = createServer(async (request, response) => {
 		try {
+			response.setHeader('connection', 'close');
 			if (request.url === '/jwks') {
 				response.setHeader('content-type', 'application/json');
 				response.end(JSON.stringify(jwks));
+				return;
+			}
+			if (request.method === 'GET' && backgroundStreams) {
+				activeBackgroundStreams += 1;
+				response.writeHead(200, { 'content-type': 'text/event-stream' });
+				response.write(': ready\n\n');
+				response.once('close', () => {
+					activeBackgroundStreams -= 1;
+				});
 				return;
 			}
 			if (request.method !== 'POST') {
@@ -113,6 +128,13 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 		setCall: (handler) => {
 			callHandler = handler;
 		},
+		setCatalog: (catalog) => {
+			tools = catalog;
+		},
+		setBackgroundStreams: (enabled) => {
+			backgroundStreams = enabled;
+		},
+		activeBackgroundStreams: () => activeBackgroundStreams,
 		sign: async (input = {}) => {
 			const agentId = input.agentId ?? 'agent-one';
 			const now = Math.floor(Date.now() / 1000);

@@ -8,6 +8,7 @@ import {
 	workerSecretBindings,
 } from '#worker-host/worker-configuration';
 import { createWorkerHost, workerAgentVerifier, type WorkerHost } from '#worker-host/worker-host';
+import type { WorkerObservationLog } from '#worker-host/worker-observation-log';
 
 export class OrganizationAuthorization extends ProductionOrganizationAuthorization {
 	private fault: 'none' | 'fail' | 'stall' = 'none';
@@ -57,9 +58,18 @@ const controlSchema = z.discriminatedUnion('kind', [
 	z.strictObject({ kind: z.literal('wait-recording'), organizationId: z.string() }),
 ]);
 let host: WorkerHost | undefined;
+const logs: WorkerObservationLog[] = [];
+const points: unknown[] = [];
+let failAnalytics = false;
 // Control routes exist only in this separate test entry, never in the production entrypoint.
 export default {
 	async fetch(request: Request, bindings: ProofBindings): Promise<Response> {
+		if (new URL(request.url).pathname === '/__points') return Response.json(points);
+		if (new URL(request.url).pathname === '/__fail-analytics') {
+			failAnalytics = new URL(request.url).searchParams.has('fail');
+			return Response.json({ ok: true });
+		}
+		if (new URL(request.url).pathname === '/__logs') return Response.json(logs);
 		if (new URL(request.url).pathname === '/__proof') {
 			const input = controlSchema.parse(await request.json());
 			const object = bindings.ORGANIZATIONS.get(
@@ -82,6 +92,13 @@ export default {
 			return Response.json({ ok: true });
 		}
 		host ??= createWorkerHost({
+			analytics: {
+				writeDataPoint: (point) => {
+					if (failAnalytics) throw new Error('binding-secret-canary');
+					points.push(point);
+				},
+			},
+			log: (event) => logs.push(event),
 			verifier: workerAgentVerifier({
 				deployment: bindings.SIGN_IN_ISSUER,
 				audience: bindings.TOOL_PORTAL_AUDIENCE,

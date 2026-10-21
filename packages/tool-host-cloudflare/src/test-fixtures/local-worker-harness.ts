@@ -28,12 +28,19 @@ export interface LocalWorkerHarness {
 			readonly token?: string;
 			readonly path?: string;
 			readonly headers?: Readonly<Record<string, string>>;
+			readonly signal?: AbortSignal;
 		},
 	) => Promise<LocalWorkerResponse>;
 	readonly close: () => Promise<void>;
 }
-export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
+export async function startLocalWorkerHarness(
+	options: {
+		readonly setup?: (fixture: ControlledMcpIssuer) => void;
+		readonly configurations?: (url: string) => unknown;
+	} = {},
+): Promise<LocalWorkerHarness> {
 	const fixture = await startControlledMcpIssuer();
+	options.setup?.(fixture);
 	const stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-worker-'));
 	process.env.WRANGLER_LOG_PATH = path.join(stateDirectory, 'wrangler.log');
 	process.env.WRANGLER_SEND_METRICS = 'false';
@@ -49,7 +56,9 @@ export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
 				SIGN_IN_ISSUER: fixture.url,
 				SIGN_IN_JWKS_URL: `${fixture.url}/jwks`,
 				TOOL_PORTAL_AUDIENCE: portalAudience,
-				ORGANIZATION_CONFIGURATIONS: JSON.stringify(organizationConfigurations(fixture.url)),
+				ORGANIZATION_CONFIGURATIONS: JSON.stringify(
+					(options.configurations ?? organizationConfigurations)(fixture.url),
+				),
 				ONE_CREDENTIAL: 'one-secret-canary',
 				TWO_CREDENTIAL: 'two-secret-canary',
 				APPROVAL_KEY: signingKeyHex,
@@ -57,6 +66,13 @@ export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
 			experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
 		},
 	);
+	const fetchLocalWorker = worker.fetch;
+	worker.fetch = async (input, init) =>
+		fetchLocalWorker(input, {
+			...init,
+			headers: Object.assign({}, init?.headers, { connection: 'close' }),
+		});
+	process.stderr.write('S6 proof stage runtime-ready\n');
 	async function control(input: Readonly<Record<string, unknown>>): Promise<void> {
 		const response = await worker.fetch('/__proof', {
 			method: 'POST',
@@ -64,6 +80,7 @@ export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
 		});
 		if (response.status !== 200)
 			throw new Error(`Proof control failed: ${String(response.status)}`);
+		await response.body?.cancel();
 	}
 	await Promise.all(
 		[organizationOne, organizationTwo].flatMap((organizationId) =>
@@ -72,6 +89,7 @@ export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
 			),
 		),
 	);
+	process.stderr.write('S6 proof stage admission-ready\n');
 	const token = await fixture.sign();
 	return {
 		worker,
@@ -81,6 +99,7 @@ export async function startLocalWorkerHarness(): Promise<LocalWorkerHarness> {
 		rpc: async (method, params = {}, options = {}) =>
 			worker.fetch(options.path ?? '/mcp', {
 				method: 'POST',
+				...(options.signal === undefined ? {} : { signal: options.signal }),
 				headers: {
 					authorization: `Bearer ${options.token ?? token}`,
 					'content-type': 'application/json',
