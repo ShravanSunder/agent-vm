@@ -116,7 +116,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Organizations:** "organizations are isolated for auth only"; "you have owner and org members. that's it. owners can allow people to log in or allow auth related stuff"; "segregated by durable objects".
 - **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
 - **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
-- **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. The first version uses Cloudflare Access plus each agent's own key; Better Auth replaces those keys afterwards, as its own project ([people sign-in](../2026-10-20-people-sign-in/requirements.md)), changing only the Worker's caller check.
+- **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. Later that day the owner also decided agents sign in with Better Auth from the start, not Cloudflare Access (see **Sign-in** below); that replaces an earlier plan of Access plus agent keys first.
 - **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
 - **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
 - **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
@@ -125,7 +125,11 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 
 Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
 
-6. **What's in the first version?** This is the Lead's reading of your decisions, not your answer yet. The first version is agents acting with their own access, configured tools and today's approvals (fleet F-23, F-35, F-53, F-56); per-user tools, under today's permission model, and the chat-led change flow (fleet F-41 to F-49) come next. Confirm it or change it.
+6. **What's in the first version?** This is the Lead's reading of your decisions, not your answer yet: agents acting with their own access, configured tools, and the three approval modes that exist today in your D-9 words: approved, requires approval and blocked (fleet F-23, F-35, F-53, F-56, D-9). Three separate choices follow, and any can come first:
+   - per-user tools, under today's permission model;
+   - the chat-led change flow (fleet F-41 to F-49), in the separate control UI.
+   - the **auto** mode, with its judge (D-9), once where the judge runs (T-16) is settled.
+7. **Does an agent ever act on behalf of a person?** Fleet F-35 says "on behalf of" is only a label, and an agent never uses a requester's accounts. On 2026-10-15 you said approval and control are "per agent, or on behalf of user". The design follows F-35 until you say otherwise.
 
 1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).
 2. **Answered on 2026-10-20: Better Auth** (see owner decisions).

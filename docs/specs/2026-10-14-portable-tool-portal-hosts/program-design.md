@@ -158,6 +158,32 @@ The dispatcher needs a record and a receipt for any call that requires approval 
   3. Each call then goes through the dispatcher with its own in-memory entry.
 - **Calls that need no approval** aren't recorded.
 
+### Approval modes and who decides
+
+**Each tool has one of four modes** (fleet D-9, decided 2026-10-18: "auto, approved, requires approval, blocked"; [concepts §7.4](../../wip/2026-10-18-fleet-backbone-concepts/concepts.md)):
+
+| Mode | Who decides | Today |
+| --- | --- | --- |
+| **approved** | nobody; it runs | `allowWithoutApprovalTools`, `withoutApproval` namespaces, trusted read-only ([mcp-portal-approval-policy.ts:57](../../../packages/config-contracts/src/mcp-portal-approval-policy.ts#L57)) |
+| **auto** | a judge (Jev or a classifier) inside fixed limits set outside the model. It approves, escalates to a person, or denies; when it's unsure, unavailable or times out, it escalates; each decision is recorded | new; where it runs is still open (T-16) |
+| **requires approval** | a person: the approver in the resource owner's policy | `alwaysAskTools`, `writeTools`, `requiresApproval` namespaces |
+| **blocked** | nobody; it never runs, and no approval overrides it | everything else |
+
+Critical tools always go to a person when they're allowed to run. A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
+
+**Who must say yes, by what the call touches:**
+
+| What the call touches | What must already allow it | Who decides "requires approval" | Status |
+| --- | --- | --- | --- |
+| a team tool (the organization's credentials) | the agent is in the organization; its profile includes the tool; the tool's mode | the agent's configured approver | built today |
+| a team account | a manager gave the workspace's agents that account | the configured approver | decided (fleet F-27) |
+| a person's own account | the owner consented to this agent; read and write modes, within hard limits | today through Hermes or Discord; the October 15 proposal sends it to the account's owner | built today; approver routing proposed |
+| someone else's account, for the requester | not allowed: "on behalf of" is a label (fleet F-35) | | decided |
+| several resources in one call | each resource's own yes | each resource's approver | proposed only |
+| changing modes or account rules | the account's owner who is also a configured editor; a chat proposal with Accept or Deny | that editor | decided (fleet F-41, F-43); detail proposed |
+
+**Across all rows:** any blocked gate stops the call; every "requires approval" gate needs its own yes; an approval covers one call, once, and lasts five minutes from when it's requested; approving never changes a tool's mode. The first version keeps today's three modes. Auto, with its judge, is decided but new, so it follows once where the judge runs (T-16) is settled.
+
 ## What's stored
 
 **Nothing new on a machine.**
@@ -213,7 +239,7 @@ One object per organization, holding only that organization's auth state. It's t
 | --- | --- | --- |
 | the owner, and who may sign in | the owner | at sign-in |
 | the organization's agents, by their sign-in client IDs | the owner | before every call |
-| per-user tools, later: account owners' consents and Deny/Ask/Allow overrides, as in today's permission model | each account's owner | before every per-user call |
+| per-user tools, later: what the Worker checks for a consented account. Today agent-vm's controller owns consents, overrides and Google credentials; whether the Worker asks it or holds its own is decided when per-user tools are designed | each account's owner | before every per-user call |
 | approval tokens already used, each kept until it expires | the Worker, when it accepts a token | before every approved call |
 
 - **One short check per call, with no cache.** Removing an agent or withdrawing a consent stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one organization today.
@@ -239,10 +265,11 @@ Today's proxy config already describes remote MCP servers, with headers whose va
 
 - **Per-user tools use today's permission model unchanged** ([agent account and tool permissions](../2026-09-04-agent-account-and-tool-permissions/requirements.md), [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)):
   - an account's owner consents, in the browser, to a specific agent using it, which gives a separate credential for that agent and account;
-  - Deny, Ask or Allow, set separately for reads and writes, from the agent's profile defaults or the owner's overrides, within the operator's hard limits;
-  - a one-call approval when the policy says Ask, which expires if not answered, as today's do.
+  - Deny, Ask or Allow, set separately for reads and writes, within the operator's hard limits. A rule the owner hasn't overridden follows the agent's profile default live, so changing the default changes it;
+  - a one-call approval when the policy says Ask. As today, it lasts five minutes from when it's requested, whether or not it's been answered ([controller-runtime.ts:182](../../../packages/agent-vm/src/controller/controller-runtime.ts#L182)).
   - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the organization's object, and its connection is reused only for that agent and account.
-  - Changing these settings is the request bar with Accept or Deny (fleet F-41 to F-49), in the separate control UI. Temporary grants and temporary revocation are recorded owner interest (fleet F-61), not part of this design.
+  - Changing a person's account rules needs that account's owner who is also a configured editor for the agent; signing in alone grants neither. Today's changes are revisioned and recorded, and that stays. Making changes through the request bar with Accept or Deny (fleet F-41 to F-49) is the separate control UI. Temporary grants and temporary revocation are recorded owner interest (fleet F-61), not part of this design.
+  - Today's approval pieces stay separate: the rules that say whether a call needs approval, the record that decides it and uses it once, and the prompt in Hermes, Discord or elsewhere. Per-user tools don't add a shared approval service.
   - Who must approve in each case (an agent on its own, a person's own account, someone else's shared resource, several resources at once, a configuration change) is worked out in the [October 15 approval target-state proposal](../../wip/2026-10-15-portal-approval-research/s1-approval-target-state.md). It's a proposal: when per-user tools are designed, it's reconciled with the adopted fleet F-27 (managers may give team accounts) and F-35 (no one else's personal accounts; "on behalf of" is a label).
 - **Computer tools:**
   - Computers are registered on our side. The Worker reaches them through a Cloudflare Tunnel protected by Cloudflare Access, using a key the Worker holds, like Tailscale.
