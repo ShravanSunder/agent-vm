@@ -37,6 +37,7 @@ export interface ControlledProvider {
 		readonly selectedHeader: string | undefined;
 	}[];
 	readonly close: () => Promise<void>;
+	readonly breakCalls: () => void;
 	readonly duplicateDiscovery: () => void;
 	readonly holdCalls: () => { readonly entered: Promise<void>; readonly release: () => void };
 	readonly holdDiscovery: () => { readonly entered: Promise<void>; readonly release: () => void };
@@ -50,6 +51,7 @@ export async function startControlledProvider(
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
+	let breakCalls = false;
 	let enteredCall: (() => void) | undefined;
 	let callGate: Promise<void> = Promise.resolve();
 	let enteredDiscovery: (() => void) | undefined;
@@ -88,8 +90,14 @@ export async function startControlledProvider(
 				});
 				enteredCall?.();
 				await callGate;
+				if (breakCalls) response.destroy();
 				return {
-					content: [{ type: 'text', text: `${label}:${String(call.params.arguments?.value)}` }],
+					content: [
+						{
+							type: 'text',
+							text: `${label}:${String(call.params.arguments?.value)}${call.params.name === 'fail' ? ` ${secretCanary} ${headerCanary}` : ''}`,
+						},
+					],
 					structuredContent: {
 						provider: label,
 						value: call.params.arguments?.value,
@@ -137,6 +145,9 @@ export async function startControlledProvider(
 			await new Promise<void>((resolve, reject) =>
 				http.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
+		},
+		breakCalls: () => {
+			breakCalls = true;
 		},
 		duplicateDiscovery: () => {
 			duplicates = true;

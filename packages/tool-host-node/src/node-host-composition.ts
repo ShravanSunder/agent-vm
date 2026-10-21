@@ -16,6 +16,8 @@ import {
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	createMcpGateway,
+	proxyUpstreamFailureFromError,
+	proxyUpstreamFailureResult,
 	createInMemoryApprovalTokenUse,
 	createPortalSessionManager,
 	type McpGateway,
@@ -43,6 +45,7 @@ import {
 	createNodeHttpUpstreamTransport,
 	createNodeStdioUpstreamTransport,
 } from '#node-host/upstream/node-upstream-transports';
+import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/upstream/stdio-upstream-errors';
 import { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
 
 export interface NodeHostSecretResolutionPort {
@@ -258,14 +261,27 @@ export async function createNodeHostComposition(props: {
 						invocation.verifiedContextRef !== credential.credentialId
 					)
 						return { kind: 'not-dispatched', reason: 'caller-unavailable' };
-					const result = await runtime.callTool({
-						agentScopeId: scope,
-						namespace: invocation.capability.namespace,
-						toolName: invocation.capability.tool,
-						arguments: invocation.arguments,
-						requestId: invocation.operationKey.item,
-					});
-					return { kind: 'completed', result: jsonValueSchema.parse(result) };
+					try {
+						const result = await runtime.callTool({
+							agentScopeId: scope,
+							namespace: invocation.capability.namespace,
+							toolName: invocation.capability.tool,
+							arguments: invocation.arguments,
+							requestId: invocation.operationKey.item,
+						});
+						return { kind: 'completed', result: jsonValueSchema.parse(result) };
+					} catch (error) {
+						const target = {
+							namespace: invocation.capability.namespace,
+							toolName: invocation.capability.tool,
+						};
+						const knownHttpFailure = proxyUpstreamFailureFromError({ ...target, error });
+						if (knownHttpFailure !== null) return knownHttpFailure;
+						const stdioFailure = stdioFailureDetailsFromUnknown(error);
+						if (stdioFailure !== null)
+							return proxyUpstreamFailureResult({ ...target, failure: stdioFailure });
+						throw error;
+					}
 				},
 			};
 			return createMcpGateway({

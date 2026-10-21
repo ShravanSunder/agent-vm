@@ -57,3 +57,12 @@ invoke the host's full catalog compiler. That compiler remains outside this pack
 text-wrapped core result for both hosts. Scalar and malformed calls retain their
 wrapper; valid calls produce ordered items, with `catalog-call` as the direct
 call's public item ID. Protocol response metadata is supplied by the host SDK.
+
+Proxy backends map known connector errors with `proxyUpstreamFailureFromError`
+(or `proxyUpstreamFailureResult` after a host's nominal error extractor). The
+optional `mcp-upstream-failure` detail retains redacted legacy diagnostics;
+transport addresses and raw causes are excluded. Provider `isError` responses
+and connect failures are `failed`; losing a response during `call_tool` remains
+`ambiguous`. The gateway exposes the legacy `upstream_call_failed` item error
+for either outcome. Managed adapters keep their existing certainty and retry
+policy when this optional detail is present.

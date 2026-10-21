@@ -12,6 +12,8 @@ import {
 } from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
 
+import { resourceFailureDetailSchema } from '#dispatch/resource-failure-detail';
+
 const boundedReference = z.string().min(1).max(1024);
 export const operationKeySchema = z.strictObject({
 	authority: boundedReference,
@@ -85,8 +87,16 @@ export const resourceResultSchema = z.discriminatedUnion('kind', [
 	}),
 	z.strictObject({ kind: z.literal('denied'), state: accessState }),
 	z.strictObject({ kind: z.literal('not-dispatched'), reason: boundedReference }),
-	z.strictObject({ kind: z.literal('failed'), reason: boundedReference }),
-	z.strictObject({ kind: z.literal('ambiguous'), reason: boundedReference }),
+	z.strictObject({
+		kind: z.literal('failed'),
+		reason: boundedReference,
+		detail: resourceFailureDetailSchema.optional(),
+	}),
+	z.strictObject({
+		kind: z.literal('ambiguous'),
+		reason: boundedReference,
+		detail: resourceFailureDetailSchema.optional(),
+	}),
 	z.strictObject({ kind: z.literal('result-expired') }),
 ]);
 export type OperationKey = z.infer<typeof operationKeySchema>;

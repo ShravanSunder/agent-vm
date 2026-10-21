@@ -534,7 +534,20 @@ async function executePreparedPortalCall(props: {
 						toolName: call.tool.toolName,
 					},
 				})
-			: itemError({ input, error: result });
+			: itemError({
+					input,
+					error:
+						(result.kind === 'failed' || result.kind === 'ambiguous') &&
+						result.detail?.kind === 'mcp-upstream-failure'
+							? {
+									kind: result.detail.code,
+									message: result.detail.message,
+									namespace: result.detail.namespace,
+									toolName: result.detail.toolName,
+									upstream: result.detail.upstream,
+								}
+							: result,
+				});
 	} catch {
 		return itemError({ input, error: { kind: 'ambiguous', reason: 'dispatch-unconfirmed' } });
 	}

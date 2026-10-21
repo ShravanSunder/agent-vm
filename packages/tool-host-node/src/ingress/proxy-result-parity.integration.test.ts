@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 
+import * as dispatch from '@agent-collaboration/tool-engine/dispatch';
 import { createPortalCore, createUpstreamMcpClientRuntime } from '@agent-vm/mcp-portal/core';
 import { createPortalHttpApp } from '@agent-vm/mcp-portal/mcp-proxy';
 import { deriveAgentBearerToken } from '@agent-vm/mcp-portal/portal-auth/agent-bearer-token';
@@ -7,7 +8,7 @@ import { serve } from '@hono/node-server';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 import { startNodeHost } from '#node-host/node-host-startup';
 import {
@@ -65,10 +66,37 @@ const cases = [
 ] satisfies readonly { readonly name: string; readonly arguments: Record<string, unknown> }[];
 
 for (const mode of ['indirect', 'direct'] as const) {
-	it(`${mode}: keeps real Node list/search/describe/call text bytes identical to the 08f9e426 proxy`, async () => {
+	it(`${mode}: keeps real Node list/search/describe/call text bytes identical to the 08f9e426 proxy`, async ({
+		onTestFinished,
+	}) => {
+		// Pin only the diagnostics clock; real HTTP, connector timers and effects remain real.
+		const observed = new Map<string, dispatch.ResourceResult>();
+		const createDispatcher = dispatch.createCapabilityDispatcher;
+		// Observe the actual dispatcher result; no backend, connector or transport is replaced.
+		const factory = vi
+			.spyOn(dispatch, 'createCapabilityDispatcher')
+			.mockImplementation((options) => {
+				const dispatcher = createDispatcher(options);
+				return {
+					...dispatcher,
+					dispatch: async (request) => {
+						const result = await dispatcher.dispatch(request);
+						observed.set(request.item, result);
+						return result;
+					},
+				};
+			});
+		onTestFinished(() => {
+			factory.mockRestore();
+		});
+		const clock = vi.spyOn(Date, 'now').mockReturnValue(1792551600000);
+		onTestFinished(() => {
+			clock.mockRestore();
+		});
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
+		let alphaClosed = false;
 		const masterKey = Buffer.alloc(32, 17);
 		const runtime = createUpstreamMcpClientRuntime({
 			servers: [{ namespace: 'alpha', transport: 'streamable-http', url: alpha.url }],
@@ -144,17 +172,30 @@ for (const mode of ['indirect', 'direct'] as const) {
 			);
 			if (!isTransport(transport)) throw new Error('Missing legacy transport');
 			await oldClient.connect(transport);
-			await Promise.all(
-				cases.map(async (request) => {
-					const expected = await oldClient.callTool(request);
-					const actual = await current.client.callTool(request);
-					const { ['_meta']: metadata, ...surface } = actual;
-					expect(metadata).toMatchObject({
-						'io.modelcontextprotocol/serverInfo': { name: 'tool-host-node', version: '0.0.153' },
-					});
-					expect(surface, JSON.stringify(request)).toEqual(expected);
-				}),
-			);
+			const compare = async (request: {
+				readonly name: string;
+				readonly arguments: Record<string, unknown>;
+			}): Promise<void> => {
+				const expected = await oldClient.callTool(request);
+				const actual = await current.client.callTool(request);
+				const { ['_meta']: metadata, ...surface } = actual;
+				expect(metadata).toMatchObject({
+					'io.modelcontextprotocol/serverInfo': { name: 'tool-host-node', version: '0.0.153' },
+				});
+				if (JSON.stringify(request).includes('provider-error'))
+					process.stdout.write(
+						JSON.stringify({ mode, case: 'isError:true', old: expected, current: surface }) + '\n',
+					);
+				expect.soft(surface, JSON.stringify(request)).toEqual(expected);
+				expect(JSON.stringify(surface)).not.toContain(secretCanary);
+				expect(JSON.stringify(surface)).not.toContain(headerCanary);
+			};
+			await Promise.all(cases.map(compare));
+			// isError closes the connector client; keep it after concurrent healthy requests.
+			await compare({
+				name: 'mcp_portal_call',
+				arguments: { calls: [call('provider-error', 'fail')] },
+			});
 			if (mode === 'direct') {
 				const directApp = createPortalHttpApp({
 					agentBearerAuth: { masterKey, authorizationHeaderName: 'authorization' },
@@ -191,6 +232,52 @@ for (const mode of ['indirect', 'direct'] as const) {
 					);
 				}
 			}
+			alpha.breakCalls();
+			const brokenRequest = {
+				name: 'mcp_portal_call',
+				arguments: { calls: [call('broken-stream')] },
+			};
+			expect(observed.get('provider-error')).toMatchObject({
+				kind: 'failed',
+				detail: { kind: 'mcp-upstream-failure', upstream: { failureClass: 'tool_error' } },
+			});
+			const beforeBroken = alpha.effects.length;
+			const expectedBroken = await oldClient.callTool(brokenRequest);
+			const { ['_meta']: brokenMetadata, ...actualBroken } =
+				await current.client.callTool(brokenRequest);
+			expect(brokenMetadata).toBeDefined();
+			expect(actualBroken).toEqual(expectedBroken);
+			expect(JSON.stringify(actualBroken)).toContain('upstream_call_failed');
+			expect(alpha.effects).toHaveLength(beforeBroken + 2);
+			expect(observed.get('broken-stream')).toMatchObject({
+				kind: 'ambiguous',
+				detail: { kind: 'mcp-upstream-failure', upstream: { phase: 'call_tool' } },
+			});
+			const effectsBefore = alpha.effects.length;
+			await alpha.close();
+			alphaClosed = true;
+			const transportRequest = {
+				name: 'mcp_portal_call',
+				arguments: { calls: [call('transport-failure')] },
+			};
+			const expectedTransport = await oldClient.callTool(transportRequest);
+			const { ['_meta']: transportMetadata, ...currentTransport } =
+				await current.client.callTool(transportRequest);
+			expect(transportMetadata).toBeDefined();
+			process.stdout.write(
+				JSON.stringify({
+					mode,
+					case: 'refused transport after catalog discovery',
+					old: expectedTransport,
+					current: currentTransport,
+				}) + '\n',
+			);
+			expect.soft(currentTransport).toEqual(expectedTransport);
+			expect(alpha.effects).toHaveLength(effectsBefore);
+			expect(observed.get('transport-failure')).toMatchObject({
+				kind: 'failed',
+				detail: { kind: 'mcp-upstream-failure', upstream: { phase: 'connect' } },
+			});
 		} finally {
 			await current.client.close();
 			await oldClient.close();
@@ -201,7 +288,7 @@ for (const mode of ['indirect', 'direct'] as const) {
 				oldServer.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
 			await host.retire();
-			await Promise.all([alpha.close(), beta.close()]);
+			await Promise.all([...(alphaClosed ? [] : [alpha.close()]), beta.close()]);
 		}
 	});
 }

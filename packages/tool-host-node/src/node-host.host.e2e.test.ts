@@ -368,7 +368,16 @@ describe('J1 Node: built HTTP and spawned stdio hosts', () => {
 				results: {
 					'stdio-error': {
 						ok: false,
-						error: { kind: 'ambiguous', reason: 'resource-authority-unconfirmed' },
+						error: {
+							kind: 'upstream_call_failed',
+							namespace: 'beta',
+							toolName: 'fail',
+							upstream: {
+								failureClass: 'tool_error',
+								phase: 'call_tool',
+								transport: { kind: 'stdio' },
+							},
+						},
 					},
 				},
 			});
