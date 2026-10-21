@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 export interface McpToolListPage {
 	readonly tools: Tool[];
+	readonly cacheScope: 'private';
+	readonly ttlMs: 60000;
 	readonly nextCursor?: string;
 }
 export const maximumToolListPageBytes = 1024 * 1024;
@@ -11,7 +13,7 @@ const cursorSchema = z
 	.regex(/^(?:0|[1-9]\d*)$/u)
 	.transform(Number)
 	.pipe(z.number().int().nonnegative().safe());
-const emptyPageBytes = '{"tools":[]}'.length;
+const emptyPageBytes = '{"tools":[],"cacheScope":"private","ttlMs":60000}'.length;
 const cursorFieldBytes = ',"nextCursor":""'.length;
 
 /** Internal arithmetic for decimal cursors and already UTF-8-measured tool JSON. */
@@ -56,6 +58,8 @@ export function paginateMcpTools(tools: readonly Tool[], cursor?: string): McpTo
 	const nextOffset = offset + selectedTools.length;
 	return {
 		tools: selectedTools,
+		cacheScope: 'private',
+		ttlMs: 60000,
 		...(nextOffset < tools.length ? { nextCursor: String(nextOffset) } : {}),
 	};
 }

@@ -33,7 +33,7 @@ serving; this package does not infer client behavior from its name.
 
 `listTools(mode, cursor?)` returns an MCP result page (`tools`, `nextCursor?`).
 Direct pages contain whole tools and are at most 1 MiB of serialized UTF-8 JSON,
-including the cursor. An indivisible tool over that budget is refused. Hosts
+including the cursor, `cacheScope: "private"` and `ttlMs: 60000`. JSON-RPC framing is outside this result budget. An indivisible tool over that budget is refused. Hosts
 return the page and pass the next request's cursor back unchanged. Indirect lists
 remain four tools; list and search retain their existing bounded result pages.
 

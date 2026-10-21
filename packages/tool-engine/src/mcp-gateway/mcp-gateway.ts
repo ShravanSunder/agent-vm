@@ -345,7 +345,7 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 			);
 			if (mode === 'indirect') {
 				if (cursor !== undefined) throw new Error('Indirect tools/list has no cursor.');
-				return { tools: [...searchTools] };
+				return { tools: [...searchTools], cacheScope: 'private', ttlMs: 60000 };
 			}
 			return paginateMcpTools(
 				[...(await prepareCatalog()).tools.map((tool) => tool.descriptor), ...searchTools],
