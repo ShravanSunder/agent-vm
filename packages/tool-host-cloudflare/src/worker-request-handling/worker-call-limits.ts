@@ -29,7 +29,10 @@ export function createBatchScheduler(): {
 export function serializedBytes(value: unknown): number {
 	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
-import type { DispatchInvocation, ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
+import type {
+	DispatchInvocation,
+	ResourceResult,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	projectProxyMcpResult,
 	type PortalBatchResult,

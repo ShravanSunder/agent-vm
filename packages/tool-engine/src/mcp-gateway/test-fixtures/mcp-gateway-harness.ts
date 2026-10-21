@@ -1,41 +1,44 @@
 import { createPortalAgentIdentity } from '@agent-collaboration/tool-access/authorization';
 import {
-	assessAccessInput,
 	type AssessAccessInput,
+	assessAccessInput,
 } from '@agent-collaboration/tool-access/contracts';
-import {
-	type DispatchInvocation,
-	type ToolBackend,
-	type BackendKind,
-	type ResourceResult,
-	type OperationPort,
-	type OperationRecord,
-	type ApprovalPort,
-} from '@agent-collaboration/tool-engine/dispatch';
+import type {
+	DispatchInvocation,
+	ResourceResult,
+	OperationRecord,
+	OperationPort,
+	ApprovalPort,
+	ToolBackend,
+	BackendKind,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import { z } from 'zod';
 
-import type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';
+import { createAgentCatalogViewCache } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
+import type { GatewayApprovalTokens } from '#mcp-gateway/call-approvals/models/call-approval';
 import {
-	createMcpGateway,
 	type McpGateway,
 	type PreparedGatewayCatalog,
+	createMcpGateway,
 } from '#mcp-gateway/mcp-gateway';
-import { createPortalSessionManager } from '#mcp-gateway/portal-session';
-import type { PortalBatchResult } from '#mcp-gateway/portal-tools';
+import type { PortalBatchResult } from '#mcp-gateway/portal-tools/models/portal-tool-contracts';
 
 export const revision = { owner: 'fixture-authority', revision: 'v1' };
+
 export const frozenNames = [
 	'alpha__ask__645775a667',
 	'alpha__read__151160dc30',
 	'beta__ask__7e2e2be604',
 	'beta__read__08da93d672',
 ];
+
 export const inputSchema = {
 	type: 'object' as const,
 	properties: { value: { type: 'integer' } },
 	required: ['value'],
 	additionalProperties: false,
 };
+
 interface GatewayTestHarness {
 	gateway: McpGateway;
 	effects: DispatchInvocation[];
@@ -46,9 +49,11 @@ interface GatewayTestHarness {
 	setPrepared: (transform: (catalog: PreparedGatewayCatalog) => PreparedGatewayCatalog) => void;
 	setResult: (result: ResourceResult) => void;
 }
+
 export function retainCatalog(catalog: PreparedGatewayCatalog): PreparedGatewayCatalog {
 	return catalog;
 }
+
 export function createHarness(
 	throwAt?: 'access' | 'backend' | 'backend-after-effect',
 	discovery: 'complete' | 'incomplete' | 'duplicate' = 'complete',
@@ -132,7 +137,7 @@ export function createHarness(
 		agentScopeId: 'scope-a',
 		source: 'mcp-proxy-bearer',
 	});
-	const sessions = createPortalSessionManager({
+	const sessions = createAgentCatalogViewCache({
 		accessPolicy: {
 			enabledNamespaces: ['alpha', 'beta'],
 			enabledNamespacesByAgent: {},
@@ -258,6 +263,7 @@ export function createHarness(
 		},
 	};
 }
+
 export function callInput(
 	toolName = 'read',
 	id = 'original-item',
@@ -265,11 +271,13 @@ export function callInput(
 ): unknown {
 	return { calls: [{ id, namespace: 'alpha', toolName, arguments: args }] };
 }
+
 export function output(result: PortalBatchResult, id: string): Readonly<Record<string, unknown>> {
 	const value = result.results[id];
 	if (value === undefined || !value.ok) throw new Error(JSON.stringify(result));
 	return value.output;
 }
+
 export function identities(value: unknown): readonly string[] {
 	return z
 		.object({ tools: z.array(z.object({ namespace: z.string(), toolName: z.string() })) })

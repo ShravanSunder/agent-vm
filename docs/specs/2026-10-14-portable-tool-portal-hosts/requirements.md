@@ -1,189 +1,167 @@
-# Requirements: portable tool access
-
-[Overview](index.html) · [HTML](requirements.html) · [Specification](2026-10-14-portable-tool-portal-hosts.md)
-
-Shravan wants agents on different computers and harnesses to use his tools through MCP. A cloud entry connects ordinary remote MCPs, protected cloud services, and configured computer services. A computer may run macOS tools, controlled CLIs, a VM executor, or another backend. Execution technology does not define the portal.
-
-Reusable identity, authorization, credential and approval components must work independently of both existing portal packages. This is a distributed system design, rather than an attempt to put today's entire Node/controller runtime in a Worker.
-
-The owner narrowed this work to **Tool Portal, MCP Gateway and related access components**, not all of Agent VM (Fleet Framework F-36). Workspace configuration, Tool Portal's control API and the reusable React control-surface package are in scope. The console service that will most likely host that surface (F-57, provisional) is not; nor are the fleet registry, agent hosting, collaboration channels and AgentStudio daemon remain their own products.
-
-This document owns authorized needs and limits. The [Specification](2026-10-14-portable-tool-portal-hosts.md) owns observable behavior; [Program Design](program-design.md) proposes its realization; [Verification Design](verification-design.md) plans proof. These documents do not establish implementation or acceptance.
-
-## The owner's picture
-
-```mermaid
-flowchart TB
- Agents[Agents and harnesses] -->|MCP calls and operation lookup| Tools[Portable tool access]
- Owner[Owner or provisioner] -->|enroll and assign access| Tools
- Approver[Authorized approver] -->|exact decision| Tools
- Tools -->|configured authenticated access| Resources[Cloud and computer resources]
- Tools -->|redacted approval request| Surface[Chosen approval surface]
-```
-
-
-**Service groups do not fix public endpoint count.** The owner first described four endpoints, then reopened that requirement: callers may see different groups through one gateway. Separate URLs remain a deployment isolation option. Neither one URL nor four supplies tool authorization by itself.
-
-Cloudflare's managed **MCP Portal** is an outer product that may aggregate our gateway. Our current **`@agent-vm/mcp-portal` package** is different. The owner requested a rename; **MCP Gateway** is the proposed name for our server role. Exact npm names remain a structural proposal.
-
-## Authorized needs
-
-All rows are authorized, required outcomes; priority assigner: Shravan, with no relative delivery order selected. U1–U15 preserve the earlier owner conversation and repository invariants. U16–U22 carry the later explicit UI corrections and [Fleet Framework decisions](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md#owner-decisions-in-this-design-verbatim), rather than narrowing needs to fit current code. F-41 supersedes the earlier agent-authored manual-editor interaction; U16–U18 outcomes remain.
-
-| ID | Consumer | Authorized outcome and reason |
-| --- | --- | --- |
-| `U1` | Library integrator | Host portable components in a Cloudflare Worker or Node/Mac process with equivalent security semantics. Unsupported features fail explicitly. |
-| `U2` | Harness integrator | Use MCP from Hermes, Codex, Claude Code, Cursor, Pi and other clients. Client adapters address limitations; harness/model names are not identities. |
-| `U3` | Owner and callers | Preserve caller isolation, complete permission profiles, revocation and exact-call approval throughout the distributed path. |
-| `U4` | Operator | Compose registered local and remote services, including Workers, independently of execution placement. |
-| `U5` | Account holder | Keep provider credentials outside agents. Use authenticated downstream MCPs or controlled MCP/CLI backends without disclosing their grants. |
-| `U6` | Caller and operator | Recover known operations across disconnects, handler replacement and restarts. Logical sessions outlive transports; uncertain effects stay visible. |
-| `U7` | Harness integrator | Select full tool exposure or compact search/describe/call presentation. Native client search/code mode needs no second server-side code runtime. |
-| `U8` | Execution integrator | Support configured native tools, controlled CLI families and different execution services. Gondolin is one adapter, not a prerequisite. |
-| `U9` | Existing operator | Preserve managed controller authority, generation fences, credential custody, artifact access, storage boundaries and protected administration. |
-| `U10` | Fleet operator | Use a cloud MCP Gateway in front of remote providers and computer MCP services. Computers expose configured resources; agents may access different groups. |
-| `U11` | Collaboration operator | Keep collaboration a distinct MCP service, behavior and state owner. Shared ingress or identity code must not merge tool and collaboration permissions. |
-| `U12` | Package consumer | Use shared identity, authorization, credentials and approvals without importing portal runtime, full Node hosting, desktop integration or a VM provider. |
-| `U13` | Fleet owner | Identify agents, machines and services separately. Trusted administration enrolls and assigns them; deployment credentials can rotate/revoke separately. Connecting does not register privileges. |
-| `U14` | Operator and harness | Present approvals through Hermes, Router, the IDE or another authorized surface using a common decision contract. Webhook delivery is distinct from a decision. |
-| `U15` | Owner | Integrate with the distributed Codex/Agent Router's central fleet and machine services through narrow identity and approval contracts. Follow applicable standards and avoid unnecessary service, account and operating costs, including per-agent paid human accounts, without designing those projects here. |
-| `U16` | Workspace owner or manager; agent integrator | Register an agent in a harness, configure the workspace's tool allowance and the agent/persona's subset, and apply that allowance to every named-workspace call. Multi-workspace discovery is a union, not a security partition. Managers may grant connected team-account use; personal-account consent remains separate. Basis: F-10–F-12, F-23/F-24, F-27/F-29/F-32/F-35. |
-| `U17` | Workspace operator | Inspect access and decide proposed changes through a clear React + Base UI + official shadcn interface using Bridge's theme, `cn` and `@shadcn/lint`, with visible validation, conflict, unavailable and failure states. Manual editors are not the interaction (F-41); the stack and visible-state outcomes remain. Basis: direct owner rejection of Hono JSX and explicit tooling URLs; F-41; browser baseline in the WIP review. |
-| `U18` | Owner and security operator | Review an attributable event for every security or permission change, including its scope and before/after meaning and, for a chat-proposed change, who asked and which manager accepted, without logging credentials. On-behalf metadata describes the requester; it never switches account authority. Basis: F-28/F-30/F-35/F-43. |
-| `U19` | Workspace owner or manager | Understand what the app is for and what each agent can use. One view shows how a workspace's agents, tools and accounts are associated, filtered by any of them, and says for any agent and tool whether it is usable and, when it is not, why. Separate places are justified only for the audit log and, possibly, accounts (F-42). Search finds any agent, tool, integration or account. Basis: F-42; owner: “whats the ui even sukppsoe dto d o? i dunno what he sidebar does”, “so that i can … serach to find the righ tintegration”, “yes its two problems”. |
-| `U20` | Workspace owner or manager | Change access by describing it in chat. A fast model turns the request into generated UI that shows exactly what would change; the owner's only action is Accept or Deny, and nothing changes without Accept. Chat wording never grants access by itself. Basis: F-41, F-43; owner: “edit shsoudl be thorkugh chat not thorugh some screen”, “its by chat so i dont ahve to do anythnign uses a fast model and only gerative ui to acept deny”. |
-| `U21` | Workspace owner or manager | See, for each integration, what it needs before agents can use it: nothing, an API key or token, or an OAuth sign-in. Supply it in the app without it ever being shown back, sent to agents or given to the model; or start the provider's own OAuth screen. Then set the account's provider-specific options (for example, which Gmail, Calendar or Drive operations are allowed). Basis: F-47 parts 2–3; U5. |
-| `U22` | Workspace owner or manager; authorized approver | Configure which tools or operations need a person's approval, and see and decide pending approval requests for that workspace's agents, as one approval surface among the selected presenters (U14). Basis: F-47 part 1; D-9 modes; U3, U14. |
-
-Owner evidence includes: “all agents should communicate with MCP”; “generic MCP gateway; Hermes is one possible client”; “tool portal shouldn't be tied to gondolin”; credentials must not leak to agents; “we need agent/machine identity”; and the explicit full-design request. `U12` incorporates the correction that shared security cannot live only inside Tool Portal. `U14` and `U15` incorporate the latest Router/IDE integration and cost constraints.
-
-## Consumers and success
-
-### Agent and machine identity
-
-An **agent operator** authorizes agent types and their launchers; trusted launchers enroll launched instances automatically. External agents are registered separately. Each admitted logical agent has a complete assignment and separately revocable credentials. A session is a conversation/run association, not an agent credential. One logical agent may have several deployment credentials without sharing a secret.
-
-### Configured resources
-
-A **computer operator** registers a computer service, its authenticated service/machine relationship and a finite capability set. Google CLI and unrelated CLIs may share one configured credentialed backend. A privileged backend may run anywhere its authenticated route and custody policy permit.
-
-### Shared security consumers
-
-A **library integrator** composes security and execution components without importing host effects.
-
-### Approval surfaces
-
-A **human approver** sees the caller, target and exact action and decides through an authorized surface. A **Router integrator** may supply trusted registration and approval adapters; the gateway does not assume a session ID already provides durable identity.
-
-Success means every authorized need has an observable contract, an owner and a proof route. Extraction alone does not establish distributed authentication, durable approval or remote execution.
-
-### What the app is for — U16–U20
-
-The app has one job: let a workspace owner or manager **see what their agents can use, and change it by asking**. The owner confirmed it splits into two problems (“yes its two problems”):
-
-1. **Understanding.** Which agent can use which tool, through which account, in which workspace, and why not when it can't. Tools, agents and most account facts are associations of the same data, so one view filtered by any of them answers this. Only the audit log and, possibly, accounts justify places of their own (F-42).
-2. **Changing.** The owner describes a change in chat. A fast model generates it as a proposal on screen, and the owner Accepts or Denies (F-41, F-43).
-
-**The current screen.** The rejected review mock splits that one association into Tools, Agents and Accounts editors. Answering “what can Calendar assistant use?” takes three pages, and every change is a manual edit:
-
-![Current review mock: the Tools page, one of three editor pages that each show part of the same agent–tool–account association](assets/current-review-mock-tools.png)
-
-*Current review mock (fixture data, http://127.0.0.1:56071), captured 2026-10-19. The sidebar lists entity editors; nothing on this page says what any agent can actually use.*
-
-The desired screen is one filtered access view with a chat panel whose proposals carry Accept and Deny. A generated picture of it is a gap (no image generation route in this session); the [Specification](2026-10-14-portable-tool-portal-hosts.md#c12--chat-request-to-accepted-change) pins what the owner observes, and the [explainer](tool-access-explainer.md) shows the end-to-end example.
-
-The current product has agent/profile configuration and OAuth forms, but no workspace registration, access explanation or chat-led change. The [React review prototype](../../wip/2026-10-18-agent-vm-review/review.html#react-evidence) is rejected as the interaction model; its official components, theme and validation observations may be reused. Its captures are UI evidence only. Production scope, identity, credential, model and audit integration remain missing.
-
-## The distinct user journeys
-
-These are views of the authorized U rows, not additional requirements. Source observations describe current code; no new hosted behavior or UI has been observed.
-
-### Workspace owner or manager — U16, U17, U19, U20
-
-| Journey | Current pain or evidence | Desired observable difference |
-| --- | --- | --- |
-| Find out what an agent can use, and why not | Review mock: three editor pages; no page says what an agent can use or why a tool is unavailable. Owner: “hard to udnetandc what each screen does”. | One view filtered by agent, tool or account shows usable, usable with approval, or blocked, with the missing condition named. |
-| Ask for a change → read the proposal → Accept or Deny → see the result | Review mock: manual switches, forms and Save buttons. Owner: “edit shsoudl be thorkugh chat not thorugh some screen”. | A chat request becomes an exact proposal; nothing changes until Accept; the applied, conflicting, refused or unconfirmed result is shown truthfully. |
-| Find a tool, integration, agent or account | No search exists. Owner asked to “serach to find the righ tintegration”. | Search reaches any of them and opens the access view filtered to it. |
-| Connect a team account | Review mock: a stubbed confirmation of one pre-seeded account. | Account connections show status and start the provider's own sign-in; chat can propose the connection, but consent happens at the provider. |
-
-### Owner and computer operator — U3, U4, U5, U10, U13, U15
-
-| Journey | Current pain or evidence | Desired observable difference |
-| --- | --- | --- |
-| Enroll → assign complete permissions → register resource → rotate/revoke | Current standalone registration is a fixed configured set; Router session identity is not authenticated agent enrollment. Dynamic fleet outcome remains unobserved. | Trusted registration and separate revocation, with explicit caller-specific resource access. |
-
-### Agent and harness integrator — U2, U6, U7, U10
-
-| Journey | Current pain or evidence | Desired observable difference |
-| --- | --- | --- |
-| Connect → discover permitted tools → invoke/await decision → recover operation | Node MCP surfaces and SDK contracts exist. Cross-host caller identity and recovery proof is missing; exact runtime usability for every harness is unknown. | The same admitted work remains understandable across client type and replacement connections. |
-
-### Library integrator — U1, U8, U9, U12
-
-| Journey | Current pain or evidence | Desired observable difference |
-| --- | --- | --- |
-| Import security → compose capability adapters → select host → retain controls | Current public exports reach Node hosting/provider code; [source map](program-design.html#program--current-code-and-the-required-change). | Independent security consumers and portable hosts without weakening managed execution. |
-
-### Authorized approver — U3, U14
-
-| Journey | Current pain or evidence | Desired observable difference |
-| --- | --- | --- |
-| Inspect caller/target/action → decide exact request → inspect recorded outcome | Managed Hermes presenter and controller decision path exist by source. Generalized Router/IDE delivery and authenticated remote decisions remain unobserved. | Same challenge meaning through selected presenters, one authoritative decision and honest pending/uncertain outcomes. |
-
-Exact-action approval presenters remain adapter consumers. This cycle adds the access view and chat-led change; it does not require rebuilding Hermes, Router or the IDE's approval presentation, and it adds no approval inbox unless D7 selects one.
-
-## Scope and limits
-
-This cycle designs package responsibilities, MCP ingress/egress, caller/machine identity, policy, credential custody, approval interaction, operation recovery and host composition. Existing managed authority remains authoritative.
-
-Source, config and infrastructure stay read-only. No provisioning, credential migration, deployment, Gondolin patch, Hermes distribution change or Router/coordination implementation is authorized. This is not a hypervisor, VM scheduler, arbitrary remote shell, general fleet database or new identity-provider product.
-
-The focus is tool resources, access policy and credentialed runtimes. Agent launching and identity enrollment are external integrations; this design does not turn the gateway into an agent host. An agent can belong to several workspaces and use their configured team resources (F-32), but an incoming requester does not change the agent's own access or select that requester's personal accounts (F-35). Personal-account sharing through a manager is excluded.
-
-HTTPS MCP is the primary remote boundary. Local sockets may connect processes on one machine. Stdio can remain an explicit Node compatibility adapter. A Rust rewrite is not needed to define these boundaries. The tool gateway neither owns the harness conversation nor replicates its history.
-
-Managed and standalone policy inputs remain distinct until a reviewed hard cutover. Profiles stay complete with no inheritance. Shared code does not mean a globally writable approval database. Identity, authorization and approval remain separate responsibilities even if a deployment serves them together.
-
-The new public contract retires the legacy standalone approval protocols; it does not translate their tokens or uncertain calls into new authority. Existing managed control and account consent remain preserved. A deployment cutover must account for outstanding legacy work before enabling affected capabilities; changing a package name or closing a connection is insufficient evidence.
-
-Use existing standards where they fit the boundary; document platform-specific adapters and unsupported client paths explicitly. A working draft is prior art until deliberately adopted. A new paid tier, hosted service or bespoke protocol needs a concrete capability and cost justification. This is an operating-cost constraint, not a claim that the current Cloudflare account is free or that hosted usage has no cost.
-
-### Shared fleet direction
-
-The [Fleet Framework parent](../2026-10-18-fleet-framework/2026-10-18-fleet-framework.md) carries current shared meaning. The older WIP concept record is evidence only where it differs. A persona is a definition, not a harness, transport session or credential. Registration into a workspace does not require running the agent loop on a machine we control.
-
-Those directions constrain the next contracts; they do not supply an implemented identity issuer or a distributed approval authority. Persona-to-person relationships, agent enrollment/credential carriage, auto-judge policy and the authoritative approval settlement protocol still need their own definitions. An acts-for label does not grant access to that person's accounts. Fleet write leases do not set tool-execution leases, approval lifetimes or operation-retention periods.
-
-Automatic identity enrollment must preserve resource consent. Today's grant to a configured agent cannot become a grant to every future instance of its persona through a key rename. A future template-based grant needs explicit authorization for the instances and limits it covers. The concrete instance remains the caller and the owner of its operation/artifact history; sharing a persona or permission profile does not merge those histories.
-
-F-32 selects union discovery across a bot's workspaces. Each call names one workspace and must fit its allowance for that agent/persona; another membership does not widen that call. The bot may deliberately name another workspace it is allowed to use, so this mechanism is attribution and mistake prevention, not isolation between mutually distrusting workspaces. F-34 makes each host or VM a separate boundary, independent of physical hardware. File/ambient credential isolation still requires its own host boundary; a tool profile supplies neither.
-
-F-27/F-29/F-35 admit workspace-local manager grants for **team** accounts only. Personal accounts retain their owner's consent. Provider consent, account classification, the workspace grant and an agent's tool allowance remain distinct. Security/permission changes always produce an audit event (F-28); audit ownership, retention and cross-product aggregation remain with the parent Q-F7 decision.
-
-The UI stack is selected: React, Base UI, official shadcn, `cn` and `@shadcn/lint`, with a Bridge-derived theme. Framework choice does not choose an identity issuer, make browser validation authoritative, or create an audit service.
-
-Chat-led change is generative UI from a fast model (F-43). The model proposes; it never decides, applies or holds a credential. Out of scope: automatic application of any change, free-text editing of configuration, a model with write access, and a replacement fleet registry or identity store.
-
-## Decisions that remain open
-
-| ID | Unselected meaning | Effect of deferral |
-| --- | --- | --- |
-| `D1` | Independent computer admission during cloud loss versus fresh cloud admission for every new call. | No offline-admission promise. Existing work can still be safely contained and looked up. |
-| `D2` | The shared backbone is the intended identity home; its issuer/bootstrap, persona and instance relationships, resource consent for future instances, launcher authority, credential carriage through ingress, original-caller proof and revocation freshness remain to be contracted. | No claim of preserved caller identity through managed MCP Portal or of an implemented production issuer. Until D2 lands, identity, workspace membership and managers come from explicit configuration (F-53); the seam stays shaped for the fleet contract. |
-| `D3` | Distributed approval routing through agent-collaboration is the direction; decision-record ownership, grant consumption, auto-judge rules, composition of cloud and resource approval gates, and continuation after expiry, disconnect or gateway loss remain to be contracted. | No cloud override, shared writable decision record, implicit merging of approval gates or continuation default is adopted. |
-| `D4` | Identify tool hosts only, restrict source machines per resource, or enroll every calling machine. | Earlier owner question remains pending. Source-machine policy cannot be silently selected. |
-| `D5` | Concrete finite bounds, retention/deletion rules and recovery/revocation service levels. | Bounds are required but no operational values are declared ready. |
-| `D6` | Parent Q-F7: authoritative audit persistence, readership, retention and cross-product aggregation. Account classification authority also needs the parent/tool account contract. | No unlogged security mutation or manager self-assertion that a personal account is a team account. |
-| `D7` | F-47 lists “approvals system and config” as a part of this app, read here as: this app is one approval surface (U22) beside Hermes, IDE and Router presenters. Awaiting the owner's confirmation of that reading. | Until confirmed, approval configuration is designed; the pending-approval place is designed but marked unconfirmed. |
-| `D9` | ~~How this app works with the fleet and Tool VM control~~ **Settled by F-49:** option (c). This app ships now and reads fleet and Tool VM state through their verified contracts. Its UI is a separate, reusable package with concerns separated, and the router's function list is pluggable per product, so a shared shell can follow. F-57 (provisional) answers who owns it: a separate console service that talks to both Tool Portal and the fleet will most likely own the UI and the request router. This design supplies Tool Portal's control API and the UI package; the console itself is outside this scope (F-36). | No fleet or Tool VM control action happens through Tool Portal; the console reaches those through their owners' APIs. |
-| `D10` | What the “built-in scan screen” is (F-47 part 4). Candidate readings: scanning a new integration's tools when it is added; scanning a QR code to connect a device or agent; scanning a workspace for risky or unused access. | Not designed until the owner says which. |
-| `D8` | Parent Q-F9 remainder (surface settled by F-46: a request bar with composed UI, no chat thread): which cheap fast model; F-48 settles the route: through OpenRouter, Jev as the router model, alternatives as fallback behind one abstraction. Still open: what current state the model may read to propose (F-20 allows the provider to see context). F-57 makes the console service the likely caller. The F-45 experiment informs the choice but does not settle it. On 16 frozen synthetic cases, one Jev encoding matched 4 and Haiku 14, and Jev was about five times faster. Two Jev proposals added unrequested removals that validation accepted. So F-48's Jev route is still the owner's to confirm or change. | The proposal and Accept/Deny contract holds for any choice; the model holds no authority. No model is selected by this design. |
-
-Target-machine authentication and caller isolation are required regardless of `D4`. The backbone direction does not make existing Router session records into authenticated agent identities. Identity and approval integration must be checked against its owning contract and implementation before claiming reuse.
-
-## Evidence boundary
-
-Agent VM source baseline: `8535fdd433dc90fed627ee7a05f63e59d58cf8ee`. Portable dispatch ports exist, but standalone hosting and provider clients include Node dependencies; approvals use different mechanisms. [Program Design](program-design.md#current-code-and-the-required-change) supplies decisive anchors.
-
-The latest corrections supersede older chapters assuming exactly four public endpoints, security owned entirely by Tool Portal, client labels as identity or three governing documents. Historical inputs are preserved under checkout `tmp/`; they are not competing contracts.
+# Requirements: take Tool Portal apart and put it back together
+
+[Specification](2026-10-14-portable-tool-portal-hosts.md) · [Program Design](program-design.md) · [Verification Design](verification-design.md)
+
+## What this work is
+
+agent-vm has two libraries for tools today: `@agent-vm/tool-portal` and `@agent-vm/mcp-portal`. They grew up together and each one mixes several jobs:
+- the rules for who may call what;
+- serving MCP to agents;
+- calling other MCP servers;
+- running agent-vm's own tools;
+- Node-only code.
+
+This work has two parts:
+1. **Take them apart** into pieces with one job each, and put agent-vm back together on those pieces. **Behaviour stays the same.** No new features.
+2. **Run the MCP proxy on a deployed, secured Cloudflare Worker.** The owner added this on 2026-10-20, and it's the one new thing. It brings organizations, three kinds of tools and analytics with it, described under "What changes".
+
+**Why take them apart:**
+- each piece can be understood, tested and changed on its own;
+- the rules can be used without pulling in the server;
+- the same engine can run on a machine and on a Worker;
+- code mode can be added later, in one place.
+
+## What must stay the same
+
+1. **The three ways in keep working unchanged.** Callers reach tools three ways today, and each keeps its tool names, inputs, results and artifact reads. The MCP routes move to MCP 2026-07-28 (owner, 2026-10-21; below):
+   - **agent-vm's private connection** between its gateway and its portal (portal, artifact and catalog operations). It isn't MCP.
+   - **the standalone Tool Portal:** its MCP tools (`tool_portal_*`, plus reading artifacts as MCP resources), which the Portal SDK uses, and its JSON-over-HTTP endpoint.
+   - **the MCP proxy's tools** (`mcp_portal_*`, or one MCP tool per configured tool).
+2. Agents see the same tools, under the same permissions, as today.
+3. A call that needs approval still needs it, and approvals work as they do today:
+   - in agent-vm, through its controller;
+   - in each standalone server, through its own signed approval token, as today. Both of today's paths are kept.
+4. Provider credentials never reach agents.
+5. agent-vm's controller keeps its authority over its own tools, VMs and credentials.
+6. Clients that speak MCP 2026-07-28 work, including the Portal SDK once it moves to the new client. A client that speaks only 2025-era MCP is refused (owner, 2026-10-21). agent-vm's private connection isn't MCP and doesn't change.
+7. Today's limits stay as they are, at the entry point where each applies. They're listed in the [Program Design](program-design.md#limits-today). The Worker has its own limits, listed there too.
+
+## What changes
+
+1. **The pieces.** The two libraries become these:
+
+   | New piece | Its one job |
+   | --- | --- |
+   | `@agent-collaboration/tool-access` | The rules: may this agent call this tool, and does the call need approval? It has no server code. |
+   | `@agent-collaboration/tool-engine` | The core: shows tools to agents, routes every call through one dispatcher, and talks to other MCP servers. |
+   | `@agent-collaboration/tool-host-node` | Runs the engine on a machine: takes connections, checks who's calling, and loads config. It replaces both of today's standalone servers and keeps each one's tools and results. |
+   | `@agent-collaboration/tool-host-cloudflare` | Runs the engine as a deployed, secured Cloudflare Worker that serves the MCP proxy's way in. |
+   | agent-vm's managed adapter | Plugs agent-vm's own tools and approvals into the engine. It stays inside agent-vm. |
+
+   When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Deleting the packages doesn't change any of the three ways in.
+
+2. **The proxy shows tools one of two ways, chosen for each client.** Each organization's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself, which the client's address says (`?tools=direct`):
+   - **The client defers (`client-deferred`), so it gets `direct`:** every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is a deliberate change.
+   - **The portal defers (`portal-deferred`), so it gets `indirect`:** only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
+   - **Exactly these two cases.** A client not known to defer gets `portal-deferred`. Either way the agent reaches the same tools, under the same permissions and approvals.
+   - **A big tool list still has to fit the client.** The full list has been measured at about 4.56 MB across 170 tools (Router PR #153), so in `client-deferred` it's sent in pages the client can take.
+
+3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
+   - **It refuses every caller it can't identify,** and it tells agents apart. Agents sign in with our own login, Better Auth, not Cloudflare Access.
+   - **Sign-in comes into this work.** The sign-in service (`@agent-collaboration/auth`, [people sign-in](../2026-10-20-people-sign-in/requirements.md)) runs Better Auth in its own Worker and gives people and agents tokens for the tool Worker. Its design now adds agents signing in as themselves (its `U8` and `R15` to `R17`), awaiting independent review.
+   - **Cloudflare is for machines only.** The Worker reaches registered computers through Cloudflare (Tunnel and Access), like Tailscale.
+   - **Its limits fit Workers and Durable Objects,** within the paid Workers plan the owner pays for.
+   - **When one Worker or one Durable Object isn't enough,** the work can be split across several (sharding), once measurement shows it's needed.
+   - Things a Worker can't run (stdio servers, configured CLIs, Tool VMs) stay on the Node host and agent-vm.
+
+4. **Organizations, for sign-in only.** You belong to an organization to reach anything inside it. It has two roles:
+   - the **owner**, who decides who may sign in and handles auth settings, nothing more;
+   - **members**.
+
+   Each organization has its own Durable Object, which holds who belongs to it and its sign-in settings; the logins themselves are kept by the sign-in service. Being the owner grants no tool access and no access to anyone's personal accounts.
+
+5. **Three kinds of tools, by whose credentials they use:**
+
+   | Kind | What it is | When it can be built |
+   | --- | --- | --- |
+   | **Organization tools** | remote MCP servers set up for the organization, called with the organization's credentials. Today's proxy already does this with its configured servers and secret headers. | in this work |
+   | **Per-user tools** | a person's own account, such as their Google account, that its owner has consented to a specific agent. It uses today's permission model: the owner's consent, Deny/Ask/Allow for reads and writes, and one-call approvals. An agent always acts with its own access; "on behalf of" is only a label in the log (fleet F-35). | next, after the first version; the design must not block it |
+   | **Computer tools** | an MCP server on a registered computer or VM, which the Worker reaches through Cloudflare (Tunnel and Access), like Tailscale. The Worker never runs them. | next, after the first version; the design must not block it |
+
+6. **Analytics and observability.**
+   - Each call sends one data point to Cloudflare Workers Analytics Engine: who called, which tool, the outcome and the timing. Analytics Engine samples data, which the owner accepted, so it's a view of usage, not a complete history.
+   - It never holds arguments, results or secrets.
+   - The data point has the same shape on every host.
+   - Logs, traces and errors on the Worker use Cloudflare's built-in Workers observability.
+
+## Not in this work
+
+Pruned by the owner on 2026-10-20. Several of these **were** asked for at different times, as separate tracks: workspace scopes, a React UI, audit, changing access by chat, people sign-in, and a central cloud entry. The owner also said "in essence this is 2 projects" and "lets move to the core functionality and design and split". So they belong in their own later projects, not in this core split. The owner's words for each are kept in the [independent inventory](../../wip/2026-10-20-tool-portal-scope-inventory/inventory.md). The owner's later Worker decisions (above) replace the earlier lines that excluded the Worker and computer tools.
+- Fleet and Router integration, including fleet-issued agent tokens.
+- Routing calls between machines in the fleet. The Worker reaching a computer's own MCP server is a computer tool, above.
+- A stored record of every call, and recovery of calls after a restart. Today's servers keep no such record.
+- Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.
+- A full audit trail of permission and security changes.
+- An agent acting with someone else's accounts. "On behalf of" stays a label in the log (fleet F-30, F-35).
+- A control API for proposing and deciding changes.
+- New limits or hardening beyond today's limits, except the Worker's own limits.
+
+## Later, if wanted
+
+- **Code mode in both `direct` and `indirect`:** code calls tools through a typed API. It's wanted eventually, not in this work. **Nothing here may block it:** `describe`'s per-tool helper keeps working on every host, including the Worker, and the full catalog compiler keeps working where it runs today.
+
+## Owner decisions on 2026-10-20
+
+- **Scope:** take apart and recompose, with no new features: "decompose and rethink composition and system ground up not add more features."
+- **Mode names:** `direct` and `indirect`.
+- **Deferred tool loading** (09:52 and 09:54 ET, relayed by Sun): it's per MCP portal, meaning per organization, and "each MCP portal instance connects to its downstream MCPs at startup". What it exposes is "DYNAMIC, decided per connecting client": "if the client supports deferred MCP/tool loading → give it everything (full tool list) and let the client defer. If the client doesn't → the portal does the deferred loading itself." It's modelled as a union, `client-deferred | portal-deferred`, chosen from the client's capabilities. Proof: real runs of both paths, checked by an independent Verifier.
+- **Code mode:** in both modes eventually, "should be possible later, just don't block us".
+- **Pruning:** everything listed under "Not in this work".
+- **Cloudflare Worker:** "yes deployed secured cf worker is part of the delivery".
+- **Limits:** "make sure caps are reasonable for limits and fit worker/durable objects (i pay for workers)".
+- **Scaling:** "we can have shards if we need it and workers need to split up".
+- **Analytics and observability:** "analytics and metrics for analytics engine". Sampled data is fine. "observability looks like cf has stuff already, we use that".
+- **Three kinds of tools:** "tools that are org specific", "tools that are per user with auth", and "computer tools with vm etc".
+- **Organizations:** "organizations are isolated for auth only"; "you have owner and org members. that's it. owners can allow people to log in or allow auth related stuff"; "segregated by durable objects".
+- **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
+- **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
+- **Who issues real logins and agent keys** (2026-10-20, owner: "better auth i thought?"): Better Auth, our own login service. Later that day the owner also decided agents sign in with Better Auth from the start, not Cloudflare Access (see **Sign-in** below); that replaces an earlier plan of Access plus agent keys first.
+- **Relayed by the Advisor from the owner's session:** "the outer portal is Cloudflare's managed MCP Portal". Answered for agents on 2026-10-20: they connect directly, with our own sign-in.
+- **Sign-in** (2026-10-20, in chat): "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Better Auth runs in the sign-in service's own Worker, and the tool Worker checks its tokens ("yes to a"). Cloudflare Access is "only selected agents and a configuration server side and registration for computer control ... kinda like tailscale ... from worker downwards to those computers".
+- **Admin panel** (2026-10-20): "i think i want everything to be configurable via admin panel", then option C: "request bar to search and make changes as proposal and user to accept with form. so agent makes the change user sees and accepts". It refines fleet F-41 and F-43: the panel has a request bar for search and proposals, and each proposal is shown as a form you accept. "we can design it more", so it gets its own design pass. **It's in the first version** ("no we need panel"), building on the base design: "gen ui with composing ui for show or edit with shadcn components using shadcn lint and shadcn cn library". The agent's draft form **can be edited** before accepting. **Accounts get a details view**: "a details page or modal or drawer form below".
+- **Personal accounts are set up by their owners** (2026-10-20): "i like that each of us signs in for that agent to flow and setup our own just like agent-vm partially does now". Per-user tools keep agent-vm's flow: an agent-provided private link, then sign in, choose consent, connect the account and set its rules ([profile policy](../2026-09-13-profile-oauth-policy/requirements.md), U4). Each person does their own, and sign-in moves to Better Auth.
+- **Who approves on a personal account** (2026-10-20, "yes to 1"): when a call on a person's own account requires approval, that account's owner decides it. You approve edits to your calendar, and your wife approves edits to hers. This adopts that row of the October 15 proposal. The owner also said to "cover auto approval or ability to change easily". So an owner can set an action on their account to auto (the judge decides, and asks them when unsure), to approved, or to approved until a time. They can change that easily: today on agent-vm's account page, later with one request in the admin panel, shown as a form they accept.
+- **Approved with a time limit** ("so we have approved with time limit too"): approved can carry an end time, a temporary grant, after which the tool goes back to its previous mode. "Blocked until a time not required", so F-61's temporary revocation is dropped. Not in the first version.
+- **Tool-loading case:** a URL parameter ("i thought it would be a url param when dialing in?").
+
+## Owner decision on 2026-10-21
+
+- **MCP 2026-07-28 only, stateless** (said to the Advisor, pointing at [Cloudflare's MCP v2 post](https://blog.cloudflare.com/mcp-v2/)): "we only want to support mcp 2 stateless" (typed as "fhy we only want to skupoed mcp 2 stateless"). Every MCP route we serve speaks only the 2026-07-28 protocol: no `initialize`, no protocol sessions, no `Mcp-Session-Id`. A 2025-era client is refused. This replaces "any client that works today keeps working" for MCP. It doesn't touch agent-vm's private connection, which Hermes uses inside agent-vm and which isn't MCP ([managed_gateway_bootstrap.py:919](../../../python/agent-vm-hermes-adapter/src/agent_vm_hermes_adapter/managed_gateway_bootstrap.py#L919)).
+  - **Who this affects today:**
+    - **Claude Code** speaks it by default since 2.1.274 (HTTP) and 2.1.292 (stdio), unless a user opts out ([changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21274)).
+    - **Codex** 0.163.0 speaks it only with its `mcp_2026_07_28` feature turned on, plus a per-server marker for stdio servers ([features](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/features/src/lib.rs#L1541)).
+    - **Our Portal SDK clients** (Node and Python) move to the new SDKs.
+    - **Clients on MCP SDK v1** can't connect.
+  - **Whether our own connections out to tool servers must also be 2026-07-28** is question 8.
+
+## Questions for the owner
+
+Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
+
+6. **What's in the first version?** This is the Lead's reading of your decisions, not your answer yet: agents acting with their own access, configured tools, and the three approval modes that exist today in your D-9 words: approved, requires approval and blocked (fleet F-23, F-35, F-53, F-56, D-9). Three separate choices follow, and any can come first:
+   - per-user tools, under today's permission model;
+   - the chat-led change flow (fleet F-41 to F-49), in the separate control UI.
+   - the **auto** mode, with its judge (D-9), once where the judge runs (T-16) is settled;
+   - **approved until a time** (temporary grants);
+
+   The admin panel is in the first version (owner, 2026-10-20). The Lead reads the first version as keeping each organization's configuration in its database, as versions, which the panel changes with no redeploy.
+7. **Does an agent ever act on behalf of a person?** Fleet F-35 says "on behalf of" is only a label, and an agent never uses a requester's accounts. On 2026-10-15 you said approval and control are "per agent, or on behalf of user". The design follows F-35 until you say otherwise.
+
+1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).
+2. **Answered on 2026-10-20: Better Auth** (see owner decisions).
+3. **Do tool calls need history that survives a restart?** The design assumes not. Today's servers keep no record per call. On the Worker, the one thing kept is which approval tokens have been used, until each expires, so an approval still works only once.
+4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
+
+5. **Answered on 2026-10-20:** a URL parameter, `?tools=direct` (see owner decisions).
+8. **May the portal still call tool servers that speak only 2025-era MCP?** Your direction covers the MCP we serve. Our connections out to tool servers are a separate choice, because those servers aren't ours.
+   - **The Lead recommends no:** connect only with 2026-07-28. A server that hasn't upgraded is refused when the portal starts, with a clear reason, and none of its tools are offered. It matches "only", and it keeps one protocol to prove.
+   - **It costs:** any configured tool server that still speaks only 2025 MCP stops working until it upgrades.
+   - **The alternative:** let each configured server fall back to 2025 MCP until a set date.
+   - **Waits on this:** the connector part of the SDK move. The MCP routes we serve can move first.
+
+**Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
+9. **What should aborting a Portal SDK call over HTTP do?** Today the SDK cancels the work, then keeps the response open for a short grace period to collect the call's final result (`resultGraceAfterAbortMs`). MCP 2026-07-28 over HTTP cancels by closing that request's stream, so both can't happen at once (checked with a real SDK test in S3d).
+   - **The Lead recommends A:** the server is told to cancel at once, and the caller gets today's "grace expired, outcome uncertain" result, as if the grace period were zero. It follows the protocol you chose. Being told to cancel isn't proof that the work stopped: whether a tool that has started stops depends on that tool, and the test proves only that the request was cancelled. So the outcome stays uncertain, and nothing is retried automatically.
+   - **The alternative, B:** keep the stream open through the grace period, then close it. The caller may still get the final result, but the server isn't asked to cancel until the grace period ends.
+   - **Unchanged either way:** stdio and agent-vm's private connection keep today's grace.
+   - **What happens if you defer:** A is in the S3d draft PR provisionally, and B is a small swap.

@@ -5,48 +5,48 @@ import {
 } from '@agent-collaboration/tool-access/authorization';
 import { assessAccessInput, jsonValueSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	createUpstreamMcpClientRuntime,
-	type UpstreamMcpClientRuntime,
-} from '@agent-collaboration/tool-engine/connectors';
-import {
 	type ApprovalPort,
 	type ToolBackend,
 	type BackendKind,
 	type OperationPort,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createMcpGateway,
 	createOrganizationToolCatalog,
 	proxyUpstreamFailureFromError,
 	proxyUpstreamFailureResult,
 	createInMemoryApprovalTokenUse,
-	createPortalSessionManager,
+	createAgentCatalogViewCache,
 	type McpGateway,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import {
+	createUpstreamMcpClientRuntime,
+	type UpstreamMcpClientRuntime,
+} from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { ToolSchema } from '@modelcontextprotocol/core';
 
-import { mcpConfigToResolvedProviders } from '#node-host/configuration/mcp-config';
+import { mcpConfigToResolvedProviders } from '#node-host/host-configuration/mcp-config';
 import {
 	nodeHostConfigSchema,
 	type NodeHostConfig,
-} from '#node-host/configuration/node-host-config';
+} from '#node-host/host-configuration/models/node-host-config';
 import {
-	formatSecretValue,
 	type SecretValue,
 	type FormattedSecretValue,
-} from '#node-host/configuration/secret-value';
+} from '#node-host/host-configuration/models/secret-value';
+import { formatSecretValue } from '#node-host/host-configuration/secret-value';
+import { compileNodeHostCredentialSet } from '#node-host/mcp-proxy-server/bearer-credentials';
 import {
-	compileNodeHostCredentialSet,
 	type NodeHostBearerCredentialSet,
 	type CompiledNodeHostCredential,
-} from '#node-host/ingress/bearer-credentials';
-import { openNodeOperationStore } from '#node-host/operations/node-operation-store';
+} from '#node-host/mcp-proxy-server/models/bearer-credentials';
+import { openNodeOperationStore } from '#node-host/operation-records/node-operation-store';
 import {
 	createNodeHttpUpstreamTransport,
 	createNodeStdioUpstreamTransport,
-} from '#node-host/upstream/node-upstream-transports';
-import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/upstream/stdio-upstream-errors';
-import { createNodeStdioUpstreamRuntime } from '#node-host/upstream/stdio-upstream-runtime';
+} from '#node-host/stdio-upstream-servers/node-upstream-transports';
+import { upstreamMcpFailureDetailsFromUnknown as stdioFailureDetailsFromUnknown } from '#node-host/stdio-upstream-servers/stdio-upstream-errors';
+import { createNodeStdioUpstreamRuntime } from '#node-host/stdio-upstream-servers/stdio-upstream-runtime';
 
 export interface NodeHostSecretResolutionPort {
 	readonly resolve: (secret: SecretValue) => Promise<string>;
@@ -200,7 +200,7 @@ export async function createNodeHostComposition(props: {
 		now: Date.now,
 	});
 	await organizationCatalog.read();
-	const sessions = createPortalSessionManager({
+	const sessions = createAgentCatalogViewCache({
 		accessPolicy: {
 			enabledNamespaces: [...runtimeByNamespace.keys()],
 			enabledNamespacesByAgent: {},
@@ -326,7 +326,7 @@ export async function createNodeHostComposition(props: {
 		},
 		closeSession: async (identity) => {
 			allScopes.delete(portalAgentScopeKey(identity));
-			await sessions.invalidateSession(identity);
+			await sessions.invalidateView(identity);
 		},
 		close: async () => {
 			if (closed) return;

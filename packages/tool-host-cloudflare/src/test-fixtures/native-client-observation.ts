@@ -1,4 +1,4 @@
-import type { UpstreamMcpClientLike } from '@agent-collaboration/tool-engine/connectors';
+import type { UpstreamMcpClientLike } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 

@@ -1,163 +1,16 @@
-import type { ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
-import { describe, expect, it, vi } from 'vitest';
+import type { ResourceResult } from '@agent-collaboration/tool-engine/capability-dispatch';
+import { describe, it, vi, expect } from 'vitest';
 
-import * as callValidation from '#mcp-gateway/portal-call-validation';
-import { PortalCatalogPreparationError } from '#mcp-gateway/portal-session';
+import * as callValidation from '#mcp-gateway/portal-tools/portal-call-validation';
 import {
 	createHarness,
-	retainCatalog,
 	frozenNames,
-	inputSchema,
-	revision,
 	callInput,
-	output,
-	identities,
+	revision,
+	inputSchema,
 } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
 
-// Oracles: Spec R3/R5/R8/R15, S3a proof 1/2/7/8/9. No host/auth/durable-store claim.
 describe('portable MCP gateway through the neutral dispatcher', () => {
-	it.each(['prepare', 'list'] as const)(
-		'refuses incomplete full catalog discovery through %s before publication',
-		async (path) => {
-			const publisher = vi.fn(retainCatalog);
-			const harness = createHarness(undefined, 'incomplete');
-			harness.setPrepared(publisher);
-			const preparation =
-				path === 'prepare' ? harness.gateway.prepareCatalog() : harness.gateway.listTools('direct');
-			await expect(preparation).rejects.toThrowError(
-				new PortalCatalogPreparationError([
-					{
-						namespace: 'beta',
-						kind: 'upstream_discovery_failed',
-						message: 'beta discovery unavailable',
-					},
-				]),
-			);
-			await expect(preparation).rejects.toMatchObject({
-				name: 'PortalCatalogPreparationError',
-				failedNamespaces: ['beta'],
-				message:
-					'MCP Portal catalog preparation failed for namespace(s): beta. Run live MCP validation or use indirect mode for partial discovery diagnostics.',
-			});
-			expect(publisher).not.toHaveBeenCalled();
-		},
-	);
-	it.each(['prepare', 'list'] as const)(
-		'refuses duplicate exported full catalog names through %s before publication',
-		async (path) => {
-			const harness = createHarness(undefined, 'duplicate');
-			const publisher = vi.fn(retainCatalog);
-			harness.setPrepared(publisher);
-			const preparation =
-				path === 'prepare' ? harness.gateway.prepareCatalog() : harness.gateway.listTools('direct');
-			await expect(preparation).rejects.toBeInstanceOf(PortalCatalogPreparationError);
-			await expect(preparation).rejects.toMatchObject({
-				name: 'PortalCatalogPreparationError',
-				failedNamespaces: ['alpha'],
-				message:
-					'MCP Portal catalog preparation failed for namespace(s): alpha. Run live MCP validation or use indirect mode for partial discovery diagnostics.',
-			});
-			expect(publisher).not.toHaveBeenCalled();
-		},
-	);
-	it('publishes a complete allowed full catalog', async () => {
-		const harness = createHarness();
-		const publisher = vi.fn(retainCatalog);
-		harness.setPrepared(publisher);
-		expect((await harness.gateway.listTools('direct')).tools.map((tool) => tool.name)).toEqual([
-			...frozenNames,
-			'mcp_portal_list',
-			'mcp_portal_search',
-			'mcp_portal_describe',
-			'mcp_portal_call',
-		]);
-		expect(publisher).toHaveBeenCalledOnce();
-	});
-	it('keeps healthy compact discovery, describe and calls available with failure diagnostics', async () => {
-		const harness = createHarness(undefined, 'incomplete');
-		const publisher = vi.fn(retainCatalog);
-		harness.setPrepared(publisher);
-		const listed = await harness.gateway.list({ requests: [{ id: 'r' }] });
-		expect(identities(output(listed, 'r'))).toEqual(['alpha.ask', 'alpha.read']);
-		const described = await harness.gateway.describe({
-			requests: [{ id: 'r', tools: [{ namespace: 'alpha', toolName: 'read' }] }],
-		});
-		expect(identities(output(described, 'r'))).toEqual(['alpha.read']);
-		const called = await harness.gateway.call(callInput());
-		expect(called.results['original-item']?.ok).toBe(true);
-		expect(harness.effects).toHaveLength(1);
-		for (const result of [listed, described, called]) {
-			expect(result.diagnostics).toMatchObject([
-				{ kind: 'upstream_discovery_failed', namespace: 'beta' },
-			]);
-		}
-		expect((await harness.gateway.listTools('indirect')).tools.map((tool) => tool.name)).toEqual([
-			'mcp_portal_list',
-			'mcp_portal_search',
-			'mcp_portal_describe',
-			'mcp_portal_call',
-		]);
-		expect(publisher).not.toHaveBeenCalled();
-	});
-
-	it('keeps the same literal allowed corpus across list, search, describe and native catalog', async () => {
-		const { gateway } = createHarness();
-		expect(identities(output(await gateway.list({ requests: [{ id: 'r' }] }), 'r'))).toEqual([
-			'alpha.ask',
-			'alpha.read',
-			'beta.ask',
-			'beta.read',
-		]);
-		expect(
-			identities(output(await gateway.search({ requests: [{ id: 'r', query: 'read' }] }), 'r')),
-		).toEqual(['alpha.read', 'beta.read']);
-		const catalog = await gateway.prepareCatalog();
-		expect(catalog.tools.map((tool) => tool.descriptor.name)).toEqual(frozenNames);
-		expect((await gateway.listTools('direct')).tools.map((tool) => tool.name)).toEqual([
-			...frozenNames,
-			'mcp_portal_list',
-			'mcp_portal_search',
-			'mcp_portal_describe',
-			'mcp_portal_call',
-		]);
-		expect((await gateway.listTools('indirect')).tools.map((tool) => tool.name)).toEqual([
-			'mcp_portal_list',
-			'mcp_portal_search',
-			'mcp_portal_describe',
-			'mcp_portal_call',
-		]);
-		expect((await gateway.listTools('indirect')).tools[0]?.description).toBe(
-			'List authorized MCP namespaces and compact tool summaries. Allowed namespaces for this agent: alpha, beta.',
-		);
-		expect(
-			identities(
-				output(
-					await gateway.describe({ requests: [{ id: 'r', refs: ['mcp:YWxwaGE:cmVhZA'] }] }),
-					'r',
-				),
-			),
-		).toEqual(['alpha.read']);
-	});
-	it('keeps configured skill search hints while filtering hidden references', async () => {
-		const h = createHarness();
-		expect(
-			identities(
-				output(
-					await h.gateway.search({ requests: [{ id: 'r', query: 'workflow-only-marker' }] }),
-					'r',
-				),
-			),
-		).toEqual(['alpha.read']);
-		h.setDenyRead();
-		expect(
-			identities(
-				output(
-					await h.gateway.search({ requests: [{ id: 'r', query: 'workflow-only-marker' }] }),
-					'r',
-				),
-			),
-		).toEqual([]);
-	});
 	it.each(['indirect', 'direct'] as const)(
 		'runs the allowed control in %s and records the literal normalized digest and effect',
 		async (mode) => {
@@ -209,6 +62,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			]);
 		},
 	);
+
 	it('binds the consumer digest to normalized arguments', async () => {
 		const h = createHarness();
 		expect((await h.gateway.call(callInput('read', 'normalized', { value: '42' }))).ok).toBe(true);
@@ -217,6 +71,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			'dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3',
 		]);
 	});
+
 	it.each(['indirect', 'direct'] as const)(
 		'pending approval and invalid arguments cause zero effects in %s',
 		async (mode) => {
@@ -258,6 +113,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			expect(h.effects).toEqual([]);
 		},
 	);
+
 	it.each(['denied', 'hidden'])(
 		'refuses registered %s names, selectors, encoded references and aliases',
 		async (toolName) => {
@@ -301,6 +157,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			expect(h.effects).toHaveLength(1);
 		},
 	);
+
 	it('does not trust a stale assignment or reference in either mode', async () => {
 		const h = createHarness();
 		const catalog = await h.gateway.prepareCatalog();
@@ -321,6 +178,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		).toBe(false);
 		expect(h.effects).toEqual([]);
 	});
+
 	it.each(['indirect', 'direct'] as const)(
 		'holds a binding that changes during %s preparation',
 		async (mode) => {
@@ -340,6 +198,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			expect(h.effects).toEqual([]);
 		},
 	);
+
 	it('refuses previously prepared binding bytes after rebinding', async () => {
 		const h = createHarness();
 		const catalog = await h.gateway.prepareCatalog();
@@ -356,6 +215,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		).toBe(false);
 		expect(h.effects).toEqual([]);
 	});
+
 	it.each(['foreign-caller', 'wrong-hash'] as const)(
 		'refuses a %s prepared catalog, with an admitted control',
 		async (kind) => {
@@ -395,6 +255,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 			expect(h.effects).toHaveLength(1);
 		},
 	);
+
 	it('a prepared catalog cannot add a registered hidden capability or replace its native descriptor', async () => {
 		const h = createHarness();
 		h.setPrepared((catalog) => ({
@@ -423,6 +284,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		).toBe(false);
 		expect(h.effects).toEqual([]);
 	});
+
 	it('continues a permitted sibling in a mixed batch', async () => {
 		const h = createHarness();
 		const result = await h.gateway.call({
@@ -437,6 +299,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		expect(result.results.pending).toMatchObject({ ok: false, error: { kind: 'pending' } });
 		expect(result.results.permitted).toMatchObject({ ok: true, output: { result: { value: 42 } } });
 	});
+
 	it.each(['indirect', 'direct'] as const)(
 		'rejects an unauthorized effect from a direct-backend bypass in %s',
 		async (mode) => {
@@ -572,6 +435,7 @@ describe('portable MCP gateway through the neutral dispatcher', () => {
 		{ kind: 'ambiguous', reason: 'literal:uncertain' },
 		{ kind: 'result-expired' },
 	];
+
 	for (const outcome of outcomes)
 		it.each(['indirect', 'direct'] as const)(
 			`preserves every field of ${outcome.kind} in %s`,

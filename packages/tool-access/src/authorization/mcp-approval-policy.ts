@@ -2,7 +2,7 @@
 import type {
 	NamespaceToolRef,
 	ResolvedMcpPortalProfile,
-} from '../contracts/mcp-approval-profile.js';
+} from '#tool-access/contracts/mcp-approval-profile';
 
 export interface McpPortalApprovalToolAnnotations {
 	readonly destructiveHint?: boolean | undefined;

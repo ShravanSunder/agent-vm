@@ -2,13 +2,13 @@ import {
 	createAgentTokenVerifier,
 	type AgentTokenVerifier,
 } from '@agent-collaboration/tool-access/contracts';
-import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/connectors';
 import {
 	PortalCatalogPreparationError,
 	resolveToolLoading,
 	toolLoadingMode,
 	type ConsumeApprovalTokenId,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
+import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 
 import { recordBatchCallAnalytics } from '#worker-host/call-analytics/batch-call-analytics';

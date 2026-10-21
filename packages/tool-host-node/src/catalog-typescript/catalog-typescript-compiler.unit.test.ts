@@ -7,21 +7,21 @@ import {
 } from '#node-host/catalog-typescript/catalog-typescript-compiler';
 
 describe('compileCatalogTypescriptModules', () => {
-	it('keeps distinct tuple identities when names contain separator characters', () => {
+	it('keeps distinct tuple identities when names contain separator characters', async () => {
 		const tools = [
 			{ namespace: 'a\u0000', name: 'b', inputSchema: { type: 'object' } },
 			{ namespace: 'a', name: '\u0000b', inputSchema: { type: 'object' } },
 		];
-		expect(() => fingerprintCatalogTypescriptInput({ tools })).not.toThrow();
+		await expect(fingerprintCatalogTypescriptInput({ tools })).resolves.toEqual(expect.any(String));
 	});
-	it('fingerprints canonically equivalent ordering without conflating distinct Unicode names', () => {
+	it('fingerprints canonically equivalent ordering without conflating distinct Unicode names', async () => {
 		const tools = ['é', 'e\u0301'].map((name) => ({
 			inputSchema: { type: 'object' },
 			name,
 			namespace: 'unicode',
 		}));
-		expect(fingerprintCatalogTypescriptInput({ tools })).toBe(
-			fingerprintCatalogTypescriptInput({ tools: tools.toReversed() }),
+		expect(await fingerprintCatalogTypescriptInput({ tools })).toBe(
+			await fingerprintCatalogTypescriptInput({ tools: tools.toReversed() }),
 		);
 	});
 	it('includes native presentation descriptors in the shared definition identity', async () => {
@@ -43,7 +43,7 @@ describe('compileCatalogTypescriptModules', () => {
 			},
 		]);
 		expect(
-			fingerprintCatalogTypescriptInput({
+			await fingerprintCatalogTypescriptInput({
 				tools: [{ ...tool, description: 'Read one issue with its comments.' }],
 			}),
 		).not.toBe(compiled.definitionFingerprint);
@@ -87,7 +87,7 @@ describe('compileCatalogTypescriptModules', () => {
 		const second = await compileCatalogTypescriptModules({ tools: input.tools.toReversed() });
 
 		expect(first).toEqual(second);
-		expect(fingerprintCatalogTypescriptInput(input)).toBe(first.definitionFingerprint);
+		expect(await fingerprintCatalogTypescriptInput(input)).toBe(first.definitionFingerprint);
 		expect(first.files).toHaveLength(2);
 		expect(first.manifest.namespaces.map((entry) => entry.namespace)).toEqual([
 			'files',

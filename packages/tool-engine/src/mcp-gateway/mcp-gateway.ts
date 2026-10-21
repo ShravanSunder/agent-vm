@@ -1,44 +1,50 @@
 import {
-	createAccessAssessor,
 	type PortalAgentIdentity,
+	createAccessAssessor,
 	portalAgentScopeKey,
 } from '@agent-collaboration/tool-access/authorization';
 import {
-	assessAccessInput,
-	hashCallArguments,
 	type AssessAccessInput,
 	type HostAccessBinding,
 	type JsonObject,
+	assessAccessInput,
+	hashCallArguments,
 } from '@agent-collaboration/tool-access/contracts';
 import {
-	createCapabilityDispatcher,
-	type ApprovalPort,
 	type OperationPort,
-	type ToolBackend,
+	type ApprovalPort,
 	type BackendKind,
+	type ToolBackend,
 	type ResourceResult,
-} from '@agent-collaboration/tool-engine/dispatch';
+	createCapabilityDispatcher,
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { Tool } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
-import { createCatalogToolPresentationName } from '#mcp-gateway/catalog-tool-presentation-name';
+import { PortalCatalogPreparationError } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
+import { createCatalogToolPresentationName } from '#mcp-gateway/agent-catalog-views/catalog-tool-presentation-name';
+import type {
+	AgentCatalogViewCache,
+	AgentCatalogView,
+} from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import {
+	type McpToolListPage,
+	paginateMcpTools,
+} from '#mcp-gateway/agent-catalog-views/tool-list-pagination';
+import type { McpToolMode } from '#mcp-gateway/agent-catalog-views/tool-loading';
 import {
 	approvedTokenPort,
 	authorizeGatewayCalls,
-	type GatewayApprovalTokens,
-	type VerifiedCallApproval,
-} from '#mcp-gateway/gateway-approval';
-import { listPortalCoreToolDescriptors } from '#mcp-gateway/indirect-tool-descriptors';
-import {
-	PortalCatalogPreparationError,
-	type PortalSession,
-	type PortalSessionManager,
-} from '#mcp-gateway/portal-session';
-import { createPortalToolHandlers, type PortalBatchResult } from '#mcp-gateway/portal-tools';
-import { createSearchIndex } from '#mcp-gateway/search-index';
-import { buildToolGraph } from '#mcp-gateway/tool-graph';
-import { paginateMcpTools, type McpToolListPage } from '#mcp-gateway/tool-list-pagination';
-import type { McpToolMode } from '#mcp-gateway/tool-loading';
+} from '#mcp-gateway/call-approvals/gateway-call-approval';
+import type {
+	GatewayApprovalTokens,
+	VerifiedCallApproval,
+} from '#mcp-gateway/call-approvals/models/call-approval';
+import type { PortalBatchResult } from '#mcp-gateway/portal-tools/models/portal-tool-contracts';
+import { createPortalToolHandlers } from '#mcp-gateway/portal-tools/portal-tool-handlers';
+import { listPortalCoreToolDescriptors } from '#mcp-gateway/tool-search/indirect-tool-descriptors';
+import { createSearchIndex } from '#mcp-gateway/tool-search/search-index';
+import { buildToolGraph } from '#mcp-gateway/tool-search/tool-graph';
 
 export interface PreparedCatalogTool {
 	readonly namespace: string;
@@ -46,6 +52,7 @@ export interface PreparedCatalogTool {
 	readonly descriptor: Tool;
 	readonly bindingRevision: AssessAccessInput['facts']['upstream']['binding'];
 }
+
 export interface PreparedGatewayCatalog {
 	readonly agentScopeId: string;
 	readonly sourceHash: string;
@@ -60,7 +67,7 @@ export interface McpGatewayOptions {
 		readonly verifiedContextRef: string;
 	};
 	readonly hostBinding: HostAccessBinding;
-	readonly sessions: PortalSessionManager;
+	readonly sessions: AgentCatalogViewCache;
 	readonly resolveAccess: (input: {
 		readonly capability: AssessAccessInput['capability'];
 		readonly call: AssessAccessInput['call'];
@@ -72,6 +79,7 @@ export interface McpGatewayOptions {
 	readonly backends: ReadonlyMap<BackendKind, ToolBackend<BackendKind>>;
 	readonly now: () => number;
 }
+
 export interface McpGateway {
 	readonly listTools: (mode: McpToolMode, cursor?: string) => Promise<McpToolListPage>;
 	readonly list: (input: unknown) => Promise<PortalBatchResult>;
@@ -94,9 +102,11 @@ function sameRevision(
 ): boolean {
 	return left.owner === right.owner && left.revision === right.revision;
 }
+
 function refused(): ResourceResult {
 	return { kind: 'denied', state: { kind: 'not-usable', firstUnmet: 'not-given-to-agent' } };
 }
+
 function refusedBatch(): PortalBatchResult {
 	return {
 		ok: false,
@@ -110,6 +120,7 @@ function refusedBatch(): PortalBatchResult {
 		results: {},
 	};
 }
+
 function requireCatalogBinding(
 	bindings: ReadonlyMap<string, PreparedCatalogTool['bindingRevision']>,
 	namespace: string,
@@ -119,6 +130,7 @@ function requireCatalogBinding(
 	if (binding === undefined) throw new Error('Missing assessed catalog binding');
 	return binding;
 }
+
 function digestAsHex(base64url: string): string {
 	return Array.from(atob(base64url.replaceAll('-', '+').replaceAll('_', '/')), (byte) =>
 		byte.charCodeAt(0).toString(16).padStart(2, '0'),
@@ -150,12 +162,12 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 		});
 	}
 	async function visibleSession(): Promise<
-		PortalSession & {
+		AgentCatalogView & {
 			readonly bindings: ReadonlyMap<string, PreparedCatalogTool['bindingRevision']>;
 		}
 	> {
 		const bindings = new Map<string, PreparedCatalogTool['bindingRevision']>();
-		const session = await options.sessions.getSession(identity);
+		const session = await options.sessions.getView(identity);
 		const selected = await Promise.all(
 			session.catalog.tools.map(async (tool) => {
 				try {
@@ -237,14 +249,14 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 				: { kind: 'not-dispatched', reason: 'admission-failed' };
 		}
 	}
-	const handlers = createPortalToolHandlers({ getSession: visibleSession, dispatchCall });
+	const handlers = createPortalToolHandlers({ getView: visibleSession, dispatchCall });
 	async function callBound(
 		input: unknown,
 		expectedBinding?: PreparedCatalogTool['bindingRevision'],
 	): Promise<PortalBatchResult> {
 		let session: Awaited<ReturnType<typeof visibleSession>> | undefined;
 		const boundHandlers = createPortalToolHandlers({
-			getSession: async () => {
+			getView: async () => {
 				session = await visibleSession();
 				return session;
 			},

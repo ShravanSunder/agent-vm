@@ -1,7 +1,10 @@
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { agentTokenClaimsSchema, createAgentTokenVerifier } from './agent-proof.js';
+import {
+	agentTokenClaimsSchema,
+	createAgentTokenVerifier,
+} from '#tool-access/contracts/agent-proof';
 
 const deployment = 'https://test-issuer.invalid';
 const audience = 'https://tool-portal.invalid/mcp';

@@ -186,7 +186,7 @@ describe('splitResolvedGatewaySecrets', () => {
 					type: 'hermes',
 					profileSecretProjectionsByAgent: { main: {} },
 					profilesByAgent: { main: 'main' },
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: 18791,
 					config: './hermes.json',

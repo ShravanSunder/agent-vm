@@ -10,8 +10,8 @@ const requiredPortalPackageExports = [
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-engine/mcp-gateway',
-	'@agent-collaboration/tool-engine/connectors',
-	'@agent-collaboration/tool-engine/dispatch',
+	'@agent-collaboration/tool-engine/upstream-mcp-connectors',
+	'@agent-collaboration/tool-engine/capability-dispatch',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -70,14 +70,14 @@ const requiredPortalNamedExports = {
 		'createMcpGateway',
 		'encodeToolRef',
 		'decodeToolRef',
-		'createPortalSessionManager',
+		'createAgentCatalogViewCache',
 	],
-	'@agent-collaboration/tool-engine/connectors': [
+	'@agent-collaboration/tool-engine/upstream-mcp-connectors': [
 		'createUpstreamMcpClientRuntime',
 		'redactUpstreamResponse',
 		'UpstreamMcpError',
 	],
-	'@agent-collaboration/tool-engine/dispatch': [
+	'@agent-collaboration/tool-engine/capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
 		'operationKeySchema',

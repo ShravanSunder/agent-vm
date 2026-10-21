@@ -502,7 +502,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -546,7 +546,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -673,7 +673,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: currentCallerContext.zoneId,
@@ -712,7 +712,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: currentCallerContext.zoneId,
@@ -770,7 +770,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: currentCallerContext.zoneId,
@@ -812,7 +812,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -894,7 +894,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -998,7 +998,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					profile: {
 						cpus: 2,
 						imageProfile: 'tool-default',
-						memory: '2G',
+						memory: '2560M',
 					},
 					profileId: 'standard',
 					zoneId: callerContext.zoneId,
@@ -1037,7 +1037,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1074,7 +1074,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -1126,7 +1126,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1211,7 +1211,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1287,7 +1287,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				guestWorkdir: '/work',
 				hostGitDirectoryRoot: testHostGitDirectoryRoot,
 				hostWorkspaceRoot: '/host/validated-work',
-				profile: { cpus: 2, imageProfile: 'tool-default', memory: '2G' },
+				profile: { cpus: 2, imageProfile: 'tool-default', memory: '2560M' },
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
 			}),
@@ -1339,7 +1339,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1435,7 +1435,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: currentCallerContext.zoneId,
@@ -1493,7 +1493,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1522,7 +1522,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -1613,7 +1613,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 					profile: {
 						cpus: 2,
 						imageProfile: 'tool-default',
-						memory: '2G',
+						memory: '2560M',
 					},
 					profileId: 'standard',
 					zoneId: callerContext.zoneId,
@@ -1674,7 +1674,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId,
 			zoneId: callerContext.zoneId,
@@ -1728,7 +1728,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: context.zoneId,
@@ -1786,7 +1786,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: callerContext.zoneId,
@@ -1852,7 +1852,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -1900,7 +1900,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -1965,7 +1965,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -2016,7 +2016,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -2092,7 +2092,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -2165,7 +2165,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 			profile: {
 				cpus: 2,
 				imageProfile: 'tool-default',
-				memory: '2G',
+				memory: '2560M',
 			},
 			profileId: 'standard',
 			zoneId: context.zoneId,
@@ -2246,7 +2246,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: context.zoneId,
@@ -2364,7 +2364,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: context.zoneId,
@@ -2462,7 +2462,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -2523,7 +2523,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -2566,7 +2566,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
@@ -2608,7 +2608,7 @@ describe('createGatewayControlLeaseRpcOperations', () => {
 				profile: {
 					cpus: 2,
 					imageProfile: 'tool-default',
-					memory: '2G',
+					memory: '2560M',
 				},
 				profileId: 'standard',
 				zoneId: callerContext.zoneId,
