@@ -1,6 +1,6 @@
 import type { JsonValue } from '@agent-collaboration/tool-access/contracts';
 
-import type { DispatchInvocation } from '#dispatch/dispatch-contracts';
+import type { DispatchInvocation } from '#capability-dispatch/models/dispatch-contracts';
 
 /** V1 sorts object keys by UTF-16 code units, independently of the host locale. */
 export function canonicalDispatchJson(value: JsonValue): string {

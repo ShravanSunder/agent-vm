@@ -1,6 +1,6 @@
 # Tool engine
 
-`@agent-collaboration/tool-engine/dispatch` admits capabilities through the shared
+`@agent-collaboration/tool-engine/capability-dispatch` admits capabilities through the shared
 access assessor, an operation authority, an approval authority and an injected
 resource backend. It has no Node or managed-VM imports.
 

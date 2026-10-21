@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
-	'@agent-collaboration/tool-engine/dispatch',
+	'@agent-collaboration/tool-engine/capability-dispatch',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -52,7 +52,7 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
-	'@agent-collaboration/tool-engine/dispatch': [
+	'@agent-collaboration/tool-engine/capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
 		'operationKeySchema',

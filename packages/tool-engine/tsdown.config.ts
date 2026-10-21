@@ -2,7 +2,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
 	clean: true,
 	dts: true,
-	entry: { 'dispatch/index': 'src/dispatch/index.ts' },
+	entry: { 'capability-dispatch/index': 'src/capability-dispatch/index.ts' },
 	format: 'esm',
 	outExtensions: () => ({ dts: '.d.ts', js: '.js' }),
 	outDir: 'dist',

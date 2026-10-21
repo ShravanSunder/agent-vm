@@ -5,6 +5,7 @@ import {
 	type AssessAccessResult,
 } from '@agent-collaboration/tool-access/contracts';
 
+import { canonicalDispatchJson, dispatchIntentDigest } from '#capability-dispatch/dispatch-intent';
 import {
 	approvalReceiptSchema,
 	approvalChallengeSchema,
@@ -19,8 +20,7 @@ import {
 	type OperationPort,
 	type ResourceResult,
 	type ToolBackend,
-} from '#dispatch/dispatch-contracts';
-import { canonicalDispatchJson, dispatchIntentDigest } from '#dispatch/dispatch-intent';
+} from '#capability-dispatch/models/dispatch-contracts';
 
 function unavailable(): ResourceResult {
 	return { kind: 'denied', state: { kind: 'not-usable', firstUnmet: 'service-unavailable' } };

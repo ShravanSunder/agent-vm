@@ -17,7 +17,7 @@ import {
 	type OperationPort,
 	type OperationRecord,
 	type ResourceResult,
-} from '@agent-collaboration/tool-engine/dispatch';
+} from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	PortalCallResultSchema,
 	type PortalCallRequest,
