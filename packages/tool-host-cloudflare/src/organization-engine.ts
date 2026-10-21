@@ -1,6 +1,7 @@
 import {
 	createPortalAgentIdentity,
 	portalAgentScopeKey,
+	mcpPortalCallPolicyDecision,
 } from '@agent-collaboration/tool-access/authorization';
 import {
 	assessAccessInput,
@@ -15,6 +16,8 @@ import type {
 	ApprovalPort,
 	BackendKind,
 	ToolBackend,
+	DispatchInvocation,
+	ResourceResult,
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	createMcpGateway,
@@ -37,10 +40,15 @@ import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-tran
 
 export interface OrganizationEngine {
 	readonly configuration: OrganizationConfiguration;
+	readonly trustedTool: (namespace: string, toolName: string) => boolean;
+	readonly requiresApproval: (agentId: string, namespace: string, toolName: string) => boolean;
 	readonly gatewayFor: (props: {
 		readonly agentClientId: string;
 		readonly consumeTokenId: ConsumeApprovalTokenId;
-		readonly invoke?: (call: () => Promise<unknown>) => Promise<unknown>;
+		readonly invoke?: (
+			invocation: DispatchInvocation,
+			call: () => Promise<unknown>,
+		) => Promise<ResourceResult>;
 	}) => { readonly gateway: McpGateway; readonly close: () => Promise<void> };
 }
 const unavailableApproval: ApprovalPort = {
@@ -133,6 +141,22 @@ export async function createOrganizationEngine(props: {
 	const revision = { owner: props.organizationId, revision: 'deployed-v1' };
 	return {
 		configuration,
+		trustedTool: (namespace, toolName) =>
+			catalogByNamespace.get(namespace)?.some((tool) => tool.name === toolName) === true,
+		requiresApproval: (agentId, namespace, toolName) => {
+			const assignment = configuration.portal.agents[agentId];
+			const profile =
+				assignment === undefined ? undefined : configuration.portal.profiles[assignment.profile];
+			const tool = catalogByNamespace.get(namespace)?.find((entry) => entry.name === toolName);
+			return (
+				profile !== undefined &&
+				mcpPortalCallPolicyDecision(resolveWorkerProxyProfile(profile), {
+					namespace,
+					toolName,
+					...(tool?.annotations === undefined ? {} : { annotations: tool.annotations }),
+				}).kind === 'requires_approval'
+			);
+		},
 		gatewayFor: ({ agentClientId, consumeTokenId, invoke }) => {
 			const assignment = configuration.portal.agents[agentClientId];
 			const profile =
@@ -161,10 +185,9 @@ export async function createOrganizationEngine(props: {
 							arguments: invocation.arguments satisfies JsonObject,
 							requestId: invocation.operationKey.item,
 						});
-					return {
-						kind: 'completed',
-						result: jsonValueSchema.parse(await (invoke === undefined ? call() : invoke(call))),
-					};
+					return invoke === undefined
+						? { kind: 'completed', result: jsonValueSchema.parse(await call()) }
+						: invoke(invocation, call);
 				},
 			};
 			const gateway = createMcpGateway({
