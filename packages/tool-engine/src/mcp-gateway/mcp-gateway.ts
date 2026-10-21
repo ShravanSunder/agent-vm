@@ -18,7 +18,7 @@ import {
 	type BackendKind,
 	type ResourceResult,
 } from '@agent-collaboration/tool-engine/dispatch';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import { createCatalogToolPresentationName } from '#mcp-gateway/catalog-tool-presentation-name';

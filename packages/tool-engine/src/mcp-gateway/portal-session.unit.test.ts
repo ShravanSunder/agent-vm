@@ -3,7 +3,7 @@ import {
 	resolvePortalAccessPolicy,
 	type PortalAgentIdentity,
 } from '@agent-collaboration/tool-access/authorization';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UpstreamMcpError } from '#connectors/upstream-mcp-errors';

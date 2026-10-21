@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
 import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool as GatewayTool } from '@modelcontextprotocol/server';
 
 import {
 	messageFromUnknownError,
@@ -124,7 +125,7 @@ export interface UpstreamMcpClientRuntime {
 	readonly callTool: (call: UpstreamToolCall) => Promise<unknown>;
 	readonly closeAgentScope: (agentScopeId: string) => Promise<void>;
 	readonly closeSession: (scopeKey: string) => Promise<void>;
-	readonly listTools: (call: ListToolsCall) => Promise<readonly Tool[]>;
+	readonly listTools: (call: ListToolsCall) => Promise<readonly GatewayTool[]>;
 }
 
 export interface CachedClient {

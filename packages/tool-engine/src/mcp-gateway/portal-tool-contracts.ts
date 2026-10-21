@@ -4,7 +4,8 @@ import {
 } from '@agent-collaboration/tool-access/authorization';
 import { jsonObjectSchema, type JsonObject } from '@agent-collaboration/tool-access/contracts';
 import type { ResourceResult } from '@agent-collaboration/tool-engine/dispatch';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ToolSchema } from '@modelcontextprotocol/core';
+import type { Tool } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { PortalToolRecord } from '#mcp-gateway/catalog-types';
@@ -133,37 +134,12 @@ export interface PreparedPortalCall {
 	readonly tool: PortalToolRecord;
 }
 
-function isToolSchemaProperties(value: unknown): value is Record<string, object> {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		!Array.isArray(value) &&
-		Object.values(value).every(
-			(entry) => typeof entry === 'object' && entry !== null && !Array.isArray(entry),
-		)
-	);
-}
-
-function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
-}
-
 function toPortalInputJsonSchema(schema: z.ZodType): Tool['inputSchema'] {
 	const jsonSchema = jsonObjectSchema.parse(z.toJSONSchema(schema, { io: 'input' }));
 	if (jsonSchema.type !== 'object') {
 		throw new Error('MCP Portal tool input schemas must be JSON Schema objects.');
 	}
-	const properties = isToolSchemaProperties(jsonSchema.properties)
-		? jsonSchema.properties
-		: undefined;
-	const required = isStringArray(jsonSchema.required) ? jsonSchema.required : undefined;
-
-	return {
-		...jsonSchema,
-		...(properties !== undefined ? { properties } : {}),
-		...(required !== undefined ? { required } : {}),
-		type: 'object',
-	};
+	return ToolSchema.shape.inputSchema.parse(jsonSchema);
 }
 
 export const portalToolInputSchemas = {

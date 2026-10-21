@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 
 import { portalToolInputSchemas } from '#mcp-gateway/portal-tool-contracts';
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

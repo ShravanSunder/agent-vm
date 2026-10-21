@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createHarness } from '#mcp-gateway/test-fixtures/mcp-gateway-harness';
