@@ -17,6 +17,7 @@ import {
 	headerCanary,
 	secretCanary,
 	startControlledProvider,
+	successfulOutput,
 	writeFixtureConfig,
 } from '#node-host/test-fixtures/node-host-fixture';
 
@@ -290,7 +291,7 @@ describe('Node host real admission and preparation races', () => {
 		}
 	});
 
-	it('refuses duplicate direct names and refuses startup if a configured server cannot list', async () => {
+	it('refuses duplicate direct names and starts with bounded refusal when all configured servers are down', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');
 		const beta = await startControlledProvider('beta');
@@ -309,6 +310,51 @@ describe('Node host real admission and preparation races', () => {
 			await host.retire();
 			await Promise.all([alpha.close(), beta.close()]);
 		}
-		await expect(startNodeHost({ configPath, secrets })).rejects.toThrow();
+		const unavailable = await startNodeHost({ configPath, secrets });
+		if (unavailable.http === undefined) throw new Error('Missing all-down listener');
+		const indirect = await connectClient(unavailable.http.endpoint, 'credential-a');
+		try {
+			const empty = await indirect.client.callTool({
+				name: 'mcp_portal_list',
+				arguments: { requests: [{ id: 'empty' }] },
+			});
+			expect(successfulOutput(empty, 'empty')).toMatchObject({ namespaces: [], tools: [] });
+			expect(decodedResult(empty)).toMatchObject({
+				diagnostics: expect.arrayContaining([
+					expect.objectContaining({ namespace: 'alpha' }),
+					expect.objectContaining({ namespace: 'beta' }),
+				]),
+			});
+			const direct = await fetch(endpoint(unavailable), {
+				method: 'POST',
+				headers: {
+					authorization: 'Bearer credential-a',
+					'content-type': 'application/json',
+					accept: 'application/json, text/event-stream',
+					'MCP-Protocol-Version': '2026-07-28',
+					'Mcp-Method': 'tools/list',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 5,
+					method: 'tools/list',
+					params: {
+						_meta: {
+							[PROTOCOL_VERSION_META_KEY]: '2026-07-28',
+							[CLIENT_CAPABILITIES_META_KEY]: {},
+						},
+					},
+				}),
+			});
+			expect(direct.status).toBe(503);
+			expect(await direct.json()).toMatchObject({
+				error: { kind: 'catalog_preparation_failed', failedNamespaces: ['alpha', 'beta'] },
+			});
+			expect(alpha.effects).toHaveLength(0);
+			expect(beta.effects).toHaveLength(0);
+		} finally {
+			await indirect.client.close();
+			await unavailable.retire();
+		}
 	});
 });

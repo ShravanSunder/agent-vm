@@ -194,11 +194,39 @@ export async function startNodeHostMcpHttpServer(
 				return;
 			}
 			const mode = toolLoadingMode(resolveToolLoading(requestUrl));
+			const preparation: { error?: PortalCatalogPreparationError } = {};
 			const handler = createMcpHandler(
-				() => createNodeMcpServer({ gateway: props.composition.gatewayFor(credential), mode }),
-				{ legacy: 'reject' },
+				async () => {
+					const gateway = props.composition.gatewayFor(credential);
+					// The SDK calls the factory only after version, metadata and header validation.
+					if (mode === 'direct' && request.headers['mcp-method'] === 'tools/list')
+						await gateway.prepareCatalog();
+					return createNodeMcpServer({ gateway, mode });
+				},
+				{
+					legacy: 'reject',
+					onerror: (error) => {
+						if (error instanceof PortalCatalogPreparationError) preparation.error = error;
+					},
+				},
 			);
-			await toNodeHandler(handler)(
+			await toNodeHandler({
+				fetch: async (fetchRequest, options) => {
+					const result = await handler.fetch(fetchRequest, options);
+					if (preparation.error === undefined) return result;
+					return Response.json(
+						{
+							ok: false,
+							error: {
+								kind: 'catalog_preparation_failed',
+								failedNamespaces: preparation.error.failedNamespaces,
+								refusals: preparation.error.refusals,
+							},
+						},
+						{ status: 503 },
+					);
+				},
+			})(
 				{
 					method: request.method ?? 'POST',
 					url: request.url ?? '/',

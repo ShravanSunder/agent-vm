@@ -66,3 +66,11 @@ and connect failures are `failed`; losing a response during `call_tool` remains
 `ambiguous`. The gateway exposes the legacy `upstream_call_failed` item error
 for either outcome. Managed adapters keep their existing certainty and retry
 policy when this optional detail is present.
+
+`createOrganizationToolCatalog` owns shared startup discovery and its request-driven
+lifetime. Incomplete discovery keeps healthy providers and retries failed ones on
+the next read. Complete catalogs refresh after the configured lifetime; failed
+refreshes retain the previous complete snapshot with diagnostics. Passing this
+source to `createPortalSessionManager` builds caller views from the organization
+snapshot without owning another discovery cache. Hosts perform the first read
+before accepting clients and keep protocol-specific refusals at their ingress.

@@ -8,7 +8,11 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+	type CallToolResult,
+	CallToolRequestSchema,
+	ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import {
@@ -37,6 +41,7 @@ export interface ControlledProvider {
 		readonly selectedHeader: string | undefined;
 	}[];
 	readonly close: () => Promise<void>;
+	readonly setCallResult: (result: CallToolResult) => void;
 	readonly breakCalls: () => void;
 	readonly duplicateDiscovery: () => void;
 	readonly holdCalls: () => { readonly entered: Promise<void>; readonly release: () => void };
@@ -46,12 +51,14 @@ export interface ControlledProvider {
 export async function startControlledProvider(
 	label: string,
 	catalog?: readonly import('@modelcontextprotocol/sdk/types.js').Tool[],
+	port = 0,
 ): Promise<ControlledProvider> {
 	const listings: string[] = [];
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
 	let breakCalls = false;
+	let callResult: CallToolResult | undefined;
 	let enteredCall: (() => void) | undefined;
 	let callGate: Promise<void> = Promise.resolve();
 	let enteredDiscovery: (() => void) | undefined;
@@ -91,6 +98,7 @@ export async function startControlledProvider(
 				enteredCall?.();
 				await callGate;
 				if (breakCalls) response.destroy();
+				if (callResult !== undefined) return callResult;
 				return {
 					content: [
 						{
@@ -131,7 +139,7 @@ export async function startControlledProvider(
 			response.end();
 		});
 	});
-	http.listen(0, '127.0.0.1');
+	http.listen(port, '127.0.0.1');
 	await once(http, 'listening');
 	const address = http.address();
 	if (address === null || typeof address === 'string') throw new Error('Missing provider address');
@@ -145,6 +153,9 @@ export async function startControlledProvider(
 			await new Promise<void>((resolve, reject) =>
 				http.close((error) => (error === undefined ? resolve() : reject(error))),
 			);
+		},
+		setCallResult: (result) => {
+			callResult = result;
 		},
 		breakCalls: () => {
 			breakCalls = true;

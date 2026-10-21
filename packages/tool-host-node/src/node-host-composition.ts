@@ -16,6 +16,7 @@ import {
 } from '@agent-collaboration/tool-engine/dispatch';
 import {
 	createMcpGateway,
+	createOrganizationToolCatalog,
 	proxyUpstreamFailureFromError,
 	proxyUpstreamFailureResult,
 	createInMemoryApprovalTokenUse,
@@ -23,7 +24,6 @@ import {
 	type McpGateway,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { ToolSchema } from '@modelcontextprotocol/core';
-import type { Tool } from '@modelcontextprotocol/server';
 
 import { mcpConfigToResolvedProviders } from '#node-host/configuration/mcp-config';
 import {
@@ -192,23 +192,14 @@ export async function createNodeHostComposition(props: {
 		},
 	};
 	// One organization catalog is read before a listener can admit any client.
-	const catalogByNamespace = new Map<string, readonly Tool[]>();
-	const discoveryScope = `startup:${config.authority}`;
-	try {
-		await Promise.all(
-			[...runtimeByNamespace.keys()].map(async (namespace) => {
-				catalogByNamespace.set(
-					namespace,
-					await runtime.listTools({ agentScopeId: discoveryScope, namespace }),
-				);
-			}),
-		);
-	} catch (error) {
-		await operations.close();
-		throw error;
-	} finally {
-		await runtime.closeAgentScope(discoveryScope);
-	}
+	const organizationCatalog = createOrganizationToolCatalog({
+		namespaces: [...runtimeByNamespace.keys()],
+		runtime,
+		discoveryScope: `startup:${config.authority}`,
+		catalogTtlMs: 60_000,
+		now: Date.now,
+	});
+	await organizationCatalog.read();
 	const sessions = createPortalSessionManager({
 		accessPolicy: {
 			enabledNamespaces: [...runtimeByNamespace.keys()],
@@ -217,10 +208,8 @@ export async function createNodeHostComposition(props: {
 		},
 		upstreamNamespaces: [...runtimeByNamespace.keys()],
 		catalogTtlMs: 60_000,
-		runtime: {
-			...runtime,
-			listTools: async ({ namespace }) => catalogByNamespace.get(namespace) ?? [],
-		},
+		organizationCatalog,
+		runtime,
 	});
 	let closed = false;
 

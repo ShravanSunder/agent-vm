@@ -29,3 +29,5 @@ export type { GatewayApprovalTokens } from '#mcp-gateway/gateway-approval';
 export * from '#mcp-gateway/proxy-mcp-result';
 
 export * from '#mcp-gateway/proxy-upstream-failure';
+
+export * from '#mcp-gateway/organization-tool-catalog';

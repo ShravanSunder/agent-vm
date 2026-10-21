@@ -44,3 +44,11 @@ permit `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` until
 the later package cutover. Other agent-vm packages and VM providers are forbidden.
 Standalone `tool_portal_*`, JSON and artifact routes and the Portal SDK's Node
 client migration belong to the following standalone-core slice.
+
+If a provider is down during startup discovery, healthy providers remain available
+on the plain address and discovery diagnostics identify the failed namespace.
+The next catalog-dependent request retries only failed providers. Direct
+`tools/list` returns bounded HTTP 503 diagnostics while discovery is incomplete.
+A complete catalog refreshes on the first access after 60 seconds; a failed
+refresh keeps the previous complete tools and adds diagnostics. There is no
+background retry or refresh timer.
