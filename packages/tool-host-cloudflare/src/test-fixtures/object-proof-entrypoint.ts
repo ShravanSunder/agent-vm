@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { OrganizationAuthorization } from '#worker-host/organization-authorization';
+import { OrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
 
 export { OrganizationAuthorization };
 interface ObjectProofBindings {

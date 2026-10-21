@@ -11,23 +11,29 @@ import {
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 
-import { recordBatchCallAnalytics } from '#worker-host/batch-call-analytics';
-import type { CallAnalyticsBinding } from '#worker-host/call-analytics';
-import { checkWorkerCaller, type OrganizationAdmission } from '#worker-host/caller-check';
-import {
-	createOrganizationEngine,
-	type OrganizationEngine,
-} from '#worker-host/organization-engine';
-import { createWorkerRequestLimits, workerRequestBodyBytes } from '#worker-host/worker-call-limits';
-import {
-	type OrganizationConfigurationSource,
-	type WorkerSecretBindings,
-} from '#worker-host/worker-configuration';
-import { createWorkerMcpServer } from '#worker-host/worker-mcp-server';
+import { recordBatchCallAnalytics } from '#worker-host/call-analytics/batch-call-analytics';
+import type { CallAnalyticsBinding } from '#worker-host/call-analytics/call-analytics';
 import {
 	writeWorkerObservationLog,
 	type WorkerObservationLog,
-} from '#worker-host/worker-observation-log';
+} from '#worker-host/call-analytics/worker-observation-log';
+import {
+	checkWorkerCaller,
+	type OrganizationAdmission,
+} from '#worker-host/caller-authorization/caller-check';
+import {
+	createOrganizationEngine,
+	type OrganizationEngine,
+} from '#worker-host/organization-engines/organization-engine';
+import {
+	type OrganizationConfigurationSource,
+	type WorkerSecretBindings,
+} from '#worker-host/worker-configuration/models/worker-configuration';
+import {
+	createWorkerRequestLimits,
+	workerRequestBodyBytes,
+} from '#worker-host/worker-request-handling/worker-call-limits';
+import { createWorkerMcpServer } from '#worker-host/worker-request-handling/worker-mcp-server';
 
 export interface OrganizationAuthorizationPort extends OrganizationAdmission {
 	readonly consumeApprovalToken: ConsumeApprovalTokenId;

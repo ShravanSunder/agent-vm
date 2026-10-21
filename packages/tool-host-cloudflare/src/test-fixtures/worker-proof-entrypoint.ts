@@ -1,8 +1,9 @@
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { z } from 'zod';
 
+import type { WorkerObservationLog } from '#worker-host/call-analytics/worker-observation-log';
+import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
 import type { WorkerBindings } from '#worker-host/index';
-import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/organization-authorization';
 import {
 	createObservedNativeClient,
 	nativeClientClosures,
@@ -10,9 +11,12 @@ import {
 import {
 	deployedConfigurationSource,
 	workerSecretBindings,
-} from '#worker-host/worker-configuration';
-import { createWorkerHost, workerAgentVerifier, type WorkerHost } from '#worker-host/worker-host';
-import type { WorkerObservationLog } from '#worker-host/worker-observation-log';
+} from '#worker-host/worker-configuration/worker-configuration';
+import {
+	createWorkerHost,
+	workerAgentVerifier,
+	type WorkerHost,
+} from '#worker-host/worker-request-handling/worker-host';
 
 export class OrganizationAuthorization extends ProductionOrganizationAuthorization {
 	private fault: 'none' | 'fail' | 'stall' = 'none';

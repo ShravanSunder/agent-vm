@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
-import { responseWithRequestCleanup } from '#worker-host/worker-host';
+import { responseWithRequestCleanup } from '#worker-host/worker-request-handling/worker-host';
 afterEach(() => {
 	vi.useRealTimers();
 });

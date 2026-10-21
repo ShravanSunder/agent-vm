@@ -1,19 +1,23 @@
 import { z } from 'zod';
 
-import { OrganizationAuthorization } from '#worker-host/organization-authorization';
+import { writeWorkerObservationLog } from '#worker-host/call-analytics/worker-observation-log';
+import { OrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
 import {
 	deployedConfigurationSource,
 	workerSecretBindings,
-} from '#worker-host/worker-configuration';
-import { createWorkerHost, workerAgentVerifier, type WorkerHost } from '#worker-host/worker-host';
-import { writeWorkerObservationLog } from '#worker-host/worker-observation-log';
+} from '#worker-host/worker-configuration/worker-configuration';
+import {
+	createWorkerHost,
+	workerAgentVerifier,
+	type WorkerHost,
+} from '#worker-host/worker-request-handling/worker-host';
 
 export { OrganizationAuthorization, createWorkerHost };
 export type { WorkerHost };
 export interface WorkerBindings extends Readonly<Record<string, unknown>> {
 	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
 	readonly ORGANIZATION_CONFIGURATIONS: string;
-	readonly CALL_ANALYTICS: import('#worker-host/call-analytics').CallAnalyticsBinding;
+	readonly CALL_ANALYTICS: import('#worker-host/call-analytics/call-analytics').CallAnalyticsBinding;
 	readonly SIGN_IN_ISSUER: string;
 	readonly SIGN_IN_JWKS_URL: string;
 	readonly TOOL_PORTAL_AUDIENCE: string;

@@ -34,6 +34,7 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@agent-collaboration/tool-host-node": "workspace:*",
 		"@cloudflare/workers-types": "4.20250927.0",
 		"@modelcontextprotocol/client": "2.3.1",
 		"esbuild": "0.27.7",

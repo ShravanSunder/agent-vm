@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { analyticsText, writeCallAnalytics, type CallAnalytics } from '#worker-host/call-analytics';
+import {
+	analyticsText,
+	writeCallAnalytics,
+	type CallAnalytics,
+} from '#worker-host/call-analytics/call-analytics';
 
 const call: CallAnalytics = {
 	organizationId: '11111111-1111-4111-8111-111111111111',

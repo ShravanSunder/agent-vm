@@ -2,14 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { startNodeHost } from '@agent-collaboration/tool-host-node';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { startLegacyProxyReference } from '#worker-host/test-fixtures/legacy-proxy-reference';
 import { startLocalWorkerHarness } from '#worker-host/test-fixtures/local-worker-harness';
-
-import { startNodeHost } from '../../tool-host-node/src/node-host-startup.js';
-import { fixtureConfig } from '../../tool-host-node/src/test-fixtures/node-host-fixture.js';
+import { nodeParityHostConfig } from '#worker-host/test-fixtures/node-parity-host-config';
 
 // Independent contract values, deliberately not imported from the limit implementation.
 const replyLimit = 16 * 1024 * 1024;
@@ -73,7 +72,7 @@ async function startNodeComparison(
 	) => Promise<{ readonly status: number; readonly text: string }>;
 	readonly retire: () => Promise<void>;
 }> {
-	const config = fixtureConfig(directory, [`${url}/mcp`, `${url}/mcp`]);
+	const config = nodeParityHostConfig(directory, [`${url}/mcp`, `${url}/mcp`]);
 	const provider = config.mcp.providers.alpha;
 	const profile = config.profiles['profile-a'];
 	const policy = profile?.profile.namespaces.alpha;

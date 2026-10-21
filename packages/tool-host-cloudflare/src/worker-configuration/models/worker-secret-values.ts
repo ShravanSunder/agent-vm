@@ -53,19 +53,3 @@ export const formattedSecretValueSchema = z.discriminatedUnion('source', [
 export type SecretFormat = z.infer<typeof secretFormatSchema>;
 export type SecretValue = z.infer<typeof secretValueSchema>;
 export type FormattedSecretValue = z.infer<typeof formattedSecretValueSchema>;
-
-export function formatSecretValue(secret: FormattedSecretValue, rawValue: string): string {
-	if (secret.format === undefined) {
-		return rawValue;
-	}
-	switch (secret.format.kind) {
-		case 'bearer':
-			return `Bearer ${rawValue}`;
-		case 'prefix':
-			return `${secret.format.prefix} ${rawValue}`;
-		default: {
-			const exhaustiveFormat: never = secret.format;
-			return exhaustiveFormat;
-		}
-	}
-}

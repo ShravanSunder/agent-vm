@@ -10,7 +10,7 @@ import {
 	startLocalWorkerHarness,
 	type LocalWorkerHarness,
 } from '#worker-host/test-fixtures/local-worker-harness';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration';
+import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 const pointSchema = z.object({
 	indexes: z.array(z.string()).length(1),

@@ -603,6 +603,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@cloudflare/workers-types':
         specifier: 4.20250927.0
         version: 4.20250927.0

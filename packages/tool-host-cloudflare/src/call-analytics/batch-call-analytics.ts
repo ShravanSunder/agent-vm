@@ -5,8 +5,8 @@ import {
 	writeCallAnalytics,
 	type CallAnalytics,
 	type CallAnalyticsBinding,
-} from '#worker-host/call-analytics';
-import { serializedBytes } from '#worker-host/worker-call-limits';
+} from '#worker-host/call-analytics/call-analytics';
+import { serializedBytes } from '#worker-host/worker-request-handling/worker-call-limits';
 
 export function recordBatchCallAnalytics(props: {
 	readonly organizationId: string;

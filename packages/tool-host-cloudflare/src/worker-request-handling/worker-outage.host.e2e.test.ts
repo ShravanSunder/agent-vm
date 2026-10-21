@@ -10,7 +10,7 @@ import {
 	rpcResult,
 	portalRead,
 } from '#worker-host/test-fixtures/local-worker-harness';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration';
+import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 it('keeps healthy tools during a startup outage, retries the failed server, and retains a complete catalog after a failed60s refresh', async () => {
 	const now = Date.now();

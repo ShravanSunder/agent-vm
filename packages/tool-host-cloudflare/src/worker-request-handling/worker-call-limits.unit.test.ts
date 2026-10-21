@@ -7,7 +7,7 @@ import {
 	createWorkerRequestLimits,
 	projectBoundedWorkerToolResult,
 	workerReplyTrimOrder,
-} from '#worker-host/worker-call-limits';
+} from '#worker-host/worker-request-handling/worker-call-limits';
 
 describe('whole-call Worker batch scheduling', () => {
 	it('admits six whole calls and releases the next six only on completion', async () => {

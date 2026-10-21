@@ -14,12 +14,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { z } from 'zod';
 
-import { resolveWorkerProxyProfile } from '#worker-host/proxy-profile-policy';
+import { resolveWorkerProxyProfile } from '#worker-host/organization-engines/proxy-profile-policy';
 import {
 	organizationConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
-import { organizationConfigurationSchema } from '#worker-host/worker-configuration';
+import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 function transportShape(transport: unknown): transport is Transport {
 	return (

@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { startNodeHost } from '@agent-collaboration/tool-host-node';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -10,16 +11,14 @@ import {
 	startLocalWorkerHarness,
 	rpcResult,
 } from '#worker-host/test-fixtures/local-worker-harness';
-
-import { startNodeHost } from '../../tool-host-node/src/node-host-startup.js';
-import { fixtureConfig } from '../../tool-host-node/src/test-fixtures/node-host-fixture.js';
+import { nodeParityHostConfig } from '#worker-host/test-fixtures/node-parity-host-config';
 
 for (const mode of ['direct', 'indirect'] as const)
 	it(`${mode}: real Node and Worker proxy preserve08f9e426 missing-token error with zero effects`, async () => {
 		const harness = await startLocalWorkerHarness();
 		const reference = await startLegacyProxyReference(harness.fixture.url, mode);
 		const directory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-missing-approval-'));
-		const config = fixtureConfig(directory, [
+		const config = nodeParityHostConfig(directory, [
 			`${harness.fixture.url}/mcp`,
 			`${harness.fixture.url}/mcp`,
 		]);

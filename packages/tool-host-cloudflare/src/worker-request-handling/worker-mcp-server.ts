@@ -7,11 +7,11 @@ import {
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { Server, type CallToolResult } from '@modelcontextprotocol/server';
 
-import type { WorkerRequestLimits } from '#worker-host/worker-call-limits';
+import type { WorkerRequestLimits } from '#worker-host/worker-request-handling/worker-call-limits';
 import {
 	workerProtocolIdentity,
 	projectBoundedWorkerToolResult,
-} from '#worker-host/worker-call-limits';
+} from '#worker-host/worker-request-handling/worker-call-limits';
 
 function toolResult(
 	operation: ProxyMcpOperation,

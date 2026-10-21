@@ -31,15 +31,18 @@ import {
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { z } from 'zod';
 
-import { assessedProxyProfile, resolveWorkerProxyProfile } from '#worker-host/proxy-profile-policy';
-import { createRequestOperationEntries } from '#worker-host/request-operation-entries';
+import {
+	assessedProxyProfile,
+	resolveWorkerProxyProfile,
+} from '#worker-host/organization-engines/proxy-profile-policy';
+import { createRequestOperationEntries } from '#worker-host/organization-engines/request-operation-entries';
+import { createWorkerUpstreamTransport } from '#worker-host/organization-engines/worker-upstream-transports';
 import type {
 	OrganizationConfiguration,
 	WorkerSecretBindings,
-} from '#worker-host/worker-configuration';
-import { mcpConfigToResolvedProviders } from '#worker-host/worker-mcp-configuration';
-import { formatSecretValue } from '#worker-host/worker-secret-values';
-import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
+} from '#worker-host/worker-configuration/models/worker-configuration';
+import { mcpConfigToResolvedProviders } from '#worker-host/worker-configuration/worker-mcp-configuration';
+import { formatSecretValue } from '#worker-host/worker-configuration/worker-secret-values';
 
 export interface OrganizationEngine {
 	readonly configuration: OrganizationConfiguration;

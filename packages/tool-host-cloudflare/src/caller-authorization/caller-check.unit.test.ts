@@ -1,7 +1,7 @@
 import type { AgentTokenVerifier } from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { checkWorkerCaller } from '#worker-host/caller-check';
+import { checkWorkerCaller } from '#worker-host/caller-authorization/caller-check';
 
 const organizationId = '11111111-1111-4111-8111-111111111111';
 // This unit test isolates the edge's routing rule. Signed JWT/JWKS HTTP is proved in workerd.
