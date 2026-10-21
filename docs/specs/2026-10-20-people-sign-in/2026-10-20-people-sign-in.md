@@ -26,7 +26,7 @@ flowchart TB
   machines -->|not through sign-in| cf
 ```
 
-The sign-in service never serves machines or agents (`U6`). It does not decide what a person may do inside a service; each service checks that itself.
+The sign-in service never serves machines or VMs (`U6`). Agents sign in only as agents, never as people (`U8`). It does not decide what a person may do inside a service; each service checks that itself.
 
 ## Problems and outcomes
 
@@ -46,7 +46,7 @@ The sign-in service never serves machines or agents (`U6`). It does not decide w
 | `E3` Linked login | One Google or GitHub account, identified by provider plus that provider's account id, attached to one Person. | belongs to one E2 | A provider account is linked to at most one Person per deployment | linked, unlinked |
 | `E4` Passkey | One WebAuthn credential a signed-in Person registered, identified by its credential id. | belongs to one E2 | Usable only to sign in as its own Person; holds no biometric data or private key | active, removed |
 | `E5` Session | One signed-in period of one Person in one deployment. | belongs to one E2 | Ends at sign-out, expiry or removal of the Person | active, signed out, expired, revoked |
-| `E6` Relying service | One of our services that receives proof of a person, identified by its audience identifier (the console; Tool Portal's control API). | registered in one E1; receives many E7 | Proof for one relying service is never valid for another | registered, retired |
+| `E6` Relying service | One of our services that receives proof of a person or an agent, identified by its audience identifier (the console; Tool Portal's control API). | registered in one E1; receives many E7 | Proof for one relying service is never valid for another | registered, retired |
 | `E7` Person proof | Evidence issued to one relying service that one Person is signed in, valid for that service only and for a bounded time. | names one E2 and one E6; issued during one E5 | Represents a person, never a service or machine | valid, expired, withdrawn |
 | `E8` Allowlist entry | One provider-verified email address approved for a private deployment, compared case-insensitively. An unverified address never matches. | belongs to one private E1; admits at most one E2, the Person it first admitted | Changes are recorded (`R12`). A Person in a private deployment is active exactly while at least one E8 admits them and every E8 that admits them is allowed | allowed, removed |
 | `E9` Agent client | One agent registered to sign in as itself in one deployment, identified by its client id; registered for one organization. | belongs to one E1; receives many E10 | Signs in only with its own registered credential; never a Person | active, removed |
@@ -75,7 +75,7 @@ flowchart TB
 
 | Id | Requirement | Needs | Entities | Problem → outcome · example | Proof |
 | --- | --- | --- | --- | --- | --- |
-| `R1` | The service MUST offer exactly three sign-in methods: Google, GitHub, and a passkey the Person registered earlier. It MUST NOT offer email and password, magic links, any other provider, or an identity-proxy sign-in path. | U1 | E1–E4 | P1→O1 · C1 | V1 |
+| `R1` | For people, the service MUST offer exactly three sign-in methods: Google, GitHub, and a passkey the Person registered earlier. Agents sign in only with their own client credentials (`R15`). It MUST NOT offer email and password, magic links, any other provider, or an identity-proxy sign-in path. | U1 | E1–E4 | P1→O1 · C1 | V1 |
 | `R2` | A new Person MUST first sign in with Google or GitHub (the default until `SD7` decides whether passkey-first registration is allowed). While signed in, a Person MAY register passkeys, and a later passkey sign-in MUST reach the same Person. | U1 | E2–E5 | P1→O1 · C1 | V1 |
 | `R3` | In a private deployment, a Google or GitHub sign-in MUST reach or create a Person only when the provider-verified email matches an allowed E8. Otherwise the sign-in MUST end as "not allowed" with nothing created or linked. | U2 | E1, E2, E3, E8 | P2→O2 · C1 | V2 |
 | `R4` | When an E8 is removed, the matching Person MUST be unable to start a new session by any method, including a passkey. The removal takes effect when it is recorded: every session creation, proof issuance and privileged-decision confirmation after that MUST be refused, including one that uses a session created while the removal was in progress. Existing sessions MUST stop being accepted for privileged decisions at once (`R9`), and for any other use within the token lifetime (bound `SD3`). | U2 | E2, E5, E7, E8 | P2→O2 · C1 | V3 |

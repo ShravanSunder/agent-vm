@@ -45,11 +45,11 @@ Priority: `U1`, `U2`, `U4`, `U6` and `U7` first (private apps). `U3` (public app
 
 ## Boundary
 
-- **In:** people's sign-in for our apps, in private and public deployments; the proof each relying service receives; removing a person's access; the record of who may sign in.
+- **In:** people's sign-in for our apps, and agents signing in as themselves (`U8`), in private and public deployments; the proof each relying service receives; removing a person's access; the record of who may sign in.
 - **Reused:** Better Auth, self-hosted, version 1.7.11 or later; Cloudflare Workers and D1; Google and GitHub as identity providers; Cloudflare for machine access.
 - **Not in:**
   - email and password, magic links, other providers, SSO or SAML;
-  - identities for machines, VMs or agents (D2 and Tool Portal E12/E13);
+  - identities for machines or VMs (D2 and Tool Portal E12/E13);
   - a workspace membership registry, which the fleet owns (F-53 until its contract exists);
   - per-call tool approvals (Tool Portal E7);
   - proving a manager meant a particular Accept, which stays with the console (F-57).
@@ -67,4 +67,4 @@ Priority: `U1`, `U2`, `U4`, `U6` and `U7` first (private apps). `U3` (public app
 | `SD6` | Workers Free or Paid | owner, after measurement | Free, if measured CPU fits |
 | `SD7` | Whether a new person may register with a passkey first, or must first sign in with Google or GitHub | owner | Google or GitHub first, then add passkeys (Lead proposal; Better Auth supports either) |
 | `SD8` | How old a privileged decision's confirmation that the person is still active may be when the decision takes effect | owner, with D5 | 5 seconds (Lead proposal) |
-| `SD9` | Who may register and remove an agent's sign-in: the organization's owner only, or its managers too | owner | owner and managers (Lead proposal; fleet F-23 has managers configure agents) |
+| `SD9` | Who may register and remove an agent's sign-in: the organization's owner only, or its managers too | owner | owner and managers (Lead proposal; fleet F-23 has managers configure agents). Either way, Tool Portal's agent-management handler checks who may, and coordinates the two writes (Lead proposal, Program Design "Adding and removing an agent") |

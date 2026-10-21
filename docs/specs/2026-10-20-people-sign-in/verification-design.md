@@ -26,6 +26,7 @@ No `verify-*` skill exists in this repository, so every journey below is `needed
 | `U5` | Runs on the owner's Cloudflare with its own database, no vendor | Read the deployment settings and the deployed Worker's own record: the owner's account, a database of its own, and no sign-in vendor in the code. | Workers Free CPU fit (`SD6`), measured separately |
 | `U6` | Machines and VMs never use people's sign-in | The VM test lanes run with no sign-in service present. No machine is registered as a sign-in client, and no machine package depends on the sign-in package. | VPN and Router traffic through Cloudflare, which live outside this repository |
 | `U7` | Every change to who may sign in, or how, is recorded, with no secrets | Make each kind of change, then read the audit table: one record per change, with who, what and when. A change whose record can't be written doesn't happen. Search the table and the Worker's logs for the real codes, tokens and cookies seen during the run; none appear. | how long records are kept (Tool Portal D6) |
+| `U8` | Agents sign in as themselves | Register a test agent and read back that it can only use its own sign-in, and that the other grant is refused. Call Tool Portal's Worker with its real token; a person check refuses it. Remove it, then on the same running instances its old token's call and a new token request both fail, including when the removal fails halfway. | the real console (the person verifier stands in); each host's credential storage |
 
 ## Targets
 
@@ -35,6 +36,7 @@ No `verify-*` skill exists in this repository, so every journey below is `needed
 | `T2` | The public test deployment: the same commit, `mode: "public"`, its own Worker and D1 | `U3`, when built |
 | `T3` | The same Worker build on a local Workers runtime with a local D1 | held interleavings and forced audit-write failures. Not hosted proof: it keeps Better Auth, the hooks, the request handler and the database statements real, but not D1's replication |
 | `T4` | Tool Portal at the slice that delivers `decide`, using the production person-proof verifier configured to trust `T1` | decisions, audiences, freshness |
+| `T5` | Tool Portal's Worker (`tool-host-cloudflare`) with its organization Durable Object and agent-management handler, using the production agent verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account, bound to the sign-in Worker's agent-client route | agent calls, removal, held interleavings |
 | client | A scripted stand-in for the console: a registered client that runs authorization code with S256 PKCE | asking for proofs. It stands in until the console exists, and it is never counted as console proof |
 
 ## Shared observations
@@ -127,6 +129,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 **G. Focused rules** (unit, no journey):
 - *The verifier's token rules*, with real JOSE signing over test keys. Each of these must give its own reason: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another service, an `aud` array containing this service (from `openid` and from two resources), expired, and `sid` missing. A token that is correct in every way verifies.
+- *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, wrong `aud`, expired, a `sid` present (`not-an-agent`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof`. The person verifier refuses that same token as `not-a-person`.
 - *The allowlist gate:*
   - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches;
   - **derived active state:**
@@ -143,6 +146,24 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - make the before-change audit write fail during a passkey registration and during a link; no `passkey` or `account` row may appear;
   - make the outcome write fail after a change; the before-change record must still be there;
   - make an allowlist batch fail; neither the change nor its record may land.
+
+**J. Agent sign-in and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
+- **Register:** through `T5`'s agent-management handler, add a test agent to organization O1. Then read the E9 row straight from D1: `grant_types` is exactly `["client_credentials"]`, `client_credentials_scopes` is exactly `["tool-portal:agent"]`, metadata is `{ kind: "agent", organizationId: O1 }`, and the client id is absent from the deployed `cachedTrustedClients`.
+- **Forbidden grant:** start an authorization-code request with the agent's client id, as the stand-in client would. **Expect:** refused, with no code issued.
+- **Use:** get a `client_credentials` token and call one tool through `T5`. **Expect:** the call runs. Then:
+  - present the same token for another audience: `wrong-audience`;
+  - present it to the person verifier, which is what the console will run: `not-a-person`;
+  - present Person A's Tool Portal token to `T5`'s agent check: `not-an-agent`.
+- **Remove, warm:** keep the old token (`tok-old`). Remove the agent through the handler, then on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
+  - call with `tok-old`: `removed-agent`;
+  - request a new token: `invalid_client`;
+  - read the handler's status: "removal complete", the object's agent row, the disabled E9 row, and one audit record naming the acting Person.
+- **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove the agent. **Expect:** status "pending"; a call with any token is refused `removed-agent`; a new token request still succeeds, which is the named gap. Retry. **Expect:** status "complete", then a new token request is refused `invalid_client`.
+- **Held races** (on `T3`, with the hold seam from E):
+  1. a token request held after the credential check while the disable commits, then released. **Expect:** `invalid_client`, and no usable token.
+  2. a token issued before removal, used after step 1 and before step 2. **Expect:** `removed-agent`.
+
+**Read:** each response, the E9 and audit rows, the object's agent row, and the handler's status. A client registered with authorization code as well fails the readback and the forbidden-grant attempt. A Worker that caches the agent list fails the warm call. A client listed in the trusted cache fails the warm token request. A handler that reports "complete" after one write fails the between-writes case.
 
 ## Rows
 
@@ -236,7 +257,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - the console token is refused with `wrong-audience`, and Tool Portal's token verifies;
   - the `openid` token and the two-resource token, both with an array `aud`, are refused with `wrong-audience`;
   - in G, a token without `sid` is refused as `not-a-person`, and each other bad token gives its own reason;
-  - no registered client lists `client_credentials`.
+  - no person-facing client lists `client_credentials`; only agent clients do, with no other grant.
 
   Wrong builds that fail it:
   - a verifier that accepts any audience in an array;
@@ -270,7 +291,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Passes when:**
   - the VM lanes pass with no sign-in configuration present;
   - the import check finds no edge from agent-vm, gateway-runtime, the Gondolin adapter or the Tool VM packages to the sign-in package;
-  - `T1` lists only people-facing clients.
+  - `T1` lists only people-facing clients and agent clients, and no machine or VM client.
 
   Wrong builds that fail it:
   - a controller or VM path that calls the sign-in Worker (the lanes fail without it);
@@ -304,26 +325,31 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 ### `U8` — agents sign in as themselves
 
 - **Obligations:** `R15`, `R16`, `R17` · proof obligation `V11` · seam: trace row R15–R17.
-- **Proven by:** real tokens from the sign-in Worker presented to Tool Portal's Worker and to the console.
-- **Reference:** Spec C4.
-- **Target and journey:** `T1`, plus Tool Portal's Worker in local workerd and when deployed. Needed: a journey that registers a test agent client, gets its token, calls the Worker, removes the client and calls again.
+- **Proven by:** observations J and G: register a test agent, read back how it is registered, try the grant it must not have, call Tool Portal's Worker with its real token, then remove it and try again on the same warm instances, including halfway through the removal.
+- **Reference:** Spec C4; `R15`–`R17`; Program Design [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
+- **Target and journey:** `T1` with `T5`, and `T3` with `T5` local for the held and between-writes cases. Journey `verify-auth` `agent`, needed, lasting: it must drive `T5`'s agent-management handler and the sign-in token endpoint, and read D1, the organization's object and the handler's status.
 - **Passes when:**
-  - the Worker accepts the agent's token for its own audience and refuses one for another audience;
-  - the console, and any check that needs a person, refuses the agent's token; the agent check refuses a person's token;
-  - after removal, the agent's next token request fails and the Worker refuses its next call, even with a token not yet expired.
+  - the E9 row has only `client_credentials`, only `tool-portal:agent`, agent metadata, and is not trusted-cached; an authorization-code request with its id is refused;
+  - `T5` accepts the agent's token for its own audience and refuses it for another; the person verifier refuses it as `not-a-person`; the agent check refuses a person's token as `not-an-agent`;
+  - after removal, on the same warm instances, the old token's call is refused `removed-agent` and a new token request gets `invalid_client`;
+  - between the writes, calls are refused and status is pending; after retry, status is complete and token requests are refused;
+  - both held races end refused.
 
   Wrong builds that fail it:
-  - a verifier that accepts a token without checking `sid`;
-  - a Worker that caches the agent list;
-  - a client registered with authorization code as well as client credentials.
+  - a client registered with authorization code as well as client credentials (readback, forbidden grant);
+  - a verifier that accepts a token without checking `sid` (G, the person-token check);
+  - a Worker that caches the agent list (warm call);
+  - an agent client in the trusted-client cache (warm token request);
+  - a handler that reports complete after one write (between writes).
 - **Reuses:** none yet.
-- **Unverified:** the agent's host storing its credential, which each host proves with its own wiring.
+- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring, and D1's hosted replication timing (only `T3` holds steps in order).
 
 ## What the plan must add
 
-- **Journeys, all lasting:** `verify-auth` with `bootstrap`, `provider-sign-in`, `passkey`, `proof-audience`, `removal` and `audit`, as scripts in the project's scripts location.
+- **Journeys, all lasting:** `verify-auth` with `bootstrap`, `provider-sign-in`, `passkey`, `proof-audience`, `removal`, `audit` and `agent`, as scripts in the project's scripts location.
 - **Automated tests, no journey:**
   - E: held interleavings on `T3`, using a hold seam in the test composition only;
+  - J's held races and between-writes case, on `T3` with `T5` local, using the same hold seam and a one-time failure of the agent-client route in the test composition only;
   - F: decision freshness at Tool Portal's `decide`;
   - G: verifier and gate rules;
   - the forced audit-write failures in I.
