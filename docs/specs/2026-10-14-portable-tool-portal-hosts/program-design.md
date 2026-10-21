@@ -169,7 +169,9 @@ The dispatcher needs a record and a receipt for any call that requires approval 
 | **requires approval** | a person: the approver in the resource owner's policy | `alwaysAskTools`, `writeTools`, `requiresApproval` namespaces |
 | **blocked** | nobody; it never runs, and no approval overrides it | everything else |
 
-Critical tools always go to a person when they're allowed to run. A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
+Critical tools always go to a person when they're allowed to run. A mode is a per-tool setting, not the state of a call, and a timed-out approval never counts as a yes.
+
+**Modes can have an end time** (owner, 2026-10-20, turning fleet F-61's interest into a decision): **approved until** a set time is a temporary grant, and **blocked until** a set time is a temporary revocation. When the time passes, the tool goes back to its previous mode. This is new, so it comes after the first version, together with the change flow that sets it. A blocking ask with a time limit, which lets an agent carry on with a reason (fleet D-8), is a different thing: it's about one question the agent asks, not a tool's mode. For a person's own account, today's Allow, Ask and Deny correspond to approved, requires approval and blocked.
 
 **Who must say yes, by what the call touches:**
 
