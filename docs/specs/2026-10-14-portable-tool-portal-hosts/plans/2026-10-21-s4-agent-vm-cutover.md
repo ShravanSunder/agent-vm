@@ -433,16 +433,21 @@ Branch `tool-portal/s4c-managed-distribution`, base S4b; one shipping/integratio
 
 Branch `tool-portal/s4d-outbound-mcp`, base S4c; one protocol PR, gated by Q8.
 
+**Q8 answered (owner, 2026-10-22): connect to whatever each tool server speaks; DeepWiki must keep working.** The Lead starts S4d now on the S4b head (`c08a0915`, PR #254) in parallel with S4c2: the two touch different files. The Lead orders them later by merging, without rewriting history.
+
 - Move Engine's `upstream-mcp-protocol.ts`, runtime header normalization and server
   types to client/core 2.3.1. Update Node's `stdio-upstream-servers` transport,
   protocol/model/runtime files and managed validation factory together. Preserve
   transport injection, scopes, cancellation, progress, redaction and 4 MiB response
   accounting before redaction. Audit v1 callTool's old result-schema argument:
   v2 takes request options in that position, so a mechanical import swap loses them.
-- With the recommended answer, implement exactly row 10b: modern-only and old-only
-  controlled servers, request logs at startup and reconnect, no tools/effects from
-  the old server, zero initialize and deprecated transport attempts, poisoned legacy
-  `prior`, and source/behavior proof that production passes no prior.
+- Implement row 10b as rewritten for the owner's answer. Use modern-only and old-only
+  (2025-11-25) controlled servers with request logs at startup and on reconnect. Both
+  servers' tools are offered and called, each with exactly one effect. The modern
+  server gets zero `initialize` and zero deprecated-transport attempts (never
+  downgraded), and the old server is reached on its version. Inbound row 10 controls
+  still refuse a 2025-era client. Add a by-hand or scheduled live DeepWiki check that
+  lists its tools and makes one read-only call.
 - Repair existing HTTP/stdio connector, teardown, progress and production-service
   tests; modernize the positive server fixtures and retain legacy negative controls.
   Keep SDK v1 as a devDependency only where the deliberate old-client control needs it.
@@ -450,11 +455,11 @@ Branch `tool-portal/s4d-outbound-mcp`, base S4c; one protocol PR, gated by Q8.
   on the separate #246/#248 lineage: send its Lead the exact connector contract/diff;
   its runtime adapter must move to v2 and run its existing workerd/deployed regression
   before that lineage is integrated. S4 does not silently edit or deploy that branch.
-- Wrong builds: default/auto mode under a no-fallback answer; legacy prior bypasses
-  pin; Node stdio still initializes; validation and runtime negotiate differently;
-  migrated client drops abort/progress; successful discovery masks reconnect fallback.
-- If Q8 is deferred, stop this PR only. S4a–c remain useful and reviewable; no fallback
-  decision is inferred from a passing fixture or an unavailable real provider.
+- Wrong builds: pinned to 2026-07-28 outbound, so the old-only server (and DeepWiki)
+  drops out; a modern server downgraded to `initialize`; the outbound fallback leaks
+  inbound and a 2025-era client is accepted; validation and runtime negotiate
+  differently; the migrated client drops abort or progress; successful discovery
+  masks a reconnect that negotiates differently.
 
 ### S4e — delete the old packages and the last executable references
 

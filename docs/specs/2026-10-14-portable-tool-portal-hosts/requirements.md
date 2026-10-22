@@ -132,7 +132,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
     - **Codex** 0.163.0 speaks it only with its `mcp_2026_07_28` feature turned on, plus a per-server marker for stdio servers ([features](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/features/src/lib.rs#L1541)).
     - **Our Portal SDK clients** (Node and Python) move to the new SDKs.
     - **Clients on MCP SDK v1** can't connect.
-  - **Whether our own connections out to tool servers must also be 2026-07-28** is question 8.
+  - **Our own connections out to tool servers reach each server on whatever MCP version it speaks** (question 8, answered 2026-10-22). Only what we serve to client agents is 2026-07-28 only.
 
 ## Questions for the owner
 
@@ -153,11 +153,7 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
 5. **Answered on 2026-10-20:** a URL parameter, `?tools=direct` (see owner decisions).
-8. **May the portal still call tool servers that speak only 2025-era MCP?** Your direction covers the MCP we serve. Our connections out to tool servers are a separate choice, because those servers aren't ours.
-   - **The Lead recommends no:** connect only with 2026-07-28. A server that hasn't upgraded is refused when the portal starts, with a clear reason, and none of its tools are offered. It matches "only", and it keeps one protocol to prove.
-   - **It costs:** any configured tool server that still speaks only 2025 MCP stops working until it upgrades.
-   - **The alternative:** let each configured server fall back to 2025 MCP until a set date.
-   - **Waits on this:** the connector part of the SDK move. The MCP routes we serve can move first.
+8. **Answered on 2026-10-22: yes.** In your words: "downstream servers can be whatever, we should connect"; "2026-07-28 only" meant from us to client agents. DeepWiki, which speaks only up to 2025-11-25, is "super important" and must keep working. The Perplexity local server is no longer used, so it's out of scope. This replaces the Lead's earlier "no" recommendation.
 
 **Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
 9. **What should aborting a Portal SDK call over HTTP do?** Today the SDK cancels the work, then keeps the response open for a short grace period to collect the call's final result (`resultGraceAfterAbortMs`). MCP 2026-07-28 over HTTP cancels by closing that request's stream, so both can't happen at once (checked with a real SDK test in S3d).

@@ -77,10 +77,10 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 
 **Approvals don't change.** The approval token still travels as `portalApprovalToken` in the call's input, or under the vendor `_meta` key `agent-vm/tool-portal-approval-token`. 2026-07-28 allows vendor metadata. Its own required metadata (protocol version, client capabilities) is separate, and the SDK handles it. **MRTR isn't adopted.** 2026-07-28's multi-round-trip requests (`input_required`, then a retry) could carry an approval prompt. That would be a new approval flow, so it's the owner's call, not part of this move. Either way, the one-use check stays on the server, as the protocol itself requires ([MRTR](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)).
 
-**Outbound, owner question 8.**
-- **The Lead's recommendation:** the connectors' SDK v2 client pins the version, `versionNegotiation: { mode: { pin: "2026-07-28" } }`. It passes no remembered `prior` (that skips the pin, [client.ts:1004](https://github.com/modelcontextprotocol/typescript-sdk/blob/fcef852f6cdafea07f36cf6fae69b37c8adf85be/packages/client/src/client/client.ts#L1004)), and it has no retry over the old protocol. A server that answers only the old protocol is refused when the portal starts, before any call is dispatched, and its tools aren't offered.
-- **If the owner allows fallback instead:** the same client uses `mode: "auto"` for the servers allowed it.
-- Today's `auto-http`, which falls back from Streamable HTTP to the deprecated HTTP+SSE transport ([upstream-mcp-client-runtime.ts:305](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L305)), is a 2025-era fallback, so it goes unless question 8 keeps it.
+**Outbound: connect to whatever each tool server speaks** (owner question 8, answered 2026-10-22).
+- The connectors' SDK v2 client uses `versionNegotiation: { mode: "auto" }`. It speaks 2026-07-28 to a server that offers it, and that server's 2025-era version otherwise. A server that offers 2026-07-28 is never downgraded. DeepWiki's public server, which lists versions only up to 2025-11-25, must keep working.
+- Today's `auto-http`, which falls back from Streamable HTTP to the deprecated HTTP+SSE transport ([upstream-mcp-client-runtime.ts:305](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L305)), stays for the servers that need it.
+- The fallback is outbound only. The routes we serve to client agents stay 2026-07-28 only, and row 10's controls still refuse a 2025-era client.
 
 **Clients and packages:**
 - The Portal SDK's Node client moves to `@modelcontextprotocol/client` with the version pinned.

@@ -46,7 +46,7 @@ They're described in the [Program Design](program-design.md#the-three-ways-in).
     - There are no protocol sessions: no `Mcp-Session-Id` is issued, and one a client sends is ignored. `GET` and `DELETE` get 405.
     - Every `tools/list` page and every `resources/read` result carries `ttlMs` and `cacheScope: "private"`, because they depend on the caller. So does `server/discover`.
     - agent-vm's private connection, which Hermes uses inside agent-vm, isn't MCP and works as today.
-    - Whether connections out to tool servers must also be 2026-07-28 is owner question 8.
+    - Connections out to tool servers use whatever MCP version each server speaks: 2026-07-28 when the server offers it, its 2025-era version otherwise (owner, 2026-10-22). This doesn't loosen anything above: what we serve stays 2026-07-28 only.
 
 ## The pieces stay separate
 
