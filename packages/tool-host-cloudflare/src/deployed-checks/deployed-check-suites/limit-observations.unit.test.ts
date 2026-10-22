@@ -68,6 +68,18 @@ function overlapRecords(): TailRecord[] {
 	}));
 }
 describe('deployed limit assertion sensitivity', () => {
+	it.each([200, 403, 502])(
+		'reports the observed HTTP %s when an oversized body is not refused',
+		(status) => {
+			expect(() =>
+				assertBodyLimit(
+					[success, success, { ...success, status }],
+					observedCalls(['under', 'at']),
+					['under', 'at', 'over'],
+				),
+			).toThrow(`Oversized body was not refused with 413 (got HTTP ${String(status)}).`);
+		},
+	);
 	it('accepts under/at body limit and rejects a moved cap or effects after rejection', () => {
 		const ids = ['under', 'at', 'over'];
 		const calls = observedCalls(['under', 'at']);

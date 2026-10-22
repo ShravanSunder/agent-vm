@@ -22,7 +22,10 @@ export function assertBodyLimit(
 				throw new Error('Body under or at the limit failed.');
 			assertCallEffects(observations, callId, 1);
 		} else {
-			if (response.status !== 413) throw new Error('Oversized body was not refused with 413.');
+			if (response.status !== 413)
+				throw new Error(
+					`Oversized body was not refused with 413 (got HTTP ${String(response.status)}).`,
+				);
 			assertCallEffects(observations, callId, 0);
 		}
 	});
