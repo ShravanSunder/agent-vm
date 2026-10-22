@@ -91,7 +91,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - Fleet and Router integration, including fleet-issued agent tokens.
 - Routing calls between machines in the fleet. The Worker reaching a computer's own MCP server is a computer tool, above.
 - A stored record of every call, and recovery of calls after a restart. Today's servers keep no such record.
-- Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.
+- ~~Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.~~ **Superseded on 2026-10-22:** the workspace is now the portal's unit (see below).
 - A full audit trail of permission and security changes.
 - An agent acting with someone else's accounts. "On behalf of" stays a label in the log (fleet F-30, F-35).
 - A control API for proposing and deciding changes.
@@ -134,6 +134,19 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
     - **Our Portal SDK clients** (Node and Python) move to the new SDKs.
     - **Clients on MCP SDK v1** can't connect.
   - **Our own connections out to tool servers reach each server on whatever MCP version it speaks** (question 8, answered 2026-10-22). Only what we serve to client agents is 2026-07-28 only.
+
+## Owner decisions on 2026-10-22: the workspace is the unit
+
+These replace the 2026-10-20 line that put workspaces "for later". The fleet framework records them as F-69 to F-76; the [data map](../../wip/2026-10-22-data-map/index.html) shows the data they change.
+
+- **Each workspace has its own MCP** (F-73): "mcp is per workspace". An agent connects to the MCP of each workspace it belongs to. The workspace is the endpoint, not an argument on a call.
+- **Auth is per workspace** (F-75): "auth is per works pace". An agent's token is scoped to one workspace and means nothing at another. This doesn't choose a new token issuer.
+- **An agent has no access of its own** (F-71): "we arent creating any internal bots with its own access, its all vai workspace". In a workspace it belongs to, an agent has that workspace's tools, which its persona may narrow. Per agent we store only who it is, which workspaces it belongs to and its persona.
+- **External agents get only agent-collaboration** (F-72, F-75): "external agents only have access to agent collaboration". Internal or external is decided per workspace by membership (F-69); internal and external agents alike reach resources only through mediation (F-70).
+- **Every agent works through agent-collaboration** (F-74): "man agents go through agent-collaboration".
+- **Agents join workspaces, and the fleet knows each workspace's members, machines and agent-collaboration** (F-76). The portal reads membership from the fleet, and from configuration until the fleet carries it (F-53).
+
+What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. How sign-in's organizations relate to workspaces is still open ([org page](../../wip/2026-10-21-org-and-portal-design/index.html) decision 1). The Specification and Program Design haven't been revised for this yet.
 
 ## Questions for the owner
 
