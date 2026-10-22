@@ -126,6 +126,9 @@ describe('shared Hermes E2E harness contracts', () => {
 		});
 		const installStoreDirectory = path.join(project.tempRoot, 'registry-install-store');
 		await expect(fs.access(installStoreDirectory)).rejects.toThrow();
+		process.stdout.write(
+			`portal-overlay-pnpm-version ${(await execFileAsync('pnpm', ['--version'], { cwd: localArtifactDirectory })).stdout.trim()}\n`,
+		);
 		await execFileAsync(
 			'pnpm',
 			[
