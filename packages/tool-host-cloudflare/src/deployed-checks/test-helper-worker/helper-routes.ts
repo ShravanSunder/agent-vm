@@ -81,6 +81,13 @@ export async function handleHelperRequest(
 			toolName: name,
 		});
 		return controlledResponseStream({ rpcId: rpc.id, input, observations });
-	} else return new Response(null, { status: 202 });
+	} else {
+		if (rpc.id === undefined) return new Response(null, { status: 202 });
+		return Response.json({
+			jsonrpc: '2.0',
+			id: rpc.id,
+			error: { code: -32601, message: 'Method not found' },
+		});
+	}
 	return Response.json({ jsonrpc: '2.0', id: rpc.id, result });
 }

@@ -64,6 +64,40 @@ function request(path: string, secret?: string, body?: unknown, method = 'POST')
 	});
 }
 describe('controlled helper routes and counters', () => {
+	it.each(['discovery-probe', 0])(
+		'returns method-not-found for an unknown request with id %s',
+		async (id) => {
+			const { ports } = fixture();
+			const response = await handleHelperRequest(
+				request('/mcp/alpha', credential, {
+					jsonrpc: '2.0',
+					id,
+					method: 'server/discover',
+				}),
+				ports,
+			);
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({
+				jsonrpc: '2.0',
+				id,
+				error: { code: -32601, message: 'Method not found' },
+			});
+			expect((await ports.observations('unit-run').snapshot()).calls).toEqual([]);
+		},
+	);
+	it('accepts a notification without a JSON-RPC response or controlled effect', async () => {
+		const { ports } = fixture();
+		const response = await handleHelperRequest(
+			request('/mcp/alpha', credential, {
+				jsonrpc: '2.0',
+				method: 'notifications/initialized',
+			}),
+			ports,
+		);
+		expect(response.status).toBe(202);
+		expect(await response.text()).toBe('');
+		expect((await ports.observations('unit-run').snapshot()).calls).toEqual([]);
+	});
 	it('serves only public EC keys and rejects private signing material', async () => {
 		const { ports } = fixture();
 		expect(
