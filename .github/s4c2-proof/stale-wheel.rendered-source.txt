@@ -1,0 +1,462 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import {
+	fakeUpstreamNamespace,
+	startFakeUpstreamMcpServer,
+	type StartedFakeUpstreamMcpServer,
+} from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
+import { afterAll, describe, expect, it } from 'vitest';
+
+import {
+	createControllerStateRoot,
+	resolveControllerGatewayStateRoot,
+} from '../controller/durable-state/controller-state-paths.js';
+import { resolveControllerGatewayRecordTargets } from '../controller/durable-state/controller-state-record-paths.js';
+import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
+import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
+import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
+import {
+	canRunManagedVmE2e,
+	currentE2eArchitecture,
+	prepareGatewayE2eProjectImages,
+	removeE2eTempRoot,
+	startE2eControllerRuntime,
+	type E2eHarnessRuntime,
+} from './e2e-harness.js';
+import {
+	buildHermesE2eProfileApiServerKeySecrets,
+	hermesE2eProfileApiServerKey,
+	hermesE2eProfileApiServerKeyEnvironmentName,
+	materializeLocalHermesGatewayImagePackages,
+	renderHermesManagedE2eConfiguration,
+	scaffoldHermesE2eProject,
+	type HermesE2eProject,
+} from './hermes-e2e-harness.js';
+import { assertManagedPortalImageInstallation } from './managed-portal-distribution-test-fixture.js';
+import {
+	createPortalCompositionApprovalObservation,
+	portalCompositionApprovalNamespace,
+	requestPortalCompositionApprovalRun,
+	portalCompositionApprovalPrompt,
+	portalCompositionApprovalFinalMarker,
+} from './portal-composition-approval-test-fixture.js';
+import { rethrowPortalCompositionFailure } from './portal-composition-failure-diagnostics.js';
+import {
+	buildPortalCompositionFixtureConfig,
+	buildPortalCompositionHostScriptBody,
+	buildPortalCompositionLossScriptBody,
+} from './portal-composition-hermes-e2e-config.js';
+import {
+	requestPortalCompositionHermesTurn,
+	snapshotPortalCompositionModelProgress,
+	startPortalCompositionModelServer,
+	waitForPortalCompositionHermesHealth,
+} from './portal-composition-hermes-e2e-support.js';
+import {
+	buildPortalCompositionProgram as buildSharedPortalCompositionProgram,
+	portalCompositionArtifactNamespace,
+	portalCompositionArtifactOperationName,
+	portalCompositionLossProbeOperationName,
+	validatePortalCompositionGeneratedProgramSyntax,
+} from './portal-composition-hermes-e2e-test-fixture.js';
+import { observeLossProbeProcessExit } from './portal-composition-loss-test-fixture.js';
+import { assertPortalCompositionResults } from './portal-composition-result-assertions-test-fixture.js';
+
+const architecture = currentE2eArchitecture();
+const runPortalCompositionHermesE2e =
+	process.env.AGENT_VM_HERMES_E2E === '1' && (await canRunManagedVmE2e({ architecture }));
+const describePortalCompositionHermesE2e = runPortalCompositionHermesE2e ? describe : describe.skip;
+
+const agentId = 'main';
+const configuredCliNamespace = 'portal_composition_execution';
+const credentialedEffectOperationName = 'credentialed_effect';
+const credentialedRuntimeSecretEnvironmentName = 'AGENT_VM_PORTAL_COMPOSITION_CREDENTIALED_TOKEN';
+const credentialedRuntimeHost = 'portal-composition-credential.invalid';
+const fakeMcpHost = 'portal-composition-mcp.vm.host';
+const finalMarker = 'portal-composition-hermes-complete';
+const hostOperationName = 'write_host_effect';
+const hiddenHostEffectOperationName = 'hidden_host_effect';
+const modelHost = 'portal-composition-model.vm.host';
+const modelName = 'portal-composition-hermes-e2e';
+const promptMarker = 'RUN_PORTAL_COMPOSITION_E2E';
+const programResultMarker = 'portal-composition-program-complete';
+const resultDerivedValue = 'derived-from-read-thing';
+const sessionId = 'portal-composition-hermes-session';
+const toolVmEffectOperationName = 'write_tool_vm_effect';
+
+async function writePortalCompositionConfiguration(options: {
+	readonly barrierFifoPath: string;
+	readonly barrierReadyPath: string;
+	readonly concurrencyOrderPath: string;
+	readonly hostEffectPath: string;
+	readonly hiddenHostEffectPath: string;
+	readonly lossFifoPath: string;
+	readonly lossFastTimestampPath: string;
+	readonly lossOrderPath: string;
+	readonly lossPidPath: string;
+	readonly lossReadyPath: string;
+	readonly mcpUrl: string;
+	readonly project: HermesE2eProject;
+}): Promise<void> {
+	const configDirectory = path.join(options.project.tempRoot, 'config', 'tool-portal');
+	await mkdir(configDirectory, { recursive: true });
+	const credentialedImageReference = '../../vm-images/tool-vms/default/build-config.jsonc';
+	const defaultToolVmProfile = options.project.systemConfig.imageProfiles.toolVms.default;
+	if (
+		defaultToolVmProfile === undefined ||
+		path.resolve(configDirectory, credentialedImageReference) !== defaultToolVmProfile.buildConfig
+	) {
+		throw new Error(
+			'Portal composition credentialed image reference did not resolve to the prepared default Tool VM recipe.',
+		);
+	}
+	const hostScript = buildPortalCompositionHostScriptBody({
+		barrierFifoPath: options.barrierFifoPath,
+		barrierReadyPath: options.barrierReadyPath,
+		concurrencyOrderPath: options.concurrencyOrderPath,
+		hostEffectPath: options.hostEffectPath,
+		hiddenHostEffectPath: options.hiddenHostEffectPath,
+	});
+	const lossScript = buildPortalCompositionLossScriptBody({
+		lossFifoPath: options.lossFifoPath,
+		lossFastTimestampPath: options.lossFastTimestampPath,
+		lossOrderPath: options.lossOrderPath,
+		lossPidPath: options.lossPidPath,
+		lossReadyPath: options.lossReadyPath,
+	});
+	const credentialedScript = [
+		'import json, os, pathlib, sys',
+		'effect_path = pathlib.Path("/tmp/portal-composition-credentialed-effect.json")',
+		'assert os.environ.get("PORTAL_COMPOSITION_PROOF_TOKEN")',
+		'command = sys.argv[1]',
+		'if command == "write-credentialed-effect":',
+		'    effect_path.write_text(json.dumps({"destination": "credentialed-runtime", "value": sys.argv[2]}, sort_keys=True), encoding="utf-8")',
+		'    result = {"destination": "credentialed-runtime-effect-written"}',
+		'elif command == "read-credentialed-effect":',
+		'    result = {"effect": json.loads(effect_path.read_text(encoding="utf-8")), "destination": "credentialed-runtime-effect-read"}',
+		'else:',
+		'    raise RuntimeError("unexpected credentialed fixture command")',
+		'print(json.dumps(result, sort_keys=True), end="")',
+	].join('\n');
+	const { mcpConfig, toolPortalConfig } = buildPortalCompositionFixtureConfig({
+		agentId,
+		configuredCliNamespace,
+		credentialedEffectOperationName,
+		credentialedImageReference,
+		credentialedRuntimeHost,
+		credentialedRuntimeSecretEnvironmentName,
+		credentialedScriptBody: credentialedScript,
+		fakeUpstreamNamespace,
+		hostCwd: options.project.tempRoot,
+		hostEffectOperationName: hostOperationName,
+		hostScriptBody: hostScript,
+		hiddenHostEffectOperationName,
+		lossProbeOperationName: portalCompositionLossProbeOperationName,
+		lossScriptBody: lossScript,
+		mcpUrl: options.mcpUrl,
+		toolVmArtifactNamespace: portalCompositionArtifactNamespace,
+		toolVmArtifactOperationName: portalCompositionArtifactOperationName,
+		toolVmEffectOperationName,
+	});
+	await Promise.all([
+		writeFile(
+			path.join(configDirectory, 'mcp.config.jsonc'),
+			`${JSON.stringify(mcpConfig, null, '\t')}\n`,
+			'utf8',
+		),
+		writeFile(
+			path.join(configDirectory, 'tool-portal.config.jsonc'),
+			`${JSON.stringify(toolPortalConfig, null, '\t')}\n`,
+			'utf8',
+		),
+	]);
+	const zone = options.project.systemConfig.zones[0];
+	if (zone === undefined || zone.gateway.type !== 'hermes') {
+		throw new Error('Portal composition E2E requires a Hermes zone.');
+	}
+	zone.toolPortal = {
+		configDir: configDirectory,
+		surfaceEligibilityByProfile: {
+			[agentId]: {
+				[configuredCliNamespace]: ['protected_uds'],
+				[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
+				[portalCompositionArtifactNamespace]: ['protected_uds'],
+				[portalCompositionApprovalNamespace]: ['protected_uds'],
+			},
+		},
+	};
+}
+
+describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Hermes', () => {
+	let harness: E2eHarnessRuntime | undefined;
+	let mcpServer: StartedFakeUpstreamMcpServer | undefined;
+	let modelServer: Awaited<ReturnType<typeof startPortalCompositionModelServer>> | undefined;
+	let project: HermesE2eProject | undefined;
+
+	afterAll(async () => {
+
+        process.stdout.write('s4c2-negative-wire ' + JSON.stringify({ methods: mcpServer?.requests.flatMap(request => request.jsonRpcMethods), callNames: mcpServer?.calls.map(call => call.name) }) + '\n');
+        if (project !== undefined) {
+            const negativeRecords = resolveControllerGatewayRecordTargets({ gatewayStateRoot: resolveControllerGatewayStateRoot({ controllerStateRoot: createControllerStateRoot({ controllerStateDirectoryPath: project.systemConfig.controllerStateDir }), zoneId: project.zone.id }) }).approvalRecords;
+            const negativeFs = await import('node:fs/promises');
+            const recordNames = await negativeFs.readdir(negativeRecords.directoryPath).catch((error) => { if (error.code === 'ENOENT') return []; throw error; });
+            process.stdout.write('s4c2-negative-controller-records ' + JSON.stringify({ approvalRecordCount: recordNames.filter(name => name.endsWith('.json')).length }) + '\n');
+        }
+		await harness?.close({ preserveTempRoot: true });
+		await Promise.allSettled([mcpServer?.close(), modelServer?.close()]);
+		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+	});
+
+	it('preserves generic execute_code composition and runs generated TypeScript through foreground terminal', async () => {
+		const repoRoot = path.resolve(process.cwd());
+		project = await scaffoldHermesE2eProject({
+			agents: [agentId],
+			architecture,
+			prefix: 'portal-composition-hermes-e2e-',
+			zoneId: 'portal-composition-hermes-e2e',
+		});
+		const hostEffectPath = path.join(project.tempRoot, 'portal-composition-host-effect.json');
+		const hiddenHostEffectPath = path.join(
+			project.tempRoot,
+			'portal-composition-hidden-host-effect.txt',
+		);
+		const hostSentinelPath = path.join(project.tempRoot, 'portal-composition-host-only-sentinel');
+		const generatedProgram = buildSharedPortalCompositionProgram({ hostSentinelPath });
+		await validatePortalCompositionGeneratedProgramSyntax(generatedProgram);
+		const barrierFifoPath = path.join(project.tempRoot, 'portal-composition-concurrency.fifo');
+		const barrierReadyPath = path.join(
+			project.tempRoot,
+			'portal-composition-concurrency-ready.fifo',
+		);
+		const concurrencyOrderPath = path.join(
+			project.tempRoot,
+			'portal-composition-concurrency-order.txt',
+		);
+		const lossFifoPath = path.join(project.tempRoot, 'portal-composition-loss.fifo');
+		const lossFastTimestampPath = path.join(
+			project.tempRoot,
+			'portal-composition-loss-fast-timestamp.txt',
+		);
+		const lossReadyPath = path.join(project.tempRoot, 'portal-composition-loss-ready.fifo');
+		const lossOrderPath = path.join(project.tempRoot, 'portal-composition-loss-order.txt');
+		const lossPidPath = path.join(project.tempRoot, 'portal-composition-loss.pid');
+		await writeFile(hostSentinelPath, 'host-only\n', 'utf8');
+		[mcpServer, modelServer] = await Promise.all([
+			startFakeUpstreamMcpServer(),
+			startPortalCompositionModelServer({
+				compositionProgram: generatedProgram.pythonProgram,
+				finalMarker,
+				promptMarker,
+				programResultMarker,
+			}),
+		]);
+		const zone = project.systemConfig.zones[0];
+		if (zone === undefined || zone.gateway.type !== 'hermes') {
+			throw new Error('Expected the portal composition Hermes zone.');
+		}
+		const controllerRecords = resolveControllerGatewayRecordTargets({
+			gatewayStateRoot: resolveControllerGatewayStateRoot({
+				controllerStateRoot: createControllerStateRoot({
+					controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
+				}),
+				zoneId: zone.id,
+			}),
+		});
+		const credentialedRuntimeDirectory = controllerRecords.credentialedRuntimeRecords.directoryPath;
+		zone.approvalAccess = {
+			audience: 'agent-vm-controller-approval',
+			approvers: [{ approverId: 'hermes-native', kind: 'managed_gateway' }],
+		};
+		zone.gateway.profileSecretProjectionsByAgent[agentId] = {
+			API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
+		};
+		zone.egressHosts = [
+			...(zone.egressHosts ?? []),
+			{ audience: 'gateway', host: fakeMcpHost },
+			{ audience: 'gateway', host: modelHost },
+		];
+		await writePortalCompositionConfiguration({
+			barrierFifoPath,
+			barrierReadyPath,
+			concurrencyOrderPath,
+			hostEffectPath,
+			hiddenHostEffectPath,
+			lossFifoPath,
+			lossFastTimestampPath,
+			lossOrderPath,
+			lossPidPath,
+			lossReadyPath,
+			mcpUrl: `http://${fakeMcpHost}:${String(mcpServer.port)}/mcp`,
+			project,
+		});
+		await writeFile(
+			zone.gateway.config,
+			renderHermesManagedE2eConfiguration({
+				contextLength: 65_536,
+				fakeModelBaseUrl: `http://${modelHost}:${String(modelServer.port)}/v1`,
+				fakeModelHost: modelHost,
+				fakeModelName: modelName,
+			}),
+			'utf8',
+		);
+		await materializeLocalHermesGatewayImagePackages({
+			architecture,
+			profileName: project.zone.gateway.imageProfile,
+			projectRoot: project.tempRoot,
+			repoRoot,
+			systemConfig: project.systemConfig,
+		});
+
+        const negativeFs = await import('node:fs/promises');
+        const packet = process.env.S4C2_CI_PACKET_DIR;
+        if (!packet) throw new Error('Missing approved CI packet directory');
+        const negativeProfile = project.systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
+        if (!negativeProfile) throw new Error('Missing selected Gateway profile');
+        const context = path.dirname(negativeProfile.buildConfig);
+        await negativeFs.mkdir(path.join(context, 's4c2-stale'), { recursive: true });
+        const staleBytes = await negativeFs.readFile(path.join(packet, "agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl"));
+        const digest = (await import('node:crypto')).createHash('sha256').update(staleBytes).digest('hex');
+        if (digest !== "a9ba71fe6dc2c57dc3c93305e8820309627b5f85d3b01297d2c9417380ef5d15") throw new Error('Unapproved stale wheel bytes');
+        await negativeFs.writeFile(path.join(context, 's4c2-stale', "agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl"), staleBytes);
+        await negativeFs.appendFile(path.join(context, 'Dockerfile'), "\nCOPY s4c2-stale/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl\nRUN uv pip install --no-deps --force-reinstall --python /opt/hermes/.venv/bin/python /tmp/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl\nRUN /opt/hermes/.venv/bin/python -c 'import importlib.metadata as m,json; print(\"s4c2-stale-installed-requires\",json.dumps(m.requires(\"agent-vm-agent-portal-sdk\")))'\n");
+        process.stdout.write('s4c2-negative-image-input ' + JSON.stringify({ mode: 'stale-wheel', wheelOrigin: '83e9683f', wheelSha256: digest }) + '\n');
+		await prepareGatewayE2eProjectImages({ project });
+
+		let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+		const controllerManagedVmRequests: ManagedVmCreateRequest[] = [];
+		harness = await startE2eControllerRuntime({
+			onControllerManagedVmCreateRequest: (request) => { controllerManagedVmRequests.push(request); process.stdout.write('s4c2-actual-vm-image ' + JSON.stringify({ imageReference: request.imageReference, sessionLabel: request.sessionLabel }) + '\n'); },
+			secrets: {
+				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
+				[credentialedRuntimeSecretEnvironmentName]: 'portal-composition-fixture-token',
+				GITHUB_TOKEN: 'unused-portal-composition-e2e-token',
+			},
+			startGatewayZone: async (startOptions, dependencies) => {
+				const result = await startGatewayZone(startOptions, {
+					...dependencies,
+					gatewayRuntimeArtifactLimits: controllerFixedGatewayRuntimeArtifactLimits,
+					managedVmFactory: {
+						createManagedVm: async (request) => {
+							const vm = await dependencies.managedVmFactory.createManagedVm(request);
+							gatewayVm = vm;
+                                const installedReadback = await vm.exec(['/opt/hermes/.venv/bin/python', '-I', '-c', "import hashlib,importlib.metadata as metadata,json,pathlib,sysconfig\nroot=pathlib.Path(sysconfig.get_paths()[\"purelib\"])/\"agent_vm_agent_portal_sdk\"\nprint(json.dumps({\"requiresDist\":metadata.requires(\"agent-vm-agent-portal-sdk\"),\"standardSha256\":hashlib.sha256((root/\"standard_mcp_transport.py\").read_bytes()).hexdigest(),\"clientSha256\":hashlib.sha256((root/\"gateway_runtime_client.py\").read_bytes()).hexdigest()}))\n"]);
+                                process.stdout.write('s4c2-installed-readback ' + installedReadback.stdout.toString().trim() + '\n');
+
+							return vm;
+						},
+					},
+				});
+				if (result.executionModel !== 'managed-gateway') {
+					throw new Error('Portal composition E2E requires a managed Gateway VM.');
+				}
+				gatewayVm = result.vm;
+				return result;
+			},
+			startOptions: { systemConfig: project.systemConfig, zoneIds: [zone.id] },
+			tcpHostsOverride: {
+				[`${fakeMcpHost}:${String(mcpServer.port)}`]: `127.0.0.1:${String(mcpServer.port)}`,
+				[`${modelHost}:${String(modelServer.port)}`]: `127.0.0.1:${String(modelServer.port)}`,
+			},
+		});
+		await waitForPortalCompositionHermesHealth({
+			controllerUrl: harness.controllerUrl,
+			gatewayPort: project.gatewayPort,
+			resolveVm: () => gatewayVm,
+			zoneId: zone.id,
+		});
+		await mcpServer.firstListToolsRequest;
+		if (gatewayVm === undefined) throw new Error('Expected the real managed Gateway VM');
+		const gatewayProfile = project.systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
+		if (gatewayProfile === undefined) throw new Error('Expected selected Hermes image profile');
+		await assertManagedPortalImageInstallation({
+			vm: gatewayVm,
+			repoRoot,
+			artifactDirectory: path.join(path.dirname(gatewayProfile.buildConfig), 'local-agent-vm'),
+		});
+		const approvalObservation = createPortalCompositionApprovalObservation({
+			recordsTarget: controllerRecords.approvalRecords,
+			calls: () => mcpServer?.calls ?? [],
+		});
+
+		const approvalGatewayPort = project.gatewayPort;
+		const runApproval = async (execution: number): Promise<void> => {
+			const output = await requestPortalCompositionApprovalRun({
+				agentId,
+				apiServerKey: hermesE2eProfileApiServerKey(agentId),
+				gatewayPort: approvalGatewayPort,
+				modelName,
+				prompt: portalCompositionApprovalPrompt,
+				sessionId: `${sessionId}-approval-${execution}`,
+				onApproval: approvalObservation.onApproval,
+			});
+			expect(output).toContain(portalCompositionApprovalFinalMarker);
+		};
+		await runApproval(1);
+		await runApproval(2);
+		await approvalObservation.assertSettled(modelServer.approvalResults());
+		expect(modelServer.approvalPrograms()).toHaveLength(2);
+		expect(modelServer.approvalPrograms()[1]).toBe(modelServer.approvalPrograms()[0]);
+		expect(modelServer.approvalResults()).toHaveLength(2);
+
+		const lossObservation = new AbortController();
+		const [response] = await Promise.all([
+			requestPortalCompositionHermesTurn({
+				agentId,
+				apiServerKey: hermesE2eProfileApiServerKey(agentId),
+				gatewayPort: project.gatewayPort,
+				modelName,
+				prompt: promptMarker,
+				sessionId,
+				controllerUrl: harness.controllerUrl,
+				zoneId: zone.id,
+			}).then((turnResponse) => {
+				expect(
+					turnResponse,
+					`Raw foreground results: ${JSON.stringify({ executeCode: modelServer?.latestExecuteCodeResult(), generatedTerminal: modelServer?.latestGeneratedTerminalResult() })}`,
+				).toContain(finalMarker);
+				return turnResponse;
+			}),
+			observeLossProbeProcessExit({
+				pidPath: lossPidPath,
+				timestampPath: lossFastTimestampPath,
+				signal: lossObservation.signal,
+			}),
+		])
+			.catch((error: unknown) =>
+				rethrowPortalCompositionFailure(error, {
+					credentialedRuntimeDirectory,
+					modelProgress: () =>
+						modelServer === undefined
+							? undefined
+							: snapshotPortalCompositionModelProgress(modelServer),
+					mcpCalls: mcpServer?.calls ?? [],
+					vmRequests: controllerManagedVmRequests,
+					paths: {
+						hostEffectPath,
+						concurrencyOrderPath,
+						lossOrderPath,
+						lossPidPath,
+						lossFastTimestampPath,
+					},
+				}),
+			)
+			.finally(() => lossObservation.abort());
+		await approvalObservation.assertSettled(modelServer.approvalResults());
+		await assertPortalCompositionResults({
+			response,
+			finalMarker,
+			modelServer,
+			mcpServer,
+			programResultMarker,
+			resultDerivedValue,
+			hostEffectPath,
+			hiddenHostEffectPath,
+			concurrencyOrderPath,
+			lossOrderPath,
+			hostSentinelPath,
+			controllerManagedVmRequests,
+		});
+	}, 900_000);
+});

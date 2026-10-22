@@ -1,0 +1,55 @@
+--- a/packages/agent-vm/src/integration-tests/portal-composition.hermes.e2e.test.ts
++++ b/packages/agent-vm/src/integration-tests/portal-composition.hermes.e2e.test.ts
+@@ -196,6 +196,14 @@
+ 	let project: HermesE2eProject | undefined;
+ 
+ 	afterAll(async () => {
++
++        process.stdout.write('s4c2-negative-wire ' + JSON.stringify({ methods: mcpServer?.requests.flatMap(request => request.jsonRpcMethods), callNames: mcpServer?.calls.map(call => call.name) }) + '\n');
++        if (project !== undefined) {
++            const negativeRecords = resolveControllerGatewayRecordTargets({ gatewayStateRoot: resolveControllerGatewayStateRoot({ controllerStateRoot: createControllerStateRoot({ controllerStateDirectoryPath: project.systemConfig.controllerStateDir }), zoneId: project.zone.id }) }).approvalRecords;
++            const negativeFs = await import('node:fs/promises');
++            const recordNames = await negativeFs.readdir(negativeRecords.directoryPath).catch((error) => { if (error.code === 'ENOENT') return []; throw error; });
++            process.stdout.write('s4c2-negative-controller-records ' + JSON.stringify({ approvalRecordCount: recordNames.filter(name => name.endsWith('.json')).length }) + '\n');
++        }
+ 		await harness?.close({ preserveTempRoot: true });
+ 		await Promise.allSettled([mcpServer?.close(), modelServer?.close()]);
+ 		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+@@ -300,12 +308,26 @@
+ 			repoRoot,
+ 			systemConfig: project.systemConfig,
+ 		});
++
++        const negativeFs = await import('node:fs/promises');
++        const packet = process.env.S4C2_CI_PACKET_DIR;
++        if (!packet) throw new Error('Missing approved CI packet directory');
++        const negativeProfile = project.systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
++        if (!negativeProfile) throw new Error('Missing selected Gateway profile');
++        const context = path.dirname(negativeProfile.buildConfig);
++        await negativeFs.mkdir(path.join(context, 's4c2-stale'), { recursive: true });
++        const staleBytes = await negativeFs.readFile(path.join(packet, "agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl"));
++        const digest = (await import('node:crypto')).createHash('sha256').update(staleBytes).digest('hex');
++        if (digest !== "a9ba71fe6dc2c57dc3c93305e8820309627b5f85d3b01297d2c9417380ef5d15") throw new Error('Unapproved stale wheel bytes');
++        await negativeFs.writeFile(path.join(context, 's4c2-stale', "agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl"), staleBytes);
++        await negativeFs.appendFile(path.join(context, 'Dockerfile'), "\nCOPY s4c2-stale/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl /tmp/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl\nRUN uv pip install --no-deps --force-reinstall --python /opt/hermes/.venv/bin/python /tmp/agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl\nRUN /opt/hermes/.venv/bin/python -c 'import importlib.metadata as m,json; print(\"s4c2-stale-installed-requires\",json.dumps(m.requires(\"agent-vm-agent-portal-sdk\")))'\n");
++        process.stdout.write('s4c2-negative-image-input ' + JSON.stringify({ mode: 'stale-wheel', wheelOrigin: '83e9683f', wheelSha256: digest }) + '\n');
+ 		await prepareGatewayE2eProjectImages({ project });
+ 
+ 		let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+ 		const controllerManagedVmRequests: ManagedVmCreateRequest[] = [];
+ 		harness = await startE2eControllerRuntime({
+-			onControllerManagedVmCreateRequest: (request) => controllerManagedVmRequests.push(request),
++			onControllerManagedVmCreateRequest: (request) => { controllerManagedVmRequests.push(request); process.stdout.write('s4c2-actual-vm-image ' + JSON.stringify({ imageReference: request.imageReference, sessionLabel: request.sessionLabel }) + '\n'); },
+ 			secrets: {
+ 				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
+ 				[credentialedRuntimeSecretEnvironmentName]: 'portal-composition-fixture-token',
+@@ -319,6 +341,9 @@
+ 						createManagedVm: async (request) => {
+ 							const vm = await dependencies.managedVmFactory.createManagedVm(request);
+ 							gatewayVm = vm;
++                                const installedReadback = await vm.exec(['/opt/hermes/.venv/bin/python', '-I', '-c', "import hashlib,importlib.metadata as metadata,json,pathlib,sysconfig\nroot=pathlib.Path(sysconfig.get_paths()[\"purelib\"])/\"agent_vm_agent_portal_sdk\"\nprint(json.dumps({\"requiresDist\":metadata.requires(\"agent-vm-agent-portal-sdk\"),\"standardSha256\":hashlib.sha256((root/\"standard_mcp_transport.py\").read_bytes()).hexdigest(),\"clientSha256\":hashlib.sha256((root/\"gateway_runtime_client.py\").read_bytes()).hexdigest()}))\n"]);
++                                process.stdout.write('s4c2-installed-readback ' + installedReadback.stdout.toString().trim() + '\n');
++
+ 							return vm;
+ 						},
+ 					},

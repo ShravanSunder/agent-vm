@@ -1,0 +1,75 @@
+name: S4c2 isolated negative proof (do not merge)
+on:
+  pull_request:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  negative:
+    name: S4c2 negative (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [stale-wheel, wrong-mcp]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: probe
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 83fac91a6dcb9ccd9a5fdf67cb6ff2b61ef05994
+          path: product
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.7.0
+      - uses: ./product/.github/actions/setup-system-packages
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
+        with:
+          version: '0.11.31'
+          enable-cache: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
+        with:
+          install: false
+          cache: false
+      - name: Prepare exact product checkout and native VM tooling
+        working-directory: product
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 83fac91a6dcb9ccd9a5fdf67cb6ff2b61ef05994
+          git status --short --branch
+          node --version
+          pnpm --version
+          mise install
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+      - name: Verify approved packet bytes
+        working-directory: probe/.github/s4c2-proof
+        run: sha256sum -c CHECKSUMS
+      - name: Baseline, observed wrong build, restoration and green replay
+        working-directory: product
+        env:
+          S4C2_CI_PACKET_DIR: ${{ github.workspace }}/probe/.github/s4c2-proof
+        run: bash "$S4C2_CI_PACKET_DIR/run_negative.sh" '${{ matrix.mode }}' 83fac91a6dcb9ccd9a5fdf67cb6ff2b61ef05994
+      - name: Retain bounded proof logs in the job log
+        if: always()
+        env:
+          S4C2_NEGATIVE_MODE: ${{ matrix.mode }}
+        run: |
+          for proof_log in "$RUNNER_TEMP/s4c2-negative-$S4C2_NEGATIVE_MODE"/*.log; do
+            if test -f "$proof_log"; then
+              echo "$proof_log"
+              cat "$proof_log"
+            fi
+          done

@@ -1,0 +1,13 @@
+{
+  "origin": "83e9683f00b26ff1772b8e130abd6dae727866f7",
+  "wheel": "agent_vm_agent_portal_sdk-0.0.153-py3-none-any.whl",
+  "sha256": "a9ba71fe6dc2c57dc3c93305e8820309627b5f85d3b01297d2c9417380ef5d15",
+  "standardSourceMatchesGit": true,
+  "standardSha256": "2e12968d1fa58fe3576126d042c1533e5774431c14cfd64ab4d1e2aa7e7f7062",
+  "requiresDist": [
+    "Requires-Dist: httpx<1,>=0.27.1",
+    "Requires-Dist: mcp<2,>=1.28.1",
+    "Requires-Dist: pydantic-core<3,>=2.41.5",
+    "Requires-Dist: pydantic<3,>=2.12.0"
+  ]
+}

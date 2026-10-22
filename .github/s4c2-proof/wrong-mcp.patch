@@ -1,0 +1,51 @@
+--- a/packages/agent-vm/src/integration-tests/portal-composition.hermes.e2e.test.ts
++++ b/packages/agent-vm/src/integration-tests/portal-composition.hermes.e2e.test.ts
+@@ -196,6 +196,14 @@
+ 	let project: HermesE2eProject | undefined;
+ 
+ 	afterAll(async () => {
++
++        process.stdout.write('s4c2-negative-wire ' + JSON.stringify({ methods: mcpServer?.requests.flatMap(request => request.jsonRpcMethods), callNames: mcpServer?.calls.map(call => call.name) }) + '\n');
++        if (project !== undefined) {
++            const negativeRecords = resolveControllerGatewayRecordTargets({ gatewayStateRoot: resolveControllerGatewayStateRoot({ controllerStateRoot: createControllerStateRoot({ controllerStateDirectoryPath: project.systemConfig.controllerStateDir }), zoneId: project.zone.id }) }).approvalRecords;
++            const negativeFs = await import('node:fs/promises');
++            const recordNames = await negativeFs.readdir(negativeRecords.directoryPath).catch((error) => { if (error.code === 'ENOENT') return []; throw error; });
++            process.stdout.write('s4c2-negative-controller-records ' + JSON.stringify({ approvalRecordCount: recordNames.filter(name => name.endsWith('.json')).length }) + '\n');
++        }
+ 		await harness?.close({ preserveTempRoot: true });
+ 		await Promise.allSettled([mcpServer?.close(), modelServer?.close()]);
+ 		if (project !== undefined) await removeE2eTempRoot(project.tempRoot);
+@@ -300,12 +308,22 @@
+ 			repoRoot,
+ 			systemConfig: project.systemConfig,
+ 		});
++
++        const negativeFs = await import('node:fs/promises');
++        const negativeProfile = project.systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
++        if (!negativeProfile) throw new Error('Missing selected Gateway profile');
++        const endpoint = `http://${fakeMcpHost}:${String(mcpServer.port)}/mcp`;
++        const patchPython = "import hashlib,json,pathlib,sysconfig\nmodule = pathlib.Path(sysconfig.get_paths()[\"purelib\"]) / \"agent_vm_agent_portal_sdk/gateway_runtime_client.py\"\nbefore = module.read_bytes()\nassert hashlib.sha256(before).hexdigest() == '702de7205fd780299d3529945f5bbd35ba53f97a4d760395a205daeee0e58e7d', \"wrong client artifact before mutation\"\nsource = before.decode()\nneedle = \"else GatewayRuntimeUdsTransport()\"\nassert source.count(needle) == 1\nsource = source.replace(needle, \"else S4c2WrongMcpTransport()\") + \"\\n\" + '\\nclass S4c2WrongMcpTransport:\\n    def __init__(self):\\n        from pydantic import SecretStr\\n        from .standard_mcp_transport import StandardMcpToolPortalTransport, ToolPortalStreamableHttpMcpConfig\\n        self._mcp = StandardMcpToolPortalTransport(ToolPortalStreamableHttpMcpConfig(endpoint=__ENDPOINT__, authorization=SecretStr(\"s4c2-controlled-fixture\")))\\n\\n    async def connect(self, socket_path):\\n        print(\"s4c2-wrong-mcp-connect-attempt\", flush=True)\\n        await self._mcp.connect()\\n        print(\"s4c2-wrong-mcp-connected\", flush=True)\\n\\n    async def handshake(self, attachment):\\n        # Never send real attachment material to the controlled MCP server.\\n        print(\"s4c2-wrong-mcp-private-handshake-request\", flush=True)\\n        return await self._mcp.call_tool(\"managed-plugin.handshake\", {})\\n\\n    async def request(self, method, params):\\n        return await self._mcp.call_tool(method, {})\\n\\n    async def disconnect(self):\\n        await self._mcp.close()\\n'\ncompile(source, str(module), \"exec\")\nmodule.write_text(source)\nprint(\"s4c2-wrong-installed-client\", json.dumps({\"before\": hashlib.sha256(before).hexdigest(), \"after\": hashlib.sha256(module.read_bytes()).hexdigest()}))\n".replace('__ENDPOINT__', JSON.stringify(endpoint));
++        const encoded = Buffer.from(patchPython).toString('base64');
++        const command = `RUN /opt/hermes/.venv/bin/python -c "import base64;exec(base64.b64decode('${encoded}'))"`;
++        await negativeFs.appendFile(path.join(path.dirname(negativeProfile.buildConfig), 'Dockerfile'), '\n' + command + '\n');
++        process.stdout.write('s4c2-negative-image-input ' + JSON.stringify({ mode: 'wrong-mcp', originalClientSha256: "702de7205fd780299d3529945f5bbd35ba53f97a4d760395a205daeee0e58e7d" }) + '\n');
+ 		await prepareGatewayE2eProjectImages({ project });
+ 
+ 		let gatewayVm: Pick<GatewayZoneVmOperations, 'exec'> | undefined;
+ 		const controllerManagedVmRequests: ManagedVmCreateRequest[] = [];
+ 		harness = await startE2eControllerRuntime({
+-			onControllerManagedVmCreateRequest: (request) => controllerManagedVmRequests.push(request),
++			onControllerManagedVmCreateRequest: (request) => { controllerManagedVmRequests.push(request); process.stdout.write('s4c2-actual-vm-image ' + JSON.stringify({ imageReference: request.imageReference, sessionLabel: request.sessionLabel }) + '\n'); },
+ 			secrets: {
+ 				...buildHermesE2eProfileApiServerKeySecrets([agentId]),
+ 				[credentialedRuntimeSecretEnvironmentName]: 'portal-composition-fixture-token',
+@@ -319,6 +337,9 @@
+ 						createManagedVm: async (request) => {
+ 							const vm = await dependencies.managedVmFactory.createManagedVm(request);
+ 							gatewayVm = vm;
++                                const installedReadback = await vm.exec(['/opt/hermes/.venv/bin/python', '-I', '-c', "import hashlib,importlib.metadata as metadata,json,pathlib,sysconfig\nroot=pathlib.Path(sysconfig.get_paths()[\"purelib\"])/\"agent_vm_agent_portal_sdk\"\nprint(json.dumps({\"requiresDist\":metadata.requires(\"agent-vm-agent-portal-sdk\"),\"standardSha256\":hashlib.sha256((root/\"standard_mcp_transport.py\").read_bytes()).hexdigest(),\"clientSha256\":hashlib.sha256((root/\"gateway_runtime_client.py\").read_bytes()).hexdigest()}))\n"]);
++                                process.stdout.write('s4c2-installed-readback ' + installedReadback.stdout.toString().trim() + '\n');
++
+ 							return vm;
+ 						},
+ 					},
