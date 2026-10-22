@@ -24,6 +24,15 @@ and keep the exactly-once count and the receipt assertion. This doesn't weaken
 proof, because order isn't a requirement. Not changed during the structure
 pass.
 
+**Second instance, same pattern (2026-10-22):**
+`packages/tool-engine/src/standalone-tool-portal/standalone-tool-portal-core.unit.test.ts:67`
+("matches the frozen d25 built core for all four operations and mixed canonical
+outcomes") compares effect tool names in a fixed order. In the Lead's sunclaw
+sweep at S4c2 `61d24f82` it saw `['failed','uncertain','read']` instead of
+`['read','failed','uncertain']`. The same file passed at `860ad050` and
+`c08a0915`, and S4c2 doesn't touch tool-engine. Same fix in its own layer:
+compare as a multiset and keep the exactly-once counts.
+
 ## Approved managed MCP calls are refused at the provider (pre-existing product defect) — FIXED
 
 **Fixed at `23b1e33d` (draft PR #253), accepted by the Lead on 2026-10-22.** The
