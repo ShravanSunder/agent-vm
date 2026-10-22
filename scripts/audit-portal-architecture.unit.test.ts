@@ -196,6 +196,7 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/agent-portal-sdk/src/cli/tool-portal-cli.ts: only Gateway runtime may construct ToolPortalService',
+			'packages/gateway-runtime/src/managed-tool-portal-composition.ts: managed production must use the shared engine and owned adapters, not @agent-vm/tool-portal',
 			'packages/tool-portal/src/duplicate-tool-portal-service.ts: only Gateway runtime may construct ToolPortalService',
 		]);
 	});
@@ -282,8 +283,11 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/gateway-runtime/src/duplicate-tool-portal-constructor.ts: only packages/gateway-runtime/src/managed-tool-portal-composition.ts may import, construct, or export createToolPortalService',
+			'packages/gateway-runtime/src/duplicate-tool-portal-export.ts: managed production must use the shared engine and owned adapters, not @agent-vm/tool-portal',
 			'packages/gateway-runtime/src/duplicate-tool-portal-export.ts: only packages/gateway-runtime/src/managed-tool-portal-composition.ts may import, construct, or export createToolPortalService',
+			'packages/gateway-runtime/src/duplicate-tool-portal-import.ts: managed production must use the shared engine and owned adapters, not @agent-vm/tool-portal',
 			'packages/gateway-runtime/src/duplicate-tool-portal-import.ts: only packages/gateway-runtime/src/managed-tool-portal-composition.ts may import, construct, or export createToolPortalService',
+			'packages/gateway-runtime/src/managed-tool-portal-composition.ts: managed production must use the shared engine and owned adapters, not @agent-vm/tool-portal',
 		]);
 	});
 

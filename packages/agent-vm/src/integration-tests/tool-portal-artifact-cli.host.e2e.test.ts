@@ -6,10 +6,10 @@ import {
 	TOOL_PORTAL_MCP_BEARER_AUDIENCE,
 	startStandaloneToolPortalMcpHttpServer,
 	type StandaloneToolPortalArtifactReader,
-	type StandaloneToolPortalFixedCredentialPrincipal,
-	type StandaloneToolPortalMcpHttpServer,
+	type NodeHostFixedCredentialPrincipal,
+	type StandaloneToolPortalHttpServer,
 	type StandaloneToolPortalProjectionService,
-} from '@agent-vm/tool-portal';
+} from '@agent-collaboration/tool-host-node';
 import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -29,6 +29,7 @@ import {
 } from '../../../gateway-runtime/src/index.js';
 
 const repoRoot = process.cwd();
+const accessDirectory = path.join(repoRoot, 'packages', 'tool-access');
 const sdkDirectory = path.join(repoRoot, 'packages', 'agent-portal-sdk');
 const oauthBrokerContractsDirectory = path.join(repoRoot, 'packages', 'oauth-broker-contracts');
 const artifactCredentialA = 'test-only-artifact-credential-a';
@@ -37,7 +38,7 @@ const artifactNowMilliseconds = Date.parse('2026-07-13T12:00:00.000Z');
 const artifactBytes = Uint8Array.from([1, 2, 3, 4]);
 const standaloneServiceGeneration = 'standalone-service:artifact-cli:1';
 const standaloneArtifactDenialDiagnostic =
-	'tool-portal: MCP error -32600: MCP error -32600: Standalone Tool Portal artifact read failed.\n';
+	'tool-portal: Standalone Tool Portal artifact read failed.\n';
 
 interface PackedCliFixture {
 	readonly binPath: string | undefined;
@@ -71,13 +72,13 @@ const artifactPrincipalA = {
 	agentId: 'artifact-agent-a',
 	profileAssignmentRevision: 'profile-assignment:artifact-agent-a:1',
 	toolPortalProfileId: 'artifact-reader',
-} satisfies StandaloneToolPortalFixedCredentialPrincipal;
+} satisfies NodeHostFixedCredentialPrincipal;
 
 const artifactPrincipalB = {
 	agentId: 'artifact-agent-b',
 	profileAssignmentRevision: 'profile-assignment:artifact-agent-b:1',
 	toolPortalProfileId: 'artifact-reader',
-} satisfies StandaloneToolPortalFixedCredentialPrincipal;
+} satisfies NodeHostFixedCredentialPrincipal;
 
 const storedArtifactFrameworkIdentity = {
 	kind: 'hermes',
@@ -219,7 +220,7 @@ async function startStandaloneArtifactCliFixture(): Promise<StandaloneArtifactCl
 	});
 	await writeHandle.write(artifactBytes);
 	const reference = await writeHandle.commit();
-	const server: StandaloneToolPortalMcpHttpServer = await startStandaloneToolPortalMcpHttpServer({
+	const server: StandaloneToolPortalHttpServer = await startStandaloneToolPortalMcpHttpServer({
 		allowedHosts: ['127.0.0.1'],
 		allowedOrigins: [],
 		artifactReader: createStandaloneArtifactReaderAdapter(store),
@@ -264,35 +265,45 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 	const consumerDirectory = path.join(rootDirectory, 'consumer');
 	await Promise.all([mkdir(packDirectory), mkdir(consumerDirectory)]);
 	await Promise.all(
-		[sdkDirectory, oauthBrokerContractsDirectory].map(async (packageDirectory): Promise<void> => {
-			await execa(
-				'pnpm',
-				[
-					'--dir',
-					packageDirectory,
-					'pack',
-					'--pack-destination',
-					packDirectory,
-					'--config.ignore-scripts=true',
-				],
-				{ cwd: repoRoot, timeout: 60_000 },
-			);
-		}),
+		[accessDirectory, sdkDirectory, oauthBrokerContractsDirectory].map(
+			async (packageDirectory): Promise<void> => {
+				await execa(
+					'pnpm',
+					[
+						'--dir',
+						packageDirectory,
+						'pack',
+						'--pack-destination',
+						packDirectory,
+						'--config.ignore-scripts=true',
+					],
+					{ cwd: repoRoot, timeout: 60_000 },
+				);
+			},
+		),
 	);
 	const tarballNames = (await readdir(packDirectory)).filter((name) => name.endsWith('.tgz'));
-	if (tarballNames.length !== 2) {
+	if (tarballNames.length !== 3) {
 		throw new Error(
-			`Expected two packed Tool Portal contract tarballs; found ${String(tarballNames.length)}.`,
+			`Expected three packed Tool Portal contract tarballs; found ${String(tarballNames.length)}.`,
 		);
 	}
+	const accessTarballName = tarballNames.find((name) =>
+		name.startsWith('agent-collaboration-tool-access-'),
+	);
 	const sdkTarballName = tarballNames.find((name) => name.startsWith('agent-vm-agent-portal-sdk-'));
 	const oauthBrokerContractsTarballName = tarballNames.find((name) =>
 		name.startsWith('agent-vm-oauth-broker-contracts-'),
 	);
-	if (sdkTarballName === undefined || oauthBrokerContractsTarballName === undefined) {
+	if (
+		accessTarballName === undefined ||
+		sdkTarballName === undefined ||
+		oauthBrokerContractsTarballName === undefined
+	) {
 		throw new Error('Packed Tool Portal contract tarballs did not contain the expected packages.');
 	}
 	const dependencies = {
+		'@agent-collaboration/tool-access': `file:${path.join(packDirectory, accessTarballName)}`,
 		'@agent-vm/agent-portal-sdk': `file:${path.join(packDirectory, sdkTarballName)}`,
 		'@agent-vm/oauth-broker-contracts': `file:${path.join(packDirectory, oauthBrokerContractsTarballName)}`,
 	} as const;
@@ -301,6 +312,7 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 		JSON.stringify({
 			dependencies,
 			name: 'tool-portal-artifact-cli-host-fixture',
+			packageManager: 'pnpm@10.33.0',
 			pnpm: { overrides: dependencies },
 			private: true,
 			type: 'module',

@@ -193,7 +193,13 @@ async function waitForReadinessEvidenceStatus(props: {
 	readonly status: GatewayRuntimeReadinessSnapshot['uds']['attachment']['status'];
 }): Promise<GatewayRuntimeReadinessSnapshot> {
 	const signal = AbortSignal.timeout(READINESS_EVIDENCE_WAIT_MILLISECONDS);
-	const watcher = watch(path.dirname(props.evidencePath), { signal });
+	const cancellation = new AbortController();
+	const watcher = watch(path.dirname(props.evidencePath), {
+		signal: AbortSignal.any([signal, cancellation.signal]),
+	});
+	// fs/promises.watch is lazy: prime iteration before the initial file read.
+	let nextEvent = watcher.next();
+	void nextEvent.catch(() => undefined);
 	const readMatchingSnapshot = async (): Promise<GatewayRuntimeReadinessSnapshot | undefined> => {
 		try {
 			const snapshot = GatewayRuntimeReadinessSnapshotSchema.parse(
@@ -218,8 +224,18 @@ async function waitForReadinessEvidenceStatus(props: {
 	try {
 		const currentSnapshot = await readMatchingSnapshot();
 		if (currentSnapshot !== undefined) return currentSnapshot;
-		for await (const event of watcher) {
-			if (event.filename !== path.basename(props.evidencePath)) continue;
+		while (true) {
+			// oxlint-disable-next-line no-await-in-loop -- Each filesystem event must precede its persisted snapshot read.
+			const event = await nextEvent;
+			if (event.done) break;
+			nextEvent = watcher.next();
+			void nextEvent.catch(() => undefined);
+			if (
+				event.value.filename !== null &&
+				event.value.filename !== path.basename(props.evidencePath)
+			)
+				continue;
+			// oxlint-disable-next-line no-await-in-loop -- Inspect each publication before waiting for the next directory event.
 			const snapshot = await readMatchingSnapshot();
 			if (snapshot !== undefined) return snapshot;
 		}
@@ -230,6 +246,10 @@ async function waitForReadinessEvidenceStatus(props: {
 			});
 		}
 		throw error;
+	} finally {
+		cancellation.abort();
+		await nextEvent.catch(() => undefined);
+		await watcher.return?.();
 	}
 	throw new Error(`Readiness evidence watcher ended before status '${props.status}'.`);
 }
