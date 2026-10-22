@@ -8,9 +8,9 @@ import {
 	startFakeUpstreamMcpServer,
 	fakeUpstreamNamespace,
 } from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { SSEClientTransport } from '@modelcontextprotocol/client';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import type { JSONRPCMessage } from '@modelcontextprotocol/client';
 import { describe, afterEach, vi, it, expect } from 'vitest';
 
 function portFromServerAddress(address: AddressInfo | string | null): number {

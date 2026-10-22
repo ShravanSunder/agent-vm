@@ -1,12 +1,6 @@
 import { serve, type ServerType } from '@hono/node-server';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import {
-	CallToolRequestSchema,
-	ListToolsRequestSchema,
-	type CallToolResult,
-	type Tool,
-} from '@modelcontextprotocol/sdk/types.js';
+import { type CallToolResult, type Tool } from '@modelcontextprotocol/client';
+import { Server, createMcpHandler } from '@modelcontextprotocol/server';
 import { Hono, type Context } from 'hono';
 
 export const fakeUpstreamNamespace = 'upstream-mock';
@@ -156,6 +150,7 @@ export async function startFakeUpstreamMcpServer(
 				);
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 	const app = new Hono();
+	const handlers = new Set<ReturnType<typeof createMcpHandler>>();
 
 	app.use('*', async (context, next) => {
 		const authorization = context.req.header('authorization');
@@ -188,60 +183,66 @@ export async function startFakeUpstreamMcpServer(
 		) {
 			return context.text('provider response detail must not escape', options.callHttpStatusCode);
 		}
-		const transport = new WebStandardStreamableHTTPServerTransport();
-		const server = new Server(
-			{ name: 'portal-upstream-fixture', version: '1.0.0' },
-			{ capabilities: { tools: { listChanged: false } } },
-		);
+		const handler = createMcpHandler(
+			() => {
+				const server = new Server(
+					{ name: 'portal-upstream-fixture', version: '1.0.0' },
+					{ capabilities: { tools: { listChanged: false } } },
+				);
 
-		server.setRequestHandler(ListToolsRequestSchema, async () => {
-			if (!hasObservedListToolsRequest) {
-				hasObservedListToolsRequest = true;
-				resolveFirstListToolsRequest?.();
-			}
-			return { tools };
-		});
-		server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-			const tool = toolsByName.get(request.params.name);
-			if (tool === undefined) {
-				return {
-					content: [{ text: `Unknown tool ${request.params.name}`, type: 'text' }],
-					isError: true,
-				};
-			}
-			const toolErrorMessage = options.toolErrorMessageByToolName?.[tool.name];
-			if (toolErrorMessage !== undefined) {
-				const result: CallToolResult = {
-					content: [{ text: toolErrorMessage, type: 'text' }],
-					isError: true,
-				};
-				toolResults.push(result);
-				return result;
-			}
-			const progressToken = extra['_meta']?.progressToken;
-			if (options.emitProgress === true && progressToken !== undefined) {
-				await extra.sendNotification({
-					method: 'notifications/progress',
-					params: {
-						message: 'fake upstream half done',
-						progress: 1,
-						progressToken,
-						total: 2,
-					},
+				server.setRequestHandler('tools/list', async () => {
+					if (!hasObservedListToolsRequest) {
+						hasObservedListToolsRequest = true;
+						resolveFirstListToolsRequest?.();
+					}
+					return { tools };
 				});
-			}
-			const argumentsValue = isObjectRecord(request.params.arguments)
-				? request.params.arguments
-				: {};
-			calls.push({ argumentsValue, name: tool.name });
-			const result =
-				options.toolResultByToolName?.[tool.name] ?? createToolResult(tool.name, argumentsValue);
-			toolResults.push(result);
-			return result;
-		});
+				server.setRequestHandler('tools/call', async (request, extra) => {
+					const tool = toolsByName.get(request.params.name);
+					if (tool === undefined) {
+						return {
+							content: [{ text: `Unknown tool ${request.params.name}`, type: 'text' }],
+							isError: true,
+						};
+					}
+					const toolErrorMessage = options.toolErrorMessageByToolName?.[tool.name];
+					if (toolErrorMessage !== undefined) {
+						const result: CallToolResult = {
+							content: [{ text: toolErrorMessage, type: 'text' }],
+							isError: true,
+						};
+						toolResults.push(result);
+						return result;
+					}
+					const progressToken = extra.mcpReq['_meta']?.progressToken;
+					if (options.emitProgress === true && progressToken !== undefined) {
+						await extra.mcpReq.notify({
+							method: 'notifications/progress',
+							params: {
+								message: 'fake upstream half done',
+								progress: 1,
+								progressToken,
+								total: 2,
+							},
+						});
+					}
+					const argumentsValue = isObjectRecord(request.params.arguments)
+						? request.params.arguments
+						: {};
+					calls.push({ argumentsValue, name: tool.name });
+					const result =
+						options.toolResultByToolName?.[tool.name] ??
+						createToolResult(tool.name, argumentsValue);
+					toolResults.push(result);
+					return result;
+				});
 
-		await server.connect(transport);
-		return await transport.handleRequest(context.req.raw);
+				return server;
+			},
+			{ legacy: 'reject' },
+		);
+		handlers.add(handler);
+		return await handler.fetch(context.req.raw);
 	});
 
 	const startedServer = await serveHonoOnOpenPort(app);
@@ -251,6 +252,7 @@ export async function startFakeUpstreamMcpServer(
 		authorizationHeaders,
 		toolResults,
 		close: async () => {
+			await Promise.all([...handlers].map(async (handler) => handler.close()));
 			await closeServer(startedServer.server);
 		},
 		firstListToolsRequest,

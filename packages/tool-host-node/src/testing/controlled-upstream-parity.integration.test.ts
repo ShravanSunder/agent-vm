@@ -1,7 +1,9 @@
 import { createUpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import { startFakeUpstreamMcpServer as startOldOnlyServer } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { CallToolResultSchema as LegacyCallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { createNodeHttpUpstreamTransport } from '#node-host/stdio-upstream-servers/node-upstream-transports';
 import {
@@ -17,14 +19,59 @@ interface ControlledUpstreamObservation {
 	readonly result: unknown;
 	readonly events: readonly unknown[];
 	readonly calls: StartedFakeUpstreamMcpServer['calls'];
-	readonly toolResults: StartedFakeUpstreamMcpServer['toolResults'];
-	readonly listedTools: StartedFakeUpstreamMcpServer['listedTools'];
+	readonly toolResults: readonly unknown[];
+	readonly listedTools: readonly unknown[];
 	readonly requests: StartedFakeUpstreamMcpServer['requests'];
+}
+
+// The modern handler stamps its own reserved producer identity; vendor metadata remains exact.
+function withoutModernServerIdentity(result: unknown): unknown {
+	if (
+		typeof result !== 'object' ||
+		result === null ||
+		Array.isArray(result) ||
+		!('_meta' in result)
+	)
+		return result;
+	const record = z.record(z.string(), z.unknown()).parse(result);
+	const metadata = z.record(z.string(), z.unknown()).parse(record['_meta']);
+	expect(metadata['io.modelcontextprotocol/serverInfo']).toEqual({
+		name: 'portal-upstream-fixture',
+		version: '1.0.0',
+	});
+	const vendorMetadata = Object.fromEntries(
+		Object.entries(metadata).filter(([key]) => key !== 'io.modelcontextprotocol/serverInfo'),
+	);
+	const payload = Object.fromEntries(Object.entries(record).filter(([key]) => key !== '_meta'));
+	return Object.keys(vendorMetadata).length === 0 ? payload : { ...payload, _meta: vendorMetadata };
+}
+
+type ComparisonServer = Pick<
+	StartedFakeUpstreamMcpServer,
+	'calls' | 'authorizationHeaders' | 'close' | 'firstListToolsRequest' | 'requests' | 'port' | 'url'
+> & { readonly listedTools: readonly unknown[]; readonly toolResults: readonly unknown[] };
+async function oldComparisonServer(
+	options: FakeUpstreamMcpServerOptions,
+): Promise<ComparisonServer> {
+	const { toolResultByToolName, ...otherOptions } = options;
+	return await startOldOnlyServer({
+		...otherOptions,
+		...(toolResultByToolName === undefined
+			? {}
+			: {
+					toolResultByToolName: Object.fromEntries(
+						Object.entries(toolResultByToolName).map(([name, result]) => [
+							name,
+							LegacyCallToolResultSchema.parse(result),
+						]),
+					),
+				}),
+	});
 }
 
 // The independent old-only source is retained from accepted 40a4ec5b, not implemented through this entry.
 async function observeControlledServer(
-	factory: typeof startFakeUpstreamMcpServer,
+	factory: (options: FakeUpstreamMcpServerOptions) => Promise<ComparisonServer>,
 	options: FakeUpstreamMcpServerOptions,
 ): Promise<ControlledUpstreamObservation> {
 	const server = await factory(options);
@@ -90,6 +137,7 @@ describe('Node workspace controlled upstream entry', () => {
 				descriptionByToolName: { read_thing: 'Custom description ✓' },
 				toolResultByToolName: {
 					read_thing: {
+						_meta: { 'provider/example': 'vendor metadata is preserved' },
 						content: [{ type: 'text' as const, text: 'custom result' }],
 						structuredContent: { ok: true, source: 'controlled' },
 					},
@@ -106,11 +154,20 @@ describe('Node workspace controlled upstream entry', () => {
 		},
 	])('preserves old-only fixture observations for $label', async ({ options }) => {
 		// Arrange / Act: both observations use actual listeners, SDK calls and the production Node transport.
-		const expected = await observeControlledServer(startOldOnlyServer, options);
+		const expected = await observeControlledServer(oldComparisonServer, options);
 		const actual = await observeControlledServer(startFakeUpstreamMcpServer, options);
 		// Assert
 		expect(actual.calls).toEqual(expected.calls);
-		expect(actual).toEqual(expected);
+		const { requests: actualRequests, ...actualValues } = actual;
+		const { requests: expectedRequests, ...expectedValues } = expected;
+		expect({ ...actualValues, result: withoutModernServerIdentity(actual.result) }).toEqual(
+			expectedValues,
+		);
+		expect(
+			actualRequests.every((request) => request.method === 'POST' && request.path === '/mcp'),
+		).toBe(true);
+		expect(actualRequests.flatMap((request) => request.jsonRpcMethods)).not.toContain('initialize');
+		expect(expectedRequests.flatMap((request) => request.jsonRpcMethods)).toContain('initialize');
 	});
 	it('counts one actual success and records error results separately from successful effects', async () => {
 		const server = await startFakeUpstreamMcpServer({
@@ -156,7 +213,7 @@ describe('Node workspace controlled upstream entry', () => {
 		}
 	});
 	it('keeps the independent old-only server as a modern-client refusal with a working legacy control', async () => {
-		const server: StartedFakeUpstreamMcpServer = await startOldOnlyServer();
+		const server = await oldComparisonServer({});
 		const modern = new Client(
 			{ name: 'old-only-negative', version: '1' },
 			{ versionNegotiation: { mode: { pin: '2026-07-28' } } },
