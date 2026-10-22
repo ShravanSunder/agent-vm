@@ -33,12 +33,19 @@ export interface ControlledMcpIssuer {
 	setTools: (count: number, descriptionBytes?: number) => void;
 	setCall: (handler: (call: RecordedCall) => Promise<unknown>) => void;
 	setCatalog: (tools: readonly Record<string, unknown>[]) => void;
+	setDiscovery: (
+		handler: (props: { readonly disconnected: Promise<void> }) => Promise<void>,
+	) => void;
 	setUnavailablePath: (path: string, unavailable: boolean) => void;
 	setBrokenCalls: (broken: boolean) => void;
 	setEarlyCallHeaders: (enabled: boolean) => void;
 	setBackgroundStreams: (enabled: boolean) => void;
 	readonly activeBackgroundStreams: () => number;
 }
+
+async function completeDiscoveryImmediately(_props: {
+	readonly disconnected: Promise<void>;
+}): Promise<void> {}
 
 /** Test-only sign-in issuer/JWKS stand-in plus controlled legacy MCP server. No real sign-in proof. */
 export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
@@ -68,6 +75,7 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 		],
 	});
 	let closed = false;
+	let discoveryHandler = completeDiscoveryImmediately;
 	const server: HttpServer = createServer((request, response) => {
 		void (async () => {
 			try {
@@ -112,6 +120,13 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 						break;
 					case 'tools/list':
 						discoveryCredentials.push(credential);
+						{
+							const disconnected = Promise.withResolvers<void>();
+							response.once('close', () => {
+								if (!response.writableEnded) disconnected.resolve();
+							});
+							await discoveryHandler({ disconnected: disconnected.promise });
+						}
 						result = { tools };
 						break;
 					case 'tools/call': {
@@ -175,6 +190,9 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 		},
 		setCatalog: (catalog) => {
 			tools = catalog;
+		},
+		setDiscovery: (handler) => {
+			discoveryHandler = handler;
 		},
 		setUnavailablePath: (path, unavailable) => {
 			if (unavailable) unavailablePaths.add(path);
