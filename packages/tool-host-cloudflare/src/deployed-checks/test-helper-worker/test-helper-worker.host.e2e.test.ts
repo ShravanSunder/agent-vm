@@ -5,6 +5,11 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { unstable_dev, type Unstable_DevWorker } from 'wrangler';
 
+import {
+	runObservationsSchema,
+	type RunObservations,
+} from '#worker-host/deployed-checks/test-helper-worker/models/helper-contracts';
+import { waitForProtocolRetryInterval } from '#worker-host/test-fixtures/protocol-observation-interval';
 import { startWorkerdSocketGuard } from '#worker-host/test-fixtures/workerd-socket-guard';
 
 it('boots only the helper once and proves keys, MCP secrets, admission and durable observations', async () => {
@@ -104,6 +109,72 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 			peakCalls: 1,
 			calls: [{ callId: 'one', effects: 1, credential: 'controlled-test-secret' }],
 		});
+		// A pending RPC promise is not a storage/input lock: later snapshot and
+		// release RPCs must run while six independently held responses are pending.
+		// Live barriers are volatile; this does not claim restart/hibernation durability.
+		const heldRunId = 'held-smoke';
+		let completed = 0;
+		let beforeRelease = { activeCalls: 0, peakCalls: 0, completed: 0 };
+		const held = Array.from({ length: 6 }, async (_, index) => {
+			const response = await fetchHelper('/mcp/alpha', 'POST', 'controlled-test-secret', {
+				...call,
+				params: {
+					name: 'read',
+					arguments: { runId: heldRunId, callId: `held-${String(index)}`, hold: true },
+				},
+			});
+			expect(response.status).toBe(200);
+			expect(await response.json()).toMatchObject({ result: { content: [{ text: 'ok' }] } });
+			completed += 1;
+		});
+		const readHeld = async (): Promise<RunObservations> =>
+			runObservationsSchema.parse(
+				await (
+					await fetchHelper(
+						`/observations?runId=${heldRunId}`,
+						'GET',
+						'Bearer separate-admission-secret',
+					)
+				).json(),
+			);
+		const deadline = Date.now() + 10_000;
+		async function waitForSixHeldCalls(): Promise<void> {
+			const snapshot = await readHeld();
+			if (snapshot.activeCalls === 6) return;
+			if (snapshot.activeCalls > 6 || Date.now() >= deadline)
+				throw new Error('Real helper did not expose six held calls.');
+			await waitForProtocolRetryInterval();
+			await waitForSixHeldCalls();
+		}
+		try {
+			await waitForSixHeldCalls();
+			expect(completed).toBe(0);
+			const heldSnapshot = await readHeld();
+			expect(heldSnapshot).toMatchObject({ activeCalls: 6, peakCalls: 6 });
+			beforeRelease = {
+				activeCalls: heldSnapshot.activeCalls,
+				peakCalls: heldSnapshot.peakCalls,
+				completed,
+			};
+		} finally {
+			expect(
+				(
+					await fetchHelper(
+						`/observations?runId=${heldRunId}`,
+						'POST',
+						'Bearer separate-admission-secret',
+						{ action: 'release' },
+					)
+				).status,
+			).toBe(200);
+			await Promise.all(held);
+		}
+		expect(completed).toBe(6);
+		const releasedSnapshot = await readHeld();
+		expect(releasedSnapshot).toMatchObject({ activeCalls: 0, peakCalls: 6 });
+		process.stdout.write(
+			`${JSON.stringify({ heldRpcProof: { beforeRelease, afterRelease: { activeCalls: releasedSnapshot.activeCalls, peakCalls: releasedSnapshot.peakCalls, completed } } })}\n`,
+		);
 	} finally {
 		try {
 			await worker?.stop();
