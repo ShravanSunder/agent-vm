@@ -23,3 +23,24 @@ rerun. **Fix in its own layer:** compare the effects' arguments as a multiset,
 and keep the exactly-once count and the receipt assertion. This doesn't weaken
 proof, because order isn't a requirement. Not changed during the structure
 pass.
+
+## Approved managed MCP calls are refused at the provider (pre-existing product defect)
+
+In agent-vm's managed path, an MCP tool that requires approval is refused even
+after the controller approves it. `createToolPortalMcpProjection`
+(`packages/config-contracts/src/tool-portal-config.ts:1077`) copies the profile's
+`calls` unchanged into the provider's view. The managed wrapper
+(`packages/tool-portal/src/mcp-provider-backend/tool-portal-mcp-provider-backend-port.ts:153–175`)
+passes the operation id but no approval grant. The provider's
+`preflightCallDecision` (`packages/mcp-portal/src/mcp-provider-backend/mcp-provider-capability-backend.ts:547–568`)
+then answers `approval_required` for every requiresApproval tool; its unit test
+(:737) pins that. Existing approval tests use factory doubles, so they never hit it.
+
+Confirmed on 2026-10-21 by S4a's Implementer with the actual old factory,
+connector and a controlled MCP server: an unprotected `read_thing` ran once; a
+grant-carrying `write_thing` was refused `approval_required` with no effect.
+Source is identical at `08f9e426` and #245.
+
+**Not changed in S4a.** The cutover keeps today's behavior, and its tests don't
+pin the defect as expected. Fixing it changes behavior: the provider would have
+to accept a controller-dispatched approval for that exact call. **Owner decision.**
