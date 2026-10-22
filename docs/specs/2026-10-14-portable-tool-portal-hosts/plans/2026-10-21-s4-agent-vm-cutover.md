@@ -43,6 +43,11 @@ delivery context:
   PR topology: separate-prs, one linear gh stack above #245
 ```
 
+**Lead admission (2026-10-21, restated 2026-10-22).** The record above is the
+planner's original return and stays as history. The Lead admitted the plan for
+S4a–S4c (see Status), so a slice's authority is this plan plus the Lead's commission
+for it; `revision-requested` and `plan-only` no longer govern any slice.
+
 The review identities and their closure are the Lead's supplied evidence, not a
 new independent review by this planner. The Lead identifies the post-review changes
 as ab705f5e, 63cbc4ad, 4c255301, ea5420ba, 23e67cf4, 11a57a86, 4f87ca77,
@@ -389,6 +394,11 @@ Branch `tool-portal/s4b-python-mcp-client`, base S4a; one client PR.
 - Wrong builds: dependency-only bump; default auto negotiation; stale three-stream
   unpack; httpx object passed to httpx2 transport; dropped vendor metadata; v1 field
   access silently loses structured results; artifact call works only against a fake.
+- **Lead ruling (2026-10-22):** the artifact URI carries only the id, and the bounded
+  read request lives in `_meta['agent-vm/artifact-read-request']`. Today's Python
+  transport drops that metadata on `resources/read`, which the URI-only fake hid. S4b
+  forwards the existing metadata through v2 `session.read_resource(meta=...)`, with no
+  other contract change; dropping it is an added wrong build.
 - External dependency: Python 3.13, uv, Node build and controlled MCP provider.
   No live account, LLM or VM. The image-level dependency proof waits for S4c CI.
 
