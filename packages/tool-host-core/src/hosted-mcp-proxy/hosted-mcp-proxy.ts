@@ -97,9 +97,9 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 								sink: props.analytics,
 								clock: props.clock,
 								log,
-								trustedTool: engine.trustedTool,
+								trustedTool: requestEngine.trustedTool,
 								requiresApproval: (namespace, toolName) =>
-									engine.requiresApproval(caller.agentClientId, namespace, toolName),
+									requestEngine.requiresApproval(namespace, toolName),
 							}),
 					});
 				},

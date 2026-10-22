@@ -125,40 +125,12 @@ export async function createOrganizationEngine(props: {
 		now: props.clock.nowMs,
 	});
 	let snapshot = await organizationCatalog.read();
-	const sessions = createAgentCatalogViewCache({
-		runtime: catalogRuntime,
-		catalogTtlMs: 60_000,
-		organizationCatalog: { read: async () => snapshot },
-		upstreamNamespaces: providers.map((provider) => provider.namespace),
-		accessPolicy: {
-			enabledNamespaces: providers.map((provider) => provider.namespace),
-			enabledNamespacesByAgent: {},
-			hiddenToolsByAgent: {},
-		},
-	});
+
 	const revision = { owner: props.organizationId, revision: 'deployed-v1' };
 	return {
 		configuration,
 		refresh: async () => {
 			snapshot = await organizationCatalog.read();
-		},
-		trustedTool: (namespace, toolName) =>
-			snapshot.toolsByNamespace.get(namespace)?.some((tool) => tool.name === toolName) === true,
-		requiresApproval: (agentId, namespace, toolName) => {
-			const assignment = configuration.portal.agents[agentId];
-			const profile =
-				assignment === undefined ? undefined : configuration.portal.profiles[assignment.profile];
-			const tool = snapshot.toolsByNamespace
-				.get(namespace)
-				?.find((entry) => entry.name === toolName);
-			return (
-				profile !== undefined &&
-				mcpPortalCallPolicyDecision(resolveHostedProxyProfile(profile), {
-					namespace,
-					toolName,
-					...(tool?.annotations === undefined ? {} : { annotations: tool.annotations }),
-				}).kind === 'requires_approval'
-			);
 		},
 		gatewayFor: ({ agentClientId, consumeTokenId, invoke }) => {
 			const assignment = configuration.portal.agents[agentClientId];
@@ -167,6 +139,18 @@ export async function createOrganizationEngine(props: {
 			if (profile === undefined || assignment === undefined)
 				throw new Error('Agent profile unavailable.');
 			const resolvedProfile = resolveHostedProxyProfile(profile);
+			const requestSnapshot = snapshot;
+			const sessions = createAgentCatalogViewCache({
+				runtime: catalogRuntime,
+				catalogTtlMs: 60_000,
+				organizationCatalog: { read: async () => requestSnapshot },
+				upstreamNamespaces: providers.map((provider) => provider.namespace),
+				accessPolicy: {
+					enabledNamespaces: providers.map((provider) => provider.namespace),
+					enabledNamespacesByAgent: {},
+					hiddenToolsByAgent: {},
+				},
+			});
 			const identity = createPortalAgentIdentity({
 				agentId: agentClientId,
 				agentScopeId: agentClientId,
@@ -219,7 +203,7 @@ export async function createOrganizationEngine(props: {
 				backends: new Map([['mcp_provider', backend]]),
 				now: props.clock.nowMs,
 				resolveAccess: async ({ capability, call }) => {
-					const descriptor = snapshot.toolsByNamespace
+					const descriptor = requestSnapshot.toolsByNamespace
 						.get(capability.namespace)
 						?.find((tool) => tool.name === capability.tool);
 					return assessAccessInput.parse({
@@ -256,7 +240,26 @@ export async function createOrganizationEngine(props: {
 					});
 				},
 			});
-			return { gateway, close: async () => runtime.closeAgentScope(scope) };
+			return {
+				gateway,
+				close: async () => runtime.closeAgentScope(scope),
+				trustedTool: (namespace, toolName) =>
+					requestSnapshot.toolsByNamespace
+						.get(namespace)
+						?.some((tool) => tool.name === toolName) === true,
+				requiresApproval: (namespace, toolName) => {
+					const tool = requestSnapshot.toolsByNamespace
+						.get(namespace)
+						?.find((entry) => entry.name === toolName);
+					return (
+						mcpPortalCallPolicyDecision(resolvedProfile, {
+							namespace,
+							toolName,
+							...(tool?.annotations === undefined ? {} : { annotations: tool.annotations }),
+						}).kind === 'requires_approval'
+					);
+				},
+			};
 		},
 	};
 }
