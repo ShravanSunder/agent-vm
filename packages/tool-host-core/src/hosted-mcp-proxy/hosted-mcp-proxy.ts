@@ -11,6 +11,8 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 
 import { recordBatchCallAnalytics } from '#tool-host-core/call-analytics/batch-call-analytics';
 import { checkHostedCaller } from '#tool-host-core/caller-admission/caller-check';
+import type { HostedCallerCheck } from '#tool-host-core/caller-admission/models/caller-admission';
+import type { OrganizationConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import { createHostedMcpServer } from '#tool-host-core/hosted-mcp-proxy/hosted-mcp-server';
 import type {
 	HostedMcpProxy,
@@ -20,31 +22,40 @@ import type { OrganizationEngine } from '#tool-host-core/organization-engines/mo
 import { createOrganizationEngine } from '#tool-host-core/organization-engines/organization-engine';
 import { createHostedRequestLimits } from '#tool-host-core/request-limits/hosted-call-limits';
 
+interface HostedOrganizationContext {
+	readonly configuration: OrganizationConfiguration;
+	engine?: Promise<OrganizationEngine>;
+}
+
+function callerRefusalResponse(
+	caller: Exclude<HostedCallerCheck, { readonly kind: 'verified' }>,
+): Response {
+	return Response.json(
+		{ error: caller.reason },
+		{ status: caller.kind === 'unavailable' ? 503 : 401 },
+	);
+}
+
 export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy {
-	const engines = new Map<string, Promise<OrganizationEngine>>();
+	// Cache configuration before lazy discovery so an unassigned caller cannot
+	// start upstream clients or poison a later assigned caller's organization engine.
+	const organizations = new Map<string, Promise<HostedOrganizationContext>>();
 	const isolateId = props.newId();
 	let activeRequests = 0;
 	const log = props.log;
-	function organizationEngine(organizationId: string): Promise<OrganizationEngine> {
-		const existing = engines.get(organizationId);
+	function organizationContext(organizationId: string): Promise<HostedOrganizationContext> {
+		const existing = organizations.get(organizationId);
 		if (existing !== undefined) return existing;
-		const created = props.configurations.read(organizationId).then(async (configuration) =>
-			createOrganizationEngine({
-				organizationId,
-				configuration,
-				secrets: props.secrets,
-				clock: props.clock,
-				limits: props.limits,
-				createUpstreamMcpTransport: props.createUpstreamMcpTransport,
-				...(props.createClient === undefined ? {} : { createClient: props.createClient }),
-			}),
-		);
-		engines.set(organizationId, created);
+		const created = Promise.resolve()
+			.then(() => props.configurations.read(organizationId))
+			.then((configuration) => ({ configuration }));
+		organizations.set(organizationId, created);
 		void created.catch(() => {
-			if (engines.get(organizationId) === created) engines.delete(organizationId);
+			if (organizations.get(organizationId) === created) organizations.delete(organizationId);
 		});
 		return created;
 	}
+
 	return {
 		async handle(request: Request): Promise<Response> {
 			const caller = await checkHostedCaller({
@@ -52,11 +63,19 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 				verifier: props.verifier,
 				organizations: props.organizations,
 			});
-			if (caller.kind !== 'verified')
-				return Response.json(
-					{ error: caller.reason },
-					{ status: caller.kind === 'unavailable' ? 503 : 401 },
-				);
+			if (caller.kind !== 'verified') return callerRefusalResponse(caller);
+			const pendingContext = organizationContext(caller.organizationId);
+			// Preserve the existing SDK error path for failed configuration reads;
+			// a readable but unassigned profile is an admission refusal before MCP handling.
+			const admissionContext = await pendingContext.catch(() => undefined);
+			if (admissionContext !== undefined) {
+				const assignment = admissionContext.configuration.portal.agents[caller.agentClientId];
+				if (
+					assignment === undefined ||
+					admissionContext.configuration.portal.profiles[assignment.profile] === undefined
+				)
+					return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
+			}
 			const mode = toolLoadingMode(resolveToolLoading(request.url));
 			const requestId = props.newId();
 			activeRequests += 1;
@@ -66,7 +85,23 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			let catalogError: PortalCatalogPreparationError | undefined;
 			const handler = createMcpHandler(
 				async () => {
-					const engine = await organizationEngine(caller.organizationId);
+					const context = await pendingContext;
+					if (context.engine === undefined) {
+						context.engine = createOrganizationEngine({
+							organizationId: caller.organizationId,
+							configuration: context.configuration,
+							secrets: props.secrets,
+							clock: props.clock,
+							limits: props.limits,
+							createUpstreamMcpTransport: props.createUpstreamMcpTransport,
+							...(props.createClient === undefined ? {} : { createClient: props.createClient }),
+						});
+						void context.engine.catch(() => {
+							if (organizations.get(caller.organizationId) === pendingContext)
+								organizations.delete(caller.organizationId);
+						});
+					}
+					const engine = await context.engine;
 					await engine.refresh();
 					const requestEngine = engine.gatewayFor({
 						agentClientId: caller.agentClientId,
@@ -97,9 +132,9 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 								sink: props.analytics,
 								clock: props.clock,
 								log,
-								trustedTool: engine.trustedTool,
+								trustedTool: requestEngine.trustedTool,
 								requiresApproval: (namespace, toolName) =>
-									engine.requiresApproval(caller.agentClientId, namespace, toolName),
+									requestEngine.requiresApproval(namespace, toolName),
 							}),
 					});
 				},

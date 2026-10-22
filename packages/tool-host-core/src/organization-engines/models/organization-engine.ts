@@ -12,8 +12,6 @@ import type { OrganizationConfiguration } from '#tool-host-core/hosted-configura
 export interface OrganizationEngine {
 	readonly configuration: OrganizationConfiguration;
 	readonly refresh: () => Promise<void>;
-	readonly trustedTool: (namespace: string, toolName: string) => boolean;
-	readonly requiresApproval: (agentId: string, namespace: string, toolName: string) => boolean;
 	readonly gatewayFor: (props: {
 		readonly agentClientId: string;
 		readonly consumeTokenId: ConsumeApprovalTokenId;
@@ -21,5 +19,10 @@ export interface OrganizationEngine {
 			invocation: DispatchInvocation,
 			call: () => Promise<ResourceResult>,
 		) => Promise<ResourceResult>;
-	}) => { readonly gateway: McpGateway; readonly close: () => Promise<void> };
+	}) => {
+		readonly gateway: McpGateway;
+		readonly close: () => Promise<void>;
+		readonly trustedTool: (namespace: string, toolName: string) => boolean;
+		readonly requiresApproval: (namespace: string, toolName: string) => boolean;
+	};
 }

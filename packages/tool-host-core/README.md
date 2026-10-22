@@ -5,6 +5,12 @@ organization authority, configuration, secrets, analytics, clock, IDs, limits,
 logging and upstream transport creation. `createHostedMcpProxy(ports).handle`
 accepts web `Request` objects and returns web `Response` objects.
 
+An admitted caller still needs a valid configured profile. Missing assignments
+and dangling profile references return the existing admission refusal envelope,
+HTTP 401 with `profile-unassigned`, before any upstream discovery or dispatch.
+There is no default profile. Each request also keeps one catalog generation for
+its views, access checks and analytics while organization discovery stays shared.
+
 Organization authority runs the same admission and approval-use rules over an
 `OrganizationAuthorityStore`. Its atomic callback reads the clock, reads the row,
 checks replay, prunes expired uses, checks the byte cap and awaits the write.

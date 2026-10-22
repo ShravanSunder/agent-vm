@@ -15,6 +15,6 @@ export type HostedCallerCheck =
 	| HostedCaller
 	| {
 			readonly kind: 'refused';
-			readonly reason: AgentProofRefusal | 'missing-token' | 'removed-agent';
+			readonly reason: AgentProofRefusal | 'missing-token' | 'removed-agent' | 'profile-unassigned';
 	  }
 	| { readonly kind: 'unavailable'; readonly reason: 'admission-unavailable' };
