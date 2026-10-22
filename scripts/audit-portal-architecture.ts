@@ -1078,8 +1078,6 @@ export function isForbiddenToolEngineImport(specifier: string): boolean {
 }
 export function isForbiddenToolHostCoreImport(specifier: string): boolean {
 	return (
-		specifier === 'pkce-challenge' ||
-		specifier.includes('/pkce-challenge/') ||
 		specifier === '@cloudflare/workers-types' ||
 		specifier.startsWith('@cloudflare/workers-types/') ||
 		specifier === 'typescript' ||

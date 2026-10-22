@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export interface ToolEngineClosureFixture {
+export interface PortalPackageClosureFixture {
 	readonly name: string;
 	readonly source: string;
 	readonly reason: string;
@@ -10,7 +10,7 @@ export interface ToolEngineClosureFixture {
 }
 
 /** Controlled dependency branches distinguish Node resolution from real Worker bundling. */
-export async function prepareToolEngineClosureFixtures(root: string): Promise<void> {
+export async function preparePortalPackageClosureFixtures(root: string): Promise<void> {
 	// Node-first clean entry makes accidental retention of Node's condition fail this control.
 	const poisonDirectory = path.join(root, 'node_modules', 's4d-worker-closure-poison');
 	await mkdir(poisonDirectory, { recursive: true });
@@ -76,7 +76,10 @@ export async function prepareToolEngineClosureFixtures(root: string): Promise<vo
 	);
 }
 
-export function toolEngineClosureFixtures(original: string): readonly ToolEngineClosureFixture[] {
+export function portalPackageClosureFixtures(
+	original: string,
+	packageLabel = 'tool-engine',
+): readonly PortalPackageClosureFixture[] {
 	return [
 		{
 			name: 'lazy',
@@ -188,5 +191,9 @@ export function toolEngineClosureFixtures(original: string): readonly ToolEngine
 				"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
 			reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
 		},
-	];
+	].map((fixture) =>
+		Object.assign(fixture, {
+			reason: fixture.reason.replaceAll('tool-engine', packageLabel),
+		}),
+	);
 }

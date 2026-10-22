@@ -9,6 +9,11 @@ import {
 	collectToolHostCoreViolations,
 	isForbiddenToolHostCoreImport,
 } from './audit-portal-architecture.ts';
+import {
+	preparePortalPackageClosureFixtures,
+	portalPackageClosureFixtures,
+} from './portal-package-closure-fixtures.ts';
+import { portalPackageClosureScannerSource } from './portal-package-closure-scanner-source.ts';
 import { isAllowedSdkNodeShimImport } from './tool-host-core-closure-policy.ts';
 import { declarationScannerSource } from './verify-tool-engine-closure.ts';
 
@@ -75,53 +80,16 @@ ${isAllowedSdkNodeShimImport.toString()}
 `;
 }
 
-function scannerSource(): string {
-	return `import {readFile,realpath,writeFile} from 'node:fs/promises';
-import {fileURLToPath,pathToFileURL} from 'node:url';
-import {createRequire} from 'node:module';
-import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
-${policySource()}
-const [entry,condition,sdkNodeShim,graphPath]=process.argv.slice(2);
-const pending=[entry],visited=new Set();let edges=0,allowedEdges=0;
-while(pending.length){
- const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
- if(location.startsWith(${JSON.stringify(repositoryRoot)}+'/'))throw new Error('tool-host-core workspace fallback '+location);
- if(isForbiddenToolHostCoreImport(pathToFileURL(location).href))throw new Error('tool-host-core forbidden resolved path '+location);
- if(location.endsWith('.json'))continue;
- const source=ts.createSourceFile(location,await readFile(location,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.JS),imports=[];
- function visit(node){
-  if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier)imports.push({specifier:node.moduleSpecifier.text,kind:'import'});
-  if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||(ts.isIdentifier(node.expression)&&node.expression.text==='require'))){
-   if(node.arguments.length!==1||!ts.isStringLiteral(node.arguments[0]))throw new Error('tool-host-core nonliteral import '+location);
-   imports.push({specifier:node.arguments[0].text,kind:node.expression.kind===ts.SyntaxKind.ImportKeyword?'import':'require'});
-  }
-  ts.forEachChild(node,visit);
- }visit(source);
- for(const {specifier,kind} of imports){
-  edges++;
-  if(isAllowedSdkNodeShimImport({condition,importer:location,sdkNodeShim,specifier})){allowedEdges++;continue;}
-  if(isForbiddenToolHostCoreImport(specifier))throw new Error('tool-host-core forbidden import '+specifier+' from '+location);
-  const resolved=kind==='require'?pathToFileURL(createRequire(location).resolve(specifier)).href:import.meta.resolve(specifier,pathToFileURL(location).href);
-  if(isForbiddenToolHostCoreImport(resolved))throw new Error('tool-host-core forbidden resolved import '+resolved);
-  if(!resolved.startsWith('file:'))throw new Error('tool-host-core non-file dependency '+resolved);
-  pending.push(fileURLToPath(resolved));
- }
-}
-if(visited.size===0)throw new Error('empty closure');
-if(condition==='node'&&allowedEdges!==1)throw new Error('Expected exactly one SDK Node shim edge, saw '+allowedEdges);
-if(condition!=='node'&&allowedEdges!==0)throw new Error('Unexpected shim exception');
-await writeFile(graphPath,JSON.stringify({condition,modules:[...visited],edges,allowedEdges,pkceModules:[...visited].filter(location=>location.includes('/pkce-challenge/'))},null,2));
-console.log(condition+' closure: '+visited.size+' modules, '+edges+' edges, '+allowedEdges+' exact SDK Node shim edge(s)');
-`;
-}
-
 function loaderSource(): string {
 	return `import {registerHooks} from 'node:module';
+import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 ${policySource()}
-const [condition,sdkNodeShim]=JSON.parse(process.env.TOOL_HOST_CORE_CLOSURE_POLICY);
+const [condition,sdkNodeShim,graphPath]=JSON.parse(process.env.TOOL_HOST_CORE_CLOSURE_POLICY);
+const firstPartyModules=new Set(JSON.parse(await readFile(graphPath,'utf8')).modules);
 registerHooks({resolve(specifier,context,nextResolve){
  const importer=context.parentURL?.startsWith('file:')?fileURLToPath(context.parentURL):'';
+ if(!firstPartyModules.has(importer))return nextResolve(specifier,context);
  if(isAllowedSdkNodeShimImport({condition,importer,sdkNodeShim,specifier}))return nextResolve(specifier,context);
  if(isForbiddenToolHostCoreImport(specifier))throw new Error('tool-host-core forbidden import '+specifier);
  const resolved=nextResolve(specifier,context);
@@ -206,7 +174,22 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 	const sdkNodeShim = requireFromEntry
 		.resolve('@modelcontextprotocol/server/_shims')
 		.replace(/\.cjs$/u, '.mjs');
-	await writeFile(path.join(scratch, 'scanner.mjs'), scannerSource());
+	await Promise.all(
+		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
+			await writeFile(
+				path.join(scratch, `scanner-${scan}.mjs`),
+				portalPackageClosureScannerSource({
+					repositoryRoot,
+					scan,
+					packageLabel: 'tool-host-core',
+					forbiddenImportSource: isForbiddenToolHostCoreImport.toString(),
+					sdkNodeShim,
+					typescriptUrl: import.meta.resolve('typescript'),
+					esbuildUrl: import.meta.resolve('esbuild'),
+				}),
+			);
+		}),
+	);
 	await writeFile(
 		path.join(scratch, 'declaration-scanner.mjs'),
 		declarationScannerSource({
@@ -227,27 +210,29 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 	if (declarations.code !== 0) throw new Error('Packed declaration closure failed');
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
 	await writeFile(path.join(scratch, 'consumer.mjs'), consumerSource());
-	async function scan(condition: string, label: string): Promise<CommandResult> {
+	async function scanClosure(
+		scanKind: 'first-party' | 'worker',
+		label: string,
+	): Promise<CommandResult> {
 		return command({
 			executable: process.execPath,
 			args: [
 				'--experimental-import-meta-resolve',
-				...(condition === 'node' ? [] : [`--conditions=${condition}`]),
-				path.join(scratch, 'scanner.mjs'),
-				entry,
-				condition,
-				sdkNodeShim,
-				path.join(evidence, `${label}-graph.json`),
+				path.join(scratch, `scanner-${scanKind}.mjs`),
+				JSON.stringify([entry]),
+				path.join(evidence, label),
 			],
 			cwd: scratch,
 			evidence,
 			label,
 		});
 	}
-	for (const condition of ['browser', 'workerd', 'node']) {
-		const clean = await scan(condition, `${condition}-clean`);
-		if (clean.code !== 0) throw new Error(`${condition} clean closure failed`);
+	async function check(label: string): Promise<CommandResult> {
+		const firstParty = await scanClosure('first-party', `${label}-first-party`);
+		if (firstParty.code !== 0) return firstParty;
+		return scanClosure('worker', `${label}-worker`);
 	}
+	if ((await check('clean')).code !== 0) throw new Error('Clean dual closure failed');
 	// The Node runtime consumer has a loader that enforces the same exact edge policy.
 	const consumer = spawnSync(
 		process.execPath,
@@ -255,7 +240,14 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 		{
 			cwd: scratch,
 			encoding: 'utf8',
-			env: { ...process.env, TOOL_HOST_CORE_CLOSURE_POLICY: JSON.stringify(['node', sdkNodeShim]) },
+			env: {
+				...process.env,
+				TOOL_HOST_CORE_CLOSURE_POLICY: JSON.stringify([
+					'node',
+					sdkNodeShim,
+					path.join(evidence, 'clean-first-party/first-party-graph.json'),
+				]),
+			},
 		},
 	);
 	await writeFile(
@@ -264,25 +256,39 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 	);
 	if (consumer.status !== 0) throw new Error(`Packed consumer failed: ${consumer.stderr ?? ''}`);
 	if (process.argv.includes('--fixtures')) {
+		await preparePortalPackageClosureFixtures(root);
 		const original = await readFile(entry, 'utf8');
-		for (const condition of ['browser', 'workerd', 'node']) {
+		const fixtures = portalPackageClosureFixtures(original, 'tool-host-core').filter((fixture) =>
+			[
+				'direct',
+				'browser-main-field',
+				'worker-nonliteral-import',
+				'worker-nonliteral-require',
+			].includes(fixture.name),
+		);
+		await fixtures.reduce<Promise<void>>(async (previous, fixture): Promise<void> => {
+			await previous;
 			try {
-				await writeFile(
-					entry,
-					`${original}\nexport async function forbiddenHostRuntime(){ return import('node:process'); }\n`,
-				);
-				const red = await scan(condition, `${condition}-planted-node-red`);
-				if (red.code === 0 || !red.output.includes('tool-host-core forbidden import node:process'))
-					throw new Error(`${condition} planted violation did not fail for its intended reason`);
+				await writeFile(entry, fixture.source);
+				const red = await check(`${fixture.name}-red`);
+				if (
+					red.code === 0 ||
+					!red.output.includes(fixture.reason) ||
+					(fixture.scanReason !== undefined && !red.output.includes(fixture.scanReason))
+				)
+					throw new Error(`${fixture.name} did not fail for its intended reason`);
 			} finally {
 				await writeFile(entry, original);
 			}
-			if ((await scan(condition, `${condition}-restored`)).code !== 0)
-				throw new Error(`${condition} closure did not restore`);
-		}
+			if ((await check(`${fixture.name}-restored`)).code !== 0)
+				throw new Error(`${fixture.name} closure did not restore`);
+		}, Promise.resolve());
+		process.stdout.write(
+			`sensitivity: ${fixtures.length} intended rejections, ${fixtures.length} restored passes\n`,
+		);
 	}
 	process.stdout.write(
-		'tool-host-core packed closure: passed (browser, workerd, Node with exact SDK shim exception)\n',
+		'tool-host-core packed closure: passed (Node first-party with exact SDK shim, full Worker bundler)\n',
 	);
 }
 

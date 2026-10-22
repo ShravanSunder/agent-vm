@@ -1,25 +1,31 @@
 import { builtinModules } from 'node:module';
 
-import { isForbiddenToolEngineImport } from './audit-portal-architecture.ts';
+import { isAllowedSdkNodeShimImport } from './tool-host-core-closure-policy.ts';
 
-export type ToolEngineClosureScan = 'first-party' | 'worker';
+export type PortalPackageClosureScan = 'first-party' | 'worker';
 
 /** Generate each isolated scanner so Node's resolution cache cannot cross the two policies. */
-export function toolEngineClosureScannerSource(props: {
+export function portalPackageClosureScannerSource(props: {
 	readonly repositoryRoot: string;
-	readonly scan: ToolEngineClosureScan;
+	readonly packageLabel: string;
+	readonly forbiddenImportSource: string;
+	readonly sdkNodeShim?: string;
+	readonly scan: PortalPackageClosureScan;
 	readonly esbuildUrl: string;
 	readonly typescriptUrl: string;
 }): string {
-	if (props.scan === 'worker') return workerBundlerSource(props.esbuildUrl, props.typescriptUrl);
-	return `import { readFile, realpath } from 'node:fs/promises';
+	if (props.scan === 'worker')
+		return workerBundlerSource(props).replaceAll('tool-engine', props.packageLabel);
+	return `import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import ts from ${JSON.stringify(props.typescriptUrl)};
 const scan = ${JSON.stringify(props.scan)};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
-${isForbiddenToolEngineImport.toString()}
+const isForbiddenToolEngineImport = ${props.forbiddenImportSource};
+${isAllowedSdkNodeShimImport.toString()}
+const sdkNodeShim = ${JSON.stringify(props.sdkNodeShim ?? '')};
 function resolveImport(specifier, location, kind) {
  return kind === 'require' ? pathToFileURL(createRequire(location).resolve(specifier)).href : import.meta.resolve(specifier, pathToFileURL(location).href);
 }
@@ -39,10 +45,11 @@ async function isFirstParty(location) {
   const parent = path.dirname(directory); if (parent === directory) throw new Error('No owning package: ' + location); directory = parent;
  }
 }
-const pending = JSON.parse(process.argv[2]); const visited = new Set(); let edges = 0;
+const pending = JSON.parse(process.argv[2]); if (sdkNodeShim) pending.push(sdkNodeShim);
+const visited = new Set(); let edges = 0, allowedEdges = 0;
 while (pending.length) {
  const location = await realpath(pending.pop()); if (visited.has(location)) continue;
- if (!await isFirstParty(location)) continue;
+ if (location !== sdkNodeShim && !await isFirstParty(location)) continue;
  visited.add(location);
  if (isForbiddenToolEngineImport(pathToFileURL(location).href)) throw new Error('tool-engine forbidden resolved path ' + location + ' [' + scan + ' scan]');
  if (location.startsWith(${JSON.stringify(props.repositoryRoot)} + '/')) throw new Error('tool-engine workspace fallback ' + location);
@@ -58,6 +65,7 @@ while (pending.length) {
  }
  visit(source);
  for (const {specifier, kind} of imports) {
+  if (isAllowedSdkNodeShimImport({condition: 'node', importer: location, sdkNodeShim, specifier})) { allowedEdges++; edges++; continue; }
   if (isForbiddenToolEngineImport(specifier)) throw new Error('tool-engine forbidden import ' + specifier + ' from ' + location + ' [' + scan + ' scan]');
   const resolved = resolveImport(specifier, location, kind); edges++;
   if (isForbiddenToolEngineImport(resolved)) throw new Error('tool-engine forbidden resolved path ' + resolved + ' [' + scan + ' scan]');
@@ -67,18 +75,27 @@ while (pending.length) {
  }
 }
 if (visited.size === 0) throw new Error('empty closure');
-console.log(scan + ' emitted import closure: ' + visited.size + ' modules, ' + edges + ' static/lazy edges; no forbidden imports');
-`;
+if (sdkNodeShim && allowedEdges !== 1) throw new Error('Expected exactly one SDK Node shim edge, saw ' + allowedEdges);
+if (process.argv[3]) {
+ await mkdir(process.argv[3], {recursive: true});
+ await writeFile(path.join(process.argv[3], 'first-party-graph.json'), JSON.stringify({modules: [...visited], edges, allowedEdges, sdkNodeShim}, null, 2));
+}
+console.log(scan + ' emitted import closure: ' + visited.size + ' modules, ' + edges + ' static/lazy edges; no forbidden imports; ' + allowedEdges + ' exact SDK Node shim edge(s)');
+`.replaceAll('tool-engine', props.packageLabel);
 }
 
-/** Use the actual mirrored Wrangler resolver, including browser main-field remapping. */
-function workerBundlerSource(esbuildUrl: string, typescriptUrl: string): string {
+/** Resolve the complete Worker graph, including browser main-field remapping. */
+function workerBundlerSource(props: {
+	readonly esbuildUrl: string;
+	readonly typescriptUrl: string;
+	readonly forbiddenImportSource: string;
+}): string {
 	return `import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { build, version, stop } from ${JSON.stringify(esbuildUrl)};
-import ts from ${JSON.stringify(typescriptUrl)};
+import { build, version, stop } from ${JSON.stringify(props.esbuildUrl)};
+import ts from ${JSON.stringify(props.typescriptUrl)};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
-${isForbiddenToolEngineImport.toString()}
+const isForbiddenToolEngineImport = ${props.forbiddenImportSource};
 // Wrangler 4.124.0: wrangler-dist/cli.js:252816-252834,252997; its published manifest pins esbuild 0.28.1.
 // Mirror bundleWorker's unset platform and default mainFields, not only its export conditions.
 const workerConditions = ['workerd', 'worker', 'browser'];

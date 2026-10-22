@@ -19,10 +19,10 @@ import {
 	isForbiddenToolEngineImport,
 } from './audit-portal-architecture.ts';
 import {
-	prepareToolEngineClosureFixtures,
-	toolEngineClosureFixtures,
-} from './tool-engine-closure-fixtures.ts';
-import { toolEngineClosureScannerSource } from './tool-engine-closure-scanner-source.ts';
+	preparePortalPackageClosureFixtures,
+	portalPackageClosureFixtures,
+} from './portal-package-closure-fixtures.ts';
+import { portalPackageClosureScannerSource } from './portal-package-closure-scanner-source.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = fileURLToPath(import.meta.url);
@@ -379,8 +379,10 @@ export async function verifyToolEngineClosure(): Promise<void> {
 		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
 			await writeFile(
 				path.join(scratch, `scanner-${scan}.mjs`),
-				toolEngineClosureScannerSource({
+				portalPackageClosureScannerSource({
 					scan,
+					packageLabel: 'tool-engine',
+					forbiddenImportSource: isForbiddenToolEngineImport.toString(),
 					repositoryRoot,
 					typescriptUrl: import.meta.resolve('typescript'),
 					esbuildUrl: import.meta.resolve('esbuild'),
@@ -416,7 +418,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
-		await prepareToolEngineClosureFixtures(root);
+		await preparePortalPackageClosureFixtures(root);
 		await subpaths.reduce<Promise<void>>(async (previous, subpath): Promise<void> => {
 			await previous;
 			const entryDirectory = path.join(root, 'dist', subpath.slice(2));
@@ -425,7 +427,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 			const declaration = path.join(entryDirectory, 'index.d.ts');
 			const original = await readFile(contract, 'utf8');
 			const originalDeclaration = await readFile(declaration, 'utf8');
-			const fixtureSources = toolEngineClosureFixtures(original);
+			const fixtureSources = portalPackageClosureFixtures(original);
 			await writeFile(
 				path.join(entryDirectory, 's2-transitive-poison.js'),
 				"export async function lazyPoison() { return import('node:fs'); }\n",

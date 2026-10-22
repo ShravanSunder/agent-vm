@@ -61,6 +61,8 @@ describe('portable hosted proxy architecture', () => {
 			'@agent-collaboration/tool-engine/mcp-gateway',
 			'#tool-host-core/hosted-mcp-proxy/hosted-mcp-proxy',
 			'file:///packed/tool-host-core/dist/index.js',
+			'pkce-challenge',
+			'file:///packed/node_modules/pkce-challenge/dist/index.browser.js',
 		])
 			expect(isForbiddenToolHostCoreImport(specifier)).toBe(false);
 		expect(
@@ -75,7 +77,6 @@ describe('portable hosted proxy architecture', () => {
 			'@agent-vm/agent-vm',
 			'@gondolin/provider',
 			'@cloudflare/workers-types',
-			'pkce-challenge',
 		])
 			expect(isForbiddenToolHostCoreImport(specifier)).toBe(true);
 	});

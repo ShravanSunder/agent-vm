@@ -13,16 +13,21 @@ is an in-memory conformance store; it makes no process-durability guarantee.
 Cloudflare's adapter supplies the Durable Object transaction and its 512 KiB cap.
 
 The core emits semantic `CallAnalytics` events. The Cloudflare adapter owns
-Analytics Engine encoding, the existing limit values and SDK v1 upstream
+Analytics Engine encoding, the existing limit values and SDK v2 upstream
 transports. No host adapter or Workers type is imported by core production code.
 
-The MCP server SDK selects its runtime through conditional exports. The packed
-closure guard checks browser and workerd graphs with no Node dependencies, and
-the ordinary Node graph with exactly one allowed edge: the SDK's own
-`@modelcontextprotocol/server/dist/shimsNode.mjs` to `node:process`. No other
-Node imports, PKCE dependency or host package is allowed. Core's own source has
-no Node exception. Native tests use ordinary Node conditions; they do not force
-browser exports. Workerd runtime proof belongs to the Cloudflare host suite.
+Tool Access owns provider and secret schemas; core re-exports those contracts and
+owns hosted organization configuration, binding lookup and environment-only enforcement.
+The core continues to compose Engine's `createMcpGateway`; standalone Portal is
+a separate wire projection of the same Engine.
+
+The shared packed closure guard checks first-party code under ordinary Node
+conditions, with no Node imports. Its existing SDK-server shim check permits
+only the exact `shimsNode.mjs` to `node:process` edge. The full Worker closure uses
+Wrangler's bundler conditions and browser-field resolution, rejects non-literal
+imports and has no Node exception. PKCE resolves to its browser build there.
+Native tests use ordinary Node conditions; workerd runtime proof belongs to the
+Cloudflare host suite.
 
 From the repository root:
 
