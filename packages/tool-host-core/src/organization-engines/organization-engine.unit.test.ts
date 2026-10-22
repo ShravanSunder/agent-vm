@@ -168,42 +168,48 @@ it.each([true, false])(
 			try {
 				const refreshedCatalog = await second.gateway.prepareCatalog();
 				expect(refreshedCatalog.sourceHash).not.toBe(initialCatalog.sourceHash);
-				const events: CallAnalytics[] = [];
-				for (const [requestEngine, expectedApproval] of [
-					[first, initialRequiresApproval],
-					[second, !initialRequiresApproval],
-				] as const) {
-					const input = {
-						calls: [{ id: 'changing', namespace: 'fixture', toolName: 'changing', arguments: {} }],
-					};
-					const result = await requestEngine.gateway.call(input);
-					// Assert actual gateway authorization, then the production analytics writer.
-					expect(result.results.changing?.ok).toBe(!expectedApproval);
-					if (expectedApproval)
-						expect(result.results.changing).toMatchObject({
-							error: { kind: 'approval_token_missing' },
+				await Promise.all(
+					(
+						[
+							[first, initialRequiresApproval],
+							[second, !initialRequiresApproval],
+						] as const
+					).map(async ([requestEngine, expectedApproval]) => {
+						const events: CallAnalytics[] = [];
+						const input = {
+							calls: [
+								{ id: 'changing', namespace: 'fixture', toolName: 'changing', arguments: {} },
+							],
+						};
+						const result = await requestEngine.gateway.call(input);
+						// Assert actual gateway authorization, then the production analytics writer.
+						expect(result.results.changing?.ok).toBe(!expectedApproval);
+						if (expectedApproval)
+							expect(result.results.changing).toMatchObject({
+								error: { kind: 'approval_token_missing' },
+							});
+						recordBatchCallAnalytics({
+							organizationId: 'fixture',
+							organizationName: 'fixture',
+							agentClientId: 'sender',
+							mode: 'indirect',
+							input,
+							result,
+							startedAt: nowMs,
+							clock,
+							sink: { write: (event) => events.push(event) },
+							log: () => {},
+							trustedTool: requestEngine.trustedTool,
+							requiresApproval: requestEngine.requiresApproval,
 						});
-					recordBatchCallAnalytics({
-						organizationId: 'fixture',
-						organizationName: 'fixture',
-						agentClientId: 'sender',
-						mode: 'indirect',
-						input,
-						result,
-						startedAt: nowMs,
-						clock,
-						sink: { write: (event) => events.push(event) },
-						log: () => {},
-						trustedTool: requestEngine.trustedTool,
-						requiresApproval: requestEngine.requiresApproval,
-					});
-					expect(events.at(-1)).toMatchObject({
-						serverName: 'fixture',
-						toolName: 'changing',
-						outcome: expectedApproval ? 'needs approval' : 'ran',
-						failureKind: expectedApproval ? 'approval' : 'none',
-					});
-				}
+						expect(events.at(-1)).toMatchObject({
+							serverName: 'fixture',
+							toolName: 'changing',
+							outcome: expectedApproval ? 'needs approval' : 'ran',
+							failureKind: expectedApproval ? 'approval' : 'none',
+						});
+					}),
+				);
 				expect(upstreamCalls).toBe(1);
 			} finally {
 				await second.close();
