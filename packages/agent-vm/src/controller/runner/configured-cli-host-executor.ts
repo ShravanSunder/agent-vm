@@ -1,13 +1,11 @@
 import { spawn } from 'node:child_process';
 
-import type {
-	ConfiguredCliInput,
-	EffectiveControllerExecutionOperation,
-} from '@agent-vm/config-contracts';
 import {
 	evaluateCliAllowanceInvocation,
 	resolveCliAllowanceTimeout,
-} from '@agent-vm/tool-portal/cli-allowances';
+} from '@agent-collaboration/tool-access/authorization';
+import { type ConfiguredCliInput } from '@agent-collaboration/tool-access/contracts';
+import { type EffectiveControllerExecutionOperation } from '@agent-vm/config-contracts';
 
 import {
 	configuredCliAuthorizedEvaluationsEqual,

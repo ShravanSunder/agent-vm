@@ -2,11 +2,13 @@ import {
 	redactCredentialText,
 	type UpstreamMcpRuntimeOptions,
 } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import {
+	SSEClientTransport,
+	StreamableHTTPClientTransport,
+	type Transport,
+} from '@modelcontextprotocol/client';
+import type { JSONRPCMessage } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 import type {
 	NormalizedUpstreamMcpServer,
@@ -67,7 +69,7 @@ export function createNodeStdioUpstreamTransport(
 		transport.stderr?.on('data', (chunk: Buffer | string): void => {
 			props.stderr?.(redactCredentialText(String(chunk), { exactValues: Object.values(env) }));
 		});
-		return withOrderedUpstreamMessages(transport);
+		return withOrderedStdioMessages(transport);
 	};
 }
 
@@ -106,4 +108,37 @@ function withOrderedUpstreamMessages(transport: Transport): Transport {
 		},
 	};
 	return orderedTransport;
+}
+
+/** Preserve the SDK base instance: auto negotiation owns the disposable probe child. */
+function withOrderedStdioMessages(transport: StdioClientTransport): StdioClientTransport {
+	const startTransport = transport.start.bind(transport);
+	const closeTransport = transport.close.bind(transport);
+	let deliveries = Promise.resolve();
+	transport.start = async () => {
+		const onmessage = transport.onmessage;
+		const onclose = transport.onclose;
+		Object.assign(transport, {
+			onmessage: (message: JSONRPCMessage): void => {
+				deliveries = deliveries
+					.then(() => {
+						onmessage?.(message);
+					})
+					.catch((error: unknown) => {
+						transport.onerror?.(
+							error instanceof Error ? error : new Error('Upstream message delivery failed.'),
+						);
+					});
+			},
+			onclose: (): void => {
+				void deliveries.then(() => onclose?.());
+			},
+		});
+		await startTransport();
+	};
+	transport.close = async () => {
+		await closeTransport();
+		await deliveries;
+	};
+	return transport;
 }

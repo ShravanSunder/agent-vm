@@ -1,6 +1,6 @@
 import type {
-	UpstreamMcpTransportKind,
 	NormalizedUpstreamMcpServer,
+	UpstreamMcpTransportKind,
 } from '#upstream-mcp-connectors/models/upstream-mcp-server';
 
 export type UpstreamMcpFailurePhase = 'call_tool' | 'connect' | 'list_tools';
@@ -13,13 +13,17 @@ export type UpstreamMcpFailureClass =
 	| 'rate_limit'
 	| 'tool_error';
 
-export interface UpstreamMcpTransportSummary {
-	readonly kind: 'sse' | 'streamable-http';
-	readonly url: string;
-}
+export type UpstreamMcpTransportSummary =
+	| { readonly kind: 'sse' | 'streamable-http'; readonly url: string }
+	| {
+			readonly kind: 'stdio';
+			readonly command: string;
+			readonly argCount: number;
+			readonly cwd?: string;
+	  };
 
 export interface UpstreamMcpFailureDetails {
-	readonly attemptTransport?: Exclude<UpstreamMcpTransportKind, 'auto-http'>;
+	readonly attemptTransport?: Exclude<UpstreamMcpTransportKind, 'auto-http'> | 'stdio';
 	readonly causeMessage: string;
 	readonly elapsedMs: number;
 	readonly failureClass?: UpstreamMcpFailureClass;

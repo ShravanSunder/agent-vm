@@ -11,7 +11,7 @@ describe('connector credential redaction at callback boundaries', () => {
 		const client: UpstreamMcpClientLike = {
 			connect: async () => {},
 			listTools: async () => ({ tools: [] }),
-			callTool: async (_params, _schema, options) => {
+			callTool: async (_params, options) => {
 				options?.onprogress?.({ progress: 1, message: canary });
 				return {};
 			},

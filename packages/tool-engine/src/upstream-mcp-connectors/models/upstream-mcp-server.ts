@@ -1,4 +1,4 @@
-import type { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
+import type { SSEClientTransportOptions } from '@modelcontextprotocol/client';
 
 export type UpstreamMcpTransportKind = 'auto-http' | 'sse' | 'streamable-http';
 

@@ -4,8 +4,25 @@ export * from '#tool-host-core/hosted-mcp-proxy/models/observation-log';
 export * from '#tool-host-core/caller-admission/caller-check';
 export * from '#tool-host-core/caller-admission/models/caller-admission';
 export * from '#tool-host-core/hosted-configuration/models/hosted-configuration';
-export * from '#tool-host-core/hosted-configuration/models/mcp-configuration';
-export * from '#tool-host-core/hosted-configuration/models/secret-values';
+export {
+	mcpConfigSchema,
+	mcpProviderSchema,
+	mcpSecretPolicySchema,
+	namespaceDiscoverySchema,
+	secretFormatSchema,
+	secretValueSchema,
+	formattedSecretValueSchema,
+	type McpConfig,
+	type McpProvider,
+	type ResolvedMcpProvider,
+	type SecretFormat,
+	type SecretValue,
+	type FormattedSecretValue,
+} from '@agent-collaboration/tool-access/contracts';
+
+export type NamespaceDiscovery = import('zod').infer<
+	typeof import('@agent-collaboration/tool-access/contracts').namespaceDiscoverySchema
+>;
 export * from '#tool-host-core/request-limits/hosted-call-limits';
 export * from '#tool-host-core/request-limits/models/hosted-proxy-limits';
 export * from '#tool-host-core/request-limits/models/hosted-request-limits';

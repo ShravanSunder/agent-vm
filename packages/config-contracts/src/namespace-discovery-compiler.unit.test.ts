@@ -1,6 +1,6 @@
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { mcpConfigSchema } from './mcp-config.js';
 import { compileToolPortalNamespaceDiscoveryByProfile } from './namespace-discovery-compiler.js';
 import { toolPortalConfigSchema } from './tool-portal-config.js';
 

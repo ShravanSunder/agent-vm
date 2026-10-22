@@ -2,12 +2,12 @@ import { proxyUpstreamFailureResult } from '@agent-collaboration/tool-engine/mcp
 import { PortalCallResultSchema, type PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { createManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import {
 	semanticSnapshot,
 	toolPortalConfig,
 	trustedContext,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
 const identity = {

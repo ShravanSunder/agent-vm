@@ -1,8 +1,6 @@
-import type {
-	GoogleOAuthApplicationConfig,
-	GoogleOAuthApplicationId,
-	OAuthConfig,
-} from './oauth-config.js';
+import { type GoogleOAuthApplicationId } from '@agent-collaboration/tool-access/contracts';
+
+import { type GoogleOAuthApplicationConfig, type OAuthConfig } from './oauth-config.js';
 
 function createGoogleApplicationConfig(
 	applicationId: GoogleOAuthApplicationId,

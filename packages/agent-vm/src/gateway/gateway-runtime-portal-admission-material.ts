@@ -1,8 +1,8 @@
+import { type McpConfig } from '@agent-collaboration/tool-access/contracts';
 import { compareUnicodeCodePointStrings } from '@agent-vm/agent-portal-sdk';
 import {
 	effectiveManagedToolPortalConfigSchema,
 	type EffectiveManagedToolPortalConfig,
-	type McpConfig,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimePortalSemanticSnapshot,

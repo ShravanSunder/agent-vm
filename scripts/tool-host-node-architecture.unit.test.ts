@@ -53,11 +53,11 @@ describe('Node inbound protocol session policy', () => {
 		'const transport = { sessionIdGenerator: () => "session" };',
 		'const session = request.headers["Mcp-Session-Id"];',
 	])('rejects surviving protocol session state: %s', (sourceText) => {
-		expect(
-			collectToolHostNodeViolations({
-				filePath: 'packages/tool-host-node/src/mcp-proxy-server/node-http-server.ts',
-				sourceText,
-			}),
-		).not.toEqual([]);
+		for (const filePath of [
+			'packages/tool-host-node/src/mcp-proxy-server/node-http-server.ts',
+			'packages/tool-host-node/src/standalone-tool-portal/standalone-http-servers.ts',
+		]) {
+			expect(collectToolHostNodeViolations({ filePath, sourceText })).not.toEqual([]);
+		}
 	});
 });

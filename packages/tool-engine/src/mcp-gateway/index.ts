@@ -131,3 +131,8 @@ export type {
 } from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
 
 export type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';
+export { createPortalToolHandlers } from '#mcp-gateway/portal-tools/portal-tool-handlers';
+export type {
+	PortalToolRuntime,
+	PortalToolHandlers,
+} from '#mcp-gateway/portal-tools/models/portal-tool-contracts';

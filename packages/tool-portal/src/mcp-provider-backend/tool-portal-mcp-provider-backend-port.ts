@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import {
 	createToolPortalMcpProjection,
 	type GatewayRuntimeManagedToolPortalConfig,
 	type ManagedToolPortalConfig,
-	type StandaloneToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,

@@ -1,13 +1,13 @@
 import {
 	resolveConfiguredCliTimeout,
 	type controllerConfiguredCliInputSchema,
-	type GatewayRuntimeControllerExecutionOperation,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { type GatewayRuntimeControllerExecutionOperation } from '@agent-vm/config-contracts';
 import type {
 	ControllerExecutionAuthorityBinding,
 	ControllerExecutionResult,
 } from '@agent-vm/controller-execution-contracts';
-import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
+import type { ToolPortalApprovalPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
 import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
 import type { ControllerExecutionDispatchRequest } from './controller-execution-backend-port.js';

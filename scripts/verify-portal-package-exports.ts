@@ -13,6 +13,7 @@ const requiredPortalPackageExports = [
 	'@agent-collaboration/tool-engine/mcp-gateway',
 	'@agent-collaboration/tool-engine/upstream-mcp-connectors',
 	'@agent-collaboration/tool-engine/capability-dispatch',
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -46,7 +47,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -70,6 +71,13 @@ const requiredPortalNamedExports = {
 		'openNodeOperationStore',
 		'createNodeHostComposition',
 		'nodeHostConfigSchema',
+		'resolveUpstreamServers',
+		'createNodeProviderRuntime',
+		'loadMcpConfig',
+		'formatSecretValue',
+		'mcpPortalConfigSchema',
+		'standaloneToolPortalConfigSchema',
+		'createMcpPortalConfigSchemaArtifact',
 	],
 	'@agent-collaboration/tool-host-node/catalog-typescript': [
 		'compileCatalogTypescriptModules',
@@ -86,6 +94,11 @@ const requiredPortalNamedExports = {
 		'redactUpstreamResponse',
 		'UpstreamMcpError',
 	],
+	'@agent-collaboration/tool-engine/standalone-tool-portal': [
+		'mergeToolPortalList',
+		'mergeToolPortalSearch',
+		'mergeToolPortalDescribe',
+	],
 	'@agent-collaboration/tool-engine/capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
@@ -94,6 +107,10 @@ const requiredPortalNamedExports = {
 		'approvalReceiptSchema',
 	],
 	'@agent-collaboration/tool-access/contracts': [
+		'mcpConfigSchema',
+		'secretValueSchema',
+		'configuredCliPolicySchema',
+		'toolPortalToolSelectorSchema',
 		'hostAccessBinding',
 		'assessAccessInput',
 		'accessFacts',
@@ -257,6 +274,12 @@ const requiredPortalNamedExports = {
 	'@agent-vm/gateway-runtime': [
 		'GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS',
 		'createGatewayRuntimeToolPortalComposition',
+		'createGatewayRuntimeManagedToolPortalComposition',
+		'createManagedToolPortalCapabilityCore',
+		'createManagedMcpProviderBackendFactoryFromConfig',
+		'deterministicOperationId',
+		'directDispatchFingerprint',
+		'ToolPortalManagedServiceInvocationOptionsSchema',
 	],
 	'@agent-vm/mcp-portal': ['UpstreamMcpError', 'createUpstreamMcpClientRuntime'],
 	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps'],
@@ -289,7 +312,7 @@ const requiredPortalNamedExports = {
 		'signApprovalToken',
 		'verifyApprovalToken',
 	],
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': [
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': [
 		'createFakeUpstreamTools',
 		'startFakeUpstreamMcpServer',
 	],
@@ -312,6 +335,7 @@ const requiredPortalNamedExports = {
 
 const requiredPortalNamedExportSpecifiers = [
 	'@agent-collaboration/tool-host-core',
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-access/contracts',
@@ -342,7 +366,7 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -367,12 +391,18 @@ const deferredPortalPackageExports = [
 ] as const;
 
 const forbiddenPortalPackageExports = [
+	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/gateway-runtime/flow-control',
 	'@agent-vm/gateway-runtime/protocol',
 	'@agent-vm/tool-portal/in-process-entrypoint',
 ] as const;
 
 const forbiddenPortalNamedExports = {
+	'@agent-collaboration/tool-host-node': [
+		'startFakeUpstreamMcpServer',
+		'createFakeUpstreamTools',
+		'fakeUpstreamNamespace',
+	],
 	'@agent-vm/tool-portal': [
 		'createManagedToolPortalInProcessRuntime',
 		'createToolPortalInProcessEntryPoint',
@@ -380,6 +410,7 @@ const forbiddenPortalNamedExports = {
 } as const;
 
 const forbiddenPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/tool-portal',
 ] as const satisfies readonly (keyof typeof forbiddenPortalNamedExports)[];
 

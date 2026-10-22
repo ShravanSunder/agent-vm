@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 
-import type { UpstreamMcpClientRuntime } from '@agent-vm/mcp-portal';
+import type { UpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 

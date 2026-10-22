@@ -2,15 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalArtifactReadRequestSchema,
 	type ArtifactReference,
 	type PortalArtifactReadRequest,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
 import {
 	createManagedToolPortalCapabilityCore,
@@ -113,7 +111,7 @@ type ArtifactPrivateUdsProjection = Pick<
 
 interface ArtifactCompositionFixture {
 	readonly composition: {
-		readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+		readonly capabilityCore: ToolPortalCapabilityCore;
 		readonly privateUdsProjection: ArtifactPrivateUdsProjection;
 	};
 	readonly privateUdsFactoryCalls: readonly GatewayRuntimePrivateUdsProjectionFactoryProps[];

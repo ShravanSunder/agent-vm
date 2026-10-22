@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/client';
 import { describe, afterEach, vi, it, expect } from 'vitest';
 
 import {
@@ -252,7 +252,7 @@ describe('upstream MCP session lifecycle', () => {
 		const controller = new AbortController();
 		const progressEvents: unknown[] = [];
 		const client: UpstreamMcpClientLike = {
-			callTool: vi.fn(async (_params, _resultSchema, options) => {
+			callTool: vi.fn(async (_params, options) => {
 				expect(options?.signal).toBeDefined();
 				expect(options?.signal?.aborted).toBe(false);
 				options?.onprogress?.({
@@ -295,7 +295,6 @@ describe('upstream MCP session lifecycle', () => {
 		]);
 		expect(client.callTool).toHaveBeenCalledWith(
 			{ arguments: {}, name: 'create_issue' },
-			undefined,
 			expect.objectContaining({
 				onprogress: expect.any(Function),
 				signal: expect.any(AbortSignal),
@@ -307,7 +306,7 @@ describe('upstream MCP session lifecycle', () => {
 		let observedSignal: AbortSignal | undefined;
 		const abortObserved = createDeferred<void>();
 		const client: UpstreamMcpClientLike = {
-			callTool: vi.fn((_params, _resultSchema, options) => {
+			callTool: vi.fn((_params, options) => {
 				observedSignal = options?.signal;
 				observedSignal?.addEventListener('abort', () => abortObserved.resolve(undefined), {
 					once: true,

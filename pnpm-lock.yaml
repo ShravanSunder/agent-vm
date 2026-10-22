@@ -44,12 +44,18 @@ importers:
 
   packages/agent-portal-sdk:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
+      '@modelcontextprotocol/core':
+        specifier: 2.3.1
+        version: 2.3.1
       '@optique/core':
         specifier: ^1.2.0
         version: 1.2.0
@@ -69,6 +75,15 @@ importers:
 
   packages/agent-vm:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -202,6 +217,12 @@ importers:
 
   packages/config-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
@@ -228,6 +249,9 @@ importers:
 
   packages/controller-execution-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -244,6 +268,9 @@ importers:
 
   packages/gateway-control-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -266,6 +293,9 @@ importers:
 
   packages/gateway-lifecycle:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/managed-vm':
         specifier: workspace:*
         version: link:../managed-vm
@@ -285,6 +315,15 @@ importers:
 
   packages/gateway-runtime:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -373,6 +412,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/core':
+        specifier: 2.3.1
+        version: 2.3.1
       '@types/ssh2':
         specifier: ^1.15.5
         version: 1.15.5
@@ -422,6 +464,12 @@ importers:
 
   packages/mcp-portal:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -502,6 +550,9 @@ importers:
 
   packages/oauth-broker:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
@@ -565,12 +616,12 @@ importers:
       '@agent-collaboration/tool-access':
         specifier: workspace:*
         version: link:../tool-access
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
       '@modelcontextprotocol/core':
         specifier: 2.3.1
         version: 2.3.1
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.3.1
         version: 2.3.1
@@ -578,6 +629,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
@@ -593,12 +647,12 @@ importers:
       '@agent-collaboration/tool-host-core':
         specifier: workspace:*
         version: link:../tool-host-core
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
       '@modelcontextprotocol/core':
         specifier: 2.3.1
         version: 2.3.1
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.3.1
         version: 2.3.1
@@ -612,15 +666,18 @@ importers:
       '@cloudflare/workers-types':
         specifier: 4.20250927.0
         version: 4.20250927.0
-      '@modelcontextprotocol/client':
-        specifier: 2.3.1
-        version: 2.3.1
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
       esbuild:
         specifier: 0.27.7
         version: 0.27.7
       jose:
         specifier: 6.1.0
         version: 6.1.0
+      legacy-mcp-portal:
+        specifier: npm:@agent-vm/mcp-portal@0.0.153
+        version: '@agent-vm/mcp-portal@0.0.153(hono-rate-limiter@0.5.3(hono@4.12.34))'
       miniflare:
         specifier: 5.20260815.0-alpha
         version: 5.20260815.0-alpha(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -688,9 +745,6 @@ importers:
       '@modelcontextprotocol/node':
         specifier: 2.1.1
         version: 2.1.1(@modelcontextprotocol/server@2.3.1)
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.3.1
         version: 2.3.1
@@ -710,12 +764,24 @@ importers:
       '@hono/node-server':
         specifier: 2.0.10
         version: 2.0.10(hono@4.12.34)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
+      hono:
+        specifier: 4.12.34
+        version: 4.12.34
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/tool-portal:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -752,6 +818,23 @@ packages:
 
   '@1password/sdk@0.4.0':
     resolution: {integrity: sha512-RIypujc9R/UeUaobjyClTYokqRFpcaIkHq+EO/X9XoHId98Vg+SbjwGV+yygRC4MyHwYNo1KP1iEbZcqJ4ZTdw==}
+
+  '@agent-vm/agent-portal-sdk@0.0.153':
+    resolution: {integrity: sha512-5LmmMzkZnhSeQOk5YF7aoDlCVEpVv1tPH7B9rVf64t9A5krc30/boI7W6sAyVoriBqjRIJ1qLqByYL1oLIOQQw==}
+    hasBin: true
+
+  '@agent-vm/config-contracts@0.0.153':
+    resolution: {integrity: sha512-pQuYQnp90VETQ6EO0w5iBS0pdYD9kCShJZQ9/enyp2ZXhspdocShrVRjAQaBx+8n+hbz9XgxaLgWWiim/9Ge0w==}
+
+  '@agent-vm/mcp-portal@0.0.153':
+    resolution: {integrity: sha512-IMzAWXVPTh++vruqIRKws7e7D4mbFn6T94RYLXV3p3Wjy6ITaDBe9tlpCbeOdlplLc63TGJmDIyL9wURkEMhjw==}
+    hasBin: true
+
+  '@agent-vm/oauth-broker-contracts@0.0.153':
+    resolution: {integrity: sha512-uxz0DousFKKhXxeguXCGNllmcA3gBuHbKc5ASAtdMNVZfsO89TJgazrmwoZdYVVBH4yILeaR816k7E4z+k1dzg==}
+
+  '@agent-vm/secret-management@0.0.153':
+    resolution: {integrity: sha512-wt/5LM8+w3w8JQwJ4qVgnEjgUuPGz60OEaPED7MbRkfLeS/34pwS58LKL/L3UhZAJU2G9KcRo2rxDbVycC7T7A==}
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
     resolution: {integrity: sha512-60vepv88RwcJtSHrD6MjIL6Ta3SOYbgfnkHb+ppAVK+o9mXprRtulx7VlRl3lN3bbvysAfCS7WMVfhUYemB0IQ==}
@@ -4243,6 +4326,54 @@ snapshots:
   '@1password/sdk@0.4.0':
     dependencies:
       '@1password/sdk-core': 0.4.0
+
+  '@agent-vm/agent-portal-sdk@0.0.153':
+    dependencies:
+      '@agent-vm/oauth-broker-contracts': 0.0.153
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
+      '@optique/core': 1.2.0
+      '@optique/run': 1.2.0
+      '@optique/zod': 1.2.0(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+
+  '@agent-vm/config-contracts@0.0.153':
+    dependencies:
+      '@agent-vm/oauth-broker-contracts': 0.0.153
+      jsonc-parser: 3.3.1
+      zod: 4.4.3
+
+  '@agent-vm/mcp-portal@0.0.153(hono-rate-limiter@0.5.3(hono@4.12.34))':
+    dependencies:
+      '@agent-vm/agent-portal-sdk': 0.0.153
+      '@agent-vm/config-contracts': 0.0.153
+      '@agent-vm/secret-management': 0.0.153
+      '@hono/mcp': 0.3.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono-rate-limiter@0.5.3(hono@4.12.34))(hono@4.12.34)(zod@4.4.3)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
+      '@logtape/logtape': 2.3.0
+      '@logtape/otel': 2.3.0(@logtape/logtape@2.3.0)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
+      '@optique/core': 1.2.0
+      '@optique/run': 1.2.0
+      '@optique/zod': 1.2.0(zod@4.4.3)
+      hono: 4.12.34
+      json-schema-to-typescript: 16.0.0
+      typescript: 6.0.3
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - hono-rate-limiter
+      - supports-color
+
+  '@agent-vm/oauth-broker-contracts@0.0.153':
+    dependencies:
+      zod: 4.4.3
+
+  '@agent-vm/secret-management@0.0.153':
+    dependencies:
+      '@1password/sdk': 0.4.0
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
     dependencies:

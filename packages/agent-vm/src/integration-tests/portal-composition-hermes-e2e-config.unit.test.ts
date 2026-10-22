@@ -1,9 +1,11 @@
 import {
+	resolveCliAllowanceTimeout,
+	toolPortalSelectorAllowsOperation,
+} from '@agent-collaboration/tool-access/authorization';
+import {
 	controllerEnforcedConfiguredCliOperationSchema,
 	controllerToolVmConfiguredCliOperationSchema,
-	toolPortalSelectorAllowsOperation,
 } from '@agent-vm/config-contracts';
-import { resolveCliAllowanceTimeout } from '@agent-vm/tool-portal/cli-allowances';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -15,7 +17,7 @@ import {
 import {
 	portalCompositionLossCancellationWindowMilliseconds,
 	portalCompositionLossNaturalTimeoutMilliseconds,
-} from './portal-composition-hermes-e2e-program.js';
+} from './portal-composition-hermes-e2e-test-fixture.js';
 
 describe('portal composition Hermes E2E fixture config', () => {
 	it('parses the complete generated config with control-free executable arguments', () => {

@@ -4,7 +4,7 @@ import os
 
 import anyio
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 TEST_PORTAL_CALL_RESULT: dict[str, object] = {
     "items": [
@@ -26,8 +26,8 @@ TEST_PORTAL_CALL_RESULT: dict[str, object] = {
 }
 
 
-def create_test_server() -> FastMCP[None]:
-    server = FastMCP("agent-vm-tool-portal-stdio-test", log_level="ERROR")
+def create_test_server() -> MCPServer[None]:
+    server = MCPServer("agent-vm-tool-portal-stdio-test", log_level="ERROR")
 
     @server.tool(name="tool_portal_call")
     async def call_tool_portal(
@@ -37,7 +37,7 @@ def create_test_server() -> FastMCP[None]:
         _ = calls, requestId
         return types.CallToolResult(
             content=[types.TextContent(type="text", text="bounded stdio fixture result")],
-            structuredContent=TEST_PORTAL_CALL_RESULT,
+            structured_content=TEST_PORTAL_CALL_RESULT,
         )
 
     @server.resource(

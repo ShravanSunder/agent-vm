@@ -1,14 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
-import type {
-	ControllerConfiguredCliInput,
-	EffectiveControllerExecutionOperation,
-} from '@agent-vm/config-contracts';
 import {
 	resolveCompiledGoogleCommand,
+	validateCliAllowanceInvocation,
+} from '@agent-collaboration/tool-access/authorization';
+import { type ControllerConfiguredCliInput } from '@agent-collaboration/tool-access/contracts';
+import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
+import {
 	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
+	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import {
 	GatewayControlConfiguredCliControllerExecutionResultSchema,
@@ -19,12 +20,11 @@ import type {
 	ManagedGoogleInvocationBinding,
 } from '@agent-vm/oauth-broker-contracts';
 import type {
-	GoogleOAuthRuntimeCredentialRequest,
 	GoogleOAuthRuntimeCredentialBinding,
+	GoogleOAuthRuntimeCredentialRequest,
 	GoogleOAuthRuntimeCredentialResolution,
 	GoogleOAuthRuntimeCredentialSnapshotValidation,
 } from '@agent-vm/oauth-broker/google';
-import { validateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
 
 import type {
 	CredentialedRuntimeManager,

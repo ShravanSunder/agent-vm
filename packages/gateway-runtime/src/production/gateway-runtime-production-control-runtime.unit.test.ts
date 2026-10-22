@@ -2,7 +2,7 @@ import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	type EffectiveManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
-import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
+import type { ToolPortalApprovalPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayRuntimeArtifactStore } from '../artifacts/artifact-store.js';

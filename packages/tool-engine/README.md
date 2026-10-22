@@ -81,3 +81,20 @@ so both addresses keep serving its tools while the failed namespace is retried.
 Only a snapshot that has never completed refuses direct listing. This deliberately
 changes the old new-session refusal after a failed refresh: stateless clients now
 retain the availability that connected clients previously kept.
+
+
+`createStandaloneToolPortalCore` implements the four standalone Portal operations.
+Its read-only discovery ports cannot invoke effects. Host-resolved facts supply
+current access, caller identity, revision-bound operation IDs and exact-batch
+preparation; every executable call goes through the S2 dispatcher. Direct calls
+finish before the protected group is armed, preserving the original ordering.
+Canonical resource outcomes, operation IDs and owning generations are retained.
+Node HMAC keys, protocol sessions and managed runtime facts do not live here.
+
+The original Tool Portal merger remains an independent pre-cutover reference
+under F-60. The copied engine merger and the old merger have separate source;
+byte snapshots and live old/new comparisons guard them until S4 retires the old
+package. Tool Portal schemas have one owner in `tool-access/contracts`; the Portal
+SDK retains explicit public reexports and unchanged generated contract bytes.
+Public namespace/tool names retain their existing nonempty-only contract. Opaque
+revision/identity fields keep their separate established 256/1024 limits.

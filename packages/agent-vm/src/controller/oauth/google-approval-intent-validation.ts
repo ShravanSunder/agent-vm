@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	controllerConfiguredCliInputSchema,
 	configuredGoogleOperationKey,
 	isControllerEphemeralManagedVmConfiguredCliOperation,
-	resolveCompiledGoogleCommand,
 } from '@agent-vm/config-contracts';
 import type { GatewayRuntimeApprovalChallengeIntent } from '@agent-vm/gateway-control-contracts';
 

@@ -8,7 +8,7 @@ import { credentialedRuntimeRecordSchema } from '../controller/credentialed-runt
 import {
 	portalCompositionProgramPhaseFilename,
 	portalCompositionProgramPhases,
-} from './portal-composition-hermes-e2e-program.js';
+} from './portal-composition-hermes-e2e-test-fixture.js';
 
 const programPhaseSchema = z.object({ phase: z.enum(portalCompositionProgramPhases) });
 type ProgramPhaseEvidence =

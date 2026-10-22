@@ -1,8 +1,5 @@
-import type {
-	McpConfig,
-	ResolvedMcpProvider,
-} from '#tool-host-core/hosted-configuration/models/mcp-configuration';
-import type { FormattedSecretValue } from '#tool-host-core/hosted-configuration/models/secret-values';
+import type { McpConfig, ResolvedMcpProvider } from '@agent-collaboration/tool-access/contracts';
+import type { FormattedSecretValue } from '@agent-collaboration/tool-access/contracts';
 
 export function mcpConfigToResolvedProviders(config: McpConfig): readonly ResolvedMcpProvider[] {
 	return Object.values(config.providers).map((provider) => {

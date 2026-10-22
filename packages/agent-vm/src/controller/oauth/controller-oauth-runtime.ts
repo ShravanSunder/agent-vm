@@ -4,27 +4,29 @@ import path from 'node:path';
 
 import {
 	googleOAuthApplicationIds,
+	type GoogleOAuthApplicationId,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	compileOAuthPolicy,
 	loadOAuthConfig,
 	loadToolPortalConfig,
-	compileOAuthPolicy,
 	managedToolPortalRequiresOAuthConfiguration,
 	type CompiledOAuthPolicy,
-	type GoogleOAuthApplicationId,
 	type OAuthConfig,
 	type ResolvedOAuthConfig,
 } from '@agent-vm/config-contracts';
 import { loadOAuthApprovalAssetBundle } from '@agent-vm/oauth-approval-ui';
 import {
-	oauthKeyEncryptionKeySchema,
-	openOAuthCredentialCatalog,
 	createOAuthBrowserNavigationStore,
 	createOAuthLoginContinuationStore,
 	createOAuthPolicyEnvelopeCodec,
+	oauthKeyEncryptionKeySchema,
 	oauthPolicyEnvelopeBindingSchema,
+	oauthStoredGrantSchema,
+	openOAuthCredentialCatalog,
 	type OAuthCredentialCatalog,
 	type OAuthKeyEncryptionKey,
 } from '@agent-vm/oauth-broker';
-import { oauthStoredGrantSchema } from '@agent-vm/oauth-broker';
 import {
 	googleAccountPolicyBindingSchema,
 	googleAccountPolicySnapshotSchema,
@@ -32,10 +34,10 @@ import {
 import {
 	createGoogleOAuthAdapter,
 	createGoogleOAuthBrokerService,
-	parseGoogleWebClientCredentials,
-	getGooglePolicyCatalog,
-	readGoogleAccountPolicySnapshot,
 	decryptGoogleCredentialPayload,
+	getGooglePolicyCatalog,
+	parseGoogleWebClientCredentials,
+	readGoogleAccountPolicySnapshot,
 	type GoogleOAuthBrokerService,
 	type GoogleWebClientCredentials,
 } from '@agent-vm/oauth-broker/google';
