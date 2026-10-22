@@ -17,7 +17,7 @@ import {
 import {
 	portalCompositionLossCancellationWindowMilliseconds,
 	portalCompositionLossNaturalTimeoutMilliseconds,
-} from './portal-composition-hermes-e2e-program.js';
+} from './portal-composition-hermes-e2e-test-fixture.js';
 
 describe('portal composition Hermes E2E fixture config', () => {
 	it('parses the complete generated config with control-free executable arguments', () => {

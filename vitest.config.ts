@@ -144,6 +144,9 @@ export default defineConfig({
 			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
 			'@agent-vm/secret-management': repoPath('packages/secret-management/src/index.ts'),
+			'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': repoPath(
+				'packages/tool-host-node/src/testing/fake-upstream-mcp-server.ts',
+			),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
 			),

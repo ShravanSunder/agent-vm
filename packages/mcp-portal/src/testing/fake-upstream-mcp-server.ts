@@ -1,3 +1,5 @@
+// Private SDK 1.29 old-only oracle retained for S4d; active controlled consumers use Node testing.
+// This module has no public package export and does not forward to the moved fixture.
 import { serve, type ServerType } from '@hono/node-server';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';

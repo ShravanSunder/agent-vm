@@ -2,17 +2,16 @@ import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import { createUpstreamMcpClientRuntime as createRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
+import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import {
 	startFakeUpstreamMcpServer,
 	fakeUpstreamNamespace,
-} from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
+} from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { describe, afterEach, vi, it, expect } from 'vitest';
-
-import { createUpstreamMcpClientRuntime as createRuntime } from '#upstream-mcp-connectors/upstream-mcp-client-runtime';
-import type { UpstreamMcpRuntimeOptions } from '#upstream-mcp-connectors/upstream-mcp-protocol';
 
 function portFromServerAddress(address: AddressInfo | string | null): number {
 	if (typeof address === 'object' && address !== null) {

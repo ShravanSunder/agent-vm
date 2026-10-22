@@ -1,5 +1,6 @@
 import { readFile, rm } from 'node:fs/promises';
 
+import { startFakeUpstreamMcpServer } from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
 import {
 	PortalCallRequestSchema,
 	PortalCatalogOfferResultSchema,
@@ -17,7 +18,6 @@ import {
 	cutoverPortalRequests,
 	cutoverTrustedContext,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/production-private-cutover-test-fixture.js';
-import { startFakeUpstreamMcpServer } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 

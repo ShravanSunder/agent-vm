@@ -25,12 +25,26 @@ export function isForbiddenToolHostNodeImport(specifier: string): boolean {
 		specifier.startsWith('@earendil-works/gondolin')
 	);
 }
+export function isNodeHostTestingEntry(specifier: string): boolean {
+	return (
+		/^(?:@agent-collaboration\/tool-host-node\/testing|#node-host\/testing)(?:\/|$)/u.test(
+			specifier,
+		) || /\/@agent-collaboration\/tool-host-node\/(?:src|dist)\/testing\//u.test(specifier)
+	);
+}
+export function isNodeHostTestingDependency(specifier: string): boolean {
+	return (
+		/^(?:hono(?:\/|$)|@hono\/node-server(?:\/|$))/u.test(specifier) ||
+		isNodeHostTestingEntry(specifier)
+	);
+}
 export function collectToolHostNodeViolations(
 	file: PortalArchitectureSourceFile,
 ): readonly string[] {
 	const filePath = normalizedFilePath(file.filePath);
 	if (!filePath.startsWith('packages/tool-host-node/src/') || isTestSourceFile(filePath)) return [];
 	const violations: string[] = [];
+	const testSupport = filePath.startsWith('packages/tool-host-node/src/testing/');
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
 	function visit(node: ts.Node): void {
 		const inbound =
@@ -57,7 +71,8 @@ export function collectToolHostNodeViolations(
 			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 			node.moduleSpecifier !== undefined &&
 			ts.isStringLiteral(node.moduleSpecifier) &&
-			isForbiddenToolHostNodeImport(node.moduleSpecifier.text)
+			(isForbiddenToolHostNodeImport(node.moduleSpecifier.text) ||
+				(!testSupport && isNodeHostTestingDependency(node.moduleSpecifier.text)))
 		)
 			violations.push(`${filePath}: tool-host-node forbidden import ${node.moduleSpecifier.text}`);
 		if (
@@ -65,7 +80,8 @@ export function collectToolHostNodeViolations(
 			ts.isExternalModuleReference(node.moduleReference) &&
 			node.moduleReference.expression !== undefined &&
 			ts.isStringLiteral(node.moduleReference.expression) &&
-			isForbiddenToolHostNodeImport(node.moduleReference.expression.text)
+			(isForbiddenToolHostNodeImport(node.moduleReference.expression.text) ||
+				(!testSupport && isNodeHostTestingDependency(node.moduleReference.expression.text)))
 		)
 			violations.push(
 				`${filePath}: tool-host-node forbidden import ${node.moduleReference.expression.text}`,
@@ -74,7 +90,8 @@ export function collectToolHostNodeViolations(
 			ts.isImportTypeNode(node) &&
 			ts.isLiteralTypeNode(node.argument) &&
 			ts.isStringLiteral(node.argument.literal) &&
-			isForbiddenToolHostNodeImport(node.argument.literal.text)
+			(isForbiddenToolHostNodeImport(node.argument.literal.text) ||
+				(!testSupport && isNodeHostTestingDependency(node.argument.literal.text)))
 		)
 			violations.push(
 				`${filePath}: tool-host-node forbidden type import ${node.argument.literal.text}`,
@@ -90,7 +107,8 @@ export function collectToolHostNodeViolations(
 			if (
 				argument !== undefined &&
 				ts.isStringLiteral(argument) &&
-				isForbiddenToolHostNodeImport(argument.text)
+				(isForbiddenToolHostNodeImport(argument.text) ||
+					(!testSupport && isNodeHostTestingDependency(argument.text)))
 			)
 				violations.push(`${filePath}: tool-host-node forbidden import ${argument.text}`);
 		}

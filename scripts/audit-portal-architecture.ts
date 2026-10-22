@@ -995,7 +995,12 @@ function isTestOnlyPortalAlias(specifier: string): boolean {
 	return (
 		/^@agent-vm\/(?:controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(
 			specifier,
-		) || /^@agent-vm\/tool-portal\/policy-comparison(?:\/|$)/u.test(specifier)
+		) ||
+		/^@agent-vm\/tool-portal\/policy-comparison(?:\/|$)/u.test(specifier) ||
+		/^@agent-vm\/mcp-portal\/testing(?:\/|$)/u.test(specifier) ||
+		/^(?:@agent-collaboration\/tool-host-node\/testing|#node-host\/testing)(?:\/|$)/u.test(
+			specifier,
+		)
 	);
 }
 
@@ -1041,7 +1046,12 @@ function collectProductionTestAliasViolations(
 			const argument = node.arguments[0];
 			if (argument !== undefined && ts.isStringLiteral(argument)) specifier = argument.text;
 		}
-		if (specifier !== undefined && isTestOnlyPortalAlias(specifier))
+		if (
+			specifier !== undefined &&
+			(isTestOnlyPortalAlias(specifier) ||
+				(filePath.startsWith('packages/tool-host-node/src/') &&
+					/^(?:\.\.?\/)+testing(?:\/|$)/u.test(specifier)))
+		)
 			violations.push(`${filePath}: production must not import test-only alias ${specifier}`);
 		ts.forEachChild(node, visit);
 	}

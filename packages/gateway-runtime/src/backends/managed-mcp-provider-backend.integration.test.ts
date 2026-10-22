@@ -1,9 +1,9 @@
-import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
-import { ToolPortalMcpProjectionSchema } from '@agent-vm/config-contracts';
 import {
 	startFakeUpstreamMcpServer,
 	fakeUpstreamNamespace,
-} from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
+} from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
+import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
+import { ToolPortalMcpProjectionSchema } from '@agent-vm/config-contracts';
 import { describe, expect, it } from 'vitest';
 
 import { createManagedMcpProviderBackendFactoryFromConfig } from '#gateway-runtime/backends/managed-mcp-provider-backend';
