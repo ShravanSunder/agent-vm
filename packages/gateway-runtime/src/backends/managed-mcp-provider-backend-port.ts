@@ -106,6 +106,7 @@ export function createToolPortalMcpProviderBackendPort(
 				request,
 			});
 			return await backendForInvocation(options).call(request, {
+				managedDispatchAuthority: options.dispatchAuthority,
 				operationIdsByCallId: suppliedOperationIdsByCallId,
 				...(options.signal === undefined ? {} : { signal: options.signal }),
 			});

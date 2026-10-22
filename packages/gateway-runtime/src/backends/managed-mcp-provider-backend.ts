@@ -32,8 +32,11 @@ import {
 	ToolPortalMcpProjectionSchema,
 	type ToolPortalMcpProjection,
 } from '@agent-vm/config-contracts';
+import type { GatewayRuntimeToolPortalDispatchAuthorityForBackendKind } from '@agent-vm/gateway-control-contracts';
 import { z } from 'zod';
 export interface McpProviderCapabilityBackendCallOptions {
+	/** Trusted S2 handoff only; public call data never supplies dispatch authority. */
+	readonly managedDispatchAuthority?: GatewayRuntimeToolPortalDispatchAuthorityForBackendKind<'mcp_provider'>;
 	readonly operationIdsByCallId?: Readonly<Record<string, string>>;
 	readonly signal?: AbortSignal;
 }
@@ -179,6 +182,13 @@ export async function createManagedMcpProviderBackendFactoryFromConfig(
 					const items = await Promise.all(
 						parsed.calls.map(async (call) => {
 							const operationId = supplied?.[call.id] ?? randomUUID();
+							// S2/controller own approval binding and consumption. Carry their exact
+							// single-call authority without widening the retained profile policy.
+							const authority = callOptions.managedDispatchAuthority;
+							const approvedDispatch =
+								parsed.calls.length === 1 &&
+								authority?.kind === 'approval-grant' &&
+								authority.grant.operationId === operationId;
 							const policy = projection.namespaces[call.namespace];
 							const includes = (selector: {
 								readonly allow: '*' | readonly string[];
@@ -189,7 +199,8 @@ export async function createManagedMcpProviderBackendFactoryFromConfig(
 							if (
 								policy === undefined ||
 								!includes(policy.tools) ||
-								!includes(policy.calls.withoutApproval)
+								(!includes(policy.calls.withoutApproval) &&
+									!(includes(policy.calls.requiresApproval) && approvedDispatch))
 							) {
 								const code =
 									policy !== undefined &&

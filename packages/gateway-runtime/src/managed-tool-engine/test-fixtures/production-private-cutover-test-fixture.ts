@@ -23,6 +23,8 @@ export async function createCutoverServiceConfig(
 		readonly mcpConfig?: McpConfig;
 		readonly mcpOnly?: boolean;
 		readonly mcpAllowedTools?: readonly string[];
+		readonly mcpRequiresApprovalTools?: readonly string[];
+		readonly mcpShareProfileWithAgentB?: boolean;
 		readonly includeControllerExecution?: boolean;
 		readonly includeMcpProvider?: boolean;
 		readonly includeProcessLogs?: boolean;
@@ -35,7 +37,9 @@ export async function createCutoverServiceConfig(
 	const toolPortalConfig = effectiveManagedToolPortalConfigSchema.parse({
 		agents: {
 			'agent-a': { profile: 'profile-a' },
-			'agent-b': { profile: 'profile-b' },
+			'agent-b': {
+				profile: options.mcpShareProfileWithAgentB === true ? 'profile-a' : 'profile-b',
+			},
 		},
 		mode: 'managed',
 		profiles: {
@@ -65,8 +69,13 @@ export async function createCutoverServiceConfig(
 								github: {
 									backend: { kind: 'mcp_provider' as const },
 									calls: {
-										requiresApproval: { allow: [], deny: [] },
-										withoutApproval: { allow: options.mcpAllowedTools ?? ['read_thing'], deny: [] },
+										requiresApproval: { allow: options.mcpRequiresApprovalTools ?? [], deny: [] },
+										withoutApproval: {
+											allow: (options.mcpAllowedTools ?? ['read_thing']).filter(
+												(name) => !options.mcpRequiresApprovalTools?.includes(name),
+											),
+											deny: [],
+										},
 									},
 									discovery: {},
 									tools: { allow: options.mcpAllowedTools ?? ['read_thing'], deny: [] },
@@ -127,8 +136,9 @@ export async function createCutoverServiceConfig(
 			{
 				agentId: 'agent-b',
 				frameworkIdentity: { kind: 'hermes', profileName: 'agent-b-profile' },
-				toolPortalNamespaces: [],
-				toolPortalProfileId: 'profile-b',
+				toolPortalNamespaces:
+					options.mcpShareProfileWithAgentB === true ? [{ namespace: 'github' }] : [],
+				toolPortalProfileId: options.mcpShareProfileWithAgentB === true ? 'profile-a' : 'profile-b',
 			},
 		],
 		mcpConfig,
