@@ -105,7 +105,7 @@ mise exec node@24.7.0 -- node packages/tool-host-node/src/manual-tests/deepwiki-
 ```
 
 It starts the built gateway, lists DeepWiki tools, and makes one read-only
-`ask_question` call against `modelcontextprotocol/typescript-sdk`. The JSON output
+`ask_wiki_question` call against `modelcontextprotocol/typescript-sdk`. The JSON output
 records advertised and negotiated protocol versions, wire attempts, the source
 commit, Node version, built file hashes, and the result. It fails if advertised
 versions are absent or the selected wire version disagrees. This external check

@@ -77,7 +77,7 @@ const config = nodeHostConfigSchema.parse({
 						tools: { allow: '*', deny: [] },
 						calls: {
 							kind: 'selectors',
-							withoutApproval: { allow: ['ask_question'], deny: [] },
+							withoutApproval: { allow: ['ask_wiki_question'], deny: [] },
 							requiresApproval: { allow: [], deny: [] },
 						},
 						operations: {},
@@ -138,10 +138,12 @@ try {
 	const tools = (await client.listTools()).tools;
 	const deepwikiTools = tools.filter((tool) => tool.name.startsWith('deepwiki__'));
 	const questionTool = deepwikiTools.find((tool) =>
-		tool.name.startsWith('deepwiki__ask_question__'),
+		tool.name.startsWith('deepwiki__ask_wiki_question__'),
 	);
 	if (questionTool === undefined)
-		throw new Error('DeepWiki ask_question is missing through the gateway.');
+		throw new Error(
+			`DeepWiki ask_wiki_question is missing through the gateway: ${JSON.stringify({ offeredTools: tools.map((tool) => tool.name), upstreamAttempts: requests })}`,
+		);
 	const question = {
 		repoName: 'modelcontextprotocol/typescript-sdk',
 		question: 'What is the main purpose of this repository? Answer briefly from its documentation.',
@@ -196,7 +198,7 @@ try {
 		),
 	);
 	process.stdout.write(
-		`${JSON.stringify({ observedAt: new Date().toISOString(), sourceHead: head, node: process.version, endpoint: endpoint.href, advertisedProtocolVersions: advertised, negotiatedProtocolVersion: negotiated[0], upstreamAttempts: requests, offeredTools: deepwikiTools.map((tool) => tool.name), readOnlyCall: { name: 'ask_question', arguments: question, count: calls.length }, result, builtNodeHashes: builtHashes }, null, 2)}\n`,
+		`${JSON.stringify({ observedAt: new Date().toISOString(), sourceHead: head, node: process.version, endpoint: endpoint.href, advertisedProtocolVersions: advertised, negotiatedProtocolVersion: negotiated[0], upstreamAttempts: requests, offeredTools: deepwikiTools.map((tool) => tool.name), readOnlyCall: { name: 'ask_wiki_question', arguments: question, count: calls.length }, result, builtNodeHashes: builtHashes }, null, 2)}\n`,
 	);
 } finally {
 	await client.close();
