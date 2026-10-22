@@ -6,16 +6,17 @@ from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-import httpx
-from mcp import types
+import httpx2
+from mcp import Client, types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter
 
 if t.TYPE_CHECKING:
-    from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-    from mcp.shared.message import SessionMessage
+    from mcp.client._transport import Transport
+
+_MCP_REQUEST_METADATA = TypeAdapter(types.RequestParamsMeta)
 
 
 class ToolPortalStreamableHttpMcpConfig(BaseModel):
@@ -42,7 +43,7 @@ type ToolPortalStandardMcpConfig = ToolPortalStreamableHttpMcpConfig | ToolPorta
 
 
 class StandardMcpToolPortalTransport:
-    """One initialized official MCP session over Streamable HTTP or stdio."""
+    """One explicitly pinned MCP session over Streamable HTTP or stdio."""
 
     def __init__(self, config: ToolPortalStandardMcpConfig) -> None:
         self._config = config
@@ -52,7 +53,7 @@ class StandardMcpToolPortalTransport:
         self._closed = False
 
     async def connect(self) -> None:
-        """Open the configured transport and publish state only after initialization."""
+        """Let Client own the transport and adopt MCP 2026-07-28 without fallback."""
         async with self._lifecycle_lock:
             if self._closed:
                 error_message = "Tool Portal MCP transport is closed."
@@ -63,17 +64,16 @@ class StandardMcpToolPortalTransport:
             pending_stack = AsyncExitStack()
             await pending_stack.__aenter__()
             try:
-                read_stream, write_stream = await self._enter_transport(pending_stack)
-                pending_session = await pending_stack.enter_async_context(
-                    ClientSession(read_stream, write_stream),
+                transport = await self._create_transport(pending_stack)
+                pending_client = await pending_stack.enter_async_context(
+                    Client(transport, mode="2026-07-28"),
                 )
-                await pending_session.initialize()
             except BaseException:
                 await pending_stack.aclose()
                 raise
 
             self._exit_stack = pending_stack
-            self._session = pending_session
+            self._session = pending_client.session
 
     async def close(self) -> None:
         """Close the session and its owned transport exactly once."""
@@ -93,16 +93,16 @@ class StandardMcpToolPortalTransport:
         *,
         metadata: Mapping[str, object] | None = None,
     ) -> Mapping[str, object]:
-        """Call one standard MCP tool through the initialized session."""
+        """Use the low-level session for one call, without automatic approval retries."""
         session = self._require_session()
         result = await session.call_tool(
             name,
             arguments=dict(arguments),
-            meta=None if metadata is None else dict(metadata),
+            meta=None if metadata is None else _MCP_REQUEST_METADATA.validate_python(dict(metadata)),
         )
-        if result.structuredContent is None:
+        if result.structured_content is None:
             return {}
-        return {"structuredContent": result.structuredContent}
+        return {"structuredContent": result.structured_content}
 
     async def read_resource(
         self,
@@ -114,33 +114,37 @@ class StandardMcpToolPortalTransport:
         if not isinstance(resource_uri, str):
             error_message = "Tool Portal MCP resource request requires one URI string."
             raise TypeError(error_message)
-        result = await session.read_resource(types.AnyUrl(resource_uri))
+        raw_metadata = request.get("_meta")
+        if raw_metadata is not None and not isinstance(raw_metadata, Mapping):
+            error_message = "Tool Portal MCP resource metadata must be an object."
+            raise TypeError(error_message)
+        result = await session.read_resource(
+            resource_uri,
+            meta=None if raw_metadata is None else _MCP_REQUEST_METADATA.validate_python(raw_metadata),
+        )
         return {
             "contents": [self._normalize_resource_content(content) for content in result.contents],
         }
 
-    async def _enter_transport(
+    async def _create_transport(
         self,
         pending_stack: AsyncExitStack,
-    ) -> "tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]]":
+    ) -> "Transport":
         if isinstance(self._config, ToolPortalStreamableHttpMcpConfig):
             http_client = await pending_stack.enter_async_context(
-                httpx.AsyncClient(
+                httpx2.AsyncClient(
                     follow_redirects=True,
                     headers={
                         "Authorization": f"Bearer {self._config.authorization.get_secret_value()}",
                     },
-                    timeout=httpx.Timeout(30.0, read=300.0),
+                    timeout=httpx2.Timeout(30.0, read=300.0),
                 ),
             )
-            read_stream, write_stream, _ = await pending_stack.enter_async_context(
-                streamable_http_client(
-                    self._config.endpoint,
-                    http_client=http_client,
-                    terminate_on_close=True,
-                ),
+            return streamable_http_client(
+                self._config.endpoint,
+                http_client=http_client,
+                terminate_on_close=True,
             )
-            return read_stream, write_stream
 
         server_parameters = StdioServerParameters(
             command=self._config.executable,
@@ -148,7 +152,7 @@ class StandardMcpToolPortalTransport:
             cwd=self._config.cwd,
             env=None if self._config.environment is None else dict(self._config.environment),
         )
-        return await pending_stack.enter_async_context(stdio_client(server_parameters))
+        return stdio_client(server_parameters)
 
     def _require_session(self) -> ClientSession:
         if self._closed:
@@ -164,8 +168,8 @@ class StandardMcpToolPortalTransport:
         content: types.TextResourceContents | types.BlobResourceContents,
     ) -> dict[str, object]:
         normalized_content: dict[str, object] = {"uri": str(content.uri)}
-        if content.mimeType is not None:
-            normalized_content["mimeType"] = content.mimeType
+        if content.mime_type is not None:
+            normalized_content["mimeType"] = content.mime_type
         if isinstance(content, types.BlobResourceContents):
             normalized_content["blob"] = content.blob
         else:

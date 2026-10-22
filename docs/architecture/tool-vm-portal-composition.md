@@ -27,6 +27,29 @@ from `@agent-vm/agent-portal-sdk` and closes the client in `finally`. The
 All three expose list, search, describe, call, and authorized artifact reads.
 The packaged `/agent-vm/tool-portal.md` guide gives canonical request examples.
 
+### Standalone Python MCP connections
+
+Outside the managed invocation relay, Python callers can inject
+`StandardMcpToolPortalTransport` into `ToolPortalMcpClient`. Configure an authenticated
+HTTP endpoint with `ToolPortalStreamableHttpMcpConfig`, or an owned child process
+with `ToolPortalStdioMcpConfig`. These types live in
+`agent_vm_agent_portal_sdk.standard_mcp_transport`; the client lives in
+`agent_vm_agent_portal_sdk.tool_portal_mcp_client`.
+
+The transport uses exactly `mcp==2.0.0` and explicitly adopts protocol `2026-07-28`.
+It sends no `initialize` handshake and does not negotiate a legacy fallback. MCP
+HTTP uses `httpx2`; ordinary SDK HTTP clients continue to use `httpx`. One Portal
+call issues one MCP call. An approval token supplied to `client.call(...,
+approval_token=...)` travels in vendor metadata; the client never automatically
+approves or retries a call. Artifact reads carry the complete validated read
+request in metadata alongside the opaque artifact URI.
+
+Open the client with `async with client`, or call `connect()` and close it in
+`finally`. Closing twice is safe and terminates an owned stdio child. Cancelling
+a call is not rollback: an already started effect can finish, and the caller
+must verify effects before retrying. Managed Hermes continues to use its private
+`GatewayRuntimeUdsTransport` and `GatewayPortalSession`.
+
 ## Catalog presentation and generated TypeScript
 
 Managed and standalone startup select catalog presentation in different places.
