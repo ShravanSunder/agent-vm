@@ -11,7 +11,7 @@ export function toolEngineClosureScannerSource(props: {
 	readonly esbuildUrl: string;
 	readonly typescriptUrl: string;
 }): string {
-	if (props.scan === 'worker') return workerBundlerSource(props.esbuildUrl);
+	if (props.scan === 'worker') return workerBundlerSource(props.esbuildUrl, props.typescriptUrl);
 	return `import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -72,10 +72,11 @@ console.log(scan + ' emitted import closure: ' + visited.size + ' modules, ' + e
 }
 
 /** Use the actual mirrored Wrangler resolver, including browser main-field remapping. */
-function workerBundlerSource(esbuildUrl: string): string {
-	return `import { mkdir, writeFile } from 'node:fs/promises';
+function workerBundlerSource(esbuildUrl: string, typescriptUrl: string): string {
+	return `import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { build, version, stop } from ${JSON.stringify(esbuildUrl)};
+import ts from ${JSON.stringify(typescriptUrl)};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
 ${isForbiddenToolEngineImport.toString()}
 // Wrangler 4.124.0: wrangler-dist/cli.js:252816-252834,252997; its published manifest pins esbuild 0.28.1.
@@ -88,7 +89,22 @@ if (version !== mirroredEsbuildVersion) throw new Error('Worker closure esbuild 
 const entries = JSON.parse(process.argv[2]);
 const evidence = process.argv[3];
 await mkdir(evidence, { recursive: true });
-const deniedImports = []; const resolveErrors = []; const inputs = new Set(); let edges = 0;
+const deniedImports = []; const nonliteralImports = []; const resolveErrors = []; const inputs = new Set(); let edges = 0;
+async function inspectSelectedInput(location) {
+ if (location.endsWith('.json')) return;
+ const source = ts.createSourceFile(location, await readFile(path.resolve(location), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+ function visit(node) {
+  if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+   if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0])) {
+    const kind = node.expression.kind === ts.SyntaxKind.ImportKeyword ? 'import' : 'require';
+    const position = source.getLineAndCharacterOfPosition(node.getStart(source));
+    nonliteralImports.push({kind, file: location, line: position.line + 1, column: position.character + 1});
+   }
+  }
+  ts.forEachChild(node, visit);
+ }
+ visit(source);
+}
 try {
  for (const [index, entry] of entries.entries()) {
   try {
@@ -106,14 +122,18 @@ try {
     }}],
    });
    await writeFile(path.join(evidence, index + '.metafile.json'), JSON.stringify(result.metafile, null, 2));
-   for (const [location, data] of Object.entries(result.metafile.inputs)) { inputs.add(location); edges += data.imports.length; }
+   for (const [location, data] of Object.entries(result.metafile.inputs)) {
+    if (!inputs.has(location)) await inspectSelectedInput(location);
+    inputs.add(location); edges += data.imports.length;
+   }
   } catch (error) { resolveErrors.push({entry, error: error instanceof Error ? error.message : String(error)}); }
  }
 } finally { stop(); }
-await writeFile(path.join(evidence, 'resolution.json'), JSON.stringify({wrangler: '4.124.0', esbuild: version, conditions: workerConditions, platform: 'unset', mainFields: 'default', entries, deniedImports, resolveErrors}, null, 2));
+await writeFile(path.join(evidence, 'resolution.json'), JSON.stringify({wrangler: '4.124.0', esbuild: version, conditions: workerConditions, platform: 'unset', mainFields: 'default', entries, deniedImports, nonliteralImports, resolveErrors}, null, 2));
 for (const denied of deniedImports) process.stderr.write('tool-engine forbidden import ' + denied.specifier + ' from ' + denied.importer + ' [worker scan]\\n');
+for (const denied of nonliteralImports) process.stderr.write('tool-engine nonliteral ' + denied.kind + ' cannot be closed: ' + denied.file + ' [worker scan] at ' + denied.line + ':' + denied.column + '\\n');
 for (const failure of resolveErrors) process.stderr.write(failure.error + '\\n');
-if (deniedImports.length || resolveErrors.length) process.exitCode = 1;
+if (deniedImports.length || nonliteralImports.length || resolveErrors.length) process.exitCode = 1;
 else {
  if (!inputs.size) throw new Error('empty Worker closure');
  console.log('worker bundled closure: ' + inputs.size + ' modules, ' + edges + ' resolved edges; no forbidden imports');

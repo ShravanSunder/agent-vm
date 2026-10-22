@@ -54,6 +54,26 @@ export async function prepareToolEngineClosureFixtures(root: string): Promise<vo
 		path.join(browserPoisonDirectory, 'browser.js'),
 		"import 'node:fs'; export const marker = 'browser-poison';",
 	);
+	await Promise.all(
+		['import', 'require'].map(async (expression): Promise<void> => {
+			const directory = path.join(root, 'node_modules', `s4d-nonliteral-${expression}-poison`);
+			await mkdir(directory, { recursive: true });
+			await writeFile(
+				path.join(directory, 'package.json'),
+				JSON.stringify({
+					name: `s4d-nonliteral-${expression}-poison`,
+					type: 'module',
+					main: './node.js',
+					browser: './browser.js',
+				}),
+			);
+			await writeFile(path.join(directory, 'node.js'), 'export const marker = "node-clean";');
+			await writeFile(
+				path.join(directory, 'browser.js'),
+				`export async function marker() { const selectedModule = 'node:fs'; return await ${expression}(selectedModule); }`,
+			);
+		}),
+	);
 }
 
 export function toolEngineClosureFixtures(original: string): readonly ToolEngineClosureFixture[] {
@@ -92,6 +112,22 @@ export function toolEngineClosureFixtures(original: string): readonly ToolEngine
 				"\nimport { marker } from 's4d-browser-field-poison'; globalThis.closureBrowserMarker = marker;\n",
 			reason: 'tool-engine forbidden import node:fs',
 			scanReason: '[worker scan]',
+		},
+		{
+			name: 'worker-nonliteral-import',
+			source:
+				original +
+				"\nimport { marker } from 's4d-nonliteral-import-poison'; globalThis.closureNonliteralImportMarker = marker;\n",
+			reason: 'tool-engine nonliteral import cannot be closed:',
+			scanReason: 's4d-nonliteral-import-poison/browser.js [worker scan]',
+		},
+		{
+			name: 'worker-nonliteral-require',
+			source:
+				original +
+				"\nimport { marker } from 's4d-nonliteral-require-poison'; globalThis.closureNonliteralRequireMarker = marker;\n",
+			reason: 'tool-engine nonliteral require cannot be closed:',
+			scanReason: 's4d-nonliteral-require-poison/browser.js [worker scan]',
 		},
 		{
 			name: 'direct',
