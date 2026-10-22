@@ -224,7 +224,7 @@ function renderManagedDockerfile(props: {
 		if (!hasLocalAgentVmPackageOverlay(props.overlay)) {
 			lines.push(
 				'RUN install -d -m 0755 /opt/agent-vm/portal-packages && pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts ' +
-					shellJoin([props.portalSdkPackageSpec, `@agent-collaboration/tool-access@${version}`, `@agent-collaboration/tool-engine@${version}`, `@agent-collaboration/tool-host-node@${version}`]),
+					shellJoin([`@agent-collaboration/tool-access@${version}`, `@agent-collaboration/tool-engine@${version}`, `@agent-collaboration/tool-host-node@${version}`, props.portalSdkPackageSpec]),
 			);
 		}
 	}

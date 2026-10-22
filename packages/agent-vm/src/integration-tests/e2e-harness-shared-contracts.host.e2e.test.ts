@@ -76,7 +76,7 @@ describe('shared Hermes E2E harness contracts', () => {
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
 	});
 
-	it('materializes the local Hermes image overlay into a fresh Docker context', async () => {
+	it('materializes and installs the local Hermes overlay with an empty store and registry access', async () => {
 		const project = await scaffoldHermesE2eProject({
 			agents: ['main', 'beta'],
 			architecture: 'aarch64',
@@ -124,10 +124,23 @@ describe('shared Hermes E2E harness contracts', () => {
 				'@agent-vm/mcp-portal': expect.stringMatching(/^file:/u),
 			},
 		});
-		await execFileAsync('pnpm', ['install', '--prod', '--ignore-scripts', '--offline'], {
-			cwd: localArtifactDirectory,
-			maxBuffer: 20 * 1024 * 1024,
-		});
+		const installStoreDirectory = path.join(project.tempRoot, 'registry-install-store');
+		await expect(fs.access(installStoreDirectory)).rejects.toThrow();
+		await execFileAsync(
+			'pnpm',
+			[
+				'install',
+				'--prod',
+				'--ignore-scripts',
+				'--store-dir',
+				installStoreDirectory,
+				'--registry=https://registry.npmjs.org/',
+			],
+			{
+				cwd: localArtifactDirectory,
+				maxBuffer: 20 * 1024 * 1024,
+			},
+		);
 		const installed = installedPortalNodeArtifactsSchema.parse(
 			JSON.parse(
 				(

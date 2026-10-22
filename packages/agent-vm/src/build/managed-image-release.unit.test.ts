@@ -275,6 +275,11 @@ describe('managed image release', () => {
 		);
 		expect(portalPackageDirectoryInstallIndex).toBeGreaterThan(-1);
 		expect(portalSdkInstallIndex).toBeGreaterThan(portalPackageDirectoryInstallIndex);
+		expect(
+			generatedDockerfile.split('\n').find((line) =>
+				line.includes('pnpm add --dir /opt/agent-vm/portal-packages '),
+			),
+		).toMatch(/"@agent-vm\/agent-portal-sdk@[^"]+"$/u);
 		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');

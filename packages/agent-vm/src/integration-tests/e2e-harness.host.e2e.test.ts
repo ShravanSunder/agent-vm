@@ -643,6 +643,11 @@ describe('startE2eControllerRuntime', () => {
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-oauth-broker-contracts-0.0.0-smoke.tgz');
 		expect(toolVmDockerfile).toContain('@agent-vm/mcp-portal');
 		expect(toolVmDockerfile).toContain('file:/tmp/agent-vm-mcp-portal-0.0.0-smoke.tgz');
+		for (const packageName of ['tool-access', 'tool-engine', 'tool-host-node']) {
+			expect(toolVmDockerfile).toContain(
+				`file:/tmp/agent-collaboration-${packageName}-0.0.0-smoke.tgz`,
+			);
+		}
 		expect(toolVmDockerfile).not.toContain('pnpm add -g');
 	});
 
@@ -652,6 +657,7 @@ describe('startE2eControllerRuntime', () => {
 		const systemConfig = createMinimalHermesSystemConfig();
 		const packageDir = path.join(repoRoot, 'packages', 'mcp-portal');
 
+		await createFakeSharedToolPortalPackages(repoRoot);
 		await createFakeAgentPortalSdkPackage(repoRoot);
 		await createFakeConfigContractsPackage(repoRoot);
 		await createFakeSecretsPackage(repoRoot);
@@ -896,8 +902,12 @@ function createMinimalHermesSystemConfig(projectRoot = '/tmp'): LoadedSystemConf
 async function createFakeSimplePackage(
 	repoRoot: string,
 	packageName: string,
-	dependencies: Readonly<Record<string, string>> = {},
+	props: {
+		readonly dependencies?: Readonly<Record<string, string>>;
+		readonly dependencyName?: string;
+	} = {},
 ): Promise<void> {
+	const dependencies = props.dependencies ?? {};
 	const packageDir = path.join(repoRoot, 'packages', packageName);
 	await fs.mkdir(path.join(packageDir, 'dist'), { recursive: true });
 	await fs.writeFile(
@@ -905,7 +915,7 @@ async function createFakeSimplePackage(
 		`${JSON.stringify(
 			{
 				...(Object.keys(dependencies).length > 0 ? { dependencies } : {}),
-				name: `@agent-vm/${packageName}`,
+				name: props.dependencyName ?? `@agent-vm/${packageName}`,
 				version: '0.0.0-smoke',
 				files: ['dist'],
 				type: 'module',
@@ -918,10 +928,20 @@ async function createFakeSimplePackage(
 	await fs.writeFile(path.join(packageDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
 }
 
+async function createFakeSharedToolPortalPackages(repoRoot: string): Promise<void> {
+	await Promise.all(
+		['tool-access', 'tool-engine', 'tool-host-node'].map(async (packageName) => {
+			await createFakeSimplePackage(repoRoot, packageName, {
+				dependencyName: `@agent-collaboration/${packageName}`,
+			});
+		}),
+	);
+}
+
 async function createFakeAgentPortalSdkPackage(repoRoot: string): Promise<void> {
 	await createFakeSimplePackage(repoRoot, 'oauth-broker-contracts');
 	await createFakeSimplePackage(repoRoot, 'agent-portal-sdk', {
-		'@agent-vm/oauth-broker-contracts': '0.0.0-smoke',
+		dependencies: { '@agent-vm/oauth-broker-contracts': '0.0.0-smoke' },
 	});
 }
 
@@ -932,6 +952,7 @@ async function createFakeAgentPortalSdkWheel(projectRoot: string): Promise<strin
 }
 
 async function createFakePortalDist(repoRoot: string): Promise<void> {
+	await createFakeSharedToolPortalPackages(repoRoot);
 	await createFakeAgentPortalSdkPackage(repoRoot);
 	await createFakeConfigContractsPackage(repoRoot);
 	await createFakeSecretsPackage(repoRoot);
