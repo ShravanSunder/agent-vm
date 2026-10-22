@@ -23,6 +23,7 @@ import {
 	portalPackageClosureFixtures,
 } from './portal-package-closure-fixtures.ts';
 import { portalPackageClosureScannerSource } from './portal-package-closure-scanner-source.ts';
+import { resolveWorkerClosureBundler } from './worker-closure-bundler.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = fileURLToPath(import.meta.url);
@@ -375,6 +376,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 		return path.resolve(root, entry.import);
 	});
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
+	const bundler = await resolveWorkerClosureBundler(repositoryRoot);
 	await Promise.all(
 		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
 			await writeFile(
@@ -385,7 +387,8 @@ export async function verifyToolEngineClosure(): Promise<void> {
 					forbiddenImportSource: isForbiddenToolEngineImport.toString(),
 					repositoryRoot,
 					typescriptUrl: import.meta.resolve('typescript'),
-					esbuildUrl: import.meta.resolve('esbuild'),
+					esbuildUrl: bundler.esbuildUrl,
+					bundlerProvenance: bundler,
 				}),
 			);
 		}),

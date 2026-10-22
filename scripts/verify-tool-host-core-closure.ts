@@ -16,6 +16,7 @@ import {
 import { portalPackageClosureScannerSource } from './portal-package-closure-scanner-source.ts';
 import { isAllowedSdkNodeShimImport } from './tool-host-core-closure-policy.ts';
 import { declarationScannerSource } from './verify-tool-engine-closure.ts';
+import { resolveWorkerClosureBundler } from './worker-closure-bundler.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -174,6 +175,7 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 	const sdkNodeShim = requireFromEntry
 		.resolve('@modelcontextprotocol/server/_shims')
 		.replace(/\.cjs$/u, '.mjs');
+	const bundler = await resolveWorkerClosureBundler(repositoryRoot);
 	await Promise.all(
 		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
 			await writeFile(
@@ -185,7 +187,8 @@ export async function verifyToolHostCoreClosure(): Promise<void> {
 					forbiddenImportSource: isForbiddenToolHostCoreImport.toString(),
 					sdkNodeShim,
 					typescriptUrl: import.meta.resolve('typescript'),
-					esbuildUrl: import.meta.resolve('esbuild'),
+					esbuildUrl: bundler.esbuildUrl,
+					bundlerProvenance: bundler,
 				}),
 			);
 		}),

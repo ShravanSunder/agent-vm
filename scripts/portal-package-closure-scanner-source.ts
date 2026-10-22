@@ -1,6 +1,7 @@
 import { builtinModules } from 'node:module';
 
 import { isAllowedSdkNodeShimImport } from './tool-host-core-closure-policy.ts';
+import type { WorkerClosureBundler } from './worker-closure-bundler.ts';
 
 export type PortalPackageClosureScan = 'first-party' | 'worker';
 
@@ -12,6 +13,7 @@ export function portalPackageClosureScannerSource(props: {
 	readonly sdkNodeShim?: string;
 	readonly scan: PortalPackageClosureScan;
 	readonly esbuildUrl: string;
+	readonly bundlerProvenance: WorkerClosureBundler;
 	readonly typescriptUrl: string;
 }): string {
 	if (props.scan === 'worker')
@@ -87,6 +89,7 @@ console.log(scan + ' emitted import closure: ' + visited.size + ' modules, ' + e
 /** Resolve the complete Worker graph, including browser main-field remapping. */
 function workerBundlerSource(props: {
 	readonly esbuildUrl: string;
+	readonly bundlerProvenance: WorkerClosureBundler;
 	readonly typescriptUrl: string;
 	readonly forbiddenImportSource: string;
 }): string {
@@ -101,8 +104,8 @@ const isForbiddenToolEngineImport = ${props.forbiddenImportSource};
 const workerConditions = ['workerd', 'worker', 'browser'];
 const workerPlatform = undefined;
 const workerMainFields = undefined;
-const mirroredEsbuildVersion = '0.28.1';
-if (version !== mirroredEsbuildVersion) throw new Error('Worker closure esbuild version drift: ' + version);
+const wranglerEsbuildVersion = '0.28.1';
+if (version !== wranglerEsbuildVersion) throw new Error('Worker closure esbuild version drift: ' + version);
 const entries = JSON.parse(process.argv[2]);
 const evidence = process.argv[3];
 await mkdir(evidence, { recursive: true });
@@ -146,7 +149,7 @@ try {
   } catch (error) { resolveErrors.push({entry, error: error instanceof Error ? error.message : String(error)}); }
  }
 } finally { stop(); }
-await writeFile(path.join(evidence, 'resolution.json'), JSON.stringify({wrangler: '4.124.0', esbuild: version, conditions: workerConditions, platform: 'unset', mainFields: 'default', entries, deniedImports, nonliteralImports, resolveErrors}, null, 2));
+await writeFile(path.join(evidence, 'resolution.json'), JSON.stringify({bundler: ${JSON.stringify(props.bundlerProvenance)}, wrangler: '4.124.0', esbuild: version, conditions: workerConditions, platform: 'unset', mainFields: 'default', entries, deniedImports, nonliteralImports, resolveErrors}, null, 2));
 for (const denied of deniedImports) process.stderr.write('tool-engine forbidden import ' + denied.specifier + ' from ' + denied.importer + ' [worker scan]\\n');
 for (const denied of nonliteralImports) process.stderr.write('tool-engine nonliteral ' + denied.kind + ' cannot be closed: ' + denied.file + ' [worker scan] at ' + denied.line + ':' + denied.column + '\\n');
 for (const failure of resolveErrors) process.stderr.write(failure.error + '\\n');
