@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { privateDeployFileSchema } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
+import { portalTestConfigurations } from '#worker-host/deployed-checks/deploy-configuration/portal-test-configuration';
 import {
 	readPrivateDeployFile,
 	requireOutsideGitWorkTree,
@@ -114,5 +116,22 @@ describe('private deployment renderer', () => {
 			substituteTemplate('{"value":"__VALUE__"}', { __VALUE__: { nested: '"quoted"' } }),
 		).toEqual({ value: { nested: '"quoted"' } });
 		expect(() => substituteTemplate('"__MISSING__"', {})).toThrow();
+	});
+});
+
+it('uses canonical helper origins for accepted trailing-slash input in JWKS and MCP URLs', async () => {
+	const directory = await temporaryDirectory();
+	const fixture = privateDeployFixture(directory);
+	const configuration = privateDeployFileSchema.parse({
+		...fixture,
+		helper: { ...fixture.helper, origin: 'https://helper.invalid/' },
+	});
+	await renderDeployConfiguration(configuration, directory, { worker: 'all', workersDev: false });
+	const portal: unknown = JSON.parse(await readFile(path.join(directory, 'portal-a.json'), 'utf8'));
+	expect(portal).toMatchObject({ vars: { SIGN_IN_JWKS_URL: 'https://helper.invalid/jwks' } });
+	expect(portalTestConfigurations(configuration)).toMatchObject({
+		'11111111-1111-4111-8111-111111111111': {
+			mcp: { providers: { fixture: { transport: { url: 'https://helper.invalid/mcp/alpha' } } } },
+		},
 	});
 });

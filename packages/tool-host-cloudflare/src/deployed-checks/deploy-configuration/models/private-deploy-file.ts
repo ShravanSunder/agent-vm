@@ -1,17 +1,20 @@
 import { z } from 'zod';
 
 const workerNameSchema = z.string().regex(/^[a-z0-9-]+$/u);
-const httpsOriginSchema = z.url().refine((value) => {
-	const parsed = new URL(value);
-	return (
-		parsed.protocol === 'https:' &&
-		parsed.pathname === '/' &&
-		parsed.search === '' &&
-		parsed.hash === '' &&
-		parsed.username === '' &&
-		parsed.password === ''
-	);
-});
+const httpsOriginSchema = z
+	.url()
+	.refine((value) => {
+		const parsed = new URL(value);
+		return (
+			parsed.protocol === 'https:' &&
+			parsed.pathname === '/' &&
+			parsed.search === '' &&
+			parsed.hash === '' &&
+			parsed.username === '' &&
+			parsed.password === ''
+		);
+	})
+	.transform((value) => new URL(value).origin);
 const privateWorkerSchema = z.strictObject({
 	name: workerNameSchema,
 	origin: httpsOriginSchema,
