@@ -16,7 +16,8 @@ export interface HostedUpstreamEffect {
 export interface ControlledHostedUpstream {
 	readonly url: string;
 	readonly effects: readonly HostedUpstreamEffect[];
-	readonly sign: () => Promise<string>;
+	readonly requests: readonly string[];
+	readonly sign: (agentId?: string) => Promise<string>;
 	readonly close: () => Promise<void>;
 }
 
@@ -27,6 +28,7 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 		keys: [{ ...(await exportJWK(keys.publicKey)), kid: 'fixture', alg: 'ES256', use: 'sig' }],
 	};
 	const effects: HostedUpstreamEffect[] = [];
+	const requests: string[] = [];
 	const server = createServer((request, response) => {
 		void (async (): Promise<void> => {
 			if (request.url === '/jwks') {
@@ -42,6 +44,7 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 			let body = '';
 			for await (const chunk of request) body += String(chunk);
 			const rpc = rpcSchema.parse(JSON.parse(body));
+			requests.push(rpc.method);
 			let result: unknown;
 			switch (rpc.method) {
 				case 'initialize':
@@ -107,13 +110,14 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 	return {
 		url,
 		effects,
-		sign: async () => {
+		requests,
+		sign: async (agentId = 'sender') => {
 			const now = Math.floor(Date.now() / 1000);
 			return new SignJWT({
 				iss: url,
-				sub: 'sender',
-				client_id: 'sender',
-				azp: 'sender',
+				sub: agentId,
+				client_id: agentId,
+				azp: agentId,
 				aud: 'https://portal.invalid/mcp',
 				exp: now + 3600,
 				iat: now,
