@@ -70,13 +70,14 @@ This work has two parts:
 
    Each organization has its own Durable Object, which holds who belongs to it and its sign-in settings; the logins themselves are kept by the sign-in service. Being the owner grants no tool access and no access to anyone's personal accounts.
 
-5. **Three kinds of tools, by whose credentials they use:**
+5. **Four kinds of tools, by whose credentials they use and what they're for:**
 
    | Kind | What it is | When it can be built |
    | --- | --- | --- |
    | **Organization tools** | remote MCP servers set up for the organization, called with the organization's credentials. Today's proxy already does this with its configured servers and secret headers. | in this work |
    | **Per-user tools** | a person's own account, such as their Google account, that its owner has consented to a specific agent. It uses today's permission model: the owner's consent, Deny/Ask/Allow for reads and writes, and one-call approvals. An agent always acts with its own access; "on behalf of" is only a label in the log (fleet F-35). | next, after the first version; the design must not block it |
    | **Computer tools** | an MCP server on a registered computer or VM, which the Worker reaches through Cloudflare (Tunnel and Access), like Tailscale. The Worker never runs them. | next, after the first version; the design must not block it |
+   | **Collaboration tools** (owner, 2026-10-22) | the fleet's own agent-collaboration MCP, which facilitates collaboration between agents and people: boards, threads, messages and sessions. It acts as the calling agent itself, so the agent's own identity has to reach the fleet. Neither an organization credential nor a person's account can stand in for it | not yet scoped; the design must not block it. How the agent's identity reaches the fleet is open, and is shared with the fleet's agent-identity question (fleet Q-C11) |
 
 6. **Analytics and observability.**
    - Each call sends one data point to Cloudflare Workers Analytics Engine: who called, which tool, the outcome and the timing. Analytics Engine samples data, which the owner accepted, so it's a view of usage, not a complete history.
@@ -111,7 +112,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Limits:** "make sure caps are reasonable for limits and fit worker/durable objects (i pay for workers)".
 - **Scaling:** "we can have shards if we need it and workers need to split up".
 - **Analytics and observability:** "analytics and metrics for analytics engine". Sampled data is fine. "observability looks like cf has stuff already, we use that".
-- **Three kinds of tools:** "tools that are org specific", "tools that are per user with auth", and "computer tools with vm etc".
+- **Four kinds of tools:** "tools that are org specific", "tools that are per user with auth", and "computer tools with vm etc" (2026-10-20). The fourth, named 2026-10-22: "it was the agent collaboration / fleet mcp", "that facilitated collaboration".
 - **Organizations:** "organizations are isolated for auth only"; "you have owner and org members. that's it. owners can allow people to log in or allow auth related stuff"; "segregated by durable objects".
 - **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
 - **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
