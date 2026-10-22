@@ -39,7 +39,7 @@ then answers `approval_required` for every requiresApproval tool; its unit test
 Confirmed on 2026-10-21 by S4a's Implementer with the actual old factory,
 connector and a controlled MCP server: an unprotected `read_thing` ran once; a
 grant-carrying `write_thing` was refused `approval_required` with no effect.
-Source is identical at `08f9e426` and #245.
+Source is identical at `08f9e426` and #245. Reconfirmed with the real durable controller ledger: the decision armed the dispatch (`dispatch-armed`), yet the provider still answered `approval_required` and the write never ran (S4a evidence `old-approved-provider-ledger.log`).
 
 **Not changed in S4a.** The cutover keeps today's behavior, and its tests don't
 pin the defect as expected. Fixing it changes behavior: the provider would have
