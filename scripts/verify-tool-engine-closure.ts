@@ -18,6 +18,7 @@ import {
 	collectToolEngineViolations,
 	isForbiddenToolEngineImport,
 } from './audit-portal-architecture.ts';
+import { toolEngineClosureScannerSource } from './tool-engine-closure-scanner-source.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = fileURLToPath(import.meta.url);
@@ -107,43 +108,6 @@ registerHooks({resolve(specifier, context, nextResolve) {
  if (isForbiddenToolEngineImport(resolved.url)) throw new Error('tool-engine forbidden resolved path ' + resolved.url);
  return resolved;
 }});
-`;
-}
-
-function scannerSource(): string {
-	return `import { readFile, realpath } from 'node:fs/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import {createRequire} from 'node:module';
-import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
-const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
-${isForbiddenToolEngineImport.toString()}
-const pending=JSON.parse(process.argv[2]); const visited=new Set(); let edges=0;
-while(pending.length) {
- const location=await realpath(pending.pop()); if(visited.has(location))continue; visited.add(location);
- if(isForbiddenToolEngineImport(pathToFileURL(location).href))throw new Error('tool-engine forbidden resolved path '+location);
- if(location.startsWith(${JSON.stringify(repositoryRoot)}+'/'))throw new Error('tool-engine workspace fallback '+location);
- const text=await readFile(location,'utf8');
- if(location.endsWith('.json'))continue;
- const source=ts.createSourceFile(location,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS); const imports=[];
- function visit(node) {
-  if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier)imports.push({specifier:node.moduleSpecifier.text,kind:"import"});
-  if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||(ts.isIdentifier(node.expression)&&node.expression.text==='require'))) {
-   if(node.arguments.length!==1||!ts.isStringLiteral(node.arguments[0]))throw new Error('tool-engine nonliteral import cannot be closed: '+location);
-   imports.push({specifier:node.arguments[0].text,kind:node.expression.kind===ts.SyntaxKind.ImportKeyword?"import":"require"});
-  }
-  ts.forEachChild(node,visit);
- }
- visit(source);
- for(const {specifier,kind} of imports) {
-  if(isForbiddenToolEngineImport(specifier))throw new Error('tool-engine forbidden import '+specifier+' from '+location);
-  const resolved=kind==='require'?pathToFileURL(createRequire(location).resolve(specifier)).href:import.meta.resolve(specifier,pathToFileURL(location).href); edges++;
-  if(isForbiddenToolEngineImport(resolved))throw new Error('tool-engine forbidden resolved path '+resolved);
-  if(!resolved.startsWith('file:'))throw new Error('tool-engine non-file dependency '+resolved);
-  pending.push(fileURLToPath(resolved));
- }
-}
-if(visited.size===0)throw new Error('empty closure');
-console.log('emitted import closure: '+visited.size+' modules, '+edges+' static/lazy edges; no forbidden imports');
 `;
 }
 
@@ -262,13 +226,22 @@ async function installedCheck(root: string): Promise<void> {
 	const entries = argument('--entries');
 	if (evidence === undefined || entries === undefined)
 		throw new Error('Missing installed-check arguments');
-	const graph = await command({
-		executable: process.execPath,
-		args: ['--experimental-import-meta-resolve', path.join(directory, 'scanner.mjs'), entries],
-		cwd: directory,
-		label: 'graph',
-		evidence,
-	});
+	const graphs = await Promise.all(
+		(['first-party', 'worker'] as const).map(
+			async (scan): Promise<CommandResult> =>
+				await command({
+					executable: process.execPath,
+					args: [
+						'--experimental-import-meta-resolve',
+						path.join(directory, `scanner-${scan}.mjs`),
+						entries,
+					],
+					cwd: directory,
+					label: `graph-${scan}`,
+					evidence,
+				}),
+		),
+	);
 	const parsedEntries: unknown = JSON.parse(entries);
 	if (
 		!Array.isArray(parsedEntries) ||
@@ -292,7 +265,7 @@ async function installedCheck(root: string): Promise<void> {
 		label: 'consumer',
 		evidence,
 	});
-	if (graph.code !== 0 || declarations.code !== 0 || runtime.code !== 0)
+	if (graphs.some((graph) => graph.code !== 0) || declarations.code !== 0 || runtime.code !== 0)
 		throw new Error('Packed closure or blocked-loader consumer failed');
 }
 
@@ -392,7 +365,18 @@ export async function verifyToolEngineClosure(): Promise<void> {
 		return path.resolve(root, entry.import);
 	});
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
-	await writeFile(path.join(scratch, 'scanner.mjs'), scannerSource());
+	await Promise.all(
+		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
+			await writeFile(
+				path.join(scratch, `scanner-${scan}.mjs`),
+				toolEngineClosureScannerSource({
+					scan,
+					repositoryRoot,
+					typescriptUrl: import.meta.resolve('typescript'),
+				}),
+			);
+		}),
+	);
 	await writeFile(path.join(scratch, 'declaration-scanner.mjs'), declarationScannerSource());
 	await writeFile(path.join(scratch, 'consumer.mjs'), consumerSource(subpaths));
 	async function check(label: string): Promise<CommandResult> {
@@ -421,6 +405,30 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
+		// Node-first clean entry makes accidental retention of Node's condition fail this control.
+		const poisonDirectory = path.join(root, 'node_modules', 's4d-worker-closure-poison');
+		await mkdir(poisonDirectory, { recursive: true });
+		await writeFile(
+			path.join(poisonDirectory, 'package.json'),
+			JSON.stringify({
+				name: 's4d-worker-closure-poison',
+				type: 'module',
+				exports: {
+					'.': {
+						node: './node.js',
+						workerd: './worker.js',
+						worker: './worker.js',
+						browser: './worker.js',
+						default: './node.js',
+					},
+				},
+			}),
+		);
+		await writeFile(path.join(poisonDirectory, 'node.js'), 'export const selected = "node";');
+		await writeFile(
+			path.join(poisonDirectory, 'worker.js'),
+			"import 'node:fs'; export const selected = 'worker';",
+		);
 		await subpaths.reduce<Promise<void>>(async (previous, subpath): Promise<void> => {
 			await previous;
 			const entryDirectory = path.join(root, 'dist', subpath.slice(2));
@@ -446,14 +454,22 @@ export async function verifyToolEngineClosure(): Promise<void> {
 					reason: 'tool-engine forbidden import typescript',
 				},
 				{
-					name: 'sdk-http',
-					source: original + "\nimport '@modelcontextprotocol/sdk/client/streamableHttp.js';\n",
-					reason: 'tool-engine forbidden import node:crypto',
+					name: 'worker-third-party',
+					source: original + "\nimport 's4d-worker-closure-poison';\n",
+					reason: 'tool-engine forbidden import node:fs',
+					scanReason: '[worker scan]',
+				},
+				{
+					name: 'worker-third-party-require',
+					source: original + "\nrequire('s4d-worker-closure-poison');\n",
+					reason: 'tool-engine forbidden import node:fs',
+					scanReason: '[worker scan]',
 				},
 				{
 					name: 'direct',
 					source: `${original}\nimport 'node:fs';`,
 					reason: 'tool-engine forbidden import node:fs',
+					scanReason: '[first-party scan]',
 				},
 				{
 					name: 'transitive',
@@ -535,7 +551,11 @@ export async function verifyToolEngineClosure(): Promise<void> {
 						);
 					}
 					const red = await check(`${fixturePrefix}${fixture.name}-red`);
-					if (red.code === 0 || !red.output.includes(fixture.reason))
+					if (
+						red.code === 0 ||
+						!red.output.includes(fixture.reason) ||
+						('scanReason' in fixture && !red.output.includes(fixture.scanReason))
+					)
 						throw new Error(`Fixture ${fixture.name} did not fail for its intended reason`);
 				} finally {
 					await replaceArtifact(contract, original);
