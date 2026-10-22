@@ -19,18 +19,34 @@ docker run --rm \
 	"${HERMES_RUNTIME_IMAGE}" \
 	-c '
 		set -euo pipefail
-		uv pip install \
-			--python /opt/hermes/.venv/bin/python \
-			pytest \
-			ty \
-			/workspace/python/agent-vm-agent-portal-sdk \
-			/workspace/python/agent-vm-hermes-adapter
 		/opt/hermes/.venv/bin/python -c '\''
 import importlib.metadata as metadata
 import pathlib
+import subprocess
+import sys
 import tomllib
 
 repository_root = pathlib.Path("/workspace")
+lockfile = tomllib.loads((repository_root / "uv.lock").read_text())
+locked_tools = {}
+for tool_name in ("pytest", "ty"):
+	versions = [package["version"] for package in lockfile["package"] if package["name"] == tool_name]
+	if len(versions) != 1 or not isinstance(versions[0], str):
+		raise RuntimeError(f"Expected one locked version for {tool_name}")
+	locked_tools[tool_name] = versions[0]
+subprocess.run(
+	[
+		"uv", "pip", "install", "--python", sys.executable,
+		*[f"{name}=={version}" for name, version in locked_tools.items()],
+		str(repository_root / "python/agent-vm-agent-portal-sdk"),
+		str(repository_root / "python/agent-vm-hermes-adapter"),
+	],
+	check=True,
+)
+for tool_name, locked_version in locked_tools.items():
+	assert metadata.version(tool_name) == locked_version
+	print(f"Hermes check tool: {tool_name}=={locked_version}", flush=True)
+
 sdk_project = tomllib.loads(
 	(repository_root / "python/agent-vm-agent-portal-sdk/pyproject.toml").read_text()
 )

@@ -29,10 +29,6 @@ if (configPath === undefined || process.argv.length !== 3) {
 			},
 			onDiagnostic: createNodeHostDiagnosticLogger(createPortalServerLogger()),
 		});
-		if (host.http !== undefined)
-			process.stdout.write(
-				`${JSON.stringify({ event: 'ready', endpoint: host.http.endpoint.href })}\n`,
-			);
 		const retire = async (): Promise<void> => {
 			try {
 				await host.retire();
@@ -52,6 +48,10 @@ if (configPath === undefined || process.argv.length !== 3) {
 					process.exitCode = 1;
 				});
 			});
+		if (host.http !== undefined)
+			process.stdout.write(
+				`${JSON.stringify({ event: 'ready', endpoint: host.http.endpoint.href })}\n`,
+			);
 	} catch {
 		await logging?.shutdown();
 		process.stderr.write('Tool host startup refused.\n');
