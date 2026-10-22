@@ -41,12 +41,15 @@ function childEnvironment(): Record<string, string> {
 	};
 }
 
-function startHostProcess(configPath: string): {
+function startHostProcess(
+	configPath: string,
+	additionalNodeArguments: readonly string[] = [],
+): {
 	readonly child: ChildProcessWithoutNullStreams;
 	readonly exited: Promise<readonly [number | null, NodeJS.Signals | null]>;
 	readonly stderr: string[];
 } {
-	const child = spawn(process.execPath, [hostBinary, configPath], {
+	const child = spawn(process.execPath, [...additionalNodeArguments, hostBinary, configPath], {
 		env: childEnvironment(),
 		stdio: ['pipe', 'pipe', 'pipe'],
 	});
@@ -60,6 +63,46 @@ function startHostProcess(configPath: string): {
 }
 
 describe('J1 Node: built HTTP and spawned stdio hosts', () => {
+	it('retires gracefully when SIGTERM arrives synchronously at the ready publication boundary', async () => {
+		const directory = await fixtureDirectory();
+		const alpha = await startControlledProvider('alpha');
+		const beta = await startControlledProvider('beta');
+		const configPath = await writeFixtureConfig(
+			fixtureConfig(directory, [alpha.url, beta.url]),
+			directory,
+		);
+		// Force the supervisor's signal into the exact write-before-handler window.
+		// This preload alters only the test child; the built CLI owns real signal handling.
+		const signalAtReady = [
+			'const writeStdout = process.stdout.write;',
+			'process.stdout.write = function (...outputArguments) {',
+			'  const written = Reflect.apply(writeStdout, this, outputArguments);',
+			'  let record;',
+			'  try { record = JSON.parse(String(outputArguments[0])); } catch { return written; }',
+			'  if (record !== null && typeof record === "object" && record.event === "ready") process.kill(process.pid, "SIGTERM");',
+			'  return written;',
+			'};',
+		].join('\n');
+		const child = startHostProcess(configPath, [
+			'--import',
+			`data:text/javascript;base64,${Buffer.from(signalAtReady).toString('base64')}`,
+		]);
+		const lines = createInterface({ input: child.child.stdout });
+		try {
+			const ready = once(lines, 'line');
+			const status = await child.exited;
+			expect(status, child.stderr.join('')).toEqual([0, null]);
+			const [readyLine] = await ready;
+			expect(JSON.parse(String(readyLine))).toMatchObject({ event: 'ready' });
+		} finally {
+			lines.close();
+			if (child.child.exitCode === null && child.child.signalCode === null)
+				child.child.kill('SIGTERM');
+			await child.exited;
+			await Promise.all([alpha.close(), beta.close()]);
+		}
+	});
+
 	it('serves the built CLI over real HTTP with the pinned SDK Client, then retires cleanly', async () => {
 		const directory = await fixtureDirectory();
 		const alpha = await startControlledProvider('alpha');

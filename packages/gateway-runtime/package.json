@@ -22,6 +22,9 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"imports": {
+		"#gateway-runtime/*": "./src/*.ts"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -38,6 +41,9 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/gateway-runtime/src"
 	},
 	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"@agent-collaboration/tool-engine": "workspace:*",
+		"@agent-collaboration/tool-host-node": "workspace:*",
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",
@@ -69,6 +75,7 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@modelcontextprotocol/core": "2.3.1",
 		"@types/ssh2": "^1.15.5",
 		"@types/ws": "^8.18.1",
 		"socket.io-client": "4.8.1",

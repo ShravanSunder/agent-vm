@@ -10,7 +10,7 @@ import type {
 	ToolPortalApprovalPort,
 	ToolPortalBackendPort,
 	ToolPortalOAuthAvailabilityPort,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { v7 as uuidv7 } from 'uuid';
 
 import {

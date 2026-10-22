@@ -3,24 +3,29 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import {
 	compileOAuthPolicy,
-	controllerConfiguredCliInputSchema,
 	configuredGoogleOperationKey,
 	gatewayRuntimeManagedToolPortalConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
-	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	deriveGatewayControlStablePrincipal,
 } from '@agent-vm/gateway-control-contracts';
+import { createManagedToolPortalCapabilityCore } from '@agent-vm/gateway-runtime';
+import {
+	createRecordingBackendPort,
+	semanticSnapshot,
+	udsOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-service-test-fixture.js';
 import {
 	googleAccountPolicySnapshotSchema,
 	oauthAccountIdSchema,
 	oauthApplicationIdSchema,
 	type ManagedGooglePreflightResult,
 } from '@agent-vm/oauth-broker-contracts';
-import { createManagedToolPortalCapabilityCore } from '@agent-vm/tool-portal';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
@@ -29,11 +34,6 @@ import {
 	facadeIdentity,
 } from '../../../../oauth-broker/src/google/google-broker-facade-test-fixture.js';
 import { wrappingKey } from '../../../../oauth-broker/src/oauth-catalog-test-fixture.js';
-import {
-	createRecordingBackendPort,
-	semanticSnapshot,
-	udsOptions,
-} from '../../../../tool-portal/src/tool-portal-service-test-fixture.js';
 import { createControllerApprovalLedger } from '../approval/controller-approval-ledger.js';
 import { inspectGogFileInputs } from '../files/gog-file-input-preflight.js';
 import { validateGoogleApprovalIntent } from './google-approval-intent-validation.js';

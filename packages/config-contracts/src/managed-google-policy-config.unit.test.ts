@@ -1,9 +1,9 @@
+import { oauthConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
 	controllerConfiguredCliOperationSchema,
 	isControllerEphemeralManagedVmConfiguredCliOperation,
-	oauthConfiguredCliInputSchema,
 } from './controller-configured-cli.js';
 import { toolPortalConfigSchema } from './tool-portal-config.js';
 

@@ -1,5 +1,4 @@
 import { ToolSchema as GatewayToolSchema } from '@modelcontextprotocol/core';
-import { normalizeHeaders } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool } from '@modelcontextprotocol/server';
 
 import type { NormalizedUpstreamMcpServer } from '#upstream-mcp-connectors/models/upstream-mcp-server';
@@ -124,7 +123,7 @@ export function createUpstreamMcpClientRuntime(
 					...server,
 					requestInit: {
 						...server.requestInit,
-						headers: { ...normalizeHeaders(server.requestInit?.headers), ...server.headers },
+						headers: { ...normalizeRequestHeaders(server.requestInit?.headers), ...server.headers },
 					},
 				},
 				transportKind,
@@ -230,23 +229,26 @@ export function createUpstreamMcpClientRuntime(
 				const timeoutAbort = createRuntimeAbortSignal(call.signal);
 				try {
 					const upstreamResult = await withTimeout(
-						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
-							onprogress: (progress) => {
-								void call.onEvent?.({
-									kind: 'progress',
-									...(progress.message !== undefined
-										? {
-												message: redactCredentialText(progress.message, {
-													exactValues: redactionValues,
-												}),
-											}
-										: {}),
-									progress: progress.progress,
-									...(progress.total !== undefined ? { total: progress.total } : {}),
-								});
+						client.callTool(
+							{ arguments: call.arguments, name: call.toolName },
+							{
+								onprogress: (progress) => {
+									void call.onEvent?.({
+										kind: 'progress',
+										...(progress.message !== undefined
+											? {
+													message: redactCredentialText(progress.message, {
+														exactValues: redactionValues,
+													}),
+												}
+											: {}),
+										progress: progress.progress,
+										...(progress.total !== undefined ? { total: progress.total } : {}),
+									});
+								},
+								signal: timeoutAbort.signal,
 							},
-							signal: timeoutAbort.signal,
-						}),
+						),
 						{
 							onTimeout: timeoutAbort.abortTimeout,
 							operation: `MCP callTool ${call.namespace}.${call.toolName}`,
@@ -409,4 +411,12 @@ export function createUpstreamMcpClientRuntime(
 			}
 		},
 	};
+}
+
+/** Preserve the existing Headers, tuple-list and record forms at the host-neutral boundary. */
+function normalizeRequestHeaders(headers: RequestInit['headers']): Record<string, string> {
+	if (headers === undefined) return {};
+	if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+	if (Array.isArray(headers)) return Object.fromEntries(headers);
+	return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, String(value)]));
 }

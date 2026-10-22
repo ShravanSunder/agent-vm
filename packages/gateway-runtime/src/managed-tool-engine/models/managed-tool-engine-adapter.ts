@@ -1,12 +1,12 @@
 import type { createAccessAssessor } from '@agent-collaboration/tool-access/authorization';
 import type { AccountFact } from '@agent-collaboration/tool-access/contracts';
 import type {
-	createCapabilityDispatcher,
 	ApprovalPort,
 	BackendKind,
 	DispatchRequest,
 	OperationPort,
 	ToolBackend,
+	createCapabilityDispatcher,
 } from '@agent-collaboration/tool-engine/capability-dispatch';
 import type { PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
@@ -23,11 +23,15 @@ export interface ManagedToolEngineAdapter {
 		readonly call: PortalCallRequest['calls'][number];
 		readonly accounts?: readonly AccountFact[];
 		readonly managedGoogle?: ManagedGoogleReadyPreflight;
-	}) => string;
+	}) => Promise<string>;
 	readonly release: (reference: string) => void;
 	readonly request: (reference: string) => DispatchRequest;
 	readonly call: (
 		request: PortalCallRequest,
 		context: ManagedEngineInvocationContext,
+		prepared?: {
+			readonly accounts: readonly AccountFact[];
+			readonly managedGoogle?: ManagedGoogleReadyPreflight;
+		},
 	) => Promise<PortalCallResult>;
 }

@@ -1,6 +1,6 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/client';
+import type { Transport } from '@modelcontextprotocol/client';
+import { JSONRPCMessageSchema } from '@modelcontextprotocol/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createNodeHttpUpstreamTransport } from '#node-host/stdio-upstream-servers/node-upstream-transports';
@@ -90,11 +90,14 @@ describe('Node legacy SSE transport and pinned SDK notification ordering', () =>
 		try {
 			await client.connect(transport);
 			expect(
-				await client.callTool({ name: 'read', arguments: {} }, undefined, {
-					onprogress: (value): void => {
-						progress.push(value);
+				await client.callTool(
+					{ name: 'read', arguments: {} },
+					{
+						onprogress: (value): void => {
+							progress.push(value);
+						},
 					},
-				}),
+				),
 			).toEqual({ content: [{ type: 'text', text: 'known-result' }] });
 			expect(progress).toEqual([{ progress: 1, total: 1, message: 'coalesced' }]);
 			expect(errors).toEqual([]);

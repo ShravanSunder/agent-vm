@@ -1,19 +1,17 @@
 import { createHash } from 'node:crypto';
 
-import { encodeCanonicalJson, JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
+import { toolPortalNamespaceAllowsOperation } from '@agent-collaboration/tool-access/authorization';
+import { type SecretValue } from '@agent-collaboration/tool-access/contracts';
+import { JsonObjectSchema, encodeCanonicalJson } from '@agent-vm/agent-portal-sdk';
 import {
 	createEffectiveManagedToolPortalConfig,
-	type ConfiguredCliCredentialProjection,
+	decodeConfiguredCliPreparedImageIdentity,
 	type ConfiguredCliCredentialEnvironmentValue,
 	type ConfiguredCliCredentialFileMapping,
+	type ConfiguredCliCredentialProjection,
+	type EffectiveControllerExecutionOperation,
 	type EffectiveManagedToolPortalConfig,
 	type PreparedManagedToolPortalConfig,
-	type SecretValue,
-} from '@agent-vm/config-contracts';
-import {
-	decodeConfiguredCliPreparedImageIdentity,
-	toolPortalNamespaceAllowsOperation,
-	type EffectiveControllerExecutionOperation,
 } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
 import type { SecretRef } from '@agent-vm/secret-management';

@@ -135,8 +135,19 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 						break;
 					}
 					default:
-						response.writeHead(202);
-						response.end();
+						if (rpc.id !== undefined) {
+							response.setHeader('content-type', 'application/json');
+							response.end(
+								JSON.stringify({
+									jsonrpc: '2.0',
+									id: rpc.id,
+									error: { code: -32601, message: 'Method not found' },
+								}),
+							);
+						} else {
+							response.writeHead(202);
+							response.end();
+						}
 						return;
 				}
 				if (!response.headersSent) response.setHeader('content-type', 'application/json');

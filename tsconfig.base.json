@@ -38,6 +38,9 @@
 			"@agent-collaboration/tool-engine/capability-dispatch": [
 				"./packages/tool-engine/src/capability-dispatch/index.ts"
 			],
+			"@agent-collaboration/tool-engine/standalone-tool-portal": [
+				"./packages/tool-engine/src/standalone-tool-portal/index.ts"
+			],
 			"@agent-collaboration/tool-access/contracts": [
 				"./packages/tool-access/src/contracts/index.ts"
 			],

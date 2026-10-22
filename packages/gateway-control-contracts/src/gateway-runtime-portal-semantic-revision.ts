@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto';
 
 import {
+	type ConfiguredCliInvocationMatcher,
+	type FormattedSecretValue,
+	type McpConfig,
+} from '@agent-collaboration/tool-access/contracts';
+import {
 	compareUnicodeCodePointStrings,
 	type EffectiveNamespaceDiscovery,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	ConfiguredCliInvocationMatcher,
-	EffectiveManagedToolPortalConfig,
-	FormattedSecretValue,
-	GatewayRuntimeManagedToolPortalConfig,
-	McpConfig,
+import {
+	type EffectiveManagedToolPortalConfig,
+	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 
 import {

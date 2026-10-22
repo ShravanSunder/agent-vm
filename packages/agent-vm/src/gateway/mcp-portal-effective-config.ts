@@ -2,30 +2,34 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import { toolPortalNamespaceAllowsOperation } from '@agent-collaboration/tool-access/authorization';
+import {
+	type FormattedSecretValue,
+	type McpConfig,
+} from '@agent-collaboration/tool-access/contracts';
 import {
 	loadMcpConfig,
-	loadToolPortalConfig,
-	loadOAuthConfig,
-	isControllerEphemeralManagedVmConfiguredCliOperation,
-	isControllerToolVmConfiguredCliOperation,
+	mcpPortalConfigSchema,
+	type McpPortalConfig,
+} from '@agent-collaboration/tool-host-node';
+import {
 	compileOAuthPolicy,
-	managedToolPortalRequiresOAuthConfiguration,
-	configuredGoogleOperationKey,
 	compileToolPortalNamespaceDiscoveryByProfile,
+	configuredGoogleOperationKey,
 	effectiveManagedToolPortalConfigSchema,
 	encodeConfiguredCliPreparedImageIdentity,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	isControllerToolVmConfiguredCliOperation,
+	loadOAuthConfig,
+	loadToolPortalConfig,
 	managedToolPortalConfigSchema,
-	mcpPortalConfigSchema,
+	managedToolPortalRequiresOAuthConfiguration,
 	normalizePreparedControllerExecutionOperation,
 	preparedManagedToolPortalConfigSchema,
-	toolPortalNamespaceAllowsOperation,
-	type FormattedSecretValue,
 	type EffectiveManagedToolPortalConfig,
-	type McpConfig,
-	type McpPortalConfig,
 	type PreparedManagedToolPortalConfig,
-	type ToolPortalNamespacePolicy,
 	type ToolPortalConfig,
+	type ToolPortalNamespacePolicy,
 } from '@agent-vm/config-contracts';
 import type { ManagedVmImageCapability } from '@agent-vm/managed-vm';
 import { getGooglePolicyCatalog } from '@agent-vm/oauth-broker/google';

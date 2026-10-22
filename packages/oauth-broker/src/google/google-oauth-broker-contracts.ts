@@ -1,12 +1,12 @@
-import { type GoogleOAuthApplicationId } from '@agent-vm/config-contracts';
+import { type GoogleOAuthApplicationId } from '@agent-collaboration/tool-access/contracts';
 import {
 	type OAuthAccountActivityAvailability,
 	type OAuthApplicationId,
 	type OAuthAuthorizationActionRequest,
 	type OAuthAuthorizationActionResult,
 	type OAuthBrowserSessionIdentity,
-	type OAuthCredentialId,
 	type OAuthCompletionSessionId,
+	type OAuthCredentialId,
 	type OAuthMaterialRevision,
 	type OAuthPermissionSelections,
 	type OAuthTransactionId,

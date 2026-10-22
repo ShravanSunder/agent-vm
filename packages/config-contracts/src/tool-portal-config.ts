@@ -1,64 +1,44 @@
-import { z } from 'zod';
-
-import { compiledGoogleCommandSetSchema } from './compiled-google-command-set.js';
+import { toolPortalNamespaceAllowsOperation } from '@agent-collaboration/tool-access/authorization';
 import {
-	configuredCliAuthorizationSchema,
+	compiledGoogleCommandSetSchema,
 	configuredCliAllowedCommandSchema,
 	configuredCliInvocationCallPolicySchema,
-	configuredCliCredentialLogicalNameSchema,
 	configuredCliPatternRuleSchema,
 	configuredCliStaticInvocationCallPolicySchema,
 	configuredCliStdinPolicySchema,
 	configuredCliTimeoutPolicySchema,
+	googleOAuthApplicationIdSchema,
+	namespaceDiscoverySchema,
+	toolPortalAgentConfigSchema,
+	toolPortalBackendKindSchema,
+	toolPortalCallPolicySchema,
+	toolPortalNamespaceCallPolicySchema,
+	toolPortalToolSelectorSchema,
+	type ToolPortalNamespaceCallPolicy,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	standaloneToolPortalConfigSchema,
+	validateStandaloneToolPortalConfig,
+	type StandaloneToolPortalConfig,
+} from '@agent-collaboration/tool-host-node';
+import { z } from 'zod';
+
+import {
+	configuredCliAuthorizationSchema,
+	configuredCliCredentialLogicalNameSchema,
 	controllerExecutionOperationSchema,
 	controllerRegisteredOperationSchema,
 	effectiveControllerHostConfiguredCliOperationSchema,
-	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
 	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
 	isEffectiveControllerToolVmConfiguredCliOperation,
+	effectiveControllerExecutionOperationSchema as preparedControllerExecutionOperationSchema,
 } from './controller-configured-cli.js';
 import {
 	googleConsentRecommendationConfigSchema,
 	googlePolicyDefaultsConfigSchema,
-	managedGoogleNamespaceCallPolicySchema,
 } from './google-policy-defaults-config.js';
 import { loadJsonConfigFile } from './json-config-file.js';
-import { namespaceDiscoverySchema } from './mcp-config.js';
-import { googleOAuthApplicationIdSchema, googleOAuthCeilingSchema } from './oauth-config.js';
-import { secretValueSchema } from './secret-value.js';
-
-export const toolPortalToolSelectorSchema = z
-	.object({
-		allow: z.union([z.literal('*'), z.array(z.string().min(1))]),
-		deny: z.array(z.string().min(1)).default([]),
-	})
-	.strict();
-
-export type ToolPortalToolSelector = z.infer<typeof toolPortalToolSelectorSchema>;
-
-export const toolPortalCallPolicySchema = z
-	.object({
-		requiresApproval: toolPortalToolSelectorSchema,
-		withoutApproval: toolPortalToolSelectorSchema,
-	})
-	.strict()
-	.superRefine((policy, context) => {
-		if (toolSelectorsOverlap(policy.requiresApproval, policy.withoutApproval)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Tool Portal call policy cannot list one tool in both approval selectors.',
-				path: ['withoutApproval'],
-			});
-		}
-	});
-
-export type ToolPortalCallPolicy = z.infer<typeof toolPortalCallPolicySchema>;
-
-export const toolPortalNamespaceCallPolicySchema = z.union([
-	toolPortalCallPolicySchema,
-	managedGoogleNamespaceCallPolicySchema,
-]);
-export type ToolPortalNamespaceCallPolicy = z.infer<typeof toolPortalNamespaceCallPolicySchema>;
+import { googleOAuthCeilingSchema } from './oauth-config.js';
 
 function validateManagedGoogleNamespace(
 	policy: {
@@ -101,12 +81,6 @@ function validateManagedGoogleNamespace(
 			});
 	}
 }
-
-export const toolPortalBackendKindSchema = z.enum([
-	'mcp_provider',
-	'controller_execution',
-	'tool_vm_runner',
-]);
 
 const sandboxOperationDescriptionSchema = z.string().min(1);
 const sandboxExecutableSchema = z
@@ -236,7 +210,6 @@ export const toolPortalBackendBindingSchema = z.discriminatedUnion('kind', [
 	toolPortalSandboxSshBackendBindingSchema,
 ]);
 
-export type ToolPortalBackendKind = z.infer<typeof toolPortalBackendKindSchema>;
 export type ToolPortalBackendBinding = z.infer<typeof toolPortalBackendBindingSchema>;
 
 const toolPortalNamespacePolicyCommonShape = {
@@ -277,33 +250,6 @@ export const toolPortalNamespacePolicySchema = z.union([
 
 export type ToolPortalNamespacePolicy = z.infer<typeof toolPortalNamespacePolicySchema>;
 
-export function toolPortalSelectorAllowsOperation(
-	selector: ToolPortalToolSelector,
-	operationName: string,
-): boolean {
-	return (
-		!selector.deny.includes(operationName) &&
-		(selector.allow === '*' || selector.allow.includes(operationName))
-	);
-}
-
-export interface ToolPortalOperationReachabilityPolicy {
-	readonly calls: ToolPortalNamespaceCallPolicy;
-	readonly tools: ToolPortalToolSelector;
-}
-
-export function toolPortalNamespaceAllowsOperation(
-	namespacePolicy: ToolPortalOperationReachabilityPolicy,
-	operationName: string,
-): boolean {
-	return (
-		toolPortalSelectorAllowsOperation(namespacePolicy.tools, operationName) &&
-		('source' in namespacePolicy.calls ||
-			toolPortalSelectorAllowsOperation(namespacePolicy.calls.requiresApproval, operationName) ||
-			toolPortalSelectorAllowsOperation(namespacePolicy.calls.withoutApproval, operationName))
-	);
-}
-
 export const toolPortalProfileDefinitionSchema = z
 	.object({
 		catalogMode: z.enum(['compact', 'catalog']).optional(),
@@ -323,21 +269,7 @@ export const toolPortalProfileDefinitionSchema = z
 	})
 	.strict();
 
-const standaloneToolPortalProfileDefinitionSchema = z
-	.object({
-		namespaces: z.record(z.string().min(1), toolPortalMcpNamespacePolicySchema).default({}),
-	})
-	.strict();
-
 export type ToolPortalProfileDefinition = z.infer<typeof toolPortalProfileDefinitionSchema>;
-
-export const toolPortalAgentConfigSchema = z
-	.object({
-		profile: z.string().min(1),
-	})
-	.strict();
-
-export type ToolPortalAgentConfig = z.infer<typeof toolPortalAgentConfigSchema>;
 
 const toolPortalCredentialFileSecretSchema = z
 	.object({
@@ -369,101 +301,6 @@ export const managedToolPortalAgentConfigSchema = z
 	.strict();
 
 export type ManagedToolPortalAgentConfig = z.infer<typeof managedToolPortalAgentConfigSchema>;
-
-export const toolPortalStandaloneAgentAuthenticationSchema = z
-	.object({
-		approvalHmacKey: secretValueSchema,
-		bearerKey: secretValueSchema,
-		credentialVersion: z.number().int().positive(),
-	})
-	.strict();
-
-export type ToolPortalStandaloneAgentAuthentication = z.infer<
-	typeof toolPortalStandaloneAgentAuthenticationSchema
->;
-
-export const toolPortalStandaloneAuthenticationSchema = z
-	.object({
-		agents: z.record(z.string().min(1), toolPortalStandaloneAgentAuthenticationSchema),
-	})
-	.strict();
-
-export type ToolPortalStandaloneAuthentication = z.infer<
-	typeof toolPortalStandaloneAuthenticationSchema
->;
-
-export const toolPortalNetworkAddressSchema = z
-	.object({
-		host: z.string().min(1),
-		port: z.number().int().min(1).max(65_535),
-	})
-	.strict();
-
-export type ToolPortalNetworkAddress = z.infer<typeof toolPortalNetworkAddressSchema>;
-
-const toolPortalBearerEntrypointAuthenticationSchema = z
-	.object({
-		kind: z.literal('bearer'),
-	})
-	.strict();
-
-const toolPortalEntrypointRouteSchema = z
-	.string()
-	.min(1)
-	.refine((route) => route.startsWith('/'), {
-		message: 'Tool Portal entrypoint routes must start with "/".',
-	});
-
-export const toolPortalHttpEntrypointSchema = z
-	.object({
-		address: toolPortalNetworkAddressSchema,
-		allowedHosts: z.array(z.string().min(1)).min(1),
-		allowedOrigins: z.array(z.string().url()),
-		authentication: toolPortalBearerEntrypointAuthenticationSchema,
-		enabled: z.literal(true),
-		route: toolPortalEntrypointRouteSchema,
-	})
-	.strict();
-
-export type ToolPortalHttpEntrypoint = z.infer<typeof toolPortalHttpEntrypointSchema>;
-
-export const toolPortalMcpEntrypointSchema = z
-	.object({
-		address: toolPortalNetworkAddressSchema,
-		allowedHosts: z.array(z.string().min(1)).min(1),
-		allowedOrigins: z.array(z.string().url()),
-		authentication: toolPortalBearerEntrypointAuthenticationSchema,
-		enabled: z.literal(true),
-		route: toolPortalEntrypointRouteSchema,
-		transport: z.literal('streamable-http'),
-	})
-	.strict();
-
-export type ToolPortalMcpEntrypoint = z.infer<typeof toolPortalMcpEntrypointSchema>;
-
-export const toolPortalStdioEntrypointSchema = z
-	.object({
-		authentication: z
-			.object({
-				agentId: z.string().min(1),
-				kind: z.literal('scoped-principal'),
-			})
-			.strict(),
-		enabled: z.literal(true),
-	})
-	.strict();
-
-export type ToolPortalStdioEntrypoint = z.infer<typeof toolPortalStdioEntrypointSchema>;
-
-export const toolPortalStandaloneEntrypointsSchema = z
-	.object({
-		http: toolPortalHttpEntrypointSchema.optional(),
-		mcp: toolPortalMcpEntrypointSchema.optional(),
-		stdio: toolPortalStdioEntrypointSchema.optional(),
-	})
-	.strict();
-
-export type ToolPortalStandaloneEntrypoints = z.infer<typeof toolPortalStandaloneEntrypointsSchema>;
 
 const toolPortalCommonConfigShape = {
 	$schema: z.string().min(1).optional(),
@@ -833,28 +670,13 @@ export function createGatewayRuntimeManagedToolPortalConfig(
 	});
 }
 
-export const standaloneToolPortalConfigSchema = z
-	.object({
-		$schema: z.string().min(1).optional(),
-		agents: z.record(z.string().min(1), toolPortalAgentConfigSchema).default({}),
-		authentication: toolPortalStandaloneAuthenticationSchema,
-		drain: z
-			.object({
-				timeoutMs: z.number().int().positive(),
-			})
-			.strict(),
-		entrypoints: toolPortalStandaloneEntrypointsSchema,
-		mode: z.literal('standalone'),
-		profiles: z.record(z.string().min(1), standaloneToolPortalProfileDefinitionSchema),
-		schemaVersion: z.literal(1),
-	})
-	.strict();
-
-export type StandaloneToolPortalConfig = z.infer<typeof standaloneToolPortalConfigSchema>;
-
 export const toolPortalConfigSchema = z
 	.discriminatedUnion('mode', [managedToolPortalConfigSchema, standaloneToolPortalConfigSchema])
 	.superRefine((config, context) => {
+		if (config.mode === 'standalone') {
+			validateStandaloneToolPortalConfig(config, context);
+			return;
+		}
 		if (Object.keys(config.profiles).length === 0) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
@@ -964,214 +786,10 @@ export const toolPortalConfigSchema = z
 				}
 			}
 		}
-
-		if (config.mode !== 'standalone') {
-			return;
-		}
-
-		const configuredAgentIds = Object.keys(config.agents);
-		if (configuredAgentIds.length === 0) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Standalone Tool Portal must define at least one agent.',
-				path: ['agents'],
-			});
-		}
-
-		for (const configuredAgentId of configuredAgentIds) {
-			if (config.authentication.agents[configuredAgentId] === undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Standalone Tool Portal agent "${configuredAgentId}" is missing authentication material.`,
-					path: ['authentication', 'agents', configuredAgentId],
-				});
-			}
-		}
-
-		for (const authenticatedAgentId of Object.keys(config.authentication.agents)) {
-			if (config.agents[authenticatedAgentId] === undefined) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					message: `Standalone Tool Portal authentication references unknown agent "${authenticatedAgentId}".`,
-					path: ['authentication', 'agents', authenticatedAgentId],
-				});
-			}
-		}
-
-		if (Object.values(config.entrypoints).every((entrypoint) => entrypoint === undefined)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: 'Standalone Tool Portal must explicitly enable at least one entrypoint.',
-				path: ['entrypoints'],
-			});
-		}
-
-		const stdioAgentId = config.entrypoints.stdio?.authentication.agentId;
-		if (stdioAgentId !== undefined && config.agents[stdioAgentId] === undefined) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				message: `Standalone Tool Portal stdio principal references unknown agent "${stdioAgentId}".`,
-				path: ['entrypoints', 'stdio', 'authentication', 'agentId'],
-			});
-		}
 	});
 
 export type ToolPortalConfig = ManagedToolPortalConfig | StandaloneToolPortalConfig;
 
 export async function loadToolPortalConfig(configPath: string): Promise<ToolPortalConfig> {
 	return toolPortalConfigSchema.parse(await loadJsonConfigFile(configPath));
-}
-
-export const ToolPortalMcpProjectionNamespaceSchema = z
-	.object({
-		calls: toolPortalCallPolicySchema,
-		tools: toolPortalToolSelectorSchema,
-	})
-	.strict();
-
-export type ToolPortalMcpProjectionNamespace = z.infer<
-	typeof ToolPortalMcpProjectionNamespaceSchema
->;
-
-export const ToolPortalMcpProjectionSchema = z
-	.object({
-		agentId: z.string().min(1),
-		namespaces: z.record(z.string().min(1), ToolPortalMcpProjectionNamespaceSchema),
-		profile: z.string().min(1),
-	})
-	.strict();
-
-export type ToolPortalMcpProjection = z.infer<typeof ToolPortalMcpProjectionSchema>;
-
-export const ToolPortalControllerExecutionProjectionNamespaceSchema = z
-	.object({
-		calls: toolPortalNamespaceCallPolicySchema,
-		tools: toolPortalToolSelectorSchema,
-	})
-	.strict();
-
-export type ToolPortalControllerExecutionProjectionNamespace = z.infer<
-	typeof ToolPortalControllerExecutionProjectionNamespaceSchema
->;
-
-export const ToolPortalControllerExecutionProjectionSchema = z
-	.object({
-		agentId: z.string().min(1),
-		namespaces: z.record(z.string().min(1), ToolPortalControllerExecutionProjectionNamespaceSchema),
-		profile: z.string().min(1),
-	})
-	.strict();
-
-export type ToolPortalControllerExecutionProjection = z.infer<
-	typeof ToolPortalControllerExecutionProjectionSchema
->;
-
-export interface CreateToolPortalMcpProjectionProps {
-	readonly agentId: string;
-	readonly config:
-		| EffectiveManagedToolPortalConfig
-		| GatewayRuntimeManagedToolPortalConfig
-		| ToolPortalConfig;
-}
-
-export function createToolPortalMcpProjection(
-	props: CreateToolPortalMcpProjectionProps,
-): ToolPortalMcpProjection {
-	const agentConfig = props.config.agents[props.agentId];
-	if (agentConfig === undefined) {
-		throw new Error(`Tool Portal agent "${props.agentId}" is not configured.`);
-	}
-
-	const profileConfig = props.config.profiles[agentConfig.profile];
-	if (profileConfig === undefined) {
-		throw new Error(
-			`Tool Portal agent "${props.agentId}" references missing profile "${agentConfig.profile}".`,
-		);
-	}
-
-	const namespaces = Object.fromEntries(
-		Object.entries(profileConfig.namespaces)
-			.filter(([, namespacePolicy]) => namespacePolicy.backend.kind === 'mcp_provider')
-			.map(([namespace, namespacePolicy]) => [
-				namespace,
-				{
-					calls: namespacePolicy.calls,
-					tools: namespacePolicy.tools,
-				},
-			]),
-	);
-
-	return ToolPortalMcpProjectionSchema.parse({
-		agentId: props.agentId,
-		namespaces,
-		profile: agentConfig.profile,
-	});
-}
-
-export interface CreateToolPortalControllerExecutionProjectionProps {
-	readonly agentId: string;
-	readonly config:
-		| EffectiveManagedToolPortalConfig
-		| GatewayRuntimeManagedToolPortalConfig
-		| ToolPortalConfig;
-}
-
-export function createToolPortalControllerExecutionProjection(
-	props: CreateToolPortalControllerExecutionProjectionProps,
-): ToolPortalControllerExecutionProjection {
-	const agentConfig = props.config.agents[props.agentId];
-	if (agentConfig === undefined) {
-		throw new Error(`Tool Portal agent "${props.agentId}" is not configured.`);
-	}
-
-	const profileConfig = props.config.profiles[agentConfig.profile];
-	if (profileConfig === undefined) {
-		throw new Error(
-			`Tool Portal agent "${props.agentId}" references missing profile "${agentConfig.profile}".`,
-		);
-	}
-
-	const namespaces = Object.fromEntries(
-		Object.entries(profileConfig.namespaces)
-			.filter(([, namespacePolicy]) => namespacePolicy.backend.kind === 'controller_execution')
-			.map(([namespace, namespacePolicy]) => [
-				namespace,
-				{
-					calls: namespacePolicy.calls,
-					tools: namespacePolicy.tools,
-				},
-			]),
-	);
-
-	return ToolPortalControllerExecutionProjectionSchema.parse({
-		agentId: props.agentId,
-		namespaces,
-		profile: agentConfig.profile,
-	});
-}
-
-function toolSelectorsOverlap(
-	left: ToolPortalToolSelector,
-	right: ToolPortalToolSelector,
-): boolean {
-	const leftAllow = left.allow;
-	const rightAllow = right.allow;
-	if (leftAllow === '*' && rightAllow === '*') {
-		return true;
-	}
-	if (leftAllow === '*') {
-		if (rightAllow === '*') {
-			return true;
-		}
-		return rightAllow.some((toolName) => !left.deny.includes(toolName));
-	}
-	if (rightAllow === '*') {
-		return leftAllow.some((toolName) => !right.deny.includes(toolName));
-	}
-	return leftAllow.some(
-		(toolName) =>
-			rightAllow.includes(toolName) &&
-			!left.deny.includes(toolName) &&
-			!right.deny.includes(toolName),
-	);
 }

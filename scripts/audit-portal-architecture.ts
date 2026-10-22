@@ -1,12 +1,13 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { collectToolHostNodeViolations } from './tool-host-node-architecture.js';
 export {
 	collectToolHostNodeViolations,
 	isForbiddenToolHostNodeImport,
 } from './tool-host-node-architecture.js';
-import { readdir, readFile } from 'node:fs/promises';
-import { builtinModules } from 'node:module';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 
@@ -595,17 +596,26 @@ function collectToolPortalSemanticRouterViolations(
 		isTestSourceFile(filePath) ||
 		!filePath.startsWith('packages/') ||
 		!filePath.includes('/src/') ||
-		!filePath.endsWith('.ts') ||
-		filePath === 'packages/tool-portal/src/tool-portal-result-router.ts'
+		!filePath.endsWith('.ts')
 	) {
 		return [];
 	}
-	return toolPortalSemanticRouterHelperNames
-		.filter((helperName) => declaresNamedFunctionOrVariable(file.sourceText, helperName))
-		.map(
-			(helperName) =>
-				`${filePath}: Tool Portal semantic router helper ${helperName} must be declared only in packages/tool-portal/src/tool-portal-result-router.ts`,
-		);
+	return toolPortalSemanticRouterHelperNames.flatMap((helperName) => {
+		const owner = helperName.startsWith('merge')
+			? 'packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts'
+			: 'packages/tool-portal/src/tool-portal-result-router.ts';
+		// F-60 keeps the original independent merger until S4 removes the old package.
+		const originalPreCutoverMerger =
+			helperName.startsWith('merge') &&
+			filePath === 'packages/tool-portal/src/tool-portal-result-router.ts';
+		return filePath !== owner &&
+			!originalPreCutoverMerger &&
+			declaresNamedFunctionOrVariable(file.sourceText, helperName)
+			? [
+					`${filePath}: Tool Portal semantic router helper ${helperName} must be declared only in ${owner}`,
+				]
+			: [];
+	});
 }
 
 function collectHarnessViolations(file: PortalArchitectureSourceFile): readonly string[] {
@@ -857,10 +867,29 @@ function collectManagedFrameworkChildTopologyViolations(
 	return [];
 }
 
+export function collectManagedPortalCutoverViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (!filePath.startsWith('packages/gateway-runtime/src/') || isTestSourceFile(filePath))
+		return [];
+	return importedModuleSpecifiers(file.sourceText)
+		.filter(
+			(specifier) =>
+				importStartsWithAny(specifier, ['@agent-vm/tool-portal', '@agent-vm/mcp-portal']) ||
+				/\/(?:tool-portal|mcp-portal)\/src\//u.test(specifier),
+		)
+		.map(
+			(specifier) =>
+				`${filePath}: managed production must use the shared engine and owned adapters, not ${specifier}`,
+		);
+}
+
 export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
 	const violations = [
+		...props.files.flatMap(collectManagedPortalCutoverViolations),
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),
 		...props.files.flatMap(collectToolHostCoreViolations),
@@ -967,9 +996,15 @@ export function collectToolAccessViolations(file: PortalArchitectureSourceFile):
 
 function isTestOnlyPortalAlias(specifier: string): boolean {
 	return (
+		/^legacy-mcp-portal(?:\/|$)/u.test(specifier) ||
 		/^@agent-vm\/(?:controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(
 			specifier,
-		) || /^@agent-vm\/tool-portal\/policy-comparison(?:\/|$)/u.test(specifier)
+		) ||
+		/^@agent-vm\/tool-portal\/policy-comparison(?:\/|$)/u.test(specifier) ||
+		/^@agent-vm\/mcp-portal\/testing(?:\/|$)/u.test(specifier) ||
+		/^(?:@agent-collaboration\/tool-host-node\/testing|#node-host\/testing)(?:\/|$)/u.test(
+			specifier,
+		)
 	);
 }
 
@@ -1015,7 +1050,12 @@ function collectProductionTestAliasViolations(
 			const argument = node.arguments[0];
 			if (argument !== undefined && ts.isStringLiteral(argument)) specifier = argument.text;
 		}
-		if (specifier !== undefined && isTestOnlyPortalAlias(specifier))
+		if (
+			specifier !== undefined &&
+			(isTestOnlyPortalAlias(specifier) ||
+				(filePath.startsWith('packages/tool-host-node/src/') &&
+					/^(?:\.\.?\/)+testing(?:\/|$)/u.test(specifier)))
+		)
 			violations.push(`${filePath}: production must not import test-only alias ${specifier}`);
 		ts.forEachChild(node, visit);
 	}
