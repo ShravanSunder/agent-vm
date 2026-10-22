@@ -137,7 +137,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 
 ## Owner decisions on 2026-10-22: the workspace is the unit
 
-These replace the 2026-10-20 line that put workspaces "for later". The fleet framework records them as F-69 to F-76; the [data map](../../wip/2026-10-22-data-map/index.html) shows the data they change.
+These replace the 2026-10-20 line that put workspaces "for later". The fleet framework records them as F-69 to F-76; the Lead's local data-map explainer (`docs/wip/2026-10-22-data-map/`, kept out of the repository) shows the data they change.
 
 - **Each workspace has its own MCP** (F-73): "mcp is per workspace". An agent connects to the MCP of each workspace it belongs to. The workspace is the endpoint, not an argument on a call.
 - **Auth is per workspace** (F-75): "auth is per works pace". An agent's token is scoped to one workspace and means nothing at another. This doesn't choose a new token issuer.
@@ -146,7 +146,7 @@ These replace the 2026-10-20 line that put workspaces "for later". The fleet fra
 - **Every agent works through agent-collaboration** (F-74): "man agents go through agent-collaboration".
 - **Agents join workspaces, and the fleet knows each workspace's members, machines and agent-collaboration** (F-76). The portal reads membership from the fleet, and from configuration until the fleet carries it (F-53).
 
-What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. How sign-in's organizations relate to workspaces is still open ([org page](../../wip/2026-10-21-org-and-portal-design/index.html) decision 1). The Specification and Program Design haven't been revised for this yet.
+What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. How sign-in's organizations relate to workspaces is still open (decision 1 in the Lead's local org-and-portal explainer). The Specification and Program Design haven't been revised for this yet.
 
 ## Questions for the owner
 
