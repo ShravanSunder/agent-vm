@@ -24,7 +24,27 @@ and keep the exactly-once count and the receipt assertion. This doesn't weaken
 proof, because order isn't a requirement. Not changed during the structure
 pass.
 
-## Approved managed MCP calls are refused at the provider (pre-existing product defect)
+## Approved managed MCP calls are refused at the provider (pre-existing product defect) — FIXED
+
+**Fixed at `23b1e33d` (draft PR #253), accepted by the Lead on 2026-10-22.** The
+owner asked for the fix on 2026-10-22 ("yes fix approval bug"). The managed backend
+port now forwards the dispatch authority that S2 already checked. The provider
+admits a requiresApproval tool only for a single call whose approval grant names
+that call's operation id. S2 and the controller ledger remain the only owners of
+the exact-call binding and the one-use rule. Proof:
+
+- The permanent test `managed-mcp-approval.integration.test.ts` runs the real UDS,
+  production composition, S2, provider and a controlled MCP server, with the durable
+  ledger. Before the fix it fails: an approved, armed write had 0 effects. After the
+  fix the write runs once and a replay adds nothing. Mismatched, no-grant, blocked and
+  self-approval cases have 0 effects.
+- Three wrong builds each fail on the server's effect count: no-grant accepted (1
+  vs 0), a wrong-fingerprint grant accepted (1 vs 0), replay allowed (2 vs 1). Both
+  the Implementer and the Verifier ran them.
+- The sunclaw sweep passed: check 16/16, unit 5490/5490, integration 1048/1048,
+  e2e-host 244/244.
+
+The history below is kept as found.
 
 In agent-vm's managed path, an MCP tool that requires approval is refused even
 after the controller approves it. `createToolPortalMcpProjection`
