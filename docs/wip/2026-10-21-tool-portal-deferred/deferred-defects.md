@@ -43,6 +43,26 @@ it passed at `80067700`, and S4d doesn't touch gateway-runtime. Same fix in its
 own layer: compare the dispatched items as a multiset and keep the effect,
 result and release assertions.
 
+## Completed-result budget keeps survivors by completion order (product defect, held for #33)
+
+Bot review thread r4350681792 on #246, now in `tool-host-core` (#248). When a batch's
+completed results exceed the per-request budget, which items survive depends on the
+order calls finish, not on request order. The Implementer reproduced it with a unit
+test: the same inputs and successes keep a different item depending on completion order.
+
+**Why it's held:** the brief (S4d Implementer's worktree,
+`tmp/worker-review-triage-evidence/budget-boundary-brief.md`) found no fix that keeps
+today's memory bound. Admitting results in request order needs scheduling or eviction
+that today's interfaces don't have. A deterministic accumulator needs a new seam between
+the host and Engine. Removing the cap allows about 50 × 4 MiB per request. The owner
+hasn't accepted any cap and wants large results streamed or spilled to disk (#33), so the
+fix belongs with that design.
+
+**Open risk for #33 (estimated, not measured):** about 16 MiB of retained results plus
+6 × 4 MiB in flight is about 40 MiB of wire-equivalent data per request. Three concurrent
+requests come to about 120 MiB before parsed and copied forms, close to the Worker's
+128 MiB limit. The thread stays unresolved, with a reply pointing here.
+
 ## Approved managed MCP calls are refused at the provider (pre-existing product defect) — FIXED
 
 **Fixed at `23b1e33d` (draft PR #253), accepted by the Lead on 2026-10-22.** The
