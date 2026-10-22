@@ -7,16 +7,43 @@ export interface WorkerdSockets {
 	readonly established: number;
 	readonly closeWait: number;
 }
+/** Query only direct workerd children; unrelated process arguments never enter this proof. */
 export async function ownedWorkerdPids(): Promise<number[]> {
-	const { stdout } = await executeFile('ps', ['-axo', 'pid,ppid,command'], { timeout: 2000 });
-	return stdout.split('\n').flatMap((line) => {
-		const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/u);
-		return match?.[1] !== undefined &&
-			Number(match[2]) === process.pid &&
-			match[3]?.includes('/workerd serve')
-			? [Number(match[1])]
-			: [];
-	});
+	try {
+		const { stdout } = await executeFile('pgrep', ['-P', String(process.pid), '-x', 'workerd'], {
+			timeout: 2000,
+		});
+		const lines = stdout.trim().split('\n').filter(Boolean);
+		if (lines.some((line) => !/^[1-9]\d*$/u.test(line)))
+			throw new Error('Invalid owned workerd PID output.');
+		return lines.map(Number).toSorted((left, right) => left - right);
+	} catch (error: unknown) {
+		if (
+			typeof error === 'object' &&
+			error !== null &&
+			'code' in error &&
+			error.code === 1 &&
+			'stdout' in error &&
+			error.stdout === '' &&
+			'stderr' in error &&
+			error.stderr === ''
+		)
+			return [];
+		const field = (name: string): unknown =>
+			typeof error === 'object' && error !== null && name in error
+				? Reflect.get(error, name)
+				: undefined;
+		// Never include a process table or arbitrary command arguments in failure logs.
+		throw new Error(
+			`Owned workerd PID query failed: ${JSON.stringify({
+				code: field('code'),
+				signal: field('signal'),
+				killed: field('killed'),
+				stderr: field('stderr'),
+			})}`,
+			{ cause: error },
+		);
+	}
 }
 export async function workerdSockets(pids: readonly number[]): Promise<WorkerdSockets[]> {
 	return Promise.all(
