@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+	buildPortalCompositionApprovalProgram,
+	portalCompositionApprovalPrompt,
+	portalCompositionApprovalResultMarker,
+} from '#agent-vm/integration-tests/portal-composition-approval-test-fixture';
+
 import { startPortalCompositionModelServer } from './portal-composition-hermes-e2e-support.js';
 import {
 	buildPortalCompositionProgram,
@@ -182,6 +188,40 @@ describe('portal composition generated foreground terminal program', () => {
 			expect(server.latestExecuteCodeResult()).toBeUndefined();
 			expect(server.latestGeneratedTerminalResult()).toBeUndefined();
 			expect(server.generatedTerminalRequestCount()).toBe(0);
+		} finally {
+			await server.close();
+		}
+	});
+});
+
+describe('protected composition model program', () => {
+	it('emits identical program bytes for separate execute_code invocations without changing the full-composition counters', async () => {
+		const server = await startPortalCompositionModelServer({
+			compositionProgram: 'print("original")',
+			finalMarker: 'original-finished',
+			promptMarker: 'ORIGINAL',
+			programResultMarker: 'original-result',
+		});
+		const messages = [{ content: portalCompositionApprovalPrompt, role: 'user' }];
+		try {
+			const first = await requestDeterministicModel(server.port, messages);
+			await requestDeterministicModel(server.port, [
+				...messages,
+				{ role: 'tool', content: portalCompositionApprovalResultMarker },
+			]);
+			const second = await requestDeterministicModel(server.port, messages);
+			expect(first).toContain('execute_code');
+			expect(second).toContain('execute_code');
+			expect(server.approvalPrograms()).toEqual([
+				buildPortalCompositionApprovalProgram(),
+				buildPortalCompositionApprovalProgram(),
+			]);
+			expect(server.executeCodeRequestCount()).toBe(0);
+			expect(server.generatedTerminalRequestCount()).toBe(0);
+			await validatePortalCompositionGeneratedProgramSyntax({
+				pythonProgram: buildPortalCompositionApprovalProgram(),
+				nodeProgram: 'const valid = 1;',
+			});
 		} finally {
 			await server.close();
 		}

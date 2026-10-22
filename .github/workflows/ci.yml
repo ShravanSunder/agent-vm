@@ -43,6 +43,9 @@ jobs:
           - name: Hermes adapter tests in pinned runtime
             run: pnpm python:test:hermes
 
+          - name: Hermes adapter typecheck in pinned runtime
+            run: pnpm python:typecheck:hermes
+
           - name: E2E inventory
             run: pnpm test:e2e:inventory
 

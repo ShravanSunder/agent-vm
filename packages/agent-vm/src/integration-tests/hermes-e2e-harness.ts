@@ -18,9 +18,8 @@ import {
 	removeE2eLocalPackageTarballs,
 	removeE2eTempRoot,
 	reserveE2eTcpPoolPortRange,
-	requireLocalPackageTarballPath,
 	resolveE2eCacheRoot,
-	useLocalToolVmMcpPortalPackageTarballs,
+	useLocalToolVmPackageTarballs,
 	type LocalDockerPackageTarball,
 	type ManagedVmE2ePrerequisiteOptions,
 } from './e2e-harness.js';
@@ -65,6 +64,9 @@ export async function shouldRunHermesE2e(
 }
 
 const hermesGatewayLocalPackageNames = [
+	'tool-access',
+	'tool-engine',
+	'tool-host-node',
 	'agent-portal-sdk',
 	'oauth-broker-contracts',
 	'config-contracts',
@@ -193,8 +195,11 @@ export async function materializeLocalHermesGatewayImagePackages(options: {
 		})),
 	);
 	try {
-		const localPackageTarballs = packedTarballPaths.map(({ packageName, sourcePath }) =>
-			createLocalDockerPackageTarball({ packageName, sourcePath }),
+		const localPackageTarballs = await Promise.all(
+			packedTarballPaths.map(
+				async ({ packageName, sourcePath }) =>
+					await createLocalDockerPackageTarball({ packageName, sourcePath }),
+			),
 		);
 		const [agentPortalSdkWheelPath, hermesAdapterWheelPath] = await Promise.all([
 			buildLocalPythonWheel({
@@ -261,24 +266,19 @@ export async function materializeLocalHermesGatewayImagePackages(options: {
 				`${JSON.stringify(recipe.buildConfig, null, '\t')}\n`,
 				'utf8',
 			),
-			useLocalToolVmMcpPortalPackageTarballs({
+			useLocalToolVmPackageTarballs({
 				localAgentPortalSdkWheelPath: agentPortalSdkWheelPath,
-				localAgentPortalSdkTarballPath: requireLocalPackageTarballPath(
-					packedTarballPaths,
-					'agent-portal-sdk',
-				),
-				localConfigContractsTarballPath: requireLocalPackageTarballPath(
-					packedTarballPaths,
-					'config-contracts',
-				),
-				localMcpPortalTarballPath: requireLocalPackageTarballPath(packedTarballPaths, 'mcp-portal'),
-				localOAuthBrokerContractsTarballPath: requireLocalPackageTarballPath(
-					packedTarballPaths,
-					'oauth-broker-contracts',
-				),
-				localSecretManagementTarballPath: requireLocalPackageTarballPath(
-					packedTarballPaths,
-					'secret-management',
+				localPackageTarballs: localPackageTarballs.filter((entry) =>
+					[
+						'agent-portal-sdk',
+						'config-contracts',
+						'mcp-portal',
+						'oauth-broker-contracts',
+						'secret-management',
+						'tool-access',
+						'tool-engine',
+						'tool-host-node',
+					].includes(entry.packageName),
 				),
 				projectRoot: options.projectRoot,
 				systemConfig: options.systemConfig,

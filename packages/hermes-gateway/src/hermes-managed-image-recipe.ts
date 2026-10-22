@@ -130,6 +130,14 @@ function requireExactPublicPackageVersion(packageVersion: string, packageName: s
 	return packageVersion;
 }
 
+function renderInstalledPortalPythonCheck(sdkVersion: string, adapterVersion: string): string {
+	return `    /opt/hermes/.venv/bin/python -c 'import importlib.metadata as metadata; import agent_vm_agent_portal_sdk.standard_mcp_transport; import agent_vm_hermes_adapter; assert metadata.version("agent-vm-agent-portal-sdk") == "${sdkVersion}"; assert metadata.version("agent-vm-hermes-adapter") == "${adapterVersion}"; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"; assert metadata.version("mcp") == "2.0.0"; assert metadata.version("httpx2").split(".")[0] == "2"; assert "mcp==2.0.0" in metadata.requires("agent-vm-agent-portal-sdk")'`;
+}
+
+function renderInstalledPortalNodeCheck(): string {
+	return '    node --input-type=module -e \'await import("@agent-collaboration/tool-access/authorization"); await import("@agent-collaboration/tool-engine/capability-dispatch"); await import("@agent-collaboration/tool-host-node/catalog-typescript")\'';
+}
+
 function renderHermesManagedImageLocalArtifactInstallLines(
 	artifactContext: HermesManagedImageLocalArtifactContext,
 ): readonly string[] {
@@ -171,6 +179,7 @@ function renderHermesManagedImageLocalArtifactInstallLines(
 		'RUN test -f /opt/agent-vm/local-packages/' + packageManifestFileName + ' && \\',
 		'    cd /opt/agent-vm/local-packages && \\',
 		'    pnpm install --prod --ignore-scripts && \\',
+		`${renderInstalledPortalNodeCheck()} && \\`,
 		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
 		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
 		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
@@ -185,7 +194,7 @@ function renderHermesManagedImageLocalArtifactInstallLines(
 		'    test -x "$hermes_scripts/agent-vm-hermes-gateway" && \\',
 		'    ln -sfn "$hermes_scripts/agent-vm-hermes-gateway" /usr/local/bin/agent-vm-hermes-gateway && \\',
 		'    command -v agent-vm-hermes-gateway && \\',
-		`    /opt/hermes/.venv/bin/python -c 'import importlib.metadata as metadata; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"' && \\`,
+		`${renderInstalledPortalPythonCheck(agentPortalSdkWheelFileName.split('-')[1] ?? '', hermesAdapterWheelFileName.split('-')[1] ?? '')} && \\`,
 		`    rm -f /tmp/${agentPortalSdkWheelFileName} /tmp/${hermesAdapterWheelFileName}`,
 	];
 }
@@ -201,6 +210,9 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 		'/opt/agent-vm/registry-packages/node_modules/@agent-vm/gateway-runtime/dist/bin/gateway-runtime.js';
 	const registryPackageManifest = JSON.stringify({
 		dependencies: {
+			'@agent-collaboration/tool-access': agentVmVersion,
+			'@agent-collaboration/tool-engine': agentVmVersion,
+			'@agent-collaboration/tool-host-node': agentVmVersion,
 			'@agent-vm/gateway-runtime': agentVmVersion,
 		},
 		private: true,
@@ -217,6 +229,7 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 		'    cd /opt/agent-vm/registry-packages && \\',
 		`    printf '%s\\n' '${registryPackageManifest}' > package.json && \\`,
 		'    pnpm install --prod --ignore-scripts --registry=https://registry.npmjs.org/ && \\',
+		`${renderInstalledPortalNodeCheck()} && \\`,
 		`    gateway_runtime_bin="${gatewayRuntimeExecutablePath}" && \\`,
 		'    test -f "$gateway_runtime_bin" && chmod 755 "$gateway_runtime_bin" && \\',
 		'    ln -sfn "$gateway_runtime_bin" /usr/local/bin/agent-vm-gateway-runtime && \\',
@@ -232,7 +245,7 @@ function renderHermesManagedImagePublicRegistryInstallLines(
 		'    test -x "$hermes_scripts/agent-vm-hermes-gateway" && \\',
 		'    ln -sfn "$hermes_scripts/agent-vm-hermes-gateway" /usr/local/bin/agent-vm-hermes-gateway && \\',
 		'    command -v agent-vm-hermes-gateway && \\',
-		`    /opt/hermes/.venv/bin/python -c 'import importlib.metadata as metadata; assert metadata.version("agent-vm-agent-portal-sdk") == "${agentVmVersion}"; assert metadata.version("agent-vm-hermes-adapter") == "${agentVmVersion}"; assert metadata.version("${HERMES_AGENT_DISTRIBUTION.distributionName}") == "${HERMES_AGENT_DISTRIBUTION.projectVersion}"'`,
+		renderInstalledPortalPythonCheck(agentVmVersion, agentVmVersion),
 	];
 }
 

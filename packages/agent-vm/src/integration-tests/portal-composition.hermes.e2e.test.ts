@@ -1,5 +1,4 @@
-/* oxlint-disable eslint/no-await-in-loop -- bounded host liveness observation must remain sequential */
-import { access, mkdir, readFile, watch, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -7,10 +6,8 @@ import {
 	startFakeUpstreamMcpServer,
 	type StartedFakeUpstreamMcpServer,
 } from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
-import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { z } from 'zod/v4';
 
 import {
 	createControllerStateRoot,
@@ -28,7 +25,6 @@ import {
 	startE2eControllerRuntime,
 	type E2eHarnessRuntime,
 } from './e2e-harness.js';
-import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import {
 	buildHermesE2eProfileApiServerKeySecrets,
 	hermesE2eProfileApiServerKey,
@@ -38,6 +34,14 @@ import {
 	scaffoldHermesE2eProject,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
+import { assertManagedPortalImageInstallation } from './managed-portal-distribution-test-fixture.js';
+import {
+	createPortalCompositionApprovalObservation,
+	portalCompositionApprovalNamespace,
+	requestPortalCompositionApprovalRun,
+	portalCompositionApprovalPrompt,
+	portalCompositionApprovalFinalMarker,
+} from './portal-composition-approval-test-fixture.js';
 import { rethrowPortalCompositionFailure } from './portal-composition-failure-diagnostics.js';
 import {
 	buildPortalCompositionFixtureConfig,
@@ -54,11 +58,11 @@ import {
 	buildPortalCompositionProgram as buildSharedPortalCompositionProgram,
 	portalCompositionArtifactNamespace,
 	portalCompositionArtifactOperationName,
-	portalCompositionProgramPhaseFilename,
-	portalCompositionLossCancellationWindowMilliseconds,
 	portalCompositionLossProbeOperationName,
 	validatePortalCompositionGeneratedProgramSyntax,
 } from './portal-composition-hermes-e2e-test-fixture.js';
+import { observeLossProbeProcessExit } from './portal-composition-loss-test-fixture.js';
+import { assertPortalCompositionResults } from './portal-composition-result-assertions-test-fixture.js';
 
 const architecture = currentE2eArchitecture();
 const runPortalCompositionHermesE2e =
@@ -81,60 +85,6 @@ const programResultMarker = 'portal-composition-program-complete';
 const resultDerivedValue = 'derived-from-read-thing';
 const sessionId = 'portal-composition-hermes-session';
 const toolVmEffectOperationName = 'write_tool_vm_effect';
-
-function hostProcessIsAlive(processId: number): boolean {
-	try {
-		process.kill(processId, 0);
-		return true;
-	} catch (error: unknown) {
-		if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
-			return false;
-		}
-		throw error;
-	}
-}
-
-async function observeLossProbeProcessExit(options: {
-	readonly timestampPath: string;
-	readonly pidPath: string;
-	readonly signal: AbortSignal;
-}): Promise<void> {
-	const readBarrier = async (): Promise<{ processId: number; startedAtMs: number } | undefined> => {
-		const [pidText, timestampText] = await Promise.all([
-			readFile(options.pidPath, 'utf8').catch(() => undefined),
-			readFile(options.timestampPath, 'utf8').catch(() => undefined),
-		]);
-		if (pidText === undefined || timestampText === undefined) return undefined;
-		if (!/^[1-9][0-9]*$/u.test(pidText.trim()) || !/^[1-9][0-9]*$/u.test(timestampText.trim())) {
-			throw new Error('Loss-probe PID or fast timestamp was invalid.');
-		}
-		return {
-			processId: Number.parseInt(pidText, 10),
-			startedAtMs: Number.parseInt(timestampText, 10),
-		};
-	};
-	let barrier = await readBarrier();
-	if (barrier === undefined) {
-		for await (const event of watch(path.dirname(options.pidPath), {
-			signal: AbortSignal.any([options.signal, AbortSignal.timeout(180_000)]),
-		})) {
-			void event;
-			barrier = await readBarrier();
-			if (barrier !== undefined) break;
-		}
-	}
-	if (barrier === undefined) throw new Error('Loss-probe host barrier was never observed.');
-	const deadline = barrier.startedAtMs + portalCompositionLossCancellationWindowMilliseconds;
-	while (hostProcessIsAlive(barrier.processId) && Date.now() <= deadline) {
-		options.signal.throwIfAborted();
-		await waitForProtocolRetryInterval(50);
-	}
-	if (hostProcessIsAlive(barrier.processId) || Date.now() > deadline) {
-		throw new Error(
-			`Loss-probe host process ${String(barrier.processId)} did not exit within the cancellation window.`,
-		);
-	}
-}
 
 async function writePortalCompositionConfiguration(options: {
 	readonly barrierFifoPath: string;
@@ -233,6 +183,7 @@ async function writePortalCompositionConfiguration(options: {
 				[configuredCliNamespace]: ['protected_uds'],
 				[fakeUpstreamNamespace]: ['mcp', 'protected_uds'],
 				[portalCompositionArtifactNamespace]: ['protected_uds'],
+				[portalCompositionApprovalNamespace]: ['protected_uds'],
 			},
 		},
 	};
@@ -297,14 +248,19 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 		if (zone === undefined || zone.gateway.type !== 'hermes') {
 			throw new Error('Expected the portal composition Hermes zone.');
 		}
-		const credentialedRuntimeDirectory = resolveControllerGatewayRecordTargets({
+		const controllerRecords = resolveControllerGatewayRecordTargets({
 			gatewayStateRoot: resolveControllerGatewayStateRoot({
 				controllerStateRoot: createControllerStateRoot({
 					controllerStateDirectoryPath: project.systemConfig.controllerStateDir,
 				}),
 				zoneId: zone.id,
 			}),
-		}).credentialedRuntimeRecords.directoryPath;
+		});
+		const credentialedRuntimeDirectory = controllerRecords.credentialedRuntimeRecords.directoryPath;
+		zone.approvalAccess = {
+			audience: 'agent-vm-controller-approval',
+			approvers: [{ approverId: 'hermes-native', kind: 'managed_gateway' }],
+		};
 		zone.gateway.profileSecretProjectionsByAgent[agentId] = {
 			API_SERVER_KEY: hermesE2eProfileApiServerKeyEnvironmentName(agentId),
 		};
@@ -386,17 +342,49 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 			zoneId: zone.id,
 		});
 		await mcpServer.firstListToolsRequest;
+		if (gatewayVm === undefined) throw new Error('Expected the real managed Gateway VM');
+		const gatewayProfile = project.systemConfig.imageProfiles.gateways[zone.gateway.imageProfile];
+		if (gatewayProfile === undefined) throw new Error('Expected selected Hermes image profile');
+		await assertManagedPortalImageInstallation({
+			vm: gatewayVm,
+			repoRoot,
+			artifactDirectory: path.join(path.dirname(gatewayProfile.buildConfig), 'local-agent-vm'),
+		});
+		const approvalObservation = createPortalCompositionApprovalObservation({
+			recordsTarget: controllerRecords.approvalRecords,
+			calls: () => mcpServer?.calls ?? [],
+		});
+
+		const approvalGatewayPort = project.gatewayPort;
+		const runApproval = async (execution: number): Promise<void> => {
+			const output = await requestPortalCompositionApprovalRun({
+				agentId,
+				apiServerKey: hermesE2eProfileApiServerKey(agentId),
+				gatewayPort: approvalGatewayPort,
+				modelName,
+				prompt: portalCompositionApprovalPrompt,
+				sessionId: `${sessionId}-approval-${execution}`,
+				onApproval: approvalObservation.onApproval,
+			});
+			expect(output).toContain(portalCompositionApprovalFinalMarker);
+		};
+		await runApproval(1);
+		await runApproval(2);
+		await approvalObservation.assertSettled(modelServer.approvalResults());
+		expect(modelServer.approvalPrograms()).toHaveLength(2);
+		expect(modelServer.approvalPrograms()[1]).toBe(modelServer.approvalPrograms()[0]);
+		expect(modelServer.approvalResults()).toHaveLength(2);
 
 		const lossObservation = new AbortController();
 		const [response] = await Promise.all([
 			requestPortalCompositionHermesTurn({
 				agentId,
 				apiServerKey: hermesE2eProfileApiServerKey(agentId),
-				controllerUrl: harness.controllerUrl,
 				gatewayPort: project.gatewayPort,
 				modelName,
 				prompt: promptMarker,
 				sessionId,
+				controllerUrl: harness.controllerUrl,
 				zoneId: zone.id,
 			}).then((turnResponse) => {
 				expect(
@@ -430,186 +418,20 @@ describePortalCompositionHermesE2e('e2e: Tool VM Portal composition through Herm
 				}),
 			)
 			.finally(() => lossObservation.abort());
-		expect(
+		await approvalObservation.assertSettled(modelServer.approvalResults());
+		await assertPortalCompositionResults({
 			response,
-			`Raw foreground results: ${JSON.stringify({ executeCode: modelServer.latestExecuteCodeResult(), generatedTerminal: modelServer.latestGeneratedTerminalResult() })}`,
-		).toContain(finalMarker);
-		expect(modelServer.executeCodeRequestCount()).toBe(2);
-		expect(modelServer.generatedTerminalRequestCount()).toBe(1);
-		const resetProbeResult = modelServer.secondExecuteCodeResult();
-		const resetProbeEnvelope = z
-			.object({
-				kernel: z.object({
-					remote: z.literal(true),
-					reused: z.literal(false),
-					state_reset: z.literal(true),
-				}),
-				output: z.string(),
-				status: z.literal('success'),
-			})
-			.parse(JSON.parse(resetProbeResult ?? 'null'));
-		expect(resetProbeEnvelope.output).toContain('portal-composition-kernel-reset-probe');
-		const executeCodeResult = modelServer.latestExecuteCodeResult();
-		expect(executeCodeResult).toContain(programResultMarker);
-		expect(executeCodeResult).toContain(resultDerivedValue);
-		expect(executeCodeResult).toContain('hostSentinelVisible');
-		expect(executeCodeResult).toContain('/opt/agent-vm-tools/bin/python');
-		const executionEnvelope = z
-			.object({
-				kernel: z.object({ remote: z.literal(true), reused: z.literal(false) }),
-				output: z.string(),
-				status: z.literal('success'),
-			})
-			.parse(JSON.parse(executeCodeResult ?? 'null'));
-		const compositionOutput: unknown = JSON.parse(executionEnvelope.output);
-		expect(compositionOutput).toMatchObject({
-			capacityReuse: { artifactBytes: 70 * 256 * 3_840, independentOperationCount: 3 },
-			toolVmConfiguredCli: {
-				effect: resultDerivedValue,
-				result: {
-					ok: true,
-					items: [
-						{
-							id: 'python-tool-vm-write',
-							status: 'ok',
-							outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
-							value: {
-								exitCode: 0,
-								stderrTruncated: false,
-								stdout: `tool-vm:${resultDerivedValue}`,
-								stdoutTruncated: false,
-							},
-						},
-					],
-				},
-			},
+			finalMarker,
+			modelServer,
+			mcpServer,
+			programResultMarker,
+			resultDerivedValue,
+			hostEffectPath,
+			hiddenHostEffectPath,
+			concurrencyOrderPath,
+			lossOrderPath,
+			hostSentinelPath,
+			controllerManagedVmRequests,
 		});
-		const generatedTerminalProgram = modelServer.observedGeneratedTerminalProgram();
-		expect(generatedTerminalProgram?.orientationImports).toEqual({
-			configuredCli: {
-				exportedFactoryName: 'bindPortalCompositionExecutionTools',
-				modulePath: expect.stringMatching(
-					/^\/run\/agent-vm\/tool-portal-sdk\/[a-f0-9]{64}\/portal-composition-execution-[a-f0-9]{8}\.ts$/u,
-				),
-			},
-			mcp: {
-				exportedFactoryName: 'bindUpstreamMockTools',
-				modulePath: expect.stringMatching(
-					/^\/run\/agent-vm\/tool-portal-sdk\/[a-f0-9]{64}\/upstream-mock-[a-f0-9]{8}\.ts$/u,
-				),
-			},
-		});
-		const generatedTerminalResult = modelServer.latestGeneratedTerminalResult();
-		expect(generatedTerminalResult).toContain('portal-composition-generated-terminal-complete');
-		const generatedTerminalEnvelope = z
-			.object({ exit_code: z.literal(0), output: z.string(), error: z.null() })
-			.parse(JSON.parse(generatedTerminalResult ?? 'null'));
-		const generatedTerminalOutput = z
-			.object({
-				concurrentConfiguredCli: PortalCallResultSchema,
-				concurrentMcpWrite: PortalCallResultSchema,
-				dependentRead: PortalCallResultSchema,
-				derivedValue: z.literal('generated-from-read-thing'),
-				manifestFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
-				marker: z.literal('portal-composition-generated-terminal-complete'),
-				orientationImports: z.object({
-					configuredCli: z.object({
-						exportedFactoryName: z.literal('bindPortalCompositionExecutionTools'),
-						modulePath: z.string(),
-					}),
-					mcp: z.object({
-						exportedFactoryName: z.literal('bindUpstreamMockTools'),
-						modulePath: z.string(),
-					}),
-				}),
-			})
-			.parse(JSON.parse(generatedTerminalEnvelope.output));
-		expect(generatedTerminalOutput.orientationImports).toEqual(
-			generatedTerminalProgram?.orientationImports,
-		);
-		expect(generatedTerminalOutput.orientationImports.mcp.modulePath.split('/').at(-2)).toBe(
-			generatedTerminalOutput.manifestFingerprint,
-		);
-		expect(generatedTerminalOutput.dependentRead.items[0]).toMatchObject({
-			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
-			status: 'ok',
-			value: { result: { structuredContent: { name: 'read_thing', ok: true } } },
-		});
-		expect(generatedTerminalOutput.concurrentMcpWrite.items[0]).toMatchObject({
-			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
-			status: 'ok',
-			value: { result: { structuredContent: { name: 'write_thing', ok: true } } },
-		});
-		expect(generatedTerminalOutput.concurrentConfiguredCli.items[0]).toMatchObject({
-			outcome: { certainty: 'proven', completion: 'succeeded', kind: 'completed' },
-			status: 'ok',
-			value: {
-				exitCode: 0,
-				stdout: 'tool-vm:generated-from-read-thing',
-			},
-		});
-		expect(mcpServer.calls).toEqual([
-			{ argumentsValue: { title: 'python-seed' }, name: 'read_thing' },
-			{ argumentsValue: { title: resultDerivedValue }, name: 'write_thing' },
-			{ argumentsValue: { title: 'generated-terminal-seed' }, name: 'read_thing' },
-			{ argumentsValue: { title: 'generated-from-read-thing' }, name: 'write_thing' },
-		]);
-		expect(JSON.parse(await readFile(hostEffectPath, 'utf8'))).toEqual({
-			argv: ['write-host-effect', resultDerivedValue],
-			destination: 'controller-host',
-		});
-		await expect(access(`${hostEffectPath}.forged`)).rejects.toThrow();
-		await expect(access(hiddenHostEffectPath)).rejects.toThrow();
-		expect(await readFile(concurrencyOrderPath, 'utf8')).toBe(
-			['prepared', 'slow-admitted', 'fast-completed', 'release-started', 'slow-completed', ''].join(
-				'\n',
-			),
-		);
-		expect(await readFile(lossOrderPath, 'utf8')).toBe(
-			['loss-prepared', 'loss-admitted', 'loss-fast', ''].join('\n'),
-		);
-		await expect(access(hostSentinelPath)).resolves.toBeUndefined();
-		const toolVmRequest = controllerManagedVmRequests.find(
-			(request) => request.mounts['/workspace']?.kind === 'owned-filtered-workspace',
-		);
-		const workspaceMount = toolVmRequest?.mounts['/workspace'];
-		if (workspaceMount?.kind !== 'owned-filtered-workspace') {
-			throw new Error('Portal composition E2E did not observe the Tool VM workspace mount.');
-		}
-		const programPhase: unknown = JSON.parse(
-			await readFile(
-				path.join(
-					workspaceMount.directory.identity.canonicalPath,
-					portalCompositionProgramPhaseFilename,
-				),
-				'utf8',
-			),
-		);
-		expect(programPhase).toEqual({ phase: 'loss-prepare-returned' });
-		const toolVmOrigin: unknown = JSON.parse(
-			await readFile(
-				path.join(
-					workspaceMount.directory.identity.canonicalPath,
-					'portal-composition-tool-vm-origin.json',
-				),
-				'utf8',
-			),
-		);
-		expect(toolVmOrigin).toMatchObject({ hostSentinelVisible: false });
-		expect(toolVmOrigin).toEqual({
-			cwd: expect.stringMatching(/^\/tmp\/hermes_rkernel_[0-9a-f]{12}$/u),
-			hostSentinelVisible: false,
-			interpreter: expect.stringMatching(/^\/opt\/agent-vm-tools\/bin\/python(?:3(?:\.\d+)?)?$/u),
-		});
-		expect(
-			controllerManagedVmRequests.some((request) =>
-				request.sessionLabel.startsWith('credentialed-runtime-'),
-			),
-		).toBe(true);
-		expect(
-			controllerManagedVmRequests.some(
-				(request) => !request.sessionLabel.startsWith('credentialed-runtime-'),
-			),
-		).toBe(true);
 	}, 900_000);
 });

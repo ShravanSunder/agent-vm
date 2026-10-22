@@ -224,7 +224,7 @@ function renderManagedDockerfile(props: {
 		if (!hasLocalAgentVmPackageOverlay(props.overlay)) {
 			lines.push(
 				'RUN install -d -m 0755 /opt/agent-vm/portal-packages && pnpm add --dir /opt/agent-vm/portal-packages --prod --ignore-scripts ' +
-					shellJoin([props.portalSdkPackageSpec]),
+					shellJoin([props.portalSdkPackageSpec, `@agent-collaboration/tool-access@${version}`, `@agent-collaboration/tool-engine@${version}`, `@agent-collaboration/tool-host-node@${version}`]),
 			);
 		}
 	}
@@ -237,6 +237,8 @@ function renderManagedDockerfile(props: {
 		lines.push(
 			`RUN ln -sfnT ${packageRoot}/node_modules /node_modules && test -x ${toolPortalExecutable} && test "$(head -n 1 ${toolPortalExecutable})" = "#!/usr/bin/env node" && ln -sfn ${toolPortalExecutable} /pnpm/tool-portal`,
 		);
+		lines.push(`RUN cd ${packageRoot} && node --input-type=module -e 'await import("@agent-collaboration/tool-access/authorization"); await import("@agent-collaboration/tool-engine/capability-dispatch"); await import("@agent-collaboration/tool-host-node/catalog-typescript")'`);
+		lines.push('RUN /opt/agent-vm-tools/bin/python -c \'import importlib.metadata as metadata; import agent_vm_agent_portal_sdk.standard_mcp_transport; assert metadata.version("mcp") == "2.0.0"; assert metadata.version("httpx2").split(".")[0] == "2"; assert "mcp==2.0.0" in metadata.requires("agent-vm-agent-portal-sdk")\'');
 	}
 	lines.push('');
 	return lines.join('\n');

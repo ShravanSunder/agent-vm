@@ -24,6 +24,11 @@ import {
 	renderHermesManagedE2eConfiguration,
 	scaffoldHermesE2eProject,
 } from './hermes-e2e-harness.js';
+import {
+	expectedPortalNodeArtifacts,
+	installedPortalNodeArtifactsSchema,
+	portalNodeInstallationProbe,
+} from './managed-portal-distribution-test-fixture.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryRoots: string[] = [];
@@ -108,6 +113,50 @@ describe('shared Hermes E2E harness contracts', () => {
 		await expect(
 			fs.readFile(path.join(path.dirname(gatewayProfile.buildConfig), 'Dockerfile'), 'utf8'),
 		).resolves.toContain('agent_vm_hermes_adapter');
+		const manifest: unknown = JSON.parse(
+			await fs.readFile(path.join(localArtifactDirectory, 'package.json'), 'utf8'),
+		);
+		expect(manifest).toMatchObject({
+			dependencies: {
+				'@agent-collaboration/tool-access': expect.stringMatching(/^file:/u),
+				'@agent-collaboration/tool-engine': expect.stringMatching(/^file:/u),
+				'@agent-collaboration/tool-host-node': expect.stringMatching(/^file:/u),
+				'@agent-vm/mcp-portal': expect.stringMatching(/^file:/u),
+			},
+		});
+		await execFileAsync('pnpm', ['install', '--prod', '--ignore-scripts', '--offline'], {
+			cwd: localArtifactDirectory,
+			maxBuffer: 20 * 1024 * 1024,
+		});
+		const installed = installedPortalNodeArtifactsSchema.parse(
+			JSON.parse(
+				(
+					await execFileAsync(
+						'node',
+						['--input-type=module', '--eval', portalNodeInstallationProbe()],
+						{ cwd: localArtifactDirectory, maxBuffer: 20 * 1024 * 1024 },
+					)
+				).stdout,
+			),
+		);
+		expect(installed.map(({ resolvedPath: _resolvedPath, ...artifact }) => artifact)).toEqual(
+			await expectedPortalNodeArtifacts(localArtifactDirectory),
+		);
+		const installedRoot = await fs.realpath(localArtifactDirectory);
+		expect(
+			installed.every((artifact) =>
+				artifact.resolvedPath.startsWith(`${installedRoot}${path.sep}`),
+			),
+		).toBe(true);
+		expect(
+			await fs.readFile(
+				path.join(
+					localArtifactDirectory,
+					'node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js',
+				),
+				'utf8',
+			),
+		).toMatch(/^#!\/usr\/bin\/env node/u);
 	});
 
 	it('renders safe shared Hermes policy', () => {
