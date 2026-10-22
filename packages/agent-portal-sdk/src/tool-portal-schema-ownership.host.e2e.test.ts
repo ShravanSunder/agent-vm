@@ -28,25 +28,40 @@ it('keeps packed SDK and access schemas and refinement registry identical', asyn
 				await executeFile('tar', ['-xzf', archivePath, '-C', unpackedPath]);
 			}),
 		);
-		const dependencies = [
-			'zod',
-			'@agent-vm/oauth-broker-contracts',
-			'@modelcontextprotocol/client',
-			'@modelcontextprotocol/core',
-			'@optique/core',
-			'@optique/run',
-			'@optique/zod',
-		];
+		// Recreate each packed owner's declared dependency edges, using the packed
+		// Access artifact for the shared contract identity and installed external packages.
 		await Promise.all(
-			[...dependencies, '@agent-collaboration/tool-access'].map(async (dependency) => {
-				const link = path.join(directory, 'node_modules', dependency);
-				await mkdir(path.dirname(link), { recursive: true });
-				await symlink(
-					dependency === '@agent-collaboration/tool-access'
-						? path.join(directory, 'tool-access/package')
-						: path.join(repositoryRoot, 'packages/agent-portal-sdk/node_modules', dependency),
-					link,
-					'dir',
+			['tool-access', 'agent-portal-sdk'].map(async (packageDirectory) => {
+				const packedRoot = path.join(directory, packageDirectory, 'package');
+				const manifest: unknown = JSON.parse(
+					await readFile(path.join(packedRoot, 'package.json'), 'utf8'),
+				);
+				if (
+					typeof manifest !== 'object' ||
+					manifest === null ||
+					!('dependencies' in manifest) ||
+					typeof manifest.dependencies !== 'object' ||
+					manifest.dependencies === null
+				)
+					throw new Error(`Packed ${packageDirectory} has no dependency manifest.`);
+				await Promise.all(
+					Object.keys(manifest.dependencies).map(async (dependency) => {
+						const link = path.join(packedRoot, 'node_modules', dependency);
+						await mkdir(path.dirname(link), { recursive: true });
+						await symlink(
+							dependency === '@agent-collaboration/tool-access'
+								? path.join(directory, 'tool-access/package')
+								: path.join(
+										repositoryRoot,
+										'packages',
+										packageDirectory,
+										'node_modules',
+										dependency,
+									),
+							link,
+							'dir',
+						);
+					}),
 				);
 			}),
 		);
