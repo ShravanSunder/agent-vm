@@ -420,9 +420,14 @@ Branch `tool-portal/s4c-managed-distribution`, base S4b; one shipping/integratio
   remain the permanent harness, using owned temporary roots.
 - **CI only:** pinned Hermes-image Python tests/typecheck; real Tool VM, managed
   Gateway/Hermes and image assembly. Extend `portal-composition.hermes.e2e.test.ts`
-  with the Verification row 6 journey: protected tool -> real controller challenge
-  and decision -> exactly one external effect -> replay adds zero effects. Keep its
-  current unprotected-call, catalog, artifact and private-transport assertions.
+  with the Verification row 6 journey: protected tool -> Hermes native approval ->
+  real controller decision -> exactly one counted external effect, with the ledger
+  read back as used. A second guest run of the same code gets its own pending
+  challenge, is denied, and the count stays one. The replay-adds-zero check stays in
+  #253's permanent integration test, at the private socket and durable ledger where
+  the one-use rule lives. Production allows one active connection per attachment, so
+  the VM journey can't open a second client to replay (Lead, 2026-10-22). Keep the
+  test's current unprotected-call, catalog, artifact and private-transport assertions.
 - Wrong builds: a Dockerfile still installs the old binary; an overlay lacks the new
   scope; old cached image/wheel is used; Hermes runs MCP instead of private UDS;
   source tests pass but installed wheel imports fail; replay produces a second effect.
