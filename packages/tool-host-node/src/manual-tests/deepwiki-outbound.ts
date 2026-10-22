@@ -93,7 +93,7 @@ const config = nodeHostConfigSchema.parse({
 				kind: 'mcp',
 				namespace: 'deepwiki',
 				transport: {
-					kind: 'auto-http',
+					kind: 'streamable-http',
 					url: endpoint.href,
 					headers: {},
 					connectionTimeoutMs: 120000,
