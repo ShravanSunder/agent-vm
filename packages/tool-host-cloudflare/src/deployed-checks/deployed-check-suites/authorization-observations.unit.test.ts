@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	assertCallEffects,
+	assertOrganizationCatalogTools,
 	assertOneApprovalUse,
 	assertOwnCredential,
 	assertRefusedCall,
@@ -55,5 +56,37 @@ describe('authorization proof sensitivity', () => {
 	it('accepts replay keeping exactly one effect and rejects a second effect', () => {
 		expect(() => assertCallEffects(observation(), 'one', 1)).not.toThrow();
 		expect(() => assertCallEffects(observation(2), 'one', 1)).toThrow();
+	});
+});
+
+describe('organization catalog label boundaries', () => {
+	it.each([
+		['alpha-long', 'alpha'],
+		['alpha', 'alpha-long'],
+		['my-alpha', 'alpha'],
+	])('accepts own %s when the other label is %s', (ownLabel, otherLabel) => {
+		expect(() =>
+			assertOrganizationCatalogTools({
+				names: [`same-server__only-${ownLabel}__hash`],
+				ownLabel,
+				otherLabel,
+			}),
+		).not.toThrow();
+	});
+	it('rejects an exact foreign organization tool and a missing own tool', () => {
+		expect(() =>
+			assertOrganizationCatalogTools({
+				names: ['same-server__only-alpha-long__hash', 'same-server__only-alpha__hash'],
+				ownLabel: 'alpha-long',
+				otherLabel: 'alpha',
+			}),
+		).toThrow();
+		expect(() =>
+			assertOrganizationCatalogTools({
+				names: ['same-server__read__hash'],
+				ownLabel: 'alpha-long',
+				otherLabel: 'alpha',
+			}),
+		).toThrow();
 	});
 });

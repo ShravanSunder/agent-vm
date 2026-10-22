@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { readPrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import {
 	assertOwnCredential,
+	assertOrganizationCatalogTools,
 	assertRefusedCall,
 } from '#worker-host/deployed-checks/deployed-check-suites/authorization-observations';
 import {
@@ -43,13 +44,11 @@ it('row 14: token organization and sender own the tools and credential, includin
 				.object({ tools: z.array(z.object({ name: z.string() })) })
 				.parse(listed)
 				.tools.map((tool) => tool.name);
-			if (
-				!names.some((name) => name.startsWith(`same-server__only-${organization.label}__`)) ||
-				names.some((name) =>
-					name.includes(`only-${organization === alpha ? beta.label : alpha.label}`),
-				)
-			)
-				throw new Error('Organization catalog leaked or lost tools.');
+			assertOrganizationCatalogTools({
+				names,
+				ownLabel: organization.label,
+				otherLabel: organization === alpha ? beta.label : alpha.label,
+			});
 		}),
 	);
 	const refuse = async (options: PortalRequestOptions, toolName = 'read'): Promise<void> => {

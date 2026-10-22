@@ -39,3 +39,16 @@ export function assertRefusedCall(
 	if (response.status !== 401 && !(response.status === 200 && response.result?.isError === true))
 		throw new Error('Refused control was served.');
 }
+
+/** Require an exact organization tool boundary, including when labels share a prefix. */
+export function assertOrganizationCatalogTools(props: {
+	readonly names: readonly string[];
+	readonly ownLabel: string;
+	readonly otherLabel: string;
+}): void {
+	if (
+		!props.names.some((name) => name.startsWith(`same-server__only-${props.ownLabel}__`)) ||
+		props.names.some((name) => name.startsWith(`same-server__only-${props.otherLabel}__`))
+	)
+		throw new Error('Organization catalog leaked or lost tools.');
+}
