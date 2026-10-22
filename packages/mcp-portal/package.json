@@ -62,10 +62,6 @@
 		"./portal-auth/agent-bearer-token": {
 			"types": "./dist/portal-auth/agent-bearer-token.d.ts",
 			"import": "./dist/portal-auth/agent-bearer-token.js"
-		},
-		"./testing/fake-upstream-mcp-server": {
-			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
-			"import": "./dist/testing/fake-upstream-mcp-server.js"
 		}
 	},
 	"publishConfig": {
@@ -79,6 +75,8 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/mcp-portal/src"
 	},
 	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"@agent-collaboration/tool-host-node": "workspace:*",
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",

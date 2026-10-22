@@ -1,8 +1,7 @@
 import { mcpPortalProfileDefinitionSchema } from '@agent-collaboration/tool-access/contracts';
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
+import { secretValueSchema } from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
-
-import { mcpConfigSchema } from '#tool-host-core/hosted-configuration/models/mcp-configuration';
-import { secretValueSchema } from '#tool-host-core/hosted-configuration/models/secret-values';
 
 // Proxy policy wire format. The HTTP listener and bearer-master-key fields have no authority here.
 export const hostedPortalConfigurationSchema = z.strictObject({

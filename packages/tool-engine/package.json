@@ -8,11 +8,16 @@
 	],
 	"type": "module",
 	"imports": {
+		"#standalone-tool-portal/*": "./src/standalone-tool-portal/*.ts",
 		"#capability-dispatch/*": "./src/capability-dispatch/*.ts",
 		"#mcp-gateway/*": "./src/mcp-gateway/*.ts",
 		"#upstream-mcp-connectors/*": "./src/upstream-mcp-connectors/*.ts"
 	},
 	"exports": {
+		"./standalone-tool-portal": {
+			"types": "./dist/standalone-tool-portal/index.d.ts",
+			"import": "./dist/standalone-tool-portal/index.js"
+		},
 		"./capability-dispatch": {
 			"types": "./dist/capability-dispatch/index.d.ts",
 			"import": "./dist/capability-dispatch/index.js"
@@ -36,12 +41,13 @@
 	},
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
+		"@modelcontextprotocol/client": "2.3.1",
 		"@modelcontextprotocol/core": "2.3.1",
-		"@modelcontextprotocol/sdk": "1.29.0",
 		"@modelcontextprotocol/server": "2.3.1",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"vitest": "^4.1.5"
 	}
 }

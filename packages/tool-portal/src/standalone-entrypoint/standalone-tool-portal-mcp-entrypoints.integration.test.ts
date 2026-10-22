@@ -1,4 +1,4 @@
-import type { StandaloneToolPortalConfig } from '@agent-vm/config-contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it, vi } from 'vitest';
 

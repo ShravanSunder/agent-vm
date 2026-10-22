@@ -2,11 +2,10 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 
-import {
-	createConfigContractSchemaArtifacts,
-	mcpPortalConfigSchemaPaths,
-} from '@agent-vm/config-contracts';
+import { mcpPortalConfigSchemaPaths } from '@agent-collaboration/tool-access/contracts';
 import type { EgressHostConfig, VmAudience } from '@agent-vm/gateway-lifecycle';
+
+import { createConfigContractSchemaArtifacts } from '#agent-vm/cli/config-schema-artifacts';
 
 import { resolveManagedVmBackendPackageSpec } from '../build/managed-vm-build-tooling.js';
 import { resolveConfigPath } from '../config/path-resolver.js';

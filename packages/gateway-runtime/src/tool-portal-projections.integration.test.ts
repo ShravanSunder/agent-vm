@@ -1,17 +1,18 @@
+import type { ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalArtifactReadRequestSchema,
 	PortalCallRequestSchema,
-	type PortalCallRequest,
 	PortalDescribeRequestSchema,
-	type PortalDescribeRequest,
 	PortalListRequestSchema,
-	type PortalListRequest,
 	PortalSearchRequestSchema,
-	type PortalSearchRequest,
-	type PortalCallResult,
 	type PortalBackendDescribeResult,
 	type PortalBackendListResult,
 	type PortalBackendSearchResult,
+	type PortalCallRequest,
+	type PortalCallResult,
+	type PortalDescribeRequest,
+	type PortalListRequest,
+	type PortalSearchRequest,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeClient,
@@ -19,22 +20,19 @@ import {
 	type GatewayRuntimeRequestOptions,
 	type GatewayRuntimeTransportFactory,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
+import { createManagedToolPortalCapabilityCore } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-portal-facade.js';
 import {
-	createManagedToolPortalCapabilityCore,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
-	type ToolPortalInvocationOptions,
 	type ToolPortalCapabilityCore,
+	type ToolPortalInvocationOptions,
 	type ToolPortalTrustedInvocationContext,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayRuntimeArtifactReader } from './artifacts/artifact-store.js';
@@ -213,7 +211,7 @@ interface RecordingBackendPort<TBackendKind extends ToolPortalBackendKind> {
 }
 
 interface RecordingComposition {
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly privateUdsProjection: RecordingPrivateUdsProjection;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
@@ -230,7 +228,7 @@ interface RecordingCompositionFixture {
 	readonly createCapabilityCoreForComposition: (props: {
 		readonly approvalPort: ToolPortalApprovalPort;
 		readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
-	}) => ToolPortalCapabilityCore<'managed'>;
+	}) => ToolPortalCapabilityCore;
 	readonly privateUdsFactoryCalls: readonly GatewayRuntimePrivateUdsProjectionFactoryProps[];
 }
 
@@ -462,7 +460,7 @@ function composeRecordingProjections(
 		(props: {
 			readonly approvalPort: ToolPortalApprovalPort;
 			readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
-		}): ToolPortalCapabilityCore<'managed'> =>
+		}): ToolPortalCapabilityCore =>
 			createManagedToolPortalCapabilityCore({
 				approvalPort: props.approvalPort,
 				backendPorts: {

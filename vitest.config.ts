@@ -36,6 +36,10 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'#agent-vm': repoPath('packages/agent-vm/src'),
+			'@agent-collaboration/tool-engine/standalone-tool-portal': repoPath(
+				'packages/tool-engine/src/standalone-tool-portal/index.ts',
+			),
 			'@agent-collaboration/tool-engine/mcp-gateway': repoPath(
 				'packages/tool-engine/src/mcp-gateway/index.ts',
 			),
@@ -140,6 +144,9 @@ export default defineConfig({
 			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
 			'@agent-vm/secret-management': repoPath('packages/secret-management/src/index.ts'),
+			'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': repoPath(
+				'packages/tool-host-node/src/testing/fake-upstream-mcp-server.ts',
+			),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
 			),

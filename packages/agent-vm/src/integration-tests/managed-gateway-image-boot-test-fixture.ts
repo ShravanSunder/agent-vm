@@ -1,9 +1,9 @@
 import { generateKeyPairSync } from 'node:crypto';
 
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeInputRevision,
@@ -22,8 +22,8 @@ import {
 } from '../config/system-config.js';
 import { prepareGatewayE2eProjectImages, removeE2eTempRoot } from './e2e-harness.js';
 import {
-	scaffoldHermesE2eProject,
 	materializeLocalHermesGatewayImagePackages,
+	scaffoldHermesE2eProject,
 	type HermesE2eProject,
 } from './hermes-e2e-harness.js';
 

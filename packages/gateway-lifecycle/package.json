@@ -36,6 +36,7 @@
 		"test:unit": "vitest run --root ../../ --config vitest.config.ts --project unit packages/gateway-lifecycle/src"
 	},
 	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-vm/managed-vm": "workspace:*",
 		"@agent-vm/secret-management": "workspace:*",
 		"uuid": "^11.1.1"

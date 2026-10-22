@@ -1,20 +1,19 @@
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalCallRequestSchema,
 	PortalCallResultSchema,
+	type PortalCallRequest,
 	type PortalCallResult,
 	type PortalDescribeResult,
 	type PortalListResult,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
 import {
-	type GatewayRuntimeClient,
 	type GatewayRuntimeAttachmentMetadata,
+	type GatewayRuntimeClient,
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
@@ -23,17 +22,17 @@ import { type ControllerApprovalOperatorIdentity } from '@agent-vm/controller-te
 import { type GatewayControlCallerContextSessionRef } from '@agent-vm/controller-test-support/control-session/gateway-control-caller-context.js';
 import type { GatewayEpochIdentity } from '@agent-vm/controller-test-support/vm-ownership/vm-ownership-contracts.js';
 import {
-	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
+	deriveGatewayControlStablePrincipal,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
 import { type GatewayRuntimePortalProjectionOperations } from '@agent-vm/gateway-runtime';
-import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
 import {
 	type ToolPortalBackendCallOptions,
 	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
+import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
 
 export const BASE_TIME_MS = Date.parse('2026-07-13T17:00:00.000Z');
 
@@ -164,8 +163,10 @@ export interface ApprovalControlTraceEntry {
 	readonly resultKind: string;
 }
 
-export interface RecordedMcpProviderInvocation {
-	readonly options: ToolPortalBackendCallOptions<'mcp_provider'>;
+export interface RecordedApprovedBackendInvocation {
+	readonly options:
+		| ToolPortalBackendCallOptions<'mcp_provider'>
+		| ToolPortalBackendCallOptions<'tool_vm_runner'>;
 	readonly request: typeof portalCallRequest;
 }
 
@@ -235,12 +236,25 @@ function unexpectedMcpProviderRead(): never {
 	throw new Error('MCP provider discovery was not expected in the approval call proof.');
 }
 
-export function createRecordingMcpProviderBackend(
-	invocations: RecordedMcpProviderInvocation[],
-): ToolPortalBackendPort<'mcp_provider'> {
-	return {
-		backendKind: 'mcp_provider',
-		call: async (request, options): Promise<PortalCallResult> => {
+export function createRecordingApprovedBackend(
+	backendKind: 'mcp_provider',
+	invocations: RecordedApprovedBackendInvocation[],
+): ToolPortalBackendPort<'mcp_provider'>;
+export function createRecordingApprovedBackend(
+	backendKind: 'tool_vm_runner',
+	invocations: RecordedApprovedBackendInvocation[],
+): ToolPortalBackendPort<'tool_vm_runner'>;
+export function createRecordingApprovedBackend(
+	backendKind: 'mcp_provider' | 'tool_vm_runner',
+	invocations: RecordedApprovedBackendInvocation[],
+): ToolPortalBackendPort<'mcp_provider'> | ToolPortalBackendPort<'tool_vm_runner'> {
+	const shared = {
+		call: async (
+			request: PortalCallRequest,
+			options:
+				| ToolPortalBackendCallOptions<'mcp_provider'>
+				| ToolPortalBackendCallOptions<'tool_vm_runner'>,
+		): Promise<PortalCallResult> => {
 			const parsedRequest = PortalCallRequestSchema.parse(request);
 			if (options.dispatchAuthority.kind !== 'approval-grant') {
 				throw new Error('MCP provider dispatch requires a controller-issued approval grant.');
@@ -268,6 +282,9 @@ export function createRecordingMcpProviderBackend(
 		list: async (): Promise<PortalListResult> => unexpectedMcpProviderRead(),
 		search: async (): Promise<PortalSearchResult> => unexpectedMcpProviderRead(),
 	};
+	return backendKind === 'mcp_provider'
+		? { backendKind: 'mcp_provider', ...shared }
+		: { backendKind: 'tool_vm_runner', ...shared };
 }
 
 export function singleResultItem(result: PortalCallResult): PortalCallResult['items'][number] {

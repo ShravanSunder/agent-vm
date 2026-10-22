@@ -13,12 +13,9 @@ import {
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
+import { deterministicOperationId, directDispatchFingerprint } from '@agent-vm/gateway-runtime';
 import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { createSecretResolver, type SecretResolver } from '@agent-vm/secret-management';
-import {
-	deterministicOperationId,
-	directDispatchFingerprint,
-} from '@agent-vm/tool-portal/dispatch-authority';
 import { describe, expect, it } from 'vitest';
 
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
@@ -33,8 +30,8 @@ import type {
 } from '../controller/control-session/gateway-control-caller-context.js';
 import { authorizeGatewayControlControllerExecution } from '../controller/control-session/gateway-control-controller-execution-authorization.js';
 import { createCredentialedRuntimeManager } from '../controller/credentialed-runtime/credentialed-runtime-manager.js';
-import { createControllerCredentialedRuntimeRegistryPublisher } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
 import type { CredentialedRuntimeResolution } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
+import { createControllerCredentialedRuntimeRegistryPublisher } from '../controller/credentialed-runtime/credentialed-runtime-registry.js';
 import { createOperationFileRetentionBudget } from '../controller/files/operation-file-retention-budget.js';
 import { createConfiguredCliManagedVmExecutor } from '../controller/runner/configured-cli-managed-vm-executor.js';
 import { writeGatewayRuntimePortalAdmissionFile } from '../gateway/gateway-runtime-portal-admission-file.js';

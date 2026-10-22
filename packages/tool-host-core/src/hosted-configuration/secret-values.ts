@@ -1,4 +1,4 @@
-import type { FormattedSecretValue } from '#tool-host-core/hosted-configuration/models/secret-values';
+import type { FormattedSecretValue } from '@agent-collaboration/tool-access/contracts';
 
 export function formatSecretValue(secret: FormattedSecretValue, rawValue: string): string {
 	if (secret.format === undefined) {

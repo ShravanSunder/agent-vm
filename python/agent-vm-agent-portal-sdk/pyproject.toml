@@ -7,7 +7,8 @@ authors = [{ name = "Shravan Sunder", email = "ShravanSunder@users.noreply.githu
 license = "MIT"
 dependencies = [
 	"httpx>=0.27.1,<1",
-	"mcp>=1.28.1,<2",
+	"httpx2>=2.5.0,<3",
+	"mcp==2.0.0",
 	"pydantic>=2.12.0,<3",
 	"pydantic-core>=2.41.5,<3",
 ]

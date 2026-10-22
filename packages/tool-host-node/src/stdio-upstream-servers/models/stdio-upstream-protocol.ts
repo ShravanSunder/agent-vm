@@ -1,6 +1,6 @@
 import type { JsonObject } from '@agent-collaboration/tool-access/contracts';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { Progress, Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Transport } from '@modelcontextprotocol/client';
+import type { Progress, Tool } from '@modelcontextprotocol/client';
 export type UpstreamMcpTransportKind = 'stdio';
 export interface NormalizedUpstreamMcpServer {
 	readonly namespace: string;
@@ -62,7 +62,6 @@ export interface UpstreamMcpClientLike {
 			readonly arguments: JsonObject;
 			readonly name: string;
 		},
-		resultSchema?: unknown,
 		options?: {
 			readonly onprogress?: (progress: UpstreamMcpProgress) => void;
 			readonly signal?: AbortSignal;

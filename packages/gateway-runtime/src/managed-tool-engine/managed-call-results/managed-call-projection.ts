@@ -10,24 +10,26 @@ import type {
 } from '@agent-vm/gateway-control-contracts';
 import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
 import {
-	approvalRequiredItem,
 	ambiguousDispatchItem,
+	approvalRequiredItem,
+	capabilityDeniedItem,
 	failedDispatchItem,
 	notDispatchedItem,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-results.js';
+import { deterministicOperationId } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-identity.js';
 import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
-import { deterministicOperationId } from '@agent-vm/tool-portal/dispatch-authority';
 export function createManagedPortalCallProjection(props: {
 	readonly request: ManagedToolEngineAdapter['request'];
 	readonly register: ManagedToolEngineAdapter['register'];
 	readonly release: ManagedToolEngineAdapter['release'];
 	readonly dispatcher: ManagedToolEngineAdapter['dispatcher'];
 	readonly snapshot: GatewayRuntimePortalSemanticSnapshot;
+	readonly preDispatchFailure?: (reference: string) => PortalCallResult['items'][number] | null;
 	readonly admission: (reference: string) => GatewayRuntimeApprovalAdmissionResult | null;
 	readonly backendItem: (reference: string) => PortalCallResult['items'][number] | null;
 }): ManagedToolEngineAdapter['call'] {
 	const { request, register, dispatcher, snapshot } = props;
-	return async (publicRequest, context) => {
+	return async (publicRequest, context, prepared) => {
 		const parsed = PortalCallRequestSchema.parse(publicRequest);
 		const stablePrincipal = deriveGatewayControlStablePrincipal({
 			principal: context.trustedContext.principal,
@@ -47,19 +49,26 @@ export function createManagedPortalCallProjection(props: {
 				let reference: string | undefined;
 				let dispatchAttempted = false;
 				try {
-					reference = register({ context, call });
+					reference = await register({ context, call, ...prepared });
 					const neutralRequest = request(reference);
 					// A thrown dispatch call may already have reached the leaf.
 					dispatchAttempted = true;
 					const result = await dispatcher.dispatch(neutralRequest);
 					if (result.kind === 'completed') return PortalCallItemResultSchema.parse(result.result);
+					const preDispatchFailure = props.preDispatchFailure?.(reference);
+					if (preDispatchFailure !== undefined && preDispatchFailure !== null)
+						return preDispatchFailure;
+					const admission = props.admission(reference);
+					if (admission?.kind === 'not-dispatched')
+						return notDispatchedItem({ ...common, reason: admission.reason });
+					if (admission?.kind === 'ambiguous') return ambiguousDispatchItem(common);
 					if (result.kind === 'pending') {
-						const admission = props.admission(reference);
 						if (admission?.kind !== 'approval-required')
 							throw new Error('Missing managed challenge.');
 						return approvalRequiredItem({
 							...common,
 							challengeId: result.reference,
+							managedGoogleDisplay: admission.challenge.intent.managedGoogle?.display,
 							expiresAt: admission.challenge.expiresAt,
 						});
 					}
@@ -71,6 +80,7 @@ export function createManagedPortalCallProjection(props: {
 								backendItem.outcome.kind === result.kind))
 					)
 						return backendItem;
+					if (result.kind === 'denied') return capabilityDeniedItem(common);
 					if (result.kind === 'failed')
 						return failedDispatchItem({ ...common, reason: result.reason });
 					return result.kind === 'ambiguous' || result.kind === 'result-expired'

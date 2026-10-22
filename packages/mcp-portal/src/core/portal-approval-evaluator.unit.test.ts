@@ -1,4 +1,4 @@
-import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
+import { type ResolvedMcpPortalProfile } from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
 import type { PortalToolRecord } from '../catalog-types.js';

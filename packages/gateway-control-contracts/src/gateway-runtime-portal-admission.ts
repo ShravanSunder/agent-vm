@@ -1,7 +1,5 @@
-import {
-	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
-} from '@agent-vm/config-contracts';
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
+import { effectiveManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { z } from 'zod/v4';
 
 import { GatewayRuntimePortalSemanticSnapshotSchema } from './gateway-runtime-portal-context.js';

@@ -107,3 +107,26 @@ export function ambiguousDispatchItem(props: {
 		status: 'error',
 	};
 }
+
+export function capabilityDeniedItem(props: {
+	readonly id: string;
+	readonly operationId: string;
+	readonly owningGeneration: string;
+}): PortalCallItem {
+	return {
+		error: {
+			code: 'capability_denied',
+			message: 'Capability is not allowed by the active Tool Portal policy.',
+			safeDiagnostic: {
+				code: 'capability_denied',
+				level: 'error',
+				safeMessage: 'Capability is not allowed.',
+			},
+		},
+		id: props.id,
+		operationId: props.operationId,
+		outcome: { certainty: 'proven', kind: 'not-dispatched', retryClass: 'safe-before-dispatch' },
+		owningGeneration: props.owningGeneration,
+		status: 'error',
+	};
+}

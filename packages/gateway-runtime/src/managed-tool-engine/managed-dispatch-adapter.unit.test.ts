@@ -14,17 +14,17 @@ import {
 	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
-	GatewayRuntimeTrustedInvocationContextSchema,
 	GatewayRuntimePortalSemanticSnapshotSchema,
+	GatewayRuntimeTrustedInvocationContextSchema,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
 import { createManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import {
 	semanticSnapshot,
 	toolPortalConfig,
 	trustedContext,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { describe, expect, it, vi } from 'vitest';
 
 const now = Date.parse('2026-07-13T12:00:00.000Z');
@@ -272,6 +272,20 @@ describe('managed dispatch authority', () => {
 			},
 		});
 	});
+	it('publishes the awaited argument digest in the managed reference before admission', async () => {
+		const subject = harness();
+		const reference = await subject.adapter.register({
+			context: { trustedContext, surfaceClass: 'protected_uds' },
+			call: { ...call, arguments: { b: 2, a: [1, null, { z: true, x: '雪' }] } },
+		});
+		const digest = subject.adapter.request(reference).access.call?.digest;
+		expect(typeof digest).toBe('string');
+		expect(Buffer.from(digest ?? '', 'hex').toString('base64url')).toBe(
+			'S0MvAQltEfz2QTqPwzpbYmbNjqt8qa_caDcprJCv0GA',
+		);
+		expect(subject.effects).toEqual([]);
+		subject.adapter.release(reference);
+	});
 	it('refuses an explicitly denied profile in admission and all discovery operations', async () => {
 		const config = gatewayRuntimeManagedToolPortalConfigSchema.parse(toolPortalConfig);
 		const policy = config.profiles['gate-c-profile']?.namespaces.github;
@@ -284,7 +298,7 @@ describe('managed dispatch authority', () => {
 				{ trustedContext, surfaceClass: 'protected_uds' },
 			),
 		).toMatchObject({ ok: false, items: [{ status: 'error' }] });
-		const reference = subject.adapter.register({
+		const reference = await subject.adapter.register({
 			context: { trustedContext, surfaceClass: 'protected_uds' },
 			call,
 		});
@@ -318,7 +332,7 @@ describe('managed dispatch authority', () => {
 	});
 	it('binds the assessor from host configuration and refuses a configured workspace fact', async () => {
 		const subject = harness();
-		const reference = subject.adapter.register({
+		const reference = await subject.adapter.register({
 			context: { trustedContext, surfaceClass: 'protected_uds' },
 			call,
 		});
@@ -354,26 +368,25 @@ describe('managed dispatch authority', () => {
 			const subject = harness({ snapshot });
 			// Build a valid neutral shape with a good context, then substitute the independently forged context reference.
 			const good = harness();
-			const goodReference = good.adapter.register({
+			const goodReference = await good.adapter.register({
 				context: { trustedContext, surfaceClass: 'protected_uds' },
 				call,
 			});
 			const incoming = createNeutralInvocation(good.adapter, goodReference);
-			const badReference = subject.adapter.register({
+			const badReference = await subject.adapter.register({
 				context: { trustedContext: context, surfaceClass: 'protected_uds' },
 				call,
 			});
-			expect(
-				await subject.adapter.backends
-					.get('mcp_provider')
-					?.invoke({ ...incoming, verifiedContextRef: badReference }),
-			).toMatchObject({ kind: 'not-dispatched', reason: 'managed-authority-refused' });
+			const result = await subject.adapter.backends
+				.get('mcp_provider')
+				?.invoke({ ...incoming, verifiedContextRef: badReference });
 			expect(subject.effects).toEqual([]);
+			expect(result).toMatchObject({ kind: 'not-dispatched', reason: 'managed-authority-refused' });
 		},
 	);
 	it('independently fences an ineligible arrival surface despite a permissive upstream invocation', async () => {
 		const subject = harness();
-		const reference = subject.adapter.register({
+		const reference = await subject.adapter.register({
 			context: { trustedContext, surfaceClass: 'mcp' },
 			call,
 		});
@@ -403,7 +416,7 @@ describe('managed dispatch authority', () => {
 		async (kind, namespace, name) => {
 			const subject = harness({ config: directConfig() });
 			const selectedCall = { ...call, namespace, name };
-			const reference = subject.adapter.register({
+			const reference = await subject.adapter.register({
 				context: { trustedContext, surfaceClass: 'protected_uds' },
 				call: selectedCall,
 			});
@@ -457,7 +470,7 @@ describe('managed dispatch authority', () => {
 		'filters all discovery operations for %s',
 		async (kind) => {
 			const subject = harness();
-			const reference = subject.adapter.register({
+			const reference = await subject.adapter.register({
 				context: { trustedContext, surfaceClass: 'protected_uds' },
 				call,
 			});

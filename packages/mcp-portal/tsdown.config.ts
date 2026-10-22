@@ -15,7 +15,6 @@ export default defineConfig({
 		'src/portal-auth/hmac-env.ts',
 		'src/portal-auth/hmac-token.ts',
 		'src/bin/mcp-portal.ts',
-		'src/testing/fake-upstream-mcp-server.ts',
 	],
 	format: 'esm',
 	outExtensions: () => ({

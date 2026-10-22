@@ -78,6 +78,17 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 					break;
 				}
 				default:
+					if (rpc.id !== undefined) {
+						response.setHeader('content-type', 'application/json');
+						response.end(
+							JSON.stringify({
+								jsonrpc: '2.0',
+								id: rpc.id,
+								error: { code: -32601, message: `Unknown method: ${rpc.method}` },
+							}),
+						);
+						return;
+					}
 					response.writeHead(202);
 					response.end();
 					return;

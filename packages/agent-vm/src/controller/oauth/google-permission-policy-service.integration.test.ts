@@ -1,4 +1,5 @@
-import { compileOAuthPolicy, googleOAuthApplicationIdSchema } from '@agent-vm/config-contracts';
+import { googleOAuthApplicationIdSchema } from '@agent-collaboration/tool-access/contracts';
+import { compileOAuthPolicy } from '@agent-vm/config-contracts';
 import {
 	createOAuthPolicyEnvelopeCodec,
 	oauthPolicyEnvelopeBindingSchema,

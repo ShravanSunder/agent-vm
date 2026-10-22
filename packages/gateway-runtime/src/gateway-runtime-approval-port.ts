@@ -1,17 +1,17 @@
 import type { GatewayStablePrincipalDigest } from '@agent-vm/agent-portal-sdk/contracts';
 import {
-	deriveGatewayControlStablePrincipal,
 	GatewayControlRpcCommandMessageSchema,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
 	GatewayRuntimeApprovalChallengeIntentSchema,
 	GatewayRuntimeGatewayDispatchReservationSchema,
+	deriveGatewayControlStablePrincipal,
 	type GatewayControlRpcMessage,
 	type GatewayRuntimeApprovalChallengeIntent,
 	type GatewayRuntimeGatewayDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
+import type { ToolPortalApprovalPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
 type GatewayRuntimeApprovalControlCommand = Extract<
 	GatewayControlRpcMessage,

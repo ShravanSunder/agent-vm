@@ -3,19 +3,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 	deriveGatewayControlStablePrincipal,
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
-	GatewayControlWorkspaceGitPushControllerExecutionPayloadSchema,
 	type GatewayControlToolPortalControllerExecutionPayload,
 	type GatewayRuntimeControllerExecutionDispatchReservation,
 } from '@agent-vm/gateway-control-contracts';
+import { deterministicOperationId, directDispatchFingerprint } from '@agent-vm/gateway-runtime';
 import { oauthAccountIdSchema, oauthApplicationIdSchema } from '@agent-vm/oauth-broker-contracts';
-import {
-	deterministicOperationId,
-	directDispatchFingerprint,
-} from '@agent-vm/tool-portal/dispatch-authority';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {

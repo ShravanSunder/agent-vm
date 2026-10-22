@@ -1,8 +1,7 @@
 import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { SSEClientTransport, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-/** Outbound SDK v1 client/transport behavior is unchanged while owner question 8 remains open. */
+/** Return SDK v2 transports; Engine owns automatic protocol negotiation. */
 export const createWorkerUpstreamTransport: UpstreamMcpRuntimeOptions['createUpstreamMcpTransport'] =
 	(server, kind) => {
 		const url = new URL(server.url);

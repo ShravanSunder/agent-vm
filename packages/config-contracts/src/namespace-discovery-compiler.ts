@@ -1,7 +1,9 @@
+import {
+	namespaceDiscoverySchema,
+	type McpConfig,
+} from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
 
-import type { McpConfig } from './mcp-config.js';
-import { namespaceDiscoverySchema } from './mcp-config.js';
 import type { ToolPortalNamespacePolicy } from './tool-portal-config.js';
 
 export const toolPortalEffectiveNamespaceDiscoverySchema = namespaceDiscoverySchema

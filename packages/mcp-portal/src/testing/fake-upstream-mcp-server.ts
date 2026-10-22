@@ -1,3 +1,5 @@
+// Private SDK 1.29 old-only oracle retained for S4d; active controlled consumers use Node testing.
+// This module has no public package export and does not forward to the moved fixture.
 import { serve, type ServerType } from '@hono/node-server';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -24,6 +26,9 @@ export interface FakeUpstreamHttpRequestRecord {
 
 export interface StartedFakeUpstreamMcpServer {
 	readonly calls: readonly FakeUpstreamToolCallRecord[];
+	readonly authorizationHeaders: readonly string[];
+	readonly listedTools: readonly Tool[];
+	readonly toolResults: readonly CallToolResult[];
 	readonly close: () => Promise<void>;
 	readonly firstListToolsRequest: Promise<void>;
 	readonly requests: readonly FakeUpstreamHttpRequestRecord[];
@@ -32,6 +37,8 @@ export interface StartedFakeUpstreamMcpServer {
 }
 
 export interface FakeUpstreamMcpServerOptions {
+	readonly descriptionByToolName?: Readonly<Record<string, string>>;
+	readonly toolResultByToolName?: Readonly<Record<string, CallToolResult>>;
 	readonly callHttpStatusCode?: 400 | 401 | 403 | 429 | 500;
 	readonly callHttpStatusToolName?: string;
 	readonly emptyTools?: boolean;
@@ -129,17 +136,32 @@ export async function startFakeUpstreamMcpServer(
 	options: FakeUpstreamMcpServerOptions = {},
 ): Promise<StartedFakeUpstreamMcpServer> {
 	const calls: FakeUpstreamToolCallRecord[] = [];
+	const toolResults: CallToolResult[] = [];
+	const authorizationHeaders: string[] = [];
 	const requests: FakeUpstreamHttpRequestRecord[] = [];
 	let resolveFirstListToolsRequest: (() => void) | undefined;
 	const firstListToolsRequest = new Promise<void>((resolve) => {
 		resolveFirstListToolsRequest = resolve;
 	});
 	let hasObservedListToolsRequest = false;
-	const tools = options.emptyTools === true ? [] : createFakeUpstreamTools();
+	const tools =
+		options.emptyTools === true
+			? []
+			: createFakeUpstreamTools().map((tool) =>
+					Object.assign(
+						{},
+						tool,
+						options.descriptionByToolName?.[tool.name] === undefined
+							? {}
+							: { description: options.descriptionByToolName[tool.name] },
+					),
+				);
 	const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 	const app = new Hono();
 
 	app.use('*', async (context, next) => {
+		const authorization = context.req.header('authorization');
+		if (authorization !== undefined) authorizationHeaders.push(authorization);
 		requests.push({
 			jsonRpcMethods: await readJsonRpcMethodsFromRequest(context),
 			method: context.req.method,
@@ -191,10 +213,12 @@ export async function startFakeUpstreamMcpServer(
 			}
 			const toolErrorMessage = options.toolErrorMessageByToolName?.[tool.name];
 			if (toolErrorMessage !== undefined) {
-				return {
+				const result: CallToolResult = {
 					content: [{ text: toolErrorMessage, type: 'text' }],
 					isError: true,
 				};
+				toolResults.push(result);
+				return result;
 			}
 			const progressToken = extra['_meta']?.progressToken;
 			if (options.emitProgress === true && progressToken !== undefined) {
@@ -212,7 +236,10 @@ export async function startFakeUpstreamMcpServer(
 				? request.params.arguments
 				: {};
 			calls.push({ argumentsValue, name: tool.name });
-			return createToolResult(tool.name, argumentsValue);
+			const result =
+				options.toolResultByToolName?.[tool.name] ?? createToolResult(tool.name, argumentsValue);
+			toolResults.push(result);
+			return result;
 		});
 
 		await server.connect(transport);
@@ -222,6 +249,9 @@ export async function startFakeUpstreamMcpServer(
 	const startedServer = await serveHonoOnOpenPort(app);
 	return {
 		calls,
+		listedTools: tools,
+		authorizationHeaders,
+		toolResults,
 		close: async () => {
 			await closeServer(startedServer.server);
 		},

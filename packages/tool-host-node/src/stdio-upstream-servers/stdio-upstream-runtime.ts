@@ -3,7 +3,7 @@ import {
 	redactThrownError,
 	redactUpstreamResponse,
 } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/client';
 
 import {
 	type UpstreamMcpRuntimeOptions,
@@ -230,23 +230,26 @@ export function createNodeStdioUpstreamRuntime(
 				const timeoutAbort = createRuntimeAbortSignal(call.signal);
 				try {
 					const upstreamResult = await withTimeout(
-						client.callTool({ arguments: call.arguments, name: call.toolName }, undefined, {
-							onprogress: (progress) => {
-								void call.onEvent?.({
-									kind: 'progress',
-									...(progress.message !== undefined
-										? {
-												message: redactCredentialText(progress.message, {
-													exactValues: redactionValues,
-												}),
-											}
-										: {}),
-									progress: progress.progress,
-									...(progress.total !== undefined ? { total: progress.total } : {}),
-								});
+						client.callTool(
+							{ arguments: call.arguments, name: call.toolName },
+							{
+								onprogress: (progress) => {
+									void call.onEvent?.({
+										kind: 'progress',
+										...(progress.message !== undefined
+											? {
+													message: redactCredentialText(progress.message, {
+														exactValues: redactionValues,
+													}),
+												}
+											: {}),
+										progress: progress.progress,
+										...(progress.total !== undefined ? { total: progress.total } : {}),
+									});
+								},
+								signal: timeoutAbort.signal,
 							},
-							signal: timeoutAbort.signal,
-						}),
+						),
 						{
 							onTimeout: timeoutAbort.abortTimeout,
 							operation: `MCP callTool ${call.namespace}.${call.toolName}`,

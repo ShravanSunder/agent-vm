@@ -1,19 +1,22 @@
+import { compiledGoogleCommandSetSchema } from '@agent-collaboration/tool-access/contracts';
 import {
-	compiledGoogleCommandSetSchema,
+	controllerEphemeralManagedVmConfiguredCliOperationSchema,
 	createEffectiveManagedToolPortalConfig,
 	createGatewayRuntimeManagedToolPortalConfig,
-	controllerEphemeralManagedVmConfiguredCliOperationSchema,
 	encodeConfiguredCliPreparedImageIdentity,
-	type EffectiveManagedToolPortalConfig,
-	type GatewayRuntimeManagedToolPortalConfig,
 	isEffectiveControllerEphemeralManagedVmConfiguredCliOperation,
 	normalizePreparedControllerExecutionOperation,
+	type EffectiveManagedToolPortalConfig,
+	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalApprovalPort, ToolPortalBackendCallOptions } from '@agent-vm/tool-portal';
+import type {
+	ToolPortalApprovalPort,
+	ToolPortalBackendCallOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';

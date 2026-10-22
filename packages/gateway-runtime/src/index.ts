@@ -2,10 +2,10 @@ export * from './artifacts/artifact-store.js';
 export * from './artifacts/runtime-file-artifact-storage.js';
 export * from './backends/index.js';
 export * from './catalog/index.js';
-export * from './controller-execution/index.js';
 export * from './control-endpoint/index.js';
-export * from './gateway-runtime-approval-port.js';
+export * from './controller-execution/index.js';
 export * from './gateway-runtime-approval-decision-operations.js';
+export * from './gateway-runtime-approval-port.js';
 export * from './managed-tool-portal-composition.js';
 export * from './oauth-availability-gateway-control-port.js';
 export * from './production/gateway-runtime-private-uds-dispatcher.js';
@@ -16,3 +16,13 @@ export * from './runtime/index.js';
 export * from './sandbox/index.js';
 export * from './tool-portal-projections.js';
 export * from './uds/index.js';
+
+export {
+	deterministicOperationId,
+	directDispatchFingerprint,
+} from './managed-tool-engine/managed-dispatch-identity.js';
+export * from './managed-tool-engine/models/managed-portal-ports.js';
+
+export * from './backends/managed-mcp-provider-backend.js';
+
+export { createManagedToolPortalCapabilityCore } from './managed-tool-engine/managed-portal-facade.js';

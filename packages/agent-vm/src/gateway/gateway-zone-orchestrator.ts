@@ -3,20 +3,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { redactCredentialText } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 import type { GatewayRuntimeFrameworkIdentity } from '@agent-vm/agent-portal-sdk/contracts';
 import { CONTROL_PROTOCOL_VERSION } from '@agent-vm/control-protocol-contracts';
 import {
-	buildGatewayControlCallerContextAgentAuthorityPayload,
-	buildGatewayControlCallerContextProofPayload,
 	GatewayControlRpcCommandResultMessageSchema,
 	GatewayControlRpcMessageSchema,
+	buildGatewayControlCallerContextAgentAuthorityPayload,
+	buildGatewayControlCallerContextProofPayload,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	gatewayControlDeliveryPolicyByOperation,
+	type GatewayControlCallerContextProof,
 	type GatewayControlToolVmBindingPublication,
 	type GatewayControlToolVmBindingPublicationAuthority,
 	type GatewayRuntimePortalAdmissionMaterial,
 	type GatewayRuntimeReadinessSnapshot,
-	type GatewayControlCallerContextProof,
 	type ManagedAgentProjection,
 } from '@agent-vm/gateway-control-contracts';
 import type {
@@ -34,7 +35,6 @@ import type {
 	ManagedVmMediatedSecretDescriptor,
 	ManagedVmOwnedDirectoryCapability,
 } from '@agent-vm/managed-vm';
-import { redactCredentialText } from '@agent-vm/mcp-portal/core';
 import {
 	redactOnePasswordReferences,
 	type SecretRef,
@@ -52,17 +52,17 @@ import {
 	connectGatewayControlSession,
 	createControlSessionDispatcher,
 	createControlSessionFenceRegistry,
-	createGatewayControlCallerContextRegistry,
 	createGatewayControlBindingPublicationCoordinator,
+	createGatewayControlCallerContextRegistry,
 	createGatewayControlDomainHandler,
-	deleteGatewayControlSessionMaterial,
-	resolveGatewayControlInboundStablePrincipal,
 	createGatewayControlSessionMaterial,
 	createGatewaySemanticResultLedger,
+	deleteGatewayControlSessionMaterial,
+	resolveGatewayControlInboundStablePrincipal,
 	writeGatewayControlSessionMaterial,
 	type GatewayControlCallerContextRegisterPayload,
-	type GatewayDisposableControlSessionClient,
 	type GatewayControlSessionMaterial,
+	type GatewayDisposableControlSessionClient,
 } from '../controller/control-session/index.js';
 import type { GatewayEpochIdentity } from '../controller/vm-ownership/vm-ownership-contracts.js';
 import {
@@ -100,8 +100,8 @@ import { writeGatewayRuntimePortalAdmissionFile } from './gateway-runtime-portal
 import { materializeGatewayRuntimePortalAdmission } from './gateway-runtime-portal-admission-material.js';
 import type { GatewayRuntimeRoleReadinessEvidence } from './gateway-runtime-readiness-plane-mapper.js';
 import {
-	deleteManagedGatewayRuntimeRecord,
 	buildManagedGatewayRuntimeRecord,
+	deleteManagedGatewayRuntimeRecord,
 	writeManagedGatewayRuntimeRecord,
 	type ManagedGatewayRuntimeRecord,
 } from './gateway-runtime-record.js';
@@ -111,9 +111,9 @@ import {
 	findGatewayZone,
 	mapSystemGatewayZoneToLifecycleZone,
 	observabilityCollectorHost,
-	type GatewayZone,
 	type GatewayControlSessionConnector,
 	type GatewayControlSessionMaterialFactory,
+	type GatewayZone,
 	type GatewayZoneDestroyResult,
 	type GatewayZonePreflightOptions,
 	type GatewayZoneStartResult,
@@ -138,8 +138,8 @@ import {
 } from './managed-gateway-runtime-input-builders.js';
 import {
 	preflightMcpPortalEffectiveConfig,
-	type ManagedVmImageSelection,
 	writeMcpPortalEffectiveConfig,
+	type ManagedVmImageSelection,
 } from './mcp-portal-effective-config.js';
 
 const defaultGatewayReadinessRetryDelayMs = 500;
