@@ -33,6 +33,16 @@ sweep at S4c2 `61d24f82` it saw `['failed','uncertain','read']` instead of
 `c08a0915`, and S4c2 doesn't touch tool-engine. Same fix in its own layer:
 compare as a multiset and keep the exactly-once counts.
 
+**Third instance, same pattern (2026-10-22):**
+`packages/gateway-runtime/src/managed-tool-engine/managed-call-results/managed-call-batch-failures.unit.test.ts:206`
+("preserves the completed sibling and literal failure outcome at
+missing-challenge") compares the order in which two concurrent batch items were
+dispatched. In the Lead's sunclaw sweep at S4d `ada827da` it saw
+`['failing-item','original-item']` instead of `['original-item','failing-item']`;
+it passed at `80067700`, and S4d doesn't touch gateway-runtime. Same fix in its
+own layer: compare the dispatched items as a multiset and keep the effect,
+result and release assertions.
+
 ## Approved managed MCP calls are refused at the provider (pre-existing product defect) — FIXED
 
 **Fixed at `23b1e33d` (draft PR #253), accepted by the Lead on 2026-10-22.** The
