@@ -8,32 +8,20 @@ export type ToolEngineClosureScan = 'first-party' | 'worker';
 export function toolEngineClosureScannerSource(props: {
 	readonly repositoryRoot: string;
 	readonly scan: ToolEngineClosureScan;
+	readonly esbuildUrl: string;
 	readonly typescriptUrl: string;
 }): string {
+	if (props.scan === 'worker') return workerBundlerSource(props.esbuildUrl);
 	return `import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createRequire, registerHooks } from 'node:module';
+import { createRequire } from 'node:module';
 import ts from ${JSON.stringify(props.typescriptUrl)};
 const scan = ${JSON.stringify(props.scan)};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
 ${isForbiddenToolEngineImport.toString()}
-// Wrangler 4.124.0 bundleWorker/getBuildConditions, packages/wrangler/src/deployment-bundle/bundle.ts:
-// https://github.com/cloudflare/workers-sdk/blob/wrangler%404.124.0/packages/wrangler/src/deployment-bundle/bundle.ts
-// Installed wrangler-dist/cli.js:252816-252821,252997. Keep Node's implicit condition out.
-const workerConditions = ['workerd', 'worker', 'browser'];
-let resolutionKind = 'import';
-if (scan === 'worker') registerHooks({ resolve(specifier, context, nextResolve) {
- return nextResolve(specifier, { ...context, conditions: [...workerConditions, resolutionKind] });
-}});
 function resolveImport(specifier, location, kind) {
- if (scan === 'first-party') return kind === 'require'
-  ? pathToFileURL(createRequire(location).resolve(specifier)).href
-  : import.meta.resolve(specifier, pathToFileURL(location).href);
- resolutionKind = kind;
- // import.meta.resolve caches by parent/specifier. Distinguish import/require export branches.
- const parent = pathToFileURL(location); parent.searchParams.set('closure-kind', kind);
- return import.meta.resolve(specifier, parent.href);
+ return kind === 'require' ? pathToFileURL(createRequire(location).resolve(specifier)).href : import.meta.resolve(specifier, pathToFileURL(location).href);
 }
 const packageOwners = new Map();
 async function isFirstParty(location) {
@@ -54,7 +42,7 @@ async function isFirstParty(location) {
 const pending = JSON.parse(process.argv[2]); const visited = new Set(); let edges = 0;
 while (pending.length) {
  const location = await realpath(pending.pop()); if (visited.has(location)) continue;
- if (scan === 'first-party' && !await isFirstParty(location)) continue;
+ if (!await isFirstParty(location)) continue;
  visited.add(location);
  if (isForbiddenToolEngineImport(pathToFileURL(location).href)) throw new Error('tool-engine forbidden resolved path ' + location + ' [' + scan + ' scan]');
  if (location.startsWith(${JSON.stringify(props.repositoryRoot)} + '/')) throw new Error('tool-engine workspace fallback ' + location);
@@ -75,10 +63,60 @@ while (pending.length) {
   if (isForbiddenToolEngineImport(resolved)) throw new Error('tool-engine forbidden resolved path ' + resolved + ' [' + scan + ' scan]');
   if (!resolved.startsWith('file:')) throw new Error('tool-engine non-file dependency ' + resolved);
   const dependency = fileURLToPath(resolved);
-  if (scan === 'worker' || await isFirstParty(dependency)) pending.push(dependency);
+  if (await isFirstParty(dependency)) pending.push(dependency);
  }
 }
 if (visited.size === 0) throw new Error('empty closure');
 console.log(scan + ' emitted import closure: ' + visited.size + ' modules, ' + edges + ' static/lazy edges; no forbidden imports');
+`;
+}
+
+/** Use the actual mirrored Wrangler resolver, including browser main-field remapping. */
+function workerBundlerSource(esbuildUrl: string): string {
+	return `import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { build, version, stop } from ${JSON.stringify(esbuildUrl)};
+const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
+${isForbiddenToolEngineImport.toString()}
+// Wrangler 4.124.0: wrangler-dist/cli.js:252816-252834,252997; its published manifest pins esbuild 0.28.1.
+// Mirror bundleWorker's unset platform and default mainFields, not only its export conditions.
+const workerConditions = ['workerd', 'worker', 'browser'];
+const workerPlatform = undefined;
+const workerMainFields = undefined;
+const mirroredEsbuildVersion = '0.28.1';
+if (version !== mirroredEsbuildVersion) throw new Error('Worker closure esbuild version drift: ' + version);
+const entries = JSON.parse(process.argv[2]);
+const evidence = process.argv[3];
+await mkdir(evidence, { recursive: true });
+const deniedImports = []; const resolveErrors = []; const inputs = new Set(); let edges = 0;
+try {
+ for (const [index, entry] of entries.entries()) {
+  try {
+   const result = await build({
+    entryPoints: [entry], bundle: true, format: 'esm', write: false, metafile: true,
+    conditions: workerConditions, platform: workerPlatform, mainFields: workerMainFields,
+    logLevel: 'silent',
+    plugins: [{name: 'tool-engine-worker-import-policy', setup(context) {
+     context.onResolve({filter: /.*/}, (args) => {
+      if (isForbiddenToolEngineImport(args.path)) {
+       deniedImports.push({specifier: args.path, importer: args.importer || entry});
+       return {path: args.path, external: true};
+      }
+     });
+    }}],
+   });
+   await writeFile(path.join(evidence, index + '.metafile.json'), JSON.stringify(result.metafile, null, 2));
+   for (const [location, data] of Object.entries(result.metafile.inputs)) { inputs.add(location); edges += data.imports.length; }
+  } catch (error) { resolveErrors.push({entry, error: error instanceof Error ? error.message : String(error)}); }
+ }
+} finally { stop(); }
+await writeFile(path.join(evidence, 'resolution.json'), JSON.stringify({wrangler: '4.124.0', esbuild: version, conditions: workerConditions, platform: 'unset', mainFields: 'default', entries, deniedImports, resolveErrors}, null, 2));
+for (const denied of deniedImports) process.stderr.write('tool-engine forbidden import ' + denied.specifier + ' from ' + denied.importer + ' [worker scan]\\n');
+for (const failure of resolveErrors) process.stderr.write(failure.error + '\\n');
+if (deniedImports.length || resolveErrors.length) process.exitCode = 1;
+else {
+ if (!inputs.size) throw new Error('empty Worker closure');
+ console.log('worker bundled closure: ' + inputs.size + ' modules, ' + edges + ' resolved edges; no forbidden imports');
+}
 `;
 }

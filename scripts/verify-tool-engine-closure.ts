@@ -18,6 +18,10 @@ import {
 	collectToolEngineViolations,
 	isForbiddenToolEngineImport,
 } from './audit-portal-architecture.ts';
+import {
+	prepareToolEngineClosureFixtures,
+	toolEngineClosureFixtures,
+} from './tool-engine-closure-fixtures.ts';
 import { toolEngineClosureScannerSource } from './tool-engine-closure-scanner-source.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -235,6 +239,7 @@ async function installedCheck(root: string): Promise<void> {
 						'--experimental-import-meta-resolve',
 						path.join(directory, `scanner-${scan}.mjs`),
 						entries,
+						path.join(evidence, 'worker-metafiles'),
 					],
 					cwd: directory,
 					label: `graph-${scan}`,
@@ -373,6 +378,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 					scan,
 					repositoryRoot,
 					typescriptUrl: import.meta.resolve('typescript'),
+					esbuildUrl: import.meta.resolve('esbuild'),
 				}),
 			);
 		}),
@@ -405,30 +411,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
-		// Node-first clean entry makes accidental retention of Node's condition fail this control.
-		const poisonDirectory = path.join(root, 'node_modules', 's4d-worker-closure-poison');
-		await mkdir(poisonDirectory, { recursive: true });
-		await writeFile(
-			path.join(poisonDirectory, 'package.json'),
-			JSON.stringify({
-				name: 's4d-worker-closure-poison',
-				type: 'module',
-				exports: {
-					'.': {
-						node: './node.js',
-						workerd: './worker.js',
-						worker: './worker.js',
-						browser: './worker.js',
-						default: './node.js',
-					},
-				},
-			}),
-		);
-		await writeFile(path.join(poisonDirectory, 'node.js'), 'export const selected = "node";');
-		await writeFile(
-			path.join(poisonDirectory, 'worker.js'),
-			"import 'node:fs'; export const selected = 'worker';",
-		);
+		await prepareToolEngineClosureFixtures(root);
 		await subpaths.reduce<Promise<void>>(async (previous, subpath): Promise<void> => {
 			await previous;
 			const entryDirectory = path.join(root, 'dist', subpath.slice(2));
@@ -437,94 +420,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 			const declaration = path.join(entryDirectory, 'index.d.ts');
 			const original = await readFile(contract, 'utf8');
 			const originalDeclaration = await readFile(declaration, 'utf8');
-			const fixtureSources = [
-				{
-					name: 'lazy',
-					source: original + "\nexport async function sdkLazyPoison(){return import('node:fs');}\n",
-					reason: 'tool-engine forbidden import node:fs',
-				},
-				{
-					name: 're-export',
-					source: original + "\nexport * from 'node:fs';\n",
-					reason: 'tool-engine forbidden import node:fs',
-				},
-				{
-					name: 'compiler',
-					source: original + "\nimport 'typescript';\n",
-					reason: 'tool-engine forbidden import typescript',
-				},
-				{
-					name: 'worker-third-party',
-					source: original + "\nimport 's4d-worker-closure-poison';\n",
-					reason: 'tool-engine forbidden import node:fs',
-					scanReason: '[worker scan]',
-				},
-				{
-					name: 'worker-third-party-require',
-					source: original + "\nrequire('s4d-worker-closure-poison');\n",
-					reason: 'tool-engine forbidden import node:fs',
-					scanReason: '[worker scan]',
-				},
-				{
-					name: 'direct',
-					source: `${original}\nimport 'node:fs';`,
-					reason: 'tool-engine forbidden import node:fs',
-					scanReason: '[first-party scan]',
-				},
-				{
-					name: 'transitive',
-					source: `${original}\nexport * from './s2-transitive-poison.js';`,
-					reason: 'tool-engine forbidden import node:fs',
-				},
-				{
-					name: 'host',
-					source: `${original}\nimport '@agent-collaboration/tool-host-node';`,
-					reason: 'tool-engine forbidden import @agent-collaboration/tool-host-node',
-				},
-				{
-					name: 'managed-type',
-					source: original,
-					reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
-				},
-				{
-					name: 'transitive-type',
-					source: original,
-					reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
-				},
-				{
-					name: 'agent-vm',
-					source: `${original}\nimport '@agent-vm/agent-vm';`,
-					reason: 'tool-engine forbidden import @agent-vm/agent-vm',
-				},
-				{
-					name: 'gondolin',
-					source: `${original}\nimport '@gondolin/provider';`,
-					reason: 'tool-engine forbidden import @gondolin/provider',
-				},
-				{
-					name: 'controller-test-alias',
-					source: original,
-					declaration:
-						"import type { ControllerApprovalLedger } from '@agent-vm/controller-test-support/approval/controller-approval-ledger.js'; export type AliasPoison = ControllerApprovalLedger;",
-					reason:
-						'tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
-				},
-				{
-					name: 'config-test-alias',
-					source: original,
-					declaration:
-						"import type { createOAuthPolicyCompilerTestInput } from '@agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js'; export type AliasPoison = typeof createOAuthPolicyCompilerTestInput;",
-					reason:
-						'tool-engine forbidden import @agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js',
-				},
-				{
-					name: 'policy-test-alias',
-					source: original,
-					declaration:
-						"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
-					reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
-				},
-			];
+			const fixtureSources = toolEngineClosureFixtures(original);
 			await writeFile(
 				path.join(entryDirectory, 's2-transitive-poison.js'),
 				"export async function lazyPoison() { return import('node:fs'); }\n",
@@ -554,7 +450,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 					if (
 						red.code === 0 ||
 						!red.output.includes(fixture.reason) ||
-						('scanReason' in fixture && !red.output.includes(fixture.scanReason))
+						(fixture.scanReason !== undefined && !red.output.includes(fixture.scanReason))
 					)
 						throw new Error(`Fixture ${fixture.name} did not fail for its intended reason`);
 				} finally {
