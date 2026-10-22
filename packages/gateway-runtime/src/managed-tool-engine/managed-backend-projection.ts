@@ -16,7 +16,7 @@ import type { GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-con
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
 import { resolveManagedEngineInvocation } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-invocation-authority.js';
 import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 export interface ManagedBackendPorts {
 	readonly controllerExecution: ToolPortalBackendPort<'controller_execution'>;
 	readonly mcpProvider: ToolPortalBackendPort<'mcp_provider'>;

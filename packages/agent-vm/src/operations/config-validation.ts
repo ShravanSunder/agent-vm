@@ -1,11 +1,11 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 
+import { loadMcpConfig } from '@agent-collaboration/tool-host-node';
 import {
-	loadMcpConfig,
+	compileOAuthPolicy,
 	loadOAuthConfig,
 	loadToolPortalConfig,
-	compileOAuthPolicy,
 	managedToolPortalRequiresOAuthConfiguration,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
@@ -25,14 +25,14 @@ import {
 } from '../gateway/mcp-portal-effective-config.js';
 import { buildManagedAgentSecretAccessChecks } from './agent-secret-access-checks.js';
 import {
+	resolveProjectCheckoutPath,
 	type ConfigValidationCheck,
 	type ConfigValidationResult,
-	resolveProjectCheckoutPath,
 } from './config-validation-shared.js';
 import { buildRuntimePathIsolationChecks, collectVmHostSystemDoctorCheck } from './doctor.js';
 import { runLiveMcpPortalValidation } from './mcp-portal-live-validation.js';
 
-export { type ConfigValidationCheck, type ConfigValidationResult, resolveProjectCheckoutPath };
+export { resolveProjectCheckoutPath, type ConfigValidationCheck, type ConfigValidationResult };
 
 export interface RunConfigValidationOptions {
 	readonly mcpLive?: boolean;

@@ -3,11 +3,11 @@ import {
 	GatewayControlRpcCommandResultMessageSchema,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 } from '@agent-vm/gateway-control-contracts';
+import type { ToolPortalOAuthAvailabilityPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import {
-	oauthToolAvailabilityBatchResultSchema,
 	managedGooglePreflightResultSchema,
+	oauthToolAvailabilityBatchResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
-import type { ToolPortalOAuthAvailabilityPort } from '@agent-vm/tool-portal';
 
 import type { GatewayControlCallerContextRegistrationClient } from './control-endpoint/gateway-control-caller-context-registration-client.js';
 import type { GatewayRuntimeControlCommandClient } from './control-endpoint/gateway-control-command-client.js';

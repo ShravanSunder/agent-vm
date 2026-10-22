@@ -1,4 +1,4 @@
-import type { SecretValue } from '@agent-vm/config-contracts';
+import { type SecretValue } from '@agent-collaboration/tool-access/contracts';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 export interface ResolveSecretValueProps {

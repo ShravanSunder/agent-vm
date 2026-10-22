@@ -1,7 +1,9 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import {
+	Client,
+	StreamableHTTPClientTransport,
+	type Transport,
+} from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 import type { ToolPortalMcpResourceContent, ToolPortalMcpTransport } from './index.js';
 
@@ -88,24 +90,53 @@ function createClientTransportBridge(
 				}
 			}
 			if (transport instanceof StreamableHTTPClientTransport) {
-				await transport.send(message, options);
+				await transport.send(
+					message,
+					options === undefined
+						? undefined
+						: {
+								...(options.resumptionToken === undefined
+									? {}
+									: { resumptionToken: options.resumptionToken }),
+								...(options.onresumptiontoken === undefined
+									? {}
+									: { onresumptiontoken: options.onresumptiontoken }),
+								...(options.requestSignal === undefined
+									? {}
+									: { requestSignal: options.requestSignal }),
+								...(options.onRequestStreamEnd === undefined
+									? {}
+									: { onRequestStreamEnd: options.onRequestStreamEnd }),
+								...(options.headers === undefined ? {} : { headers: options.headers }),
+							},
+				);
 			} else {
 				await transport.send(message);
 			}
 		},
 		start: async () => {
 			// oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport uses callback properties, not EventTarget.
-			if (clientTransport.onclose !== undefined) transport.onclose = clientTransport.onclose;
+			transport.onclose = () => clientTransport.onclose?.();
 			// oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport uses callback properties, not EventTarget.
-			if (clientTransport.onerror !== undefined) transport.onerror = clientTransport.onerror;
+			transport.onerror = (error) => clientTransport.onerror?.(error);
 			// oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport uses callback properties, not EventTarget.
-			if (clientTransport.onmessage !== undefined) transport.onmessage = clientTransport.onmessage;
+			transport.onmessage = (message) => clientTransport.onmessage?.(message);
 			await transport.start();
 		},
 		...(transport instanceof StreamableHTTPClientTransport
-			? { setProtocolVersion: (version: string): void => transport.setProtocolVersion(version) }
+			? {
+					hasPerRequestStream: true,
+					setProtocolVersion: (version: string): void => transport.setProtocolVersion(version),
+				}
 			: {}),
 	};
+	if (transport instanceof StdioClientTransport) {
+		// Expose the documented stdio shape so negotiation classifies this bridge correctly.
+		Object.defineProperties(clientTransport, {
+			stderr: { get: () => transport.stderr },
+			pid: { get: () => transport.pid },
+		});
+	}
 	return clientTransport;
 }
 
@@ -113,7 +144,10 @@ function createClientTransportBridge(
 export function createNodeToolPortalMcpTransport(
 	props: CreateNodeToolPortalMcpTransportProps,
 ): ToolPortalMcpTransport {
-	const client = new Client({ name: 'tool-portal', version: '1.0.0' });
+	const client = new Client(
+		{ name: 'tool-portal', version: '1.0.0' },
+		{ versionNegotiation: { mode: { pin: '2026-07-28' } } },
+	);
 	const transport = createSdkTransport(props);
 	const pendingRequestCaptures: PendingRequestCapture[] = [];
 	const clientTransport = createClientTransportBridge(transport, pendingRequestCaptures);
@@ -130,15 +164,24 @@ export function createNodeToolPortalMcpTransport(
 		if (!Number.isInteger(graceMilliseconds) || graceMilliseconds <= 0) {
 			throw new TypeError('Tool Portal canonical-result grace must be a positive integer.');
 		}
+		if (props.kind === 'http') {
+			// Modern HTTP cancellation closes the response stream: its effective grace is zero.
+			// Keep the existing grace-expired error identity and uncertainty semantics.
+			try {
+				return await requestProps.request();
+			} catch (error) {
+				if (signal.aborted) throw signal.reason ?? new Error('Tool Portal request interrupted.');
+				throw error;
+			}
+		}
 		let rejectAfterGrace: ((reason: unknown) => void) | undefined;
 		let graceTimer: NodeJS.Timeout | undefined;
 		let cancellationSent = false;
 		const sendCancellation = (requestId: number | string): void => {
 			if (cancellationSent) return;
 			cancellationSent = true;
-			void transport
-				.send({
-					jsonrpc: '2.0',
+			void client
+				.notification({
 					method: 'notifications/cancelled',
 					params: { reason: String(signal.reason), requestId },
 				})
@@ -179,7 +222,9 @@ export function createNodeToolPortalMcpTransport(
 			}
 			const callArguments = call.arguments;
 			const sdkRequestOptions =
-				options?.resultGraceAfterAbortMs === undefined ? options : undefined;
+				props.kind === 'http' || options?.resultGraceAfterAbortMs === undefined
+					? options
+					: undefined;
 			const result = await requestWithCanonicalResultGrace({
 				method: 'tools/call',
 				...(options === undefined ? {} : { options }),
@@ -196,7 +241,6 @@ export function createNodeToolPortalMcpTransport(
 							arguments: callArguments,
 							name: call.name,
 						},
-						undefined,
 						sdkRequestOptions,
 					),
 			});
@@ -212,7 +256,9 @@ export function createNodeToolPortalMcpTransport(
 		},
 		readResource: async (request, options) => {
 			const sdkRequestOptions =
-				options?.resultGraceAfterAbortMs === undefined ? options : undefined;
+				props.kind === 'http' || options?.resultGraceAfterAbortMs === undefined
+					? options
+					: undefined;
 			const result = await requestWithCanonicalResultGrace({
 				method: 'resources/read',
 				...(options === undefined ? {} : { options }),

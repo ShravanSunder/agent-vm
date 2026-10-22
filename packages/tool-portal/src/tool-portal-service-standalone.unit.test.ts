@@ -1,9 +1,10 @@
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
+import { standaloneToolPortalConfigSchema } from '@agent-collaboration/tool-host-node';
 import type {
 	PortalCallRequest,
 	PortalCallResult,
 	PortalListRequest,
 } from '@agent-vm/agent-portal-sdk';
-import { mcpConfigSchema, standaloneToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -14,11 +15,11 @@ import { createStandaloneToolPortalProjectionService } from './standalone-entryp
 import {
 	standaloneApprovalHmacKey as approvalHmacKey,
 	standaloneAuthenticatedEnvelope as authenticatedEnvelope,
-	standaloneBaseSemanticSnapshot as standaloneSemanticSnapshot,
 	createStandaloneToolPortalFixture as createStandaloneFixture,
-	standaloneMcpConfig,
 	standaloneServiceGeneration as serviceGeneration,
 	standaloneToolPortalConfig as standaloneConfig,
+	standaloneMcpConfig,
+	standaloneBaseSemanticSnapshot as standaloneSemanticSnapshot,
 } from './standalone-tool-portal-service-test-fixture.js';
 import { agentATrustedContext, createServiceFixture } from './tool-portal-service-test-fixture.js';
 import {

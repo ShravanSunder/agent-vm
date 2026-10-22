@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import type { JsonValue } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeAttachmentMetadata } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
 import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalCapabilityCore } from '@agent-vm/tool-portal';
+import type { ToolPortalCapabilityCore } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -323,7 +323,7 @@ describe('prepared catalog Python publication host journey', () => {
 			}),
 			search: rejectUnexpectedOperation,
 			semanticSnapshot,
-		} satisfies ToolPortalCapabilityCore<'managed'>;
+		} satisfies ToolPortalCapabilityCore;
 		const composition = createGatewayRuntimeToolPortalComposition<{
 			readonly catalogOperations: GatewayRuntimeCatalogProjectionOperations;
 		}>({

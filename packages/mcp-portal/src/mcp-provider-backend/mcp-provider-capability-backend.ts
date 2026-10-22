@@ -1,39 +1,36 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+	type FormattedSecretValue,
+	type McpConfig,
+	type ToolPortalToolSelector,
+	mcpConfigSchema,
+} from '@agent-collaboration/tool-access/contracts';
+import { loadMcpConfig } from '@agent-collaboration/tool-host-node';
+import {
+	type JsonValue,
+	JsonValueSchema,
+	type PortalBackendDescribeResult,
+	PortalBackendDescribeResultSchema,
+	type PortalBackendListResult,
+	PortalBackendListResultSchema,
+	type PortalBackendSearchResult,
+	PortalBackendSearchResultSchema,
 	PortalCallRequestSchema,
 	type PortalCallResult,
 	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
-	type PortalBackendDescribeResult,
-	PortalBackendDescribeResultSchema,
-	PortalListRequestSchema,
-	type PortalBackendListResult,
-	PortalBackendListResultSchema,
-	PortalSearchRequestSchema,
-	type PortalBackendSearchResult,
-	PortalBackendSearchResultSchema,
-	JsonValueSchema,
 	type PortalError,
+	PortalListRequestSchema,
+	PortalSearchRequestSchema,
 	type SafeDiagnostic,
-	type JsonValue,
 } from '@agent-vm/agent-portal-sdk';
 import {
-	type FormattedSecretValue,
-	loadMcpConfig,
-	mcpConfigSchema,
-	type McpConfig,
 	type ToolPortalMcpProjection,
 	ToolPortalMcpProjectionSchema,
-	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import { z } from 'zod';
 
-import {
-	createPortalCore,
-	createUpstreamMcpClientRuntime,
-	resolveUpstreamServers,
-} from '../core/index.js';
 import type {
 	PortalBatchDiagnostic,
 	PortalBatchResult,
@@ -42,6 +39,11 @@ import type {
 	PortalCoreResult,
 	PortalCoreToolName,
 	PortalToolResult,
+} from '../core/index.js';
+import {
+	createPortalCore,
+	createUpstreamMcpClientRuntime,
+	resolveUpstreamServers,
 } from '../core/index.js';
 import type { PortalAgentScopeSource } from '../portal-access-policy.js';
 import { portalErrorFromUnknown, safeDiagnosticForCode } from './mcp-provider-model-errors.js';

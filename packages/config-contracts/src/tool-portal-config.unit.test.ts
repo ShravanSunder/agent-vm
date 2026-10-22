@@ -6,14 +6,16 @@ import {
 	normalizePreparedControllerExecutionOperation,
 } from './controller-configured-cli.js';
 import {
-	createGatewayRuntimeManagedToolPortalConfig,
-	createEffectiveManagedToolPortalConfig,
+	ToolPortalControllerExecutionProjectionSchema,
+	ToolPortalMcpProjectionSchema,
 	createToolPortalControllerExecutionProjection,
 	createToolPortalMcpProjection,
+} from './managed-tool-portal-projections.js';
+import {
+	createEffectiveManagedToolPortalConfig,
+	createGatewayRuntimeManagedToolPortalConfig,
 	preparedManagedToolPortalConfigSchema,
-	ToolPortalControllerExecutionProjectionSchema,
 	toolPortalConfigSchema,
-	ToolPortalMcpProjectionSchema,
 } from './tool-portal-config.js';
 
 const validManagedToolPortalConfig = {

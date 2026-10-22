@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
-
 import {
 	mcpPortalCallPolicyDecision,
 	mcpPortalCallRequiresApproval,
-} from './mcp-portal-approval-policy.js';
-import { resolveMcpPortalProfile, type McpPortalConfig } from './mcp-portal-config.js';
+	resolveMcpPortalProfile,
+} from '@agent-collaboration/tool-access/authorization';
+import { type McpPortalConfig } from '@agent-collaboration/tool-host-node';
+import { describe, expect, it } from 'vitest';
 
 const portalConfig = {
 	agents: { shravan: { credentialVersion: 1, profile: 'builder' } },

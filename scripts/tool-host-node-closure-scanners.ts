@@ -4,16 +4,20 @@ import { builtinModules } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { isForbiddenToolHostNodeImport } from './tool-host-node-architecture.ts';
+import {
+	isForbiddenToolHostNodeImport,
+	isNodeHostTestingEntry,
+} from './tool-host-node-architecture.ts';
 export function loaderSource(repositoryRoot: string): string {
 	return `import { registerHooks } from 'node:module';
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
 ${isForbiddenToolHostNodeImport.toString()}
+${isNodeHostTestingEntry.toString()}
 registerHooks({resolve(specifier, context, nextResolve) {
- if (isForbiddenToolHostNodeImport(specifier)) throw new Error('tool-host-node forbidden import ' + specifier);
+ if (isForbiddenToolHostNodeImport(specifier) || isNodeHostTestingEntry(specifier)) throw new Error('tool-host-node forbidden import ' + specifier);
  const resolved=nextResolve(specifier,context);
  if(resolved.url.startsWith(${JSON.stringify(pathToFileURL(repositoryRoot + path.sep).href)}))throw new Error('tool-host-node runtime workspace fallback '+resolved.url);
- if (isForbiddenToolHostNodeImport(resolved.url)) throw new Error('tool-host-node forbidden resolved path ' + resolved.url);
+ if (isForbiddenToolHostNodeImport(resolved.url) || isNodeHostTestingEntry(resolved.url)) throw new Error('tool-host-node forbidden resolved path ' + resolved.url);
  return resolved;
 }});
 `;
@@ -26,6 +30,7 @@ import {createRequire} from 'node:module';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
 ${isForbiddenToolHostNodeImport.toString()}
+${isNodeHostTestingEntry.toString()}
 const pending=JSON.parse(process.argv[2]); const visited=new Set(); let edges=0;
 while(pending.length) {
  const location=await realpath(pending.pop()); if(visited.has(location))continue; visited.add(location);
@@ -44,10 +49,10 @@ while(pending.length) {
  }
  visit(source);
  for(const {specifier,kind} of imports) {
-  if(isForbiddenToolHostNodeImport(specifier))throw new Error('tool-host-node forbidden import '+specifier+' from '+location);
+  if(isForbiddenToolHostNodeImport(specifier)||isNodeHostTestingEntry(specifier))throw new Error('tool-host-node forbidden import '+specifier+' from '+location);
   if(specifier.startsWith('node:')||portableBuiltinNames.has(specifier))continue;
   let resolved;try{resolved=kind==='require'?pathToFileURL(createRequire(location).resolve(specifier)).href:import.meta.resolve(specifier,pathToFileURL(location).href);}catch(error){if(error.code==='MODULE_NOT_FOUND'&&!location.includes('/@agent-collaboration/tool-host-node/dist/')){console.log('uninstalled optional literal dependency: '+specifier+' from '+location);continue;}throw error;}edges++;
-  if(isForbiddenToolHostNodeImport(resolved))throw new Error('tool-host-node forbidden resolved path '+resolved);
+  if(isForbiddenToolHostNodeImport(resolved)||isNodeHostTestingEntry(resolved))throw new Error('tool-host-node forbidden resolved path '+resolved);
   if(resolved.startsWith('node:'))continue;
   if(!resolved.startsWith('file:'))throw new Error('tool-host-node non-file dependency '+resolved);
   pending.push(fileURLToPath(resolved));
@@ -65,6 +70,7 @@ import {pathToFileURL} from 'node:url';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
 ${isForbiddenToolHostNodeImport.toString()}
+${isNodeHostTestingEntry.toString()}
 const pending=JSON.parse(process.argv[2]); const visited=new Set();let edges=0;
 while(pending.length){
  const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
@@ -80,7 +86,7 @@ while(pending.length){
  }visit(source);
  for(const specifier of imports){
  if(specifier.startsWith('node:')||portableBuiltinNames.has(specifier))continue;
- if(isForbiddenToolHostNodeImport(specifier))throw new Error('tool-host-node forbidden import '+specifier+' from '+location);
+ if(isForbiddenToolHostNodeImport(specifier)||isNodeHostTestingEntry(specifier))throw new Error('tool-host-node forbidden import '+specifier+' from '+location);
  const options={module:ts.ModuleKind.NodeNext,moduleResolution:ts.ModuleResolutionKind.NodeNext};
  const mode=ts.getImpliedNodeFormatForFile(location,undefined,ts.sys,options);
  const resolved=ts.resolveModuleName(specifier,location,options,ts.sys,undefined,undefined,mode).resolvedModule;

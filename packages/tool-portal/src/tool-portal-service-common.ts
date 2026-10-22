@@ -1,22 +1,22 @@
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
+import {
+	controllerConfiguredCliInputSchema,
+	openConfiguredCliInputSchema,
+	openOAuthConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+	quickOAuthConfiguredCliInputSchema,
+	type ToolPortalBackendKind,
+	type ToolPortalToolSelector,
+} from '@agent-collaboration/tool-access/contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import type {
 	CapabilityDiscoveryMetadata,
 	PortalCallRequest,
 	PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	StandaloneToolPortalConfig,
-	ToolPortalBackendKind,
-	ToolPortalConfig,
-	ToolPortalToolSelector,
-} from '@agent-vm/config-contracts';
 import {
-	openConfiguredCliInputSchema,
-	openOAuthConfiguredCliInputSchema,
-	quickConfiguredCliInputSchema,
-	quickOAuthConfiguredCliInputSchema,
-	controllerConfiguredCliInputSchema,
-	resolveCompiledGoogleCommand,
+	type GatewayRuntimeManagedToolPortalConfig,
+	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 export { deterministicOperationId, directDispatchFingerprint } from './dispatch-authority.js';
 

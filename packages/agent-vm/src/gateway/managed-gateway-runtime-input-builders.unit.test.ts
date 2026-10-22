@@ -1,9 +1,7 @@
 import { createPrivateKey } from 'node:crypto';
 
-import {
-	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
-} from '@agent-vm/config-contracts';
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
+import { effectiveManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimePortalAdmissionMaterialSchema,
 	type GatewayRuntimePortalAdmissionMaterial,
@@ -16,8 +14,8 @@ import type { GatewayExpectedAdmissionCohort } from './gateway-aggregate-admissi
 import { materializeGatewayRuntimePortalAdmission } from './gateway-runtime-portal-admission-material.js';
 import { createManagedGatewayBootContract } from './managed-gateway-boot-contract.js';
 import {
-	buildManagedGatewayFrameworkAdapterMaterial,
 	buildManagedGatewayExpectedAdmissionCohort,
+	buildManagedGatewayFrameworkAdapterMaterial,
 	buildManagedGatewayRuntimeAttachmentMetadata,
 	buildManagedGatewayRuntimeServiceConfig,
 } from './managed-gateway-runtime-input-builders.js';

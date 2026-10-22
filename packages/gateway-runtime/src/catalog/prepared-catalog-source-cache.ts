@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import type {
+	CompileCatalogTypescriptModulesInput,
+	CompiledCatalogTypescriptBundle,
+	compileCatalogTypescriptModules,
+	fingerprintCatalogTypescriptInput,
+} from '@agent-collaboration/tool-host-node/catalog-typescript';
 import {
 	PORTAL_CATALOG_MAXIMUM_BUNDLE_BYTES,
 	PORTAL_CATALOG_MAXIMUM_FILES,
@@ -13,12 +19,6 @@ import {
 	type PortalCatalogReleaseResult,
 	type PortalCatalogSourceManifest,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	compileCatalogTypescriptModules,
-	fingerprintCatalogTypescriptInput,
-	CompileCatalogTypescriptModulesInput,
-	CompiledCatalogTypescriptBundle,
-} from '@agent-vm/mcp-portal/catalog-typescript';
 
 export const PREPARED_CATALOG_SOURCE_CACHE_MAXIMUM_BYTES = 64 * 1_024 * 1_024;
 export const PREPARED_CATALOG_SOURCE_CACHE_MAXIMUM_ENTRIES = 128;
@@ -106,12 +106,11 @@ interface CatalogTypescriptCompiler {
 let catalogTypescriptCompilerPromise: Promise<CatalogTypescriptCompiler> | undefined;
 
 async function loadCatalogTypescriptCompiler(): Promise<CatalogTypescriptCompiler> {
-	catalogTypescriptCompilerPromise ??= import('@agent-vm/mcp-portal/catalog-typescript').then(
-		(compilerModule) => ({
+	catalogTypescriptCompilerPromise ??=
+		import('@agent-collaboration/tool-host-node/catalog-typescript').then((compilerModule) => ({
 			compile: compilerModule.compileCatalogTypescriptModules,
 			fingerprint: compilerModule.fingerprintCatalogTypescriptInput,
-		}),
-	);
+		}));
 	return await catalogTypescriptCompilerPromise;
 }
 
@@ -348,7 +347,7 @@ export function createPreparedCatalogSourceCache(
 			const { compile, fingerprint } = await resolveCatalogTypescriptCompiler(props);
 			let definitionFingerprint: string;
 			try {
-				definitionFingerprint = fingerprint(input);
+				definitionFingerprint = await fingerprint(input);
 			} catch {
 				return unavailableDiagnostic('Catalog definitions could not be normalized.');
 			}

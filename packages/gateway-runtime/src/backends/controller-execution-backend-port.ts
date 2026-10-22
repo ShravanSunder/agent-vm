@@ -1,23 +1,23 @@
 import {
-	PortalCallRequestSchema,
-	PortalCallResultSchema,
+	type CapabilityDescriptor,
+	type CapabilitySearchMatch,
+	type CapabilitySummary,
+	type JsonObject,
+	type JsonValue,
 	type PortalBackendDescribeResult,
 	PortalBackendDescribeResultSchema,
 	type PortalBackendListResult,
 	PortalBackendListResultSchema,
 	type PortalBackendSearchResult,
 	PortalBackendSearchResultSchema,
+	type PortalCallRequest,
+	PortalCallRequestSchema,
+	type PortalCallResult,
+	PortalCallResultSchema,
 	PortalDescribeRequestSchema,
+	type PortalError,
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
-	type CapabilityDescriptor,
-	type CapabilitySearchMatch,
-	type CapabilitySummary,
-	type JsonObject,
-	type JsonValue,
-	type PortalCallRequest,
-	type PortalCallResult,
-	type PortalError,
 	type SafeDiagnostic,
 } from '@agent-vm/agent-portal-sdk';
 import type {
@@ -29,7 +29,7 @@ import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import type { z } from 'zod';
 
 export interface ControllerExecutionDispatchRequest {

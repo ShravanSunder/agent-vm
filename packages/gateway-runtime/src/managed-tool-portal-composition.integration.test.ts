@@ -2,29 +2,27 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
-	type ArtifactReference,
 	PortalArtifactReadRequestSchema,
 	PortalCallRequestSchema,
-	type PortalCallRequest,
-	type PortalCallResult,
+	PortalDescribeRequestSchema,
+	PortalListRequestSchema,
+	PortalSearchRequestSchema,
+	type ArtifactReference,
 	type PortalBackendDescribeResult,
 	type PortalBackendListResult,
 	type PortalBackendSearchResult,
-	PortalDescribeRequestSchema,
+	type PortalCallRequest,
+	type PortalCallResult,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
-	PortalListRequestSchema,
 	type PortalListRequest,
 	type PortalListResult,
-	PortalSearchRequestSchema,
 	type PortalSearchRequest,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
@@ -35,9 +33,9 @@ import type {
 	ToolPortalApprovalPort,
 	ToolPortalBackendCallOptions,
 	ToolPortalBackendPort,
-	ToolPortalInvocationOptions,
 	ToolPortalCapabilityCore,
-} from '@agent-vm/tool-portal';
+	ToolPortalInvocationOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -162,7 +160,7 @@ function createUnusedBackendPort<TBackendKind extends ToolPortalBackendKind>(
 
 interface CapturedPrivateUdsProjection {
 	readonly artifactOperations: GatewayRuntimeArtifactProjectionOperations;
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly portalOperations: GatewayRuntimePortalProjectionOperations;
 }
 

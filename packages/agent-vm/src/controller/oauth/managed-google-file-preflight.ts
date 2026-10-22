@@ -1,10 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-	configuredGoogleOperationKey,
-	resolveCompiledGoogleCommand,
-	type CompiledOAuthPolicy,
-} from '@agent-vm/config-contracts';
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
+import { configuredGoogleOperationKey, type CompiledOAuthPolicy } from '@agent-vm/config-contracts';
 import {
 	gogFileInputSnapshotSchema,
 	type GogFileInputSnapshot,

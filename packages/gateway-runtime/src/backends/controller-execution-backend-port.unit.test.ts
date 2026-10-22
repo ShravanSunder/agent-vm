@@ -9,7 +9,10 @@ import type {
 	GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalBackendCallOptions, ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type {
+	ToolPortalBackendCallOptions,
+	ToolPortalBackendPort,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 

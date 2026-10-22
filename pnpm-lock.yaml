@@ -14,6 +14,9 @@ importers:
       '@vitest/utils':
         specifier: 4.1.5
         version: 4.1.5
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
       oxfmt:
         specifier: ^0.48.0
         version: 0.48.0
@@ -44,12 +47,18 @@ importers:
 
   packages/agent-portal-sdk:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@4.4.3)
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
+      '@modelcontextprotocol/core':
+        specifier: 2.3.1
+        version: 2.3.1
       '@optique/core':
         specifier: ^1.2.0
         version: 1.2.0
@@ -69,6 +78,15 @@ importers:
 
   packages/agent-vm:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -202,6 +220,12 @@ importers:
 
   packages/config-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/oauth-broker-contracts':
         specifier: workspace:*
         version: link:../oauth-broker-contracts
@@ -228,6 +252,9 @@ importers:
 
   packages/controller-execution-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -244,6 +271,9 @@ importers:
 
   packages/gateway-control-contracts:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -266,6 +296,9 @@ importers:
 
   packages/gateway-lifecycle:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/managed-vm':
         specifier: workspace:*
         version: link:../managed-vm
@@ -285,6 +318,15 @@ importers:
 
   packages/gateway-runtime:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-engine':
+        specifier: workspace:*
+        version: link:../tool-engine
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -373,6 +415,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/core':
+        specifier: 2.3.1
+        version: 2.3.1
       '@types/ssh2':
         specifier: ^1.15.5
         version: 1.15.5
@@ -422,6 +467,12 @@ importers:
 
   packages/mcp-portal:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -502,6 +553,9 @@ importers:
 
   packages/oauth-broker:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
       '@agent-vm/config-contracts':
         specifier: workspace:*
         version: link:../config-contracts
@@ -565,12 +619,12 @@ importers:
       '@agent-collaboration/tool-access':
         specifier: workspace:*
         version: link:../tool-access
+      '@modelcontextprotocol/client':
+        specifier: 2.3.1
+        version: 2.3.1
       '@modelcontextprotocol/core':
         specifier: 2.3.1
         version: 2.3.1
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.3.1
         version: 2.3.1
@@ -578,6 +632,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
@@ -654,9 +711,6 @@ importers:
       '@modelcontextprotocol/node':
         specifier: 2.1.1
         version: 2.1.1(@modelcontextprotocol/server@2.3.1)
-      '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(zod@4.4.3)
       '@modelcontextprotocol/server':
         specifier: 2.3.1
         version: 2.3.1
@@ -676,12 +730,24 @@ importers:
       '@hono/node-server':
         specifier: 2.0.10
         version: 2.0.10(hono@4.12.34)
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(zod@4.4.3)
+      hono:
+        specifier: 4.12.34
+        version: 4.12.34
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.1)(@types/node@25.6.2)(msw@2.13.4(@types/node@25.6.2)(typescript@6.0.3))(vite@8.2.2(@types/node@25.6.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/tool-portal:
     dependencies:
+      '@agent-collaboration/tool-access':
+        specifier: workspace:*
+        version: link:../tool-access
+      '@agent-collaboration/tool-host-node':
+        specifier: workspace:*
+        version: link:../tool-host-node
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk
@@ -6851,7 +6917,7 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.7
+      picomatch: 4.0.5
       std-env: 4.1.0
       tinybench: 2.9.0
       tinyexec: 1.1.2

@@ -1,11 +1,12 @@
+import {
+	googleOAuthApplicationIdSchema,
+	googleOAuthApplicationIds,
+	type GoogleOAuthApplicationId,
+} from '@agent-collaboration/tool-access/contracts';
 import { googleCatalogFamilyIdSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
 import { loadJsonConfigFile } from './json-config-file.js';
-
-export const googleOAuthApplicationIds = ['workspace-app', 'gmail-app', 'youtube-app'] as const;
-export const googleOAuthApplicationIdSchema = z.enum(googleOAuthApplicationIds);
-export type GoogleOAuthApplicationId = z.infer<typeof googleOAuthApplicationIdSchema>;
 
 const namedIdSchema = z
 	.string()

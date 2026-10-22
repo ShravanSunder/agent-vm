@@ -1,4 +1,4 @@
-import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
+import { type ResolvedMcpPortalProfile } from '@agent-collaboration/tool-access/contracts';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,8 +7,8 @@ import type { PortalCatalogSnapshot } from '../portal-session.js';
 import { UpstreamMcpError } from '../upstream-mcp-errors.js';
 import { createPortalPolicyApprovalEvaluator } from './portal-approval-evaluator.js';
 import {
-	createPortalCore,
 	collectPortalCoreResult,
+	createPortalCore,
 	listPortalCoreToolDescriptors,
 	preparePortalCatalogSnapshot,
 	type PortalCoreEvent,

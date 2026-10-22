@@ -1,60 +1,62 @@
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
 import {
-	compareUnicodeCodePointStrings,
+	controllerConfiguredCliInputSchema,
+	type McpConfig,
+	type ToolPortalBackendKind,
+} from '@agent-collaboration/tool-access/contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
+import {
 	PortalCallRequestSchema,
+	PortalDescribeRequestSchema,
+	PortalDescribeResultSchema,
+	PortalListRequestSchema,
+	PortalListResultSchema,
+	PortalSearchRequestSchema,
+	PortalSearchResultSchema,
+	compareUnicodeCodePointStrings,
 	type PortalBackendDescribeResult,
 	type PortalBackendListResult,
 	type PortalBackendSearchResult,
 	type PortalCallRequest,
 	type PortalCallResult,
-	PortalDescribeRequestSchema,
-	PortalDescribeResultSchema,
 	type PortalDescribeRequest,
 	type PortalDescribeResult,
-	PortalListRequestSchema,
-	PortalListResultSchema,
 	type PortalListRequest,
 	type PortalListResult,
-	PortalSearchRequestSchema,
-	PortalSearchResultSchema,
 	type PortalSearchRequest,
 	type PortalSearchResult,
 	type SafeDiagnostic,
 } from '@agent-vm/agent-portal-sdk';
 import {
 	gatewayRuntimeManagedToolPortalConfigSchema,
-	controllerConfiguredCliInputSchema,
-	resolveCompiledGoogleCommand,
 	type GatewayRuntimeManagedToolPortalConfig,
-	type McpConfig,
-	type StandaloneToolPortalConfig,
 	type ToolPortalBackendBinding,
-	type ToolPortalBackendKind,
 } from '@agent-vm/config-contracts';
 import {
+	GatewayRuntimePortalSemanticSnapshotSchema,
+	deriveGatewayControlStablePrincipal,
+	deriveGatewayRuntimeApprovalFingerprint,
+	deriveGatewayRuntimeApprovalId,
 	type GatewayRuntimeApprovalAdmissionResult,
 	type GatewayRuntimeApprovalArmDispatchResult,
 	type GatewayRuntimeApprovalChallengeIntent,
 	type GatewayRuntimeApprovalDispatchGrant,
 	type GatewayRuntimeApprovalDispatchReservation,
 	type GatewayRuntimeGatewayDispatchReservation,
+	type GatewayRuntimePortalSemanticSnapshot,
 	type GatewayRuntimeToolPortalDispatchAuthority,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
-	GatewayRuntimePortalSemanticSnapshotSchema,
-	deriveGatewayControlStablePrincipal,
-	deriveGatewayRuntimeApprovalFingerprint,
-	deriveGatewayRuntimeApprovalId,
-	type GatewayRuntimePortalSemanticSnapshot,
 	type GatewayRuntimeTrustedInvocationContext,
 	type GatewayRuntimeTrustedInvocationPrincipal,
 } from '@agent-vm/gateway-control-contracts';
 import {
+	managedGooglePreflightResultSchema,
+	oauthOperationRequirementIdentity,
 	oauthToolAvailabilityBatchRequestSchema,
 	oauthToolAvailabilityBatchResultSchema,
-	type OAuthOperationToolRequirement,
-	type OAuthOperationAvailability,
-	oauthOperationRequirementIdentity,
-	managedGooglePreflightResultSchema,
 	type ManagedGoogleReadyPreflight,
+	type OAuthOperationAvailability,
+	type OAuthOperationToolRequirement,
 	type OAuthToolAvailability,
 	type OAuthToolAvailabilityBatchRequest,
 	type OAuthToolAvailabilityBatchResult,
@@ -68,8 +70,8 @@ import type {
 } from './standalone-entrypoint/standalone-tool-portal-approval.js';
 import { createStandaloneV1ToolPortalService } from './standalone-tool-portal-service.js';
 import {
-	type ToolPortalInvocationOptionsForMode,
 	ToolPortalManagedServiceInvocationOptionsSchema,
+	type ToolPortalInvocationOptionsForMode,
 	type ToolPortalManagedServiceInvocationOptions,
 	type ToolPortalSemanticSnapshot,
 	type ToolPortalServiceMode,
@@ -88,8 +90,8 @@ import {
 	approvalRequiredItem,
 	callPolicyDecision,
 	canonicalJson,
-	capabilityDiscoveryMetadata,
 	capabilityDeniedItem,
+	capabilityDiscoveryMetadata,
 	deepFreeze,
 	deterministicOperationId,
 	directDispatchFingerprint,
@@ -97,8 +99,8 @@ import {
 	type PortalCallItem,
 } from './tool-portal-service-common.js';
 
-export type { ToolPortalInvocationOptions } from './tool-portal-result-router.js';
 export * from './tool-portal-invocation-contracts.js';
+export type { ToolPortalInvocationOptions } from './tool-portal-result-router.js';
 export type ToolPortalTrustedInvocationContext = GatewayRuntimeTrustedInvocationContext;
 
 export interface ToolPortalBackendCallOptions<

@@ -20,7 +20,7 @@ import {
 	createAgentCatalogViewCache,
 	createInMemoryApprovalTokenUse,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';

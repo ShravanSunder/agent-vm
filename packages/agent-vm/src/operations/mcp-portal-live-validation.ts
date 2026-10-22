@@ -1,26 +1,28 @@
 import path from 'node:path';
 
 import {
-	loadMcpConfig,
-	loadToolPortalConfig,
+	assertJsonObject,
 	type SecretValue,
+	type ToolPortalToolSelector,
+} from '@agent-collaboration/tool-access/contracts';
+import { buildZodValidatorFromJsonSchema } from '@agent-collaboration/tool-engine/mcp-gateway';
+import { UpstreamMcpError } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
+import {
+	createNodeProviderRuntime as createUpstreamMcpClientRuntime,
+	loadMcpConfig,
+	resolveUpstreamServers,
+} from '@agent-collaboration/tool-host-node';
+import {
+	loadToolPortalConfig,
 	type ToolPortalConfig,
 	type ToolPortalProfileDefinition,
-	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
-import {
-	assertJsonObject,
-	buildZodValidatorFromJsonSchema,
-	createUpstreamMcpClientRuntime,
-	UpstreamMcpError,
-} from '@agent-vm/mcp-portal';
-import { resolveUpstreamServers } from '@agent-vm/mcp-portal/core';
 import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 
 import type { LoadedSystemConfig } from '../config/system-config.js';
 import {
-	type ConfigValidationCheck,
 	resolveProjectCheckoutPath,
+	type ConfigValidationCheck,
 } from './config-validation-shared.js';
 
 export interface RunLiveMcpPortalValidationOptions {

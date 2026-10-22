@@ -1,10 +1,11 @@
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import type {
+	SandboxProcessHandle as CanonicalSandboxProcessHandle,
 	JsonObject,
 	PortalCallResult,
-	SandboxProcessHandle as CanonicalSandboxProcessHandle,
 	SandboxProcessStartResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind, ToolPortalConfig } from '@agent-vm/config-contracts';
+import { type ToolPortalConfig } from '@agent-vm/config-contracts';
 import type {
 	GatewayRuntimePortalSemanticSnapshot,
 	GatewayRuntimeToolPortalDispatchAuthority,
@@ -16,15 +17,13 @@ import {
 	createGatewayRuntimeSandboxOperationAuthority,
 	createGatewayRuntimeSandboxPathContract,
 	createGatewayRuntimeSandboxProcessRegistry,
+	createManagedToolPortalCapabilityCore,
 	type GatewayRuntimeSandboxOperationAuthority,
 	type GatewayRuntimeSandboxOperationContext,
 	type GatewayRuntimeSandboxProcessRegistry,
-} from '@agent-vm/gateway-runtime';
-import {
-	createManagedToolPortalCapabilityCore,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime';
 
 type StrictToolVmSshProcessRuntime = Parameters<
 	typeof createGatewayRuntimeSandboxProcessRegistry

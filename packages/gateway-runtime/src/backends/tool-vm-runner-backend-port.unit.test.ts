@@ -1,10 +1,10 @@
 import { Buffer } from 'node:buffer';
 
 import {
-	PortalCallResultSchema,
 	PortalBackendDescribeResultSchema,
 	PortalBackendListResultSchema,
 	PortalBackendSearchResultSchema,
+	PortalCallResultSchema,
 	type ArtifactReference,
 	type JsonObject,
 	type PortalCallResult,
@@ -19,7 +19,7 @@ import type {
 	ToolPortalBackendCallOptions,
 	ToolPortalBackendPort,
 	ToolPortalInvocationOptions,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { createGatewayRuntimeSandboxOperationAuthority } from '../sandbox/sandbox-operation-authority.js';

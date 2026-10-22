@@ -1,18 +1,16 @@
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalCallRequestSchema,
 	PortalDescribeRequestSchema,
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
-	type PortalCallRequest,
-	type PortalCallResult,
 	type PortalBackendDescribeResult,
 	type PortalBackendListResult,
 	type PortalBackendSearchResult,
+	type PortalCallRequest,
+	type PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
-import {
-	type GatewayRuntimeManagedToolPortalConfig,
-	type ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -37,9 +35,9 @@ import {
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendCallOptions,
 	type ToolPortalBackendPort,
+	type ToolPortalCapabilityCore,
 	type ToolPortalInvocationOptions,
 	type ToolPortalManagedServiceInvocationOptions,
-	type ToolPortalCapabilityCore,
 	type ToolPortalTrustedInvocationContext,
 } from './tool-portal-service.js';
 
@@ -545,11 +543,6 @@ function totalBackendInvocations(fixture: ReturnType<typeof createServiceFixture
 export {
 	AUTHORITY_CONTEXT,
 	STABLE_PRINCIPAL,
-	type RecordedBackendInvocation,
-	type RecordingBackendPort,
-	type ToolPortalInvocationOptions,
-	type ToolPortalManagedServiceInvocationOptions,
-	type ToolPortalTrustedInvocationContext,
 	agentATrustedContext,
 	agentBTrustedContext,
 	createAmbiguousAdmissionResult,
@@ -565,4 +558,9 @@ export {
 	semanticSnapshot,
 	totalBackendInvocations,
 	udsOptions,
+	type RecordedBackendInvocation,
+	type RecordingBackendPort,
+	type ToolPortalInvocationOptions,
+	type ToolPortalManagedServiceInvocationOptions,
+	type ToolPortalTrustedInvocationContext,
 };

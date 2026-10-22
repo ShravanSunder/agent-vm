@@ -2,10 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import { PortalCallResultSchema, SANDBOX_METHOD_CONTRACTS } from '@agent-vm/agent-portal-sdk';
 import type { GatewayRuntimeTraceContext } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import {
 	ROOT_CONTEXT,
 	SpanKind,
