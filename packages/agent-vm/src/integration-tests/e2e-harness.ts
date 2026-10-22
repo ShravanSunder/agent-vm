@@ -1485,10 +1485,15 @@ function renderLocalDockerPackageInstallCommand(
 	return [runLine.slice('RUN '.length), ...continuationLines].join('\n');
 }
 
-function isLocalToolVmPackageInstallCommand(command: string): boolean {
+function isLocalToolVmPackageInstallCommand(
+	command: string,
+	localPackageTarballs: readonly LocalDockerPackageTarball[],
+): boolean {
 	return (
 		(command.includes('/opt/agent-vm/local-packages/package.json') &&
-			command.includes('file:/tmp/agent-vm-mcp-portal-')) ||
+			localPackageTarballs.some((tarball) =>
+				command.includes(`file:/tmp/${tarball.archiveName}`),
+			)) ||
 		(command.includes('uv pip install') && command.includes('agent_vm_agent_portal_sdk-'))
 	);
 }
@@ -1501,11 +1506,7 @@ function isLocalToolVmGeneratedPackageCopyEntry(options: {
 	if (/^agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(sourceFileName)) {
 		return true;
 	}
-	return options.localPackageTarballs.some(
-		(tarball) =>
-			sourceFileName.startsWith(`agent-vm-${tarball.packageName}-`) &&
-			sourceFileName.endsWith('.tgz'),
-	);
+	return options.localPackageTarballs.some((tarball) => sourceFileName === tarball.archiveName);
 }
 
 function resolveManagedOverlayCopySourcePath(
@@ -1585,7 +1586,7 @@ async function writeLocalToolVmManagedOverlay(options: {
 		],
 		runAfterBase: [
 			...originalOverlay.runAfterBase.filter(
-				(command) => !isLocalToolVmPackageInstallCommand(command),
+				(command) => !isLocalToolVmPackageInstallCommand(command, options.localPackageTarballs),
 			),
 			renderLocalDockerPackageInstallCommand(options.localPackageTarballs),
 		],

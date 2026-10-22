@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
+import fs, { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
+
+import { loadManagedImageOverlay } from '#agent-vm/build/managed-image-dockerfile';
 
 import { imageArtifactFixtureFileContent } from '../../../../scripts/test-fixtures/image-artifact-fixture.js';
 import { computeFingerprintFromConfigPath } from '../build/gondolin-image-builder.js';
@@ -74,6 +76,50 @@ describe('shared Hermes E2E harness contracts', () => {
 
 		expect(project.zone.gateway.type).toBe('hermes');
 		expect(project.systemConfig.zones[0]?.agents).toEqual([{ id: 'smoke-agent' }]);
+	});
+
+	it('keeps the Tool VM overlay byte-identical across repeated local package materialization', async () => {
+		const project = await scaffoldHermesE2eProject({
+			agents: ['main'],
+			architecture: 'aarch64',
+			prefix: 'agent-vm-gateway-e2e-project-',
+			zoneId: 'overlay-repeat',
+		});
+		temporaryRoots.push(project.tempRoot);
+		const packageOptions = {
+			projectRoot: project.tempRoot,
+			repoRoot: process.cwd(),
+			systemConfig: project.systemConfig,
+		};
+		await materializeLocalHermesGatewayImagePackages({
+			...packageOptions,
+			architecture: 'aarch64',
+			profileName: project.zone.gateway.imageProfile,
+		});
+		const profile = project.systemConfig.imageProfiles.toolVms.default;
+		if (profile?.source === undefined) throw new Error('Expected a managed Tool VM source.');
+		const overlayPath = profile.source.overlay;
+		if (overlayPath === undefined) throw new Error('Expected a local Tool VM overlay.');
+		const originalBytes = await readFile(overlayPath, 'utf8');
+		const originalOverlay = await loadManagedImageOverlay(overlayPath);
+		for (const packageName of ['tool-access', 'tool-engine', 'tool-host-node']) {
+			expect(
+				originalOverlay.copy.filter((entry) =>
+					path.basename(entry.from).startsWith(`agent-collaboration-${packageName}-`),
+				),
+			).toHaveLength(1);
+		}
+
+		await materializeLocalHermesGatewayImagePackages({
+			...packageOptions,
+			architecture: 'aarch64',
+			profileName: project.zone.gateway.imageProfile,
+		});
+
+		expect(await readFile(overlayPath, 'utf8')).toBe(originalBytes);
+		const repeatedOverlay = await loadManagedImageOverlay(overlayPath);
+		expect(repeatedOverlay.copy).toEqual(originalOverlay.copy);
+		expect(repeatedOverlay.runAfterBase).toEqual(originalOverlay.runAfterBase);
 	});
 
 	it('materializes and installs the local Hermes overlay with an empty store and registry access', async () => {
