@@ -1,14 +1,11 @@
+import { mcpConfigSchema, type McpConfig } from '@agent-collaboration/tool-access/contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import type {
 	PortalBackendDescribeResult,
 	PortalBackendListResult,
 	PortalBackendSearchResult,
 	PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
-import {
-	mcpConfigSchema,
-	type McpConfig,
-	type StandaloneToolPortalConfig,
-} from '@agent-vm/config-contracts';
 
 import {
 	createStandaloneToolPortalApprovalCoordinator,

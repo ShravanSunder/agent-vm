@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalCallRequestSchema,
 	PortalCallResultSchema,
@@ -15,18 +16,15 @@ import {
 	type GatewayRuntimeAttachmentMetadata,
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	type ControlEnvelope,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	GatewayControlRpcCommandResultMessageSchema,
+	deriveGatewayControlStablePrincipal,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayRuntimePortalSemanticSnapshot,
 } from '@agent-vm/gateway-control-contracts';
@@ -35,19 +33,17 @@ import {
 	createGatewayRuntimePaths,
 	createGatewayRuntimePrivateUdsDispatcher,
 	createManagedPluginAttachmentState,
+	createManagedToolPortalCapabilityCore,
 	resolveGatewayRuntimeOperationGroup,
 	startGatewayRuntimeUdsServer,
 	type GatewayRuntimeApprovalControlCommandPort,
 	type GatewayRuntimeApprovalControlCommandResponse,
 	type GatewayRuntimePortalProjectionOperations,
-} from '@agent-vm/gateway-runtime';
-import {
-	createManagedToolPortalCapabilityCore,
 	type ToolPortalBackendCallOptions,
 	type ToolPortalBackendPort,
 	type ToolPortalCapabilityCore,
 	type ToolPortalManagedServiceInvocationOptions,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -214,7 +210,7 @@ function privateUdsInvocationOptions(
 }
 
 function createPrivateUdsPortalOperations(
-	capabilityCore: ToolPortalCapabilityCore<'managed'>,
+	capabilityCore: ToolPortalCapabilityCore,
 ): GatewayRuntimePortalProjectionOperations {
 	return {
 		call: async ({ publicRequest, trustedContext }) =>
@@ -403,6 +399,7 @@ describe('managed private-UDS approval exactly-once dispatch', () => {
 		});
 		const backendInvocations: RecordedMcpProviderInvocation[] = [];
 		const capabilityCore = createManagedToolPortalCapabilityCore({
+			now: () => BASE_TIME_MS,
 			approvalPort,
 			backendPorts: {
 				controllerExecution: unexpectedBackendPort(

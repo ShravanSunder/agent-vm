@@ -1,10 +1,12 @@
+import { resolveMcpPortalProfile } from '@agent-collaboration/tool-access/authorization';
 import {
-	resolveMcpPortalProfile,
-	type McpPortalAgentConfig,
-	type McpPortalConfig,
 	type ResolvedMcpPortalProfile,
 	type SecretValue,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	type McpPortalAgentConfig,
+	type McpPortalConfig,
+} from '@agent-collaboration/tool-host-node';
 
 import { createPortalPolicyApprovalEvaluator } from '../core/portal-approval-evaluator.js';
 import type {

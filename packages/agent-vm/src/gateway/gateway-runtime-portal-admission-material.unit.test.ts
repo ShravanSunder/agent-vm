@@ -1,9 +1,11 @@
 import {
 	mcpConfigSchema,
-	effectiveManagedToolPortalConfigSchema,
-	type EffectiveManagedToolPortalConfig,
 	type McpConfig,
 	type McpProvider,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	effectiveManagedToolPortalConfigSchema,
+	type EffectiveManagedToolPortalConfig,
 	type ToolPortalSandboxSshBackendBinding,
 } from '@agent-vm/config-contracts';
 import {

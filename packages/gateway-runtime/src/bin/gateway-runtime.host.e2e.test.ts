@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	GatewayRuntimeClient,
 	type GatewayRuntimeAttachmentMetadata,
@@ -17,7 +18,6 @@ import {
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeInputRevision,

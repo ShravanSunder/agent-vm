@@ -2,27 +2,31 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { FormattedSecretValue, ToolPortalBackendKind } from '@agent-vm/config-contracts';
+import {
+	type FormattedSecretValue,
+	type ToolPortalBackendKind,
+} from '@agent-collaboration/tool-access/contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	CONTROL_SESSION_TIMING_MS,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	deriveGatewayRuntimeInputRevision,
-	createGatewayRuntimeReadinessSnapshot,
 	GATEWAY_RUNTIME_READINESS_SNAPSHOT_VERSION,
-	GatewayRuntimeFatalEvidenceSchema,
 	GatewayControlRpcMessageSchema,
+	GatewayRuntimeFatalEvidenceSchema,
+	createGatewayRuntimeReadinessSnapshot,
+	deriveGatewayRuntimeInputRevision,
 	gatewayControlDeliveryPolicyByKind,
 	gatewayControlDeliveryPolicyByOperation,
 	type GatewayRuntimeAttachmentSnapshot,
 	type GatewayRuntimeReadinessSnapshot,
 } from '@agent-vm/gateway-control-contracts';
+
 import {
 	createManagedMcpProviderBackendFactoryFromConfig,
 	type ManagedMcpProviderBackendFactory,
-} from '@agent-vm/mcp-portal/mcp-provider-backend';
-import { createToolPortalMcpProviderBackendPort } from '@agent-vm/tool-portal';
+} from '#gateway-runtime/backends/managed-mcp-provider-backend';
+import { createToolPortalMcpProviderBackendPort } from '#gateway-runtime/backends/managed-mcp-provider-backend-port';
 
 import { createGatewayControlDeferredApplicationMessageHandler } from '../control-endpoint/gateway-control-deferred-application-message-handler.js';
 import {
@@ -48,9 +52,9 @@ import {
 	type GatewayRuntimeUdsServer,
 } from '../uds/gateway-runtime-uds-server.js';
 import {
-	createManagedPluginAttachmentState,
 	GATEWAY_RUNTIME_PROTOCOL_VERSION,
 	GATEWAY_RUNTIME_SCHEMA_VERSION,
+	createManagedPluginAttachmentState,
 } from '../uds/managed-plugin-attachment-policy.js';
 import {
 	createGatewayRuntimePrivateUdsDispatcher,

@@ -4,24 +4,25 @@ import {
 	PortalDescribeRequestSchema,
 	PortalListRequestSchema,
 	PortalSearchRequestSchema,
+	mcpConfigSchema,
 } from '@agent-collaboration/tool-access/contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import { ToolPortalMcpClient } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-client';
 import { createNodeToolPortalMcpTransport } from '@agent-vm/agent-portal-sdk/tool-portal-mcp-client/node-transport';
-import { mcpConfigSchema, type StandaloneToolPortalConfig } from '@agent-vm/config-contracts';
 import { createManagedMcpProviderBackendFactoryFromConfig } from '@agent-vm/mcp-portal/mcp-provider-backend';
 import {
-	createToolPortalService,
-	createStandaloneToolPortalProjectionService,
 	createStandaloneToolPortalApprovalCoordinator as createOldCoordinator,
-	startStandaloneToolPortalMcpHttpServer as startOldMcp,
+	createStandaloneToolPortalProjectionService,
+	createToolPortalService,
 	startStandaloneToolPortalHttpServer as startOldJson,
+	startStandaloneToolPortalMcpHttpServer as startOldMcp,
 	type ToolPortalStandaloneSemanticSnapshot,
 } from '@agent-vm/tool-portal';
 import { expect, it } from 'vitest';
 
 import {
-	startStandaloneToolPortalMcpHttpServer,
 	startStandaloneToolPortalHttpServer,
+	startStandaloneToolPortalMcpHttpServer,
 } from '#node-host/standalone-tool-portal/standalone-http-servers';
 import {
 	startControlledProvider,

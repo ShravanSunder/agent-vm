@@ -2,44 +2,43 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import {
+	toolPortalNamespaceAllowsOperation,
+	toolPortalSelectorAllowsOperation,
+} from '@agent-collaboration/tool-access/authorization';
+import {
+	compiledGoogleCommandSetSchema,
+	googleOAuthApplicationIdSchema,
+	type CompiledGoogleCommandSet,
+	type GoogleOAuthApplicationId,
+} from '@agent-collaboration/tool-access/contracts';
+import {
 	createGogOperationResolver,
 	googlePolicyCatalogSchema,
 	googlePolicyDefaultsSnapshotSchema,
-	type GooglePolicyDefaultsSource,
-	type GooglePolicyDefaultsSnapshot,
-	type googleServicePolicyDefaultsSchema,
 	oauthPermissionSelectionsSchema,
 	type GogCommandDescriptor,
 	type GooglePolicyCatalog,
+	type GooglePolicyDefaultsSnapshot,
+	type GooglePolicyDefaultsSource,
 	type OAuthPermissionSelections,
+	type googleServicePolicyDefaultsSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 
-import {
-	compiledGoogleCommandSetSchema,
-	type CompiledGoogleCommandSet,
-} from './compiled-google-command-set.js';
 import {
 	isControllerEphemeralManagedVmConfiguredCliOperation,
 	type ControllerEphemeralManagedVmConfiguredCliOperation,
 } from './controller-configured-cli.js';
 import {
-	googleOAuthApplicationIdSchema,
 	oauthConfigSchema,
 	resolvedOAuthConfigSchema,
-	type GoogleOAuthApplicationId,
 	type ResolvedOAuthConfig,
 } from './oauth-config.js';
-import {
-	toolPortalConfigSchema,
-	toolPortalNamespaceAllowsOperation,
-	toolPortalSelectorAllowsOperation,
-	type ManagedToolPortalConfig,
-} from './tool-portal-config.js';
+import { toolPortalConfigSchema, type ManagedToolPortalConfig } from './tool-portal-config.js';
 
 type DefaultMap = z.infer<typeof googleServicePolicyDefaultsSchema>;
 type ApplicationGroups = Partial<Record<GoogleOAuthApplicationId, readonly string[]>>;
-export type { CompiledGoogleCommandSet } from './compiled-google-command-set.js';
+
 export interface CompiledOAuthPolicy {
 	readonly oauthConfig: ResolvedOAuthConfig;
 	readonly toolPortalConfig: ManagedToolPortalConfig;

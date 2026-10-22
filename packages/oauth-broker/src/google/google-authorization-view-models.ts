@@ -1,16 +1,16 @@
 import {
 	googleOAuthApplicationIdSchema,
-	type ResolvedOAuthConfig,
-} from '@agent-vm/config-contracts';
-import type { GoogleOAuthApplicationId } from '@agent-vm/config-contracts';
+	type GoogleOAuthApplicationId,
+} from '@agent-collaboration/tool-access/contracts';
+import { type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
 	oauthAuthorizationActionResultSchema,
+	type OAuthAccountActivityAvailability,
 	type OAuthApplicationId,
 	type OAuthAuthorizationActionResult,
 	type OAuthCredentialLifecycleState,
 	type OAuthPermissionSelections,
-	type OAuthAccountActivityAvailability,
 } from '@agent-vm/oauth-broker-contracts';
 
 import { type OAuthKeyEncryptionKey } from '../envelope-codec.js';

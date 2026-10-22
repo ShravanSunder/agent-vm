@@ -1,17 +1,15 @@
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { mcpConfigSchema, type McpConfig } from '@agent-collaboration/tool-access/contracts';
 import {
 	decodeConfiguredCliPreparedImageIdentity,
-	mcpConfigSchema,
 	toolPortalConfigSchema,
 	type ControllerEnforcedConfiguredCliOperation,
-	type McpConfig,
 	type ToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import { deriveGatewayRuntimePortalBindingRevision } from '@agent-vm/gateway-control-contracts';
-import type { SecretResolver } from '@agent-vm/secret-management';
-import type { SecretRef } from '@agent-vm/secret-management';
+import type { SecretRef, SecretResolver } from '@agent-vm/secret-management';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

@@ -1,11 +1,13 @@
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 
 import { createAccessAssessor } from '@agent-collaboration/tool-access/authorization';
 import {
+	hashCallArguments,
 	jsonValueSchema,
 	revisionRef,
-	type AssessAccessInput,
 	type AccountFact,
+	type AssessAccessInput,
 } from '@agent-collaboration/tool-access/contracts';
 import {
 	canonicalDispatchJson,
@@ -28,9 +30,9 @@ import {
 	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
+	GatewayRuntimePortalSemanticSnapshotSchema,
 	deriveGatewayRuntimeApprovalFingerprint,
 	deriveGatewayRuntimeApprovalId,
-	GatewayRuntimePortalSemanticSnapshotSchema,
 	type GatewayRuntimeApprovalAdmissionResult,
 	type GatewayRuntimeApprovalChallengeIntent,
 	type GatewayRuntimeApprovalDispatchGrant,
@@ -51,19 +53,25 @@ import {
 	type ManagedBackendPorts,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-backend-projection.js';
 import { createManagedPortalCallProjection } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-projection.js';
+import {
+	ambiguousDispatchItem,
+	notDispatchedItem,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-results.js';
+import {
+	canonicalManagedDispatchJson,
+	deterministicOperationId,
+	directDispatchFingerprint,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-identity.js';
+import type { ToolPortalApprovalPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import type { ManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-tool-engine-adapter.js';
 import {
 	managedGoogleReadyPreflightSchema,
 	type ManagedGoogleReadyPreflight,
 } from '@agent-vm/oauth-broker-contracts';
-import type { ToolPortalApprovalPort } from '@agent-vm/tool-portal';
-import {
-	deterministicOperationId,
-	directDispatchFingerprint,
-} from '@agent-vm/tool-portal/dispatch-authority';
 
 interface ManagedDispatchEntry {
 	readonly context: ManagedEngineInvocationContext;
+	readonly argumentDigest: string;
 	readonly call: PortalCallRequest['calls'][number];
 	readonly accounts: readonly AccountFact[];
 	readonly managedGoogle: ManagedGoogleReadyPreflight | null;
@@ -72,6 +80,7 @@ interface ManagedDispatchEntry {
 	grant: GatewayRuntimeApprovalDispatchGrant | null;
 	receipt: ApprovalReceipt | null;
 	record: OperationRecord | null;
+	preDispatchFailure: PortalCallResult['items'][number] | null;
 	backendItem: PortalCallResult['items'][number] | null;
 }
 
@@ -117,6 +126,7 @@ export function createManagedToolEngineAdapter(props: {
 			context: selected.context,
 			call: selected.call,
 			accounts: selected.accounts,
+			argumentDigest: selected.argumentDigest,
 		});
 	}
 
@@ -211,6 +221,20 @@ export function createManagedToolEngineAdapter(props: {
 			if (!needsApproval) return { kind: 'untracked' };
 			const admission = await props.approvalPort.reserveDispatch({ intent: intent(invocation) });
 			selected.admission = admission;
+			if (
+				selected.managedGoogle !== null &&
+				admission.kind === 'approval-required' &&
+				canonicalManagedDispatchJson(admission.challenge.intent) !==
+					canonicalManagedDispatchJson(intent(invocation))
+			) {
+				selected.preDispatchFailure = notDispatchedItem({
+					id: selected.call.id,
+					operationId: intent(invocation).operationId,
+					owningGeneration: snapshot.activeRevision,
+					reason: 'Google approval display did not match the current account binding',
+				});
+				return { kind: 'denied' };
+			}
 			if (admission.kind === 'not-dispatched') return { kind: 'denied' };
 			if (admission.kind === 'ambiguous') {
 				const held = record(
@@ -234,8 +258,14 @@ export function createManagedToolEngineAdapter(props: {
 					reservation.stablePrincipal !== managed.stablePrincipal ||
 					reservation.fingerprint !== fingerprint ||
 					reservation.approvalId !== deriveGatewayRuntimeApprovalId(fingerprint)
-				)
+				) {
+					selected.preDispatchFailure = ambiguousDispatchItem({
+						id: selected.call.id,
+						operationId: expected.operationId,
+						owningGeneration: snapshot.activeRevision,
+					});
 					return { kind: 'denied' };
+				}
 				selected.reservation = reservation;
 				selected.receipt = {
 					reference: randomUUID(),
@@ -281,7 +311,10 @@ export function createManagedToolEngineAdapter(props: {
 				selected.reservation.backendKind !== 'controller_execution'
 			) {
 				const armed = await props.approvalPort.armDispatch({ reservation: selected.reservation });
-				if (armed.kind !== 'dispatch-armed') return { kind: 'denied' };
+				if (armed.kind !== 'dispatch-armed') {
+					selected.admission = armed;
+					return { kind: 'denied' };
+				}
 				const { reservation } = selected;
 				if (
 					armed.grant.approvalId !== reservation.approvalId ||
@@ -290,10 +323,16 @@ export function createManagedToolEngineAdapter(props: {
 					armed.grant.stablePrincipal !== reservation.stablePrincipal ||
 					armed.grant.backendKind !== reservation.backendKind ||
 					armed.grant.expiresAt !== reservation.expiresAt ||
-					JSON.stringify(armed.grant.authorityContext) !==
-						JSON.stringify(reservation.authorityContext)
-				)
+					canonicalDispatchJson(armed.grant.authorityContext) !==
+						canonicalDispatchJson(reservation.authorityContext)
+				) {
+					selected.preDispatchFailure = ambiguousDispatchItem({
+						id: selected.call.id,
+						operationId: intent(invocation).operationId,
+						owningGeneration: snapshot.activeRevision,
+					});
 					return { kind: 'denied' };
+				}
 				selected.grant = armed.grant;
 			}
 			selected.record = {
@@ -503,14 +542,19 @@ export function createManagedToolEngineAdapter(props: {
 		now: props.now,
 		...(props.factsRejected === undefined ? {} : { factsRejected: props.factsRejected }),
 	});
-	const register: ManagedToolEngineAdapter['register'] = ({
+	const register: ManagedToolEngineAdapter['register'] = async ({
 		context,
 		call,
 		accounts,
 		managedGoogle,
 	}) => {
+		const argumentDigest = Buffer.from(
+			await hashCallArguments(call.arguments),
+			'base64url',
+		).toString('hex');
 		const reference = randomUUID();
 		entries.set(reference, {
+			argumentDigest,
 			context,
 			call,
 			accounts: accounts ?? [],
@@ -522,6 +566,7 @@ export function createManagedToolEngineAdapter(props: {
 			receipt: null,
 			record: null,
 			backendItem: null,
+			preDispatchFailure: null,
 		});
 		return reference;
 	};
@@ -545,6 +590,7 @@ export function createManagedToolEngineAdapter(props: {
 			dispatcher,
 			snapshot,
 			admission: (reference) => entry(reference).admission,
+			preDispatchFailure: (reference) => entry(reference).preDispatchFailure,
 			backendItem: (reference) => entry(reference).backendItem,
 		}),
 	};

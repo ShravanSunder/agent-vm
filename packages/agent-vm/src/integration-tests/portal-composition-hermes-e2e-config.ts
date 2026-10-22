@@ -1,10 +1,12 @@
 import {
 	configuredCliPolicySchema,
-	managedToolPortalConfigSchema,
 	mcpConfigSchema,
+	type McpConfig,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	managedToolPortalConfigSchema,
 	suggestedConfiguredCliPolicySchema,
 	type ManagedToolPortalConfig,
-	type McpConfig,
 } from '@agent-vm/config-contracts';
 
 export interface PortalCompositionFixtureConfig {

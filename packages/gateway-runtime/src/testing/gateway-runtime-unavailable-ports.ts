@@ -1,3 +1,4 @@
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalCallRequestSchema,
 	PortalDescribeRequestSchema,
@@ -8,9 +9,11 @@ import {
 	type PortalBackendSearchResult,
 	type PortalCallResult,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
 import type { GatewayRuntimeToolPortalDispatchAuthority } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalApprovalPort, ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type {
+	ToolPortalApprovalPort,
+	ToolPortalBackendPort,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
 export class GatewayRuntimeUnavailablePortError extends Error {
 	readonly code = 'runtime-port-unavailable';

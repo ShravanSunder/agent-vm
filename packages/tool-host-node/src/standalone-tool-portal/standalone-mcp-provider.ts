@@ -4,11 +4,11 @@ import {
 } from '@agent-collaboration/tool-access/authorization';
 import {
 	JsonValueSchema,
-	jsonValueSchema,
 	PortalBackendDescribeResultSchema,
 	PortalBackendListResultSchema,
 	PortalBackendSearchResultSchema,
 	PortalCallItemResultSchema,
+	jsonValueSchema,
 	type JsonValue,
 	type PortalCallRequest,
 	type SafeDiagnostic,
@@ -16,8 +16,8 @@ import {
 import {
 	createPortalToolHandlers,
 	proxyUpstreamFailureFromError,
-	type PortalBatchResult,
 	type AgentCatalogView,
+	type PortalBatchResult,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import type {
 	StandalonePortalCallItem,
@@ -114,17 +114,19 @@ function discoveryResult(batch: PortalBatchResult, mergeBatch: boolean): unknown
 }
 
 /** MCP resource adapter. Caller/session filtering is supplied by the host's shared catalog port. */
-export function createStandaloneMcpProviderBackend(props: {
+export function createStandaloneMcpProviderBackend<
+	TOptions extends { readonly signal?: AbortSignal } = StandaloneToolPortalInvocationOptions,
+>(props: {
 	readonly identity: PortalAgentIdentity;
 	readonly getView: () => Promise<AgentCatalogView>;
 	readonly runtime: UpstreamMcpClientRuntime;
 	readonly owningGeneration: string;
 }): {
-	readonly discovery: ToolPortalDiscoveryBackendPort<StandaloneToolPortalInvocationOptions>;
+	readonly discovery: ToolPortalDiscoveryBackendPort<TOptions>;
 	readonly invoke: (
 		call: PortalCallRequest['calls'][number],
 		operationId: string,
-		options: StandaloneToolPortalInvocationOptions,
+		options: TOptions,
 	) => Promise<StandalonePortalCallItem>;
 } {
 	const readers = createPortalToolHandlers({

@@ -1,9 +1,7 @@
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
-import {
-	controllerConfiguredCliInputSchema,
-	resolveCompiledGoogleCommand,
-	type GatewayRuntimeManagedToolPortalConfig,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import type { ManagedGoogleReadyPreflight } from '@agent-vm/oauth-broker-contracts';
 
 /** Preserve the existing managed preflight binding; portable references do not carry it. */

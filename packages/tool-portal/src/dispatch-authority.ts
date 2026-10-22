@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendKind } from '@agent-vm/config-contracts';
 import type { ManagedGoogleReadyPreflight } from '@agent-vm/oauth-broker-contracts';
 
 function canonicalAuthorityJson(value: unknown): string {

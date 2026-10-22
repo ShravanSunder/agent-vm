@@ -62,3 +62,5 @@ function toolSelectorsOverlap(
 			!right.deny.includes(toolName),
 	);
 }
+
+export type ToolPortalBackendKind = z.infer<typeof toolPortalBackendKindSchema>;

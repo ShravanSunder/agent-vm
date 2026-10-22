@@ -26,7 +26,7 @@ import {
 	type ConfiguredCliPolicy,
 	type ConfiguredCliStdinPolicy,
 	type ConfiguredCliTimeoutPolicy,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
 
 export const CliArgvTokenSchema = configuredCliArgvTokenSchema;
 export const CliPatternRuleSchema = configuredCliPatternRuleSchema;

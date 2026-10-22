@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveGoogleAccountInvocationPolicy } from './google-account-policy.js';
+import { resolveGoogleAccountInvocationPolicy } from '#agent-vm/controller/oauth/google-account-invocation-policy';
 
 const binding = {
 	zoneId: 'apollofam',

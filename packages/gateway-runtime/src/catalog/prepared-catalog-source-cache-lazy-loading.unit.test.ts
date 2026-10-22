@@ -1,4 +1,4 @@
-import type { CompiledCatalogTypescriptBundle } from '@agent-vm/mcp-portal/catalog-typescript';
+import type { CompiledCatalogTypescriptBundle } from '@agent-collaboration/tool-host-node/catalog-typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const definitionFingerprint = 'a'.repeat(64);
@@ -19,7 +19,7 @@ function emptyCompiledBundle(): CompiledCatalogTypescriptBundle {
 }
 
 afterEach(() => {
-	vi.doUnmock('@agent-vm/mcp-portal/catalog-typescript');
+	vi.doUnmock('@agent-collaboration/tool-host-node/catalog-typescript');
 	vi.resetModules();
 });
 
@@ -27,10 +27,10 @@ describe('prepared catalog compiler loading', () => {
 	it('loads the TypeScript compiler only when catalog preparation is requested', async () => {
 		const compilerModuleFactory = vi.fn(() => ({
 			compileCatalogTypescriptModules: vi.fn(async () => emptyCompiledBundle()),
-			fingerprintCatalogTypescriptInput: vi.fn(() => definitionFingerprint),
+			fingerprintCatalogTypescriptInput: vi.fn(async () => definitionFingerprint),
 		}));
 		vi.resetModules();
-		vi.doMock('@agent-vm/mcp-portal/catalog-typescript', compilerModuleFactory);
+		vi.doMock('@agent-collaboration/tool-host-node/catalog-typescript', compilerModuleFactory);
 
 		const { createPreparedCatalogSourceCache } = await import('../index.js');
 		const cache = createPreparedCatalogSourceCache();

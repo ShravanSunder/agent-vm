@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
-	startStandaloneToolPortalMcpHttpServer,
 	TOOL_PORTAL_MCP_BEARER_AUDIENCE,
+	startStandaloneToolPortalMcpHttpServer,
 	type StandaloneToolPortalArtifactReader,
 	type StandaloneToolPortalFixedCredentialPrincipal,
 	type StandaloneToolPortalMcpHttpServer,

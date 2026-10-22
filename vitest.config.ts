@@ -36,6 +36,7 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'#agent-vm': repoPath('packages/agent-vm/src'),
 			'@agent-collaboration/tool-engine/standalone-tool-portal': repoPath(
 				'packages/tool-engine/src/standalone-tool-portal/index.ts',
 			),

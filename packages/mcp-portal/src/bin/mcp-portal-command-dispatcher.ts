@@ -3,12 +3,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { type SecretValue } from '@agent-collaboration/tool-access/contracts';
 import {
 	loadMcpConfig,
 	loadMcpPortalConfig,
 	type McpPortalConfig,
-	type SecretValue,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-host-node';
 import type { SecretResolver } from '@agent-vm/secret-management';
 import { z } from 'zod';
 

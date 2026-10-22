@@ -1,12 +1,13 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import { collectToolHostNodeViolations } from './tool-host-node-architecture.js';
 export {
 	collectToolHostNodeViolations,
 	isForbiddenToolHostNodeImport,
 } from './tool-host-node-architecture.js';
-import { readdir, readFile } from 'node:fs/promises';
-import { builtinModules } from 'node:module';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 
@@ -865,10 +866,29 @@ function collectManagedFrameworkChildTopologyViolations(
 	return [];
 }
 
+export function collectManagedPortalCutoverViolations(
+	file: PortalArchitectureSourceFile,
+): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (!filePath.startsWith('packages/gateway-runtime/src/') || isTestSourceFile(filePath))
+		return [];
+	return importedModuleSpecifiers(file.sourceText)
+		.filter(
+			(specifier) =>
+				importStartsWithAny(specifier, ['@agent-vm/tool-portal', '@agent-vm/mcp-portal']) ||
+				/\/(?:tool-portal|mcp-portal)\/src\//u.test(specifier),
+		)
+		.map(
+			(specifier) =>
+				`${filePath}: managed production must use the shared engine and owned adapters, not ${specifier}`,
+		);
+}
+
 export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
 	const violations = [
+		...props.files.flatMap(collectManagedPortalCutoverViolations),
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),
 		...props.files.flatMap(collectToolHostNodeViolations),

@@ -1,4 +1,8 @@
 import type {
+	PortalArtifactReadRequest,
+	PortalArtifactReadResult,
+	PortalCallRequest,
+	PortalCallResult,
 	PortalCatalogOfferRequest,
 	PortalCatalogOfferResult,
 	PortalCatalogPrepareRequest,
@@ -7,10 +11,6 @@ import type {
 	PortalCatalogReadResult,
 	PortalCatalogReleaseRequest,
 	PortalCatalogReleaseResult,
-	PortalArtifactReadRequest,
-	PortalArtifactReadResult,
-	PortalCallRequest,
-	PortalCallResult,
 	PortalDescribeRequest,
 	PortalDescribeResult,
 	PortalListRequest,
@@ -23,7 +23,10 @@ import type {
 	GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
 import { deriveGatewayControlStablePrincipal } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalApprovalPort, ToolPortalCapabilityCore } from '@agent-vm/tool-portal';
+import type {
+	ToolPortalApprovalPort,
+	ToolPortalCapabilityCore,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { z } from 'zod';
 
 import {
@@ -133,7 +136,7 @@ export interface GatewayRuntimeCatalogProjectionOperations {
 export interface GatewayRuntimePortalProjectionCommonProps {
 	readonly portalOperations: GatewayRuntimePortalProjectionOperations;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 }
 
 export interface GatewayRuntimePrivateUdsProjectionFactoryProps extends GatewayRuntimePortalProjectionCommonProps {
@@ -152,7 +155,7 @@ export interface CreateGatewayRuntimeToolPortalCompositionProps<TUdsProjection> 
 	readonly createToolPortalCapabilityCore: (props: {
 		readonly approvalPort: ToolPortalApprovalPort;
 		readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
-	}) => ToolPortalCapabilityCore<'managed'>;
+	}) => ToolPortalCapabilityCore;
 	readonly managedPluginAttachment: {
 		readonly clientKind: GatewayRuntimeManagedPluginClientKind;
 		readonly configuredAgentIds: readonly string[];
@@ -181,7 +184,7 @@ function createProtectedUdsArtifactProjectionOperations(props: {
 }
 
 export interface GatewayRuntimeToolPortalComposition<TUdsProjection> {
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly privateUdsProjection: TUdsProjection;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
 }
@@ -231,7 +234,7 @@ function catalogPreparationFlightKey(authority: PreparedCatalogSourceAuthority):
 }
 
 function createCatalogProjectionOperations(props: {
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly gatewayEpoch: string;
 	readonly preparedCatalogSourceCache: PreparedCatalogSourceCache;
 	readonly semanticSnapshot: GatewayRuntimePortalSemanticSnapshot;
@@ -337,7 +340,7 @@ function assertAttachmentMatchesSnapshot(props: {
 }
 
 function createPortalProjectionOperations(props: {
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 }): GatewayRuntimePortalProjectionOperations {
 	return {
 		call: async (invocation) =>

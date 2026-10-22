@@ -3,6 +3,11 @@ import { lstat, mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+	mcpConfigSchema,
+	type FormattedSecretValue,
+	type ToolPortalBackendKind,
+} from '@agent-collaboration/tool-access/contracts';
 import { PortalListRequestSchema } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeClient,
@@ -12,9 +17,6 @@ import {
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
-	type FormattedSecretValue,
-	type ToolPortalBackendKind,
 } from '@agent-vm/config-contracts';
 import {
 	CONTROL_HANDSHAKE_HEADER_NAMES,
@@ -30,19 +32,20 @@ import {
 	type ControlReadyRequestCredential,
 } from '@agent-vm/control-protocol-contracts';
 import {
-	deriveGatewayRuntimeInputRevision,
-	deriveGatewayRuntimePortalSemanticSnapshot,
 	GatewayControlHelloResponseSchema,
 	GatewayControlRpcMessageSchema,
 	GatewayRuntimeReadinessSnapshotSchema,
+	deriveGatewayRuntimeInputRevision,
+	deriveGatewayRuntimePortalSemanticSnapshot,
 	type GatewayControlHello,
 	type GatewayControlRpcMessage,
 	type GatewayRuntimeReadinessSnapshot,
 } from '@agent-vm/gateway-control-contracts';
-import type { ManagedMcpProviderBackendFactory } from '@agent-vm/mcp-portal/mcp-provider-backend';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { io as createSocketIoClient, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { ManagedMcpProviderBackendFactory } from '#gateway-runtime/backends/managed-mcp-provider-backend';
 
 import type {
 	GatewayControlApplicationMessageContext,
