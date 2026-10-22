@@ -313,6 +313,24 @@ The following is the dependency graph, not authority to create branches now:
              -> S4c images and consumers -> [Q8] S4d outbound -> S4e delete
 ```
 
+**Re-sequencing (Lead, 2026-10-22).** S4a is accepted at `40a4ec5b` (PR #250). S4b
+waits for the owner's `pyproject.toml` grant, so S4c is split in two:
+
+```text
+S4a 40a4ec5b -> S4c1 operator CLI and test homes -> [pyproject grant] S4b Python
+             -> S4c2 images and Hermes -> [Q8] S4d outbound -> S4e delete
+```
+
+- **S4c1** takes the parts of S4c that don't depend on the Python wheel or images:
+  - close the CLI command gap (`validate`, `generate-helper`, `call`, `mcp-proxy serve`, `print-client-config`, `write-credential` move to `tool-host-node`'s CLI, with their tests and packed-command proof);
+  - carry the controlled upstream fixture to Node's test-only entry;
+  - update the agent-vm orientation/composition fixtures and Engine connector tests to that home;
+  - update operator docs and manual templates;
+  - update the Optique/export guards.
+- **S4c2** keeps the image, tarball, Hermes recipe and CI-only Hermes/VM journeys, after S4b.
+
+The scope and the proof rows don't change; only the order does.
+
 After checking existing stack registration with `gh stack view`, adopt #245 as the
 base (`gh stack init --base tool-host-node/s3d-standalone-core <first-branch>` if a
 new stack is needed), then `gh stack add <next-branch>`. Each PR bases on the
