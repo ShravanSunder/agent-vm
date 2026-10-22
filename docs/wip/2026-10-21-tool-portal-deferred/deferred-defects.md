@@ -44,3 +44,15 @@ Source is identical at `08f9e426` and #245. Reconfirmed with the real durable co
 **Not changed in S4a.** The cutover keeps today's behavior, and its tests don't
 pin the defect as expected. Fixing it changes behavior: the provider would have
 to accept a controller-dispatched approval for that exact call. **Owner decision.**
+
+## Temp-directory cleanup race in a controller lifecycle test (test defect)
+
+`packages/agent-vm/src/controller/zone-runtimes/managed-gateway-zone-runtime.unit.test.ts`,
+"keeps lifecycle operations serialized until a timed-out replacement gateway
+settles", failed once on sunclaw during a full parallel unit run at `83e9683f`
+(S4c1 part 1) with `ENOTEMPTY: directory not empty, rmdir
+…/runtime/gateway-lifecycle`, in its own temp-directory teardown. Alone it passed
+42/42 five times in a row, and the S4 stack doesn't touch that directory (empty
+diff from `40a4ec5b`). **Fix in its own layer:** the teardown should wait for the
+timed-out replacement gateway to settle, or remove the directory recursively
+after it settles. Don't add a retry.
