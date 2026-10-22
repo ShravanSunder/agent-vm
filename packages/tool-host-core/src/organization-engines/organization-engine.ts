@@ -35,7 +35,10 @@ import type {
 } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import { formatSecretValue } from '#tool-host-core/hosted-configuration/secret-values';
 import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
-import type { OrganizationEngine } from '#tool-host-core/organization-engines/models/organization-engine';
+import type {
+	OrganizationEngine,
+	SettledOrganizationCatalog,
+} from '#tool-host-core/organization-engines/models/organization-engine';
 import {
 	assessedProxyProfile,
 	resolveHostedProxyProfile,
@@ -49,13 +52,14 @@ const unavailableApproval: ApprovalPort = {
 	decision: async () => ({ kind: 'unavailable' }),
 };
 
-/** One instance owns one organization's configuration, key and plain-data catalog. */
+/** One request owns its engine and all discovery I/O; only settled catalog data is reusable. */
 export async function createOrganizationEngine(props: {
 	readonly organizationId: string;
 	readonly configuration: OrganizationConfiguration;
 	readonly secrets: SecretSource;
 	readonly clock: Clock;
 	readonly limits: HostedProxyLimits;
+	readonly cachedCatalog?: SettledOrganizationCatalog;
 	readonly createClient?: UpstreamMcpRuntimeOptions['createClient'];
 	readonly createUpstreamMcpTransport: NonNullable<
 		UpstreamMcpRuntimeOptions['createUpstreamMcpTransport']
@@ -100,22 +104,11 @@ export async function createOrganizationEngine(props: {
 			maxResponseBytes: props.limits.upstreamResponseBytes,
 		});
 	}
-	// A discovery refresh owns its runtime only until that refresh ends; cached state is plain data.
-	const discoveryRuntimes = new Map<string, UpstreamMcpClientRuntime>();
+	// This engine is request-owned. No runtime or in-flight catalog survives into another request.
+	const discoveryRuntime = createRequestRuntime();
 	const catalogRuntime = {
-		listTools: async (call: { readonly namespace: string; readonly agentScopeId: string }) => {
-			let runtime = discoveryRuntimes.get(call.agentScopeId);
-			if (runtime === undefined) {
-				runtime = createRequestRuntime();
-				discoveryRuntimes.set(call.agentScopeId, runtime);
-			}
-			return runtime.listTools(call);
-		},
-		closeAgentScope: async (scope: string): Promise<void> => {
-			const runtime = discoveryRuntimes.get(scope);
-			discoveryRuntimes.delete(scope);
-			await runtime?.closeAgentScope(scope);
-		},
+		listTools: discoveryRuntime.listTools,
+		closeAgentScope: discoveryRuntime.closeAgentScope,
 	};
 	const organizationCatalog = createOrganizationToolCatalog({
 		namespaces: providers.map((provider) => provider.namespace),
@@ -124,14 +117,33 @@ export async function createOrganizationEngine(props: {
 		catalogTtlMs: 60_000,
 		now: props.clock.nowMs,
 	});
-	let snapshot = await organizationCatalog.read();
+	let settledCatalog = props.cachedCatalog;
+	let snapshot = settledCatalog?.snapshot;
+	async function refresh(): Promise<void> {
+		if (settledCatalog !== undefined && props.clock.nowMs() < settledCatalog.fetchedAt + 60_000)
+			return;
+		const candidate = await organizationCatalog.read();
+		if (candidate.discoveryFailures.length === 0) {
+			settledCatalog = { snapshot: candidate, fetchedAt: props.clock.nowMs() };
+			snapshot = candidate;
+		} else {
+			// A failed refresh may serve the previous complete generation, but publishes no new cache entry.
+			snapshot =
+				settledCatalog === undefined
+					? candidate
+					: {
+							...settledCatalog.snapshot,
+							discoveryFailures: candidate.discoveryFailures,
+						};
+		}
+	}
+	await refresh();
 
 	const revision = { owner: props.organizationId, revision: 'deployed-v1' };
 	return {
 		configuration,
-		refresh: async () => {
-			snapshot = await organizationCatalog.read();
-		},
+		refresh,
+		settledCatalog: () => settledCatalog,
 		gatewayFor: ({ agentClientId, consumeTokenId, invoke }) => {
 			const assignment = configuration.portal.agents[agentClientId];
 			const profile =
@@ -140,6 +152,7 @@ export async function createOrganizationEngine(props: {
 				throw new Error('Agent profile unavailable.');
 			const resolvedProfile = resolveHostedProxyProfile(profile);
 			const requestSnapshot = snapshot;
+			if (requestSnapshot === undefined) throw new Error('Request catalog was not prepared.');
 			const sessions = createAgentCatalogViewCache({
 				runtime: catalogRuntime,
 				catalogTtlMs: 60_000,

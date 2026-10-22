@@ -219,3 +219,85 @@ it.each([true, false])(
 		}
 	},
 );
+
+it.each(['fresh', 'failed-refresh'] as const)(
+	'reuses only settled catalog data for %s',
+	async (state) => {
+		const cached = {
+			fetchedAt: 100,
+			snapshot: {
+				kind: 'complete' as const,
+				toolsByNamespace: new Map([
+					['fixture', [{ name: 'read', inputSchema: { type: 'object' as const } }]],
+				]),
+				discoveryFailures: [],
+			},
+		};
+		let discoveries = 0;
+		const engine = await createOrganizationEngine({
+			organizationId: 'fixture',
+			cachedCatalog: cached,
+			configuration: organizationConfigurationSchema.parse({
+				organizationName: 'fixture',
+				approvalKeyBinding: 'KEY',
+				mcp: {
+					schemaVersion: 1,
+					providers: {
+						fixture: {
+							kind: 'mcp',
+							namespace: 'fixture',
+							transport: { kind: 'streamable-http', url: 'https://fixture.invalid/mcp' },
+						},
+					},
+				},
+				portal: {
+					schemaVersion: 1,
+					agents: { sender: { profile: 'fixture' } },
+					profiles: {
+						fixture: {
+							namespaces: {
+								fixture: {
+									tools: { allow: '*' },
+									calls: { withoutApproval: { allow: '*' }, requiresApproval: { allow: [] } },
+								},
+							},
+						},
+					},
+				},
+			}),
+			secrets: { read: () => '12'.repeat(32) },
+			clock: {
+				nowMs: () => (state === 'fresh' ? 101 : 60_101),
+				nowIso: () => '2026-10-22T00:00:00.000Z',
+			},
+			limits: testHostedProxyLimits,
+			createClient: () => ({
+				connect: async () => {},
+				close: async () => {},
+				callTool: async () => ({}),
+				listTools: async () => {
+					discoveries += 1;
+					throw new Error('controlled discovery failure');
+				},
+			}),
+			createUpstreamMcpTransport: () => ({
+				start: async () => {},
+				send: async () => {},
+				close: async () => {},
+			}),
+		});
+		const request = engine.gatewayFor({
+			agentClientId: 'sender',
+			consumeTokenId: async () => ({ ok: true }),
+		});
+		try {
+			expect(engine.settledCatalog()).toBe(cached);
+			expect((await request.gateway.prepareCatalog()).tools.map((tool) => tool.toolName)).toEqual([
+				'read',
+			]);
+			expect(discoveries).toBe(state === 'fresh' ? 0 : 1);
+		} finally {
+			await request.close();
+		}
+	},
+);

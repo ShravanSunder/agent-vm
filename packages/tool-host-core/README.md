@@ -9,7 +9,12 @@ An admitted caller still needs a valid configured profile. Missing assignments
 and dangling profile references return the existing admission refusal envelope,
 HTTP 401 with `profile-unassigned`, before any upstream discovery or dispatch.
 There is no default profile. Each request also keeps one catalog generation for
-its views, access checks and analytics while organization discovery stays shared.
+its views, access checks and analytics. Across requests the proxy caches only
+settled configuration and the last successful catalog snapshot with its fetch
+time. Each request owns its engine, discovery runtime and pending work; concurrent
+cold or expired requests discover independently. Failed discovery publishes no
+new cache entry and may serve the previous complete snapshot. A cancelled request
+cannot make the next request await its pending engine or refresh.
 
 Organization authority runs the same admission and approval-use rules over an
 `OrganizationAuthorityStore`. Its atomic callback reads the clock, reads the row,

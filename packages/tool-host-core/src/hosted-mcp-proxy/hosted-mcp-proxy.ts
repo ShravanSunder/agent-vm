@@ -18,13 +18,13 @@ import type {
 	HostedMcpProxy,
 	HostedMcpProxyPorts,
 } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
-import type { OrganizationEngine } from '#tool-host-core/organization-engines/models/organization-engine';
+import type { SettledOrganizationCatalog } from '#tool-host-core/organization-engines/models/organization-engine';
 import { createOrganizationEngine } from '#tool-host-core/organization-engines/organization-engine';
 import { createHostedRequestLimits } from '#tool-host-core/request-limits/hosted-call-limits';
 
 interface HostedOrganizationContext {
 	readonly configuration: OrganizationConfiguration;
-	engine?: Promise<OrganizationEngine>;
+	catalog?: SettledOrganizationCatalog;
 }
 
 function callerRefusalResponse(
@@ -39,21 +39,18 @@ function callerRefusalResponse(
 export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy {
 	// Cache configuration before lazy discovery so an unassigned caller cannot
 	// start upstream clients or poison a later assigned caller's organization engine.
-	const organizations = new Map<string, Promise<HostedOrganizationContext>>();
+	const organizations = new Map<string, HostedOrganizationContext>();
 	const isolateId = props.newId();
 	let activeRequests = 0;
 	const log = props.log;
-	function organizationContext(organizationId: string): Promise<HostedOrganizationContext> {
+	async function organizationContext(organizationId: string): Promise<HostedOrganizationContext> {
 		const existing = organizations.get(organizationId);
 		if (existing !== undefined) return existing;
-		const created = Promise.resolve()
-			.then(() => props.configurations.read(organizationId))
-			.then((configuration) => ({ configuration }));
-		organizations.set(organizationId, created);
-		void created.catch(() => {
-			if (organizations.get(organizationId) === created) organizations.delete(organizationId);
-		});
-		return created;
+		// Concurrent cold requests read independently. Only completed configuration is shared.
+		const configuration = await props.configurations.read(organizationId);
+		const context = organizations.get(organizationId) ?? { configuration };
+		organizations.set(organizationId, context);
+		return context;
 	}
 
 	return {
@@ -86,23 +83,22 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			const handler = createMcpHandler(
 				async () => {
 					const context = await pendingContext;
-					if (context.engine === undefined) {
-						context.engine = createOrganizationEngine({
-							organizationId: caller.organizationId,
-							configuration: context.configuration,
-							secrets: props.secrets,
-							clock: props.clock,
-							limits: props.limits,
-							createUpstreamMcpTransport: props.createUpstreamMcpTransport,
-							...(props.createClient === undefined ? {} : { createClient: props.createClient }),
-						});
-						void context.engine.catch(() => {
-							if (organizations.get(caller.organizationId) === pendingContext)
-								organizations.delete(caller.organizationId);
-						});
-					}
-					const engine = await context.engine;
-					await engine.refresh();
+					const engine = await createOrganizationEngine({
+						organizationId: caller.organizationId,
+						configuration: context.configuration,
+						secrets: props.secrets,
+						clock: props.clock,
+						limits: props.limits,
+						...(context.catalog === undefined ? {} : { cachedCatalog: context.catalog }),
+						createUpstreamMcpTransport: props.createUpstreamMcpTransport,
+						...(props.createClient === undefined ? {} : { createClient: props.createClient }),
+					});
+					const settled = engine.settledCatalog();
+					if (
+						settled !== undefined &&
+						(context.catalog === undefined || settled.fetchedAt >= context.catalog.fetchedAt)
+					)
+						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
 						agentClientId: caller.agentClientId,
 						invoke: limits.invoke,
