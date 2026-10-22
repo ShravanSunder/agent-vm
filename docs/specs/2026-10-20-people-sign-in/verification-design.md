@@ -143,7 +143,8 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - make each change kind `R12` lists: add and remove an allowlist entry; re-add; register, update and retire a client and a relying service; add and remove a passkey; link and unlink a login. The owner binding comes from H.
   - Export `sign_in_audit` and tail the Worker's logs for the run. Search both for every code, access token, session cookie, passkey credential id and public key captured during A–D and I.
 - **On `T3`:**
-  - make the before-change audit write fail during a passkey registration and during a link; no `passkey` or `account` row may appear;
+  - make the before-change audit write fail during a passkey registration, a link and an agent-client registration; no `passkey`, `account` or E9 row may appear;
+  - make the agent client's resource-link write, then its outcome write, fail during registration; no credential is returned, no admission is written, the registration reads as incomplete, and the owner's retry completes it;
   - make the outcome write fail after a change; the before-change record must still be there;
   - make an allowlist batch fail; neither the change nor its record may land.
 
@@ -157,7 +158,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Remove, warm:** keep the old token (`tok-old`). Remove the agent through the handler, then on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
   - call with `tok-old`: `removed-agent`;
   - request a new token: `invalid_client`;
-  - read the handler's status: "removal complete", the object's agent row, the disabled E9 row, and one audit record naming the acting Person.
+  - read the handler's status: "removal complete", the object's agent row, the disabled E9 row, and its before-change and outcome records naming the acting Person.
 - **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove the agent. **Expect:** status "pending"; a call with any token is refused `removed-agent`; a new token request still succeeds, which is the named gap. Retry. **Expect:** status "complete", then a new token request is refused `invalid_client`.
 - **Held races and a conflicting claim** (on `T3`, with the hold seam from E):
   1. a token request held **after Better Auth has signed the token** (past the credential check and `customAccessTokenClaims`), immediately before the handler's final D1 check; the disable commits while it is held, then it is released. **Expect:** `invalid_client`, and no token in the response.
@@ -311,7 +312,8 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - each sign-in success and refusal has a record;
   - the search finds none of the captured values;
   - on `T3`:
-    - a failed before-change write leaves no `passkey` or `account` row;
+    - a failed before-change write leaves no `passkey`, `account` or E9 row;
+    - a failed resource-link or outcome write during agent-client registration returns no credential and writes no admission, until a retry completes it;
     - a failed outcome write leaves the before-change record;
     - a failed allowlist batch leaves neither the change nor its record.
 

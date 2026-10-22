@@ -8,10 +8,10 @@ One `@agent-collaboration/auth` Worker per deployment runs Better Auth on D1. Th
 
 ```text
 originating planner: plan-implementation
-planning result: revision-requested
-plan identity: no canonical ready record; this file is the requested draft
-result payload: Lead must settle atomic OAuth registration plus audit,
-  amend Program Design/Verification Design if needed, and review the draft
+planning result: accepted by the Lead for S1 (Decision A ruled; governing docs amended)
+plan identity: this file, as accepted by the Lead on 2026-10-21
+result payload: S1 waits only for the owner's tsconfig grant; later slices keep
+  their named preconditions
 requested terminal: plan-only
 delivery grouping: selected:worker-first-linear-stack
 PR topology: separate-prs, one dependent linear stack
@@ -118,18 +118,33 @@ default:  Better Auth client write -> resource lookup/write -> our audit write
 | B. Serialize registration in a Durable Object | A DO lock around calls into D1 **does not** make their writes atomic. Moving clients, links and audit into the DO's own transaction could, but changes the designed D1 authority and Better Auth adapter. | Serializes callers; costs a new owner/store and deployment/migration work. Lead must return that design change to the owner; it is not a drop-in solution. |
 | C. Write audit intent first, then provider operation and outcome/reconciliation | A failed intent prevents the change and a lost outcome leaves an attributable intent: the R12 minimum can hold. It **does not preserve** the explicit one-batch client contract; a reconciler adds an unapproved recovery mechanism. | Reuses normal provider calls; operator pays for unresolved outcomes and recovery. Requires a design/proof change before adoption; do not quietly apply the passkey audit pattern to clients. |
 
-Recommend investigating **A first**, with one permanent workerd+D1 test, not adopting a guessed adapter. The Lead has requested the options, not selected one. If A has no supported route, return the exact missing API and take a deliberate design decision; do not patch the dependency. S1 and client/resource mutations wait for that choice; private-person rule and driver preparation can proceed independently once implementation is commissioned.
+The planner recommended investigating A first. The Lead's final ruling below selects C instead, using the Program Design's existing record-first pattern; no adapter is patched.
 
-### Lead ruling on Decision A (2026-10-21)
+### Lead ruling on Decision A (2026-10-21, final)
 
-The Specification requires that every change is recorded and that "a change whose record cannot be written MUST NOT happen" (`R12`, `V9`). "One D1 batch" is the Program Design's mechanism for that, not the Specification's, so the choice is a structural one for the Lead.
+The Specification requires that every change is recorded and that "a change whose record cannot be written MUST NOT happen" (`R12`, `V9`). "One D1 batch" was the Program Design's mechanism, not the Specification's. The Program Design already uses a second pattern for changes Better Auth writes itself (passkeys, linked logins): a before-change record, then the change, then an outcome record. **Client and relying-service changes, including agent clients (E9), now use that same pattern.** Better Auth writes those rows itself, and its D1 adapter runs no transactions. Program Design and Verification Design are amended to match (same commit as this ruling). Option C without a reconciler is selected; A is not pursued and B is not selected (B moves storage authority into a Durable Object, which would be the owner's call).
 
-1. **Try A first, time-boxed (about two hours) in S1.** Look for a *supported* Better Auth 1.7.12 API that produces the client, resource-link and audit writes as statements we can put in one `D1.batch`, returning only after commit. If one exists, use it; the Program Design stays as written.
-2. **Otherwise use C, without a reconciler.** Write the attributable audit record (who, what was requested, when) first. If that write fails, the change does not happen (`V9`). Then call Better Auth, then write the outcome row. The management route reads back the client, its resource link and the audit record, and reports "incomplete" until all three are present. A crash between the steps leaves a record whose outcome is unknown; the current state shows whether the change applied, and an owner retry is idempotent. This meets `R12`/`V9` as written. It gives up the Program Design's all-or-nothing batch, adds no new store, and adds no background recovery.
-3. **B is not selected.** It moves storage authority into a Durable Object, which is a storage-boundary change for the owner.
-4. If C is used, the Lead amends Program Design lines 70 and 236 (and every other "one D1 batch" for client changes) before S1's PR is accepted. The deciding test below applies to whichever option S1 uses, with C's expected result: no client without a prior record, and no credential released before the readback is complete.
+The contract S1 builds and proves:
 
-The deciding test attempts registration through the selected real API, reads the client, resource link and audit directly, and forces each persistence statement to fail in turn. It must observe all three records or none, no credential released on failure, and a successful real token exchange after commit. Repeat for disable and client/resource changes. A mock batch, a mutex, cleanup after success, or an audit write before/after the API cannot pass as this proof. No such test was run during planning.
+1. **Before-change record first.** The agent-client route writes an attributable record (acting Person, change kind, request id, time) before calling Better Auth. If that write fails, Better Auth is not called: no E9 row, no resource link.
+2. **Then the change, then the outcome record.**
+3. **Readback before release.** The route returns the client's credential, and the handler writes admission, only after it reads back the client, its resource link and the record. Until then the registration reads as "incomplete".
+4. **Allowed partial states:**
+   - a record with no client (the change failed or the process stopped);
+   - a client without its resource link (it can't get a token: `invalid_target`);
+   - a client and link without an outcome record.
+
+   None of these releases a credential or writes admission. The owner's retry completes or reports them; every write is idempotent. No background recovery.
+5. **Disable** follows the same order: record, disable, outcome. Admission is removed before the disable, as the Program Design says.
+
+The deciding test (workerd + D1, permanent) makes each write fail in turn: the record, the client, the resource link, the outcome. Each time it reads the rows directly and checks that:
+
+- a failed record write leaves no E9 row;
+- no failure returns a credential or writes admission;
+- the registration reads as incomplete;
+- a retry completes it with exactly one client and its records.
+
+A real token exchange then succeeds only after completion. Repeat for disable and for client and resource changes. A mock, a mutex, cleanup after success, or a record written only after the change can't pass. No such test was run during planning.
 
 ## Branches, prerequisites and sequence
 
@@ -138,7 +153,7 @@ Use one linear `gh stack`, starting with `auth/s1-agent-issuer` **above PR #248*
 The alternative is auth-only work from master plus a separate integration branch; that splits the first proof across PRs and delays the requested real path. The selected stack costs dependency on #248's integration. It grants no merge, deploy or history-rewrite authority in this plan-only task.
 
 ```text
-Decision A + Tool Portal #248 + test access -> S1 -> S2 -> S3 -> S4 -> S5 -> S6
+Tool Portal #248 + owner tsconfig grant -> S1 -> S2 -> S3 -> S4 -> S5 -> S6
                                                                            |
 org D1–D3 + reviewed org contract -----------------------------------------> S7
 ```
@@ -157,7 +172,7 @@ All commands in the next section are **planned interfaces to add**, except exist
 
 ### S1 — Real agent issuer through the Gateway
 
-**PR 1:** `auth/s1-agent-issuer`, based on #248. Dependencies: Decision A; SD1/2/3/5/6/8/9 defaults; configured org facts, not adoption of org D1–D3.
+**PR 1:** `auth/s1-agent-issuer`, based on #248. Dependencies: the owner's tsconfig grant; Decision A as ruled (record-first); SD1/2/3/5/6/8/9 defaults; configured org facts, not adoption of org D1–D3.
 
 Scope: add the package/core/Worker/D1 migrations, Better Auth OAuth/JWT configuration and primary reads; minimal owner provider sign-in and bootstrap sufficient to obtain an attributable live person proof; the shared person verifier and person/agent discrimination boundary; the owner-only Gateway agent-management handler and named sign-in binding; strict E9 registration; E10 issuance and final release checks; add/remove coordination and audit for those changes. The owner token names the management API's audience, and its live check reads the actual Person and session. This minimum person path is necessary for real owner authorization; do not substitute an arbitrary actor ID or publicly seed an agent credential. Final session/person-token/introspection checks required by this path land here; S3 completes their removal/race coverage rather than leaving the first owner path without those checks.
 
@@ -301,7 +316,7 @@ DeepWiki was queried first for Better Auth OAuth, organization, passkey and D1 p
 | --- | --- | --- |
 | OAuth maturity | [provider docs](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/docs/content/docs/plugins/oauth-provider.mdx), [changelog](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/CHANGELOG.md): no experimental warning in inspected intro; recent patches cover disabled clients, resource links and scope authority | Released does not establish this composition. S1 must run credential grant, JWKS, metadata claim and final-release checks in workerd. No plugin certification or production maturity claim. |
 | Agent shape and claims | [token.ts:1705](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/token.ts#L1705), [client scopes](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/oauthClient/client-credentials.ts#L22), [claims.ts:143](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/claims.ts#L143), [cache/disabled check](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/utils/index.ts#L291) | Resource claims merge last; final equality and no-cache checks are mandatory. Read generated E9 rows and use real JWTs, not hand-signed successes. |
-| D1 atomicity | Decision A source and primary batch docs above | Default library flow does not supply the required batch. Unresolved; workerd+D1 fault tests must close it before S1 is executable. Hosted replication timing remains a separate gap. |
+| D1 atomicity | Decision A source and primary batch docs above | The default library flow doesn't supply a batch, so client changes are record-first (Decision A). S1's workerd+D1 fault test proves that contract. Hosted replication timing remains a separate gap. |
 | Passkeys on Workers | [routes.ts:653](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/passkey/src/routes.ts#L653) and `:896` use SimpleWebAuthn with expected origin/RP ID; [types.ts](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/passkey/src/types.ts#L40) defaults registration to a session; package depends on server `^13.3.1` | No passkey flow was run. Upstream generic [Cloudflare smoke](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/e2e/smoke/test/cloudflare.spec.ts) is not proof of our OAuth/passkey/D1 path. S2 must perform real ceremonies on the intended HTTPS origin; verify actual locked transitive dependencies. |
 | Organization plugin | [types defaults](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/better-auth/src/plugins/organization/types.ts#L18), [roles](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/better-auth/src/plugins/organization/access/statement.ts#L13) | Default user-created orgs/admin powers do not settle our ownership. Do not install it as authority before S7's decisions/review. |
 | Workers Free CPU | [limits](https://developers.cloudflare.com/workers/platform/limits/#cpu-time), [pricing](https://developers.cloudflare.com/workers/platform/pricing/): Free 10 ms CPU per request; network waiting is distinct | S5 hosted route-level measurements decide SD6. No cost/CPU fit was measured during planning. |
@@ -309,6 +324,6 @@ DeepWiki was queried first for Better Auth OAuth, organization, passkey and D1 p
 
 No saved Reader research or unrelated OSS was consulted; no current runtime, hosted account, provider login or UI was observed. Memory was discovery only and was rechecked against the current four documents and commission. No independent plan review was commissioned; the Lead owns this draft's review.
 
-Stop and return to the Lead if Decision A requires a new adapter/storage authority, the issuer changes token meaning, a current proof row cannot reach its named target, org/owner identity cannot be supplied without inference, the D1 primary ordering assumption fails, or a fix requires moving controller identities/weakening audit/final checks. Missing external services permit only existing named test stand-ins; they never close real-path obligations.
+Stop and return to the Lead if the record-first contract can't be met without a new adapter or storage authority, the issuer changes token meaning, a current proof row cannot reach its named target, org/owner identity cannot be supplied without inference, the D1 primary ordering assumption fails, or a fix requires moving controller identities/weakening audit/final checks. Missing external services permit only existing named test stand-ins; they never close real-path obligations.
 
-Before a ready plan exists, the Lead must settle Decision A and any necessary governing correction, admit the concrete T4/UI dependencies, and review this draft. Before implementation completion, every required row must have current proof or an explicit unresolved gap; U3 stays required and S7 stays separately gated. This plan task runs no product tests and grants no implementation, commit, deployment or merge authority.
+Decision A is settled and the governing documents are amended. S1 is accepted; S2's UI view and S4's real `decide` target remain preconditions for those slices. Before implementation completion, every required row must have current proof or an explicit unresolved gap; U3 stays required and S7 stays separately gated. This plan task runs no product tests and grants no implementation, commit, deployment or merge authority.

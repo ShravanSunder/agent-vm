@@ -56,7 +56,7 @@ flowchart TB
   AL -->|early checks in hooks| BA
   BA --> DB
   OP --> DB
-  AD -->|change + audit, one batch| DB
+  AD -->|our rows: change + audit in one batch; clients: record first| DB
   AU --> DB
 ```
 
@@ -67,7 +67,7 @@ flowchart TB
 | OAuth provider | relying services, clients, issued proofs, introspection (E6, E7) | same Worker (Better Auth `oauthProvider` plugin, existing library) | the console; Tool Portal's verifier | the token or audience contract changes |
 | Allowlist gate | the private-mode admission decision (E8), the Person's derived active state, the owner bootstrap, and the current-person check every other component calls | same Worker (new) | the request handler, Better Auth's hooks, the admin surface | private admission or removal rules change |
 | Admin surface | allowlist, client and relying-service changes; owner-only and owner-active | same Worker (new) | the owner | who may administer changes (`SD1`) |
-| Agent-client route | creating and disabling agent clients (E9) whose metadata names the calling organization, each with its audit record in one D1 batch. Reachable only through a service binding, never the public hostname | same Worker (new; the Lead's proposal with `SD9`) | Tool Portal's agent-management handler | the agent add or remove contract changes |
+| Agent-client route | creating and disabling agent clients (E9) whose metadata names the calling organization. Better Auth writes the client, so each change gets a before-change audit record naming the acting Person and an outcome record afterwards. Reachable only through a service binding, never the public hostname | same Worker (new; the Lead's proposal with `SD9`) | Tool Portal's agent-management handler | the agent add or remove contract changes |
 | Audit writer | the audit record of every change `R12` lists and of sign-in outcomes | same Worker (new) | the owner | the record contents change |
 | Person-proof verifier | the decision "this proof is a current Person for this service" | `tool-host-node` and `tool-host-cloudflare`, implementing Tool Portal's identity-verifier port (new adapter) | Tool Portal `explain`, `propose`, `decide`, `read` | the proof format or freshness rule changes |
 
@@ -227,13 +227,13 @@ The early checks in Better Auth's hooks remain. They refuse sooner and write les
 
 An agent has two records with two owners. Its sign-in client (E9) lives in the sign-in service's D1 and decides whether it can get a token. Its admission lives in Tool Portal's organization Durable Object and decides whether a call runs. Every intermediate state between the two writes must refuse calls.
 
-**Who coordinates (the Lead's proposal, settled with `SD9`).** Tool Portal's agent-management handler, the route its admin panel calls. It already knows the organization's owner and managers, so it decides who may add or remove an agent. The dependency runs from the relying service to the sign-in service, never back: the sign-in service never calls Tool Portal. Tool Portal's Worker reaches the sign-in Worker through a Cloudflare service binding, on an agent-client route that isn't on the sign-in Worker's public hostname. That route creates or disables only agent clients whose metadata names the calling organization. It writes the change and its audit record, naming the acting Person, in one D1 batch.
+**Who coordinates (the Lead's proposal, settled with `SD9`).** Tool Portal's agent-management handler, the route its admin panel calls. It already knows the organization's owner and managers, so it decides who may add or remove an agent. The dependency runs from the relying service to the sign-in service, never back: the sign-in service never calls Tool Portal. Tool Portal's Worker reaches the sign-in Worker through a Cloudflare service binding, on an agent-client route that isn't on the sign-in Worker's public hostname. That route creates or disables only agent clients whose metadata names the calling organization. It writes a before-change audit record naming the acting Person; if that write fails, nothing changes. Better Auth then writes the client, and the route records the outcome. It returns the client's credential, and the handler writes admission, only after the route reads back the client, its resource link and the record.
 
 **Adding** writes the sign-in client first, then admission. A client that exists but isn't admitted can get a token, but every call is refused (`removed-agent`).
 
 **Removing** writes admission first, then the sign-in client:
 1. **Admission removed.** The organization's object marks the agent removed. From then on the Worker refuses the agent's next call, even with a token that hasn't expired, because it checks that record on every call.
-2. **Client disabled.** One D1 batch disables the E9 client and writes its audit record. From then on, no new token is released: the token endpoint refuses the disabled client, and any request already past that point is caught by the final check above.
+2. **Client disabled.** The route writes a before-change audit record, then disables the E9 client, then records the outcome. From then on, no new token is released: the token endpoint refuses the disabled client, and any request already past that point is caught by the final check above.
 3. **Removal complete.** Only the handler reports this, and only after both writes. Neither service reports the whole removal complete after its own write.
 
 **If step 2 fails after step 1,** the agent still can't call any tool, but it could still get tokens. The object keeps the agent as "admission removed, client not yet disabled", and the panel shows the removal as pending. The handler retries the disable on the owner's retry and on each later request to manage that agent, until the sign-in service reads the client as disabled. Both steps are idempotent. This adds no queue or background job. **If step 1 fails,** nothing has changed and the handler reports the failure.
@@ -277,6 +277,7 @@ If the cleanup itself fails, the rows stay unbound and inactive and the failure 
 | Removal races an in-flight Accept | `checkedAt` against `SD8` at Tool Portal's apply | An Accept whose live check read after the removal committed is refused. One whose check came first applies only within `SD8` (Lead default 5 s) of that check; past it, Tool Portal checks again. Tool Portal's audit names the decider | Tool Portal's `decide` |
 | Admin batch partly fails | a D1 batch error | the whole batch rolls back: no change without its audit record | the owner retries |
 | A before-change audit record can't be written | the request handler's write fails | the request is refused before Better Auth acts, so the change doesn't happen | the person or owner retries |
+| An agent client is written but its resource link or outcome record is missing | the route's readback | registration reads as incomplete: no credential is returned and no admission is written. Without its resource link the client can't get a token (`invalid_target`). The owner's retry completes it; both writes are idempotent | the agent-management handler |
 | A change happens but its outcome record can't be written | the request handler's second write fails | The change stands, and its before-change record already names the actor, the change kind and the request id. The record is never missing, only unconfirmed | owner review |
 
 ## Security and other qualities
@@ -341,8 +342,8 @@ flowchart LR
   - So `resourcePrivileges` and `clientPrivileges`, and the admin surface's own routes, allow a caller only when it is the bound deployment owner **and** the gate reads that Person as active (`SD1` default: owner only).
   - Dynamic client registration is off.
 - **Audit (`R12`):**
-  - Changes our code writes go in the same D1 batch as their record: allowlist add and remove, reactivation, owner binding, and client and relying-service changes through the admin surface.
-  - Changes Better Auth writes itself get a record before the change. These are passkey added or removed, and login linked or unlinked; the record holds the actor, change kind and request id, and if it can't be written the request is refused. After the response, the handler writes the outcome.
+  - Changes our code writes go in the same D1 batch as their record: allowlist add and remove, reactivation and owner binding.
+  - Changes Better Auth writes itself get a record before the change. These are passkey added or removed, login linked or unlinked, and client and relying-service changes, including agent clients (E9). Better Auth's OAuth provider writes a client and its resource link as separate statements, and its D1 adapter runs no transactions ([register.ts:966](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/register.ts#L966), [dialect.ts:184](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/kysely-adapter/src/dialect.ts#L184)), so those changes can't share a batch with our record. A client change also reads back the client, its resource link and its record before reporting complete or returning a credential; the record holds the actor, change kind and request id, and if it can't be written the request is refused. After the response, the handler writes the outcome.
   - Sign-in outcomes are recorded by the request handler.
 - **Privacy:**
   - The Worker stores provider account ids, verified email, display name and passkey public keys.
