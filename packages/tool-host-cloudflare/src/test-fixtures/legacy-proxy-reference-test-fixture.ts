@@ -1,17 +1,15 @@
-import { execFile } from 'node:child_process';
 import { createServer, type Server as HttpServer } from 'node:http';
-import { promisify } from 'node:util';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
 	createPortalCore,
 	createUpstreamMcpClientRuntime,
 	createPortalPolicyApprovalEvaluator,
-} from '@agent-vm/mcp-portal/core';
-import { createPortalHttpApp } from '@agent-vm/mcp-portal/mcp-proxy';
-import { deriveAgentBearerToken } from '@agent-vm/mcp-portal/portal-auth/agent-bearer-token';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+} from 'legacy-mcp-portal/core';
+import { createPortalHttpApp } from 'legacy-mcp-portal/mcp-proxy';
+import { deriveAgentBearerToken } from 'legacy-mcp-portal/portal-auth/agent-bearer-token';
 import { z } from 'zod';
 
 import { resolveWorkerProxyProfile } from '#worker-host/organization-engines/proxy-profile-policy';
@@ -19,6 +17,7 @@ import {
 	organizationConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
+import { assertLegacyProxyArtifact } from '#worker-host/test-fixtures/legacy-proxy-artifact';
 import { organizationConfigurationSchema } from '#worker-host/worker-configuration/models/worker-configuration';
 
 function transportShape(transport: unknown): transport is Transport {
@@ -34,19 +33,14 @@ function transportShape(transport: unknown): transport is Transport {
 	);
 }
 
-/** Real legacy proxy, source-pinned by a Git diff guard; no old host is bundled in the Worker. */
+/** Independent released oracle:0.0.153 ←8535fdd4 ≡08f9e426 for MCP Portal/config source.
+ * Admission checks installed package versions, registry lock integrities and no workspace fallback.
+ * The legacy artifact is test-only and never bundled in the production Worker. */
 export async function startLegacyProxyReference(
 	url: string,
 	mode: 'direct' | 'indirect',
 ): Promise<{ readonly client: Client; readonly close: () => Promise<void> }> {
-	await promisify(execFile)('git', [
-		'diff',
-		'--exit-code',
-		'08f9e426',
-		'--',
-		'packages/mcp-portal/src',
-		'packages/config-contracts/src',
-	]);
+	await assertLegacyProxyArtifact();
 	const configs = z
 		.record(z.string(), organizationConfigurationSchema)
 		.parse(organizationConfigurations(url));

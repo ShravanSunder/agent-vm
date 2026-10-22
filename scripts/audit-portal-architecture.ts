@@ -993,6 +993,7 @@ export function collectToolAccessViolations(file: PortalArchitectureSourceFile):
 
 function isTestOnlyPortalAlias(specifier: string): boolean {
 	return (
+		/^legacy-mcp-portal(?:\/|$)/u.test(specifier) ||
 		/^@agent-vm\/(?:controller-test-support|config-contracts-test-support)(?:\/|$)/u.test(
 			specifier,
 		) ||

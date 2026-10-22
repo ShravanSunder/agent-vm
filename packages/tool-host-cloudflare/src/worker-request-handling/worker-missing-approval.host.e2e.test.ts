@@ -6,7 +6,7 @@ import { startNodeHost } from '@agent-collaboration/tool-host-node';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { startLegacyProxyReference } from '#worker-host/test-fixtures/legacy-proxy-reference';
+import { startLegacyProxyReference } from '#worker-host/test-fixtures/legacy-proxy-reference-test-fixture';
 import {
 	startLocalWorkerHarness,
 	rpcResult,

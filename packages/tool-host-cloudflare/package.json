@@ -28,17 +28,18 @@
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-collaboration/tool-engine": "workspace:*",
+		"@modelcontextprotocol/client": "2.3.1",
 		"@modelcontextprotocol/core": "2.3.1",
-		"@modelcontextprotocol/sdk": "1.29.0",
 		"@modelcontextprotocol/server": "2.3.1",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
 		"@agent-collaboration/tool-host-node": "workspace:*",
 		"@cloudflare/workers-types": "4.20250927.0",
-		"@modelcontextprotocol/client": "2.3.1",
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"esbuild": "0.27.7",
 		"jose": "6.1.0",
+		"legacy-mcp-portal": "npm:@agent-vm/mcp-portal@0.0.153",
 		"miniflare": "5.20260815.0-alpha",
 		"vitest": "4.1.5",
 		"wrangler": "4.124.0"

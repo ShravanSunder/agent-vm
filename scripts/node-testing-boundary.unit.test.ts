@@ -67,3 +67,32 @@ describe('Node upstream testing entry boundary', () => {
 		});
 	});
 });
+
+it.each([
+	"import {createPortalCore} from 'legacy-mcp-portal/core';",
+	"export * from 'legacy-mcp-portal/core';",
+	"export type Legacy = import('legacy-mcp-portal/core').PortalCore;",
+	"export async function load(){return import('legacy-mcp-portal/core');}",
+	"const legacy = require('legacy-mcp-portal');",
+])('rejects the pinned legacy oracle in product code: %s', (sourceText) => {
+	for (const filePath of [
+		'packages/tool-host-cloudflare/src/index.ts',
+		'packages/tool-host-core/src/index.ts',
+		'packages/tool-engine/src/index.ts',
+	]) {
+		expect(collectPortalArchitectureViolations({ files: [{ filePath, sourceText }] })).not.toEqual(
+			[],
+		);
+	}
+	expect(
+		collectPortalArchitectureViolations({
+			files: [
+				{
+					filePath:
+						'packages/tool-host-cloudflare/src/test-fixtures/legacy-proxy-reference-test-fixture.ts',
+					sourceText,
+				},
+			],
+		}),
+	).toEqual([]);
+});
