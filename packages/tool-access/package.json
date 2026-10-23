@@ -30,6 +30,7 @@
 	},
 	"dependencies": {
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
+		"jose": "6.1.0",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {

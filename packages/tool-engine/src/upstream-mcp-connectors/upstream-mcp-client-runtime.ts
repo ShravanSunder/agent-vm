@@ -414,11 +414,9 @@ export function createUpstreamMcpClientRuntime(
 }
 
 /** Preserve the existing Headers, tuple-list and record forms at the host-neutral boundary. */
-function normalizeRequestHeaders(
-	headers: RequestInit['headers'],
-): Record<string, string | undefined> {
+function normalizeRequestHeaders(headers: RequestInit['headers']): Record<string, string> {
 	if (headers === undefined) return {};
 	if (headers instanceof Headers) return Object.fromEntries(headers.entries());
 	if (Array.isArray(headers)) return Object.fromEntries(headers);
-	return { ...headers };
+	return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, String(value)]));
 }
