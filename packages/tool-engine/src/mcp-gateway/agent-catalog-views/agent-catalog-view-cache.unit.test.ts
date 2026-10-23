@@ -1,5 +1,5 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { describe, it, vi, expect } from 'vitest';
+import type { Tool } from '@modelcontextprotocol/server';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createAgentCatalogViewCache } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
 import {

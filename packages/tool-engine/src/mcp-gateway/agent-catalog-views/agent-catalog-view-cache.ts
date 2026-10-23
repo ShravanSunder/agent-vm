@@ -4,11 +4,10 @@ import {
 	resolvePortalAccessPolicy,
 	portalAgentScopeKey,
 } from '@agent-collaboration/tool-access/authorization';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 
 import type {
 	PortalCatalogRefusal,
-	PortalDiscoveryFailure,
 	AgentCatalogViewCacheOptions,
 	AgentCatalogViewCache,
 	CachedPortalSession,
@@ -18,6 +17,7 @@ import {
 	type PortalToolRecord,
 	portalToolRecordSchema,
 } from '#mcp-gateway/agent-catalog-views/models/catalog-types';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 import { createSearchIndex } from '#mcp-gateway/tool-search/search-index';
 import { buildToolGraph } from '#mcp-gateway/tool-search/tool-graph';
 import {
@@ -87,7 +87,10 @@ async function createSourceHash(tools: readonly PortalToolRecord[]): Promise<str
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function discoveryFailureFromError(namespace: string, error: unknown): PortalDiscoveryFailure {
+export function discoveryFailureFromError(
+	namespace: string,
+	error: unknown,
+): PortalDiscoveryFailure {
 	const upstreamDetails = upstreamMcpFailureDetailsFromUnknown(error);
 	if (upstreamDetails !== null) {
 		return {
@@ -137,15 +140,28 @@ export function createAgentCatalogViewCache(
 		const discoveryFailures: PortalDiscoveryFailure[] = [...(options.discoveryFailures ?? [])];
 		const allowedNamespaces = policy.allowedNamespaces;
 
-		const namespaceToolGroups = await Promise.allSettled(
-			allowedNamespaces.map(async (namespace) => ({
-				mcpTools: await options.runtime.listTools({
-					agentScopeId: portalAgentScopeKey(identity),
-					namespace,
-				}),
-				namespace,
-			})),
-		);
+		const organization = await options.organizationCatalog?.read();
+		if (organization !== undefined)
+			discoveryFailures.push(
+				...organization.discoveryFailures.filter((failure) =>
+					allowedNamespaces.includes(failure.namespace),
+				),
+			);
+		const namespaceToolGroups =
+			organization === undefined
+				? await Promise.allSettled(
+						allowedNamespaces.map(async (namespace) => ({
+							mcpTools: await options.runtime.listTools({
+								agentScopeId: portalAgentScopeKey(identity),
+								namespace,
+							}),
+							namespace,
+						})),
+					)
+				: allowedNamespaces.map((namespace) => ({
+						status: 'fulfilled' as const,
+						value: { namespace, mcpTools: organization.toolsByNamespace.get(namespace) ?? [] },
+					}));
 		for (const [index, namespaceToolGroup] of namespaceToolGroups.entries()) {
 			if (namespaceToolGroup.status === 'rejected') {
 				const namespace = allowedNamespaces[index] ?? 'unknown';
@@ -171,6 +187,7 @@ export function createAgentCatalogViewCache(
 		const graph = buildToolGraph({ skills: options.skills ?? [], tools: sortedTools });
 		const catalog = {
 			agentScopeId: identity.agentScopeId,
+			...(organization === undefined ? {} : { organizationCatalogState: organization.kind }),
 			discoveryFailures,
 			generatedAt: new Date(getNow()).toISOString(),
 			sourceHash: await createSourceHash(sortedTools),
@@ -187,6 +204,7 @@ export function createAgentCatalogViewCache(
 
 	return {
 		async getView(identity: PortalAgentIdentity): Promise<AgentCatalogView> {
+			if (options.organizationCatalog !== undefined) return buildSession(identity);
 			const key = portalAgentScopeKey(identity);
 			const now = getNow();
 			const cached = sessions.get(key);

@@ -18,7 +18,7 @@ import {
 	type ResourceResult,
 	createCapabilityDispatcher,
 } from '@agent-collaboration/tool-engine/capability-dispatch';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import { PortalCatalogPreparationError } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
@@ -282,7 +282,10 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 	}
 	async function currentCatalog(): Promise<PreparedGatewayCatalog> {
 		const session = await visibleSession();
-		if (session.catalog.discoveryFailures.length > 0)
+		if (
+			session.catalog.discoveryFailures.length > 0 &&
+			session.catalog.organizationCatalogState !== 'complete'
+		)
 			throw new PortalCatalogPreparationError(session.catalog.discoveryFailures);
 		const tools = await Promise.all(
 			session.catalog.tools.map(
@@ -357,7 +360,7 @@ export function createMcpGateway(options: McpGatewayOptions): McpGateway {
 			);
 			if (mode === 'indirect') {
 				if (cursor !== undefined) throw new Error('Indirect tools/list has no cursor.');
-				return { tools: [...searchTools] };
+				return { tools: [...searchTools], cacheScope: 'private', ttlMs: 60000 };
 			}
 			return paginateMcpTools(
 				[...(await prepareCatalog()).tools.map((tool) => tool.descriptor), ...searchTools],

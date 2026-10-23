@@ -1,3 +1,4 @@
+import { proxyUpstreamFailureResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { PortalCallResultSchema, type PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import { createManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
@@ -107,9 +108,16 @@ const outcomes = [
 
 describe('managed backend terminal result round trip', () => {
 	// Oracle: SDK operation-contracts terminal union + baseline dispatchCall returns the matched item.
-	it.each(outcomes)(
-		'preserves the literal backend item $outcome.kind $outcome.retryClass',
-		async (expectedItem) => {
+	it.each(
+		outcomes.flatMap((expectedItem) => [
+			{ expectedItem, withFailureDetail: false },
+			...(expectedItem.outcome.kind === 'ambiguous'
+				? [{ expectedItem, withFailureDetail: true }]
+				: []),
+		]),
+	)(
+		'preserves backend $expectedItem.outcome.kind $expectedItem.outcome.retryClass with detail=$withFailureDetail',
+		async ({ expectedItem, withFailureDetail }) => {
 			// Arrange: only execution is doubled; adapter, dispatcher and wire projection are real.
 			const config = gatewayRuntimeManagedToolPortalConfigSchema.parse(toolPortalConfig);
 			const github = config.profiles['gate-c-profile']?.namespaces.github;
@@ -161,7 +169,29 @@ describe('managed backend terminal result round trip', () => {
 			});
 			const neutralBackend = adapter.backends.get('mcp_provider');
 			if (neutralBackend === undefined) throw new Error('Missing neutral backend.');
+			const originalInvoke = neutralBackend.invoke;
 			const invoke = vi.spyOn(neutralBackend, 'invoke');
+			if (withFailureDetail)
+				invoke.mockImplementation(async (invocation) => {
+					const result = await originalInvoke(invocation);
+					const failure = proxyUpstreamFailureResult({
+						namespace: 'github',
+						toolName: 'get_issue',
+						failure: {
+							kind: 'upstream_mcp_failed',
+							phase: 'call_tool',
+							namespace: 'github',
+							toolName: 'get_issue',
+							operation: 'MCP callTool github.get_issue',
+							causeMessage: 'redacted',
+							elapsedMs: 1,
+							transport: { kind: 'streamable-http' },
+						},
+					});
+					if (result.kind !== 'ambiguous' || failure.kind !== 'ambiguous')
+						throw new Error('Expected uncertain managed failure');
+					return { ...result, detail: failure.detail };
+				});
 			// Act
 			const result = await adapter.call(
 				{

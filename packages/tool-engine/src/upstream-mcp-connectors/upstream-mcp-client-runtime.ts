@@ -1,5 +1,6 @@
+import { ToolSchema as GatewayToolSchema } from '@modelcontextprotocol/core';
 import { normalizeHeaders } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 
 import type { NormalizedUpstreamMcpServer } from '#upstream-mcp-connectors/models/upstream-mcp-server';
 import {
@@ -381,7 +382,7 @@ export function createUpstreamMcpClientRuntime(
 							server ? timeoutMsForServer(server) : defaultConnectionTimeoutMs,
 						),
 						{ exactValues: redactionValues },
-					);
+					).map((tool) => GatewayToolSchema.parse(tool));
 				} finally {
 					timeoutAbort.dispose();
 				}

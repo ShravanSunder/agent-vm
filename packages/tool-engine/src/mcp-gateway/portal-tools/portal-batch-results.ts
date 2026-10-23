@@ -1,7 +1,5 @@
-import type {
-	PortalDiscoveryFailure,
-	AgentCatalogView,
-} from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import type { AgentCatalogView } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 import type {
 	PortalSafeTransportDiagnostic,
 	PortalBatchResult,

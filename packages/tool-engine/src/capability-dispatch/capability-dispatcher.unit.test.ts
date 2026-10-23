@@ -13,7 +13,9 @@ import {
 	type OperationPort,
 	type OperationRecord,
 	type ToolBackend,
+	type ResourceResult,
 } from '@agent-collaboration/tool-engine/capability-dispatch';
+import { proxyUpstreamFailureResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
 import { toolPortalConfig } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -57,7 +59,7 @@ function requireApproval(input: DispatchRequest): void {
 		requiresApproval: { allow: ['get_issue'], deny: [] },
 	};
 }
-function harness(): {
+function harness(backendResult: ResourceResult = { kind: 'completed', result: { issue: 42 } }): {
 	dispatcher: ReturnType<typeof createCapabilityDispatcher>;
 	invocations: DispatchInvocation[];
 	operations: OperationPort;
@@ -127,7 +129,7 @@ function harness(): {
 		search: async () => ({}),
 		invoke: async (invocation) => {
 			invocations.push(invocation);
-			return { kind: 'completed', result: { issue: 42 } };
+			return backendResult;
 		},
 	};
 	return {
@@ -446,4 +448,45 @@ describe('neutral capability dispatch', () => {
 		).toBe('found');
 		expect(subject.invocations).toHaveLength(3);
 	});
+});
+
+// The real dispatcher must retain the connector's certainty and its closed, redacted detail.
+describe('proxy upstream failures through dispatch', () => {
+	it.each([
+		{ phase: 'connect', failureClass: undefined, expected: 'failed' },
+		{ phase: 'call_tool', failureClass: 'tool_error', expected: 'failed' },
+		{ phase: 'call_tool', failureClass: undefined, expected: 'ambiguous' },
+	] as const)(
+		'$phase $failureClass remains $expected with safe detail',
+		async ({ phase, failureClass, expected }) => {
+			const backendResult = proxyUpstreamFailureResult({
+				namespace: 'github',
+				toolName: 'get_issue',
+				failure: {
+					kind: 'upstream_mcp_failed',
+					phase,
+					...(failureClass === undefined
+						? {}
+						: { failureClass, providerErrorMessage: '[REDACTED]' }),
+					namespace: 'github',
+					toolName: 'get_issue',
+					operation: 'MCP callTool github.get_issue',
+					causeMessage: 'unsafe connector cause',
+					elapsedMs: 4,
+					transport: { kind: 'streamable-http' },
+				},
+			});
+			const result = await harness(backendResult).dispatcher.dispatch(request());
+			expect(result).toEqual(backendResult);
+			expect(result.kind).toBe(expected);
+			expect(result).toMatchObject({
+				detail: {
+					kind: 'mcp-upstream-failure',
+					code: 'upstream_call_failed',
+					upstream: { causeMessage: 'Upstream MCP provider failed.', phase },
+				},
+			});
+			expect(JSON.stringify(result)).not.toContain('unsafe connector cause');
+		},
+	);
 });

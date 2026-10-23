@@ -1,4 +1,4 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 
 import { portalToolInputSchemas } from '#mcp-gateway/portal-tools/portal-input-schemas';
 

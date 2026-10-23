@@ -29,6 +29,7 @@ export interface VerifiedCallApproval {
 
 export type PortalCallAuthorization =
 	| { readonly kind: 'token-approved'; readonly approval: VerifiedCallApproval }
+	| { readonly kind: 'token-missing' }
 	| { readonly kind: 'refused'; readonly reason: string };
 
 export type ApprovalTokenCallDigest = z.infer<typeof approvalTokenCallDigestSchema>;

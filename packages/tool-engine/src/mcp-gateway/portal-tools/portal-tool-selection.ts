@@ -1,10 +1,8 @@
 import type { PortalToolSelector } from '@agent-collaboration/tool-access/authorization';
 
-import type {
-	AgentCatalogView,
-	PortalDiscoveryFailure,
-} from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import type { AgentCatalogView } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
 import type { PortalToolRecord } from '#mcp-gateway/agent-catalog-views/models/catalog-types';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 import { decodeToolRef } from '#mcp-gateway/agent-catalog-views/tool-ref';
 import type {
 	SelectorInputResult,

@@ -31,7 +31,8 @@ export async function authorizeGatewayCalls(props: {
 	readonly assessAccess: (input: AssessAccessInput) => AssessAccessResult;
 }): Promise<ReadonlyMap<string, PortalCallAuthorization>> {
 	const authorizations = new Map<string, PortalCallAuthorization>();
-	if (props.token === undefined) return authorizations;
+	// Hosts without proxy token configuration keep their assigned ApprovalPort behavior.
+	if (props.token === undefined && props.tokens === undefined) return authorizations;
 	const assessments = await Promise.all(
 		props.calls.map(async (call) => {
 			const argumentsHash = await hashCallArguments(call.validatedArguments);
@@ -52,6 +53,11 @@ export async function authorizeGatewayCalls(props: {
 			assessed.assessment.state.kind === 'approval-each-call',
 	);
 	if (protectedCalls.length === 0) return authorizations;
+	if (props.token === undefined) {
+		for (const { call } of protectedCalls)
+			authorizations.set(call.input.id, { kind: 'token-missing' });
+		return authorizations;
+	}
 	const tokens = props.tokens;
 	let approval: VerifiedCallApproval | undefined;
 	const verification =

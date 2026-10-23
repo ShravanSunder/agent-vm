@@ -1,0 +1,572 @@
+{
+	"$id": "agent-vm:mcp:1",
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"type": "object",
+	"properties": {
+		"$schema": {
+			"type": "string",
+			"minLength": 1
+		},
+		"schemaVersion": {
+			"type": "number",
+			"const": 1
+		},
+		"providers": {
+			"default": {},
+			"type": "object",
+			"propertyNames": {
+				"type": "string",
+				"minLength": 1
+			},
+			"additionalProperties": {
+				"type": "object",
+				"properties": {
+					"kind": {
+						"type": "string",
+						"const": "mcp"
+					},
+					"namespace": {
+						"type": "string",
+						"minLength": 1
+					},
+					"discovery": {
+						"default": {},
+						"type": "object",
+						"properties": {
+							"summary": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 500
+							}
+						},
+						"additionalProperties": false
+					},
+					"secretPolicies": {
+						"default": {},
+						"type": "object",
+						"propertyNames": {
+							"type": "string",
+							"minLength": 1
+						},
+						"additionalProperties": {
+							"type": "object",
+							"properties": {
+								"hosts": {
+									"default": [],
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"injection": {
+									"type": "string",
+									"enum": [
+										"env",
+										"http-mediation"
+									]
+								}
+							},
+							"required": [
+								"hosts",
+								"injection"
+							],
+							"additionalProperties": false
+						}
+					},
+					"transport": {
+						"oneOf": [
+							{
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"const": "streamable-http"
+									},
+									"url": {
+										"type": "string",
+										"format": "uri"
+									},
+									"connectionTimeoutMs": {
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 300000
+									},
+									"headers": {
+										"default": {},
+										"type": "object",
+										"propertyNames": {
+											"type": "string"
+										},
+										"additionalProperties": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "environment"
+														},
+														"name": {
+															"type": "string",
+															"minLength": 1
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"name"
+													],
+													"additionalProperties": false
+												},
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "1password"
+														},
+														"ref": {
+															"type": "string",
+															"pattern": "^op:\\/\\/"
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"ref"
+													],
+													"additionalProperties": false
+												}
+											]
+										}
+									},
+									"requiredEgressHosts": {
+										"default": [],
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1
+										}
+									}
+								},
+								"required": [
+									"kind",
+									"url",
+									"headers",
+									"requiredEgressHosts"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"const": "sse"
+									},
+									"url": {
+										"type": "string",
+										"format": "uri"
+									},
+									"connectionTimeoutMs": {
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 300000
+									},
+									"headers": {
+										"default": {},
+										"type": "object",
+										"propertyNames": {
+											"type": "string"
+										},
+										"additionalProperties": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "environment"
+														},
+														"name": {
+															"type": "string",
+															"minLength": 1
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"name"
+													],
+													"additionalProperties": false
+												},
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "1password"
+														},
+														"ref": {
+															"type": "string",
+															"pattern": "^op:\\/\\/"
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"ref"
+													],
+													"additionalProperties": false
+												}
+											]
+										}
+									},
+									"requiredEgressHosts": {
+										"default": [],
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1
+										}
+									}
+								},
+								"required": [
+									"kind",
+									"url",
+									"headers",
+									"requiredEgressHosts"
+								],
+								"additionalProperties": false
+							},
+							{
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"const": "stdio"
+									},
+									"command": {
+										"type": "string",
+										"minLength": 1
+									},
+									"args": {
+										"default": [],
+										"type": "array",
+										"items": {
+											"type": "string"
+										}
+									},
+									"connectionTimeoutMs": {
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 300000
+									},
+									"cwd": {
+										"type": "string",
+										"minLength": 1
+									},
+									"env": {
+										"default": {},
+										"type": "object",
+										"propertyNames": {
+											"type": "string"
+										},
+										"additionalProperties": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "environment"
+														},
+														"name": {
+															"type": "string",
+															"minLength": 1
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"name"
+													],
+													"additionalProperties": false
+												},
+												{
+													"type": "object",
+													"properties": {
+														"source": {
+															"type": "string",
+															"const": "1password"
+														},
+														"ref": {
+															"type": "string",
+															"pattern": "^op:\\/\\/"
+														},
+														"format": {
+															"oneOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "bearer"
+																		}
+																	},
+																	"required": [
+																		"kind"
+																	],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"kind": {
+																			"type": "string",
+																			"const": "prefix"
+																		},
+																		"prefix": {
+																			"type": "string",
+																			"minLength": 1,
+																			"maxLength": 64
+																		}
+																	},
+																	"required": [
+																		"kind",
+																		"prefix"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": [
+														"source",
+														"ref"
+													],
+													"additionalProperties": false
+												}
+											]
+										}
+									},
+									"networkAccess": {
+										"type": "string",
+										"enum": [
+											"declared",
+											"none"
+										]
+									},
+									"requiredEgressHosts": {
+										"default": [],
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1
+										}
+									}
+								},
+								"required": [
+									"kind",
+									"command",
+									"args",
+									"env",
+									"requiredEgressHosts"
+								],
+								"additionalProperties": false
+							}
+						]
+					}
+				},
+				"required": [
+					"kind",
+					"namespace",
+					"discovery",
+					"secretPolicies",
+					"transport"
+				],
+				"additionalProperties": false
+			}
+		}
+	},
+	"required": [
+		"schemaVersion",
+		"providers"
+	],
+	"additionalProperties": false
+}

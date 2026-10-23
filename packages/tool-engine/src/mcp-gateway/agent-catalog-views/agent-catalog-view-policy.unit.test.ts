@@ -1,5 +1,5 @@
 import { resolvePortalAccessPolicy } from '@agent-collaboration/tool-access/authorization';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 import { describe, it, vi, expect } from 'vitest';
 
 import { createAgentCatalogViewCache } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';

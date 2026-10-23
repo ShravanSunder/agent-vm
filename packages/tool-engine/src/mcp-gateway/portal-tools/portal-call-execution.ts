@@ -4,10 +4,8 @@ import type {
 } from '@agent-collaboration/tool-access/authorization';
 import { jsonObjectSchema } from '@agent-collaboration/tool-access/contracts';
 
-import type {
-	PortalDiscoveryFailure,
-	AgentCatalogView,
-} from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import type { AgentCatalogView } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 import type { PortalCallAuthorization } from '#mcp-gateway/call-approvals/models/call-approval';
 import type {
 	CallRequest,
@@ -87,10 +85,26 @@ async function executePreparedPortalCall(props: {
 }): Promise<PortalToolResult> {
 	const { call, identity, runtime, authorization } = props;
 	const input = { ...call.input, arguments: call.validatedArguments };
+	if (authorization?.kind === 'token-missing')
+		return itemError({
+			input,
+			error: {
+				kind: 'approval_token_missing',
+				message: 'An MCP Portal approval token is required before this MCP Portal call can run.',
+				namespace: call.tool.namespace,
+				toolName: call.tool.toolName,
+			},
+		});
 	if (authorization?.kind === 'refused')
 		return itemError({
 			input,
-			error: { kind: 'approval_token_invalid', reason: authorization.reason },
+			error: {
+				kind: 'approval_token_invalid',
+				message: `MCP Portal approval token is invalid: ${authorization.reason}.`,
+				namespace: call.tool.namespace,
+				reason: authorization.reason,
+				toolName: call.tool.toolName,
+			},
 		});
 	try {
 		const result = await runtime.dispatchCall({
@@ -110,7 +124,20 @@ async function executePreparedPortalCall(props: {
 						toolName: call.tool.toolName,
 					},
 				})
-			: itemError({ input, error: result });
+			: itemError({
+					input,
+					error:
+						(result.kind === 'failed' || result.kind === 'ambiguous') &&
+						result.detail?.kind === 'mcp-upstream-failure'
+							? {
+									kind: result.detail.code,
+									message: result.detail.message,
+									namespace: result.detail.namespace,
+									toolName: result.detail.toolName,
+									upstream: result.detail.upstream,
+								}
+							: result,
+				});
 	} catch {
 		return itemError({ input, error: { kind: 'ambiguous', reason: 'dispatch-unconfirmed' } });
 	}

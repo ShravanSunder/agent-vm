@@ -2,9 +2,11 @@ import type {
 	PortalAgentIdentity,
 	PortalAccessPolicyConfig,
 } from '@agent-collaboration/tool-access/authorization';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Tool } from '@modelcontextprotocol/server';
 
 import type { PortalToolRecord } from '#mcp-gateway/agent-catalog-views/models/catalog-types';
+import type { OrganizationToolCatalog } from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
+import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 import type { SearchIndex } from '#mcp-gateway/tool-search/models/search-index';
 import type { ToolGraph, SkillGraphInput } from '#mcp-gateway/tool-search/models/tool-graph';
 
@@ -12,22 +14,9 @@ export interface PortalCatalogSnapshot {
 	readonly agentScopeId: string;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 	readonly generatedAt: string;
+	readonly organizationCatalogState?: 'complete' | 'incomplete';
 	readonly sourceHash: string;
 	readonly tools: readonly PortalToolRecord[];
-}
-
-export interface PortalDiscoveryFailure {
-	readonly causeMessage?: string;
-	readonly elapsedMs?: number;
-	readonly hint?: string;
-	readonly kind: string;
-	readonly message: string;
-	readonly namespace: string;
-	readonly operation?: string;
-	readonly phase?: string;
-	readonly timeoutMs?: number;
-	readonly toolName?: string;
-	readonly transport?: unknown;
 }
 
 export interface AgentCatalogView {
@@ -49,6 +38,7 @@ export interface AgentCatalogViewRuntime {
 export interface AgentCatalogViewCacheOptions {
 	readonly accessPolicy: PortalAccessPolicyConfig;
 	readonly catalogTtlMs: number;
+	readonly organizationCatalog?: OrganizationToolCatalog;
 	readonly discoveryFailures?: readonly PortalDiscoveryFailure[];
 	readonly now?: () => number;
 	readonly runtime: AgentCatalogViewRuntime;

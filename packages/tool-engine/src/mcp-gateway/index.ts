@@ -14,7 +14,6 @@ export type {
 } from '#mcp-gateway/portal-tools/models/portal-tool-contracts';
 export type {
 	PortalCatalogSnapshot,
-	PortalDiscoveryFailure,
 	AgentCatalogView,
 	AgentCatalogViewRuntime,
 	AgentCatalogViewCacheOptions,
@@ -118,3 +117,17 @@ export {
 	maximumToolListPageBytes,
 	type McpToolListPage,
 } from '#mcp-gateway/agent-catalog-views/tool-list-pagination';
+
+export * from '#mcp-gateway/proxy-results/proxy-mcp-result';
+
+export * from '#mcp-gateway/proxy-results/proxy-upstream-failure';
+
+export * from '#mcp-gateway/agent-catalog-views/organization-tool-catalog';
+
+export type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
+export type {
+	OrganizationToolCatalog,
+	OrganizationToolCatalogSnapshot,
+} from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
+
+export type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';
