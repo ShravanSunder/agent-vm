@@ -356,7 +356,9 @@ export async function startLocalAuthHarness(): Promise<{
 					if (!bootstrap.ok) throw new Error('Real fixed owner-client bootstrap refused');
 					process.stderr.write('[auth-harness] owner client bootstrap completed\n');
 				}
-				const authorized = await auth(authorization.toString());
+				const authorized = await auth(authorization.toString(), {
+					headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+				});
 				const location = authorized.headers.get('location');
 				if (location === null) {
 					const body = z.record(z.string(), z.unknown()).safeParse(await authorized.clone().json());
