@@ -5,14 +5,14 @@ import type {
 import type {
 	ConsumeApprovalTokenId,
 	McpGateway,
-	OrganizationToolCatalogSnapshot,
+	WorkspaceToolCatalogSnapshot,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 
 import type { OrganizationConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 
 /** Settled plain data only; never a discovery promise, runtime or client. */
 export interface SettledOrganizationCatalog {
-	readonly snapshot: OrganizationToolCatalogSnapshot;
+	readonly snapshot: WorkspaceToolCatalogSnapshot;
 	/** Discovery start controls publication order and conservative cache expiry. */
 	readonly discoveryStartedAt: number;
 }

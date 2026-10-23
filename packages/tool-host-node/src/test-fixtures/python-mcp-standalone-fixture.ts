@@ -12,7 +12,7 @@ import {
 	type PortalCallRequest,
 } from '@agent-collaboration/tool-access/contracts';
 import {
-	createOrganizationToolCatalog,
+	createWorkspaceToolCatalog,
 	createAgentCatalogViewCache,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { createUpstreamMcpClientRuntime } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
@@ -78,7 +78,7 @@ export async function createPythonWheelStandaloneFixture(
 		createUpstreamMcpTransport: createNodeHttpUpstreamTransport,
 	});
 	const scopes = new Set<string>(['standalone-startup']);
-	const catalog = createOrganizationToolCatalog({
+	const catalog = createWorkspaceToolCatalog({
 		namespaces: [namespace],
 		runtime: {
 			...runtime,
@@ -106,7 +106,7 @@ export async function createPythonWheelStandaloneFixture(
 		},
 		upstreamNamespaces: [namespace],
 		catalogTtlMs: 60_000,
-		organizationCatalog: catalog,
+		workspaceCatalog: catalog,
 		runtime: {
 			...runtime,
 			listTools: async (request) =>

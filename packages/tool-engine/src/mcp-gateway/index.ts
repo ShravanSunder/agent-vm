@@ -122,13 +122,13 @@ export * from '#mcp-gateway/proxy-results/proxy-mcp-result';
 
 export * from '#mcp-gateway/proxy-results/proxy-upstream-failure';
 
-export * from '#mcp-gateway/agent-catalog-views/organization-tool-catalog';
+export * from '#mcp-gateway/agent-catalog-views/workspace-tool-catalog';
 
 export type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
 export type {
-	OrganizationToolCatalog,
-	OrganizationToolCatalogSnapshot,
-} from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
+	WorkspaceToolCatalog,
+	WorkspaceToolCatalogSnapshot,
+} from '#mcp-gateway/agent-catalog-views/models/workspace-tool-catalog';
 
 export type { ProxyMcpOperation } from '#mcp-gateway/proxy-results/models/proxy-mcp-result';
 export { createPortalToolHandlers } from '#mcp-gateway/portal-tools/portal-tool-handlers';

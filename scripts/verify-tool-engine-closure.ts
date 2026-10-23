@@ -128,7 +128,7 @@ import {pathToFileURL} from 'node:url';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
 ${props.forbiddenImportSource ?? isForbiddenToolEngineImport.toString()}
-const pending=JSON.parse(process.argv[2]); const visited=new Set();let edges=0;
+const entrypoints=JSON.parse(process.argv[2]);const pending=[...entrypoints]; const visited=new Set();let edges=0;
 while(pending.length){
  const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
  if(location.startsWith(${JSON.stringify(repositoryRoot)}+'/'))throw new Error('tool-engine declaration workspace fallback '+location);
@@ -149,7 +149,20 @@ while(pending.length){
  pending.push(resolved.resolvedFileName);edges++;
  }
 }
-if(visited.size===0)throw new Error('empty declaration closure');console.log('declaration import closure: '+visited.size+' modules, '+edges+' type edges');
+if(visited.size===0)throw new Error('empty declaration closure');
+if(${props.packageLabel === undefined}) {
+ const catalogEntry=entrypoints.find(location=>location.endsWith('/mcp-gateway/index.d.ts'));
+ if(catalogEntry===undefined)throw new Error('missing packed MCP gateway declarations');
+ const program=ts.createProgram([catalogEntry],{module:ts.ModuleKind.NodeNext,moduleResolution:ts.ModuleResolutionKind.NodeNext,noEmit:true,skipLibCheck:true});
+ const checker=program.getTypeChecker();const source=program.getSourceFile(catalogEntry);
+ const symbol=source===undefined?undefined:checker.getSymbolAtLocation(source);
+ if(symbol===undefined)throw new Error('missing packed MCP gateway declaration module');
+ const names=new Set(checker.getExportsOfModule(symbol).map(exported=>exported.getName()));
+ for(const name of ['createWorkspaceToolCatalog','WorkspaceToolCatalog','WorkspaceToolCatalogSnapshot'])if(!names.has(name))throw new Error('missing workspace catalog declaration export '+name);
+ for(const name of ['createOrganizationToolCatalog','OrganizationToolCatalog','OrganizationToolCatalogSnapshot'])if(names.has(name))throw new Error('retired organization catalog declaration export '+name);
+ console.log('packed workspace catalog declarations: 3 required exports, 3 retired aliases absent');
+}
+console.log('declaration import closure: '+visited.size+' modules, '+edges+' type edges');
 `.replaceAll('tool-engine', props.packageLabel ?? 'tool-engine');
 }
 
@@ -162,6 +175,7 @@ const requiredExports: Readonly<Record<string, readonly string[]>> = {
 	],
 	'./mcp-gateway': [
 		'createMcpGateway',
+		'createWorkspaceToolCatalog',
 		'encodeToolRef',
 		'decodeToolRef',
 		'createAgentCatalogViewCache',
@@ -211,6 +225,11 @@ for(const subpath of ${JSON.stringify(subpaths)}) {
  const expectedDescribe={items:[{id:'packed-describe',status:'ok',value:{tools:[],namespaceDiscovery:[]}}],ok:true};
  if(JSON.stringify(list)!==JSON.stringify(expectedList)||JSON.stringify(search)!==JSON.stringify(expectedSearch)||JSON.stringify(describe)!==JSON.stringify(expectedDescribe))throw new Error('packed standalone discovery did not retain empty-entry results');
  } else if(subpath==='./mcp-gateway') {
+ if('createOrganizationToolCatalog' in module)throw new Error('retired organization catalog constructor remains');
+ let catalogLists=0;let catalogCloses=0;
+ const catalog=module.createWorkspaceToolCatalog({namespaces:['packed'],runtime:{listTools:async()=>{catalogLists++;return [{name:'read',inputSchema:{type:'object'}}];},closeAgentScope:async()=>{catalogCloses++;}},discoveryScope:'packed-workspace',catalogTtlMs:60000,now:()=>0});
+ const first=await catalog.read();const cached=await catalog.read();
+ if(first.kind!=='complete'||first.toolsByNamespace.get('packed')?.[0]?.name!=='read'||cached.toolsByNamespace!==first.toolsByNamespace||catalogLists!==1||catalogCloses!==1)throw new Error('packed workspace catalog discovery/cache changed');
  if(module.encodeToolRef({namespace:'雪',toolName:'café:read'})!=='mcp:6Zuq:Y2Fmw6k6cmVhZA')throw new Error('packed reference bytes changed');
  const identity=module.decodeToolRef('mcp:YWxwaGE:cmVhZA');if(identity.namespace!=='alpha'||identity.toolName!=='read')throw new Error('packed reference decode changed');
  } else if(subpath==='./upstream-mcp-connectors') {

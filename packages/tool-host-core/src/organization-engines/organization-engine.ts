@@ -16,7 +16,7 @@ import type {
 } from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createMcpGateway,
-	createOrganizationToolCatalog,
+	createWorkspaceToolCatalog,
 	proxyUpstreamFailureFromError,
 	createAgentCatalogViewCache,
 	portalToolRecordSchema,
@@ -110,7 +110,7 @@ export async function createOrganizationEngine(props: {
 		listTools: discoveryRuntime.listTools,
 		closeAgentScope: discoveryRuntime.closeAgentScope,
 	};
-	const organizationCatalog = createOrganizationToolCatalog({
+	const workspaceCatalog = createWorkspaceToolCatalog({
 		namespaces: providers.map((provider) => provider.namespace),
 		runtime: catalogRuntime,
 		discoveryScope: '$organization-catalog',
@@ -126,7 +126,7 @@ export async function createOrganizationEngine(props: {
 		)
 			return;
 		const discoveryStartedAt = props.clock.nowMs();
-		const candidate = await organizationCatalog.read();
+		const candidate = await workspaceCatalog.read();
 		if (candidate.discoveryFailures.length === 0) {
 			settledCatalog = { snapshot: candidate, discoveryStartedAt };
 			snapshot = candidate;
@@ -160,7 +160,7 @@ export async function createOrganizationEngine(props: {
 			const sessions = createAgentCatalogViewCache({
 				runtime: catalogRuntime,
 				catalogTtlMs: 60_000,
-				organizationCatalog: { read: async () => requestSnapshot },
+				workspaceCatalog: { read: async () => requestSnapshot },
 				upstreamNamespaces: providers.map((provider) => provider.namespace),
 				accessPolicy: {
 					enabledNamespaces: providers.map((provider) => provider.namespace),

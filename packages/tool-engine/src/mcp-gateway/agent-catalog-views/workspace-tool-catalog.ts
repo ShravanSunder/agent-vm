@@ -2,11 +2,11 @@ import type { Tool } from '@modelcontextprotocol/server';
 
 import { discoveryFailureFromError } from '#mcp-gateway/agent-catalog-views/agent-catalog-view-cache';
 import type { AgentCatalogViewRuntime } from '#mcp-gateway/agent-catalog-views/models/agent-catalog-view';
-import type {
-	OrganizationToolCatalog,
-	OrganizationToolCatalogSnapshot,
-} from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
 import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
+import type {
+	WorkspaceToolCatalog,
+	WorkspaceToolCatalogSnapshot,
+} from '#mcp-gateway/agent-catalog-views/models/workspace-tool-catalog';
 
 type NamespaceTools = ReadonlyMap<string, readonly Tool[]>;
 type DiscoveryFailures = ReadonlyMap<string, PortalDiscoveryFailure>;
@@ -25,17 +25,17 @@ type CatalogState =
 			readonly complete: NamespaceTools;
 	  };
 
-/** One organization's discovery; caller views never own upstream listing or retry state. */
-export function createOrganizationToolCatalog(props: {
+/** One workspace's discovery; caller views never own upstream listing or retry state. */
+export function createWorkspaceToolCatalog(props: {
 	readonly namespaces: readonly string[];
 	readonly runtime: AgentCatalogViewRuntime;
 	readonly discoveryScope: string;
 	readonly catalogTtlMs: number;
 	readonly now: () => number;
-}): OrganizationToolCatalog {
+}): WorkspaceToolCatalog {
 	let state: CatalogState = { kind: 'unlisted' };
-	let inFlight: Promise<OrganizationToolCatalogSnapshot> | undefined;
-	function snapshot(): OrganizationToolCatalogSnapshot {
+	let inFlight: Promise<WorkspaceToolCatalogSnapshot> | undefined;
+	function snapshot(): WorkspaceToolCatalogSnapshot {
 		switch (state.kind) {
 			case 'unlisted':
 				return { kind: 'complete', toolsByNamespace: new Map(), discoveryFailures: [] };
@@ -56,7 +56,7 @@ export function createOrganizationToolCatalog(props: {
 		}
 		throw new Error('Unreachable organization catalog state');
 	}
-	async function refresh(namespaces: readonly string[]): Promise<OrganizationToolCatalogSnapshot> {
+	async function refresh(namespaces: readonly string[]): Promise<WorkspaceToolCatalogSnapshot> {
 		const previous = state;
 		const candidate = new Map(
 			previous.kind === 'unlisted'

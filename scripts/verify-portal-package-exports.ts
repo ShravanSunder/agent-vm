@@ -85,6 +85,7 @@ const requiredPortalNamedExports = {
 	],
 	'@agent-collaboration/tool-engine/mcp-gateway': [
 		'createMcpGateway',
+		'createWorkspaceToolCatalog',
 		'encodeToolRef',
 		'decodeToolRef',
 		'createAgentCatalogViewCache',
@@ -398,6 +399,7 @@ const forbiddenPortalPackageExports = [
 ] as const;
 
 const forbiddenPortalNamedExports = {
+	'@agent-collaboration/tool-engine/mcp-gateway': ['createOrganizationToolCatalog'],
 	'@agent-collaboration/tool-host-node': [
 		'startFakeUpstreamMcpServer',
 		'createFakeUpstreamTools',
@@ -410,6 +412,7 @@ const forbiddenPortalNamedExports = {
 } as const;
 
 const forbiddenPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-engine/mcp-gateway',
 	'@agent-collaboration/tool-host-node',
 	'@agent-vm/tool-portal',
 ] as const satisfies readonly (keyof typeof forbiddenPortalNamedExports)[];

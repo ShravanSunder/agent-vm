@@ -2,7 +2,7 @@
 
 `@agent-collaboration/tool-host-node` runs the portable MCP proxy on Node 24.
 It loads trusted configuration, resolves provider credentials, discovers the
-organization's catalog before opening its listener, and routes calls through
+workspace's catalog before opening its listener, and routes calls through
 `tool-engine`'s dispatcher. Outbound HTTP/SSE and stdio use MCP SDK v2 auto
 negotiation: modern servers stay on MCP 2026-07-28, and older servers negotiate
 their supported protocol. `auto-http` tries Streamable HTTP before deprecated SSE.
@@ -51,7 +51,7 @@ Embedding applications supply current caller/access facts to
 `createNodeStandaloneToolPortalService`. Its neutral core in `tool-engine/dispatch`
 uses the real Access assessor and S2 dispatcher. `createStandaloneMcpProviderBackend`
 adapts the existing MCP connector and a caller-filtered shared catalog; the host
-must complete organization discovery before opening listeners. Managed context,
+must complete workspace discovery before opening listeners. Managed context,
 CLI and OAuth facts remain outside this host.
 
 `startStandaloneToolPortalEntrypoints` starts the explicitly configured MCP, JSON

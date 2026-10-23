@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createOrganizationToolCatalog } from '#mcp-gateway/agent-catalog-views/organization-tool-catalog';
+import { createWorkspaceToolCatalog } from '#mcp-gateway/agent-catalog-views/workspace-tool-catalog';
 
 function fixture(): {
-	readonly catalog: ReturnType<typeof createOrganizationToolCatalog>;
+	readonly catalog: ReturnType<typeof createWorkspaceToolCatalog>;
 	readonly calls: string[];
 	readonly close: ReturnType<typeof vi.fn>;
 	readonly fail: Set<string>;
@@ -13,7 +13,7 @@ function fixture(): {
 	const calls: string[] = [];
 	const fail = new Set<string>();
 	const close = vi.fn();
-	const catalog = createOrganizationToolCatalog({
+	const catalog = createWorkspaceToolCatalog({
 		namespaces: ['alpha', 'beta', 'gamma'],
 		discoveryScope: 'organization',
 		catalogTtlMs: 60000,

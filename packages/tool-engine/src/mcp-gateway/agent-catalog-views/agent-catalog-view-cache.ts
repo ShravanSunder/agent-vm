@@ -140,15 +140,15 @@ export function createAgentCatalogViewCache(
 		const discoveryFailures: PortalDiscoveryFailure[] = [...(options.discoveryFailures ?? [])];
 		const allowedNamespaces = policy.allowedNamespaces;
 
-		const organization = await options.organizationCatalog?.read();
-		if (organization !== undefined)
+		const workspace = await options.workspaceCatalog?.read();
+		if (workspace !== undefined)
 			discoveryFailures.push(
-				...organization.discoveryFailures.filter((failure) =>
+				...workspace.discoveryFailures.filter((failure) =>
 					allowedNamespaces.includes(failure.namespace),
 				),
 			);
 		const namespaceToolGroups =
-			organization === undefined
+			workspace === undefined
 				? await Promise.allSettled(
 						allowedNamespaces.map(async (namespace) => ({
 							mcpTools: await options.runtime.listTools({
@@ -160,7 +160,7 @@ export function createAgentCatalogViewCache(
 					)
 				: allowedNamespaces.map((namespace) => ({
 						status: 'fulfilled' as const,
-						value: { namespace, mcpTools: organization.toolsByNamespace.get(namespace) ?? [] },
+						value: { namespace, mcpTools: workspace.toolsByNamespace.get(namespace) ?? [] },
 					}));
 		for (const [index, namespaceToolGroup] of namespaceToolGroups.entries()) {
 			if (namespaceToolGroup.status === 'rejected') {
@@ -187,7 +187,7 @@ export function createAgentCatalogViewCache(
 		const graph = buildToolGraph({ skills: options.skills ?? [], tools: sortedTools });
 		const catalog = {
 			agentScopeId: identity.agentScopeId,
-			...(organization === undefined ? {} : { organizationCatalogState: organization.kind }),
+			...(workspace === undefined ? {} : { workspaceCatalogState: workspace.kind }),
 			discoveryFailures,
 			generatedAt: new Date(getNow()).toISOString(),
 			sourceHash: await createSourceHash(sortedTools),
@@ -204,7 +204,7 @@ export function createAgentCatalogViewCache(
 
 	return {
 		async getView(identity: PortalAgentIdentity): Promise<AgentCatalogView> {
-			if (options.organizationCatalog !== undefined) return buildSession(identity);
+			if (options.workspaceCatalog !== undefined) return buildSession(identity);
 			const key = portalAgentScopeKey(identity);
 			const now = getNow();
 			const cached = sessions.get(key);
