@@ -1,9 +1,10 @@
 import path from 'node:path';
 
+import { evaluateCliAllowanceInvocation } from '@agent-collaboration/tool-access/authorization';
+import { type ToolPortalToolSelector } from '@agent-collaboration/tool-access/contracts';
 import {
 	createToolPortalControllerExecutionProjection,
 	jsonObjectSchema,
-	type ToolPortalToolSelector,
 } from '@agent-vm/config-contracts';
 import type {
 	GatewayControlToolPortalControllerExecutionPayload,
@@ -18,11 +19,7 @@ import {
 	deriveGatewayRuntimeApprovalId,
 	deriveGatewayRuntimePortalBindingRevision,
 } from '@agent-vm/gateway-control-contracts';
-import { evaluateCliAllowanceInvocation } from '@agent-vm/tool-portal/cli-allowances';
-import {
-	deterministicOperationId,
-	directDispatchFingerprint,
-} from '@agent-vm/tool-portal/dispatch-authority';
+import { deterministicOperationId, directDispatchFingerprint } from '@agent-vm/gateway-runtime';
 
 import {
 	deploymentGeneratedDirForStorageRoot,

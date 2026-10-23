@@ -62,6 +62,13 @@ const requiredPortalNamedExports = {
 		'openNodeOperationStore',
 		'createNodeHostComposition',
 		'nodeHostConfigSchema',
+		'resolveUpstreamServers',
+		'createNodeProviderRuntime',
+		'loadMcpConfig',
+		'formatSecretValue',
+		'mcpPortalConfigSchema',
+		'standaloneToolPortalConfigSchema',
+		'createMcpPortalConfigSchemaArtifact',
 	],
 	'@agent-collaboration/tool-host-node/catalog-typescript': [
 		'compileCatalogTypescriptModules',
@@ -78,6 +85,11 @@ const requiredPortalNamedExports = {
 		'redactUpstreamResponse',
 		'UpstreamMcpError',
 	],
+	'@agent-collaboration/tool-engine/standalone-tool-portal': [
+		'mergeToolPortalList',
+		'mergeToolPortalSearch',
+		'mergeToolPortalDescribe',
+	],
 	'@agent-collaboration/tool-engine/capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
@@ -86,6 +98,10 @@ const requiredPortalNamedExports = {
 		'approvalReceiptSchema',
 	],
 	'@agent-collaboration/tool-access/contracts': [
+		'mcpConfigSchema',
+		'secretValueSchema',
+		'configuredCliPolicySchema',
+		'toolPortalToolSelectorSchema',
 		'hostAccessBinding',
 		'assessAccessInput',
 		'accessFacts',
@@ -249,6 +265,12 @@ const requiredPortalNamedExports = {
 	'@agent-vm/gateway-runtime': [
 		'GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS',
 		'createGatewayRuntimeToolPortalComposition',
+		'createGatewayRuntimeManagedToolPortalComposition',
+		'createManagedToolPortalCapabilityCore',
+		'createManagedMcpProviderBackendFactoryFromConfig',
+		'deterministicOperationId',
+		'directDispatchFingerprint',
+		'ToolPortalManagedServiceInvocationOptionsSchema',
 	],
 	'@agent-vm/mcp-portal': ['UpstreamMcpError', 'createUpstreamMcpClientRuntime'],
 	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps'],
@@ -303,6 +325,7 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
 	'@agent-collaboration/tool-access/contracts',

@@ -27,7 +27,7 @@ import type {
 	ToolPortalBackendCallOptions,
 	ToolPortalBackendPort,
 	ToolPortalInvocationOptions,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { z } from 'zod';
 
 import type {
@@ -38,10 +38,10 @@ import type { GatewayRuntimeSandboxProcessRegistry } from '../sandbox/sandbox-pr
 import type { StrictToolVmSshClient } from '../sandbox/strict-tool-vm-ssh-client.js';
 import { StrictToolVmSshProcessStartError } from '../sandbox/strict-tool-vm-ssh-process-runtime.js';
 import {
-	type GatewayRuntimeToolVmRunnerCallItem,
 	toolVmRunnerExecutionErrorItem,
 	toolVmRunnerNotDispatchedItem,
 	toolVmRunnerSuccessfulCallItem,
+	type GatewayRuntimeToolVmRunnerCallItem,
 } from './tool-vm-runner-call-results.js';
 import {
 	describeToolVmRunnerCatalog,

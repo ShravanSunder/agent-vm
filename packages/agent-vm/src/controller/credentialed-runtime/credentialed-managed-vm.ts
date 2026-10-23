@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 
 import {
-	decodeConfiguredCliPreparedImageIdentity,
 	resolveConfiguredCliTimeout,
 	type ControllerConfiguredCliInput,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { decodeConfiguredCliPreparedImageIdentity } from '@agent-vm/config-contracts';
 import type {
 	ManagedVm,
 	ManagedVmFactory,

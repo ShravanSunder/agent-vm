@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { encodeCanonicalJson } from '../../../agent-portal-sdk/src/portable-contracts/index.js';
 
 const repoRoot = process.cwd();
+const accessDirectory = path.join(repoRoot, 'packages', 'tool-access');
 const sdkDirectory = path.join(repoRoot, 'packages', 'agent-portal-sdk');
 const oauthBrokerContractsDirectory = path.join(repoRoot, 'packages', 'oauth-broker-contracts');
 const testAuthorization = 'test-only-opaque-tool-portal-authorization';
@@ -147,18 +148,16 @@ async function startHttpMcpServer(
 				writeJsonResponse(response, 400);
 				return;
 			}
-			if (message['method'] === 'initialize') {
-				const params = isObjectRecord(message['params']) ? message['params'] : {};
+			if (message['method'] === 'server/discover') {
 				writeJsonResponse(response, 200, {
 					id: message['id'],
 					jsonrpc: '2.0',
 					result: {
+						supportedVersions: ['2026-07-28'],
 						capabilities: {
 							resources: { listChanged: false, subscribe: false },
 							tools: { listChanged: false },
 						},
-						protocolVersion: params['protocolVersion'],
-						serverInfo: { name: 'tool-portal-cli-host-fixture', version: '1.0.0' },
 					},
 				});
 				return;
@@ -172,6 +171,7 @@ async function startHttpMcpServer(
 					id: message['id'],
 					jsonrpc: '2.0',
 					result: {
+						resultType: 'complete',
 						content: [{ text: 'untrusted MCP text must not enter CLI stdout', type: 'text' }],
 						structuredContent,
 					},
@@ -207,35 +207,45 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 	const consumerDirectory = path.join(rootDirectory, 'consumer');
 	await Promise.all([mkdir(packDirectory), mkdir(consumerDirectory)]);
 	await Promise.all(
-		[sdkDirectory, oauthBrokerContractsDirectory].map(async (packageDirectory): Promise<void> => {
-			await execa(
-				'pnpm',
-				[
-					'--dir',
-					packageDirectory,
-					'pack',
-					'--pack-destination',
-					packDirectory,
-					'--config.ignore-scripts=true',
-				],
-				{ cwd: repoRoot, timeout: 60_000 },
-			);
-		}),
+		[accessDirectory, sdkDirectory, oauthBrokerContractsDirectory].map(
+			async (packageDirectory): Promise<void> => {
+				await execa(
+					'pnpm',
+					[
+						'--dir',
+						packageDirectory,
+						'pack',
+						'--pack-destination',
+						packDirectory,
+						'--config.ignore-scripts=true',
+					],
+					{ cwd: repoRoot, timeout: 60_000 },
+				);
+			},
+		),
 	);
 	const tarballNames = (await readdir(packDirectory)).filter((name) => name.endsWith('.tgz'));
-	if (tarballNames.length !== 2) {
+	if (tarballNames.length !== 3) {
 		throw new Error(
-			`Expected two packed Tool Portal contract tarballs; found ${String(tarballNames.length)}.`,
+			`Expected three packed Tool Portal contract tarballs; found ${String(tarballNames.length)}.`,
 		);
 	}
+	const accessTarballName = tarballNames.find((name) =>
+		name.startsWith('agent-collaboration-tool-access-'),
+	);
 	const sdkTarballName = tarballNames.find((name) => name.startsWith('agent-vm-agent-portal-sdk-'));
 	const oauthBrokerContractsTarballName = tarballNames.find((name) =>
 		name.startsWith('agent-vm-oauth-broker-contracts-'),
 	);
-	if (sdkTarballName === undefined || oauthBrokerContractsTarballName === undefined) {
+	if (
+		accessTarballName === undefined ||
+		sdkTarballName === undefined ||
+		oauthBrokerContractsTarballName === undefined
+	) {
 		throw new Error('Packed Tool Portal contract tarballs did not contain the expected packages.');
 	}
 	const dependencies = {
+		'@agent-collaboration/tool-access': `file:${path.join(packDirectory, accessTarballName)}`,
 		'@agent-vm/agent-portal-sdk': `file:${path.join(packDirectory, sdkTarballName)}`,
 		'@agent-vm/oauth-broker-contracts': `file:${path.join(packDirectory, oauthBrokerContractsTarballName)}`,
 	} as const;
@@ -244,6 +254,7 @@ async function preparePackedCliFixture(): Promise<PackedCliFixture> {
 		JSON.stringify({
 			dependencies,
 			name: 'tool-portal-cli-host-fixture',
+			packageManager: 'pnpm@10.33.0',
 			pnpm: { overrides: dependencies },
 			private: true,
 			type: 'module',
@@ -390,16 +401,16 @@ const input = readline.createInterface({ input: process.stdin });
 let pendingCallId;
 input.on('line', async (line) => {
   const message = JSON.parse(line);
-  if (message.method === 'initialize') {
-    respond(message.id, { capabilities: { tools: {} }, protocolVersion: message.params.protocolVersion, serverInfo: { name: 'scoped-stdio-fixture', version: '1.0.0' } });
+  if (message.method === 'server/discover') {
+    respond(message.id, { supportedVersions: ['2026-07-28'], capabilities: { tools: {} } });
   } else if (message.method === 'tools/call') {
 	pendingCallId = message.id;
 	await record('call:' + literalArgument);
-    if (mode === 'success') respond(message.id, { content: [], structuredContent: result });
+    if (mode === 'success') respond(message.id, { resultType: 'complete', content: [], structuredContent: result });
   } else if (message.method === 'notifications/cancelled') {
 	await record('cancel');
 	if (mode === 'cancel-with-result' && pendingCallId !== undefined) {
-		respond(pendingCallId, { content: [], structuredContent: result });
+		respond(pendingCallId, { resultType: 'complete', content: [], structuredContent: result });
 	}
   }
 });
@@ -458,7 +469,7 @@ describe('packed Tool Portal CLI', () => {
 					env: cliEnvironment(fixture.rootDirectory),
 				});
 
-				expect(result.exitCode).toBe(operationFixture.exitCode);
+				expect(result.exitCode, result.stderr).toBe(operationFixture.exitCode);
 				expect(result.stdout).toBe(`${encodeCanonicalJson(operationFixture.result)}\n`);
 				expect(result.stdout).not.toContain('untrusted MCP text');
 				if (operationFixture.exitCode === 0) expect(result.stderr).toBe('');
@@ -526,7 +537,7 @@ describe('packed Tool Portal CLI', () => {
 				}),
 			});
 
-			expect(result.exitCode).toBe(1);
+			expect(result.exitCode, result.stderr).toBe(1);
 			expect(args).not.toContain(testApprovalToken);
 			expect(result.stdout).not.toContain(testApprovalToken);
 			expect(result.stderr).not.toContain(testApprovalToken);
@@ -606,7 +617,7 @@ describe('packed Tool Portal CLI', () => {
 			env: cliEnvironment(fixture.rootDirectory),
 		});
 
-		expect(result.exitCode).toBe(0);
+		expect(result.exitCode, result.stderr).toBe(0);
 		expect(result.stdout).toBe(`${encodeCanonicalJson(successfulListResult)}\n`);
 		expect(await readFile(markerPath, 'utf8')).toContain(`call:${literalArgument}`);
 		await expect(access(shellSentinelPath)).rejects.toThrow(/ENOENT/u);

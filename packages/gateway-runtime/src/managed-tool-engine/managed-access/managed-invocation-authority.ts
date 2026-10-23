@@ -11,7 +11,7 @@ import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/m
 import {
 	ToolPortalManagedServiceInvocationOptionsSchema,
 	type ToolPortalInvocationOptions,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
 /** Rebuild authority from the controller projection on every resource entry. */
 export function resolveManagedEngineInvocation(props: {
@@ -26,6 +26,7 @@ export function resolveManagedEngineInvocation(props: {
 	const parsed = ToolPortalManagedServiceInvocationOptionsSchema.parse({
 		origin: { kind: 'managed', trustedContext: props.context.trustedContext },
 		surfaceClass: props.context.surfaceClass,
+		...(props.context.signal === undefined ? {} : { signal: props.context.signal }),
 	});
 	if (props.semanticSnapshot.activeRevision !== props.semanticSnapshot.desiredRevision)
 		throw new Error('Managed semantic snapshot is not active.');
@@ -50,7 +51,11 @@ export function resolveManagedEngineInvocation(props: {
 	return {
 		profileId: principal.toolPortalProfileId,
 		stablePrincipal,
-		options: { surfaceClass: parsed.surfaceClass, trustedContext: parsed.origin.trustedContext },
+		options: {
+			...(parsed.signal === undefined ? {} : { signal: parsed.signal }),
+			surfaceClass: parsed.surfaceClass,
+			trustedContext: parsed.origin.trustedContext,
+		},
 	};
 }
 export function assertManagedNeutralBinding(props: {

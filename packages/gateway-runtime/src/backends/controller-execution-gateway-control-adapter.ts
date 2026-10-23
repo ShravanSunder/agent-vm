@@ -1,46 +1,48 @@
-import type {
-	CapabilityDescriptor,
-	JsonObject,
-	CapabilitySummary,
-	PortalError,
-} from '@agent-vm/agent-portal-sdk';
-import { JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
+import { validateCliAllowanceInvocation } from '@agent-collaboration/tool-access/authorization';
 import {
 	controllerConfiguredCliInputSchema,
-	type GatewayRuntimeControllerExecutionOperation,
-	type GatewayRuntimeManagedToolPortalConfig,
 	openConfiguredCliInputSchema,
 	openOAuthConfiguredCliInputSchema,
 	quickConfiguredCliInputSchema,
 	quickOAuthConfiguredCliInputSchema,
+} from '@agent-collaboration/tool-access/contracts';
+import type {
+	CapabilityDescriptor,
+	CapabilitySummary,
+	JsonObject,
+	PortalError,
+} from '@agent-vm/agent-portal-sdk';
+import { JsonObjectSchema } from '@agent-vm/agent-portal-sdk';
+import {
+	type GatewayRuntimeControllerExecutionOperation,
+	type GatewayRuntimeManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 import {
-	type ControllerExecutionAuthorityBinding,
-	type ControllerExecutionResult,
 	OAuthAuthorizationBeginArgumentsSchema,
 	OAuthAuthorizationCancelArgumentsSchema,
 	OAuthAuthorizationControllerActionIdSchema,
 	OAuthAuthorizationControllerActionRequestSchema,
+	OAuthAuthorizationControllerActionResultSchema,
+	OAuthAuthorizationDisconnectArgumentsSchema,
 	OAuthAuthorizationListArgumentsSchema,
 	OAuthAuthorizationReauthorizeArgumentsSchema,
-	OAuthAuthorizationDisconnectArgumentsSchema,
 	OAuthAuthorizationStatusArgumentsSchema,
-	OAuthAuthorizationControllerActionResultSchema,
+	type ControllerExecutionAuthorityBinding,
+	type ControllerExecutionResult,
 } from '@agent-vm/controller-execution-contracts';
 import {
-	deriveGatewayControlControllerExecutionRpcWindow,
 	GatewayControlControllerHostProbeArgumentsSchema,
 	GatewayControlToolPortalControllerExecutionPayloadSchema,
 	GatewayControlWorkspaceGitPushArgumentsSchema,
-	type gatewayControlRegisteredControllerExecutionActionIds,
+	deriveGatewayControlControllerExecutionRpcWindow,
 	gatewayControlCommandExecutionTimeoutMsByOperation,
 	type GatewayControlToolPortalControllerExecutionPayload,
+	type gatewayControlRegisteredControllerExecutionActionIds,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	validateCliAllowanceInvocation,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { z } from 'zod/v4';
 
 import type { GatewayControlCallerContextRegistrationClient } from '../control-endpoint/gateway-control-caller-context-registration-client.js';

@@ -1,9 +1,11 @@
 import {
+	resolveCliAllowanceTimeout,
+	toolPortalSelectorAllowsOperation,
+} from '@agent-collaboration/tool-access/authorization';
+import {
 	controllerEnforcedConfiguredCliOperationSchema,
 	controllerToolVmConfiguredCliOperationSchema,
-	toolPortalSelectorAllowsOperation,
 } from '@agent-vm/config-contracts';
-import { resolveCliAllowanceTimeout } from '@agent-vm/tool-portal/cli-allowances';
 import { describe, expect, it } from 'vitest';
 
 import {

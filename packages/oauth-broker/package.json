@@ -40,6 +40,7 @@
 		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/oauth-broker/src"
 	},
 	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/oauth-broker-contracts": "workspace:*",
 		"@noble/ciphers": "^2.4.0",

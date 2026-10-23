@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
-
 import {
-	createConfigContractSchemaArtifacts,
 	mcpPortalConfigSchemaIds,
 	mcpPortalConfigSchemaPaths,
 	mcpPortalConfigSchemaVersions,
-} from './schema-artifacts.js';
+} from '@agent-collaboration/tool-access/contracts';
+import { describe, expect, it } from 'vitest';
+
+import { createConfigContractSchemaArtifacts } from '#agent-vm/cli/config-schema-artifacts';
 
 describe('schema artifacts', () => {
 	it('exposes schema ids, versions, paths, and JSON Schema artifacts', () => {

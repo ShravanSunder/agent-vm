@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import { googleOAuthApplicationIdSchema } from '@agent-vm/config-contracts';
+import { googleOAuthApplicationIdSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	createOAuthPolicyEnvelopeCodec,
 	oauthPolicyEnvelopeBindingSchema,

@@ -15,7 +15,7 @@ import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/gateway-control-contracts';
-import type { ToolPortalBackendCallOptions } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendCallOptions } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGatewayRuntimeSandboxOperationAuthority } from '../sandbox/sandbox-operation-authority.js';

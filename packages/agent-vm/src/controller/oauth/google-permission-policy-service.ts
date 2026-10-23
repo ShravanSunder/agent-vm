@@ -1,15 +1,20 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-	googleOAuthApplicationIdSchema,
-	controllerConfiguredCliInputSchema,
-	configuredGoogleOperationKey,
-	isControllerEphemeralManagedVmConfiguredCliOperation,
 	resolveCompiledGoogleCommand,
 	toolPortalNamespaceAllowsOperation,
+	validateCliAllowanceInvocation,
+} from '@agent-collaboration/tool-access/authorization';
+import {
+	controllerConfiguredCliInputSchema,
+	googleOAuthApplicationIdSchema,
 	type ControllerConfiguredCliInput,
-	type CompiledOAuthPolicy,
 	type GoogleOAuthApplicationId,
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	configuredGoogleOperationKey,
+	isControllerEphemeralManagedVmConfiguredCliOperation,
+	type CompiledOAuthPolicy,
 } from '@agent-vm/config-contracts';
 import {
 	oauthStoredGrantSchema,
@@ -20,19 +25,19 @@ import {
 } from '@agent-vm/oauth-broker';
 import {
 	googleAccountPolicyBindingSchema,
-	oauthApplicationIdSchema,
+	managedGooglePreflightResultSchema,
 	oauthAccountIdSchema,
+	oauthApplicationIdSchema,
 	oauthBrowserSessionIdentitySchema,
 	oauthServiceIdSchema,
-	managedGooglePreflightResultSchema,
-	type ManagedGooglePreflightResult,
-	type ManagedGoogleInvocationBinding,
-	type OAuthOperationToolRequirement,
-	type OAuthOperationAvailability,
-	type OAuthAccountToolOption,
 	type GoogleAccountPolicySnapshot,
 	type GoogleOperationEffect,
+	type ManagedGoogleInvocationBinding,
+	type ManagedGooglePreflightResult,
 	type OAuthAccountActivityAvailability,
+	type OAuthAccountToolOption,
+	type OAuthOperationAvailability,
+	type OAuthOperationToolRequirement,
 } from '@agent-vm/oauth-broker-contracts';
 import {
 	decryptGoogleCredentialPayload,
@@ -41,11 +46,9 @@ import {
 	readGoogleAccountPolicySnapshot,
 	type GoogleOAuthAccountActivityReader,
 } from '@agent-vm/oauth-broker/google';
-import {
-	resolveGoogleAccountInvocationPolicy,
-	validateCliAllowanceInvocation,
-} from '@agent-vm/tool-portal';
 import { z } from 'zod';
+
+import { resolveGoogleAccountInvocationPolicy } from '#agent-vm/controller/oauth/google-account-invocation-policy';
 
 import {
 	createGoogleAccountPolicyEditor,

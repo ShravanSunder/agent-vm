@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer';
-
 import {
 	assessAccessInput,
 	jsonObjectSchema,
@@ -12,7 +10,7 @@ import type { GatewayRuntimePortalSemanticSnapshot } from '@agent-vm/gateway-con
 import { projectManagedAccessProfile } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/access-profile-projection.js';
 import { resolveManagedEngineInvocation } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/managed-invocation-authority.js';
 import type { ManagedEngineInvocationContext } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-access/models/managed-invocation-context.js';
-import { hashCallArguments } from '@agent-vm/mcp-portal/portal-auth/hmac-token';
+
 export function createManagedAccessRequest(props: {
 	readonly authority: string;
 	readonly reference: string;
@@ -21,6 +19,7 @@ export function createManagedAccessRequest(props: {
 	readonly context: ManagedEngineInvocationContext;
 	readonly call: PortalCallRequest['calls'][number];
 	readonly accounts: readonly AccountFact[];
+	readonly argumentDigest: string;
 }): DispatchRequest {
 	const { config, snapshot, reference } = props;
 	const selected = props;
@@ -46,9 +45,7 @@ export function createManagedAccessRequest(props: {
 						? { oauthAccountId: selected.call.arguments.accountId }
 						: null,
 				// Preserve the managed hash bytes while using tool-access's hex digest encoding.
-				digest: Buffer.from(hashCallArguments(selected.call.arguments), 'base64url').toString(
-					'hex',
-				),
+				digest: props.argumentDigest,
 			},
 			facts: {
 				workspace: { kind: 'not-configured' },

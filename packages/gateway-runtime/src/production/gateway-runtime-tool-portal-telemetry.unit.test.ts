@@ -3,7 +3,7 @@ import {
 	PortalCallResultSchema,
 	type GatewayRuntimeTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { SpanKind, trace } from '@opentelemetry/api';
 import {
 	BasicTracerProvider,

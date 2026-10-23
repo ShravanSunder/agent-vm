@@ -1,8 +1,8 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type ResolvedOAuthConfig,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
 	oauthPermissionSelectionsSchema,

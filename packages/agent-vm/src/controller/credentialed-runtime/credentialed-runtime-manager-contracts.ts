@@ -1,9 +1,9 @@
-import type { ControllerConfiguredCliInput } from '@agent-vm/config-contracts';
+import { type ControllerConfiguredCliInput } from '@agent-collaboration/tool-access/contracts';
 
 import type { CredentialedManagedVmCommandResult } from './credentialed-managed-vm.js';
 import type {
-	CredentialedRuntimeOAuthAuthorization,
 	CredentialedRuntimeInvalidationScope,
+	CredentialedRuntimeOAuthAuthorization,
 } from './credentialed-runtime-material-scope.js';
 import type { CredentialedRuntimeResolution } from './credentialed-runtime-registry.js';
 import type { SharedStagingOperationSession } from './shared-staging-operation-session.js';

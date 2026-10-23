@@ -1,7 +1,9 @@
 import { z } from 'zod';
 
-import { loadJsonConfigFile } from './json-config-file.js';
-import { formattedSecretValueSchema, type FormattedSecretValue } from './secret-value.js';
+import {
+	formattedSecretValueSchema,
+	type FormattedSecretValue,
+} from '#tool-access/contracts/provider-secret-reference';
 
 const namespaceDiscoverySummaryMaximumCodePoints = 500;
 const namespaceDiscoverySummarySchema = z
@@ -18,8 +20,6 @@ export const namespaceDiscoverySchema = z
 		summary: namespaceDiscoverySummarySchema.optional(),
 	})
 	.strict();
-
-export type NamespaceDiscovery = z.infer<typeof namespaceDiscoverySchema>;
 
 const remoteTransportUrlSchema = z.url().refine(
 	(value) => {
@@ -129,54 +129,3 @@ export type ResolvedMcpProvider =
 			readonly namespace: string;
 			readonly transport: 'stdio';
 	  };
-
-export async function loadMcpConfig(configPath: string): Promise<McpConfig> {
-	return mcpConfigSchema.parse(await loadJsonConfigFile(configPath));
-}
-
-export function mcpConfigToResolvedProviders(config: McpConfig): readonly ResolvedMcpProvider[] {
-	return Object.values(config.providers).map((provider) => {
-		const transport = provider.transport;
-		if (transport.kind === 'stdio') {
-			const resolvedProvider: {
-				args: readonly string[];
-				command: string;
-				connectionTimeoutMs?: number;
-				cwd?: string;
-				env: Readonly<Record<string, FormattedSecretValue>>;
-				namespace: string;
-				transport: 'stdio';
-			} = {
-				args: transport.args,
-				command: transport.command,
-				env: transport.env,
-				namespace: provider.namespace,
-				transport: transport.kind,
-			};
-			if (transport.connectionTimeoutMs !== undefined) {
-				resolvedProvider.connectionTimeoutMs = transport.connectionTimeoutMs;
-			}
-			if (transport.cwd !== undefined) {
-				resolvedProvider.cwd = transport.cwd;
-			}
-			return resolvedProvider;
-		}
-
-		const resolvedProvider: {
-			connectionTimeoutMs?: number;
-			headers: Readonly<Record<string, FormattedSecretValue>>;
-			namespace: string;
-			transport: 'streamable-http' | 'sse';
-			url: string;
-		} = {
-			headers: transport.headers,
-			namespace: provider.namespace,
-			transport: transport.kind,
-			url: transport.url,
-		};
-		if (transport.connectionTimeoutMs !== undefined) {
-			resolvedProvider.connectionTimeoutMs = transport.connectionTimeoutMs;
-		}
-		return resolvedProvider;
-	});
-}

@@ -1,13 +1,13 @@
-import type { ToolPortalCapabilityCore, ToolPortalService } from '@agent-vm/tool-portal';
+import type { ToolPortalCapabilityCore } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
-export interface GatewayRuntimeManagedToolPortalService<
-	TOwnedComponents,
-> extends ToolPortalService<'managed'> {
+export interface GatewayRuntimeManagedToolPortalService<TOwnedComponents> {
+	readonly mode: 'managed';
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly ownedComponents: TOwnedComponents;
 }
 
 export function createGatewayRuntimeManagedToolPortalService<TOwnedComponents>(props: {
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 	readonly ownedComponents: TOwnedComponents;
 }): GatewayRuntimeManagedToolPortalService<TOwnedComponents> {
 	return Object.freeze({

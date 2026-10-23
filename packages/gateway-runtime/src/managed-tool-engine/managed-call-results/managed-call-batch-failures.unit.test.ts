@@ -3,12 +3,12 @@ import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-co
 import { GatewayRuntimeApprovalAdmissionResultSchema } from '@agent-vm/gateway-control-contracts';
 import * as callProjection from '@agent-vm/gateway-runtime/managed-tool-engine/managed-call-results/managed-call-projection.js';
 import { createManagedToolEngineAdapter } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-dispatch-adapter.js';
+import type { ToolPortalBackendPort } from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import {
 	semanticSnapshot,
 	toolPortalConfig,
 	trustedContext,
 } from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-profile-test-fixture.js';
-import type { ToolPortalBackendPort } from '@agent-vm/tool-portal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const createProjection = callProjection.createManagedPortalCallProjection;
@@ -81,8 +81,8 @@ describe('managed call batch failure isolation', () => {
 			vi.spyOn(callProjection, 'createManagedPortalCallProjection').mockImplementation((props) =>
 				createProjection({
 					...props,
-					register: (input) => {
-						const reference = props.register(input);
+					register: async (input) => {
+						const reference = await props.register(input);
 						references.set(reference, input.call.id);
 						return reference;
 					},

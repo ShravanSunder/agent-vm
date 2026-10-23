@@ -3,7 +3,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { controllerConfiguredCliInputSchema } from '@agent-vm/config-contracts';
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import type { AgentVmHealthEvent } from '@agent-vm/gateway-lifecycle';
 import {
 	oauthAuthorizationActionRequestSchema,
@@ -28,8 +28,8 @@ import { resolveManagedAgentRootPaths } from '../gateway/managed-agent-root-stor
 import { controllerFixedGatewayRuntimeArtifactLimits } from '../gateway/managed-gateway-runtime-input-builders.js';
 import { resolveControllerTelemetryIdentity as resolveControllerTelemetryIdentityDefault } from '../observability/controller-telemetry-identity.js';
 import {
-	createGatewayTelemetryResourceAttributesEnvironmentValue,
 	OTEL_RESOURCE_ATTRIBUTES_ENVIRONMENT_VARIABLE,
+	createGatewayTelemetryResourceAttributesEnvironmentValue,
 	startControllerTelemetry as startControllerTelemetryDefault,
 	type ControllerTelemetry,
 	type ControllerTelemetryProofAttributes,
@@ -54,11 +54,11 @@ import {
 	createGatewayControlLeaseRpcOperations,
 	createGatewayControlProcessAdmissionCoordinator,
 } from './control-session/index.js';
-import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import type {
 	ControllerDiagnosticLevel,
 	ControllerDiagnosticTelemetry,
 } from './controller-diagnostic-logging.js';
+import { writeControllerDiagnostic } from './controller-diagnostic-logging.js';
 import {
 	createControllerRuntimeOperations,
 	createStopControllerOperation,
@@ -100,8 +100,8 @@ import { cleanupNativeAttachmentCacheAfterContainment } from './files/native-att
 import { createNativeAttachmentStaging } from './files/native-attachment-staging.js';
 import { createOperationFileRetentionBudget } from './files/operation-file-retention-budget.js';
 import {
-	loadOperationFolderGuestProgram,
 	OperationFolderAccessError,
+	loadOperationFolderGuestProgram,
 } from './files/operation-folder-guest-access.js';
 import { appendDurableHealthEvent } from './health/durable-health-event-log.js';
 import { classifyGatewayRecoveryAction } from './health/gateway-recovery-actions.js';
@@ -145,8 +145,8 @@ import { acquireControllerOwnershipLock as acquireControllerOwnershipLockDefault
 import { createGatewayDestructionBudget } from './vm-ownership/gateway-destruction-budget.js';
 import { createGatewayOwnershipCoordinator } from './vm-ownership/gateway-ownership-coordinator.js';
 import {
-	containsGatewayOwnershipCoordinatorErrorCode,
 	GatewayOwnershipCoordinatorError,
+	containsGatewayOwnershipCoordinatorErrorCode,
 } from './vm-ownership/gateway-ownership-errors.js';
 import {
 	createGatewayVmLifecycleAuthority,

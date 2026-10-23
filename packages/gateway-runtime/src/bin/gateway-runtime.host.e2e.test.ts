@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	GatewayRuntimeClient,
 	type GatewayRuntimeAttachmentMetadata,
@@ -17,7 +18,6 @@ import {
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeInputRevision,
@@ -27,16 +27,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const execFile = promisify(execFileCallback);
 const LOCAL_PACKAGE_NAMES = [
-	'agent-portal-sdk',
-	'oauth-broker-contracts',
-	'config-contracts',
-	'control-protocol-contracts',
-	'controller-execution-contracts',
-	'gateway-control-contracts',
-	'secret-management',
-	'mcp-portal',
-	'tool-portal',
-	'gateway-runtime',
+	'@agent-vm/agent-portal-sdk',
+	'@agent-vm/oauth-broker-contracts',
+	'@agent-vm/config-contracts',
+	'@agent-vm/control-protocol-contracts',
+	'@agent-vm/controller-execution-contracts',
+	'@agent-vm/gateway-control-contracts',
+	'@agent-vm/secret-management',
+	'@agent-vm/mcp-portal',
+	'@agent-vm/tool-portal',
+	'@agent-vm/gateway-runtime',
+	'@agent-collaboration/tool-access',
+	'@agent-collaboration/tool-engine',
+	'@agent-collaboration/tool-host-node',
 ] as const;
 const PROCESS_WAIT_MILLISECONDS = 30_000;
 
@@ -124,7 +127,7 @@ async function preparePackedGatewayRuntimeFixture(): Promise<PackedGatewayRuntim
 		LOCAL_PACKAGE_NAMES.map(async (packageName) =>
 			runCommand('pnpm', [
 				'--dir',
-				path.join(process.cwd(), 'packages', packageName),
+				path.join(process.cwd(), 'packages', path.basename(packageName)),
 				'pack',
 				'--pack-destination',
 				packDirectory,
@@ -143,12 +146,14 @@ async function preparePackedGatewayRuntimeFixture(): Promise<PackedGatewayRuntim
 	const dependencies = Object.fromEntries(
 		LOCAL_PACKAGE_NAMES.map((packageName) => {
 			const tarballPath = tarballPaths.find((candidatePath) =>
-				path.basename(candidatePath).startsWith(`agent-vm-${packageName}-`),
+				path
+					.basename(candidatePath)
+					.startsWith(`${packageName.replace(/^@/u, '').replace('/', '-')}-`),
 			);
 			if (tarballPath === undefined) {
-				throw new Error(`Packed tarball for @agent-vm/${packageName} was not found.`);
+				throw new Error(`Packed tarball for ${packageName} was not found.`);
 			}
-			return [`@agent-vm/${packageName}`, `file:${tarballPath}`];
+			return [packageName, `file:${tarballPath}`];
 		}),
 	);
 	await writeFile(
@@ -156,6 +161,7 @@ async function preparePackedGatewayRuntimeFixture(): Promise<PackedGatewayRuntim
 		JSON.stringify({
 			dependencies,
 			name: 'gateway-runtime-packed-host-fixture',
+			packageManager: 'pnpm@10.33.0',
 			pnpm: { overrides: dependencies },
 			private: true,
 			type: 'module',

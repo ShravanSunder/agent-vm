@@ -1,339 +1,45 @@
-import {
-	PortalCallResultSchema,
-	PortalBackendDescribeResultSchema,
-	PortalBackendListResultSchema,
-	PortalBackendSearchResultSchema,
-} from '@agent-vm/agent-portal-sdk';
-import { ToolPortalMcpProjectionSchema } from '@agent-vm/config-contracts';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { createUpstreamMcpError } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
+import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPortalCore } from '../core/index.js';
-import { createUpstreamMcpError } from '../upstream-mcp-errors.js';
-import { createMcpProviderCapabilityBackend } from './index.js';
+import {
+	createBackendFixture,
+	createFactoryFixture,
+	defaultProjection,
+} from '#gateway-runtime/backends/managed-mcp-provider-test-fixture';
 
-const githubTools = [
-	{
-		description: 'Read issue',
-		inputSchema: {
-			properties: { number: { type: 'number' } },
-			required: ['number'],
-			type: 'object',
-		},
-		name: 'get_issue',
-	},
-	{
-		description: 'Create issue',
-		inputSchema: {
-			properties: { title: { type: 'string' } },
-			required: ['title'],
-			type: 'object',
-		},
-		name: 'create_issue',
-	},
-] satisfies readonly Tool[];
-
-function createBackendFixture(options?: {
-	readonly callUpstreamTool?: (call: {
-		readonly arguments: Record<string, unknown>;
-		readonly namespace: string;
-		readonly toolName: string;
-	}) => Promise<unknown>;
-	readonly listTools?: (props: { readonly namespace: string }) => Promise<readonly Tool[]>;
-}): ReturnType<typeof createMcpProviderCapabilityBackend> {
-	const core = createPortalCore({
-		accessPolicy: {
-			defaultPolicy: 'allow-all',
-			enabledNamespacesByAgent: {},
-			hiddenToolsByAgent: {},
-		},
-		approval: (calls) => ({
-			decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
-		}),
-		catalogTtlMs: 60_000,
-		runtime: {
-			callUpstreamTool: vi.fn(
-				options?.callUpstreamTool ??
-					(async (call) => ({
-						arguments: call.arguments,
-						ok: true,
-						upstreamTool: `${call.namespace}.${call.toolName}`,
-					})),
-			),
-			closeAgentScope: vi.fn(),
-			listTools: vi.fn(
-				options?.listTools ??
-					(async ({ namespace }) => (namespace === 'github' ? githubTools : [])),
-			),
-		},
-		upstreamNamespaces: ['github', 'linear'],
-	});
-	return createMcpProviderCapabilityBackend({
-		core,
-		projection: ToolPortalMcpProjectionSchema.parse({
-			agentId: 'agent-a',
-			namespaces: {
-				github: {
-					calls: {
-						requiresApproval: { allow: ['create_issue'], deny: [] },
-						withoutApproval: { allow: ['get_issue'], deny: [] },
-					},
-					tools: { allow: ['get_issue', 'create_issue'], deny: [] },
-				},
+describe('managed MCP provider calls', () => {
+	it('keeps direct Hermes and Tool Portal session provenance at the actual upstream edge', async () => {
+		const observed: string[] = [];
+		const factory = await createFactoryFixture({
+			callUpstreamTool: async (call) => {
+				observed.push(call.agentScopeId);
+				return { ok: true };
 			},
-			profile: 'code-builder',
-		}),
-	});
-}
-
-describe('MCP provider capability backend', () => {
-	it('describes a remote MCP tool without an optional output schema', async () => {
-		// Arrange
-		const backend = createBackendFixture();
-
-		// Act
-		const result = await backend.describe({
-			requests: [
-				{
-					id: 'describe-issue',
-					includeJsonSchema: true,
-					tools: [{ name: 'get_issue', namespace: 'github' }],
-				},
-			],
 		});
-
-		// Assert
-		expect(PortalBackendDescribeResultSchema.parse(result)).toMatchObject({
-			items: [
-				{
-					id: 'describe-issue',
-					status: 'ok',
-					value: {
-						tools: [
-							{
-								inputSchema: expect.objectContaining({ type: 'object' }),
-								name: 'get_issue',
-								namespace: 'github',
-							},
-						],
-					},
-				},
-			],
-			ok: true,
-		});
-		expect(JSON.stringify(result)).not.toContain('outputSchema');
-	});
-
-	it('preserves direct Hermes scope identity while allowing Tool Portal service scope identity', () => {
-		// Arrange
-		const core = createPortalCore({
-			accessPolicy: {
-				defaultPolicy: 'allow-all',
-				enabledNamespacesByAgent: {},
-				hiddenToolsByAgent: {},
-			},
-			approval: (calls) => ({
-				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
-			}),
-			catalogTtlMs: 60_000,
-			runtime: {
-				callUpstreamTool: vi.fn(),
-				closeAgentScope: vi.fn(),
-				listTools: vi.fn(async () => githubTools),
-			},
-			upstreamNamespaces: ['github'],
-		});
-		const createAgentScope = vi.spyOn(core, 'createAgentScope');
-		const projection = ToolPortalMcpProjectionSchema.parse({
-			agentId: 'agent-a',
-			namespaces: {},
-			profile: 'code-builder',
-		});
-
-		// Act
-		createMcpProviderCapabilityBackend({ core, projection });
-		createMcpProviderCapabilityBackend({
-			core,
+		const direct = factory.createBackend(defaultProjection);
+		const sessionA = factory.createBackend(defaultProjection, {
 			portalAgentScopeSource: 'tool-portal-service',
-			projection,
-			sessionKey: 'tool-portal-session',
-		});
-
-		// Assert
-		expect(createAgentScope).toHaveBeenNthCalledWith(
-			1,
-			expect.objectContaining({ source: 'managed-gateway-trusted' }),
-		);
-		expect(createAgentScope).toHaveBeenNthCalledWith(
-			2,
-			expect.objectContaining({
-				sessionKey: 'tool-portal-session',
-				source: 'tool-portal-service',
-			}),
-		);
-	});
-
-	it('includes managed session provenance in upstream MCP agent scope ids', async () => {
-		const observedAgentScopeIds: string[] = [];
-		const core = createPortalCore({
-			accessPolicy: {
-				defaultPolicy: 'allow-all',
-				enabledNamespacesByAgent: {},
-				hiddenToolsByAgent: {},
-			},
-			approval: (calls) => ({
-				decisionsByCallId: Object.fromEntries(calls.map((call) => [call.id, { kind: 'allow' }])),
-			}),
-			catalogTtlMs: 60_000,
-			runtime: {
-				callUpstreamTool: vi.fn(async (call) => {
-					observedAgentScopeIds.push(call.agentScopeId);
-					return {
-						arguments: call.arguments,
-						ok: true,
-						upstreamTool: `${call.namespace}.${call.toolName}`,
-					};
-				}),
-				closeAgentScope: vi.fn(),
-				listTools: vi.fn(async ({ namespace }) => (namespace === 'github' ? githubTools : [])),
-			},
-			upstreamNamespaces: ['github'],
-		});
-		const projection = ToolPortalMcpProjectionSchema.parse({
-			agentId: 'agent-a',
-			namespaces: {
-				github: {
-					calls: {
-						requiresApproval: { allow: [], deny: [] },
-						withoutApproval: { allow: ['get_issue'], deny: [] },
-					},
-					tools: { allow: ['get_issue'], deny: [] },
-				},
-			},
-			profile: 'code-builder',
-		});
-		const sessionABackend = createMcpProviderCapabilityBackend({
-			core,
-			projection,
 			sessionKey: 'session-a',
 		});
-		const sessionBBackend = createMcpProviderCapabilityBackend({
-			core,
-			projection,
+		const sessionB = factory.createBackend(defaultProjection, {
+			portalAgentScopeSource: 'tool-portal-service',
 			sessionKey: 'session-b',
 		});
-
-		await sessionABackend.call({
-			calls: [
-				{
-					arguments: { number: 1 },
-					id: 'session-a-read',
-					namespace: 'github',
-					name: 'get_issue',
-				},
-			],
-		});
-		await sessionBBackend.call({
-			calls: [
-				{
-					arguments: { number: 2 },
-					id: 'session-b-read',
-					namespace: 'github',
-					name: 'get_issue',
-				},
-			],
-		});
-
-		expect(observedAgentScopeIds).toEqual([
+		const request = {
+			calls: [{ id: 'call', namespace: 'github', name: 'get_issue', arguments: { number: 1 } }],
+		};
+		expect((await direct.call(request)).ok).toBe(true);
+		expect((await sessionA.call(request)).ok).toBe(true);
+		expect((await sessionB.call(request)).ok).toBe(true);
+		expect(observed).toEqual([
+			'mcp-provider:agent-a',
 			'mcp-provider:agent-a\nsession-a',
 			'mcp-provider:agent-a\nsession-b',
 		]);
 	});
-
-	it('lists and searches projected upstream MCP capabilities without portal tool names', async () => {
-		const backend = createBackendFixture();
-
-		const listResult = await backend.list({ requests: [{ id: 'list-tools' }] });
-		const searchResult = await backend.search({
-			requests: [{ id: 'search-tools', query: 'issue', schemaDetail: 'summary' }],
-		});
-
-		expect(PortalBackendListResultSchema.parse(listResult)).toMatchObject({
-			items: [
-				{
-					id: 'list-tools',
-					status: 'ok',
-				},
-			],
-			ok: true,
-		});
-		expect(PortalBackendSearchResultSchema.parse(searchResult)).toMatchObject({
-			items: [
-				{
-					id: 'search-tools',
-					status: 'ok',
-				},
-			],
-			ok: true,
-		});
-		expect(JSON.stringify(listResult)).toContain('get_issue');
-		expect(JSON.stringify(listResult)).not.toContain('linear');
-		expect(JSON.stringify(listResult)).not.toContain('mcp_portal_');
-	});
-
-	it('does not broaden explicit namespace filters with no projected intersection', async () => {
-		const backend = createBackendFixture();
-
-		const listResult = await backend.list({
-			requests: [{ id: 'list-linear', namespaces: ['linear'] }],
-		});
-		const searchResult = await backend.search({
-			requests: [{ id: 'search-linear', namespaces: ['linear'], query: 'issue' }],
-		});
-
-		expect(PortalBackendListResultSchema.parse(listResult)).toMatchObject({
-			items: [
-				{
-					id: 'list-linear',
-					status: 'ok',
-					value: { namespaces: [], tools: [] },
-				},
-			],
-			ok: true,
-		});
-		expect(PortalBackendSearchResultSchema.parse(searchResult)).toMatchObject({
-			items: [
-				{
-					id: 'search-linear',
-					status: 'ok',
-					value: { tools: [] },
-				},
-			],
-			ok: true,
-		});
-		expect(JSON.stringify(listResult)).not.toContain('get_issue');
-		expect(JSON.stringify(searchResult)).not.toContain('get_issue');
-	});
-
-	it('filters diagnostics from namespaces outside the Tool Portal projection', async () => {
-		const backend = createBackendFixture({
-			listTools: async ({ namespace }) => {
-				if (namespace === 'linear') {
-					throw new Error('linear discovery failed');
-				}
-				return githubTools;
-			},
-		});
-
-		const result = await backend.list({ requests: [{ id: 'list-tools' }] });
-
-		expect(PortalBackendListResultSchema.parse(result)).toMatchObject({ ok: true });
-		expect(JSON.stringify(result)).toContain('github');
-		expect(JSON.stringify(result)).not.toContain('linear');
-	});
-
 	it('normalizes allowed calls through MCP Portal core and preserves item ids', async () => {
-		const backend = createBackendFixture();
+		const backend = await createBackendFixture();
 
 		const result = await backend.call({
 			calls: [
@@ -373,10 +79,9 @@ describe('MCP provider capability backend', () => {
 			ok: true,
 		});
 	});
-
 	it('preserves service-owned operation identities supplied through private call options', async () => {
 		// Arrange
-		const backend = createBackendFixture();
+		const backend = await createBackendFixture();
 		const operationId = '60000000-0000-4000-8000-000000000006';
 
 		// Act
@@ -399,10 +104,9 @@ describe('MCP provider capability backend', () => {
 		// Assert
 		expect(result.items[0]?.operationId).toBe(operationId);
 	});
-
 	it('preserves a complete private operation identity map for a standalone batch', async () => {
 		// Arrange
-		const backend = createBackendFixture();
+		const backend = await createBackendFixture();
 		const operationIdsByCallId = {
 			'read-first': '60000000-0000-4000-8000-000000000006',
 			'read-second': '70000000-0000-4000-8000-000000000007',
@@ -428,7 +132,6 @@ describe('MCP provider capability backend', () => {
 			operationIdsByCallId,
 		);
 	});
-
 	it.each([
 		{
 			name: 'missing call id',
@@ -448,7 +151,7 @@ describe('MCP provider capability backend', () => {
 	])('rejects a $name operation identity map before upstream dispatch', async (fixture) => {
 		// Arrange
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const backend = createBackendFixture({ callUpstreamTool });
+		const backend = await createBackendFixture({ callUpstreamTool });
 
 		// Act / Assert
 		await expect(
@@ -468,14 +171,13 @@ describe('MCP provider capability backend', () => {
 		).rejects.toThrow('operation identity map');
 		expect(callUpstreamTool).not.toHaveBeenCalled();
 	});
-
 	it('maps upstream call failures to model-safe error codes', async () => {
 		const callUpstreamTool = vi.fn(async () => {
 			throw new Error(
 				'Missing environment secret PERPLEXITY_API_KEY at /Users/alice/.config/tool using https://api.example.test via /usr/local/bin/provider',
 			);
 		});
-		const backend = createBackendFixture({
+		const backend = await createBackendFixture({
 			callUpstreamTool,
 		});
 
@@ -517,7 +219,6 @@ describe('MCP provider capability backend', () => {
 		expect(serializedResult).not.toContain('api.example.test');
 		expect(serializedResult).not.toContain('/usr/local/bin/provider');
 	});
-
 	it('gives the model a safe actionable error for remote MCP authentication failures', async () => {
 		// Arrange
 		const callUpstreamTool = vi.fn(async () => {
@@ -533,7 +234,7 @@ describe('MCP provider capability backend', () => {
 				transport: { kind: 'streamable-http', url: 'https://provider.example.test/mcp' },
 			});
 		});
-		const backend = createBackendFixture({ callUpstreamTool });
+		const backend = await createBackendFixture({ callUpstreamTool });
 
 		// Act
 		const result = await backend.call({
@@ -566,7 +267,6 @@ describe('MCP provider capability backend', () => {
 		expect(serializedResult).not.toContain('credential detail');
 		expect(serializedResult).not.toContain('provider.example.test');
 	});
-
 	it.each([
 		{
 			expectedCode: 'not_authorized',
@@ -621,7 +321,7 @@ describe('MCP provider capability backend', () => {
 					transport: { kind: 'streamable-http', url: 'https://provider.example.test/mcp' },
 				});
 			});
-			const backend = createBackendFixture({ callUpstreamTool });
+			const backend = await createBackendFixture({ callUpstreamTool });
 
 			// Act
 			const result = await backend.call({
@@ -650,10 +350,9 @@ describe('MCP provider capability backend', () => {
 			expect(JSON.stringify(parsedResult)).not.toContain('provider response detail');
 		},
 	);
-
 	it('maps upstream input validation failures to schema errors on the capability surface', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const backend = createBackendFixture({ callUpstreamTool });
+		const backend = await createBackendFixture({ callUpstreamTool });
 
 		const result = await backend.call({
 			calls: [
@@ -690,53 +389,9 @@ describe('MCP provider capability backend', () => {
 		expect(JSON.stringify(result)).not.toContain('Capability execution failed');
 		expect(callUpstreamTool).not.toHaveBeenCalled();
 	});
-
-	it('maps degraded MCP namespaces to provider unavailable on the capability surface', async () => {
-		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const backend = createBackendFixture({
-			callUpstreamTool,
-			listTools: async () => {
-				throw new Error('github unavailable');
-			},
-		});
-
-		const result = await backend.call({
-			calls: [
-				{
-					arguments: { number: 42 },
-					id: 'read-issue',
-					namespace: 'github',
-					name: 'get_issue',
-				},
-			],
-		});
-
-		expect(PortalCallResultSchema.parse(result)).toMatchObject({
-			items: [
-				{
-					error: {
-						code: 'provider_unavailable',
-						message: 'Capability provider is unavailable.',
-					},
-					id: 'read-issue',
-					operationId: expect.stringMatching(/\S+/u),
-					outcome: {
-						certainty: 'proven',
-						kind: 'not-dispatched',
-						retryClass: 'safe-before-dispatch',
-					},
-					owningGeneration: 'mcp-provider:agent-a',
-					status: 'error',
-				},
-			],
-			ok: false,
-		});
-		expect(callUpstreamTool).not.toHaveBeenCalled();
-	});
-
 	it('requires approval for projected write calls and rejects model-supplied tokens', async () => {
 		const callUpstreamTool = vi.fn(async () => ({ ok: true }));
-		const backend = createBackendFixture({ callUpstreamTool });
+		const backend = await createBackendFixture({ callUpstreamTool });
 
 		const result = await backend.call({
 			calls: [

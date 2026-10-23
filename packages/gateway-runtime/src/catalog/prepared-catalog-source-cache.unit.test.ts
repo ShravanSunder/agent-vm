@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { CompiledCatalogTypescriptBundle } from '@agent-vm/mcp-portal/catalog-typescript';
+import type { CompiledCatalogTypescriptBundle } from '@agent-collaboration/tool-host-node/catalog-typescript';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -118,7 +118,7 @@ describe('prepared catalog source cache', () => {
 	it('admits only complete startup or foreground offer scopes', async () => {
 		const cache = createPreparedCatalogSourceCache({
 			compile: async () => bundle(fingerprintA, ['content']),
-			fingerprint: () => fingerprintA,
+			fingerprint: async () => fingerprintA,
 		});
 		const {
 			sessionId: _startupSessionId,
@@ -178,7 +178,8 @@ describe('prepared catalog source cache', () => {
 		const compile = vi.fn(async () => await compilation.promise);
 		const cache = createPreparedCatalogSourceCache({
 			compile,
-			fingerprint: (input) => (input.tools[0]?.name === 'first' ? fingerprintA : fingerprintB),
+			fingerprint: async (input) =>
+				input.tools[0]?.name === 'first' ? fingerprintA : fingerprintB,
 		});
 		const first = cache.prepare({
 			authority: authority(),
@@ -197,12 +198,73 @@ describe('prepared catalog source cache', () => {
 		expect(compile).toHaveBeenCalledTimes(1);
 	});
 
+	it('keeps interleaved async fingerprints and source ranges bound to their own revision', async () => {
+		const firstFingerprint = Promise.withResolvers<string>();
+		const secondFingerprint = Promise.withResolvers<string>();
+		const firstAuthority = authority({
+			catalogRevision: 'first-revision',
+			profileId: 'first-profile',
+		});
+		const secondAuthority = authority({
+			catalogRevision: 'second-revision',
+			profileId: 'second-profile',
+		});
+		const cache = createPreparedCatalogSourceCache({
+			fingerprint: async (input) =>
+				await (input.tools[0]?.name === 'first'
+					? firstFingerprint.promise
+					: secondFingerprint.promise),
+			compile: async (input) =>
+				input.tools[0]?.name === 'first'
+					? bundle(fingerprintA, ['first-source'])
+					: bundle(fingerprintB, ['second-source']),
+		});
+		const first = cache.prepare({
+			authority: firstAuthority,
+			input: { tools: [{ namespace: 'n', name: 'first', inputSchema: {} }] },
+		});
+		const second = cache.prepare({
+			authority: secondAuthority,
+			input: { tools: [{ namespace: 'n', name: 'second', inputSchema: {} }] },
+		});
+		secondFingerprint.resolve(fingerprintB);
+		const secondResult = await second;
+		firstFingerprint.resolve(fingerprintA);
+		const firstResult = await first;
+		expect(firstResult).toMatchObject({
+			kind: 'complete',
+			manifest: { definitionFingerprint: fingerprintA },
+		});
+		expect(secondResult).toMatchObject({
+			kind: 'complete',
+			manifest: { definitionFingerprint: fingerprintB },
+		});
+		for (const [selected, fingerprint, expected, forbidden] of [
+			[firstAuthority, fingerprintA, 'first-source', 'second-source'],
+			[secondAuthority, fingerprintB, 'second-source', 'first-source'],
+		] as const) {
+			const offered = cache.offer({ authority: selected, definitionFingerprint: fingerprint });
+			if (offered.kind !== 'offered') throw new Error('Expected scoped source offer');
+			const page = cache.read({
+				authority: selected,
+				definitionFingerprint: fingerprint,
+				offerId: offered.offerId,
+				offset: 0,
+				length: 8192,
+			});
+			if (page.kind !== 'content') throw new Error('Expected scoped source bytes');
+			const source = Buffer.from(page.contentBase64, 'base64').toString('utf8');
+			expect(source).toContain(expected);
+			expect(source).not.toContain(forbidden);
+		}
+	});
+
 	it('retains and reads a bundle above the operation artifact limit without time expiry', async () => {
 		const largeBundle = bundle(fingerprintA, ['x'.repeat(600_000), 'y'.repeat(600_000)]);
 		let now = 0;
 		const cache = createPreparedCatalogSourceCache({
 			compile: vi.fn(async () => largeBundle),
-			fingerprint: () => fingerprintA,
+			fingerprint: async () => fingerprintA,
 		});
 		const prepared = await cache.prepare({ authority: authority(), input: { tools: [] } });
 		expect(prepared.kind).toBe('complete');
@@ -222,7 +284,7 @@ describe('prepared catalog source cache', () => {
 		const fingerprints = [fingerprintA, fingerprintB];
 		const cache = createPreparedCatalogSourceCache({
 			compile,
-			fingerprint: () => fingerprints.shift() ?? fingerprintB,
+			fingerprint: async () => fingerprints.shift() ?? fingerprintB,
 		});
 		expect((await cache.prepare({ authority: authority(), input: { tools: [] } })).kind).toBe(
 			'complete',
@@ -248,7 +310,7 @@ describe('prepared catalog source cache', () => {
 	it('rejects forged principal, profile, session, turn, connection, stale fingerprint, and invalid ranges', async () => {
 		const cache = createPreparedCatalogSourceCache({
 			compile: async () => bundle(fingerprintA, ['content']),
-			fingerprint: () => fingerprintA,
+			fingerprint: async () => fingerprintA,
 		});
 		await cache.prepare({ authority: authority(), input: { tools: [] } });
 		const offered = cache.offer({ authority: authority(), definitionFingerprint: fingerprintA });
@@ -315,7 +377,7 @@ describe('prepared catalog source cache', () => {
 		const fingerprints = [fingerprintA, fingerprintB, fingerprintC];
 		const cache = createPreparedCatalogSourceCache({
 			compile: async () => bundles.shift() ?? bundle(fingerprintC, ['c']),
-			fingerprint: () => fingerprints.shift() ?? fingerprintC,
+			fingerprint: async () => fingerprints.shift() ?? fingerprintC,
 			limits: { maximumBytes: 2_000, maximumEntries: 2, maximumOffers: 1 },
 		});
 		await cache.prepare({ authority: authority(), input: { tools: [] } });
@@ -356,7 +418,7 @@ describe('prepared catalog source cache', () => {
 	it('retires connection offers and the complete epoch without affecting operation artifacts', async () => {
 		const cache = createPreparedCatalogSourceCache({
 			compile: async () => bundle(fingerprintA, ['content']),
-			fingerprint: () => fingerprintA,
+			fingerprint: async () => fingerprintA,
 		});
 		await cache.prepare({ authority: authority(), input: { tools: [] } });
 		const first = cache.offer({ authority: authority(), definitionFingerprint: fingerprintA });
@@ -379,7 +441,7 @@ describe('prepared catalog source cache', () => {
 		const compilation = Promise.withResolvers<CompiledCatalogTypescriptBundle>();
 		const cache = createPreparedCatalogSourceCache({
 			compile: async () => await compilation.promise,
-			fingerprint: () => fingerprintA,
+			fingerprint: async () => fingerprintA,
 		});
 		const preparation = cache.prepare({ authority: authority(), input: { tools: [] } });
 
