@@ -25,17 +25,41 @@ export type ProofProcessEnding =
 	  }
 	| { readonly kind: 'spawn-failed'; readonly message: string };
 
-/** Enumerate only the group this runner created; no command lines or unrelated process data are retained. */
+/** Test the owned process group without spawning a host command. */
+function proofProcessGroupExists(groupId: number): boolean {
+	try {
+		process.kill(-groupId, 0);
+		return true;
+	} catch (error) {
+		if (error instanceof Error && 'code' in error) {
+			if (error.code === 'ESRCH') return false;
+			if (error.code === 'EPERM') return true;
+		}
+		throw error;
+	}
+}
+
+/** List members only when the owned group exists; a failed listing never proves emptiness. */
 export async function liveProofProcessGroup(groupId: number): Promise<readonly number[]> {
-	const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,pgid='], {
-		timeout: 5000,
-		maxBuffer: 4 * 1024 * 1024,
-	});
-	return stdout.split('\n').flatMap((line) => {
+	if (!proofProcessGroupExists(groupId)) return [];
+	let stdout: string;
+	try {
+		({ stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,pgid='], {
+			timeout: 60_000,
+			maxBuffer: 4 * 1024 * 1024,
+		}));
+	} catch (error) {
+		if (!proofProcessGroupExists(groupId)) return [];
+		throw error;
+	}
+	const members = stdout.split('\n').flatMap((line) => {
 		const [pidText, groupText] = line.trim().split(/\s+/u);
 		const pid = Number(pidText);
 		return Number(groupText) === groupId && Number.isSafeInteger(pid) && pid > 0 ? [pid] : [];
 	});
+	if (members.length === 0 && proofProcessGroupExists(groupId))
+		throw new Error('Owned process group exists but its members could not be listed');
+	return members;
 }
 
 function signalProofGroup(groupId: number, signal: NodeJS.Signals): void {
@@ -50,8 +74,8 @@ async function waitForProofGroupReap(
 	groupId: number | undefined,
 	remainingAttempts: number,
 ): Promise<readonly number[]> {
-	const members = groupId === undefined ? [] : await liveProofProcessGroup(groupId);
-	if (members.length === 0 || remainingAttempts === 0) return members;
+	if (groupId === undefined || !proofProcessGroupExists(groupId)) return [];
+	if (remainingAttempts === 0) return liveProofProcessGroup(groupId);
 	// POSIX has no child event for an adopted grandchild; this bounded protocol retry observes reaping.
 	await waitForProcessReapInterval(100);
 	return waitForProofGroupReap(groupId, remainingAttempts - 1);
