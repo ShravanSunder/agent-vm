@@ -13,10 +13,8 @@ import {
 	emptyObservations,
 	finishObservation,
 } from '#worker-host/deployed-checks/test-helper-worker/observation-counters';
-import type { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 
-interface HelperBindings {
-	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
+interface HelperBindings extends Readonly<Pick<ToolPortalWorkerEnv, 'ORGANIZATIONS'>> {
 	readonly OBSERVATIONS: DurableObjectNamespace<TestObservations>;
 	readonly TEST_ORGANIZATIONS: string;
 	readonly TEST_PUBLIC_JWKS: string;

@@ -1,3 +1,5 @@
+/// <reference types="../worker-configuration.gen.d.ts" preserve="true" />
+
 import {
 	createHostedMcpProxy,
 	hostedAgentVerifier,
@@ -16,14 +18,7 @@ import { workerHostedProxyLimits } from '#worker-host/worker-limits';
 import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
 
 export { OrganizationAuthorization };
-export interface WorkerBindings extends Readonly<Record<string, unknown>> {
-	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
-	readonly ORGANIZATION_CONFIGURATIONS: string;
-	readonly CALL_ANALYTICS: import('#worker-host/analytics-engine-sink/analytics-engine-sink').CallAnalyticsBinding;
-	readonly SIGN_IN_ISSUER: string;
-	readonly SIGN_IN_JWKS_URL: string;
-	readonly TOOL_PORTAL_AUDIENCE: string;
-}
+export type WorkerBindings = Readonly<ToolPortalWorkerEnv> & Readonly<Record<string, unknown>>;
 let host: HostedMcpProxy | undefined;
 
 export default {

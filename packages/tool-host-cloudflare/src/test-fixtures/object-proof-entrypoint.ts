@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 
 export { OrganizationAuthorization };
-interface ObjectProofBindings {
-	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
-}
+type ObjectProofBindings = Readonly<Pick<ToolPortalWorkerEnv, 'ORGANIZATIONS'>>;
 const controlSchema = z.discriminatedUnion('kind', [
 	z.strictObject({
 		kind: z.literal('admission'),

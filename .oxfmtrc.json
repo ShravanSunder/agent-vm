@@ -21,6 +21,8 @@
 		"node_modules",
 		"**/*.md",
 		"docs/**/*.html",
+		// Wrangler compares the header literally, including a trailing space Oxfmt strips.
+		"packages/tool-host-cloudflare/worker-configuration.gen.d.ts",
 		"**/*.gen.ts",
 		"**/__generated__/**"
 	]

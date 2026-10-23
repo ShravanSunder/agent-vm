@@ -52,7 +52,7 @@ export async function startLocalWorkerHarness(
 	const worker = await unstable_dev(
 		'packages/tool-host-cloudflare/src/test-fixtures/worker-proof-entrypoint.ts',
 		{
-			config: 'packages/tool-host-cloudflare/wrangler.local.jsonc',
+			config: 'packages/tool-host-cloudflare/wrangler.example.jsonc',
 			local: true,
 			persist: true,
 			persistTo: stateDirectory,

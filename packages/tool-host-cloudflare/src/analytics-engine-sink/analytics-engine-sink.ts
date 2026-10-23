@@ -1,12 +1,8 @@
 import type { AnalyticsSink, CallAnalytics } from '@agent-collaboration/tool-host-core';
 
-export interface CallAnalyticsBinding {
-	readonly writeDataPoint: (point: {
-		readonly indexes: string[];
-		readonly blobs: string[];
-		readonly doubles: number[];
-	}) => void;
-}
+export type CallAnalyticsBinding = Readonly<
+	Pick<ToolPortalWorkerEnv['CALL_ANALYTICS'], 'writeDataPoint'>
+>;
 
 /** Truncate encoded bytes without splitting a Unicode code point. */
 export function analyticsText(value: string): string {
