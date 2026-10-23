@@ -1,0 +1,21 @@
+{
+	"name": "__WORKER_NAME__",
+	"account_id": "__ACCOUNT_ID__",
+	"main": "__HELPER_ENTRY__",
+	"compatibility_date": "2025-09-24",
+	"workers_dev": "__WORKERS_DEV__",
+	"preview_urls": false,
+	"routes": [],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "ORGANIZATIONS",
+				"class_name": "OrganizationAuthorization",
+				"script_name": "__PORTAL_A_NAME__"
+			},
+			{ "name": "OBSERVATIONS", "class_name": "TestObservations" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["TestObservations"] }],
+	"vars": "__HELPER_VARIABLES__"
+}
