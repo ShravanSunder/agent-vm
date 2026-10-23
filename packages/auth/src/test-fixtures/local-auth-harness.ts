@@ -13,6 +13,7 @@ import {
 import { z } from 'zod';
 
 import type { AuthTarget } from '#auth/native-owner-cli/auth-target';
+import { navigateLocalBrowser } from '#auth/test-fixtures/browser-navigation';
 import { startControlledToolUpstream } from '#auth/test-fixtures/controlled-tool-upstream';
 import { d1MigrationStatements } from '#auth/test-fixtures/d1-migration-statements';
 import { createGoogleOAuthProtocol } from '#auth/test-fixtures/google-oauth-protocol';
@@ -111,22 +112,26 @@ export async function startLocalAuthHarness(): Promise<{
 				let body = '';
 				for await (const chunk of request) body += String(chunk);
 				const pathname = request.url ?? '/';
-				const worker = await runtime.getWorker(
-					pathname.startsWith('/management/') || pathname.startsWith('/mcp')
-						? 'gateway-one'
-						: 'sign-in',
-				);
+				const gatewayRequest = pathname.startsWith('/management/') || pathname.startsWith('/mcp');
 				const headers = Object.fromEntries(
 					Object.entries(request.headers).flatMap(([name, value]) =>
 						value === undefined ? [] : [[name, Array.isArray(value) ? value.join(', ') : value]],
 					),
 				);
-				const result = await worker.fetch(`${issuer}${pathname}`, {
-					method: request.method ?? 'GET',
-					headers,
-					...(body === '' ? {} : { body }),
-					redirect: 'manual',
-				});
+				const browserNavigation =
+					!gatewayRequest &&
+					request.method === 'GET' &&
+					request.headers['sec-fetch-mode'] === 'navigate';
+				const result = browserNavigation
+					? await navigateLocalBrowser(new URL(pathname, issuer), headers, await runtime.ready)
+					: await (
+							await runtime.getWorker(gatewayRequest ? 'gateway-one' : 'sign-in')
+						).fetch(`${issuer}${pathname}`, {
+							method: request.method ?? 'GET',
+							headers,
+							...(body === '' ? {} : { body }),
+							redirect: 'manual',
+						});
 				const cookies = result.headers.getSetCookie();
 				response.writeHead(result.status, {
 					...Object.fromEntries(result.headers),
@@ -288,17 +293,21 @@ export async function startLocalAuthHarness(): Promise<{
 	});
 	const jar = new Map<string, string>();
 	async function auth(pathname: string, init: RequestInit = {}): Promise<Response> {
-		const response = await fetch(new URL(pathname, issuer), {
-			signal: AbortSignal.timeout(30_000),
-			...init,
-			headers: {
-				cookie: [...jar.values()].join('; '),
-				origin: issuer,
-				'sec-fetch-site': 'same-origin',
-				...Object.fromEntries(new Headers(init.headers)),
-			},
-			redirect: 'manual',
-		});
+		const headers = {
+			cookie: [...jar.values()].join('; '),
+			origin: issuer,
+			'sec-fetch-site': 'same-origin',
+			...Object.fromEntries(new Headers(init.headers)),
+		};
+		const response =
+			new Headers(init.headers).get('sec-fetch-mode') === 'navigate'
+				? await navigateLocalBrowser(new URL(pathname, issuer), headers)
+				: await fetch(new URL(pathname, issuer), {
+						signal: AbortSignal.timeout(30_000),
+						...init,
+						headers,
+						redirect: 'manual',
+					});
 		for (const header of response.headers.getSetCookie()) {
 			const pair = header.split(';')[0];
 			if (pair !== undefined) jar.set(pair.split('=')[0] ?? '', pair);
@@ -344,7 +353,9 @@ export async function startLocalAuthHarness(): Promise<{
 				process.stderr.write('[auth-harness] provider sign-in initiated\n');
 				const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
 				const callback = google.authorize(new URL(providerUrl), email);
-				const admitted = await auth(callback.toString());
+				const admitted = await auth(callback.toString(), {
+					headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
+				});
 				if (admitted.status !== 302) throw new Error('Real owner callback refused');
 				process.stderr.write('[auth-harness] provider callback completed\n');
 				if (email === 'owner@example.invalid') {
@@ -385,10 +396,7 @@ export async function startLocalAuthHarness(): Promise<{
 					);
 					throw new Error('Real native authorization did not return a code');
 				}
-				const completed = await fetch(location, {
-					redirect: 'manual',
-					signal: AbortSignal.timeout(30_000),
-				});
+				const completed = await navigateLocalBrowser(location);
 				if (!completed.ok) throw new Error('Real native CLI loopback callback refused');
 				return [new URL(location).searchParams.get('code') ?? '', ...jar.values()];
 			},
