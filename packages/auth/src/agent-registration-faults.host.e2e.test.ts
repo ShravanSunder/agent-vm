@@ -151,3 +151,151 @@ it.each(faults)(
 	},
 	90_000,
 );
+
+it.each(['intent', 'client', 'outcome'] as const)(
+	'agent: disable remains pending after the actual %s write fails and same-operation retry completes both owners',
+	async (fault) => {
+		const harness = await startLocalAuthHarness();
+		try {
+			const owner = await harness.ownerToken();
+			const base = `/management/organizations/${organizationOne}/agents`;
+			const registered = await harness.gateway(base, {
+				method: 'POST',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId: registrationRequestId }),
+			});
+			expect(registered.status).toBe(200);
+			const credentials = z
+				.object({ clientId: z.literal(registeredClientId), clientSecret: z.string() })
+				.parse(await registered.json());
+			async function exchange(): Promise<Response> {
+				return harness.auth('/api/auth/oauth2/token', {
+					method: 'POST',
+					headers: {
+						authorization: `Basic ${btoa(`${credentials.clientId}:${credentials.clientSecret}`)}`,
+						'content-type': 'application/x-www-form-urlencoded',
+					},
+					body: new URLSearchParams({
+						grant_type: 'client_credentials',
+						scope: 'tool-portal:agent',
+						resource: agentAudience,
+					}),
+				});
+			}
+			const permitted = await exchange();
+			expect(permitted.status).toBe(200);
+			const oldToken = z
+				.object({ access_token: z.string() })
+				.parse(await permitted.json()).access_token;
+			const trigger =
+				fault === 'client'
+					? `BEFORE UPDATE OF disabled ON oauthClient WHEN NEW.clientId = '${registeredClientId}'`
+					: `BEFORE INSERT ON sign_in_audit WHEN NEW.target_id = '${registeredClientId}' AND NEW.change_kind = 'retired' AND NEW.phase = '${fault}'`;
+			await harness.database.exec(
+				`CREATE TRIGGER fail_retirement ${trigger} BEGIN SELECT RAISE(FAIL, 'controlled-retirement-${fault}'); END;`,
+			);
+			const requestId = crypto.randomUUID();
+			const operation = {
+				method: 'DELETE',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId }),
+			};
+			const failed = await harness.gateway(`${base}/${registeredClientId}`, operation);
+			expect(failed.status).toBe(202);
+			expect(await failed.json()).toEqual({
+				kind: 'removal-pending',
+				clientId: registeredClientId,
+			});
+			expect(
+				await harness.database
+					.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+					.bind(registeredClientId)
+					.first(),
+			).toEqual({ disabled: fault === 'outcome' ? 1 : 0 });
+			expect(
+				(
+					await harness.database
+						.prepare(
+							'SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = ? ORDER BY phase',
+						)
+						.bind(requestId, 'retired')
+						.all()
+				).results,
+			).toEqual(fault === 'intent' ? [] : [{ phase: 'intent' }]);
+			const partial = await harness.gateway(
+				`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+			);
+			expect(await partial.json()).toMatchObject({
+				[`agent:${registeredClientId}`]: { state: 'removed' },
+				[`agent-retirement:${registeredClientId}`]: { kind: 'pending', requestId },
+			});
+			const status = await harness.gateway(`${base}/${registeredClientId}`, {
+				headers: { authorization: `Bearer ${owner}` },
+			});
+			expect(status.status).toBe(202);
+			const denied = await Promise.all(
+				[false, true].map((secondHeap) =>
+					harness.gateway(
+						'/mcp',
+						{
+							method: 'POST',
+							headers: { authorization: `Bearer ${oldToken}`, 'content-type': 'application/json' },
+							body: '{}',
+						},
+						secondHeap,
+					),
+				),
+			);
+			expect(denied.map((response) => response.status)).toEqual([401, 401]);
+			expect(await Promise.all(denied.map((response) => response.json()))).toEqual([
+				{ error: 'removed-agent' },
+				{ error: 'removed-agent' },
+			]);
+			expect((await exchange()).status).toBe(fault === 'outcome' ? 400 : 200);
+			await harness.database.exec('DROP TRIGGER fail_retirement');
+			const retried = await harness.gateway(`${base}/${registeredClientId}`, operation);
+			expect(retried.status).toBe(200);
+			expect(await retried.json()).toEqual({ kind: 'removed', clientId: registeredClientId });
+			expect(
+				(
+					await harness.database
+						.prepare(
+							'SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = ? ORDER BY phase',
+						)
+						.bind(requestId, 'retired')
+						.all()
+				).results,
+			).toEqual([{ phase: 'intent' }, { phase: 'outcome' }]);
+			expect(
+				(
+					await harness.database
+						.prepare('SELECT clientId FROM oauthClient WHERE clientId = ?')
+						.bind(registeredClientId)
+						.all()
+				).results,
+			).toHaveLength(1);
+			expect(
+				(
+					await harness.database
+						.prepare('SELECT resourceId FROM oauthClientResource WHERE clientId = ?')
+						.bind(registeredClientId)
+						.all()
+				).results,
+			).toEqual([{ resourceId: agentAudience }]);
+			expect(
+				await (
+					await harness.gateway(
+						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					)
+				).json(),
+			).toMatchObject({
+				[`agent-retirement:${registeredClientId}`]: { kind: 'complete', requestId },
+			});
+			expect((await exchange()).status).toBe(400);
+			expect(harness.effects).toHaveLength(0);
+		} finally {
+			await harness.close();
+		}
+	},
+	120_000,
+);

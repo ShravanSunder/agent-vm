@@ -1,3 +1,4 @@
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -111,35 +112,102 @@ describe('S1 real agent issuer through the Gateway', () => {
 	});
 	it('bootstrap: native S256 loopback creates the fixed owner client once with real owner cookie and audit', async () => {
 		const token = await harness.ownerToken();
-		expect(token.length).toBeGreaterThan(0);
-		const before = await harness.database
-			.prepare('SELECT clientId FROM oauthClient WHERE clientId = ?')
-			.bind(harness.target.ownerCliClientId)
-			.all();
-		expect(before.results).toHaveLength(1);
+		const verified = await jwtVerify(
+			token,
+			createRemoteJWKSet(new URL('/api/auth/jwks', harness.issuer)),
+			{ issuer: harness.issuer, audience: harness.target.managementAudience },
+		);
+		const person = z
+			.object({
+				sub: z.string(),
+				sid: z.string(),
+				iat: z.number(),
+				exp: z.number(),
+				aud: z.literal(harness.target.managementAudience),
+				client_id: z.literal(harness.target.ownerCliClientId),
+			})
+			.parse(verified.payload);
+		expect(verified.protectedHeader.typ).toBe('at+jwt');
+		expect(person.exp - person.iat).toBeLessThanOrEqual(300);
+		expect(
+			await harness.database.prepare('SELECT user_id FROM deployment_owner').all(),
+		).toMatchObject({ results: [{ user_id: person.sub }] });
+		expect(
+			await harness.database
+				.prepare('SELECT id, userId FROM session WHERE id = ?')
+				.bind(person.sid)
+				.first(),
+		).toEqual({ id: person.sid, userId: person.sub });
+		const client = z
+			.object({
+				clientId: z.literal(harness.target.ownerCliClientId),
+				clientSecret: z.null(),
+				tokenEndpointAuthMethod: z.literal('none'),
+				applicationType: z.literal('native'),
+				grantTypes: z.string(),
+				responseTypes: z.string(),
+				redirectUris: z.string(),
+				scopes: z.string(),
+				requirePKCE: z.literal(1),
+			})
+			.parse(
+				await harness.database
+					.prepare('SELECT * FROM oauthClient WHERE clientId = ?')
+					.bind(harness.target.ownerCliClientId)
+					.first(),
+			);
+		expect(JSON.parse(client.grantTypes)).toEqual(['authorization_code']);
+		expect(JSON.parse(client.responseTypes)).toEqual(['code']);
+		expect(JSON.parse(client.redirectUris)).toEqual([harness.target.ownerCliRedirectUri]);
+		expect(JSON.parse(client.scopes)).toEqual(['tool-portal:management']);
+		expect(
+			(
+				await harness.database
+					.prepare('SELECT resourceId FROM oauthClientResource WHERE clientId = ?')
+					.bind(client.clientId)
+					.all()
+			).results,
+		).toEqual([{ resourceId: harness.target.managementAudience }]);
+		expect(
+			(
+				await harness.database
+					.prepare(
+						'SELECT phase, actor_user_id FROM sign_in_audit WHERE request_id = ? ORDER BY phase',
+					)
+					.bind(`owner-cli:${client.clientId}`)
+					.all()
+			).results,
+		).toEqual([
+			{ phase: 'intent', actor_user_id: person.sub },
+			{ phase: 'outcome', actor_user_id: person.sub },
+		]);
+		expect(
+			(await harness.database.prepare('SELECT id FROM oauthRefreshToken').all()).results,
+		).toHaveLength(0);
+		async function protectedBootstrapRows(): Promise<unknown> {
+			return Promise.all([
+				harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all(),
+				harness.database
+					.prepare('SELECT * FROM oauthClientResource ORDER BY clientId, resourceId')
+					.all(),
+				harness.database.prepare('SELECT * FROM deployment_owner').all(),
+			]);
+		}
+		const before = await protectedBootstrapRows();
 		const repeated = await harness.auth('/api/auth/owner/bootstrap', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: '{}',
 		});
 		expect(repeated.status).toBe(200);
-		expect(
-			(
-				await harness.database
-					.prepare('SELECT clientId FROM oauthClient WHERE clientId = ?')
-					.bind(harness.target.ownerCliClientId)
-					.all()
-			).results,
-		).toEqual(before.results);
+		expect(await protectedBootstrapRows()).toEqual(before);
 		const denied = await harness.auth('/api/auth/owner/bootstrap', {
 			method: 'POST',
 			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
 			body: '{}',
 		});
 		expect(denied.status).toBe(403);
-		expect(
-			(await harness.database.prepare('SELECT * FROM deployment_owner').all()).results,
-		).toHaveLength(1);
+		expect(await protectedBootstrapRows()).toEqual(before);
 	});
 	it('agent: real HTTP registration, token and JWKS authorize exactly one O1 effect and zero O2 effects', async () => {
 		const owner = await harness.ownerToken();
@@ -166,7 +234,40 @@ describe('S1 real agent issuer through the Gateway', () => {
 					.all()
 			).results,
 		).toEqual([{ resourceId: agentAudience }]);
+		expect(
+			(
+				await harness.database
+					.prepare(
+						'SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = ? ORDER BY phase',
+					)
+					.bind(registrationRequestId, 'registered')
+					.all()
+			).results,
+		).toEqual([{ phase: 'intent' }, { phase: 'outcome' }]);
 		const proof = await accessToken(credentials);
+		const signed = await jwtVerify(
+			proof,
+			createRemoteJWKSet(new URL('/api/auth/jwks', harness.issuer)),
+			{
+				issuer: harness.issuer,
+				audience: agentAudience,
+			},
+		);
+		const claims = z
+			.object({
+				sub: z.literal(registeredClientId),
+				client_id: z.literal(registeredClientId),
+				azp: z.literal(registeredClientId),
+				aud: z.literal(agentAudience),
+				organization_id: z.literal(organizationOne),
+				scope: z.literal('tool-portal:agent'),
+				iat: z.number(),
+				exp: z.number(),
+			})
+			.parse(signed.payload);
+		expect(signed.protectedHeader.typ).toBe('at+jwt');
+		expect(Object.hasOwn(signed.payload, 'sid')).toBe(false);
+		expect(claims.exp - claims.iat).toBeLessThanOrEqual(300);
 		const before = harness.effects.length;
 		const correlation = crypto.randomUUID();
 		expect((await toolCall(proof, correlation)).status).toBe(200);
