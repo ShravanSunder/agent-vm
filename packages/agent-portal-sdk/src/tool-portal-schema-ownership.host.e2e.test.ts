@@ -16,18 +16,8 @@ it('keeps packed SDK and access schemas and refinement registry identical', asyn
 			['tool-access', 'agent-portal-sdk'].map(async (packageDirectory) => {
 				const archivePath = path.join(directory, `${packageDirectory}.tgz`);
 				await executeFile(
-					'mise',
-					[
-						'exec',
-						'node@24.7.0',
-						'--',
-						'pnpm',
-						'--dir',
-						`packages/${packageDirectory}`,
-						'pack',
-						'--out',
-						archivePath,
-					],
+					'pnpm',
+					['--dir', `packages/${packageDirectory}`, 'pack', '--out', archivePath],
 					{
 						cwd: repositoryRoot,
 						env: { ...process.env, npm_config_ignore_scripts: 'true' },
@@ -75,8 +65,8 @@ const hash = createHash('sha256').update(JSON.stringify(sdk.createPortableContra
 console.log(JSON.stringify({ exports: Object.keys(sdk).toSorted(), manifestBytes: hash, sharedCount: shared.length, differentInstances: shared.filter(([name, value]) => sdk[name] !== value).map(([name]) => name) }));
 `;
 		const { stdout } = await executeFile(
-			'mise',
-			['exec', 'node@24.7.0', '--', 'node', '--input-type=module', '--eval', script],
+			process.execPath,
+			['--input-type=module', '--eval', script],
 			{ cwd: repositoryRoot },
 		);
 		const result: unknown = JSON.parse(stdout);
