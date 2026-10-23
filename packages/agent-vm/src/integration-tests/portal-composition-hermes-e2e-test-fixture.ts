@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 
+import { fakeUpstreamNamespace } from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
 import { PortalSearchRequestSchema } from '@agent-vm/agent-portal-sdk';
-import { fakeUpstreamNamespace } from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
 
 const configuredCliNamespace = 'portal_composition_execution';
 const hiddenHostEffectOperationName = 'hidden_host_effect';

@@ -267,17 +267,25 @@ export async function verifyToolHostNodeClosure(): Promise<void> {
 	const manifest: unknown = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 	if (!isRecord(manifest) || !isRecord(manifest.exports))
 		throw new Error('Packed package has no exports map');
-	const subpaths = Object.keys(manifest.exports);
+	const packageExports = manifest.exports;
+	const subpaths = Object.keys(packageExports).filter(
+		(subpath) => !subpath.startsWith('./testing/'),
+	);
+	if (!isRecord(manifest.bin) || typeof manifest.bin['tool-host-node'] !== 'string')
+		throw new Error('Missing packed Node binary');
+	const binaryPath = path.resolve(root, manifest.bin['tool-host-node']);
 	if (
 		subpaths.length === 0 ||
 		Object.keys(requiredExports).some((entry) => !subpaths.includes(entry))
 	)
 		throw new Error('Required packed entrypoints are absent');
-	const entryPaths = Object.values(manifest.exports).map((entry) => {
+	const entryPaths = subpaths.map((subpath) => {
+		const entry = packageExports[subpath];
 		if (!isRecord(entry) || typeof entry.import !== 'string')
 			throw new Error('Every published subpath needs an import target');
 		return path.resolve(root, entry.import);
 	});
+	entryPaths.push(binaryPath);
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource(repositoryRoot));
 	await writeFile(path.join(scratch, 'scanner.mjs'), scannerSource(repositoryRoot));
 	await writeFile(
@@ -310,6 +318,47 @@ export async function verifyToolHostNodeClosure(): Promise<void> {
 	}
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
+	const binary = await command({
+		executable: process.execPath,
+		args: ['--import', path.join(scratch, 'loader.mjs'), binaryPath],
+		cwd: scratch,
+		label: 'binary-without-testing-entry',
+		evidence,
+	});
+	if (binary.code !== 1 || !binary.output.includes('Usage: tool-host-node <configuration.jsonc>'))
+		throw new Error('Packed Node binary did not load through the production-only closure');
+
+	await (
+		[
+			['main', path.join(root, 'dist/index.js')],
+			['binary', binaryPath],
+		] as const
+	).reduce<Promise<void>>(async (prior, [label, target]): Promise<void> => {
+		await prior;
+		const original = await readFile(target, 'utf8');
+		try {
+			await replaceArtifact(
+				target,
+				original +
+					"\nimport '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';\n",
+			);
+			const rejected = await check(`testing-import-${label}-red`);
+			if (
+				rejected.code === 0 ||
+				!rejected.output.includes(
+					'tool-host-node forbidden import @agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
+				)
+			)
+				throw new Error(`Packed ${label} testing-entry poison missed the forbidden import`);
+		} finally {
+			await replaceArtifact(target, original);
+		}
+		const restored = await check(`testing-import-${label}-restored`);
+		if (restored.code !== 0) throw new Error(`Packed ${label} restoration failed`);
+	}, Promise.resolve());
+	process.stdout.write(
+		'testing entry closure: main and binary poisons rejected; both restored controls passed\n',
+	);
 	if (process.argv.includes('--fixtures')) {
 		const sourcePoison = path.join(
 			repositoryRoot,

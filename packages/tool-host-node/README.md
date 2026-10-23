@@ -88,3 +88,9 @@ The next catalog-dependent request retries only failed providers. Direct
 A complete catalog refreshes on the first access after 60 seconds; a failed
 refresh keeps the previous complete tools and adds diagnostics. There is no
 background retry or refresh timer.
+
+## Controlled upstream test fixture
+
+Workspace tests import `@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server` for the controlled upstream HTTP server and its counted observations. This dedicated test entry retains its exported fixture names and SDK 1.29 wire behavior; the outbound protocol migration remains separate. Hono and its Node server are dev dependencies for workspace tests, so this entry is not supported by an isolated production-only package install. The production root and executable do not import or export it.
+
+The private fixture in `packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts` remains an independent old-only source oracle for the later protocol cutover. Its old public package entry is retired.

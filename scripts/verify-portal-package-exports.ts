@@ -46,7 +46,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -303,7 +303,7 @@ const requiredPortalNamedExports = {
 		'signApprovalToken',
 		'verifyApprovalToken',
 	],
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': [
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': [
 		'createFakeUpstreamTools',
 		'startFakeUpstreamMcpServer',
 	],
@@ -356,7 +356,7 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -381,12 +381,18 @@ const deferredPortalPackageExports = [
 ] as const;
 
 const forbiddenPortalPackageExports = [
+	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/gateway-runtime/flow-control',
 	'@agent-vm/gateway-runtime/protocol',
 	'@agent-vm/tool-portal/in-process-entrypoint',
 ] as const;
 
 const forbiddenPortalNamedExports = {
+	'@agent-collaboration/tool-host-node': [
+		'startFakeUpstreamMcpServer',
+		'createFakeUpstreamTools',
+		'fakeUpstreamNamespace',
+	],
 	'@agent-vm/tool-portal': [
 		'createManagedToolPortalInProcessRuntime',
 		'createToolPortalInProcessEntryPoint',
@@ -394,6 +400,7 @@ const forbiddenPortalNamedExports = {
 } as const;
 
 const forbiddenPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/tool-portal',
 ] as const satisfies readonly (keyof typeof forbiddenPortalNamedExports)[];
 

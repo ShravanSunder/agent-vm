@@ -21,6 +21,10 @@
 		"./catalog-typescript": {
 			"types": "./dist/catalog-typescript/index.d.ts",
 			"import": "./dist/catalog-typescript/index.js"
+		},
+		"./testing/fake-upstream-mcp-server": {
+			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
+			"import": "./dist/testing/fake-upstream-mcp-server.js"
 		}
 	},
 	"publishConfig": {
@@ -48,6 +52,7 @@
 	},
 	"devDependencies": {
 		"@hono/node-server": "2.0.10",
+		"hono": "4.12.34",
 		"vitest": "^4.1.5"
 	}
 }
