@@ -1,4 +1,4 @@
-/// <reference path="../../worker-configuration.gen.d.ts" preserve="true" />
+/// <reference types="../../worker-configuration.gen.d.ts" preserve="true" />
 
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
