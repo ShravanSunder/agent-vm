@@ -7,7 +7,7 @@ Return the selected journey, the complete compared target tuple, observations fo
 Work from the repository root. Read `scripts/verify-auth/verify-auth.ts`, `packages/auth/src/test-fixtures/auth-verification-cli.ts`, `packages/auth/src/test-fixtures/local-auth-harness.ts` and the selected permanent host tests before running. The runner's target declaration is an owned mode0600 JSON file outside every Git checkout, with these existing fields:
 
 ```json
-{"kind":"local-workerd","sourceRevision":"<full frozen checkout HEAD>","executionHost":"<admitted host name>","maxLoad1":12}
+{"kind":"local-workerd","sourceRevision":"<full frozen checkout HEAD>","executionHost":"<admitted host name>"}
 ```
 
 The placeholders describe the file's shape; obtain actual values from the declared execution target. Do not print private target contents or create a second target schema. Resolve symlinks and ownership using the existing private-runtime-path validation. This file is separate from the native CLI target generated inside the harness.
@@ -21,9 +21,9 @@ Compare all of the following before treating output as an observation:
 | Configuration | Read the frozen harness's issuer construction, compatibility date/flags, D1 and named binding declarations, two Gateway heaps, organization policies, audiences and `remembered-login` setting. Compare the configuration actually passed to Miniflare. Only loopback addresses/runtime roots may be assigned dynamically by that fixture; retain their private mapping. A different configuration needs a newly declared target. |
 | Client | At reviewed commit `6b27f848`, read `packages/auth/src/test-fixtures/local-auth-harness.ts`, `packages/auth/src/native-owner-cli/owner-cli.ts` and `packages/auth/src/native-owner-cli/owner-cli-login.ts`. They declare the fixed public code+S256 client, loopback callback, management audience and short private cache. That committed harness calls the login helper directly: delivered-CLI process proof is missing. Compare the executed entry and fixed client/redirect/audience with the newly declared frozen source; helper-only login is insufficient. Do not substitute later WIP or dirty driver code. |
 | Offered inventory | Collect `mise exec -- pnpm exec vitest list --project e2e-host packages/auth --json` on the same source. Compare offered names/files with selected runner files and `agent:` or `bootstrap:` selector, then compare the executed report's selected names/counts. Discovery is inventory only. Missing accepted cases remain gaps; they cannot disappear behind a positive count. |
-| Host/toolchain/load | The runner checks hostname, Node24.7.0 and load1 strictly below the target maximum, which is at most12. Check pinned pnpm/toolchain and installed lockfile as well. Run real workerd/D1 proof on the Lead-admitted execution host and slot; local static checks do not replace that target. |
+| Host/toolchain | The runner checks hostname and Node24.7.0. Check pinned pnpm/toolchain and installed lockfile as well. Run real workerd/D1 proof on the Lead-admitted execution host and slot; local static checks do not replace that target. |
 
-If a driver does not yet retain enough evidence to complete a comparison, report that exact gap and do not count the run as verification. A failed prerequisite must not become a product assertion failure. Admit each heavy command under the host's load and slot constraints; a granted slot is not permission to exceed its load gate.
+If a driver does not yet retain enough evidence to complete a comparison, report that exact gap and do not count the run as verification. A failed prerequisite must not become a product assertion failure. Run each command in its released execution slot without load admission checks or load waits. Retain bounded timeouts, owned process-group cleanup and terminal receipts; report timing failures for diagnosis.
 
 ## Run the selected journey
 

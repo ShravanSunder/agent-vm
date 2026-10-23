@@ -17,7 +17,7 @@ Choose `bootstrap` for the fixed public native owner client, code+S256 loopback 
 
 MUST load `references/agent-bootstrap.md` and return the selected journey, complete compared target tuple, required observations and remaining prerequisite gaps.
 
-Before counting any observation, compare the declared source revision, executed build/artifact, configuration, client, offered test inventory, host, toolchain and load with the actual execution. A fixed configuration/client/inventory must come from the frozen fixture source. Missing comparison evidence or a mismatch is a prerequisite failure, even if some tests pass. The reference owns how to obtain and compare those identities.
+Before counting any observation, compare the declared source revision, executed build/artifact, configuration, client, offered test inventory, host and toolchain with the actual execution. A fixed configuration/client/inventory must come from the frozen fixture source. Missing comparison evidence or a mismatch is a prerequisite failure, even if some tests pass. The reference owns how to obtain and compare those identities.
 
 Start through the selected journey command after its target and execution slot are admitted. Readiness means the real harness has started, applied its migrations and answered public JWKS with a usable key during authorization. A process, discovered test list or an HTTP200 without the expected JWKS is insufficient. Retain readiness failure as a failed run; do not replace it with a synthetic issuer.
 

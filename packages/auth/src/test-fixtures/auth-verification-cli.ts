@@ -1,9 +1,8 @@
 import { execFile } from 'node:child_process';
-import { readFile, mkdtemp, writeFile, readdir, appendFile } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { hostname, loadavg, tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
-import { setTimeout as waitForLoadSampleInterval } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 
@@ -23,31 +22,7 @@ const localVerificationTargetSchema = z.strictObject({
 	kind: z.literal('local-workerd'),
 	sourceRevision: z.string().regex(/^[a-f0-9]{40}$/u),
 	executionHost: z.string().min(1),
-	maxLoad1: z.number().positive().max(12),
 });
-
-export async function waitForAuthBuildLoadAdmission(props: {
-	readonly maxLoad1: number;
-	readonly readLoad1: () => number;
-	readonly now: () => number;
-	readonly waitInterval: (milliseconds: number) => Promise<void>;
-	readonly recordSample: (sample: {
-		readonly elapsedMs: number;
-		readonly load1: number;
-	}) => Promise<void>;
-}): Promise<void> {
-	const startedAt = props.now();
-	async function checkNextLoadSample(): Promise<void> {
-		const sample = { elapsedMs: props.now() - startedAt, load1: props.readLoad1() };
-		await props.recordSample(sample);
-		if (sample.load1 < props.maxLoad1 && sample.elapsedMs <= 600_000) return;
-		if (sample.elapsedMs >= 600_000)
-			throw new Error('Load admission closed before Worker artifact bundling after bounded wait');
-		await props.waitInterval(30_000);
-		await checkNextLoadSample();
-	}
-	await checkNextLoadSample();
-}
 
 export interface OfferedAuthTest {
 	readonly name: string;
@@ -124,12 +99,8 @@ export async function prepareAuthVerification(
 	const target = localVerificationTargetSchema.parse(
 		JSON.parse(await readFile(targetPath, 'utf8')),
 	);
-	if (
-		process.version !== 'v24.7.0' ||
-		hostname() !== target.executionHost ||
-		(loadavg()[0] ?? Infinity) >= target.maxLoad1
-	)
-		throw new Error('Verification target prerequisites do not match or load admission is closed');
+	if (process.version !== 'v24.7.0' || hostname() !== target.executionHost)
+		throw new Error('Verification target host/toolchain prerequisites do not match');
 	const root = fileURLToPath(new URL('../../../../', import.meta.url));
 	const execute = promisify(execFile);
 	async function checkFrozenSource(): Promise<void> {
@@ -148,7 +119,6 @@ export async function prepareAuthVerification(
 		argumentsList: readonly string[],
 		logName: string,
 	): Promise<void> {
-		if ((loadavg()[0] ?? Infinity) >= target.maxLoad1) throw new Error('Load admission closed');
 		try {
 			const output = await execute(command, [...argumentsList], {
 				cwd: root,
@@ -179,21 +149,6 @@ export async function prepareAuthVerification(
 	await runPinnedCommand('pnpm', ['install', '--frozen-lockfile'], 'install.log');
 	await runPinnedCommand('pnpm', ['build'], 'build.log');
 	await checkFrozenSource();
-	await waitForAuthBuildLoadAdmission({
-		maxLoad1: target.maxLoad1,
-		readLoad1: () => loadavg()[0] ?? Infinity,
-		now: Date.now,
-		waitInterval: async (milliseconds) => {
-			await waitForLoadSampleInterval(milliseconds);
-		},
-		recordSample: async (sample) => {
-			await appendFile(
-				path.join(evidence, 'post-build-load.jsonl'),
-				JSON.stringify(sample) + '\n',
-				{ mode: 0o600 },
-			);
-		},
-	});
 	const artifacts = await prepareProofBundles(root, evidence);
 	const manifestFile = path.join(evidence, 'bundle-manifest.json');
 	await writeFile(manifestFile, JSON.stringify(artifacts), { mode: 0o600, flag: 'wx' });
@@ -232,8 +187,6 @@ export async function prepareAuthVerification(
 		executionHost: hostname(),
 		node: process.version,
 		pnpm: pnpmVersion.stdout.trim(),
-		maxLoad1: target.maxLoad1,
-		admittedLoad1: loadavg()[0],
 	};
 	await writeFile(path.join(evidence, 'declared-target.json'), JSON.stringify(tuple), {
 		mode: 0o600,
@@ -275,7 +228,6 @@ export async function runPreparedAuthVerification(
 	const selectedFiles = authJourneyFiles(journey);
 	const selected = selectAuthObservations({ inventory, selectedFiles, journey, root });
 	const reportPath = path.join(evidence, journey + '-vitest.json');
-	if ((loadavg()[0] ?? Infinity) >= target.maxLoad1) throw new Error('Load admission closed');
 	try {
 		const runtime = await runAuthProofProcess({
 			command: process.execPath,
@@ -474,7 +426,7 @@ export async function runAuthVerification(args: readonly string[]): Promise<numb
 		process.stdout
 			.write(`Usage: mise exec -- pnpm exec tsx scripts/verify-auth/verify-auth.ts agent|bootstrap --target-file FILE
 Runs the permanent real-workerd/D1/Better-Auth/Gateway host journey, with direct D1/DO and upstream-effect assertions.
-S1 target JSON: {"kind":"local-workerd","sourceRevision":"<40-character checkout HEAD>","executionHost":"<target hostname>","maxLoad1":12}
+S1 target JSON: {"kind":"local-workerd","sourceRevision":"<40-character checkout HEAD>","executionHost":"<target hostname>"}
 FILE must be an owned mode0600 regular file outside every Git checkout. Target values and credentials are not printed.
 Requires a clean frozen checkout, Node24.7.0 and pnpm10.33.0; installs its frozen lockfile, builds workspace dependencies and freezes executable Worker bytes before running. Missing prerequisites and zero passing selected observations fail.
 Evidence is retained in an owned OS-temp directory. Unselected journeys are reported separately; hosted identity/CPU and stronger human-intent checks remain unverified.\n`);

@@ -3,7 +3,6 @@ import { expect, it } from 'vitest';
 import {
 	selectAuthObservations,
 	requireMatchingAuthObservations,
-	waitForAuthBuildLoadAdmission,
 } from '#auth/test-fixtures/auth-verification-cli';
 
 const root = '/proof-checkout';
@@ -25,52 +24,6 @@ it('selects every offered agent case and leaves bootstrap unselected', () => {
 		'agent: rejects outcome failure',
 	]);
 });
-
-it.each([
-	{ name: 'an already quiet host', loads: [11.9], elapsed: [0], admitted: true },
-	{
-		name: 'a host cooling after a build',
-		loads: [15, 12, 11.9],
-		elapsed: [0, 30_000, 60_000],
-		admitted: true,
-	},
-	{
-		name: 'load exactly at the ceiling for ten minutes',
-		loads: [12],
-		elapsed: Array.from({ length: 21 }, (_, index) => index * 30_000),
-		admitted: false,
-	},
-	{
-		name: 'an unavailable load sample',
-		loads: [Infinity],
-		elapsed: Array.from({ length: 21 }, (_, index) => index * 30_000),
-		admitted: false,
-	},
-])(
-	'post-build admission handles $name without loosening the ceiling',
-	async ({ loads, elapsed, admitted }) => {
-		let clock = 0;
-		let sampleIndex = 0;
-		const samples: { readonly elapsedMs: number; readonly load1: number }[] = [];
-		const result = waitForAuthBuildLoadAdmission({
-			maxLoad1: 12,
-			readLoad1: () => loads[Math.min(sampleIndex++, loads.length - 1)] ?? Infinity,
-			now: () => clock,
-			waitInterval: async (milliseconds) => {
-				clock += milliseconds;
-			},
-			recordSample: async (sample) => {
-				samples.push(sample);
-			},
-		});
-		if (admitted) await expect(result).resolves.toBeUndefined();
-		else await expect(result).rejects.toThrow('Load admission closed');
-		expect(samples.map((sample) => sample.elapsedMs)).toEqual(elapsed);
-		expect(samples.map((sample) => sample.load1)).toEqual(
-			elapsed.map((_, index) => loads[Math.min(index, loads.length - 1)]),
-		);
-	},
-);
 
 it('refuses a runner that silently omits an offered fault file', () => {
 	expect(() =>
