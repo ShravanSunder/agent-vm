@@ -26,7 +26,7 @@ No `verify-*` skill exists in this repository, so every journey below is `needed
 | `U5` | Runs on the owner's Cloudflare with its own database, no vendor | Read the deployment settings and the deployed Worker's own record: the owner's account, a database of its own, and no sign-in vendor in the code. | Workers Free CPU fit (`SD6`), measured separately |
 | `U6` | Machines and VMs never use people's sign-in | The VM test lanes run with no sign-in service present. No machine is registered as a sign-in client, and no machine package depends on the sign-in package. | VPN and Router traffic through Cloudflare, which live outside this repository |
 | `U7` | Every change to who may sign in, or how, is recorded, with no secrets | Make each kind of change, then read the audit table: one record per change, with who, what and when. A change whose record can't be written doesn't happen. Search the table and the Worker's logs for the real codes, tokens and cookies seen during the run; none appear. | how long records are kept (Tool Portal D6) |
-| `U8` | Agents sign in as themselves | Register a test agent and read back that it can only use its own sign-in, and that the other grant is refused. Call Tool Portal's Worker with its real token; a person check refuses it. Remove it, then on the same running instances its old token's call and a new token request both fail, including when the removal fails halfway. | the real console (the person verifier stands in); each host's credential storage |
+| `U8` | Agents sign in as themselves, one workspace at a time | Add a test agent to two workspaces of one organization. Read back that it can only use its own sign-in, that the other grant is refused, and that it gets no token for another organization's workspace. Call each workspace with that workspace's own real token; the other workspace and a person check refuse it. Remove it from one workspace: on the same running instances its old call there and a new token for that workspace both fail, while a new token for the other workspace still works. Retire it, and every token request and call fails. Both operations are also tried failing halfway and with a request caught in flight. | the real console (the person verifier stands in); each host's credential storage; creating and closing workspaces (not in this work) |
 
 ## Targets
 
@@ -36,7 +36,7 @@ No `verify-*` skill exists in this repository, so every journey below is `needed
 | `T2` | The public test deployment: the same commit, `mode: "public"`, its own Worker and D1 | `U3`, when built |
 | `T3` | The same Worker build on a local Workers runtime with a local D1 | held interleavings and forced audit-write failures. Not hosted proof: it keeps Better Auth, the hooks, the request handler and the database statements real, but not D1's replication |
 | `T4` | Tool Portal at the slice that delivers `decide`, using the production person-proof verifier configured to trust `T1` | decisions, audiences, freshness |
-| `T5` | Tool Portal's Worker (`tool-host-cloudflare`) with its organization Durable Object and agent-management handler, using the production agent verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account, bound to the sign-in Worker's agent-client route | agent calls, removal, held interleavings |
+| `T5` | Tool Portal's Worker (`tool-host-cloudflare`) serving organization O1's workspaces W1 and W2 and organization O2's workspace W3, each with its own Durable Object, and its agent-management handler, using the production agent verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account, bound to the sign-in Worker's agent-client route | agent calls, removal, held interleavings |
 | client | A scripted stand-in for the console: a registered client that runs authorization code with S256 PKCE | asking for proofs. It stands in until the console exists, and it is never counted as console proof |
 
 ## Shared observations
@@ -129,7 +129,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 **G. Focused rules** (unit, no journey):
 - *The verifier's token rules*, with real JOSE signing over test keys. Each of these must give its own reason: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another service, an `aud` array containing this service (from `openid` and from two resources), expired, and `sid` missing. A token that is correct in every way verifies.
-- *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, wrong `aud`, expired, a `sid` present or `organization_id` missing (`not-an-agent`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof`. The person verifier refuses that same token as `not-a-person`.
+- *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another workspace's address (including one in the same organization), expired, a `sid` present or `organization_id` or `workspace_id` missing (`not-an-agent`), a `workspace_id` naming a different workspace than the address (`wrong-workspace`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof` with its `workspaceId`. The person verifier refuses that same token as `not-a-person`.
 - *The allowlist gate:*
   - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches;
   - **derived active state:**
@@ -140,32 +140,52 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 **I. Audit coverage** (`verify-auth` `audit`, needed, lasting; plus forced failures on `T3`).
 - **On `T1`:**
-  - make each change kind `R12` lists: add and remove an allowlist entry; re-add; register, update and retire a client and a relying service; add and remove a passkey; link and unlink a login. The owner binding comes from H.
+  - make each change kind `R12` lists: add and remove an allowlist entry; re-add; register, update and retire a client and a relying service; link an agent client to a workspace and unlink it; add and remove a passkey; link and unlink a login. The owner binding comes from H.
   - Export `sign_in_audit` and tail the Worker's logs for the run. Search both for every code, access token, session cookie, passkey credential id and public key captured during A–D and I.
 - **On `T3`:**
   - make the before-change audit write fail during a passkey registration, a link and an agent-client registration; no `passkey`, `account` or E9 row may appear;
-  - make the agent client's resource-link write, then its outcome write, fail during registration; no credential is returned, no admission is written, the registration reads as incomplete, and the owner's retry completes it;
+  - make the agent client's resource-link write, then its outcome write, fail during registration; no credential is returned, no membership is written, the registration reads as incomplete, and the owner's retry completes it;
   - make the outcome write fail after a change; the before-change record must still be there;
   - make an allowlist batch fail; neither the change nor its record may land.
 
-**J. Agent sign-in and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
-- **Register:** through `T5`'s agent-management handler, add a test agent to organization O1. Then read the E9 row straight from D1: `grant_types` is exactly `["client_credentials"]`, `client_credentials_scopes` is exactly `["tool-portal:agent"]`, metadata is `{ kind: "agent", organizationId: O1 }`, its only `oauthClientResource` link is Tool Portal's Worker, and the client id is absent from the deployed `cachedTrustedClients`. A token request for another resource is refused `invalid_target`.
+**J. Agent sign-in, workspaces and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding, removing and retiring an agent](./program-design.md#adding-removing-and-retiring-an-agent-r17-r18). Setup: organization O1 with workspaces W1 and W2, and organization O2 with workspace W3, all served by `T5`.
+- **Register and link:** through `T5`'s agent-management handler, add a test agent to W1, then to W2. The second add returns no credential. Read straight from D1:
+  - the E9 row: `grant_types` exactly `["client_credentials"]`, `client_credentials_scopes` exactly `["tool-portal:agent"]`, metadata `{ kind: "agent", organizationId: O1 }`, and absent from the deployed `cachedTrustedClients`;
+  - exactly two `oauthClientResource` links, to W1's and W2's resources;
+  - each workspace resource: identifier its MCP address, metadata `{ kind: "workspace", organizationId: O1, workspaceId }`, `allowedScopes` `["tool-portal:agent"]`, null `customClaims`;
+  - the before-change and outcome records for the client, each resource and each link.
 - **Forbidden grant:** start an authorization-code request with the agent's client id, as the stand-in client would. **Expect:** refused, with no code issued.
-- **Use:** get a `client_credentials` token; its `organization_id` reads O1. Call one tool through `T5`. **Expect:** the call runs, against O1's tools. Then:
-  - present the same token for another audience: `wrong-audience`;
-  - present it to the person verifier, which is what the console will run: `not-a-person`;
-  - present Person A's Tool Portal token to `T5`'s agent check: `not-an-agent`.
-- **Remove, warm:** keep the old token (`tok-old`). Remove the agent through the handler, then on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
-  - call with `tok-old`: `removed-agent`;
-  - request a new token: `invalid_client`;
-  - read the handler's status: "removal complete", the object's agent row, the disabled E9 row, and its before-change and outcome records naming the acting Person.
-- **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove the agent. **Expect:** status "pending"; a call with any token is refused `removed-agent`; a new token request still succeeds, which is the named gap. Retry. **Expect:** status "complete", then a new token request is refused `invalid_client`.
-- **Held races and a conflicting claim** (on `T3`, with the hold seam from E):
-  1. a token request held **after Better Auth has signed the token** (past the credential check and `customAccessTokenClaims`), immediately before the handler's final D1 check; the disable commits while it is held, then it is released. **Expect:** `invalid_client`, and no token in the response.
-  2. a token issued before removal, used after step 1 and before step 2. **Expect:** `removed-agent`.
-  3. a resource custom claim on `T3` that sets `organization_id` to O2, then a token request by O1's agent. **Expect:** `invalid_client`; no token routed to O2 is released.
+- **Use:** get a token for W1; its `aud` is W1's address, `organization_id` O1 and `workspace_id` W1. Call one tool on W1. **Expect:** it runs once, against W1's tools. Then:
+  - present the W1 token at W2's address: `wrong-audience`;
+  - request a token for W3 (O2's workspace), and for an O1 workspace the agent was never added to: `invalid_target` each;
+  - present the W1 token to the person verifier, which is what the console will run: `not-a-person`;
+  - present Person A's Tool Portal token to `T5`'s agent check: `not-an-agent`; ask for a W1 token from Person A's session: `invalid_scope`.
+- **Remove from W1, warm:** keep the W1 token (`tok-w1-old`). Remove the agent from W1 through the handler. Then, on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
+  - call W1 with `tok-w1-old`: refused, not a member;
+  - request a new W1 token: `invalid_target`;
+  - once the removal reads complete, request a **new** W2 token and call W2 with it: it runs once;
+  - read the handler's status ("removal complete"), W1's object (agent removed), W2's object (still a member), D1 (W1 link gone, W2 link present, E9 enabled) and the `client-link-changed` records naming the acting Person.
+- **Retire, warm:** keep the W2 token (`tok-w2-old`). Retire the agent:
+  - call W2 with `tok-w2-old`: refused;
+  - request a new W2 token: `invalid_client`;
+  - read the status ("retirement complete"), the disabled E9 row and its records.
+- **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove one agent from W1, and separately retire a second agent. **Expect:** status "pending" each time; a call on the affected workspace with any token is refused; a new token request for it still succeeds, which is the named gap. Retry. **Expect:** status "complete"; then the unlinked workspace's token request gets `invalid_target`, and the retired agent's gets `invalid_client`.
+- **Held races and conflicting claims** (on `T3`, with the hold seam from E):
+  1. a W1 token request held **after Better Auth has signed the token** (past the credential check and `customAccessTokenClaims`), immediately before the handler's final D1 check; the W1 unlink commits while it is held, then it is released. **Expect:** `invalid_target`, and no token in the response.
+  2. the same hold, with the client's disable committing instead. **Expect:** `invalid_client`, no token.
+  3. a W1 token issued before removal, used after the membership is removed and before the unlink. **Expect:** refused, not a member.
+  4. a resource custom claim on `T3` that sets `organization_id` to O2 on W1's resource, then a W1 token request by O1's agent. **Expect:** `invalid_client`; no token naming O2 is released.
+  5. a resource custom claim on `T3` that sets `workspace_id` to W2 on W1's resource, then a W1 token request. **Expect:** `invalid_client`.
+  6. a link from O1's agent to W3's resource written straight into D1 by the test composition, then a W3 token request. **Expect:** refused, with no token released.
 
-**Read:** each response, the E9 and audit rows, the object's agent row, and the handler's status. A client registered with authorization code as well fails the readback and the forbidden-grant attempt. A Worker that caches the agent list fails the warm call. A client listed in the trusted cache fails the warm token request. A build with only the early checks fails case 1, and a final check that skips the organization comparison fails case 3. A handler that reports "complete" after one write fails the between-writes case.
+**Read:** each response; the E9, link, resource and audit rows; each workspace object's agent row; the handler's status. Wrong builds that fail it:
+- a client registered with authorization code as well fails the readback and the forbidden-grant attempt;
+- a Worker that caches membership fails the warm W1 call;
+- a client listed in the trusted cache fails the warm token request;
+- an unlink that removes every link, or a removal that disables the client instead of unlinking, fails the new W2 token;
+- a build with only the early checks fails held cases 1 and 2;
+- a final check that skips the organization or workspace comparison fails held cases 4 to 6;
+- a handler that reports "complete" after one write fails the between-writes case.
 
 ## Rows
 
@@ -313,7 +333,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - the search finds none of the captured values;
   - on `T3`:
     - a failed before-change write leaves no `passkey`, `account` or E9 row;
-    - a failed resource-link or outcome write during agent-client registration returns no credential and writes no admission, until a retry completes it;
+    - a failed resource-link or outcome write during agent-client registration returns no credential and writes no membership, until a retry completes it;
     - a failed outcome write leaves the before-change record;
     - a failed allowlist batch leaves neither the change nor its record.
 
@@ -325,30 +345,33 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reuses:** none.
 - **Unverified:** retention and readers of the record (Tool Portal D6).
 
-### `U8` — agents sign in as themselves
+### `U8` — agents sign in as themselves, one workspace at a time
 
-- **Obligations:** `R15`, `R16`, `R17` · proof obligation `V11` · seam: trace row R15–R17.
-- **Proven by:** observations J and G: register a test agent, read back how it is registered, try the grant it must not have, call Tool Portal's Worker with its real token, then remove it and try again on the same warm instances, including halfway through the removal.
-- **Reference:** Spec C4; `R15`–`R17`; Program Design [Adding and removing an agent](./program-design.md#adding-and-removing-an-agent-r17).
-- **Target and journey:** `T1` with `T5`, and `T3` with `T5` local for the held and between-writes cases. Journey `verify-auth` `agent`, needed, lasting: it must drive `T5`'s agent-management handler and the sign-in token endpoint, and read D1, the organization's object and the handler's status.
+- **Obligations:** `R15`, `R16`, `R17`, `R18` · proof obligations `V11`, `V12` · seam: trace row R15–R18.
+- **Proven by:** observations J and G: add a test agent to two workspaces of one organization, read back how it's registered and linked, try the grant it must not have and a workspace of another organization, call each workspace with its own real token, remove it from one workspace and show the other still works with a new token, retire it, and repeat both operations failing halfway and with requests held in flight.
+- **Reference:** Spec C4; `R15`–`R18`; Program Design [Adding, removing and retiring an agent](./program-design.md#adding-removing-and-retiring-an-agent-r17-r18).
+- **Target and journey:** `T1` with `T5`, and `T3` with `T5` local for the held and between-writes cases. Journey `verify-auth` `agent`, needed, lasting: it must drive `T5`'s agent-management handler and the sign-in token endpoint, and read D1, each workspace's object and the handler's status.
 - **Passes when:**
   - the E9 row has only `client_credentials`, only `tool-portal:agent`, agent metadata, and is not trusted-cached; an authorization-code request with its id is refused;
-  - `T5` accepts the agent's token for its own audience and refuses it for another; the person verifier refuses it as `not-a-person`; the agent check refuses a person's token as `not-an-agent`;
-  - after removal, on the same warm instances, the old token's call is refused `removed-agent` and a new token request gets `invalid_client`;
-  - between the writes, calls are refused and status is pending; after retry, status is complete and token requests are refused;
-  - all three held and conflicting-claim cases end refused.
+  - the agent's links are exactly the workspaces it was added to, each workspace resource carries its organization and workspace, and no token is issued for another organization's workspace or for one it wasn't added to;
+  - `T5` accepts the W1 token at W1 only and W2 refuses it; the person verifier refuses it as `not-a-person`; the agent check refuses a person's token as `not-an-agent`;
+  - after removal from W1, on the same warm instances, the old W1 token's call is refused, a new W1 token request gets `invalid_target`, and a **new** W2 token works once with E9 still enabled;
+  - after retirement, the old W2 token's call is refused and a new token request gets `invalid_client`;
+  - between the writes, calls are refused and status is pending; after retry, status is complete and the token requests are refused;
+  - every held and conflicting-claim case ends refused, with no token released.
 
   Wrong builds that fail it:
   - a client registered with authorization code as well as client credentials (readback, forbidden grant);
-  - a verifier that accepts a token without checking `sid` (G, the person-token check);
-  - a Worker that caches the agent list (warm call);
+  - a verifier that accepts a token without checking `sid` or `workspace_id` (G);
+  - a Worker that caches membership (warm call);
   - an agent client in the trusted-client cache (warm token request);
+  - an unlink-all, or a removal that disables the client (the new W2 token);
   - a handler that reports complete after one write (between writes);
-  - a final check deleted, leaving only the early checks (held case 1);
-  - a final check that skips the organization comparison (held case 3);
-  - an agent client without its resource link (readback, and its own token request fails `invalid_target`).
+  - a final check deleted, leaving only the early checks (held cases 1 and 2);
+  - a final check that skips the organization or workspace comparison (held cases 4 to 6);
+  - an agent client without its first resource link (readback, and its own token request fails `invalid_target`).
 - **Reuses:** none yet.
-- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring, and D1's hosted replication timing (only `T3` holds steps in order).
+- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring; D1's hosted replication timing (only `T3` holds steps in order); creating and closing workspaces, which aren't in this work; and where an organization's owner and allowlist are kept, which waits on the owner.
 
 ## What the plan must add
 

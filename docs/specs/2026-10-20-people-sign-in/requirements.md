@@ -39,7 +39,7 @@ flowchart LR
 | `U5` | owner | Self-hosted on Cloudflare Workers with D1, with no sign-in subscription, paying only for what is used. | F-64: "what is teh backend? cloudflare? workers?", accepting the Workers and D1 research; owner on 2026-10-18: "I don't want to pay beyond what I need" | authorized |
 | `U6` | owner | Machines, VMs, the VPN and the personal fleet keep using Cloudflare, not this service. | F-65: "cloduflare works for vm vpn access for persnao fleet not admin/members login"; owner 2026-10-20: Cloudflare is for "registration for computer control ... kinda like tailscale" | authorized |
 | `U7` | owner | Every change to who may sign in is recorded and attributable. | F-28: "and ahve some event log trace always  for all security and perm cahgnes for audit" | authorized |
-| `U8` | owner, managers | Each agent signs in as itself through this service, and each of our services gets proof of the agent that's valid only for that service. | owner 2026-10-20: "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system" | authorized |
+| `U8` | owner, managers | Each agent signs in as itself through this service, and each of our services gets proof of the agent that's valid only for that service. | owner 2026-10-20: "i thought we would use our own auth and not cloudflare access"; "we need a identity aware login ... in the worker with better auth? and our config system". Per workspace since 2026-10-22: "mcp is per workspace" (F-73), "auth is per works pace" (F-75) | authorized |
 
 Priority: `U1`, `U2`, `U4`, `U6` and `U7` first (private apps). `U3` (public apps) follows; the order is the Lead's proposal, not yet confirmed by the owner (SD2).
 
