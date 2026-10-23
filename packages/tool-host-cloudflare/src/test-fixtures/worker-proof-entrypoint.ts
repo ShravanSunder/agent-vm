@@ -1,8 +1,14 @@
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
+import type { ObservationLog } from '@agent-collaboration/tool-host-core';
+import {
+	createHostedMcpProxy,
+	hostedAgentVerifier,
+	type HostedMcpProxy,
+} from '@agent-collaboration/tool-host-core';
 import { z } from 'zod';
 
-import type { WorkerObservationLog } from '#worker-host/call-analytics/worker-observation-log';
-import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
+import { createAnalyticsEngineSink } from '#worker-host/analytics-engine-sink/analytics-engine-sink';
+import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 import type { WorkerBindings } from '#worker-host/index';
 import {
 	createObservedNativeClient,
@@ -11,12 +17,9 @@ import {
 import {
 	deployedConfigurationSource,
 	workerSecretBindings,
-} from '#worker-host/worker-configuration/worker-configuration';
-import {
-	createWorkerHost,
-	workerAgentVerifier,
-	type WorkerHost,
-} from '#worker-host/worker-request-handling/worker-host';
+} from '#worker-host/worker-bindings/worker-configuration';
+import { workerHostedProxyLimits } from '#worker-host/worker-limits';
+import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
 
 export class OrganizationAuthorization extends ProductionOrganizationAuthorization {
 	private fault: 'none' | 'fail' | 'stall' = 'none';
@@ -66,9 +69,9 @@ const controlSchema = z.discriminatedUnion('kind', [
 	z.strictObject({ kind: z.literal('release'), organizationId: z.string() }),
 	z.strictObject({ kind: z.literal('wait-recording'), organizationId: z.string() }),
 ]);
-let host: WorkerHost | undefined;
+let host: HostedMcpProxy | undefined;
 let testNow: number | undefined;
-const logs: WorkerObservationLog[] = [];
+const logs: ObservationLog[] = [];
 const points: unknown[] = [];
 let failAnalytics = false;
 // Control routes exist only in this separate test entry, never in the production entrypoint.
@@ -111,16 +114,20 @@ export default {
 			}
 			return Response.json({ ok: true });
 		}
-		host ??= createWorkerHost({
+		host ??= createHostedMcpProxy({
 			createClient: createObservedNativeClient,
-			analytics: {
+			analytics: createAnalyticsEngineSink({
 				writeDataPoint: (point) => {
 					if (failAnalytics) throw new Error('binding-secret-canary');
 					points.push(point);
 				},
-			},
+			}),
+			clock: { nowMs: () => Date.now(), nowIso: () => new Date().toISOString() },
+			newId: () => crypto.randomUUID(),
+			limits: workerHostedProxyLimits,
+			createUpstreamMcpTransport: createWorkerUpstreamTransport,
 			log: (event) => logs.push(event),
-			verifier: workerAgentVerifier({
+			verifier: hostedAgentVerifier({
 				deployment: bindings.SIGN_IN_ISSUER,
 				audience: bindings.TOOL_PORTAL_AUDIENCE,
 				jwksUrl: bindings.SIGN_IN_JWKS_URL,
@@ -132,6 +139,6 @@ export default {
 					bindings.ORGANIZATIONS.get(bindings.ORGANIZATIONS.idFromName(organizationId)),
 			},
 		});
-		return host.fetch(request);
+		return host.handle(request);
 	},
 };

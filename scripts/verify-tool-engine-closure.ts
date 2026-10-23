@@ -19,10 +19,11 @@ import {
 	isForbiddenToolEngineImport,
 } from './audit-portal-architecture.ts';
 import {
-	prepareToolEngineClosureFixtures,
-	toolEngineClosureFixtures,
-} from './tool-engine-closure-fixtures.ts';
-import { toolEngineClosureScannerSource } from './tool-engine-closure-scanner-source.ts';
+	preparePortalPackageClosureFixtures,
+	portalPackageClosureFixtures,
+} from './portal-package-closure-fixtures.ts';
+import { portalPackageClosureScannerSource } from './portal-package-closure-scanner-source.ts';
+import { resolveWorkerClosureBundler } from './worker-closure-bundler.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = fileURLToPath(import.meta.url);
@@ -115,13 +116,18 @@ registerHooks({resolve(specifier, context, nextResolve) {
 `;
 }
 
-function declarationScannerSource(): string {
+export function declarationScannerSource(
+	props: {
+		readonly forbiddenImportSource?: string;
+		readonly packageLabel?: string;
+	} = {},
+): string {
 	return `import {readFile,realpath} from 'node:fs/promises';
 import {builtinModules} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
-${isForbiddenToolEngineImport.toString()}
+${props.forbiddenImportSource ?? isForbiddenToolEngineImport.toString()}
 const pending=JSON.parse(process.argv[2]); const visited=new Set();let edges=0;
 while(pending.length){
  const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
@@ -144,7 +150,7 @@ while(pending.length){
  }
 }
 if(visited.size===0)throw new Error('empty declaration closure');console.log('declaration import closure: '+visited.size+' modules, '+edges+' type edges');
-`;
+`.replaceAll('tool-engine', props.packageLabel ?? 'tool-engine');
 }
 
 const requiredExports: Readonly<Record<string, readonly string[]>> = {
@@ -370,15 +376,19 @@ export async function verifyToolEngineClosure(): Promise<void> {
 		return path.resolve(root, entry.import);
 	});
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
+	const bundler = await resolveWorkerClosureBundler(repositoryRoot);
 	await Promise.all(
 		(['first-party', 'worker'] as const).map(async (scan): Promise<void> => {
 			await writeFile(
 				path.join(scratch, `scanner-${scan}.mjs`),
-				toolEngineClosureScannerSource({
+				portalPackageClosureScannerSource({
 					scan,
+					packageLabel: 'tool-engine',
+					forbiddenImportSource: isForbiddenToolEngineImport.toString(),
 					repositoryRoot,
 					typescriptUrl: import.meta.resolve('typescript'),
-					esbuildUrl: import.meta.resolve('esbuild'),
+					esbuildUrl: bundler.esbuildUrl,
+					bundlerProvenance: bundler,
 				}),
 			);
 		}),
@@ -411,7 +421,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
-		await prepareToolEngineClosureFixtures(root);
+		await preparePortalPackageClosureFixtures(root);
 		await subpaths.reduce<Promise<void>>(async (previous, subpath): Promise<void> => {
 			await previous;
 			const entryDirectory = path.join(root, 'dist', subpath.slice(2));
@@ -420,7 +430,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 			const declaration = path.join(entryDirectory, 'index.d.ts');
 			const original = await readFile(contract, 'utf8');
 			const originalDeclaration = await readFile(declaration, 'utf8');
-			const fixtureSources = toolEngineClosureFixtures(original);
+			const fixtureSources = portalPackageClosureFixtures(original);
 			await writeFile(
 				path.join(entryDirectory, 's2-transitive-poison.js'),
 				"export async function lazyPoison() { return import('node:fs'); }\n",

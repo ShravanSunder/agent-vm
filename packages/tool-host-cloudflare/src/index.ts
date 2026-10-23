@@ -1,35 +1,42 @@
+import {
+	createHostedMcpProxy,
+	hostedAgentVerifier,
+	type HostedMcpProxy,
+} from '@agent-collaboration/tool-host-core';
 import { z } from 'zod';
 
-import { writeWorkerObservationLog } from '#worker-host/call-analytics/worker-observation-log';
-import { OrganizationAuthorization } from '#worker-host/caller-authorization/organization-authorization';
+import { createAnalyticsEngineSink } from '#worker-host/analytics-engine-sink/analytics-engine-sink';
+import { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 import {
 	deployedConfigurationSource,
 	workerSecretBindings,
-} from '#worker-host/worker-configuration/worker-configuration';
-import {
-	createWorkerHost,
-	workerAgentVerifier,
-	type WorkerHost,
-} from '#worker-host/worker-request-handling/worker-host';
+} from '#worker-host/worker-bindings/worker-configuration';
+import { writeObservationLog } from '#worker-host/worker-bindings/worker-observation-log';
+import { workerHostedProxyLimits } from '#worker-host/worker-limits';
+import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
 
-export { OrganizationAuthorization, createWorkerHost };
-export type { WorkerHost };
+export { OrganizationAuthorization };
 export interface WorkerBindings extends Readonly<Record<string, unknown>> {
 	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
 	readonly ORGANIZATION_CONFIGURATIONS: string;
-	readonly CALL_ANALYTICS: import('#worker-host/call-analytics/call-analytics').CallAnalyticsBinding;
+	readonly CALL_ANALYTICS: import('#worker-host/analytics-engine-sink/analytics-engine-sink').CallAnalyticsBinding;
 	readonly SIGN_IN_ISSUER: string;
 	readonly SIGN_IN_JWKS_URL: string;
 	readonly TOOL_PORTAL_AUDIENCE: string;
 }
-let host: WorkerHost | undefined;
+let host: HostedMcpProxy | undefined;
 
 export default {
 	async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {
 		try {
-			host ??= createWorkerHost({
-				analytics: bindings.CALL_ANALYTICS,
-				verifier: workerAgentVerifier({
+			host ??= createHostedMcpProxy({
+				analytics: createAnalyticsEngineSink(bindings.CALL_ANALYTICS),
+				log: writeObservationLog,
+				clock: { nowMs: () => Date.now(), nowIso: () => new Date().toISOString() },
+				newId: () => crypto.randomUUID(),
+				limits: workerHostedProxyLimits,
+				createUpstreamMcpTransport: createWorkerUpstreamTransport,
+				verifier: hostedAgentVerifier({
 					deployment: z.url().parse(bindings.SIGN_IN_ISSUER),
 					audience: z.string().min(1).parse(bindings.TOOL_PORTAL_AUDIENCE),
 					jwksUrl: z.url().parse(bindings.SIGN_IN_JWKS_URL),
@@ -43,9 +50,9 @@ export default {
 						bindings.ORGANIZATIONS.get(bindings.ORGANIZATIONS.idFromName(organizationId)),
 				},
 			});
-			return await host.fetch(request);
+			return await host.handle(request);
 		} catch {
-			writeWorkerObservationLog({ event: 'worker-request-unavailable' });
+			writeObservationLog({ event: 'worker-request-unavailable' });
 			return Response.json({ error: 'worker-unavailable' }, { status: 503 });
 		}
 	},

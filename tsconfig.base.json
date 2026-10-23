@@ -26,6 +26,7 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
+			"@agent-collaboration/tool-host-core": ["./packages/tool-host-core/src/index.ts"],
 			"@agent-vm/gateway-runtime/managed-tool-engine/*": [
 				"./packages/gateway-runtime/src/managed-tool-engine/*"
 			],
