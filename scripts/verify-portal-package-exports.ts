@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/auth/core',
 	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
@@ -58,6 +59,15 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/auth/core': [
+		'signInConfigurationSchema',
+		'agentRegistrationSchema',
+		'agentRegistrationAllowsToken',
+		'registerAgentClient',
+		'disableAgentClient',
+		'handleSignInRequest',
+		'releaseSignInResponse',
+	],
 	'@agent-collaboration/tool-host-core': [
 		'createHostedMcpProxy',
 		'createOrganizationAuthority',
@@ -107,6 +117,9 @@ const requiredPortalNamedExports = {
 		'approvalReceiptSchema',
 	],
 	'@agent-collaboration/tool-access/contracts': [
+		'createPersonTokenVerifier',
+		'personTokenClaimsSchema',
+		'personProofSchema',
 		'mcpConfigSchema',
 		'secretValueSchema',
 		'configuredCliPolicySchema',
@@ -334,6 +347,7 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/auth/core',
 	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-host-node',

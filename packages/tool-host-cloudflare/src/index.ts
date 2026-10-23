@@ -1,6 +1,9 @@
+import { createPersonTokenVerifier } from '@agent-collaboration/tool-access/contracts';
 import {
 	createHostedMcpProxy,
+	createOrganizationAgentManagement,
 	hostedAgentVerifier,
+	type AgentClientManagementPort,
 	type HostedMcpProxy,
 } from '@agent-collaboration/tool-host-core';
 import { z } from 'zod';
@@ -23,12 +26,30 @@ export interface WorkerBindings extends Readonly<Record<string, unknown>> {
 	readonly SIGN_IN_ISSUER: string;
 	readonly SIGN_IN_JWKS_URL: string;
 	readonly TOOL_PORTAL_AUDIENCE: string;
+	readonly MANAGEMENT_AUDIENCE?: string;
+	readonly SIGN_IN?: AgentClientManagementPort;
 }
 let host: HostedMcpProxy | undefined;
 
 export default {
 	async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {
 		try {
+			if (new URL(request.url).pathname.startsWith('/management/')) {
+				if (bindings.SIGN_IN === undefined)
+					return Response.json({ error: 'management-unavailable' }, { status: 503 });
+				return await createOrganizationAgentManagement({
+					verifier: createPersonTokenVerifier({
+						deployment: z.url().parse(bindings.SIGN_IN_ISSUER),
+						audience: z.string().min(1).parse(bindings.MANAGEMENT_AUDIENCE),
+						jwksUrl: new URL(z.url().parse(bindings.SIGN_IN_JWKS_URL)),
+					}),
+					signIn: bindings.SIGN_IN,
+					organizations: {
+						forOrganization: (organizationId) =>
+							bindings.ORGANIZATIONS.get(bindings.ORGANIZATIONS.idFromName(organizationId)),
+					},
+				}).handle(request);
+			}
 			host ??= createHostedMcpProxy({
 				analytics: createAnalyticsEngineSink(bindings.CALL_ANALYTICS),
 				log: writeObservationLog,
