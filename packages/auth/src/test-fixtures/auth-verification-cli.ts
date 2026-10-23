@@ -10,6 +10,7 @@ import { parseArgs, promisify } from 'node:util';
 import { z } from 'zod';
 
 import { requirePrivateRuntimePath } from '#auth/native-owner-cli/auth-target';
+import { runAuthProofProcess } from '#auth/test-fixtures/auth-proof-process';
 import {
 	prepareProofBundles,
 	proofDigest,
@@ -271,15 +272,14 @@ export async function runPreparedAuthVerification(
 	await checkFrozenSource();
 	if (process.version !== 'v24.7.0' || hostname() !== target.executionHost)
 		throw new Error('Prepared execution host/toolchain changed');
-	const execute = promisify(execFile);
 	const selectedFiles = authJourneyFiles(journey);
 	const selected = selectAuthObservations({ inventory, selectedFiles, journey, root });
 	const reportPath = path.join(evidence, journey + '-vitest.json');
 	if ((loadavg()[0] ?? Infinity) >= target.maxLoad1) throw new Error('Load admission closed');
 	try {
-		const runtimeOutput = await execute(
-			process.execPath,
-			[
+		const runtime = await runAuthProofProcess({
+			command: process.execPath,
+			args: [
 				vitest,
 				'run',
 				'--project',
@@ -288,25 +288,51 @@ export async function runPreparedAuthVerification(
 				'--testNamePattern',
 				`${journey}:`,
 				'--reporter=json',
+				`--reporter=${path.join(root, 'packages/auth/src/test-fixtures/auth-proof-progress-reporter.ts')}`,
 				`--outputFile=${reportPath}`,
 			],
-			{
-				cwd: root,
-				env: {
-					...process.env,
-					AUTH_TEST_TARGET: targetPath,
-					AUTH_PROOF_MANIFEST_FILE: manifestFile,
-				},
-				timeout: 600_000,
-				maxBuffer: 8 * 1024 * 1024,
+			cwd: root,
+			env: {
+				...process.env,
+				AUTH_TEST_TARGET: targetPath,
+				AUTH_PROOF_MANIFEST_FILE: manifestFile,
+				AUTH_PROOF_CASE_EVENTS_FILE: path.join(evidence, `${journey}-case-events.jsonl`),
 			},
+			timeoutMs: 600_000,
+		});
+		await writeFile(
+			path.join(evidence, `${journey}-process.json`),
+			JSON.stringify({
+				ending: runtime.ending,
+				processGroup: runtime.processGroup,
+				cleanup: runtime.cleanup,
+				checkedAt: new Date().toISOString(),
+			}),
+			{ mode: 0o600 },
 		);
 		await writeFile(
 			path.join(evidence, journey + '-runtime.log'),
-			runtimeOutput.stdout + runtimeOutput.stderr,
+			runtime.stdout + runtime.stderr,
 			{ mode: 0o600 },
 		);
+		if (
+			runtime.ending.kind !== 'exited' ||
+			runtime.ending.code !== 0 ||
+			runtime.cleanup.remainingMembers.length !== 0
+		) {
+			process.stderr.write(`Real-target journey failed; private evidence: ${evidence}\n`);
+			return 1;
+		}
 	} catch (error) {
+		await writeFile(
+			path.join(evidence, `${journey}-process-error.json`),
+			JSON.stringify({
+				kind: 'runner-exception',
+				name: error instanceof Error ? error.name : 'UnknownError',
+				message: error instanceof Error ? error.message.slice(0, 500) : 'Proof runner failed',
+			}),
+			{ mode: 0o600 },
+		);
 		const output = z
 			.object({ stdout: z.string().optional(), stderr: z.string().optional() })
 			.safeParse(error);

@@ -1,0 +1,171 @@
+import { spawn, execFile } from 'node:child_process';
+import { setTimeout as waitForProcessReapInterval } from 'node:timers/promises';
+import { promisify } from 'node:util';
+
+export type ProofProcessEnding =
+	| {
+			readonly kind: 'exited';
+			readonly code: number | null;
+			readonly signal: NodeJS.Signals | null;
+	  }
+	| {
+			readonly kind: 'timed-out';
+			readonly code: number | null;
+			readonly signal: NodeJS.Signals | null;
+	  }
+	| {
+			readonly kind: 'output-limit';
+			readonly code: number | null;
+			readonly signal: NodeJS.Signals | null;
+	  }
+	| {
+			readonly kind: 'cancelled';
+			readonly code: number | null;
+			readonly signal: NodeJS.Signals | null;
+	  }
+	| { readonly kind: 'spawn-failed'; readonly message: string };
+
+// One Node verification command may run several journeys; cancellation stops later groups as well.
+let interruptedSignal: NodeJS.Signals | undefined;
+
+/** Enumerate only the group this runner created; no command lines or unrelated process data are retained. */
+export async function liveProofProcessGroup(groupId: number): Promise<readonly number[]> {
+	const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,pgid='], {
+		timeout: 5000,
+		maxBuffer: 4 * 1024 * 1024,
+	});
+	return stdout.split('\n').flatMap((line) => {
+		const [pidText, groupText] = line.trim().split(/\s+/u);
+		const pid = Number(pidText);
+		return Number(groupText) === groupId && Number.isSafeInteger(pid) && pid > 0 ? [pid] : [];
+	});
+}
+
+function signalProofGroup(groupId: number, signal: NodeJS.Signals): void {
+	try {
+		process.kill(-groupId, signal);
+	} catch (error) {
+		if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+	}
+}
+
+async function waitForProofGroupReap(
+	groupId: number | undefined,
+	remainingAttempts: number,
+): Promise<readonly number[]> {
+	const members = groupId === undefined ? [] : await liveProofProcessGroup(groupId);
+	if (members.length === 0 || remainingAttempts === 0) return members;
+	// POSIX has no child event for an adopted grandchild; this bounded protocol retry observes reaping.
+	await waitForProcessReapInterval(100);
+	return waitForProofGroupReap(groupId, remainingAttempts - 1);
+}
+
+export async function runAuthProofProcess(props: {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly cwd: string;
+	readonly env: NodeJS.ProcessEnv;
+	readonly timeoutMs: number;
+	readonly graceMs?: number;
+}): Promise<{
+	readonly ending: ProofProcessEnding;
+	readonly processGroup: number | null;
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly cleanup: {
+		readonly initialMembers: readonly number[];
+		readonly remainingMembers: readonly number[];
+		readonly signals: readonly NodeJS.Signals[];
+	};
+}> {
+	if (process.platform === 'win32') throw new Error('Proof process groups require a POSIX target');
+	if (interruptedSignal !== undefined)
+		return {
+			ending: { kind: 'cancelled', code: null, signal: interruptedSignal },
+			processGroup: null,
+			stdout: '',
+			stderr: '',
+			cleanup: { initialMembers: [], remainingMembers: [], signals: [] },
+		};
+	const child = spawn(props.command, [...props.args], {
+		cwd: props.cwd,
+		env: props.env,
+		stdio: ['ignore', 'pipe', 'pipe'],
+		detached: true,
+	});
+	const groupId = child.pid;
+	const signals: NodeJS.Signals[] = [];
+	let stopReason: 'timed-out' | 'output-limit' | 'cancelled' | undefined;
+	let forceTimer: ReturnType<typeof setTimeout> | undefined;
+	const graceMs = props.graceMs ?? 3000;
+	function signalGroup(signal: NodeJS.Signals): void {
+		if (groupId === undefined) return;
+		signals.push(signal);
+		signalProofGroup(groupId, signal);
+	}
+	function stopGroup(reason: 'timed-out' | 'output-limit' | 'cancelled'): void {
+		if (stopReason !== undefined) return;
+		stopReason = reason;
+		signalGroup('SIGTERM');
+		forceTimer = setTimeout(() => signalGroup('SIGKILL'), graceMs);
+	}
+	function interrupted(signal: NodeJS.Signals): void {
+		interruptedSignal = signal;
+		stopGroup('cancelled');
+	}
+	const terminate = (): void => interrupted('SIGTERM');
+	const interrupt = (): void => interrupted('SIGINT');
+	process.once('SIGTERM', terminate);
+	process.once('SIGINT', interrupt);
+	const timeout = setTimeout(() => stopGroup('timed-out'), props.timeoutMs);
+	let outputBytes = 0;
+	async function collect(stream: NodeJS.ReadableStream): Promise<string> {
+		let output = '';
+		for await (const chunk of stream) {
+			const text = String(chunk);
+			outputBytes += Buffer.byteLength(text);
+			if (outputBytes > 8 * 1024 * 1024) stopGroup('output-limit');
+			else output += text;
+		}
+		return output;
+	}
+	const output = Promise.all([collect(child.stdout), collect(child.stderr)]);
+	void output.catch(() => undefined);
+	try {
+		const exit = await new Promise<ProofProcessEnding>((resolve) => {
+			child.once('error', (error) => resolve({ kind: 'spawn-failed', message: error.message }));
+			child.once('close', (code, signal) =>
+				resolve({ kind: stopReason ?? 'exited', code, signal }),
+			);
+		});
+		clearTimeout(timeout);
+		const initialMembers = groupId === undefined ? [] : await liveProofProcessGroup(groupId);
+		if (initialMembers.length > 0) {
+			if (stopReason === undefined) signalGroup('SIGTERM');
+			// Orphaned children have no close event in this process; wait only the bounded signal grace.
+			await waitForProcessReapInterval(graceMs);
+			signalGroup('SIGKILL');
+		}
+		clearTimeout(forceTimer);
+		const remainingMembers = await waitForProofGroupReap(groupId, 20);
+		const [stdout, stderr] = await output;
+		return {
+			ending: exit,
+			processGroup: groupId ?? null,
+			stdout,
+			stderr,
+			cleanup: { initialMembers, remainingMembers, signals },
+		};
+	} catch (error) {
+		// A failed observer must not strand a process group either.
+		signalGroup('SIGTERM');
+		await waitForProcessReapInterval(graceMs);
+		signalGroup('SIGKILL');
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+		clearTimeout(forceTimer);
+		process.off('SIGTERM', terminate);
+		process.off('SIGINT', interrupt);
+	}
+}

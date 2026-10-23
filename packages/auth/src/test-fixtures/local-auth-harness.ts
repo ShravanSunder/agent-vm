@@ -13,7 +13,10 @@ import {
 import { z } from 'zod';
 
 import type { AuthTarget } from '#auth/native-owner-cli/auth-target';
-import { createAuthProofBarrierServer } from '#auth/test-fixtures/auth-proof-barrier-server';
+import {
+	createAuthProofBarrierServer,
+	type ManagementProofControls,
+} from '#auth/test-fixtures/auth-proof-barrier-server';
 import { recordAuthProofPhase } from '#auth/test-fixtures/auth-proof-phase-recording';
 import { navigateLocalBrowser } from '#auth/test-fixtures/browser-navigation';
 import { startControlledToolUpstream } from '#auth/test-fixtures/controlled-tool-upstream';
@@ -92,6 +95,7 @@ export async function startLocalAuthHarness(): Promise<{
 	readonly effects: Awaited<ReturnType<typeof startControlledToolUpstream>>['effects'];
 	readonly issuer: string;
 	readonly cookie: () => string;
+	readonly managementHolds: ManagementProofControls;
 	readonly ownerToken: () => Promise<string>;
 	readonly personToken: (email: string) => Promise<string>;
 	readonly auth: (pathname: string, init?: RequestInit) => Promise<Response>;
@@ -130,7 +134,10 @@ export async function startLocalAuthHarness(): Promise<{
 				let body = '';
 				for await (const chunk of request) body += String(chunk);
 				const pathname = request.url ?? '/';
-				const barrierResponse = await proofBarriers.handle(pathname, request.method ?? 'GET', body);
+				// Management controls are Node capabilities; public HTTP always reaches the Worker fence.
+				const barrierResponse = pathname.startsWith('/__auth-proof/management-hold/')
+					? null
+					: await proofBarriers.handle(pathname, request.method ?? 'GET', body);
 				if (barrierResponse !== null) {
 					response.writeHead(barrierResponse.status, Object.fromEntries(barrierResponse.headers));
 					response.end(Buffer.from(await barrierResponse.arrayBuffer()));
@@ -219,12 +226,24 @@ export async function startLocalAuthHarness(): Promise<{
 		const destination = new URL(request.url);
 		if (destination.origin !== issuer && destination.origin !== upstream.url)
 			return google.fetch(request, runtime);
-		const response = await fetch(request.url, {
-			method: request.method,
-			headers: Object.fromEntries(request.headers),
-			...(['GET', 'HEAD'].includes(request.method) ? {} : { body: await request.text() }),
-			redirect: 'manual',
-		});
+		// Only the proof Worker's outbound observer reaches the management arrival barrier.
+		const barrierResponse =
+			destination.origin === issuer &&
+			destination.pathname === '/__auth-proof/management-hold/arrive'
+				? await proofBarriers.handle(
+						`${destination.pathname}${destination.search}`,
+						request.method,
+						await request.text(),
+					)
+				: null;
+		const response =
+			barrierResponse ??
+			(await fetch(request.url, {
+				method: request.method,
+				headers: Object.fromEntries(request.headers),
+				...(['GET', 'HEAD'].includes(request.method) ? {} : { body: await request.text() }),
+				redirect: 'manual',
+			}));
 		return new WorkerResponse(response.status === 204 ? null : await response.arrayBuffer(), {
 			status: response.status,
 			headers: Object.fromEntries(response.headers),
@@ -449,6 +468,7 @@ export async function startLocalAuthHarness(): Promise<{
 		effects: upstream.effects,
 		issuer,
 		cookie: () => [...jar.values()].join('; '),
+		managementHolds: proofBarriers.managementHolds,
 		auth,
 		ownerToken: () => personToken('owner@example.invalid'),
 		personToken,

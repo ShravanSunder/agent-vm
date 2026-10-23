@@ -8,7 +8,6 @@ import {
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
-import type { AgentClientManagement } from '#auth/test-fixtures/management-observation-holds';
 
 it('agent: real non-owner E7, forged actor input and public binding URLs never acquire owner authority across concurrent requests', async () => {
 	const harness = await startLocalAuthHarness();
@@ -103,9 +102,6 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			),
 		);
 		expect(publicResponses.every((response) => [403, 404].includes(response.status))).toBe(true);
-		const binding = await harness.miniflare.getBindings<{
-			readonly SIGN_IN: AgentClientManagement;
-		}>('gateway-one');
 		// A public request cannot install or trigger the named-entry-only observer.
 		const publicHoldId = crypto.randomUUID();
 		await Promise.all(
@@ -113,6 +109,8 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 				'/__auth-proof/management/arm',
 				'/armManagementHold',
 				'/AgentClientManagement/armManagementHold',
+				`/__auth-proof/management-hold/arm?key=${publicHoldId}`,
+				`/__auth-proof/management-hold/arrive?key=${publicHoldId}`,
 			].map(async (pathname) => {
 				const response = await harness.auth(pathname, {
 					method: 'POST',
@@ -122,11 +120,11 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 				expect([403, 404].includes(response.status)).toBe(true);
 			}),
 		);
-		expect(await binding.SIGN_IN.managementHoldStatus(publicHoldId)).toEqual({
+		expect(await harness.managementHolds.managementHoldStatus(publicHoldId)).toEqual({
 			armed: false,
 			observed: false,
 		});
-		await binding.SIGN_IN.armManagementHold(publicHoldId);
+		await harness.managementHolds.armManagementHold(publicHoldId);
 		try {
 			const publicAttempt = await harness.auth('/api/auth/admin/oauth2/create-client', {
 				method: 'POST',
@@ -134,12 +132,12 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 				body: JSON.stringify({ requestId: publicHoldId, observeManagement: true }),
 			});
 			expect([403, 404].includes(publicAttempt.status)).toBe(true);
-			expect(await binding.SIGN_IN.managementHoldStatus(publicHoldId)).toEqual({
+			expect(await harness.managementHolds.managementHoldStatus(publicHoldId)).toEqual({
 				armed: true,
 				observed: false,
 			});
 		} finally {
-			await binding.SIGN_IN.releaseManagementHold(publicHoldId);
+			await harness.managementHolds.releaseManagementHold(publicHoldId);
 		}
 		async function refusedCallerB(): Promise<void> {
 			const clientsBeforeB = await clientRows();
@@ -160,12 +158,12 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 				.bind(registeredClientId)
 				.first();
 			// Reusing the completed operation makes A enter the real provider link/rotation path.
-			await binding.SIGN_IN.armManagementHold(registrationRequestId);
+			await harness.managementHolds.armManagementHold(registrationRequestId);
 			const accepted = harness.gateway(endpoint, legitimate);
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
 				const entered = await Promise.race([
-					binding.SIGN_IN.enteredManagementHold(registrationRequestId),
+					harness.managementHolds.enteredManagementHold(registrationRequestId),
 					new Promise<never>((_, reject) => {
 						timer = setTimeout(
 							() => reject(new Error('Authorized management hold was not entered')),
@@ -185,7 +183,7 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 						.run();
 			} finally {
 				if (timer !== undefined) clearTimeout(timer);
-				await binding.SIGN_IN.releaseManagementHold(registrationRequestId);
+				await harness.managementHolds.releaseManagementHold(registrationRequestId);
 				await accepted;
 			}
 			const settled = await accepted;
