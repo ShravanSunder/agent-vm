@@ -131,8 +131,8 @@ describe('S1 real agent issuer through the Gateway', () => {
 		expect(verified.protectedHeader.typ).toBe('at+jwt');
 		expect(person.exp - person.iat).toBeLessThanOrEqual(300);
 		expect(
-			await harness.database.prepare('SELECT user_id FROM deployment_owner').all(),
-		).toMatchObject({ results: [{ user_id: person.sub }] });
+			(await harness.database.prepare('SELECT user_id FROM deployment_owner').all()).results,
+		).toEqual([{ user_id: person.sub }]);
 		expect(
 			await harness.database
 				.prepare('SELECT id, userId FROM session WHERE id = ?')

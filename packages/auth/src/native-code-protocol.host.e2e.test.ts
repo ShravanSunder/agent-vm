@@ -15,11 +15,9 @@ it('agent: native owner code rejects wrong PKCE/redirect, missing or plain PKCE,
 	const harness = await startLocalAuthHarness();
 	try {
 		await harness.ownerToken();
-		const clientsBefore = await harness.database
-			.prepare(
-				'SELECT clientId, grantTypes, redirectUris, requirePKCE FROM oauthClient ORDER BY clientId',
-			)
-			.all();
+		const clientsBefore = (
+			await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all()
+		).results;
 		async function authorize(changes: Readonly<Record<string, string | null>> = {}): Promise<{
 			readonly response: Response;
 			readonly verifier: string;
@@ -138,11 +136,7 @@ it('agent: native owner code rejects wrong PKCE/redirect, missing or plain PKCE,
 			await exchange(permitted, { grant_type: 'refresh_token', refresh_token: 'forbidden' }),
 		);
 		expect(
-			await harness.database
-				.prepare(
-					'SELECT clientId, grantTypes, redirectUris, requirePKCE FROM oauthClient ORDER BY clientId',
-				)
-				.all(),
+			(await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all()).results,
 		).toEqual(clientsBefore);
 		expect(
 			await (

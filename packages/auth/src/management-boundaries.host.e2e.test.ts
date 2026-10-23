@@ -16,7 +16,7 @@ import {
 	managementAuditReadbackSql,
 	requireManagementRefusalReadback,
 } from '#auth/test-fixtures/management-refusal-readback';
-import { installedProviderHttpRoutes } from '#auth/test-fixtures/provider-endpoint-inventory';
+import { installedProviderEndpointInventory } from '#auth/test-fixtures/provider-endpoint-inventory';
 
 let harness: Awaited<ReturnType<typeof startLocalAuthHarness>>;
 beforeAll(async () => {
@@ -201,7 +201,14 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 		'/api/auth/.well-known/oauth-authorization-server',
 		'/api/auth/.well-known/openid-configuration',
 	]);
-	const installedRoutes = await installedProviderHttpRoutes(harness.miniflare);
+	const { httpRoutes: installedRoutes, noHttpPathApis } = await installedProviderEndpointInventory(
+		harness.miniflare,
+	);
+	expect(noHttpPathApis).toEqual([
+		{ endpointName: 'setPassword', serverOnly: true },
+		{ endpointName: 'signJWT', serverOnly: true },
+		{ endpointName: 'verifyJWT', serverOnly: true },
+	]);
 	expect(installedRoutes.length).toBeGreaterThan(0);
 	for (const requiredPath of [
 		'/api/auth/get-session',
@@ -288,7 +295,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 		headers: { authorization: `Bearer ${owner}` },
 	});
 	expect(personAtAgentEdge.status).toBe(401);
-	expect(await personAtAgentEdge.json()).toEqual({ error: 'not-an-agent' });
+	expect(await personAtAgentEdge.json()).toEqual({ error: 'wrong-audience' });
 	const noHook = await harness.auth('/__auth-proof/no-hook');
 	expect(noHook.status).toBe(200);
 	expect(await noHook.json()).toEqual({ refused: true });

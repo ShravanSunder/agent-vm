@@ -32,10 +32,8 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 		const memberPerson = z.object({ sub: z.string(), sid: z.string() }).parse(decodeJwt(member));
 		expect(memberPerson.sub).not.toBe(ownerPerson.sub);
 		expect(
-			await harness.database.prepare('SELECT user_id FROM deployment_owner').all(),
-		).toMatchObject({
-			results: [{ user_id: ownerPerson.sub }],
-		});
+			(await harness.database.prepare('SELECT user_id FROM deployment_owner').all()).results,
+		).toEqual([{ user_id: ownerPerson.sub }]);
 		async function clientRows(): Promise<readonly Record<string, unknown>[]> {
 			return (await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all())
 				.results;

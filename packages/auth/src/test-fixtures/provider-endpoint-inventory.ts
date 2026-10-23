@@ -5,7 +5,7 @@ import { createSignInProvider } from '#auth/better-auth-provider/provider-config
 import { signInWorkerConfiguration } from '#auth/cloudflare-host/worker-configuration';
 
 const endpointSchema = z.object({
-	path: z.string().startsWith('/'),
+	path: z.string().startsWith('/').optional(),
 	options: z.object({
 		method: z.union([z.string(), z.array(z.string())]),
 		metadata: z.object({ SERVER_ONLY: z.boolean().optional() }).optional(),
@@ -17,11 +17,19 @@ export interface ProviderHttpRoute {
 	readonly path: string;
 	readonly serverOnly: boolean;
 }
+export interface ProviderApiWithoutHttpPath {
+	readonly endpointName: string;
+	readonly serverOnly: boolean;
+}
+export interface ProviderEndpointInventory {
+	readonly httpRoutes: readonly ProviderHttpRoute[];
+	readonly noHttpPathApis: readonly ProviderApiWithoutHttpPath[];
+}
 
-/** Reads the configured provider's actual core/plugin endpoint table, including installed method arrays. */
-export async function installedProviderHttpRoutes(
+/** Includes every installed API; pathless server APIs stay explicit beside the HTTP method matrix. */
+export async function installedProviderEndpointInventory(
 	runtime: Miniflare,
-): Promise<readonly ProviderHttpRoute[]> {
+): Promise<ProviderEndpointInventory> {
 	const bindings = await runtime.getBindings<AuthWorkerEnv>('sign-in');
 	const provider = createSignInProvider({
 		...signInWorkerConfiguration(bindings),
@@ -29,8 +37,16 @@ export async function installedProviderHttpRoutes(
 		requestState: { createdUserIds: [], issuedSessions: [] },
 	});
 	await provider.$context;
-	return Object.entries(provider.api).flatMap(([endpointName, endpoint]) => {
+	const noHttpPathApis: ProviderApiWithoutHttpPath[] = [];
+	const httpRoutes = Object.entries(provider.api).flatMap(([endpointName, endpoint]) => {
 		const descriptor = endpointSchema.parse({ path: endpoint.path, options: endpoint.options });
+		if (descriptor.path === undefined) {
+			noHttpPathApis.push({
+				endpointName,
+				serverOnly: descriptor.options.metadata?.SERVER_ONLY === true,
+			});
+			return [];
+		}
 		const methods = Array.isArray(descriptor.options.method)
 			? descriptor.options.method
 			: [descriptor.options.method];
@@ -46,4 +62,10 @@ export async function installedProviderHttpRoutes(
 			})),
 		);
 	});
+	return {
+		httpRoutes,
+		noHttpPathApis: noHttpPathApis.toSorted((left, right) =>
+			left.endpointName.localeCompare(right.endpointName),
+		),
+	};
 }
