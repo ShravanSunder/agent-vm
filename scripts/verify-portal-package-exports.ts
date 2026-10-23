@@ -667,6 +667,18 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertAuthCorePlainNodeExecution, verifyAuthPackageClosure } =
+		await import('./verify-auth-package-closure.ts');
+	await assertAuthCorePlainNodeExecution(
+		(await requiredPackageExportTargetsForSpecifier('@agent-collaboration/auth/core')).importUrl,
+	);
+	if (process.argv.includes('--auth-core-only')) {
+		process.stdout.write(
+			'auth core plain Node import and policy probe: passed; full portal exports and packed closure remain unverified\n',
+		);
+		return;
+	}
+	if (process.argv.includes('--packed-auth')) await verifyAuthPackageClosure();
 	const { assertToolHostNodeSourceIsRestricted, verifyToolHostNodeClosure } =
 		await import('./verify-tool-host-node-closure.ts');
 	await assertToolHostNodeSourceIsRestricted();

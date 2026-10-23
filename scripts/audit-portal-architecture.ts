@@ -1207,18 +1207,23 @@ export function collectToolHostCoreViolations(
 	return collectPortableEngineViolations(file, 'tool-host-core', isForbiddenToolHostCoreImport);
 }
 
+export function isForbiddenAuthCoreImport(specifier: string): boolean {
+	return (
+		isForbiddenToolHostCoreImport(specifier) ||
+		/^(?:better-auth|@better-auth\/)/u.test(specifier) ||
+		/(?:#auth\/|\/auth\/(?:src|dist)\/)(?:better-auth-provider|d1-persistence|cloudflare-host)(?:\/|$)/u.test(
+			specifier,
+		) ||
+		specifier.includes('worker-configuration.gen') ||
+		specifier === '@agent-collaboration/auth/cloudflare'
+	);
+}
+
 export function collectAuthCoreViolations(file: PortalArchitectureSourceFile): readonly string[] {
 	return collectPortableEngineViolations(
 		file,
 		'auth',
-		(specifier) =>
-			isForbiddenToolHostCoreImport(specifier) ||
-			/^(?:better-auth|@better-auth\/)/u.test(specifier) ||
-			/(?:#auth\/|\/auth\/(?:src|dist)\/)(?:better-auth-provider|d1-persistence|cloudflare-host)(?:\/|$)/u.test(
-				specifier,
-			) ||
-			specifier.includes('worker-configuration.gen') ||
-			specifier === '@agent-collaboration/auth/cloudflare',
+		isForbiddenAuthCoreImport,
 		'packages/auth/src/sign-in-core/',
 	);
 }
