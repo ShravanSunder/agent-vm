@@ -149,8 +149,9 @@ These replace the 2026-10-20 line that put workspaces "for later". The fleet fra
 - **No bot or Router agent may use the admin console** (F-78): "both shokdul not be able to ttokuch teh admin console".
 - **The admin console uses an interactive sign-in, like the Cloudflare CLI, checked on every command** (F-79): "the admin concols shoudl allow a auth flow liek cloduflare cli does per command etc". How strong the human check must be is still open.
 - **"Room" names where an agent runs** (F-80): open room (a whole machine), walled-off corner (a read-fenced sandbox), locked room (a VM). Rooms are placement, not membership; which rooms a workspace allows is still open.
+- **An organization contains workspaces** (F-82, 2026-10-23): "organization contaisn workspaces". The organization decides who may sign in; each workspace inside it is the portal's unit (its own MCP endpoint, members, tools, profiles and token scope) and belongs to exactly one organization.
 
-What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. How sign-in's organizations relate to workspaces is still open (decision 1 in the Lead's local org-and-portal explainer). The Specification and Program Design haven't been revised for this yet.
+What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. An organization contains workspaces (F-82). The Specification and Program Design haven't been revised for this yet.
 
 ## Questions for the owner
 
