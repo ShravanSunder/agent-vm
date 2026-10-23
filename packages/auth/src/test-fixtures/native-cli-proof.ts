@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 
 import { cachedOwnerTokenSchema, type AuthTarget } from '#auth/native-owner-cli/auth-target';
+import { recordAuthProofPhase } from '#auth/test-fixtures/auth-proof-phase-recording';
 
 /** Reuses the actual CLI cache on the next command, so server live-status rejection remains observable. */
 export async function runCachedNativeOwnerCommand(props: {
@@ -28,7 +29,30 @@ export async function runCachedNativeOwnerCommand(props: {
 		);
 		return { code: 0, ...output };
 	} catch (error) {
-		return z.object({ code: z.number(), stdout: z.string(), stderr: z.string() }).parse(error);
+		const failure = z
+			.object({
+				code: z.union([z.number(), z.string(), z.null()]),
+				signal: z.string().nullable(),
+				killed: z.boolean(),
+				stdout: z.string(),
+				stderr: z.string(),
+			})
+			.parse(error);
+		const authorizationUrlPrinted = failure.stdout.includes('AUTHORIZATION_URL=');
+		await recordAuthProofPhase({
+			kind: 'cli-exit',
+			code: failure.code,
+			signal: failure.signal,
+			killed: failure.killed,
+			authorizationUrlPrinted,
+			targetOrigin: new URL(props.target.issuer).origin,
+		});
+		if (typeof failure.code !== 'number' || failure.signal !== null || failure.killed)
+			throw new Error(
+				`Owner CLI did not exit normally (code=${String(failure.code)}, signal=${String(failure.signal)}, killed=${String(failure.killed)}, authorizationUrlPrinted=${String(authorizationUrlPrinted)}); termination is not an owner refusal`,
+				{ cause: error },
+			);
+		return { code: failure.code, stdout: failure.stdout, stderr: failure.stderr };
 	}
 }
 

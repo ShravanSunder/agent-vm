@@ -13,6 +13,8 @@ import {
 import { z } from 'zod';
 
 import type { AuthTarget } from '#auth/native-owner-cli/auth-target';
+import { createAuthProofBarrierServer } from '#auth/test-fixtures/auth-proof-barrier-server';
+import { recordAuthProofPhase } from '#auth/test-fixtures/auth-proof-phase-recording';
 import { navigateLocalBrowser } from '#auth/test-fixtures/browser-navigation';
 import { startControlledToolUpstream } from '#auth/test-fixtures/controlled-tool-upstream';
 import { d1MigrationStatements } from '#auth/test-fixtures/d1-migration-statements';
@@ -105,13 +107,35 @@ export async function startLocalAuthHarness(): Promise<{
 	const google = await createGoogleOAuthProtocol();
 	const upstream = await startControlledToolUpstream();
 	const miniflareReady = Promise.withResolvers<Miniflare>();
+	const proofBarriers = createAuthProofBarrierServer();
 	const server = createServer((request, response) => {
 		void (async (): Promise<void> => {
+			const transportRequestId = crypto.randomUUID();
+			const pathnameOnly = new URL(request.url ?? '/', 'http://proof.invalid').pathname;
+			const observedSurface =
+				pathnameOnly === '/api/auth/jwks'
+					? 'jwks'
+					: pathnameOnly.startsWith('/management/')
+						? 'management'
+						: null;
+			if (observedSurface !== null)
+				await recordAuthProofPhase({
+					kind: 'request-start',
+					requestId: transportRequestId,
+					surface: observedSurface,
+					targetOrigin: issuer,
+				});
 			try {
 				const runtime = await miniflareReady.promise;
 				let body = '';
 				for await (const chunk of request) body += String(chunk);
 				const pathname = request.url ?? '/';
+				const barrierResponse = await proofBarriers.handle(pathname, request.method ?? 'GET', body);
+				if (barrierResponse !== null) {
+					response.writeHead(barrierResponse.status, Object.fromEntries(barrierResponse.headers));
+					response.end(Buffer.from(await barrierResponse.arrayBuffer()));
+					return;
+				}
 				const gatewayRequest = pathname.startsWith('/management/') || pathname.startsWith('/mcp');
 				const headers = Object.fromEntries(
 					Object.entries(request.headers).flatMap(([name, value]) =>
@@ -133,12 +157,24 @@ export async function startLocalAuthHarness(): Promise<{
 							redirect: 'manual',
 						});
 				const cookies = result.headers.getSetCookie();
+				if (observedSurface !== null)
+					await recordAuthProofPhase({
+						kind: 'request-end',
+						requestId: transportRequestId,
+						status: result.status,
+					});
 				response.writeHead(result.status, {
 					...Object.fromEntries(result.headers),
 					...(cookies.length === 0 ? {} : { 'set-cookie': cookies }),
 				});
 				response.end(Buffer.from(await result.arrayBuffer()));
 			} catch (error) {
+				if (observedSurface !== null)
+					await recordAuthProofPhase({
+						kind: 'request-end',
+						requestId: transportRequestId,
+						status: 503,
+					});
 				process.stderr.write(
 					`[auth-harness] transport failed: ${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'}\n`,
 				);
@@ -148,6 +184,7 @@ export async function startLocalAuthHarness(): Promise<{
 		})();
 	});
 	async function closeServers(): Promise<void> {
+		proofBarriers.close();
 		server.closeAllConnections();
 		await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 		await upstream.close();
@@ -222,6 +259,7 @@ export async function startLocalAuthHarness(): Promise<{
 									DB: { type: 'd1', id: 'auth-local' },
 									...textBindings({
 										SIGN_IN_CONFIGURATION: JSON.stringify(configuration),
+										AUTH_PROOF_CONTROL_ORIGIN: issuer,
 										AUTH_SECRET: 'test-only-auth-secret-'.repeat(3),
 										GOOGLE_CLIENT_ID: 'fixture-google-client',
 										GOOGLE_CLIENT_SECRET: 'fixture-google-secret',

@@ -53,6 +53,8 @@ export async function ownerManagementToken(props: {
 			) {
 				const checked = await verifier.verify(cached.token);
 				if (checked.kind === 'verified') return cached.token;
+				if (checked.kind === 'unavailable')
+					throw new Error('Sign-in service unavailable; no owner authorization started');
 			}
 		} catch (error) {
 			if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;

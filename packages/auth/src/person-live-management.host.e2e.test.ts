@@ -74,7 +74,13 @@ it.each([
 			const refused = await runCachedNativeOwnerCommand(command);
 			expect(refused.code).toBe(1);
 			expect(refused.stdout).toBe('');
-			expect(refused.stderr.includes('Owner management refused')).toBe(true);
+			expect(
+				refused.stderr.includes(
+					change === 'unavailable-session-store'
+						? 'Sign-in service unavailable'
+						: 'Owner management refused',
+				),
+			).toBe(true);
 			expect(refused.stderr.includes(owner)).toBe(false);
 			expect(refused.stderr.includes(harness.cookie())).toBe(false);
 			expect(harness.effects).toHaveLength(0);
