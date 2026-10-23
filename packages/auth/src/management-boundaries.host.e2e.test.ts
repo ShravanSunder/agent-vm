@@ -16,6 +16,7 @@ import {
 	managementAuditReadbackSql,
 	requireManagementRefusalReadback,
 } from '#auth/test-fixtures/management-refusal-readback';
+import { installedProviderHttpRoutes } from '#auth/test-fixtures/provider-endpoint-inventory';
 
 let harness: Awaited<ReturnType<typeof startLocalAuthHarness>>;
 beforeAll(async () => {
@@ -188,84 +189,93 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	expect(gatewayResponses.map((response) => response.status)).toEqual([
 		403, 403, 403, 403, 403, 403,
 	]);
-	const resource = encodeURIComponent(agentAudience);
-	// Enumerated from the installed provider's actual client/resource endpoint definitions.
-	const routes = [
-		...['get-session', 'list-sessions', 'list-accounts'].map((name) => ({
-			method: 'GET',
-			path: `/api/auth/${name}`,
-		})),
-		{ method: 'POST', path: '/api/auth/admin/oauth2/create-client' },
-		{ method: 'PATCH', path: '/api/auth/admin/oauth2/update-client' },
-		{ method: 'POST', path: '/api/auth/oauth2/public-client-prelogin' },
-		...['create-client', 'update-client', 'delete-client', 'client/rotate-secret'].map((name) => ({
-			method: 'POST',
-			path: `/api/auth/oauth2/${name}`,
-		})),
-		...['get-client', 'get-clients', 'public-client'].map((name) => ({
-			method: 'GET',
-			path: `/api/auth/oauth2/${name}?client_id=${registeredClientId}`,
-		})),
-		...['get-consent', 'get-consents'].map((name) => ({
-			method: 'GET',
-			path: `/api/auth/oauth2/${name}?id=missing-consent`,
-		})),
-		...['update-consent', 'delete-consent'].map((name) => ({
-			method: 'POST',
-			path: `/api/auth/oauth2/${name}`,
-		})),
-		...[
-			{ method: 'POST', suffix: '' },
-			{ method: 'GET', suffix: '' },
-			{ method: 'GET', suffix: `/${resource}` },
-			{ method: 'PATCH', suffix: `/${resource}` },
-			{ method: 'DELETE', suffix: `/${resource}` },
-			{ method: 'POST', suffix: `/${resource}/clients/${registeredClientId}` },
-			{ method: 'DELETE', suffix: `/${resource}/clients/${registeredClientId}` },
-		].map(({ method, suffix }) => ({ method, path: `/api/auth/admin/oauth2/resources${suffix}` })),
-		{ method: 'POST', path: '/api/auth/owner/bootstrap' },
-	];
-	const responses = await Promise.all(
+	// Independent S1 contract: do not filter this inventory through the product's allowlist.
+	const publicProviderPaths = new Set([
+		'/api/auth/sign-in/social',
+		'/api/auth/callback/google',
+		'/api/auth/callback/github',
+		'/api/auth/oauth2/authorize',
+		'/api/auth/oauth2/token',
+		'/api/auth/oauth2/introspect',
+		'/api/auth/jwks',
+		'/api/auth/.well-known/oauth-authorization-server',
+		'/api/auth/.well-known/openid-configuration',
+	]);
+	const installedRoutes = await installedProviderHttpRoutes(harness.miniflare);
+	expect(installedRoutes.length).toBeGreaterThan(0);
+	for (const requiredPath of [
+		'/api/auth/get-session',
+		'/api/auth/list-sessions',
+		'/api/auth/list-accounts',
+		'/api/auth/revoke-other-sessions',
+		'/api/auth/sign-out',
+		'/api/auth/get-access-token',
+	])
+		expect(installedRoutes.some((route) => route.path === requiredPath)).toBe(true);
+	const routes = installedRoutes
+		.map((route) => ({
+			...route,
+			path: route.path.replace(/:([^/]+)/gu, (_parameter: string, name: string): string =>
+				encodeURIComponent(name.includes('client') ? registeredClientId : `missing-${name}`),
+			),
+		}))
+		.filter((route) => !publicProviderPaths.has(route.path));
+	const cookieSnapshot = harness.cookie();
+	const observations = await Promise.all(
 		[agent, withoutSid].flatMap((token) =>
-			routes.map((route) => {
-				const body = JSON.stringify({
-					client_id: registeredClientId,
-					actor: person.sub,
-					owner: true,
-					organizationId: organizationOne,
-				});
-				return harness.auth(route.path, {
-					method: route.method,
-					headers: {
-						authorization: `Bearer ${token}`,
-						'content-type': 'application/json',
-						'x-owner-id': person.sub,
-						'x-organization-id': organizationOne,
-					},
-					...(route.method === 'GET' ? {} : { body }),
-				});
-			}),
+			[false, true].flatMap((withCookie) =>
+				routes.map(async (route) => {
+					const response = await harness.auth(route.path, {
+						method: route.method,
+						headers: {
+							authorization: `Bearer ${token}`,
+							cookie: withCookie ? cookieSnapshot : '',
+							'content-type': 'application/json',
+							'x-owner-id': person.sub,
+							'x-organization-id': organizationOne,
+						},
+						...(['GET', 'HEAD'].includes(route.method)
+							? {}
+							: {
+									body: JSON.stringify({
+										client_id: registeredClientId,
+										actor: person.sub,
+										owner: true,
+										organizationId: organizationOne,
+									}),
+								}),
+					});
+					const body: unknown = route.method === 'HEAD' ? null : await response.json();
+					return {
+						...route,
+						withCookie,
+						identity: token === agent ? 'E10' : 'no-sid',
+						status: response.status,
+						exactRefusal:
+							route.method === 'HEAD' ||
+							z.strictObject({ error: z.literal('not-found') }).safeParse(body).success,
+					};
+				}),
+			),
 		),
 	);
-	expect(
-		responses.flatMap((response, index) =>
-			[401, 403, 404].includes(response.status)
-				? []
-				: [{ path: routes[index % routes.length]?.path, status: response.status }],
-		),
-	).toEqual([]);
+	expect(observations.filter((observation) => observation.status !== 404)).toEqual([]);
+	expect(observations.filter((observation) => !observation.exactRefusal)).toEqual([]);
 	await Promise.all(
-		responses.map(async (response, index) => {
-			const route = routes[index % routes.length];
-			if (
-				route?.path.startsWith('/api/auth/admin/') ||
-				route?.path.startsWith('/api/auth/oauth2/')
-			) {
-				// This is the product fence's exact refusal, not a provider 404 for an absent route or row.
-				expect(response.status).toBe(404);
-				expect(await response.json()).toEqual({ error: 'not-found' });
-			}
-		}),
+		[agent, withoutSid].flatMap((token) =>
+			[false, true].map(async (withCookie) => {
+				const refusedBootstrap = await harness.auth('/api/auth/owner/bootstrap', {
+					method: 'POST',
+					headers: {
+						authorization: `Bearer ${token}`,
+						cookie: withCookie ? cookieSnapshot : '',
+						'content-type': 'application/json',
+					},
+					body: '{}',
+				});
+				expect(refusedBootstrap.status).toBe(403);
+			}),
+		),
 	);
 	await requireUnchangedProtectedState();
 	expect(harness.effects).toHaveLength(0);

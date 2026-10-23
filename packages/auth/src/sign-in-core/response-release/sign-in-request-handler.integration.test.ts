@@ -172,6 +172,10 @@ describe('C2 sign-in HTTP composition', () => {
 		'/api/auth/oauth2/create-client',
 		'/api/auth/oauth2/register',
 		'/api/auth/passkey/register',
+		'/api/auth/get-session',
+		'/api/auth/list-sessions',
+		'/api/auth/list-accounts',
+		'/api/auth/revoke-other-sessions',
 	])('never dispatches the unavailable public management route %s', async (pathname) => {
 		const effects = upstreamEffects;
 		const response = await fetch(`${endpoint}${pathname}`, {

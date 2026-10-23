@@ -12,7 +12,10 @@ import {
 } from '#auth/better-auth-provider/provider-configuration';
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
-import { handleSignInRequest } from '#auth/sign-in-core/response-release/sign-in-request-handler';
+import {
+	handleSignInRequest,
+	isPublicSignInRoute,
+} from '#auth/sign-in-core/response-release/sign-in-request-handler';
 import {
 	accessTokenReleaseClaimsSchema,
 	type SignInResponseReleasePorts,
@@ -39,6 +42,8 @@ export function createSignInHttpHandler(
 		});
 		try {
 			const url = new URL(request.url);
+			if (!isPublicSignInRoute(url.pathname))
+				return Response.json({ error: 'not-found' }, { status: 404 });
 			if (request.method === 'GET' && ['/sign-in', '/owner-ready'].includes(url.pathname)) {
 				const resumedAuthorization = new URL(
 					'/api/auth/oauth2/authorize',

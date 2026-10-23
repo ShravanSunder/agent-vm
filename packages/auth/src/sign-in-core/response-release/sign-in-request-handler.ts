@@ -6,26 +6,21 @@ import {
 
 /** S1 exposes provider sign-in and token flows; account administration waits for its audited slices. */
 export function isPublicSignInRoute(pathname: string): boolean {
-	if (pathname.startsWith('/api/auth/admin/') || pathname.startsWith('/api/auth/passkey/'))
-		return false;
-	if (
-		pathname.startsWith('/api/auth/oauth2/') &&
-		![
-			'/api/auth/oauth2/authorize',
-			'/api/auth/oauth2/token',
-			'/api/auth/oauth2/introspect',
-		].includes(pathname)
-	)
-		return false;
-	return ![
-		'/api/auth/link-social',
-		'/api/auth/unlink-account',
-		'/api/auth/update-user',
-		'/api/auth/delete-user',
-		'/api/auth/delete-user/callback',
-		'/api/auth/change-email',
-		'/api/auth/change-password',
-		'/api/auth/set-password',
+	return [
+		'/sign-in', // Starts the owner browser authorization journey.
+		'/owner-ready', // Resumes native CLI authorization after provider sign-in.
+		'/api/auth/owner/bootstrap', // Audited cookie-only bootstrap uses the in-process provider API.
+		'/api/auth/sign-in/social', // Starts configured Google/GitHub provider sign-in.
+		'/api/auth/callback/google', // Receives the configured Google OAuth callback.
+		'/api/auth/callback/github', // Receives the configured GitHub OAuth callback.
+		'/api/auth/oauth2/authorize', // Issues the native owner CLI authorization code with S256.
+		'/api/auth/oauth2/token', // Exchanges owner codes or authenticates registered agent clients.
+		'/api/auth/oauth2/introspect', // Confirms current person/session status through the release fence.
+		'/api/auth/jwks', // Publishes signing keys for audience-bound proof verification.
+		'/api/auth/.well-known/oauth-authorization-server', // Publishes provider-base OAuth metadata.
+		'/api/auth/.well-known/openid-configuration', // Publishes provider-base OIDC metadata.
+		'/.well-known/oauth-authorization-server', // Publishes issuer-root OAuth metadata.
+		'/.well-known/openid-configuration', // Publishes issuer-root OIDC metadata.
 	].includes(pathname);
 }
 
