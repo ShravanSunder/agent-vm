@@ -96,6 +96,18 @@ describe('beta tarball sync planning', () => {
 		expect(plan.toolVmPackages.map((packageEntry) => packageEntry.name)).not.toContain(
 			'@agent-vm/gateway-runtime',
 		);
+		for (const packageName of [
+			'@agent-collaboration/tool-access',
+			'@agent-collaboration/tool-engine',
+			'@agent-collaboration/tool-host-node',
+		]) {
+			expect(plan.packages.map((entry) => entry.name)).toContain(packageName);
+			expect(plan.hermesGatewayPackages.map((entry) => entry.name)).toContain(packageName);
+			expect(plan.toolVmPackages.map((entry) => entry.name)).toContain(packageName);
+		}
+		expect(
+			plan.packages.find((entry) => entry.name === '@agent-collaboration/tool-host-node')?.fileName,
+		).toBe('agent-collaboration-tool-host-node-0.0.82.tgz');
 	});
 
 	it('renders pnpm-workspace.yaml with overrides in the pnpm v10 location', () => {
@@ -453,7 +465,7 @@ describe('Tool VM overlay rendering', () => {
 		expect(overlay.copy.map((copyEntry) => copyEntry.from)).toEqual([
 			...TOOL_VM_TARBALL_PACKAGE_NAMES.map(
 				(packageName) =>
-					`local-agent-vm/${packageName.replace('@agent-vm/', 'agent-vm-')}-0.0.82-abc123ef.tgz`,
+					`local-agent-vm/${packageName.replace(/^@/u, '').replace('/', '-')}-0.0.82-abc123ef.tgz`,
 			),
 			'local-agent-vm/agent_vm_agent_portal_sdk-0.0.82-py3-none-any.whl',
 		]);

@@ -1,6 +1,13 @@
 /* oxlint-disable eslint/no-await-in-loop -- readiness probes must remain sequential */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
+import {
+	buildPortalCompositionApprovalProgram,
+	portalCompositionApprovalPrompt,
+	portalCompositionApprovalResultMarker,
+	portalCompositionApprovalFinalMarker,
+} from '#agent-vm/integration-tests/portal-composition-approval-test-fixture';
+
 import type { GatewayZoneVmOperations } from '../gateway/gateway-zone-support.js';
 import { waitForProtocolRetryInterval } from './e2e-protocol-wait.js';
 import { reportPortalCompositionResponseFailure } from './portal-composition-failure-diagnostics.js';
@@ -54,6 +61,8 @@ interface PortalCompositionModelServer extends PortalCompositionModelProgressSou
 		| PortalCompositionGeneratedTerminalProgram
 		| undefined;
 	readonly port: number;
+	readonly approvalPrograms: () => readonly string[];
+	readonly approvalResults: () => readonly string[];
 }
 
 async function readPortalCompositionDiagnosticHttpStatus(
@@ -228,6 +237,8 @@ export async function startPortalCompositionModelServer(options: {
 	readonly promptMarker: string;
 	readonly programResultMarker: string;
 }): Promise<PortalCompositionModelServer> {
+	const approvalPrograms: string[] = [];
+	const approvalResults: string[] = [];
 	let executeCodeRequestCount = 0;
 	let finalResponseIssued = false;
 	let firstExecuteCodeResultObserved = false;
@@ -265,6 +276,49 @@ export async function startPortalCompositionModelServer(options: {
 						usage: { completion_tokens: 1, prompt_tokens: 1, total_tokens: 2 },
 					}),
 				);
+				return;
+			}
+			if (latestUserContent(body)?.includes(portalCompositionApprovalPrompt)) {
+				const result = latestToolResult(body);
+				if (result === undefined) {
+					if (!hasNamedTool(body, 'execute_code'))
+						throw new Error('Hermes omitted execute_code for native approval');
+					const program = buildPortalCompositionApprovalProgram();
+					approvalPrograms.push(program);
+					writeServerSentEvents(response, [
+						completionChunk(
+							{
+								role: 'assistant',
+								tool_calls: [
+									{
+										function: {
+											name: 'execute_code',
+											arguments: JSON.stringify({ code: program }),
+										},
+										id: `portal-native-approval-${approvalPrograms.length}`,
+										index: 0,
+										type: 'function',
+									},
+								],
+							},
+							null,
+						),
+						completionChunk({}, 'tool_calls'),
+					]);
+				} else {
+					if (!result.includes(portalCompositionApprovalResultMarker))
+						throw new Error(
+							`Protected execute_code omitted result marker: ${result.slice(0, 2000)}`,
+						);
+					approvalResults.push(result);
+					writeServerSentEvents(response, [
+						completionChunk(
+							{ role: 'assistant', content: portalCompositionApprovalFinalMarker },
+							null,
+						),
+						completionChunk({}, 'stop'),
+					]);
+				}
 				return;
 			}
 			if (!latestUserContent(body)?.includes(options.promptMarker)) {
@@ -402,6 +456,8 @@ export async function startPortalCompositionModelServer(options: {
 		throw new Error('Portal composition model server did not bind a loopback port.');
 	}
 	return {
+		approvalPrograms: () => approvalPrograms,
+		approvalResults: () => approvalResults,
 		close: async () => closeServer(server),
 		executeCodeRequestCount: () => executeCodeRequestCount,
 		finalResponseIssued: () => finalResponseIssued,

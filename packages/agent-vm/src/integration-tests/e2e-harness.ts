@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
+import fs, { readFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -121,6 +121,7 @@ interface LocalNpmPackageTarball {
 
 export interface LocalDockerPackageTarball {
 	readonly archiveName: string;
+	readonly dependencyName: string;
 	readonly packageName: string;
 	readonly sourcePath: string;
 }
@@ -1346,12 +1347,38 @@ function shellSingleQuote(value: string): string {
 	return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-export function createLocalDockerPackageTarball(props: {
+export async function readPackedLocalPackageFile(
+	sourcePath: string,
+	fileName: string,
+): Promise<Buffer> {
+	const archive = gunzipSync(await readFile(sourcePath));
+	let offset = 0;
+	while (offset + tarBlockSize <= archive.length) {
+		const header = archive.subarray(offset, offset + tarBlockSize);
+		if (header.every((byte) => byte === 0)) break;
+		const entrySize = readTarEntrySize(header);
+		const dataOffset = offset + tarBlockSize;
+		if (dataOffset + entrySize > archive.length)
+			throw new Error(`Truncated package archive: ${sourcePath}`);
+		if (readTarHeaderField(header, 0, 100) === fileName)
+			return archive.subarray(dataOffset, dataOffset + entrySize);
+		offset = dataOffset + Math.ceil(entrySize / tarBlockSize) * tarBlockSize;
+	}
+	throw new Error(`Package archive has no ${fileName}: ${sourcePath}`);
+}
+
+export async function createLocalDockerPackageTarball(props: {
 	readonly packageName: string;
 	readonly sourcePath: string;
-}): LocalDockerPackageTarball {
+}): Promise<LocalDockerPackageTarball> {
+	const manifest: unknown = JSON.parse(
+		(await readPackedLocalPackageFile(props.sourcePath, 'package/package.json')).toString('utf8'),
+	);
+	if (!isJsonRecord(manifest) || typeof manifest.name !== 'string' || manifest.name.length === 0)
+		throw new Error(`Package archive has no dependency name: ${props.packageName}`);
 	return {
 		archiveName: path.basename(props.sourcePath),
+		dependencyName: manifest.name,
 		packageName: props.packageName,
 		sourcePath: props.sourcePath,
 	};
@@ -1369,7 +1396,7 @@ export async function packLocalAgentVmPackageTarball(options: {
 }
 
 export function localDockerPackageDependencyName(tarball: LocalDockerPackageTarball): string {
-	return `@agent-vm/${tarball.packageName}`;
+	return tarball.dependencyName;
 }
 
 function renderLocalDockerPackageManifest(tarballs: readonly LocalDockerPackageTarball[]): string {
@@ -1458,10 +1485,15 @@ function renderLocalDockerPackageInstallCommand(
 	return [runLine.slice('RUN '.length), ...continuationLines].join('\n');
 }
 
-function isLocalToolVmPackageInstallCommand(command: string): boolean {
+function isLocalToolVmPackageInstallCommand(
+	command: string,
+	localPackageTarballs: readonly LocalDockerPackageTarball[],
+): boolean {
 	return (
 		(command.includes('/opt/agent-vm/local-packages/package.json') &&
-			command.includes('file:/tmp/agent-vm-mcp-portal-')) ||
+			localPackageTarballs.some((tarball) =>
+				command.includes(`file:/tmp/${tarball.archiveName}`),
+			)) ||
 		(command.includes('uv pip install') && command.includes('agent_vm_agent_portal_sdk-'))
 	);
 }
@@ -1474,11 +1506,7 @@ function isLocalToolVmGeneratedPackageCopyEntry(options: {
 	if (/^agent_vm_agent_portal_sdk-[^/]+\.whl$/u.test(sourceFileName)) {
 		return true;
 	}
-	return options.localPackageTarballs.some(
-		(tarball) =>
-			sourceFileName.startsWith(`agent-vm-${tarball.packageName}-`) &&
-			sourceFileName.endsWith('.tgz'),
-	);
+	return options.localPackageTarballs.some((tarball) => sourceFileName === tarball.archiveName);
 }
 
 function resolveManagedOverlayCopySourcePath(
@@ -1558,7 +1586,7 @@ async function writeLocalToolVmManagedOverlay(options: {
 		],
 		runAfterBase: [
 			...originalOverlay.runAfterBase.filter(
-				(command) => !isLocalToolVmPackageInstallCommand(command),
+				(command) => !isLocalToolVmPackageInstallCommand(command, options.localPackageTarballs),
 			),
 			renderLocalDockerPackageInstallCommand(options.localPackageTarballs),
 		],
@@ -1568,13 +1596,9 @@ async function writeLocalToolVmManagedOverlay(options: {
 	return derivedOverlayPath;
 }
 
-export async function useLocalToolVmMcpPortalPackageTarballs(options: {
+export async function useLocalToolVmPackageTarballs(options: {
 	readonly localAgentPortalSdkWheelPath: string;
-	readonly localAgentPortalSdkTarballPath: string;
-	readonly localConfigContractsTarballPath: string;
-	readonly localMcpPortalTarballPath: string;
-	readonly localOAuthBrokerContractsTarballPath: string;
-	readonly localSecretManagementTarballPath: string;
+	readonly localPackageTarballs: readonly LocalDockerPackageTarball[];
 	readonly profileNames?: readonly string[] | undefined;
 	readonly projectRoot: string;
 	readonly systemConfig: LoadedSystemConfig;
@@ -1582,28 +1606,7 @@ export async function useLocalToolVmMcpPortalPackageTarballs(options: {
 	const managedImageRelease = await resolveManagedImageRelease();
 	const baseImage = managedImageRelease.baseImages['tool-vm'];
 	const toolVmProfiles = Object.entries(options.systemConfig.imageProfiles.toolVms);
-	const localPackageTarballs = [
-		createLocalDockerPackageTarball({
-			packageName: 'agent-portal-sdk',
-			sourcePath: options.localAgentPortalSdkTarballPath,
-		}),
-		createLocalDockerPackageTarball({
-			packageName: 'oauth-broker-contracts',
-			sourcePath: options.localOAuthBrokerContractsTarballPath,
-		}),
-		createLocalDockerPackageTarball({
-			packageName: 'config-contracts',
-			sourcePath: options.localConfigContractsTarballPath,
-		}),
-		createLocalDockerPackageTarball({
-			packageName: 'secret-management',
-			sourcePath: options.localSecretManagementTarballPath,
-		}),
-		createLocalDockerPackageTarball({
-			packageName: 'mcp-portal',
-			sourcePath: options.localMcpPortalTarballPath,
-		}),
-	] satisfies readonly LocalDockerPackageTarball[];
+	const { localPackageTarballs } = options;
 	await Promise.all(
 		toolVmProfiles
 			.filter(
@@ -1707,46 +1710,37 @@ export async function useLocalToolVmMcpPortalPackage(options: {
 			packageDirectory: path.join(options.repoRoot, 'python', 'agent-vm-agent-portal-sdk'),
 			repoRoot: options.repoRoot,
 		}));
-	const localAgentPortalSdkTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'agent-portal-sdk',
-		repoRoot: options.repoRoot,
-	});
-	const localConfigContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'config-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localOAuthBrokerContractsTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'oauth-broker-contracts',
-		repoRoot: options.repoRoot,
-	});
-	const localSecretManagementTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'secret-management',
-		repoRoot: options.repoRoot,
-	});
-	const localMcpPortalTarballPath = await packLocalAgentVmPackageTarball({
-		packageName: 'mcp-portal',
-		repoRoot: options.repoRoot,
-	});
+	const packedTarballs = await Promise.all(
+		[
+			'agent-portal-sdk',
+			'config-contracts',
+			'oauth-broker-contracts',
+			'secret-management',
+			'mcp-portal',
+			'tool-access',
+			'tool-engine',
+			'tool-host-node',
+		].map(
+			async (packageName) =>
+				await createLocalDockerPackageTarball({
+					packageName,
+					sourcePath: await packLocalAgentVmPackageTarball({
+						packageName,
+						repoRoot: options.repoRoot,
+					}),
+				}),
+		),
+	);
 	try {
-		await useLocalToolVmMcpPortalPackageTarballs({
+		await useLocalToolVmPackageTarballs({
 			localAgentPortalSdkWheelPath,
-			localAgentPortalSdkTarballPath,
-			localConfigContractsTarballPath,
-			localMcpPortalTarballPath,
-			localOAuthBrokerContractsTarballPath,
-			localSecretManagementTarballPath,
+			localPackageTarballs: packedTarballs,
 			...(options.profileNames === undefined ? {} : { profileNames: options.profileNames }),
 			projectRoot: options.projectRoot,
 			systemConfig: options.systemConfig,
 		});
 	} finally {
-		await removeE2eLocalPackageTarballs([
-			localAgentPortalSdkTarballPath,
-			localConfigContractsTarballPath,
-			localOAuthBrokerContractsTarballPath,
-			localSecretManagementTarballPath,
-			localMcpPortalTarballPath,
-		]);
+		await removeE2eLocalPackageTarballs(packedTarballs.map((entry) => entry.sourcePath));
 	}
 }
 

@@ -9,6 +9,8 @@ import {
 	type ManagedToolPortalConfig,
 } from '@agent-vm/config-contracts';
 
+import { portalCompositionApprovalNamespace } from './portal-composition-approval-test-fixture.js';
+
 export interface PortalCompositionFixtureConfig {
 	readonly mcpConfig: McpConfig;
 	readonly toolPortalConfig: ManagedToolPortalConfig;
@@ -196,6 +198,11 @@ export function buildPortalCompositionFixtureConfig(
 	});
 	const mcpConfig = mcpConfigSchema.parse({
 		providers: {
+			approvedComposition: {
+				kind: 'mcp',
+				namespace: portalCompositionApprovalNamespace,
+				transport: { kind: 'streamable-http', url: options.mcpUrl },
+			},
 			composition: {
 				discovery: { summary: 'Deterministic portal composition MCP fixture' },
 				kind: 'mcp',
@@ -372,6 +379,11 @@ export function buildPortalCompositionFixtureConfig(
 							withoutApproval: { allow: ['read_thing', 'write_thing'] },
 						},
 						tools: { allow: ['read_thing', 'write_thing'] },
+					},
+					[portalCompositionApprovalNamespace]: {
+						backend: { kind: 'mcp_provider' },
+						calls: { requiresApproval: { allow: ['write_thing'] }, withoutApproval: { allow: [] } },
+						tools: { allow: ['write_thing'] },
 					},
 				},
 			},

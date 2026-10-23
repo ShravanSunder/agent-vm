@@ -26,6 +26,9 @@ function expectManagedDockerfileToAvoidSecretMaterial(generatedDockerfile: strin
 function expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile: string): void {
 	expect(generatedDockerfile).toContain('uv venv /opt/agent-vm-tools');
 	expect(generatedDockerfile).toContain('agent-vm-agent-portal-sdk==');
+	expect(generatedDockerfile).toContain('import agent_vm_agent_portal_sdk.standard_mcp_transport');
+	expect(generatedDockerfile).toContain('metadata.version("mcp") == "2.0.0"');
+	expect(generatedDockerfile).toContain('@agent-collaboration/tool-host-node/catalog-typescript');
 	expect(generatedDockerfile).toContain('/node_modules');
 	expect(generatedDockerfile).toContain(
 		'/node_modules/@agent-vm/agent-portal-sdk/dist/cli/tool-portal.js /pnpm/tool-portal',
@@ -272,6 +275,11 @@ describe('managed image release', () => {
 		);
 		expect(portalPackageDirectoryInstallIndex).toBeGreaterThan(-1);
 		expect(portalSdkInstallIndex).toBeGreaterThan(portalPackageDirectoryInstallIndex);
+		expect(
+			generatedDockerfile.split('\n').find((line) =>
+				line.includes('pnpm add --dir /opt/agent-vm/portal-packages '),
+			),
+		).toMatch(/"@agent-vm\/agent-portal-sdk@[^"]+"$/u);
 		expectToolVmDockerfileToInstallGitHubCliFromStableApt(generatedDockerfile);
 		expect(generatedDockerfile).toContain('ENV PNPM_HOME=/pnpm');
 		expect(generatedDockerfile).toContain('ENV PATH=${PNPM_HOME}:${PATH}');

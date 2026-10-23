@@ -57,6 +57,10 @@ adapter_project = tomllib.loads(
 assert metadata.version("hermes-agent") == "0.21.5"
 assert metadata.version("agent-vm-agent-portal-sdk") == sdk_project["project"]["version"]
 assert metadata.version("agent-vm-hermes-adapter") == adapter_project["project"]["version"]
+assert metadata.version("mcp") == "2.0.0"
+assert metadata.version("httpx2").split(".")[0] == "2"
+assert "mcp==2.0.0" in metadata.requires("agent-vm-agent-portal-sdk")
+import agent_vm_agent_portal_sdk.standard_mcp_transport
 '\''
 		if [[ "${AGENT_VM_HERMES_CHECK_KIND}" == "test" ]]; then
 			/opt/hermes/.venv/bin/python -m pytest \

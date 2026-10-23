@@ -12,6 +12,9 @@ import { stripJsonComments } from './jsonc-comments.ts';
 const execFileAsync = promisify(execFile);
 
 export const AGENT_VM_PACKAGE_NAMES = [
+	'@agent-collaboration/tool-access',
+	'@agent-collaboration/tool-engine',
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/agent-vm',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
@@ -32,6 +35,9 @@ export const AGENT_VM_PACKAGE_NAMES = [
 ] as const;
 
 export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
+	'@agent-collaboration/tool-access',
+	'@agent-collaboration/tool-engine',
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
 	'@agent-vm/secret-management',
@@ -40,6 +46,9 @@ export const TOOL_VM_TARBALL_PACKAGE_NAMES = [
 ] as const;
 
 export const HERMES_GATEWAY_TARBALL_PACKAGE_NAMES = [
+	'@agent-collaboration/tool-access',
+	'@agent-collaboration/tool-engine',
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/config-contracts',
 	'@agent-vm/control-protocol-contracts',
@@ -168,7 +177,7 @@ export function resolveBetaPnpmInstallEnvironment(): Readonly<Record<string, str
 }
 
 function packageTarballFileName(packageName: AgentVmPackageName, version: string): string {
-	return `${packageName.replace('@agent-vm/', 'agent-vm-')}-${version}.tgz`;
+	return `${packageName.replace(/^@/u, '').replace('/', '-')}-${version}.tgz`;
 }
 
 function createPackageEntry(
@@ -251,7 +260,9 @@ export function listStaleLocalOverlayFileNames(options: {
 	]);
 	return options.existingFileNames.filter(
 		(fileName) =>
-			(fileName.startsWith('agent-vm-') || isAgentPortalSdkWheelFileName(fileName)) &&
+			(fileName.startsWith('agent-vm-') ||
+				fileName.startsWith('agent-collaboration-') ||
+				isAgentPortalSdkWheelFileName(fileName)) &&
 			!currentOverlayFileNames.has(fileName),
 	);
 }
@@ -273,8 +284,8 @@ function isJsonRecord(value: unknown): value is JsonRecord {
 
 function isAgentVmLocalCopyEntry(copyEntry: OverlayCopyEntry): boolean {
 	return (
-		copyEntry.from.startsWith('local-agent-vm/agent-vm-') ||
-		copyEntry.to.startsWith('/tmp/agent-vm-') ||
+		/^local-agent-vm\/agent-(?:vm|collaboration)-/u.test(copyEntry.from) ||
+		/^\/tmp\/agent-(?:vm|collaboration)-/u.test(copyEntry.to) ||
 		isAgentPortalSdkWheelFileName(path.basename(copyEntry.from)) ||
 		isAgentPortalSdkWheelFileName(path.basename(copyEntry.to))
 	);
@@ -288,6 +299,8 @@ function isAgentVmLocalInstallCommand(command: string): boolean {
 	return (
 		command.includes('/opt/agent-vm/local-packages') ||
 		command.includes('/tmp/agent-vm-') ||
+		command.includes('/tmp/agent-collaboration-') ||
+		command.includes('@agent-collaboration/') ||
 		command.includes('@agent-vm/')
 	);
 }
@@ -619,7 +632,7 @@ function isHermesLocalArtifactFileName(
 	packageEntries: readonly BetaTarballPackageEntry[],
 ): boolean {
 	const isKnownPackageTarball = packageEntries.some((packageEntry) => {
-		const packageFileNamePrefix = `${packageEntry.name.replace('@agent-vm/', 'agent-vm-')}-`;
+		const packageFileNamePrefix = `${packageEntry.name.replace(/^@/u, '').replace('/', '-')}-`;
 		return fileName.startsWith(packageFileNamePrefix) && fileName.endsWith('.tgz');
 	});
 	return (
