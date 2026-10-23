@@ -25,9 +25,6 @@ export type ProofProcessEnding =
 	  }
 	| { readonly kind: 'spawn-failed'; readonly message: string };
 
-// One Node verification command may run several journeys; cancellation stops later groups as well.
-let interruptedSignal: NodeJS.Signals | undefined;
-
 /** Enumerate only the group this runner created; no command lines or unrelated process data are retained. */
 export async function liveProofProcessGroup(groupId: number): Promise<readonly number[]> {
 	const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,pgid='], {
@@ -67,6 +64,7 @@ export async function runAuthProofProcess(props: {
 	readonly env: NodeJS.ProcessEnv;
 	readonly timeoutMs: number;
 	readonly graceMs?: number;
+	readonly onStarted?: (processGroup: number) => void;
 }): Promise<{
 	readonly ending: ProofProcessEnding;
 	readonly processGroup: number | null;
@@ -79,14 +77,6 @@ export async function runAuthProofProcess(props: {
 	};
 }> {
 	if (process.platform === 'win32') throw new Error('Proof process groups require a POSIX target');
-	if (interruptedSignal !== undefined)
-		return {
-			ending: { kind: 'cancelled', code: null, signal: interruptedSignal },
-			processGroup: null,
-			stdout: '',
-			stderr: '',
-			cleanup: { initialMembers: [], remainingMembers: [], signals: [] },
-		};
 	const child = spawn(props.command, [...props.args], {
 		cwd: props.cwd,
 		env: props.env,
@@ -109,14 +99,9 @@ export async function runAuthProofProcess(props: {
 		signalGroup('SIGTERM');
 		forceTimer = setTimeout(() => signalGroup('SIGKILL'), graceMs);
 	}
-	function interrupted(signal: NodeJS.Signals): void {
-		interruptedSignal = signal;
-		stopGroup('cancelled');
-	}
-	const terminate = (): void => interrupted('SIGTERM');
-	const interrupt = (): void => interrupted('SIGINT');
-	process.once('SIGTERM', terminate);
-	process.once('SIGINT', interrupt);
+	const cancel = (): void => stopGroup('cancelled');
+	process.once('SIGTERM', cancel);
+	process.once('SIGINT', cancel);
 	const timeout = setTimeout(() => stopGroup('timed-out'), props.timeoutMs);
 	let outputBytes = 0;
 	async function collect(stream: NodeJS.ReadableStream): Promise<string> {
@@ -132,6 +117,8 @@ export async function runAuthProofProcess(props: {
 	const output = Promise.all([collect(child.stdout), collect(child.stderr)]);
 	void output.catch(() => undefined);
 	try {
+		// A proof can retain ownership even when it deliberately breaks the runner's completion.
+		if (groupId !== undefined) props.onStarted?.(groupId);
 		const exit = await new Promise<ProofProcessEnding>((resolve) => {
 			child.once('error', (error) => resolve({ kind: 'spawn-failed', message: error.message }));
 			child.once('close', (code, signal) =>
@@ -165,7 +152,7 @@ export async function runAuthProofProcess(props: {
 	} finally {
 		clearTimeout(timeout);
 		clearTimeout(forceTimer);
-		process.off('SIGTERM', terminate);
-		process.off('SIGINT', interrupt);
+		process.off('SIGTERM', cancel);
+		process.off('SIGINT', cancel);
 	}
 }
