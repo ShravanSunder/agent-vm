@@ -96,7 +96,8 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 					const settled = engine.settledCatalog();
 					if (
 						settled !== undefined &&
-						(context.catalog === undefined || settled.fetchedAt >= context.catalog.fetchedAt)
+						(context.catalog === undefined ||
+							settled.discoveryStartedAt > context.catalog.discoveryStartedAt)
 					)
 						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
