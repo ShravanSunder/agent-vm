@@ -11,6 +11,11 @@ import {
 	agentAudience,
 	managementAudience,
 } from '#auth/test-fixtures/local-auth-harness';
+import {
+	managementClientReadbackSql,
+	managementAuditReadbackSql,
+	requireManagementRefusalReadback,
+} from '#auth/test-fixtures/management-refusal-readback';
 
 let harness: Awaited<ReturnType<typeof startLocalAuthHarness>>;
 beforeAll(async () => {
@@ -20,31 +25,34 @@ afterAll(async () => {
 	await harness?.close();
 });
 
-async function protectedRows(): Promise<unknown> {
-	return Promise.all([
+interface ManagementReadback {
+	readonly protectedState: readonly unknown[];
+	readonly auditRows: unknown;
+}
+async function protectedRows(): Promise<ManagementReadback> {
+	const protectedState = await Promise.all([
 		harness.database
-			.prepare('SELECT clientId, disabled, metadata, grantTypes FROM oauthClient ORDER BY clientId')
-			.all(),
+			.prepare(managementClientReadbackSql)
+			.all()
+			.then((result) => result.results),
 		harness.database
-			.prepare('SELECT clientId, resourceId FROM oauthClientResource ORDER BY clientId, resourceId')
-			.all(),
+			.prepare('SELECT * FROM oauthClientResource ORDER BY clientId, resourceId')
+			.all()
+			.then((result) => result.results),
 		harness.database
-			.prepare(
-				'SELECT identifier, disabled, customClaims, allowedScopes FROM oauthResource ORDER BY identifier',
-			)
-			.all(),
+			.prepare('SELECT * FROM oauthResource ORDER BY identifier')
+			.all()
+			.then((result) => result.results),
 		harness.database
-			.prepare('SELECT id, clientId, userId, scopes FROM oauthConsent ORDER BY id')
-			.all(),
-		harness.database
-			.prepare(
-				'SELECT id, actor_user_id, request_id, phase, change_kind, target_id FROM sign_in_audit ORDER BY id',
-			)
-			.all(),
+			.prepare('SELECT * FROM oauthConsent ORDER BY id')
+			.all()
+			.then((result) => result.results),
 		harness
 			.gateway(`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`)
 			.then((response) => response.json()),
 	]);
+	const auditRows = (await harness.database.prepare(managementAuditReadbackSql).all()).results;
+	return { protectedState, auditRows };
 }
 
 it('agent: every management boundary refuses real E10 and signed management no-sid identity before protected reads or effects', async () => {
@@ -92,6 +100,29 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	expect(decodeProtectedHeader(withoutSid).typ).toBe('at+jwt');
 	expect(Object.hasOwn(checked.payload, 'sid')).toBe(false);
 	const before = await protectedRows();
+	const storedCredentialHashes = z
+		.array(z.object({ clientSecret: z.string().nullable() }))
+		.parse(before.protectedState[0])
+		.flatMap((row) => (row.clientSecret === null ? [] : [row.clientSecret]));
+	async function requireUnchangedProtectedState(): Promise<void> {
+		const after = await protectedRows();
+		requireManagementRefusalReadback({
+			beforeProtected: before.protectedState,
+			afterProtected: after.protectedState,
+			beforeAudit: before.auditRows,
+			afterAudit: after.auditRows,
+			attributableActors: [person.sub, client.clientId],
+			forbiddenValues: [
+				owner,
+				agent,
+				withoutSid,
+				client.clientSecret,
+				harness.cookie(),
+				...storedCredentialHashes,
+			],
+		});
+	}
+
 	const binding = await harness.miniflare.getBindings<{
 		readonly SIGN_IN: ReturnType<typeof createSignInManagementBinding>;
 	}>('gateway-one');
@@ -136,7 +167,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 			]);
 		}),
 	);
-	expect(await protectedRows()).toEqual(before);
+	await requireUnchangedProtectedState();
 	const gatewayResponses = await Promise.all(
 		[agent, withoutSid].flatMap((token) => [
 			harness.gateway(endpoint, {
@@ -236,7 +267,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 			}
 		}),
 	);
-	expect(await protectedRows()).toEqual(before);
+	await requireUnchangedProtectedState();
 	expect(harness.effects).toHaveLength(0);
 	const ownerRead = await harness.gateway(`${endpoint}/${registeredClientId}`, {
 		headers: { authorization: `Bearer ${owner}` },
