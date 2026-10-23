@@ -33,7 +33,9 @@ export function collectToolHostNodeViolations(
 	const violations: string[] = [];
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
 	function visit(node: ts.Node): void {
-		const inbound = filePath.startsWith('packages/tool-host-node/src/mcp-proxy-server/');
+		const inbound =
+			filePath.startsWith('packages/tool-host-node/src/mcp-proxy-server/') ||
+			filePath.startsWith('packages/tool-host-node/src/standalone-tool-portal/');
 		if (
 			inbound &&
 			ts.isVariableDeclaration(node) &&

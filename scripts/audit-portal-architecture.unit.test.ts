@@ -351,7 +351,7 @@ describe('portal architecture audit', () => {
 		]);
 	});
 
-	it('allows semantic router declarations only in the canonical Tool Portal result router', () => {
+	it('keeps the new engine merger and the F-60 original independent until S4', () => {
 		// Arrange / Act
 		const violations = collectPortalArchitectureViolations({
 			files: [
@@ -367,7 +367,12 @@ describe('portal architecture audit', () => {
 				{
 					filePath: 'packages/tool-portal/src/tool-portal-result-router.ts',
 					sourceText:
-						'export async function routePortalCall(): Promise<unknown> { return {}; }\nexport async function mergePortalList(): Promise<unknown> { return {}; }\n',
+						'export async function routePortalCall(): Promise<unknown> { return {}; }\nexport async function mergeToolPortalList(): Promise<unknown> { return {}; }\n',
+				},
+				{
+					filePath: 'packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts',
+					sourceText:
+						'export async function mergePortalList(): Promise<unknown> { return {}; }\nexport async function mergeToolPortalList(): Promise<unknown> { return {}; }\n',
 				},
 				{
 					filePath: 'packages/tool-portal/src/tool-portal-result-router.unit.test.ts',
@@ -380,7 +385,7 @@ describe('portal architecture audit', () => {
 		// Assert
 		expect(violations).toEqual([
 			'packages/gateway-runtime/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
-			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
+			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper mergePortalList must be declared only in packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts',
 			'packages/tool-portal/src/copied-tool-portal-router.ts: Tool Portal semantic router helper routePortalCall must be declared only in packages/tool-portal/src/tool-portal-result-router.ts',
 		]);
 	});

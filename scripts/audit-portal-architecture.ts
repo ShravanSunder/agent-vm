@@ -594,17 +594,26 @@ function collectToolPortalSemanticRouterViolations(
 		isTestSourceFile(filePath) ||
 		!filePath.startsWith('packages/') ||
 		!filePath.includes('/src/') ||
-		!filePath.endsWith('.ts') ||
-		filePath === 'packages/tool-portal/src/tool-portal-result-router.ts'
+		!filePath.endsWith('.ts')
 	) {
 		return [];
 	}
-	return toolPortalSemanticRouterHelperNames
-		.filter((helperName) => declaresNamedFunctionOrVariable(file.sourceText, helperName))
-		.map(
-			(helperName) =>
-				`${filePath}: Tool Portal semantic router helper ${helperName} must be declared only in packages/tool-portal/src/tool-portal-result-router.ts`,
-		);
+	return toolPortalSemanticRouterHelperNames.flatMap((helperName) => {
+		const owner = helperName.startsWith('merge')
+			? 'packages/tool-engine/src/standalone-tool-portal/portal-discovery-merger.ts'
+			: 'packages/tool-portal/src/tool-portal-result-router.ts';
+		// F-60 keeps the original independent merger until S4 removes the old package.
+		const originalPreCutoverMerger =
+			helperName.startsWith('merge') &&
+			filePath === 'packages/tool-portal/src/tool-portal-result-router.ts';
+		return filePath !== owner &&
+			!originalPreCutoverMerger &&
+			declaresNamedFunctionOrVariable(file.sourceText, helperName)
+			? [
+					`${filePath}: Tool Portal semantic router helper ${helperName} must be declared only in ${owner}`,
+				]
+			: [];
+	});
 }
 
 function collectHarnessViolations(file: PortalArchitectureSourceFile): readonly string[] {

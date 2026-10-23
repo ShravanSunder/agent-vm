@@ -18,3 +18,12 @@ export { createNodeStdioUpstreamRuntime } from '#node-host/stdio-upstream-server
 export * from '#node-host/host-observability/process-logging';
 export * from '#node-host/host-observability/models/server-log-events';
 export * from '#node-host/host-configuration/mcp-schema-artifact';
+export * from '#node-host/standalone-tool-portal/models/standalone-portal-contracts';
+export * from '#node-host/standalone-tool-portal/standalone-batch-approval';
+export * from '#node-host/standalone-tool-portal/standalone-mcp-server';
+export * from '#node-host/standalone-tool-portal/standalone-http-servers';
+export * from '#node-host/standalone-tool-portal/standalone-stdio-server';
+export * from '#node-host/standalone-tool-portal/standalone-entrypoints';
+export * from '#node-host/standalone-tool-portal/standalone-service-adapter';
+export * from '#node-host/standalone-tool-portal/standalone-dispatch-identity';
+export * from '#node-host/standalone-tool-portal/standalone-mcp-provider';

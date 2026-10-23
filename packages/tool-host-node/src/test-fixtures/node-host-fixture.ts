@@ -34,6 +34,9 @@ export const toolInputSchema = {
 export interface ControlledProvider {
 	readonly url: string;
 	readonly listings: string[];
+	readonly protocolMessages: string[];
+	readonly httpMethods: string[];
+	readonly legacySseRequests: number;
 	readonly effects: {
 		readonly name: string;
 		readonly arguments: unknown;
@@ -55,6 +58,9 @@ export async function startControlledProvider(
 	port = 0,
 ): Promise<ControlledProvider> {
 	const listings: string[] = [];
+	const protocolMessages: string[] = [];
+	const httpMethods: string[] = [];
+	let legacySseRequests = 0;
 	const effects: ControlledProvider['effects'] = [];
 	const servers = new Set<Server>();
 	let duplicates = false;
@@ -66,6 +72,9 @@ export async function startControlledProvider(
 	let enteredDiscovery: (() => void) | undefined;
 	let discoveryGate: Promise<void> = Promise.resolve();
 	const http = createServer((request, response) => {
+		if (request.method === 'GET') legacySseRequests++;
+		const advertisedMethod = request.headers['mcp-method'];
+		if (typeof advertisedMethod === 'string') httpMethods.push(advertisedMethod);
 		const handle = async (): Promise<void> => {
 			const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
 			const server = new Server(
@@ -121,7 +130,13 @@ export async function startControlledProvider(
 			const bridge: Transport = {
 				start: async () => {
 					Object.assign(transport, {
-						onmessage: bridge.onmessage,
+						onmessage: (
+							message: import('@modelcontextprotocol/sdk/types.js').JSONRPCMessage,
+							extra?: import('@modelcontextprotocol/sdk/types.js').MessageExtraInfo,
+						): void => {
+							if ('method' in message) protocolMessages.push(message.method);
+							bridge.onmessage?.(message, extra);
+						},
 						onclose: bridge.onclose,
 						onerror: bridge.onerror,
 					});
@@ -150,6 +165,11 @@ export async function startControlledProvider(
 	return {
 		url: `http://127.0.0.1:${address.port}/mcp`,
 		listings,
+		protocolMessages,
+		httpMethods,
+		get legacySseRequests() {
+			return legacySseRequests;
+		},
 		effects,
 		close: async () => {
 			await Promise.all([...servers].map(async (server) => server.close()));
