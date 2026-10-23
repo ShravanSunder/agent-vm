@@ -13,7 +13,8 @@ import type { OrganizationConfiguration } from '#tool-host-core/hosted-configura
 /** Settled plain data only; never a discovery promise, runtime or client. */
 export interface SettledOrganizationCatalog {
 	readonly snapshot: OrganizationToolCatalogSnapshot;
-	readonly fetchedAt: number;
+	/** Discovery start controls publication order and conservative cache expiry. */
+	readonly discoveryStartedAt: number;
 }
 
 export interface OrganizationEngine {
