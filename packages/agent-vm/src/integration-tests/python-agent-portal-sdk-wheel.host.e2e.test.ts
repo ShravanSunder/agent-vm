@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -9,8 +9,9 @@ const repositoryRoot = process.cwd();
 const sdkDistributionName = 'agent-vm-agent-portal-sdk';
 const sdkImportPackageName = 'agent_vm_agent_portal_sdk';
 const expectedRequiresDist = [
+	'httpx2<3,>=2.5.0',
 	'httpx<1,>=0.27.1',
-	'mcp<2,>=1.28.1',
+	'mcp==2.0.0',
 	'pydantic-core<3,>=2.41.5',
 	'pydantic<3,>=2.12.0',
 ] as const;
@@ -32,6 +33,8 @@ const publicImportModuleNames = [
 ] as const;
 
 interface PythonSdkWheelFixture {
+	readonly installedPythonPath: string;
+	readonly installedTransportDependencies: Readonly<Record<string, string>>;
 	readonly importedModuleFiles: Readonly<Record<string, string>>;
 	readonly installedVersion: string;
 	readonly metadataName: string;
@@ -166,6 +169,7 @@ installed_distribution = importlib.metadata.distribution(${JSON.stringify(sdkDis
 print(json.dumps({
     "importedModuleFiles": imported_module_files,
     "installedVersion": installed_distribution.version,
+    "installedTransportDependencies": {name: importlib.metadata.version(name) for name in ("mcp", "mcp-types", "httpx", "httpx2")},
     "metadataName": wheel_metadata["Name"],
     "metadataRequiresDist": sorted(wheel_metadata.get_all("Requires-Dist", [])),
     "metadataRequiresPython": wheel_metadata["Requires-Python"],
@@ -185,6 +189,11 @@ print(json.dumps({
 	}
 
 	return {
+		installedPythonPath: virtualEnvironmentPythonPath,
+		installedTransportDependencies: requireStringRecord(
+			parsedInspection['installedTransportDependencies'],
+			'installedTransportDependencies',
+		),
 		importedModuleFiles: requireStringRecord(
 			parsedInspection['importedModuleFiles'],
 			'importedModuleFiles',
@@ -227,6 +236,9 @@ describe('packed Python Agent Portal SDK wheel', () => {
 		expect(fixture.metadataRequiresPython).toBe('>=3.13');
 		expect(fixture.metadataRequiresDist).toEqual(expectedRequiresDist);
 		expect(fixture.metadataVersion).toBe(fixture.installedVersion);
+		expect(fixture.installedTransportDependencies['mcp']).toBe('2.0.0');
+		expect(fixture.installedTransportDependencies['mcp-types']).toBe('2.0.0');
+		expect(fixture.installedTransportDependencies['httpx2']).toMatch(/^2\./u);
 	});
 
 	it('imports every public client module only from the clean wheel installation', () => {
@@ -238,4 +250,47 @@ describe('packed Python Agent Portal SDK wheel', () => {
 			expect(importedModuleFile).not.toContain(repositoryRoot);
 		}
 	});
+
+	it.each(['http', 'stdio'])(
+		'calls the built standalone Node host from the installed wheel over %s',
+		async (mode) => {
+			if (rootDirectory === undefined) throw new Error('Missing isolated wheel root.');
+			const loaderConfig = path.join(rootDirectory, 'tsx-config.json');
+			await writeFile(loaderConfig, JSON.stringify({ compilerOptions: {} }));
+			const journey = await execa(
+				fixture.installedPythonPath,
+				[
+					'-I',
+					path.join(
+						repositoryRoot,
+						'python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py',
+					),
+					mode,
+					process.execPath,
+					import.meta.resolve('tsx'),
+					path.join(
+						repositoryRoot,
+						'packages/tool-host-node/src/test-fixtures/python-mcp-node-host.ts',
+					),
+					path.join(rootDirectory, `${mode}-host.json`),
+				],
+				{
+					cwd: rootDirectory,
+					env: { ...isolatedPythonEnvironment(rootDirectory), TSX_TSCONFIG_PATH: loaderConfig },
+					extendEnv: false,
+					timeout: 90_000,
+				},
+			);
+			const result: unknown = JSON.parse(journey.stdout);
+			process.stdout.write(`${journey.stdout}\n`);
+			expect(result).toMatchObject({
+				mode,
+				mcpVersion: '2.0.0',
+				effects: expect.arrayContaining([
+					expect.objectContaining({ name: 'ask', arguments: { value: 7 } }),
+					expect.objectContaining({ name: 'ask', arguments: { value: 8 } }),
+				]),
+			});
+		},
+	);
 });
