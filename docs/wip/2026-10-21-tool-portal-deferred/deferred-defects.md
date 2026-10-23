@@ -43,6 +43,23 @@ it passed at `80067700`, and S4d doesn't touch gateway-runtime. Same fix in its
 own layer: compare the dispatched items as a multiset and keep the effect,
 result and release assertions.
 
+**Fourth instance, same pattern (2026-10-23):**
+`packages/tool-host-cloudflare/src/worker-mcp-serving/worker-parity.host.e2e.test.ts:159`
+compares the order in which the upstream fixture received four effects:
+expected `[first,last,first,last]`, got `[first,last,last,first]`. Seen in the
+sunclaw host gate at #249 `bb71279b` (catalog-ordering slice); the same test
+passed at #247 `904841d1`. `compare` awaits the reference host before the
+Worker, so the cross-host order is fixed; within one host, batch items run
+through `Promise.all` (tool-engine `portal-call-execution.ts:159`) and the
+fixture records calls on HTTP arrival (`controlled-mcp-issuer.ts:140`), so
+the two effects of one host can arrive in either order while the ordered
+result assertions still pass. Admitted as an exception for that slice. Fix in
+its own layer: assert each host's two-effect chunk as the multiset
+`{first,last}`, keep the total of four and the ordered result assertions.
+
+**All four are queued as one test-only slice**, re-gated once, instead of
+four separate changes.
+
 ## Completed-result budget keeps survivors by completion order (product defect, held for #33)
 
 Bot review thread r4350681792 on #246, now in `tool-host-core` (#248). When a batch's
