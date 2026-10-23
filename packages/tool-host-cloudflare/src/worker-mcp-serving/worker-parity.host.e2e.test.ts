@@ -156,12 +156,15 @@ for (const mode of ['direct', 'indirect'] as const) {
 			]);
 			expect(mixed.isError).toBe(true);
 			expect(harness.fixture.calls).toHaveLength(beforeMixed + 4); // Two effects on each independent host.
-			expect(harness.fixture.calls.slice(beforeMixed).map((call) => call.arguments.value)).toEqual([
-				'first',
-				'last',
-				'first',
-				'last',
-			]);
+			// The reference batch completes before the Worker batch; effects within each batch race.
+			for (const hostOffset of [0, 2]) {
+				expect(
+					harness.fixture.calls
+						.slice(beforeMixed + hostOffset, beforeMixed + hostOffset + 2)
+						.map((call) => z.string().parse(call.arguments.value))
+						.toSorted(),
+				).toEqual(['first', 'last']);
+			}
 			harness.fixture.setCall(async () => ({
 				isError: true,
 				content: [{ type: 'text', text: 'controlled isError' }],
