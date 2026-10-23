@@ -3,8 +3,9 @@
 `@agent-collaboration/tool-host-node` runs the portable MCP proxy on Node 24.
 It loads trusted configuration, resolves provider credentials, discovers the
 organization's catalog before opening its listener, and routes calls through
-`tool-engine`'s dispatcher. HTTP/SSE and stdio upstream clients retain SDK v1
-until the outbound protocol decision is settled.
+`tool-engine`'s dispatcher. Outbound HTTP/SSE and stdio use MCP SDK v2 auto
+negotiation: modern servers stay on MCP 2026-07-28, and older servers negotiate
+their supported protocol. `auto-http` tries Streamable HTTP before deprecated SSE.
 
 Build with `mise exec node@24.7.0 -- pnpm build`. Run the built CLI with
 `mise exec node@24.7.0 -- node packages/tool-host-node/dist/bin/tool-host-node.js <configuration.jsonc>`.
@@ -91,6 +92,21 @@ background retry or refresh timer.
 
 ## Controlled upstream test fixture
 
-Workspace tests import `@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server` for the controlled upstream HTTP server and its counted observations. This dedicated test entry retains its exported fixture names and SDK 1.29 wire behavior; the outbound protocol migration remains separate. Hono and its Node server are dev dependencies for workspace tests, so this entry is not supported by an isolated production-only package install. The production root and executable do not import or export it.
+Workspace tests import `@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server` for the controlled modern-only upstream HTTP server and its counted observations. It retains the fixture API and provider payloads; SDK v2 adds its reserved server identity metadata. Hono and its Node server are dev dependencies for workspace tests, so this entry is not supported by an isolated production-only package install. The production root and executable do not import or export it.
 
-The private fixture in `packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts` remains an independent old-only source oracle for the later protocol cutover. Its old public package entry is retired.
+The private fixture in `packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts` remains an independent old-only source oracle. Its old public package entry is retired.
+
+## Live DeepWiki check
+
+After building the Node host, run this account-free manual check from the repository root:
+
+```bash
+mise exec node@24.7.0 -- node packages/tool-host-node/src/manual-tests/deepwiki-outbound.ts
+```
+
+It starts the built gateway, lists DeepWiki tools, and makes one read-only
+`ask_wiki_question` call against `modelcontextprotocol/typescript-sdk`. The JSON output
+records advertised and negotiated protocol versions, wire attempts, the source
+commit, Node version, built file hashes, and the result. It fails if advertised
+versions are absent or the selected wire version disagrees. This external check
+runs manually and is outside the CI inventory.

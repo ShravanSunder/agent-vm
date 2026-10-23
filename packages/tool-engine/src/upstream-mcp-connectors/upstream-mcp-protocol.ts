@@ -1,7 +1,7 @@
 import type { JsonObject } from '@agent-collaboration/tool-access/contracts';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ToolSchema, type Progress, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { Client, SdkHttpError, type Transport } from '@modelcontextprotocol/client';
+import type { Progress, Tool } from '@modelcontextprotocol/client';
+import { ToolSchema } from '@modelcontextprotocol/core';
 import type { Tool as GatewayTool } from '@modelcontextprotocol/server';
 
 import type {
@@ -67,7 +67,6 @@ export interface UpstreamMcpClientLike {
 			readonly arguments: JsonObject;
 			readonly name: string;
 		},
-		resultSchema?: unknown,
 		options?: {
 			readonly onprogress?: (progress: UpstreamMcpProgress) => void;
 			readonly signal?: AbortSignal;
@@ -179,18 +178,15 @@ export function safeFailureFromUnknown(
 	readonly httpStatusCode?: number;
 } {
 	if (
-		error instanceof Error &&
-		error.constructor.name === 'StreamableHTTPError' &&
-		'code' in error &&
-		typeof error.code === 'number' &&
-		Number.isInteger(error.code) &&
-		error.code >= 100 &&
-		error.code <= 599
+		error instanceof SdkHttpError &&
+		Number.isInteger(error.data.status) &&
+		error.data.status >= 100 &&
+		error.data.status <= 599
 	) {
 		return {
 			causeMessage: 'Remote MCP request failed.',
-			failureClass: failureClassFromHttpStatus(error.code),
-			httpStatusCode: error.code,
+			failureClass: failureClassFromHttpStatus(error.data.status),
+			httpStatusCode: error.data.status,
 		};
 	}
 	const redactedError = redactThrownError(error, { exactValues: redactionValues });
@@ -207,10 +203,16 @@ export function isTransport(value: unknown): value is Transport {
 }
 
 export function createSdkClient(): UpstreamMcpClientLike {
-	const client = new Client({ name: 'mcp-portal', version: '1.0.0' });
+	const client = new Client(
+		{ name: 'mcp-portal', version: '1.0.0' },
+		{
+			versionNegotiation: { mode: 'auto' },
+			inputRequired: { autoFulfill: false },
+			listMaxPages: 0,
+		},
+	);
 	return {
-		callTool: async (params, _resultSchema, options) =>
-			await client.callTool(params, undefined, options),
+		callTool: async (params, options) => await client.callTool(params, options),
 		close: async () => {
 			await client.close();
 		},
@@ -221,7 +223,7 @@ export function createSdkClient(): UpstreamMcpClientLike {
 			await client.connect(transport, options);
 		},
 		listTools: async (params, options) => {
-			const result = await client.listTools(params, options);
+			const result = await client.listTools(params, { ...options, cacheMode: 'refresh' });
 			return {
 				...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
 				tools: result.tools,

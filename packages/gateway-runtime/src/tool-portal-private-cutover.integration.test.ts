@@ -92,12 +92,26 @@ describe('S4a pinned private connection comparison', () => {
 					options,
 				),
 			).toEqual(oracle.describe);
+			// SDK v2 stamps the nested provider result; every historical field stays exact.
+			const expectedCall = z
+				.object({ items: z.array(z.record(z.string(), z.unknown())) })
+				.passthrough()
+				.parse(oracle.call);
+			const allowedItem = expectedCall.items.find((item) => item['id'] === 'allowed');
+			const allowedValue = z.record(z.string(), z.unknown()).parse(allowedItem?.['value']);
+			const providerResult = z.record(z.string(), z.unknown()).parse(allowedValue['result']);
+			providerResult['_meta'] = {
+				'io.modelcontextprotocol/serverInfo': { name: 'portal-upstream-fixture', version: '1.0.0' },
+			};
+			allowedValue['result'] = providerResult;
+			if (allowedItem === undefined) throw new Error('Missing pinned allowed call.');
+			allowedItem['value'] = allowedValue;
 			expect(
 				await client.portal.call(
 					PortalCallRequestSchema.parse(cutoverPortalRequests.call),
 					options,
 				),
-			).toEqual(oracle.call);
+			).toEqual(expectedCall);
 			expect(upstream.calls).toHaveLength(1);
 			expect(upstream.calls[0]?.name).toBe('read_thing');
 			await expect(

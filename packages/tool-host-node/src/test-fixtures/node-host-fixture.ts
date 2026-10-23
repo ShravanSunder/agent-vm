@@ -35,6 +35,12 @@ export interface ControlledProvider {
 	readonly url: string;
 	readonly listings: string[];
 	readonly protocolMessages: string[];
+	readonly protocolAttempts: {
+		readonly method: string;
+		readonly protocolVersion: string | null;
+		readonly requestedVersion: unknown;
+	}[];
+	readonly negotiatedVersions: string[];
 	readonly httpMethods: string[];
 	readonly legacySseRequests: number;
 	readonly effects: {
@@ -59,6 +65,8 @@ export async function startControlledProvider(
 ): Promise<ControlledProvider> {
 	const listings: string[] = [];
 	const protocolMessages: string[] = [];
+	const protocolAttempts: ControlledProvider['protocolAttempts'] = [];
+	const negotiatedVersions: string[] = [];
 	const httpMethods: string[] = [];
 	let legacySseRequests = 0;
 	const effects: ControlledProvider['effects'] = [];
@@ -76,6 +84,26 @@ export async function startControlledProvider(
 		const advertisedMethod = request.headers['mcp-method'];
 		if (typeof advertisedMethod === 'string') httpMethods.push(advertisedMethod);
 		const handle = async (): Promise<void> => {
+			let parsedBody: unknown;
+			if (request.method === 'POST') {
+				const chunks: Buffer[] = [];
+				for await (const chunk of request)
+					chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+				parsedBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+				const observation = z
+					.object({
+						method: z.string(),
+						params: z.object({ protocolVersion: z.unknown().optional() }).passthrough().optional(),
+					})
+					.passthrough()
+					.parse(parsedBody);
+				const versionHeader = request.headers['mcp-protocol-version'];
+				protocolAttempts.push({
+					method: observation.method,
+					protocolVersion: typeof versionHeader === 'string' ? versionHeader : null,
+					requestedVersion: observation.params?.protocolVersion,
+				});
+			}
 			const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
 			const server = new Server(
 				{ name: `provider-${label}`, version: '1.0.0' },
@@ -142,12 +170,21 @@ export async function startControlledProvider(
 					});
 					await transport.start();
 				},
-				send: async (message, options) => transport.send(message, options),
+				send: async (message, options) => {
+					if ('result' in message) {
+						const version = z
+							.object({ protocolVersion: z.string().optional() })
+							.passthrough()
+							.parse(message.result).protocolVersion;
+						if (version !== undefined) negotiatedVersions.push(version);
+					}
+					await transport.send(message, options);
+				},
 				close: async () => transport.close(),
 			};
 			await server.connect(bridge);
 			try {
-				await transport.handleRequest(request, response);
+				await transport.handleRequest(request, response, parsedBody);
 			} finally {
 				await server.close();
 				servers.delete(server);
@@ -166,6 +203,8 @@ export async function startControlledProvider(
 		url: `http://127.0.0.1:${address.port}/mcp`,
 		listings,
 		protocolMessages,
+		protocolAttempts,
+		negotiatedVersions,
 		httpMethods,
 		get legacySseRequests() {
 			return legacySseRequests;
