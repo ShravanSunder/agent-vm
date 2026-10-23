@@ -145,11 +145,17 @@ export async function startLocalAuthHarness(): Promise<{
 					redirect: 'manual',
 				});
 				const cookies = result.headers.getSetCookie();
-				response.writeHead(result.status, Object.fromEntries(result.headers));
-				if (cookies.length > 0) response.setHeader('set-cookie', cookies);
+				response.writeHead(result.status, {
+					...Object.fromEntries(result.headers),
+					...(cookies.length === 0 ? {} : { 'set-cookie': cookies }),
+				});
 				response.end(Buffer.from(await result.arrayBuffer()));
-			} catch {
-				response.writeHead(503).end('Local auth transport failed');
+			} catch (error) {
+				process.stderr.write(
+					`[auth-harness] transport failed: ${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'}\n`,
+				);
+				if (response.headersSent) response.destroy();
+				else response.writeHead(503).end('Local auth transport failed');
 			}
 		})();
 	});
@@ -306,6 +312,7 @@ export async function startLocalAuthHarness(): Promise<{
 	const jar = new Map<string, string>();
 	async function auth(pathname: string, init: RequestInit = {}): Promise<Response> {
 		const response = await fetch(new URL(pathname, issuer), {
+			signal: AbortSignal.timeout(30_000),
 			...init,
 			headers: {
 				cookie: [...jar.values()].join('; '),
@@ -339,6 +346,7 @@ export async function startLocalAuthHarness(): Promise<{
 		cookie: () => [...jar.values()].join('; '),
 		auth,
 		async ownerToken(): Promise<string> {
+			process.stderr.write('[auth-harness] owner login started\n');
 			return ownerManagementToken({
 				target,
 				browser: async (url): Promise<void> => {
@@ -352,20 +360,26 @@ export async function startLocalAuthHarness(): Promise<{
 						}),
 					});
 					if (!signin.ok) throw new Error('Real provider sign-in initiation refused');
+					process.stderr.write('[auth-harness] provider sign-in initiated\n');
 					const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
 					const callback = google.authorize(new URL(providerUrl));
 					const admitted = await auth(callback.toString());
 					if (admitted.status !== 302) throw new Error('Real owner callback refused');
+					process.stderr.write('[auth-harness] provider callback completed\n');
 					const bootstrap = await auth('/api/auth/owner/bootstrap', {
 						method: 'POST',
 						headers: { 'content-type': 'application/json' },
 						body: '{}',
 					});
 					if (!bootstrap.ok) throw new Error('Real fixed owner-client bootstrap refused');
+					process.stderr.write('[auth-harness] owner client bootstrap completed\n');
 					const authorized = await auth(authorization.toString());
 					const location = authorized.headers.get('location');
 					if (location === null) throw new Error('Real native authorization did not return a code');
-					const completed = await fetch(location, { redirect: 'manual' });
+					const completed = await fetch(location, {
+						redirect: 'manual',
+						signal: AbortSignal.timeout(30_000),
+					});
 					if (!completed.ok) throw new Error('Real native CLI loopback callback refused');
 				},
 			});
