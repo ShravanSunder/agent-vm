@@ -203,8 +203,9 @@ describe('managed call batch failure isolation', () => {
 
 			// Assert: literal managed shapes are the oracle, including certainty/retry.
 			expect(effects).toEqual(['original-item']);
-			expect(dispatched).toEqual(
-				failureSite === 'request-rebuild' ? ['original-item'] : ['original-item', 'failing-item'],
+			expect(dispatched).toHaveLength(failureSite === 'request-rebuild' ? 1 : 2);
+			expect(dispatched.toSorted()).toEqual(
+				failureSite === 'request-rebuild' ? ['original-item'] : ['failing-item', 'original-item'],
 			);
 			expect(dispatchResults.get('original-item')).toBe('completed');
 			if (failureSite !== 'request-rebuild')

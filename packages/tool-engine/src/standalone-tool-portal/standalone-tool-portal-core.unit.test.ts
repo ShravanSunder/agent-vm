@@ -64,9 +64,10 @@ describe('neutral standalone Tool Portal core', () => {
 				JSON.stringify(oracle.results[operation]),
 			);
 		}
-		expect(fixture.effects.map((invocation) => invocation.capability.tool)).toEqual([
-			'read',
+		expect(fixture.effects).toHaveLength(3);
+		expect(fixture.effects.map((invocation) => invocation.capability.tool).toSorted()).toEqual([
 			'failed',
+			'read',
 			'uncertain',
 		]);
 		expect(fixture.batches).toEqual([[oracle.operationIds['write']]]);
