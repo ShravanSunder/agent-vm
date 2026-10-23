@@ -10,6 +10,7 @@
 		"packages/**/contract-fixtures/**",
 		"packages/**/dist/**",
 		"node_modules",
-		"packages/tool-host-cloudflare/**"
+		"packages/tool-host-cloudflare/**",
+		"packages/auth/**"
 	]
 }
