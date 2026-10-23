@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { build } from 'esbuild';
 import {
 	Miniflare,
 	Response as WorkerResponse,
@@ -14,10 +13,11 @@ import {
 import { z } from 'zod';
 
 import type { AuthTarget } from '#auth/native-owner-cli/auth-target';
-import { ownerManagementToken } from '#auth/native-owner-cli/owner-cli-login';
 import { startControlledToolUpstream } from '#auth/test-fixtures/controlled-tool-upstream';
 import { d1MigrationStatements } from '#auth/test-fixtures/d1-migration-statements';
 import { createGoogleOAuthProtocol } from '#auth/test-fixtures/google-oauth-protocol';
+import { loginThroughNativeOwnerCli } from '#auth/test-fixtures/native-cli-proof';
+import { loadProofBundles, recordProofHarness } from '#auth/test-fixtures/proof-bundle-artifacts';
 
 export const organizationOne = '11111111-1111-4111-8111-111111111111';
 export const organizationTwo = '22222222-2222-4222-8222-222222222222';
@@ -35,24 +35,6 @@ function textBindings(
 	return Object.fromEntries(
 		Object.entries(values).map(([name, value]) => [name, { type: 'text', value }]),
 	);
-}
-
-async function bundleWorker(entry: string): Promise<string> {
-	const result = await build({
-		entryPoints: [entry],
-		bundle: true,
-		write: false,
-		format: 'esm',
-		platform: 'neutral',
-		target: 'es2022',
-		conditions: ['workerd', 'worker', 'browser'],
-		mainFields: ['module', 'main'],
-		external: ['cloudflare:workers', 'node:*'],
-		logLevel: 'silent',
-	});
-	const output = result.outputFiles?.[0];
-	if (output === undefined) throw new Error('Worker bundle is empty');
-	return output.text;
 }
 
 function organizationConfigurations(upstream: string): unknown {
@@ -108,6 +90,7 @@ export async function startLocalAuthHarness(): Promise<{
 	readonly issuer: string;
 	readonly cookie: () => string;
 	readonly ownerToken: () => Promise<string>;
+	readonly personToken: (email: string) => Promise<string>;
 	readonly auth: (pathname: string, init?: RequestInit) => Promise<Response>;
 	readonly gateway: (
 		pathname: string,
@@ -172,18 +155,12 @@ export async function startLocalAuthHarness(): Promise<{
 	if (address === null || typeof address === 'string')
 		throw new Error('Local auth listener unavailable');
 	const issuer = `http://127.0.0.1:${address.port}`;
-	const [authScript, gatewayScript] = await Promise.all([
-		bundleWorker(path.join(root, 'packages/auth/src/test-fixtures/auth-proof-entrypoint.ts')),
-		bundleWorker(
-			path.join(
-				root,
-				'packages/tool-host-cloudflare/src/test-fixtures/auth-gateway-proof-entrypoint.ts',
-			),
-		),
-	]).catch(async (error: unknown) => {
+	const bundles = await loadProofBundles(root).catch(async (error: unknown) => {
 		await closeServers();
 		throw error;
 	});
+	const authScript = bundles.auth;
+	const gatewayScript = bundles.gateway;
 	const configuration = {
 		issuer,
 		mode: 'private',
@@ -337,6 +314,86 @@ export async function startLocalAuthHarness(): Promise<{
 		ownerCliRedirectUri: configuration.ownerCliRedirectUri,
 		tokenCachePath: path.join(runtimeDirectory, 'owner-token.json'),
 	};
+	const receiptId = crypto.randomUUID();
+	async function recordTarget(ready: boolean): Promise<void> {
+		await recordProofHarness({
+			receiptId,
+			identity: bundles.identity,
+			configuration: { signIn: configuration, gateway: gatewayBindings },
+			client: { ...target, entry: 'scripts/verify-auth/owner-cli.ts' },
+			ready,
+		});
+	}
+	await recordTarget(false);
+	async function personToken(email: string): Promise<string> {
+		process.stderr.write('[auth-harness] owner login started\n');
+		const token = await loginThroughNativeOwnerCli({
+			target,
+			repositoryRoot: root,
+			browser: async (url): Promise<readonly string[]> => {
+				const authorization = new URL(new URL(url).searchParams.get('authorize') ?? 'invalid:');
+				const signin = await auth('/api/auth/sign-in/social', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						provider: 'google',
+						callbackURL: new URL('/owner-ready', issuer).toString(),
+					}),
+				});
+				if (!signin.ok) throw new Error('Real provider sign-in initiation refused');
+				process.stderr.write('[auth-harness] provider sign-in initiated\n');
+				const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
+				const callback = google.authorize(new URL(providerUrl), email);
+				const admitted = await auth(callback.toString());
+				if (admitted.status !== 302) throw new Error('Real owner callback refused');
+				process.stderr.write('[auth-harness] provider callback completed\n');
+				if (email === 'owner@example.invalid') {
+					const bootstrap = await auth('/api/auth/owner/bootstrap', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: '{}',
+					});
+					if (!bootstrap.ok) throw new Error('Real fixed owner-client bootstrap refused');
+					process.stderr.write('[auth-harness] owner client bootstrap completed\n');
+				}
+				const authorized = await auth(authorization.toString());
+				const location = authorized.headers.get('location');
+				if (location === null) {
+					const body = z.record(z.string(), z.unknown()).safeParse(await authorized.clone().json());
+					const returnUrl =
+						body.success && typeof body.data.url === 'string'
+							? new URL(body.data.url, issuer)
+							: null;
+					process.stderr.write(
+						JSON.stringify({
+							event: 'authorization-response',
+							status: authorized.status,
+							contentType: authorized.headers.get('content-type'),
+							bodyKeys: body.success ? Object.keys(body.data).toSorted() : [],
+							redirect: body.success && body.data.redirect === true,
+							codePresent: returnUrl?.searchParams.has('code') ?? false,
+							error:
+								body.success &&
+								typeof body.data.error === 'string' &&
+								/^[a-z_]+$/u.test(body.data.error)
+									? body.data.error
+									: null,
+							redirectError: returnUrl?.searchParams.get('error') ?? null,
+						}) + '\n',
+					);
+					throw new Error('Real native authorization did not return a code');
+				}
+				const completed = await fetch(location, {
+					redirect: 'manual',
+					signal: AbortSignal.timeout(30_000),
+				});
+				if (!completed.ok) throw new Error('Real native CLI loopback callback refused');
+				return [new URL(location).searchParams.get('code') ?? '', ...jar.values()];
+			},
+		});
+		await recordTarget(true);
+		return token;
+	}
 	return {
 		miniflare,
 		database,
@@ -345,45 +402,8 @@ export async function startLocalAuthHarness(): Promise<{
 		issuer,
 		cookie: () => [...jar.values()].join('; '),
 		auth,
-		async ownerToken(): Promise<string> {
-			process.stderr.write('[auth-harness] owner login started\n');
-			return ownerManagementToken({
-				target,
-				browser: async (url): Promise<void> => {
-					const authorization = new URL(new URL(url).searchParams.get('authorize') ?? 'invalid:');
-					const signin = await auth('/api/auth/sign-in/social', {
-						method: 'POST',
-						headers: { 'content-type': 'application/json' },
-						body: JSON.stringify({
-							provider: 'google',
-							callbackURL: new URL('/owner-ready', issuer).toString(),
-						}),
-					});
-					if (!signin.ok) throw new Error('Real provider sign-in initiation refused');
-					process.stderr.write('[auth-harness] provider sign-in initiated\n');
-					const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
-					const callback = google.authorize(new URL(providerUrl));
-					const admitted = await auth(callback.toString());
-					if (admitted.status !== 302) throw new Error('Real owner callback refused');
-					process.stderr.write('[auth-harness] provider callback completed\n');
-					const bootstrap = await auth('/api/auth/owner/bootstrap', {
-						method: 'POST',
-						headers: { 'content-type': 'application/json' },
-						body: '{}',
-					});
-					if (!bootstrap.ok) throw new Error('Real fixed owner-client bootstrap refused');
-					process.stderr.write('[auth-harness] owner client bootstrap completed\n');
-					const authorized = await auth(authorization.toString());
-					const location = authorized.headers.get('location');
-					if (location === null) throw new Error('Real native authorization did not return a code');
-					const completed = await fetch(location, {
-						redirect: 'manual',
-						signal: AbortSignal.timeout(30_000),
-					});
-					if (!completed.ok) throw new Error('Real native CLI loopback callback refused');
-				},
-			});
-		},
+		ownerToken: () => personToken('owner@example.invalid'),
+		personToken,
 		async gateway(pathname, init = {}, secondHeap = false): Promise<Response> {
 			const worker = await miniflare.getWorker(secondHeap ? 'gateway-two' : 'gateway-one');
 			const incoming = new Request(new URL(pathname, issuer), init);

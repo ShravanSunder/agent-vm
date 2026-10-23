@@ -15,6 +15,7 @@ export async function runOwnerCli(args: readonly string[]): Promise<number> {
 			help: { type: 'boolean' },
 			target: { type: 'string' },
 			'force-auth': { type: 'boolean' },
+			'no-browser': { type: 'boolean' },
 			'request-id': { type: 'string' },
 			'client-id': { type: 'string' },
 			output: { type: 'string' },
@@ -27,7 +28,8 @@ export async function runOwnerCli(args: readonly string[]): Promise<number> {
 Commands: login | add-agent --request-id UUID --output FILE | remove-agent --client-id ID --request-id UUID | agent-status --client-id ID
 Target JSON: issuer, managementAudience, gatewayUrl, organizationId, ownerCliClientId, ownerCliRedirectUri, tokenCachePath.
 Target and token cache are owned mode-0600 files outside Git checkouts. Credential output is created mode0600 and must not exist.
---force-auth always opens the browser. Expiry opens the browser again; no refresh token is requested or accepted.
+--force-auth starts a new browser authorization. Expiry requires another authorization; no refresh token is requested or accepted.
+--no-browser prints the authorization URL for a browser on another machine; it never prints a credential.
 This switch makes no hardware-presence or per-command human-intent claim. Every management request checks the live Person/session.\n`);
 	} else {
 		try {
@@ -51,6 +53,13 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 			const token = await ownerManagementToken({
 				target,
 				forceAuth: values['force-auth'] === true,
+				...(values['no-browser'] === true
+					? {
+							browser: async (url: string): Promise<void> => {
+								process.stdout.write(`AUTHORIZATION_URL=${url}\n`);
+							},
+						}
+					: {}),
 			});
 			if (command === 'login')
 				process.stdout.write(
