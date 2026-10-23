@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/client-authentication-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -185,13 +186,14 @@ describe('S1 real agent issuer through the Gateway', () => {
 			(await harness.database.prepare('SELECT id FROM oauthRefreshToken').all()).results,
 		).toHaveLength(0);
 		async function protectedBootstrapRows(): Promise<unknown> {
-			return Promise.all([
+			const queryResults = await Promise.all([
 				harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all(),
 				harness.database
 					.prepare('SELECT * FROM oauthClientResource ORDER BY clientId, resourceId')
 					.all(),
 				harness.database.prepare('SELECT * FROM deployment_owner').all(),
 			]);
+			return queryResults.map((queryResult) => queryResult.results);
 		}
 		const before = await protectedBootstrapRows();
 		const repeated = await harness.auth('/api/auth/owner/bootstrap', {
@@ -372,7 +374,7 @@ describe('S1 real agent issuer through the Gateway', () => {
 			headers: { authorization: `Bearer ${owner}` },
 		});
 		expect(await completed.json()).toEqual({ kind: 'removed', clientId: registeredClientId });
-		expect((await tokenResponse(credentials)).status).toBe(400);
+		await expectBasicClientAuthenticationRefusal(await tokenResponse(credentials));
 		expect(
 			await (
 				await harness.gateway(

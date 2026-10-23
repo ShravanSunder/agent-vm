@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/client-authentication-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -251,7 +252,9 @@ it.each(['intent', 'client', 'outcome'] as const)(
 				{ error: 'removed-agent' },
 				{ error: 'removed-agent' },
 			]);
-			expect((await exchange()).status).toBe(fault === 'outcome' ? 400 : 200);
+			const partialExchange = await exchange();
+			if (fault === 'outcome') await expectBasicClientAuthenticationRefusal(partialExchange);
+			else expect(partialExchange.status).toBe(200);
 			await harness.database.exec('DROP TRIGGER fail_retirement');
 			const retried = await harness.gateway(`${base}/${registeredClientId}`, operation);
 			expect(retried.status).toBe(200);
@@ -291,7 +294,7 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			).toMatchObject({
 				[`agent-retirement:${registeredClientId}`]: { kind: 'complete', requestId },
 			});
-			expect((await exchange()).status).toBe(400);
+			await expectBasicClientAuthenticationRefusal(await exchange());
 			expect(harness.effects).toHaveLength(0);
 		} finally {
 			await harness.close();
@@ -359,15 +362,16 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			expect(
 				(await harness.database.prepare(auditSql).bind(registrationRequestId).all()).results,
 			).toEqual(fault === 'intent' ? [] : [{ phase: 'intent' }]);
-			expect((await exchange(lost.clientSecret)).status).toBe(fault === 'outcome' ? 400 : 200);
+			const partialExchange = await exchange(lost.clientSecret);
+			if (fault === 'outcome') await expectBasicClientAuthenticationRefusal(partialExchange);
+			else expect(partialExchange.status).toBe(200);
 			await harness.database.exec('DROP TRIGGER fail_rotation');
 			const recoveredResponse = await harness.gateway(endpoint, operation);
 			expect(recoveredResponse.status).toBe(200);
 			const recovered = credentialSchema.parse(await recoveredResponse.json());
 			expect(recovered.clientSecret).not.toBe(lost.clientSecret);
 			const rejectedOld = await exchange(lost.clientSecret);
-			expect(rejectedOld.status).toBe(400);
-			expect(await rejectedOld.json()).not.toHaveProperty('access_token');
+			await expectBasicClientAuthenticationRefusal(rejectedOld);
 			const permittedNew = await exchange(recovered.clientSecret);
 			expect(permittedNew.status).toBe(200);
 			expect(await permittedNew.json()).toHaveProperty('access_token');

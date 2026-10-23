@@ -37,9 +37,16 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 		).toMatchObject({
 			results: [{ user_id: ownerPerson.sub }],
 		});
-		const rowsBefore = await harness.database
-			.prepare('SELECT clientId, metadata, grantTypes FROM oauthClient ORDER BY clientId')
-			.all();
+		async function clientRows(): Promise<readonly Record<string, unknown>[]> {
+			return (await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all())
+				.results;
+		}
+		const initialClients = await clientRows();
+		const rowsBefore = initialClients.map(({ clientId, metadata, grantTypes }) => ({
+			clientId,
+			metadata,
+			grantTypes,
+		}));
 		const admissionBefore = await (
 			await harness.gateway(
 				`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
@@ -135,11 +142,7 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			await binding.SIGN_IN.releaseManagementHold(publicHoldId);
 		}
 		async function refusedCallerB(): Promise<void> {
-			const clientsBeforeB = await harness.database
-				.prepare(
-					'SELECT clientId, clientSecret, metadata, grantTypes FROM oauthClient ORDER BY clientId',
-				)
-				.all();
+			const clientsBeforeB = await clientRows();
 			const isolated = await harness.gateway(endpoint, {
 				method: 'POST',
 				headers: forgedHeaders,
@@ -149,17 +152,11 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			const noHook = await harness.auth('/__auth-proof/no-hook');
 			expect(noHook.status).toBe(200);
 			expect(await noHook.json()).toEqual({ refused: true });
-			expect(
-				await harness.database
-					.prepare(
-						'SELECT clientId, clientSecret, metadata, grantTypes FROM oauthClient ORDER BY clientId',
-					)
-					.all(),
-			).toEqual(clientsBeforeB);
+			expect(await clientRows()).toEqual(clientsBeforeB);
 		}
 		async function heldOwnerA(revoke: boolean): Promise<void> {
 			const clientBeforeA = await harness.database
-				.prepare('SELECT clientId, clientSecret FROM oauthClient WHERE clientId = ?')
+				.prepare('SELECT * FROM oauthClient WHERE clientId = ?')
 				.bind(registeredClientId)
 				.first();
 			// Reusing the completed operation makes A enter the real provider link/rotation path.
@@ -197,18 +194,22 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			if (revoke)
 				expect(
 					await harness.database
-						.prepare('SELECT clientId, clientSecret FROM oauthClient WHERE clientId = ?')
+						.prepare('SELECT * FROM oauthClient WHERE clientId = ?')
 						.bind(registeredClientId)
 						.first(),
 				).toEqual(clientBeforeA);
 			await refusedCallerB();
 		}
+		// All earlier non-owner/public attempts preserve every stored field, including the credential hash.
+		expect(await clientRows()).toEqual(initialClients);
 		await heldOwnerA(false);
 		await heldOwnerA(true);
 		expect(
-			await harness.database
-				.prepare('SELECT clientId, metadata, grantTypes FROM oauthClient ORDER BY clientId')
-				.all(),
+			(
+				await harness.database
+					.prepare('SELECT clientId, metadata, grantTypes FROM oauthClient ORDER BY clientId')
+					.all()
+			).results,
 		).toEqual(rowsBefore);
 		expect(
 			await (

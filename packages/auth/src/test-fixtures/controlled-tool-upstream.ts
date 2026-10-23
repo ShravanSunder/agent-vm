@@ -68,7 +68,17 @@ export async function startControlledToolUpstream(): Promise<{
 						break;
 					}
 					default:
-						response.writeHead(202).end();
+						if (rpc.id === undefined) response.writeHead(202).end();
+						else
+							response
+								.writeHead(200, { 'content-type': 'application/json', connection: 'close' })
+								.end(
+									JSON.stringify({
+										jsonrpc: '2.0',
+										id: rpc.id,
+										error: { code: -32601, message: 'Method not found' },
+									}),
+								);
 						return;
 				}
 				response
