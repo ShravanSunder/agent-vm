@@ -39,8 +39,19 @@ type SignInProviderOptions = BetterAuthOptions & {
 };
 export type SignInProvider = Auth<SignInProviderOptions>;
 
+export interface ManagementObservation {
+	readonly point: 'before-provider-owner-read';
+	readonly requestId: string;
+}
+export type ManagementObserver = (event: ManagementObservation) => Promise<void>;
+
 /** Every invocation owns its context. Only the named-binding caller supplies person-proof authority. */
-export function createSignInProvider(props: SignInProviderProps): SignInProvider {
+export function createSignInProvider(
+	props: SignInProviderProps,
+	controls: {
+		readonly management?: { readonly requestId: string; readonly observe: ManagementObserver };
+	} = {},
+): SignInProvider {
 	const persons = createPersonAdmissionStore({
 		database: props.database,
 		ownerEmail: props.configuration.ownerEmail,
@@ -93,6 +104,11 @@ export function createSignInProvider(props: SignInProviderProps): SignInProvider
 				: {
 						before: createAuthMiddleware(async () => {
 							if (props.authority.kind !== 'person-proof') throw new APIError('FORBIDDEN');
+							if (controls.management !== undefined)
+								await controls.management.observe({
+									point: 'before-provider-owner-read',
+									requestId: controls.management.requestId,
+								});
 							const current = await persons.readOwnerSession(
 								props.authority.proof.subject,
 								props.authority.proof.sessionRef,

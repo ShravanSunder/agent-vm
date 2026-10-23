@@ -2,6 +2,7 @@ import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify } from 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -30,6 +31,14 @@ async function protectedRows(): Promise<unknown> {
 		harness.database
 			.prepare(
 				'SELECT identifier, disabled, customClaims, allowedScopes FROM oauthResource ORDER BY identifier',
+			)
+			.all(),
+		harness.database
+			.prepare('SELECT id, clientId, userId, scopes FROM oauthConsent ORDER BY id')
+			.all(),
+		harness.database
+			.prepare(
+				'SELECT id, actor_user_id, request_id, phase, change_kind, target_id FROM sign_in_audit ORDER BY id',
 			)
 			.all(),
 		harness
@@ -83,6 +92,51 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	expect(decodeProtectedHeader(withoutSid).typ).toBe('at+jwt');
 	expect(Object.hasOwn(checked.payload, 'sid')).toBe(false);
 	const before = await protectedRows();
+	const binding = await harness.miniflare.getBindings<{
+		readonly SIGN_IN: ReturnType<typeof createSignInManagementBinding>;
+	}>('gateway-one');
+	// This calls the real named RPC binding. No HTTP route or 404 can satisfy these oracles.
+	expect(await binding.SIGN_IN.isLiveOwner({ token: owner, organizationId: organizationOne })).toBe(
+		true,
+	);
+	await Promise.all(
+		[agent, withoutSid].map(async (token) => {
+			expect(await binding.SIGN_IN.isLiveOwner({ token, organizationId: organizationOne })).toBe(
+				false,
+			);
+			expect(
+				await binding.SIGN_IN.ownsAgentClient({
+					token,
+					organizationId: organizationOne,
+					clientId: registeredClientId,
+				}),
+			).toBe(false);
+			const refused = await Promise.all([
+				binding.SIGN_IN.changeClient({
+					token,
+					operation: {
+						kind: 'register',
+						organizationId: organizationOne,
+						requestId: crypto.randomUUID(),
+					},
+				}),
+				binding.SIGN_IN.changeClient({
+					token,
+					operation: {
+						kind: 'disable',
+						organizationId: organizationOne,
+						clientId: registeredClientId,
+						requestId: crypto.randomUUID(),
+					},
+				}),
+			]);
+			expect(refused).toEqual([
+				{ kind: 'refused', reason: 'not-owner' },
+				{ kind: 'refused', reason: 'not-owner' },
+			]);
+		}),
+	);
+	expect(await protectedRows()).toEqual(before);
 	const gatewayResponses = await Promise.all(
 		[agent, withoutSid].flatMap((token) => [
 			harness.gateway(endpoint, {
@@ -111,14 +165,23 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 			path: `/api/auth/${name}`,
 		})),
 		{ method: 'POST', path: '/api/auth/admin/oauth2/create-client' },
-		{ method: 'POST', path: '/api/auth/admin/oauth2/update-client' },
+		{ method: 'PATCH', path: '/api/auth/admin/oauth2/update-client' },
+		{ method: 'POST', path: '/api/auth/oauth2/public-client-prelogin' },
 		...['create-client', 'update-client', 'delete-client', 'client/rotate-secret'].map((name) => ({
 			method: 'POST',
 			path: `/api/auth/oauth2/${name}`,
 		})),
-		...['get-client', 'get-clients', 'public-client', 'public-client-prelogin'].map((name) => ({
+		...['get-client', 'get-clients', 'public-client'].map((name) => ({
 			method: 'GET',
 			path: `/api/auth/oauth2/${name}?client_id=${registeredClientId}`,
+		})),
+		...['get-consent', 'get-consents'].map((name) => ({
+			method: 'GET',
+			path: `/api/auth/oauth2/${name}?id=missing-consent`,
+		})),
+		...['update-consent', 'delete-consent'].map((name) => ({
+			method: 'POST',
+			path: `/api/auth/oauth2/${name}`,
 		})),
 		...[
 			{ method: 'POST', suffix: '' },
@@ -160,6 +223,19 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 				: [{ path: routes[index % routes.length]?.path, status: response.status }],
 		),
 	).toEqual([]);
+	await Promise.all(
+		responses.map(async (response, index) => {
+			const route = routes[index % routes.length];
+			if (
+				route?.path.startsWith('/api/auth/admin/') ||
+				route?.path.startsWith('/api/auth/oauth2/')
+			) {
+				// This is the product fence's exact refusal, not a provider 404 for an absent route or row.
+				expect(response.status).toBe(404);
+				expect(await response.json()).toEqual({ error: 'not-found' });
+			}
+		}),
+	);
 	expect(await protectedRows()).toEqual(before);
 	expect(harness.effects).toHaveLength(0);
 	const ownerRead = await harness.gateway(`${endpoint}/${registeredClientId}`, {

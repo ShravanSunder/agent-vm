@@ -296,6 +296,39 @@ describe('S1 real agent issuer through the Gateway', () => {
 	});
 	it('agent: wrong grant, resource and dynamic registration never return a token or client', async () => {
 		const credentials = await register(await harness.ownerToken());
+		const codesBefore = await harness.database
+			.prepare(
+				"SELECT COUNT(*) AS count FROM verification WHERE json_valid(value) AND json_extract(value, '$.type') = 'authorization_code'",
+			)
+			.first();
+		const authorization = new URL('/api/auth/oauth2/authorize', harness.issuer);
+		authorization.search = new URLSearchParams({
+			client_id: credentials.clientId,
+			response_type: 'code',
+			redirect_uri: harness.target.ownerCliRedirectUri,
+			scope: 'tool-portal:agent',
+			resource: agentAudience,
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+			state: crypto.randomUUID(),
+		}).toString();
+		const forbiddenCode = await harness.auth(authorization.toString(), {
+			headers: { accept: 'text/html', 'sec-fetch-mode': 'navigate' },
+		});
+		expect(forbiddenCode.status).toBe(302);
+		const refusedAuthorization = new URL(
+			z.string().parse(forbiddenCode.headers.get('location')),
+			harness.issuer,
+		);
+		expect(refusedAuthorization.searchParams.get('error')).toBe('unauthorized_client');
+		expect(refusedAuthorization.searchParams.has('code')).toBe(false);
+		expect(
+			await harness.database
+				.prepare(
+					"SELECT COUNT(*) AS count FROM verification WHERE json_valid(value) AND json_extract(value, '$.type') = 'authorization_code'",
+				)
+				.first(),
+		).toEqual(codesBefore);
 		const denied = await Promise.all(
 			[
 				{ grant_type: 'refresh_token', refresh_token: 'unknown' },

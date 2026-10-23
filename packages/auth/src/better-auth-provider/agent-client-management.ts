@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
 	createSignInProvider,
 	type SignInProviderProps,
+	type ManagementObserver,
 } from '#auth/better-auth-provider/provider-configuration';
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
@@ -26,6 +27,7 @@ export async function manageAgentClient(props: {
 	readonly provider: Omit<SignInProviderProps, 'authority' | 'generatedClientId'>;
 	readonly proof: PersonProof;
 	readonly operation: unknown;
+	readonly observeManagement?: ManagementObserver;
 }): Promise<AgentClientChangeResult> {
 	const operation = managementOperationSchema.parse(props.operation);
 	if (!props.provider.configuration.organizationIds.includes(operation.organizationId))
@@ -41,11 +43,16 @@ export async function manageAgentClient(props: {
 		operation.kind === 'register'
 			? `agent-${operation.organizationId}-${operation.requestId}`
 			: operation.clientId;
-	const auth = createSignInProvider({
-		...props.provider,
-		authority: { kind: 'person-proof', proof: props.proof },
-		generatedClientId: clientId,
-	});
+	const auth = createSignInProvider(
+		{
+			...props.provider,
+			authority: { kind: 'person-proof', proof: props.proof },
+			generatedClientId: clientId,
+		},
+		props.observeManagement === undefined
+			? {}
+			: { management: { requestId: operation.requestId, observe: props.observeManagement } },
+	);
 	// Empty internal headers satisfy the library's API contract; caller credentials never get forwarded.
 	const headers = new Headers();
 	const audience = props.provider.configuration.agentAudience;

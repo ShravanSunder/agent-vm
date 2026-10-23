@@ -4,6 +4,7 @@ import {
 } from '@agent-collaboration/tool-access/contracts';
 
 import { manageAgentClient } from '#auth/better-auth-provider/agent-client-management';
+import type { ManagementObserver } from '#auth/better-auth-provider/provider-configuration';
 import {
 	createSignInHttpHandler,
 	type SignInHttpConfiguration,
@@ -13,7 +14,12 @@ import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admissio
 import type { AgentClientChangeResult } from '#auth/sign-in-core/agent-clients/agent-registration';
 
 /** Internal named-entrypoint implementation. Public HTTP never dispatches these methods. */
-export function createSignInManagementBinding(configuration: SignInHttpConfiguration): {
+export function createSignInManagementBinding(
+	configuration: SignInHttpConfiguration,
+	controls: {
+		readonly observeManagement?: ManagementObserver;
+	} = {},
+): {
 	readonly humanCheckStatus: () => Promise<
 		| { readonly kind: 'ready'; readonly level: 'remembered-login' }
 		| {
@@ -92,6 +98,9 @@ export function createSignInManagementBinding(configuration: SignInHttpConfigura
 				provider: { ...configuration, requestState: { createdUserIds: [], issuedSessions: [] } },
 				proof,
 				operation,
+				...(controls.observeManagement === undefined
+					? {}
+					: { observeManagement: controls.observeManagement }),
 			});
 		},
 	};

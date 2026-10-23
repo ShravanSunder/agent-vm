@@ -299,3 +299,108 @@ it.each(['intent', 'client', 'outcome'] as const)(
 	},
 	120_000,
 );
+
+it.each(['intent', 'client', 'outcome'] as const)(
+	'agent: rotation retry fails closed at its actual %s write and invalidates the lost old secret',
+	async (fault) => {
+		const harness = await startLocalAuthHarness();
+		try {
+			const owner = await harness.ownerToken();
+			const endpoint = `/management/organizations/${organizationOne}/agents`;
+			const operation = {
+				method: 'POST',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId: registrationRequestId }),
+			};
+			const credentialSchema = z.object({
+				clientId: z.literal(registeredClientId),
+				clientSecret: z.string().min(1),
+			});
+			const originalResponse = await harness.gateway(endpoint, operation);
+			expect(originalResponse.status).toBe(200);
+			const lost = credentialSchema.parse(await originalResponse.json());
+			async function exchange(secret: string): Promise<Response> {
+				return harness.auth('/api/auth/oauth2/token', {
+					method: 'POST',
+					headers: {
+						authorization: `Basic ${btoa(`${registeredClientId}:${secret}`)}`,
+						'content-type': 'application/x-www-form-urlencoded',
+					},
+					body: new URLSearchParams({
+						grant_type: 'client_credentials',
+						scope: 'tool-portal:agent',
+						resource: agentAudience,
+					}),
+				});
+			}
+			expect((await exchange(lost.clientSecret)).status).toBe(200);
+			const storedBefore = await harness.database
+				.prepare('SELECT clientSecret FROM oauthClient WHERE clientId = ?')
+				.bind(registeredClientId)
+				.first();
+			const trigger =
+				fault === 'client'
+					? `BEFORE UPDATE OF clientSecret ON oauthClient WHEN NEW.clientId = '${registeredClientId}'`
+					: `BEFORE INSERT ON sign_in_audit WHEN NEW.target_id = '${registeredClientId}' AND NEW.change_kind = 'rotated' AND NEW.phase = '${fault}'`;
+			await harness.database.exec(
+				`CREATE TRIGGER fail_rotation ${trigger} BEGIN SELECT RAISE(FAIL, 'controlled-rotation-${fault}'); END;`,
+			);
+			const failed = await harness.gateway(endpoint, operation);
+			expect(failed.status).toBe(503);
+			expect(await failed.json()).not.toHaveProperty('clientSecret');
+			const partial = await harness.database
+				.prepare('SELECT clientSecret FROM oauthClient WHERE clientId = ?')
+				.bind(registeredClientId)
+				.first();
+			if (fault === 'outcome') expect(partial).not.toEqual(storedBefore);
+			else expect(partial).toEqual(storedBefore);
+			const auditSql =
+				"SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = 'rotated' ORDER BY phase";
+			expect(
+				(await harness.database.prepare(auditSql).bind(registrationRequestId).all()).results,
+			).toEqual(fault === 'intent' ? [] : [{ phase: 'intent' }]);
+			expect((await exchange(lost.clientSecret)).status).toBe(fault === 'outcome' ? 400 : 200);
+			await harness.database.exec('DROP TRIGGER fail_rotation');
+			const recoveredResponse = await harness.gateway(endpoint, operation);
+			expect(recoveredResponse.status).toBe(200);
+			const recovered = credentialSchema.parse(await recoveredResponse.json());
+			expect(recovered.clientSecret).not.toBe(lost.clientSecret);
+			const rejectedOld = await exchange(lost.clientSecret);
+			expect(rejectedOld.status).toBe(400);
+			expect(await rejectedOld.json()).not.toHaveProperty('access_token');
+			const permittedNew = await exchange(recovered.clientSecret);
+			expect(permittedNew.status).toBe(200);
+			expect(await permittedNew.json()).toHaveProperty('access_token');
+			expect(
+				(await harness.database.prepare(auditSql).bind(registrationRequestId).all()).results,
+			).toEqual([{ phase: 'intent' }, { phase: 'outcome' }]);
+			expect(
+				(
+					await harness.database
+						.prepare('SELECT clientId FROM oauthClient WHERE clientId = ?')
+						.bind(registeredClientId)
+						.all()
+				).results,
+			).toEqual([{ clientId: registeredClientId }]);
+			expect(
+				(
+					await harness.database
+						.prepare('SELECT resourceId FROM oauthClientResource WHERE clientId = ?')
+						.bind(registeredClientId)
+						.all()
+				).results,
+			).toEqual([{ resourceId: agentAudience }]);
+			expect(
+				await (
+					await harness.gateway(
+						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					)
+				).json(),
+			).toMatchObject({ [`agent:${registeredClientId}`]: { state: 'listed' } });
+			expect(harness.effects).toHaveLength(0);
+		} finally {
+			await harness.close();
+		}
+	},
+	120_000,
+);

@@ -1,6 +1,6 @@
 import { handleAuthProofRequest } from '#auth/test-fixtures/auth-proof-application';
 
-export { AgentClientManagement } from '#auth/cloudflare-host/index';
+export { AgentClientManagement } from '#auth/test-fixtures/management-observation-holds';
 
 // Test-only composition preserves the production named entrypoint and adds a post-signing hold control.
 export default {

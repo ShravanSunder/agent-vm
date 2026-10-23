@@ -8,12 +8,13 @@ import {
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
+import type { AgentClientManagement } from '#auth/test-fixtures/management-observation-holds';
 
 it('agent: real non-owner E7, forged actor input and public binding URLs never acquire owner authority across concurrent requests', async () => {
 	const harness = await startLocalAuthHarness();
 	try {
 		const owner = await harness.ownerToken();
-		const ownerPerson = z.object({ sub: z.string() }).parse(decodeJwt(owner));
+		const ownerPerson = z.object({ sub: z.string(), sid: z.string() }).parse(decodeJwt(owner));
 		const endpoint = `/management/organizations/${organizationOne}/agents`;
 		const legitimate = {
 			method: 'POST',
@@ -95,19 +96,115 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			),
 		);
 		expect(publicResponses.every((response) => [403, 404].includes(response.status))).toBe(true);
-		// A legitimate named-binding request overlaps public/no-hook and non-owner requests.
-		const [accepted, isolated, noHook] = await Promise.all([
-			harness.gateway(endpoint, legitimate),
-			harness.gateway(endpoint, {
+		const binding = await harness.miniflare.getBindings<{
+			readonly SIGN_IN: AgentClientManagement;
+		}>('gateway-one');
+		// A public request cannot install or trigger the named-entry-only observer.
+		const publicHoldId = crypto.randomUUID();
+		await Promise.all(
+			[
+				'/__auth-proof/management/arm',
+				'/armManagementHold',
+				'/AgentClientManagement/armManagementHold',
+			].map(async (pathname) => {
+				const response = await harness.auth(pathname, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ requestId: publicHoldId, observeManagement: true }),
+				});
+				expect([403, 404].includes(response.status)).toBe(true);
+			}),
+		);
+		expect(await binding.SIGN_IN.managementHoldStatus(publicHoldId)).toEqual({
+			armed: false,
+			observed: false,
+		});
+		await binding.SIGN_IN.armManagementHold(publicHoldId);
+		try {
+			const publicAttempt = await harness.auth('/api/auth/admin/oauth2/create-client', {
+				method: 'POST',
+				headers: forgedHeaders,
+				body: JSON.stringify({ requestId: publicHoldId, observeManagement: true }),
+			});
+			expect([403, 404].includes(publicAttempt.status)).toBe(true);
+			expect(await binding.SIGN_IN.managementHoldStatus(publicHoldId)).toEqual({
+				armed: true,
+				observed: false,
+			});
+		} finally {
+			await binding.SIGN_IN.releaseManagementHold(publicHoldId);
+		}
+		async function refusedCallerB(): Promise<void> {
+			const clientsBeforeB = await harness.database
+				.prepare(
+					'SELECT clientId, clientSecret, metadata, grantTypes FROM oauthClient ORDER BY clientId',
+				)
+				.all();
+			const isolated = await harness.gateway(endpoint, {
 				method: 'POST',
 				headers: forgedHeaders,
 				body: JSON.stringify({ requestId: crypto.randomUUID() }),
-			}),
-			harness.auth('/__auth-proof/no-hook'),
-		]);
-		expect(accepted.status).toBe(200);
-		expect(isolated.status).toBe(403);
-		expect(await noHook.json()).toEqual({ refused: true });
+			});
+			expect(isolated.status).toBe(403);
+			const noHook = await harness.auth('/__auth-proof/no-hook');
+			expect(noHook.status).toBe(200);
+			expect(await noHook.json()).toEqual({ refused: true });
+			expect(
+				await harness.database
+					.prepare(
+						'SELECT clientId, clientSecret, metadata, grantTypes FROM oauthClient ORDER BY clientId',
+					)
+					.all(),
+			).toEqual(clientsBeforeB);
+		}
+		async function heldOwnerA(revoke: boolean): Promise<void> {
+			const clientBeforeA = await harness.database
+				.prepare('SELECT clientId, clientSecret FROM oauthClient WHERE clientId = ?')
+				.bind(registeredClientId)
+				.first();
+			// Reusing the completed operation makes A enter the real provider link/rotation path.
+			await binding.SIGN_IN.armManagementHold(registrationRequestId);
+			const accepted = harness.gateway(endpoint, legitimate);
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				const entered = await Promise.race([
+					binding.SIGN_IN.enteredManagementHold(registrationRequestId),
+					new Promise<never>((_, reject) => {
+						timer = setTimeout(
+							() => reject(new Error('Authorized management hold was not entered')),
+							30_000,
+						);
+					}),
+				]);
+				expect(entered).toEqual({
+					point: 'before-provider-owner-read',
+					requestId: registrationRequestId,
+				});
+				await refusedCallerB();
+				if (revoke)
+					await harness.database
+						.prepare('DELETE FROM session WHERE id = ?')
+						.bind(ownerPerson.sid)
+						.run();
+			} finally {
+				if (timer !== undefined) clearTimeout(timer);
+				await binding.SIGN_IN.releaseManagementHold(registrationRequestId);
+				await accepted;
+			}
+			const settled = await accepted;
+			expect(settled.status).toBe(revoke ? 503 : 200);
+			if (revoke) expect(await settled.json()).not.toHaveProperty('clientSecret');
+			if (revoke)
+				expect(
+					await harness.database
+						.prepare('SELECT clientId, clientSecret FROM oauthClient WHERE clientId = ?')
+						.bind(registeredClientId)
+						.first(),
+				).toEqual(clientBeforeA);
+			await refusedCallerB();
+		}
+		await heldOwnerA(false);
+		await heldOwnerA(true);
 		expect(
 			await harness.database
 				.prepare('SELECT clientId, metadata, grantTypes FROM oauthClient ORDER BY clientId')
