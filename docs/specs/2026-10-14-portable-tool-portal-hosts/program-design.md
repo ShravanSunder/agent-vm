@@ -100,7 +100,7 @@ The owner wants only MCP 2026-07-28, stateless (2026-10-21; Requirements). It ch
 | `@agent-collaboration/tool-access` | the rules | `contracts` (schemas and the call digest), `authorization` (`assessAccess`, policy helpers, CLI allowances), `approval-rules` (which calls an approval covers), `credentials` (rules for which provider account a call may use) | any other piece, agent-vm, `node:*` |
 | `@agent-collaboration/tool-engine` | route calls and talk to MCP servers | `capability-dispatch` (the one dispatcher, with neutral interfaces for backends and approvals), `standalone-tool-portal` (the standalone Tool Portal's list, search, describe and call over that dispatcher), `mcp-gateway` (the proxy's tools in `direct` or `indirect` mode, its agent bearer tokens and its approval token), `upstream-mcp-connectors` (calls to other MCP servers over HTTP or SSE). Folders inside each follow [the package structure plan](plans/2026-10-21-package-structure.md) | any host, agent-vm, `node:*` |
 | `@agent-collaboration/tool-host-node` | run the standalone servers | HTTP and stdio listeners, the two standalone projections (Tool Portal and the proxy), caller checks, the Tool Portal's batch approval check, the proxy's in-memory used-token list, config loading, the stdio connection to MCP servers, and the TypeScript catalog compiler | agent-vm |
-| `@agent-collaboration/tool-host-cloudflare` | run the MCP proxy on a Worker | the Worker's MCP listener, its caller check, the organization's Durable Object (including the proxy's used approval tokens), config and secrets from Cloudflare bindings, and the analytics data point | agent-vm, `tool-host-node`, `node:*` beyond what Cloudflare's Node compatibility provides |
+| `@agent-collaboration/tool-host-cloudflare` | run the MCP proxy on a Worker | the Worker's MCP listener, its caller check, each workspace's Durable Object (including the proxy's used approval tokens), config and secrets from Cloudflare bindings, and the analytics data point | agent-vm, `tool-host-node`, `node:*` beyond what Cloudflare's Node compatibility provides |
 | agent-vm's managed adapter (in `gateway-runtime`) | plug agent-vm in | wraps agent-vm's existing backends (native tools, configured CLIs, Tool VMs, MCP providers) and the controller's approvals behind `tool-engine`'s interfaces; keeps the private connection and agent-vm's own IDs and fingerprints | n/a; it's agent-vm code |
 
 ```mermaid
@@ -159,11 +159,11 @@ Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-par
 **When it's chosen.** 2026-07-28 MCP has no connect step: each request carries its version and the client's capabilities ([lifecycle](https://modelcontextprotocol.io/specification/2026-07-28/basic/lifecycle)). So the case is chosen on each request, from the address it's sent to, and it's the same answer every time. That also fits MCP's rule that a tool list must not vary from connection to connection ([tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)).
 - **The client's name isn't used.** The client reports it about itself, and it says nothing reliable about deferral.
 
-### The organization's portal starts once
+### The workspace's portal starts once
 
-**This is a change from today.** Each organization's portal connects to its configured tool servers and reads their tool lists into one catalog when it starts. Today, discovery is lazy and separate for each agent: it runs the first time that agent's session starts ([portal-session.ts:194](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L194), [:243](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L243)).
+**This is a change from today.** Each workspace's portal connects to its configured tool servers and reads their tool lists into one catalog when it starts. Today, discovery is lazy and separate for each agent: it runs the first time that agent's session starts ([portal-session.ts:194](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L194), [:243](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/portal-session.ts#L243)).
 - **Each client's view is filtered from that catalog,** by what the caller may use, in whichever case it gets. Calls keep using connections per agent and per server, as today.
-- **The case belongs to the caller, not the organization.** The gateway already takes the case on each `listTools` call ([mcp-gateway.ts:73](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/mcp-gateway.ts#L73)). The host sets it for each client's protocol server ([node-mcp-server.ts:27](https://github.com/ShravanSunder/agent-vm/blob/51c9813938a9f6e5a9bf4494696c5c847aa58f92/packages/tool-host-node/src/ingress/node-mcp-server.ts#L27)), never as one setting shared across the organization. So two clients of one organization can be in different cases at once.
+- **The case belongs to the caller, not the workspace.** The gateway already takes the case on each `listTools` call ([mcp-gateway.ts:73](https://github.com/ShravanSunder/agent-vm/blob/377ae627ab64b2bf7b00d558f872e2b6ba711b0d/packages/tool-engine/src/mcp-gateway/mcp-gateway.ts#L73)). The host sets it for each client's protocol server ([node-mcp-server.ts:27](https://github.com/ShravanSunder/agent-vm/blob/51c9813938a9f6e5a9bf4494696c5c847aa58f92/packages/tool-host-node/src/ingress/node-mcp-server.ts#L27)), never as one setting shared across the workspace. So two clients of one workspace can be in different cases at once.
 - **A tool server that's down at startup costs only its own tools, as today.** Starting never fails because a tool server is unreachable; only configuration, secret and listener errors stop it, as now. Today's rules carry over unchanged ([portal-session.ts:177](../../../packages/mcp-portal/src/portal-session.ts#L177), [:234](../../../packages/mcp-portal/src/portal-session.ts#L234); [portal-http-server.ts:267](../../../packages/mcp-portal/src/mcp-proxy/portal-http-server.ts#L267)):
   - the catalog records which servers failed, with diagnostics, and keeps the healthy ones;
   - an incomplete catalog isn't treated as final: the next request that needs it lists the failed servers again;
@@ -174,7 +174,7 @@ Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-par
 
   This policy lives in `tool-engine` so both hosts share it. It adds no timer or background retry.
 - **On a machine,** the portal starts with the process.
-- **On the Worker,** it starts with the first request that creates the organization's engine in an isolate; that request waits for the catalog. The engine and its catalog then last as long as the isolate, and a new isolate starts its own. **Clients to tool servers don't:** each request builds its own and closes it at the end, because a Worker request can't use input or output that another request opened ([Workers errors](https://developers.cloudflare.com/workers/observability/errors/#cannot-perform-io-on-behalf-of-a-different-request)). This was checked in local workerd. The MCP SDK 1.29 HTTP client keeps the abort controller from its first request and reuses it for later sends, so a cached client fails on the next request (S6, 2026-10-21). Results, tools and approvals are the same either way; the cost is one connection per request, which 2026-07-28's lack of a handshake keeps small.
+- **On the Worker,** it starts with the first request that creates the workspace's engine in an isolate; that request waits for the catalog. The engine and its catalog then last as long as the isolate, and a new isolate starts its own. **Clients to tool servers don't:** each request builds its own and closes it at the end, because a Worker request can't use input or output that another request opened ([Workers errors](https://developers.cloudflare.com/workers/observability/errors/#cannot-perform-io-on-behalf-of-a-different-request)). This was checked in local workerd. The MCP SDK 1.29 HTTP client keeps the abort controller from its first request and reuses it for later sends, so a cached client fails on the next request (S6, 2026-10-21). Results, tools and approvals are the same either way; the cost is one connection per request, which 2026-07-28's lack of a handshake keeps small.
 
 ### The tool list's size
 
@@ -186,7 +186,7 @@ Today the case is one command-line flag for the whole proxy ([mcp-portal-cli-par
   - Version 2 of the MCP TypeScript SDK, when it gathers pages itself, stops at 64 by default and throws; the limit is configurable ([client.ts:289](https://github.com/modelcontextprotocol/typescript-sdk/blob/46d9c9921b6542e813c1ecc5f9fc964085e8e3bb/packages/client/src/client/client.ts#L289)). Version 1.29.0, which this repository uses, returns one page per call.
 
   So a client whose limit is below the caller's list stays `portal-deferred`, where `list` and `search` already return bounded pages ([portal-tools.ts:111](../../../packages/mcp-portal/src/core/portal-tools.ts#L111), [:120](../../../packages/mcp-portal/src/core/portal-tools.ts#L120)).
-- **This is a setup rule, not a runtime switch.** It's checked when a client is set up, and again whenever the organization adds tool servers. The portal can't know a client's limits, so it never moves a caller to another case by itself; that's what keeps each caller's case stable. If an organization's list outgrows a client, whoever manages the organization moves that client to the default setup.
+- **This is a setup rule, not a runtime switch.** It's checked when a client is set up, and again whenever the workspace adds tool servers. The portal can't know a client's limits, so it never moves a caller to another case by itself; that's what keeps each caller's case stable. If a workspace's list outgrows a client, whoever manages the workspace moves that client to the default setup.
 - **The size caps found so far are larger than 1 MiB,** as defaults on the paths inspected: 8 MiB per message on Codex's modern transports; 10 MiB per HTTP response or SSE event in Hermes; and a 10 MiB stdio buffer in version 2 of the TypeScript SDK. None of them is near 1 MiB, so the 1 MiB page budget leaves plenty of room.
 
 ### `describe` and code mode
@@ -234,7 +234,7 @@ A mode is a per-tool setting, not the state of a call, and a timed-out approval 
 
 | What the call touches | What must already allow it | Who decides "requires approval" | Status |
 | --- | --- | --- | --- |
-| a team tool (the organization's credentials) | the agent is in the organization (new, on the Worker); its profile includes the tool and sets its mode (built today) | the agent's configured approver | built today, except the organization check |
+| a workspace tool (the workspace's credentials) | the agent is a member of the workspace (new, on the Worker); its persona, today's profile, includes the tool and sets its mode (built today) | the agent's configured approver | built today, except the membership check |
 | a team account | a manager gave the workspace's agents that account | the configured approver | decided (fleet F-27) |
 | a person's own account | the owner consented to this agent; read and write modes, within hard limits | the account's owner (owner decision, 2026-10-20), unless they've set the action to auto (the judge, asking them when unsure), approved, or approved until a time, which they can change easily. Today it's the configured approver, through Hermes or Discord | consent and modes built today; owner as approver decided |
 | someone else's account, for the requester | not allowed: "on behalf of" is a label (fleet F-35) | | decided |
@@ -250,7 +250,7 @@ A mode is a per-tool setting, not the state of a call, and a timed-out approval 
 - **The standalone servers** keep no protocol sessions, since 2026-07-28 has none. They keep the in-memory approval entries above for the life of the process. That matches today: the old Tool Portal's one-use token tombstones ([standalone-tool-portal-approval.ts:306](../../../packages/tool-portal/src/standalone-entrypoint/standalone-tool-portal-approval.ts#L306)) and the proxy's used-token list.
 - **agent-vm's controller** keeps what it keeps today: approvals, provider accounts and Tool VM leases. It stays the owner of that state, and the managed adapter uses it.
 - **`tool-engine` and `tool-access`** store nothing.
-- **The Worker** keeps each organization's auth state, and the approval tokens already used until each expires, in that organization's Durable Object. See [The organization's Durable Object](#the-organizations-durable-object). It keeps no record of calls.
+- **The Worker** keeps each workspace's membership, and the approval tokens already used until each expires, in that workspace's Durable Object. See [The workspace's Durable Object](#the-workspaces-durable-object). It keeps no record of calls.
 
 ## Limits today
 
@@ -271,57 +271,80 @@ The Worker serves the MCP proxy's way in, in `direct` or `indirect` mode, with t
 ```mermaid
 flowchart LR
   S[sign-in service · Better Auth, its own Worker] -.->|issues each agent a token| A[agent or MCP client]
-  A -->|its sign-in token| W[Worker · tool-host-cloudflare · caller check]
-  W -->|one short check per call| O[(organization's Durable Object · one per organization)]
-  W --> E[tool-engine · direct or indirect, then the dispatcher]
-  E -->|organization tools| R[remote MCP servers · organization credentials from Cloudflare secrets]
+  A -->|"a token for one workspace, sent to /workspaces/‹id›/mcp"| W[Worker · tool-host-cloudflare · caller check]
+  W -->|one short check per call| O[(workspace's Durable Object · one per workspace)]
+  W --> E[tool-engine · that workspace's engine · direct or indirect, then the dispatcher]
+  E -->|workspace tools| R[remote MCP servers · workspace credentials from Cloudflare secrets]
   E -.->|per-user tools, later| P[an account its owner consented to this agent]
   E -.->|computer tools, later · Cloudflare Tunnel and Access| C[a registered computer's MCP server]
   W -->|one data point per call| AE[(Analytics Engine)]
 ```
 
+### Where each thing lives
+
+The [Specification](2026-10-14-portable-tool-portal-hosts.md#what-these-checks-are-about) defines these things; this table says who owns each one and where it lives. Today's code calls the portal's unit an organization (`OrganizationConfiguration`, `organization_id`, the organization's Durable Object). The workspace build renames that unit to the workspace and keeps the organization only as who may sign in.
+
+| Thing | Owner | Where it lives | What crosses a boundary |
+| --- | --- | --- | --- |
+| E1 Organization | the sign-in service | its database: who may sign in, and the owner | the token's `organization_id` |
+| E2 Workspace | configuration now, the fleet later (F-53, F-76) | its configuration versions and secrets; one engine per isolate; one Durable Object | its ID, taken from the address `/workspaces/‹id›/mcp`; nothing in a call's body or headers can pick it |
+| E3 Agent | the sign-in service, for a bot (its registered client, sign-in E9). A Router-vouched session isn't designed yet | the sign-in service's database | the token's subject (`client_id`) |
+| E4 Membership | configuration now, written only by the owner's management path; the fleet later (F-53, F-76) | the workspace's Durable Object | read before every call; nothing on the MCP path writes it |
+| E5 Workspace token | issued by the sign-in service | nowhere: short-lived, never stored | audience: the workspace's address; claims `organization_id` and `workspace_id`; checked by the agent verifier in `tool-access/contracts` |
+| E6 Workspace tool | the workspace's configuration | the workspace's catalog, filled from its tool servers at startup | its name, within that workspace only |
+| E7 Approval | the Worker, when it accepts a token | the used-token records in the workspace's Durable Object, each until it expires | the approval token, signed with the workspace's key |
+
 ### The caller check
 
-One function at the Worker's edge answers "which agent, of which organization, is calling". It returns the organization and the agent, or it refuses the call. Nothing else in the Worker reads tokens, so a change of sign-in touches only this function.
+One function at the Worker's edge answers "which agent, of which workspace, is calling". It returns the workspace and the agent, or it refuses the call. Nothing else in the Worker reads tokens, so a change of sign-in touches only this function.
 - **Agents sign in with our own login, Better Auth** (owner, 2026-10-20). The sign-in service ([`@agent-collaboration/auth`](../2026-10-20-people-sign-in/requirements.md)) runs in its own Worker and gives each agent a token for this Worker. Better Auth's OAuth provider supports a client signing in as itself (`client_credentials`), with the client as the token's subject.
-- **The check verifies that token:** signed by our sign-in service, meant for this Worker (its audience), not expired, and naming an agent the organization's object still lists. A missing, forged, expired or wrong-audience token is refused.
-- **The organization comes from the token, not the caller.** The sign-in service signs the agent's organization into its token (`organization_id`, copied from the agent's registration; [sign-in E10](../2026-10-20-people-sign-in/program-design.md)). The check opens that organization's object and refuses the call unless the object still lists the agent. No address, header or argument names the organization.
+- **Each workspace has its own address** (F-73): `/workspaces/‹workspace-id›/mcp`. One deployment serves many workspaces.
+- **The check verifies that token:** signed by our sign-in service, its audience is this workspace's address, not expired, its `workspace_id` matches the address, and it names an agent that the workspace's object still lists as a member. A missing, forged, expired or wrong-audience token is refused, and so is a token for another workspace, even one in the same organization (F-75).
+- **The workspace comes from the address, and the token must agree.** The sign-in service signs the agent's organization (`organization_id`, from its registration) and the workspace it asked for (`workspace_id`, from the token's audience) into the token. The check opens that workspace's object and refuses the call unless the object lists the agent as a member. No header or argument names the workspace.
+- **This needs a change in the sign-in design.** Today an agent's registered client (sign-in E9) is linked to one service, so its tokens have one audience ([sign-in E10](../2026-10-20-people-sign-in/program-design.md)). A bot in several workspaces needs one link per workspace, and a token for each. That change is the sign-in design's to make; until it lands, each agent can be in one workspace.
 - **Cloudflare Access isn't in front of the Worker.** Cloudflare stays for machines: the Worker reaches registered computers through it (computer tools, below), like Tailscale.
 - **An agent is known only by its token,** never by a name, session ID, client name or tool argument it sends.
 - **An agent always acts with its own access.** The fleet's "on behalf of" field records who asked; it's a label in the log and grants nothing (fleet F-30, F-35).
 - **Agent sign-in** is in the sign-in design ([`U8`, `R15` to `R17`](../2026-10-20-people-sign-in/2026-10-20-people-sign-in.md)): each agent is a registered client with only the `client_credentials` grant, and an agent verifier beside the person verifier in `tool-access/contracts` checks its token. A person's proof is never accepted as an agent's, and an agent's never as a person's.
-- **Each organization gets its own engine.** Each organization has its own configuration (today's proxy config format, unchanged), its own secrets and its own approval signing key. The secrets and the signing key are deployed with the Worker. Where the configuration lives, deployed with the Worker or in the organization's database, is owner question 6 (see [Organization tools](#organization-tools)). The organization this check verified picks the engine that handles the call; nothing the caller sends can pick it. So tools, server settings, connections and the approval key never cross organizations. Today one runtime picks servers by name alone ([upstream-mcp-client-runtime.ts:532](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L532)) and reuses connections per agent and server ([:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)). Two organizations can use the same agent or server names, so they can't share one runtime.
+- **Each workspace gets its own engine.** Each workspace has its own configuration (today's proxy config format, unchanged), its own secrets and its own approval signing key. The secrets and the signing key are deployed with the Worker. Where the configuration lives, deployed with the Worker or in the workspace's database, is owner question 6 (see [Workspace tools](#workspace-tools)). The workspace this check verified picks the engine that handles the call; nothing the caller sends can pick it. So tools, server settings, connections and the approval key never cross workspaces. Today one runtime picks servers by name alone ([upstream-mcp-client-runtime.ts:532](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L532)) and reuses connections per agent and server ([:345](../../../packages/mcp-portal/src/upstream-mcp-client-runtime.ts#L345)). Two workspaces can use the same agent or server names, so they can't share one runtime.
+- **A member's persona narrows the workspace's tools** (F-71). Today's per-agent profile is that persona: a member is assigned one of the workspace's profiles, and a profile only selects among the workspace's own tools, so it can't add any.
 
-### The organization's Durable Object
+### The workspace's Durable Object
 
-One object per organization, holding only that organization's auth state. It's the one authority for each row below:
+One object per workspace, holding only that workspace's portal state. It's the one authority for each row below. Who may sign in belongs to the organization and stays in the sign-in service, not here.
 
 | What it holds | Written by | Checked |
 | --- | --- | --- |
-| the owner, and who may sign in | the owner | at sign-in |
-| the organization's agents, by their sign-in client IDs | the owner | before every call |
+| the workspace's members, by their sign-in client IDs, each with its persona | the owner, through the management path; the fleet later (F-53, F-76) | before every call |
 | per-user tools, later: what the Worker checks for a consented account. Today agent-vm's controller owns consents, overrides and Google credentials; whether the Worker asks it or holds its own is decided when per-user tools are designed | each account's owner | before every per-user call |
 | approval tokens already used, each kept until it expires | the Worker, when it accepts a token | before every approved call |
 
-- **One short check per call, with no cache.** Removing an agent or withdrawing a consent stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one organization today.
-- **Adding or removing an agent writes two records in a fixed order:** the sign-in client, then this object's admission when adding, and the reverse when removing. Every state in between refuses calls. Tool Portal's agent-management handler coordinates both writes and reports a removal complete only after both ([sign-in design, Adding and removing an agent](../2026-10-20-people-sign-in/program-design.md#adding-and-removing-an-agent-r17)).
+- **One short check per call, with no cache.** Removing an agent or withdrawing a consent stops that agent's next call. The cost is one hop to the object per call. Cloudflare's soft limit is about 1,000 requests a second per object, which is ample for one workspace today.
+- **Adding or removing a member writes two records in a fixed order:** the agent's sign-in client (and its link to this workspace), then this object's membership when adding, and the reverse when removing. Every state in between refuses calls. Tool Portal's agent-management handler coordinates both writes and reports a removal complete only after both ([sign-in design, Adding and removing an agent](../2026-10-20-people-sign-in/program-design.md#adding-and-removing-an-agent-r17)). Removing an agent from one workspace leaves its other memberships alone.
 - **Tool calls and their streams run in the Worker, not in the object.** The object only does short reads and writes.
-- **Splitting when needed:** if one organization's used-approval-token records grow too large or too busy, they can split by agent into more objects. That spreads only the approval records: every call still makes its one check against the organization's object, so a very busy organization would have that check measured before anything else changes.
+- **Splitting when needed:** if one workspace's used-approval-token records grow too large or too busy, they can split by agent into more objects. That spreads only the approval records: every call still makes its one check against the workspace's object, so a very busy workspace would have that check measured before anything else changes.
 - **Why approval state moves here:** today the proxy remembers used tokens in a list inside one process ([resolve-agent-identity.ts:139](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L139)). A Worker runs as many copies at once, so a list per copy couldn't stop a token being used twice. The object is the single place that records a use. This is approval state, not call history.
 - **Recording a use is one awaited step, before anything runs.**
   1. The Worker checks the token's signature, agent and calls.
-  2. It asks the organization's object to record the token. The object does that in one storage write and answers "first use" or "already used".
+  2. It asks the workspace's object to record the token. The object does that in one storage write and answers "first use" or "already used".
   3. Only "first use" lets the calls run. "Already used", an error or no answer means none of them run.
 
-  Today the token check calls a plain function for this ([hmac-token.ts:204](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L204)). It becomes an awaited step on both hosts; a machine keeps today's in-memory list behind it. The token's bytes don't change. A token signed with one organization's key fails the signature check in another.
-- **People's and agents' sign-in records aren't kept here.** They live in the sign-in service's own database. Membership is written in one place only: this object.
+  Today the token check calls a plain function for this ([hmac-token.ts:204](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L204)). It becomes an awaited step on both hosts; a machine keeps today's in-memory list behind it. The token's bytes don't change. A token signed with one workspace's key fails the signature check in another.
+- **People's and agents' sign-in records aren't kept here.** They live in the sign-in service's own database. A workspace's membership is written in one place only: this object.
 
-### Organization tools
+### Admin and management routes
 
-Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). Each organization's engine reads its own copy of that config.
-- **Where the configuration lives** (the Lead's reading, owner question 6): in the organization's database, as versions. The Worker reads the current version, so a change applies on the next call with no redeploy. That's what the admin panel changes, through a request bar and editable forms you accept; the panel is in the first version. Profiles, agents' profiles and modes keep today's meaning (fleet D-9; [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)).
-- **Secret values** come from that organization's Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
-- **Connections are reused only inside the organization's engine,** per agent and per server as today on a machine (on the Worker, each request builds its own; see above), where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). A reused connection never skips the per-call check.
+The owner's agent-management handler is the Worker's one management route today ([sign-in design](../2026-10-20-people-sign-in/program-design.md#adding-and-removing-an-agent-r17)); the admin panel's routes join it later. Every one of them:
+- accepts only a person's token for the management audience, with a live check of that person and session on every command. An agent's token (a bot's, or a Router agent's later) and any token without a person's session are refused before anything changes (F-78; sign-in R16);
+- is reached by a person through an interactive sign-in, like the Cloudflare CLI's (F-79). The CLI opens the browser, and a short-lived person token covers the commands that follow;
+- keeps how strong the human check is behind one setting, because the owner hasn't decided it. The first build implements the remembered sign-in; a stronger setting that isn't built yet refuses rather than falling back.
+
+### Workspace tools
+
+Today's proxy config already describes remote MCP servers, with headers whose values are secrets ([mcp-config.ts:39](../../../packages/config-contracts/src/mcp-config.ts#L39)). Each workspace's engine reads its own copy of that config.
+- **Where the configuration lives** (the Lead's reading, owner question 6): in the workspace's database, as versions. The Worker reads the current version, so a change applies on the next call with no redeploy. That's what the admin panel changes, through a request bar and editable forms you accept; the panel is in the first version. Profiles, agents' profiles and modes keep today's meaning (fleet D-9; [profile policy](../2026-09-13-profile-oauth-policy/requirements.md)).
+- **Secret values** come from that workspace's Worker secrets or Secrets Store bindings, in place of the machine's secret loader. The call itself doesn't change.
+- **Connections are reused only inside the workspace's engine,** per agent and per server as today on a machine (on the Worker, each request builds its own; see above), where the agent is the one its bearer token names ([resolve-agent-identity.ts:112](../../../packages/mcp-portal/src/mcp-proxy/resolve-agent-identity.ts#L112)). A reused connection never skips the per-call check.
 - **1Password:** the Node host's `op` path doesn't run in a Worker. A 1Password service-account token would need a client that works in a Worker, which is unproven, so Cloudflare secrets are the default.
 
 ### Per-user and computer tools: designed, not built
@@ -330,7 +353,7 @@ Today's proxy config already describes remote MCP servers, with headers whose va
   - an account's owner consents, in the browser, to a specific agent using it, which gives a separate credential for that agent and account;
   - Deny, Ask or Allow, set separately for reads and writes, within the operator's hard limits. A rule the owner hasn't overridden follows the agent's profile default live, so changing the default changes it;
   - a one-call approval when the policy says Ask. In the managed controller it lasts five minutes from when it's requested, whether or not it's been answered ([controller-runtime.ts:182](../../../packages/agent-vm/src/controller/controller-runtime.ts#L182)).
-  - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the organization's object, and its connection is reused only for that agent and account.
+  - The agent uses only accounts consented to it, never a requester's (fleet F-35). The account a call uses comes from that consent, checked at the workspace's object, and its connection is reused only for that agent and account.
   - Changing a person's account rules needs that account's owner who is also a configured editor for the agent; signing in alone grants neither. Today's changes are revisioned and recorded, and that stays. Making changes through the request bar with Accept or Deny (fleet F-41 to F-49) is the separate control UI. Approved until a time (temporary grants) is decided, but isn't in the first version (see [approval modes](#approval-modes-and-who-decides)); blocked until a time isn't wanted.
   - Today's approval pieces stay separate: the rules that say whether a call needs approval, the record that decides it and uses it once, and the prompt in Hermes, Discord or elsewhere. Per-user tools don't add a shared approval service.
   - Who must approve in each case (an agent on its own, a person's own account, someone else's shared resource, several resources at once, a configuration change) is worked out in the [October 15 approval target-state proposal](../../wip/2026-10-15-portal-approval-research/s1-approval-target-state.md). It's a proposal: when per-user tools are designed, it's reconciled with the adopted fleet F-27 (managers may give team accounts) and F-35 (no one else's personal accounts; "on behalf of" is a label).
@@ -349,13 +372,13 @@ There are two generators today, and only one is on the Worker's path.
 
 | Part | What it holds |
 | --- | --- |
-| index (how Analytics Engine groups and samples) | the organization's ID, a UUID (36 bytes, under the 96-byte limit). Cloudflare's guidance is to pick the index the data is viewed by, and never a unique ID per call ([sampling](https://developers.cloudflare.com/analytics/analytics-engine/sampling/)). Workspaces aren't in this work; when they arrive, the index becomes the workspace ID. |
-| text fields | organization, agent, mode (`direct` or `indirect`), tool server, tool name, outcome (ran, refused, needs approval or failed), failure kind, and whether the call was for a person (yes or no) |
+| index (how Analytics Engine groups and samples) | the workspace's ID, a UUID (36 bytes, under the 96-byte limit). Cloudflare's guidance is to pick the index the data is viewed by, and never a unique ID per call ([sampling](https://developers.cloudflare.com/analytics/analytics-engine/sampling/)). |
+| text fields | organization, workspace, agent, mode (`direct` or `indirect`), tool server, tool name, outcome (ran, refused, needs approval or failed), failure kind, and whether the call was for a person (yes or no) |
 | number fields | duration in milliseconds, request bytes, response bytes |
 
-- **Kept small and safe:** no arguments, results, secrets, tokens or personal details. Mode, outcome, failure kind and "for a person" have fixed sets of values. Names come from configuration, which sets no length limit, so each text field is cut to at most 256 bytes, on a character boundary. That keeps a data point's eight text fields far under Analytics Engine's 16 KB ([limits](https://developers.cloudflare.com/analytics/analytics-engine/limits/)).
+- **Kept small and safe:** no arguments, results, secrets, tokens or personal details. Mode, outcome, failure kind and "for a person" have fixed sets of values. Names come from configuration, which sets no length limit, so each text field is cut to at most 256 bytes, on a character boundary. That keeps a data point's nine text fields far under Analytics Engine's 16 KB ([limits](https://developers.cloudflare.com/analytics/analytics-engine/limits/)).
 - **Analytics never changes a call:** a data point that can't be written is dropped, and the failure is logged without its contents.
-- **Reading it:** counts are weighted by `_sample_interval`, because data is sampled. A rare event inside a busy organization may not be retrievable on its own.
+- **Reading it:** counts are weighted by `_sample_interval`, because data is sampled. A rare event inside a busy workspace may not be retrievable on its own.
 - **Logs, traces and errors** use Cloudflare's Workers observability. Logs are structured and never contain secrets.
 
 ### Limits on the Worker
@@ -374,7 +397,7 @@ A budget alone doesn't guarantee memory, so each is provisional until measured o
 | calls in one `mcp_portal_call` | 50 | today's proxy has no limit; 50 matches the standalone Tool Portal's batch limit, and stays under 250 data points |
 | calls of one batch running at once | 6 | our choice, so at most about 24 MiB of responses (6 × 4 MiB) are held at once; the rest wait their turn. It isn't Cloudflare's limit, which counts connections waiting for headers |
 | the whole reply | 16 MiB | calls that would push the reply past it fail with a too-large result, rather than the Worker running out of memory |
-| an organization's object | records far below Cloudflare's 2 MB per record and 10 GB per object | each record is a small row |
+| a workspace's object | records far below Cloudflare's 2 MB per record and 10 GB per object | each record is a small row |
 
 ## Where today's code goes
 
@@ -389,7 +412,7 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | `mcp-portal` proxy's MCP result projection (the core result as MCP content and `structuredContent`, and the direct-call item) | `tool-engine/mcp-gateway`, one pure function both hosts use; output byte-identical |
 | `mcp-portal` per-tool TypeScript helper, used by `describe` | `tool-engine/mcp-gateway`, on Web Crypto, so both hosts use it; output byte-identical |
 | `mcp-portal` full catalog compiler | `tool-host-node`; output byte-identical |
-| `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)), but becomes awaited: an in-memory list on a machine, the organization's object on the Worker |
+| `mcp-portal` agent bearer tokens and approval token | `tool-engine/mcp-gateway`, so both hosts use one copy. It's written against Web Crypto, which both hosts have, in place of Node's `crypto` ([hmac-token.ts:1](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L1)); the token bytes don't change. The one-use check stays passed in ([hmac-token.ts:28](../../../packages/mcp-portal/src/portal-auth/hmac-token.ts#L28)), but becomes awaited: an in-memory list on a machine, the workspace's object on the Worker |
 | `mcp-portal` call digest | `tool-access/contracts`; same bytes |
 | `mcp-portal` provider backend | `tool-engine/upstream-mcp-connectors`, used by agent-vm's adapter |
 | `tool-portal` standalone server, its MCP projection, artifacts and batch approval | `tool-host-node` |
@@ -414,8 +437,9 @@ The per-file list is the [port inventory](../../wip/2026-10-19-tool-portal-port-
 | MCP v2 | not started | move `tool-engine`'s types and connectors, and the Portal SDK's Node and Python clients, to the SDK v2 packages ([MCP 2026-07-28 only](#mcp-2026-07-28-only)). The connector's outbound rule follows owner question 8 |
 | S3d standalone core | not started | move the Tool Portal contract schemas to `tool-access/contracts` (unchanged bytes); move the standalone list, search, describe and call operations into `tool-engine/standalone-tool-portal` over the S2 dispatcher, with agent-vm's managed context, CLI and OAuth facts supplied through ports by agent-vm's adapter; then `tool-host-node`'s standalone routes and adapters. Found missing from the plan during R-S3b |
 | S4 switch agent-vm over | not started | agent-vm's private connection runs on the new pieces, then the old packages are deleted |
-| S6 Worker host | not started | build `tool-host-cloudflare` for organization tools, as designed above, serving MCP through the SDK v2 handler with `legacy: "reject"`. Its caller check needs agent sign-in from the sign-in service; deploying uses the existing Cloudflare CLI login |
-| Agent sign-in | designed and independently reviewed: no open findings at `df2d9676`. The agent token carries its organization. Who coordinates adding and removing an agent is the Lead's proposal, waiting on the owner with `SD9` | the sign-in design's `U8` and `R15` to `R17` ([people sign-in](../2026-10-20-people-sign-in/requirements.md)); S6's caller check depends on it |
+| S6 Worker host | built, draft PRs [#246](https://github.com/ShravanSunder/agent-vm/pull/246) and [#247](https://github.com/ShravanSunder/agent-vm/pull/247), with the organization as its unit | build `tool-host-cloudflare` for workspace tools, as designed above, serving MCP through the SDK v2 handler with `legacy: "reject"`. Its caller check needs agent sign-in from the sign-in service; deploying uses the existing Cloudflare CLI login |
+| Workspace unit | not started | rename the Worker's unit from organization to workspace: the address `/workspaces/‹id›/mcp`, a token audience and `workspace_id` per workspace, membership with personas in the workspace's object (written only by the owner's management path until the fleet carries it), the analytics index and field, and management routes that refuse every agent token. It needs the sign-in change below |
+| Agent sign-in | designed and independently reviewed: no open findings at `df2d9676`; S1 is being built. The agent token carries its organization; for workspaces it also needs one link per workspace on the agent's client and a `workspace_id` in each token (a sign-in design change). Who coordinates adding and removing an agent is the Lead's proposal, waiting on the owner with `SD9` | the sign-in design's `U8` and `R15` to `R17` ([people sign-in](../2026-10-20-people-sign-in/requirements.md)); S6's caller check depends on it |
 | Admin panel (`@agent-collaboration/tool-access-ui`, fleet F-63) | designed; Lead-checked | in the first version (owner, 2026-10-20): a request bar that shows or proposes, and editable proposal forms you accept, built from shadcn components ([panel design](../../wip/2026-10-20-admin-panel-design/design.md); Designer and Critic, 2 rounds). The full field inventory of the configuration editors is still open; it follows the configuration contract |
 | S3c limits, S5 control API | cancelled | none |
 
