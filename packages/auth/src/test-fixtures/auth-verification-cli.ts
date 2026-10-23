@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
-import { readFile, mkdtemp, writeFile, readdir } from 'node:fs/promises';
+import { readFile, mkdtemp, writeFile, readdir, appendFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { hostname, loadavg, tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as waitForLoadSampleInterval } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 
@@ -23,6 +24,29 @@ const localVerificationTargetSchema = z.strictObject({
 	executionHost: z.string().min(1),
 	maxLoad1: z.number().positive().max(12),
 });
+
+export async function waitForAuthBuildLoadAdmission(props: {
+	readonly maxLoad1: number;
+	readonly readLoad1: () => number;
+	readonly now: () => number;
+	readonly waitInterval: (milliseconds: number) => Promise<void>;
+	readonly recordSample: (sample: {
+		readonly elapsedMs: number;
+		readonly load1: number;
+	}) => Promise<void>;
+}): Promise<void> {
+	const startedAt = props.now();
+	async function checkNextLoadSample(): Promise<void> {
+		const sample = { elapsedMs: props.now() - startedAt, load1: props.readLoad1() };
+		await props.recordSample(sample);
+		if (sample.load1 < props.maxLoad1 && sample.elapsedMs <= 600_000) return;
+		if (sample.elapsedMs >= 600_000)
+			throw new Error('Load admission closed before Worker artifact bundling after bounded wait');
+		await props.waitInterval(30_000);
+		await checkNextLoadSample();
+	}
+	await checkNextLoadSample();
+}
 
 export interface OfferedAuthTest {
 	readonly name: string;
@@ -154,8 +178,21 @@ export async function prepareAuthVerification(
 	await runPinnedCommand('pnpm', ['install', '--frozen-lockfile'], 'install.log');
 	await runPinnedCommand('pnpm', ['build'], 'build.log');
 	await checkFrozenSource();
-	if ((loadavg()[0] ?? Infinity) >= target.maxLoad1)
-		throw new Error('Load admission closed before Worker artifact bundling');
+	await waitForAuthBuildLoadAdmission({
+		maxLoad1: target.maxLoad1,
+		readLoad1: () => loadavg()[0] ?? Infinity,
+		now: Date.now,
+		waitInterval: async (milliseconds) => {
+			await waitForLoadSampleInterval(milliseconds);
+		},
+		recordSample: async (sample) => {
+			await appendFile(
+				path.join(evidence, 'post-build-load.jsonl'),
+				JSON.stringify(sample) + '\n',
+				{ mode: 0o600 },
+			);
+		},
+	});
 	const artifacts = await prepareProofBundles(root, evidence);
 	const manifestFile = path.join(evidence, 'bundle-manifest.json');
 	await writeFile(manifestFile, JSON.stringify(artifacts), { mode: 0o600, flag: 'wx' });
