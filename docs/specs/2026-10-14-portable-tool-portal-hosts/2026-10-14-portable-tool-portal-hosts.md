@@ -19,8 +19,8 @@ Checks 2, 6, 13, 14 and 17 are written over these things, from the owner's decis
 | --- | --- | --- | --- | --- | --- |
 | E1 | **Organization** | same organization; two organizations are never merged by name | contains one or more workspaces | decides who may sign in: its owner, people and bots. Being its owner gives no tool access. The first deployment has exactly one (F-82) | not decided: creating and closing organizations isn't in this work |
 | E2 | **Workspace** | same workspace; two workspaces with the same name are still two | exactly one organization | has its own MCP address, members, tool servers and rules. Its tools are served only at its own address, and nothing reaches them another way (F-70, F-73) | not decided: creating and closing workspaces isn't in this work |
-| E3 | **Agent** | same verified identity: one bot's own sign-in, or one Router session its Router vouches for. The same program in two Router sessions is two agents; one bot signing in from two machines is one agent (F-77) | a member of any number of workspaces | has no access of its own (F-71). Its persona can only narrow what a workspace offers it, never widen it. It never uses the admin console (F-78), and "on behalf of" is only a label (F-35) | a bot: registered, then removed. A Router agent lasts as long as its Router session; how the Router vouches isn't designed yet |
-| E4 | **Membership** | one agent in one workspace | one workspace and one agent | only a member can list or call the workspace's tools; an agent that isn't a member reaches the workspace only through agent-collaboration, outside this Worker (F-72, F-75). It's read from configuration until the fleet carries it (F-53, F-76) | active, then removed |
+| E3 | **Agent** | same verified identity: one bot's own sign-in, or one Router session its Router vouches for. The same program in two Router sessions is two agents; one bot signing in from two machines is one agent (F-77) | a member of any number of workspaces | has no access of its own (F-71). It never uses the admin console (F-78), and "on behalf of" is only a label (F-35) | a bot: registered, then removed. A Router agent lasts as long as its Router session; how the Router vouches isn't designed yet |
+| E4 | **Membership** | one agent in one workspace | one workspace and one agent | carries the agent's persona in that workspace, which can only narrow what the workspace offers it, never widen it (F-71). Only a member can list or call the workspace's tools; an agent that isn't a member reaches the workspace only through agent-collaboration, outside this Worker (F-72, F-75). It's read from configuration until the fleet carries it (F-53, F-76) | active, then removed |
 | E5 | **Workspace token** | one token, issued for one workspace's address to one agent | one workspace and one agent | works only at that workspace's address: refused at every other workspace, including one in the same organization (F-75). An agent's token is never a person's ([sign-in](../2026-10-20-people-sign-in/2026-10-20-people-sign-in.md) R16) | valid, then expired |
 | E6 | **Workspace tool** | one tool name on one of the workspace's tool servers | exactly one workspace | never listed or callable from another workspace | as today's tools |
 | E7 | **Approval** | one approval for the exact calls it names | one workspace and one agent | used at most once, even when two copies of the Worker receive it; never used in another workspace | unused, then used |
@@ -28,10 +28,10 @@ Checks 2, 6, 13, 14 and 17 are written over these things, from the owner's decis
 ```mermaid
 flowchart TB
   ORG["E1 Organization<br/>who may sign in"] -->|"contains 1..n"| WS["E2 Workspace<br/>own MCP address, members, tools"]
-  AG["E3 Agent<br/>own identity; persona narrows"]
+  AG["E3 Agent<br/>own identity"]
   WS -->|"serves 0..n"| TOOL["E6 Workspace tool"]
   WS -->|"scopes"| APR["E7 Approval<br/>unused → used"]
-  WS -->|"has 0..n"| MEM["E4 Membership<br/>active → removed"]
+  WS -->|"has 0..n"| MEM["E4 Membership<br/>persona narrows; active → removed"]
   AG -->|"holds 0..n"| MEM
   MEM -->|"its agent receives tokens<br/>for this workspace only"| TOK["E5 Workspace token<br/>valid → expired"]
 ```
