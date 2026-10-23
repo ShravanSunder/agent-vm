@@ -5,9 +5,11 @@ description: "Use when verifying local T3 agent issuance, owner bootstrap, or li
 
 # Verify auth
 
-Issuer state decides whether an agent gets a proof. Organization admission decides whether its next call runs. Observe both storage owners and the tool effect before calling the journey successful.
+Issuer state decides whether an agent gets a proof. Organization admission decides whether its next call runs. For bootstrap, observe issuer, owner, fixed client and Person/session state. For agent, observe both storage owners (issuer and admission) and the real tool effect before calling that journey successful.
 
 This skill covers the local T3 sign-in Worker, its named `AgentClientManagement` binding, the production Gateway path and organization Durable Object. The harness uses actual workerd, D1, Better Auth and Gateway code. Only the external Google protocol and upstream tool are controlled fixtures. A fixture provider identity never establishes a real hosted login.
+
+This is a local unpushed draft: no push, no offering for use, and no command described as operable until the actual commands pass on the declared T3 target.
 
 ## Select and bind the target
 
@@ -21,7 +23,7 @@ Start through the selected journey command after its target and execution slot a
 
 ## Report observations
 
-Keep the command, exit code, selected pass/fail counts, separately named unselected tests, complete compared target tuple, direct D1/DO readback and upstream effects. Zero passing selected observations, failed setup and skipped cases never count as observed behavior. A partial diagnostic does not complete a journey.
+Keep the command, exit code, selected pass/fail counts, separately named unselected tests and complete compared target tuple. Bootstrap requires direct issuer/owner/client/session evidence. Agent additionally requires direct D1/DO readback and the real upstream tool effect. Zero passing selected observations, failed setup and skipped cases never count as observed behavior. A partial diagnostic does not complete a journey.
 
 Store raw receipts and any credentials in owned private runtime/evidence files outside Git. Public reports contain redacted identities and results; never publish tokens, cookies, signing keys, captured codes or resolved private target values. Keep wrong-build patches with their intended assertion failure and restored-green run. Setup failures are not mutant reds.
 
