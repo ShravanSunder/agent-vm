@@ -143,6 +143,8 @@ Evidence is retained in an owned OS-temp directory. Unselected journeys are repo
 		await runPinnedCommand('pnpm', ['install', '--frozen-lockfile'], 'install.log');
 		await runPinnedCommand('pnpm', ['build'], 'build.log');
 		await checkFrozenSource();
+		if ((loadavg()[0] ?? Infinity) >= target.maxLoad1)
+			throw new Error('Load admission closed before Worker artifact bundling');
 		const artifacts = await prepareProofBundles(root, evidence);
 		const manifestFile = path.join(evidence, 'bundle-manifest.json');
 		await writeFile(manifestFile, JSON.stringify(artifacts), { mode: 0o600, flag: 'wx' });
