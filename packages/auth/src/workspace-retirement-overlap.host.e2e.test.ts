@@ -204,3 +204,129 @@ it.each(['retirement supersedes pending unlink', 'stale unlink retry reads retir
 	},
 	120_000,
 );
+
+it('agent: retirement after completed unlinks keeps an incomplete disable ID for GET recovery', async () => {
+	const harness = await startLocalAuthHarness();
+	try {
+		const owner = await harness.ownerToken();
+		const registration = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceOne,
+			requestId: registrationRequestId,
+		});
+		expect(registration.status).toBe(200);
+		const credential = agentCredentialSchema.parse(await registration.json());
+		expect(
+			(
+				await addWorkspaceAgent({
+					harness,
+					owner,
+					workspaceId: workspaceTwo,
+					clientId: credential.clientId,
+					requestId: crypto.randomUUID(),
+				})
+			).status,
+		).toBe(200);
+		const headers = { authorization: `Bearer ${owner}`, 'content-type': 'application/json' };
+		await Promise.all(
+			[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+				expect(
+					(
+						await harness.gateway(
+							`/management/workspaces/${workspaceId}/agents/${credential.clientId}`,
+							{
+								method: 'DELETE',
+								headers,
+								body: JSON.stringify({ requestId: crypto.randomUUID() }),
+							},
+						)
+					).status,
+				).toBe(200);
+				expect(
+					await (
+						await harness.gateway(
+							`/__auth-proof?workspace=${workspaceId}&client=${credential.clientId}`,
+						)
+					).json(),
+				).toMatchObject({
+					[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+					[`member-removal:${credential.clientId}`]: { kind: 'complete', operation: 'unlink' },
+				});
+			}),
+		);
+		const retirementId = crypto.randomUUID();
+		const endpoint = `/management/organizations/${organizationOne}/agents/${credential.clientId}`;
+		await harness.database.exec(
+			`CREATE TRIGGER fail_history_disable BEFORE UPDATE OF disabled ON oauthClient WHEN NEW.clientId = '${registeredClientId}' BEGIN SELECT RAISE(FAIL, 'controlled-disable-fault'); END;`,
+		);
+		try {
+			const pending = await harness.gateway(endpoint, {
+				method: 'DELETE',
+				headers,
+				body: JSON.stringify({ requestId: retirementId }),
+			});
+			expect(pending.status).toBe(202);
+			expect(await pending.json()).toEqual({
+				kind: 'removal-pending',
+				clientId: credential.clientId,
+			});
+			await Promise.all(
+				[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+					expect(
+						await (
+							await harness.gateway(
+								`/__auth-proof?workspace=${workspaceId}&client=${credential.clientId}`,
+							)
+						).json(),
+					).toEqual({
+						[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+						[`member-removal:${credential.clientId}`]: {
+							kind: 'pending',
+							operation: 'disable',
+							requestId: retirementId,
+						},
+					});
+				}),
+			);
+			expect((await harness.gateway(endpoint, { headers })).status).toBe(202);
+			expect(
+				await harness.database
+					.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+					.bind(credential.clientId)
+					.first(),
+			).toEqual({ disabled: 0 });
+		} finally {
+			await harness.database.exec('DROP TRIGGER fail_history_disable');
+		}
+		const completed = await harness.gateway(endpoint, { headers });
+		expect(completed.status).toBe(200);
+		expect(await completed.json()).toEqual({ kind: 'removed', clientId: credential.clientId });
+		await Promise.all(
+			[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+				expect(
+					await (
+						await harness.gateway(
+							`/__auth-proof?workspace=${workspaceId}&client=${credential.clientId}`,
+						)
+					).json(),
+				).toEqual({
+					[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+					[`member-removal:${credential.clientId}`]: {
+						kind: 'complete',
+						operation: 'disable',
+						requestId: retirementId,
+					},
+				});
+			}),
+		);
+		expect(
+			await harness.database
+				.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+				.bind(credential.clientId)
+				.first(),
+		).toEqual({ disabled: 1 });
+	} finally {
+		await harness.close();
+	}
+});

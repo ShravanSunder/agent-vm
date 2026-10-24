@@ -1,163 +1,13 @@
 import { expect, it } from 'vitest';
 
-import type { AgentClientManagementPort } from '#tool-host-core/agent-management/agent-client-management-port';
-import { createWorkspaceAgentManagement } from '#tool-host-core/agent-management/workspace-agent-management';
-import { workspaceConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
-import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
-import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
-
-const organizationId = '11111111-1111-4111-8111-111111111111';
-const workspaceOne = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const workspaceTwo = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const rejectedId = 'b015079b-19b6-4aa2-9b82-1298efcb2f79';
-const recoveryId = 'b015079b-19b6-4aa2-9b82-1298efcb2f80';
-const clientId = 'agent-one';
-const portalOrigin = 'https://portal.invalid';
-
-function removalFixture(): {
-	readonly authority: (workspaceId: string) => ReturnType<typeof createWorkspaceAuthority>;
-	readonly request: (operation: 'unlink' | 'disable', requestId?: string) => Promise<Response>;
-	readonly issuer: {
-		enabled: boolean;
-		readonly links: Set<string>;
-		readonly unlinkRequests: string[];
-		readonly disableRequests: string[];
-		readonly outcomes: Map<string, 'refused' | 'incomplete' | 'complete'>;
-	};
-	readonly controls: { failSwapOnce: boolean };
-	readonly add: () => Promise<Response>;
-} {
-	const authorities = new Map<string, ReturnType<typeof createWorkspaceAuthority>>();
-	const issuer = {
-		enabled: true,
-		links: new Set([workspaceOne, workspaceTwo]),
-		unlinkRequests: new Array<string>(),
-		disableRequests: new Array<string>(),
-		outcomes: new Map<string, 'refused' | 'incomplete' | 'complete'>([[rejectedId, 'refused']]),
-	};
-	const controls = { failSwapOnce: false };
-	function authority(workspaceId: string): ReturnType<typeof createWorkspaceAuthority> {
-		let current = authorities.get(workspaceId);
-		if (current === undefined) {
-			current = createWorkspaceAuthority({
-				store: createVolatileAuthorityStore(),
-				clock: { nowMs: () => 100 },
-				cap: 1024,
-			});
-			authorities.set(workspaceId, current);
-		}
-		return current;
-	}
-	const signIn: AgentClientManagementPort = {
-		humanCheckStatus: async () => ({ kind: 'ready', level: 'remembered-login' }),
-		isLiveOwner: async () => true,
-		ownsAgentClient: async (input) => input.clientId === clientId,
-		registerAndLink: async () => {
-			throw new Error('Registration is outside this fixture');
-		},
-		link: async () => {
-			throw new Error('Link is outside this fixture');
-		},
-		unlink: async (input) => {
-			expect(await authority(input.workspaceId).readMembership(clientId)).toBeNull();
-			issuer.unlinkRequests.push(input.requestId);
-			if (issuer.outcomes.get(input.requestId) === 'refused')
-				return { kind: 'refused', reason: 'operation-conflict' };
-			if (issuer.outcomes.get(input.requestId) === 'incomplete')
-				return { kind: 'incomplete', clientId };
-			issuer.links.delete(input.workspaceId);
-			return {
-				kind: 'unlinked',
-				clientId,
-				workspaceId: input.workspaceId,
-				resource: `${portalOrigin}/workspaces/${input.workspaceId}/mcp`,
-			};
-		},
-		disable: async (input) => {
-			await Promise.all(
-				[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
-					expect(await authority(workspaceId).readMembership(clientId)).toBeNull();
-				}),
-			);
-			issuer.disableRequests.push(input.requestId);
-			if (issuer.outcomes.get(input.requestId) === 'refused')
-				return { kind: 'refused', reason: 'operation-conflict' };
-			if (issuer.outcomes.get(input.requestId) === 'incomplete')
-				return { kind: 'incomplete', clientId };
-			issuer.enabled = false;
-			return { kind: 'disabled', clientId };
-		},
-	};
-	const management = createWorkspaceAgentManagement({
-		verifier: {
-			verify: async () => ({
-				kind: 'verified',
-				freshness: { kind: 'signature' },
-				proof: {
-					issuer: 'https://issuer.invalid',
-					subject: 'owner-one',
-					audience: `${portalOrigin}/management`,
-					sessionRef: 'session-one',
-					clientId: 'owner-cli',
-					expiresAt: 400,
-				},
-			}),
-		},
-		signIn,
-		toolPortalOrigin: portalOrigin,
-		configurations: {
-			workspaceIdsForOrganization: async () => [workspaceOne, workspaceTwo],
-			read: async () =>
-				workspaceConfigurationSchema.parse({
-					organizationId,
-					workspaceName: 'fixture',
-					approvalKeyBinding: 'KEY',
-					mcp: { schemaVersion: 1, providers: {} },
-					portal: { schemaVersion: 1, profiles: { reader: { namespaces: {} } } },
-				}),
-		},
-		workspaces: {
-			forWorkspace: (workspaceId) => ({
-				...authority(workspaceId),
-				beginAgentRemoval: async (selectedClient, operationId, intent) => {
-					if (
-						controls.failSwapOnce &&
-						workspaceId === workspaceTwo &&
-						intent.replacesPendingRequestId !== undefined
-					) {
-						controls.failSwapOnce = false;
-						throw new Error('Controlled W2 replacement write failure');
-					}
-					return authority(workspaceId).beginAgentRemoval(selectedClient, operationId, intent);
-				},
-			}),
-		},
-	});
-	return {
-		authority,
-		issuer,
-		controls,
-		add: async () =>
-			management.handle(
-				new Request(`${portalOrigin}/management/workspaces/${workspaceOne}/agents`, {
-					method: 'POST',
-					headers: { authorization: 'Bearer owner-proof', 'content-type': 'application/json' },
-					body: JSON.stringify({ requestId: recoveryId, clientId, persona: 'reader' }),
-				}),
-			),
-		request: async (operation, requestId) =>
-			management.handle(
-				new Request(
-					`${portalOrigin}/management/${operation === 'unlink' ? `workspaces/${workspaceOne}` : `organizations/${organizationId}`}/agents/${clientId}`,
-					{
-						method: requestId === undefined ? 'GET' : 'DELETE',
-						headers: { authorization: 'Bearer owner-proof', 'content-type': 'application/json' },
-						...(requestId === undefined ? {} : { body: JSON.stringify({ requestId }) }),
-					},
-				),
-			),
-	};
-}
+import {
+	clientId,
+	rejectedId,
+	recoveryId,
+	workspaceOne,
+	workspaceTwo,
+	removalFixture,
+} from '#tool-host-core/agent-management/test-fixtures/workspace-removal-fixture';
 
 // Signature and issuer behavior are contract doubles; coordinator and membership transactions are real.
 it.each(['unlink', 'disable'] as const)(
@@ -393,3 +243,184 @@ it('aggregates mixed GET outcomes without swapping or inventing an ID', async ()
 		otherPendingId,
 	);
 });
+
+async function completedUnlinkHistory(
+	unlinkWorkspaceId: string,
+): Promise<ReturnType<typeof removalFixture>> {
+	const target = removalFixture(unlinkWorkspaceId);
+	await Promise.all(
+		[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+			await target.authority(workspaceId).setMembership(clientId, 'reader');
+		}),
+	);
+	target.issuer.outcomes.delete(rejectedId);
+	expect((await target.request('unlink', rejectedId)).status).toBe(200);
+	return target;
+}
+
+async function workspaceRemovalState(target: ReturnType<typeof removalFixture>): Promise<unknown> {
+	return Promise.all(
+		[workspaceOne, workspaceTwo].map(async (workspaceId) => ({
+			workspaceId,
+			membership: await target.authority(workspaceId).readMembership(clientId),
+			removal: await target.authority(workspaceId).readAgentRemoval(clientId),
+		})),
+	);
+}
+
+it.each([workspaceOne, workspaceTwo])(
+	'refuses retirement ID reuse from completed unlink in %s before writing any workspace',
+	async (unlinkWorkspaceId) => {
+		const target = await completedUnlinkHistory(unlinkWorkspaceId);
+		const before = await workspaceRemovalState(target);
+		target.controls.beginRequests.length = 0;
+		const refused = await target.request('disable', rejectedId);
+		expect(refused.status).toBe(403);
+		expect(await refused.json()).toEqual({ kind: 'refused', reason: 'operation-conflict' });
+		expect(await workspaceRemovalState(target)).toEqual(before);
+		expect(target.controls.beginRequests).toEqual([]);
+		expect(target.issuer.disableRequests).toEqual([]);
+		expect(target.issuer.enabled).toBe(true);
+		expect([...target.issuer.links]).toEqual([
+			unlinkWorkspaceId === workspaceOne ? workspaceTwo : workspaceOne,
+		]);
+	},
+);
+
+it.each([workspaceOne, workspaceTwo])(
+	'GET reports a locally refused pending retirement ID beside completed unlink in %s without writes',
+	async (unlinkWorkspaceId) => {
+		const target = await completedUnlinkHistory(unlinkWorkspaceId);
+		const pendingWorkspace = unlinkWorkspaceId === workspaceOne ? workspaceTwo : workspaceOne;
+		await target
+			.authority(pendingWorkspace)
+			.beginAgentRemoval(clientId, rejectedId, { operation: 'disable' });
+		const before = await workspaceRemovalState(target);
+		target.controls.beginRequests.length = 0;
+		const refused = await target.request('disable');
+		expect(refused.status).toBe(403);
+		expect(await refused.json()).toEqual({ kind: 'refused', reason: 'operation-conflict' });
+		expect(await workspaceRemovalState(target)).toEqual(before);
+		expect(target.controls.beginRequests).toEqual([]);
+		expect(target.issuer.disableRequests).toEqual([]);
+		expect(target.issuer.enabled).toBe(true);
+	},
+);
+
+it.each([workspaceOne, workspaceTwo])(
+	'a fresh retirement ID recovers the forced local-conflict leftover beside completed unlink in %s',
+	async (unlinkWorkspaceId) => {
+		const target = await completedUnlinkHistory(unlinkWorkspaceId);
+		const pendingWorkspace = unlinkWorkspaceId === workspaceOne ? workspaceTwo : workspaceOne;
+		await target
+			.authority(pendingWorkspace)
+			.beginAgentRemoval(clientId, rejectedId, { operation: 'disable' });
+		const recovered = await target.request('disable', recoveryId);
+		expect(recovered.status).toBe(200);
+		expect(await recovered.json()).toEqual({ kind: 'removed', clientId });
+		expect(await target.authority(unlinkWorkspaceId).readAgentRemoval(clientId)).toEqual({
+			kind: 'complete',
+			operation: 'disable',
+			requestId: recoveryId,
+		});
+		expect(await target.authority(pendingWorkspace).readAgentRemoval(clientId)).toEqual({
+			kind: 'complete',
+			operation: 'disable',
+			requestId: recoveryId,
+		});
+		await Promise.all(
+			[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+				expect(await target.authority(workspaceId).readMembership(clientId)).toBeNull();
+			}),
+		);
+		expect(target.issuer.disableRequests).toEqual([recoveryId]);
+		expect(target.issuer.enabled).toBe(false);
+	},
+);
+
+it('completed unlink history is not a disabled winner over an incomplete retirement', async () => {
+	const target = await completedUnlinkHistory(workspaceOne);
+	await target
+		.authority(workspaceTwo)
+		.beginAgentRemoval(clientId, recoveryId, { operation: 'disable' });
+	target.issuer.outcomes.set(recoveryId, 'incomplete');
+	expect((await target.request('disable', otherPendingId)).status).toBe(202);
+	await Promise.all(
+		[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+			expect(await target.authority(workspaceId).readAgentRemoval(clientId)).toEqual({
+				kind: 'pending',
+				operation: 'disable',
+				requestId: recoveryId,
+			});
+		}),
+	);
+	expect(target.issuer.disableRequests).toEqual([recoveryId]);
+	expect(target.issuer.enabled).toBe(true);
+});
+
+it('retirement after all workspaces completed unlink records its incomplete ID for a later GET', async () => {
+	const target = await completedUnlinkHistory(workspaceOne);
+	expect((await target.request('unlink', otherPendingId, workspaceTwo)).status).toBe(200);
+	target.issuer.outcomes.set(recoveryId, 'incomplete');
+	expect((await target.request('disable', recoveryId)).status).toBe(202);
+	await Promise.all(
+		[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+			expect(await target.authority(workspaceId).readMembership(clientId)).toBeNull();
+			expect(await target.authority(workspaceId).readAgentRemoval(clientId)).toEqual({
+				kind: 'pending',
+				operation: 'disable',
+				requestId: recoveryId,
+			});
+		}),
+	);
+	expect((await target.request('disable')).status).toBe(202);
+	expect(target.issuer.enabled).toBe(true);
+	target.issuer.outcomes.set(recoveryId, 'complete');
+	expect((await target.request('disable')).status).toBe(200);
+	await Promise.all(
+		[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+			expect(await target.authority(workspaceId).readAgentRemoval(clientId)).toEqual({
+				kind: 'complete',
+				operation: 'disable',
+				requestId: recoveryId,
+			});
+		}),
+	);
+	expect(target.issuer.disableRequests).toEqual([recoveryId, recoveryId, recoveryId]);
+	expect(target.issuer.enabled).toBe(false);
+	expect((await target.request('unlink', rejectedId)).status).toBe(200);
+	expect(target.issuer.disableRequests).toEqual([recoveryId, recoveryId, recoveryId]);
+});
+
+it.each(['local conflict', 'storage failure'] as const)(
+	're-reads a rejected retirement begin and distinguishes %s before recovery',
+	async (failure) => {
+		const target = removalFixture();
+		await Promise.all(
+			[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+				await target.authority(workspaceId).setMembership(clientId, 'reader');
+			}),
+		);
+		target.controls.raceUnlinkOnce = failure === 'local conflict';
+		target.controls.failBeginOnce = failure === 'storage failure';
+		const refused = await target.request('disable', rejectedId);
+		expect(refused.status).toBe(failure === 'local conflict' ? 403 : 503);
+		expect(await refused.json()).toEqual(
+			failure === 'local conflict'
+				? { kind: 'refused', reason: 'operation-conflict' }
+				: { error: 'management-unavailable' },
+		);
+		expect(target.issuer.disableRequests).toEqual([]);
+		expect((await target.request('disable', recoveryId)).status).toBe(200);
+		await Promise.all(
+			[workspaceOne, workspaceTwo].map(async (workspaceId): Promise<void> => {
+				expect(await target.authority(workspaceId).readAgentRemoval(clientId)).toEqual({
+					kind: 'complete',
+					operation: 'disable',
+					requestId: recoveryId,
+				});
+			}),
+		);
+		expect(target.issuer.enabled).toBe(false);
+	},
+);

@@ -346,3 +346,170 @@ it('agent: an incompatible workspace resource is never overwritten or linked by 
 		await harness.close();
 	}
 });
+
+it('agent: retirement refuses a locally reused unlink ID without writes and recovers its forced racy leftover', async () => {
+	const harness = await startLocalAuthHarness();
+	try {
+		const owner = await harness.ownerToken();
+		const registration = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceOne,
+			requestId: registrationRequestId,
+		});
+		expect(registration.status).toBe(200);
+		const credential = agentCredentialSchema.parse(await registration.json());
+		expect(
+			(
+				await addWorkspaceAgent({
+					harness,
+					owner,
+					workspaceId: workspaceTwo,
+					clientId: credential.clientId,
+					requestId: crypto.randomUUID(),
+				})
+			).status,
+		).toBe(200);
+		const unlinkId = crypto.randomUUID();
+		const recoveryId = crypto.randomUUID();
+		const headers = { authorization: `Bearer ${owner}`, 'content-type': 'application/json' };
+		async function remove(endpoint: string, requestId: string): Promise<Response> {
+			return harness.gateway(endpoint, {
+				method: 'DELETE',
+				headers,
+				body: JSON.stringify({ requestId }),
+			});
+		}
+		async function workspaceState(workspaceId: string): Promise<unknown> {
+			return (
+				await harness.gateway(
+					`/__auth-proof?workspace=${workspaceId}&client=${credential.clientId}`,
+				)
+			).json();
+		}
+		async function issuerState(): Promise<unknown> {
+			return Promise.all([
+				harness.database
+					.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+					.bind(credential.clientId)
+					.first(),
+				harness.database
+					.prepare(
+						'SELECT resourceId FROM oauthClientResource WHERE clientId = ? ORDER BY resourceId',
+					)
+					.bind(credential.clientId)
+					.all()
+					.then((result) => result.results),
+				harness.database
+					.prepare('SELECT * FROM sign_in_audit ORDER BY id')
+					.all()
+					.then((result) => result.results),
+			]);
+		}
+		const unlinkEndpoint = `/management/workspaces/${workspaceOne}/agents/${credential.clientId}`;
+		const retirementEndpoint = `/management/organizations/${organizationOne}/agents/${credential.clientId}`;
+		expect((await remove(unlinkEndpoint, unlinkId)).status).toBe(200);
+		const history = await workspaceState(workspaceOne);
+		expect(history).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'complete',
+				operation: 'unlink',
+				requestId: unlinkId,
+			},
+		});
+		const beforeOther = await workspaceState(workspaceTwo);
+		expect(beforeOther).toEqual({
+			[`member:${credential.clientId}`]: { state: 'member', persona: 'operator' },
+		});
+		const beforeIssuer = await issuerState();
+		const refused = await remove(retirementEndpoint, unlinkId);
+		expect.soft(refused.status).toBe(403);
+		const refusal = await refused.json();
+		expect.soft(refusal).toEqual({ kind: 'refused', reason: 'operation-conflict' });
+		expectNoIssuedCredentials(refusal);
+		expect.soft(await workspaceState(workspaceOne)).toEqual(history);
+		expect.soft(await workspaceState(workspaceTwo)).toEqual(beforeOther);
+		expect.soft(await issuerState()).toEqual(beforeIssuer);
+
+		// Seed only the ruled race history through the real DO method; requests below use production fetch.
+		const bindings = await harness.miniflare.getBindings<{
+			readonly WORKSPACES: {
+				readonly idFromName: (name: string) => DurableObjectId;
+				readonly get: (id: DurableObjectId) => {
+					readonly beginAgentRemoval: (
+						clientId: string,
+						requestId: string,
+						intent: { readonly operation: 'disable' },
+					) => Promise<unknown>;
+				};
+			};
+		}>('gateway-one');
+		expect(
+			await bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(workspaceTwo)).beginAgentRemoval(
+				credential.clientId,
+				unlinkId,
+				{ operation: 'disable' },
+			),
+		).toEqual({ kind: 'pending', operation: 'disable', requestId: unlinkId });
+		const leftover = await workspaceState(workspaceTwo);
+		expect(leftover).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'pending',
+				operation: 'disable',
+				requestId: unlinkId,
+			},
+		});
+		const status = await harness.gateway(retirementEndpoint, { headers });
+		expect.soft(status.status).toBe(403);
+		const statusBody = await status.json();
+		expect.soft(statusBody).toEqual({ kind: 'refused', reason: 'operation-conflict' });
+		expectNoIssuedCredentials(statusBody);
+		expect.soft(await workspaceState(workspaceOne)).toEqual(history);
+		expect.soft(await workspaceState(workspaceTwo)).toEqual(leftover);
+		expect.soft(await issuerState()).toEqual(beforeIssuer);
+		const recovered = await remove(retirementEndpoint, recoveryId);
+		expect.soft(recovered.status).toBe(200);
+		const recoveredBody = await recovered.json();
+		expect.soft(recoveredBody).toEqual({ kind: 'removed', clientId: credential.clientId });
+		expect.soft(await workspaceState(workspaceOne)).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'complete',
+				operation: 'disable',
+				requestId: recoveryId,
+			},
+		});
+		expect.soft(await workspaceState(workspaceTwo)).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'complete',
+				operation: 'disable',
+				requestId: recoveryId,
+			},
+		});
+		expect
+			.soft(
+				await harness.database
+					.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+					.bind(credential.clientId)
+					.first(),
+			)
+			.toEqual({ disabled: 1 });
+		expect
+			.soft(
+				(
+					await harness.database
+						.prepare(
+							'SELECT resourceId FROM oauthClientResource WHERE clientId = ? ORDER BY resourceId',
+						)
+						.bind(credential.clientId)
+						.all()
+				).results,
+			)
+			.toEqual([{ resourceId: workspaceAudience(workspaceTwo) }]);
+	} finally {
+		await harness.close();
+	}
+});
