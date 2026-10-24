@@ -52,6 +52,10 @@ function removalResponse(
 				clientId,
 				...(workspaceId === undefined ? {} : { workspaceId }),
 			});
+		default: {
+			const unexpected: never = outcome;
+			throw new Error(`Unexpected removal outcome: ${JSON.stringify(unexpected)}`);
+		}
 	}
 }
 
