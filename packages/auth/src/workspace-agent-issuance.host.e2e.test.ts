@@ -11,6 +11,7 @@ import {
 	workspaceThree,
 	workspaceAudience,
 	organizationOne,
+	organizationTwo,
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
@@ -492,3 +493,67 @@ it('agent: an authentic legacy Worker audience without workspace identity cannot
 		await harness.close();
 	}
 });
+
+it('agent: a real O2 W3 token dispatches exactly once under W3 credentials and never at W1 or W2', async () => {
+	const harness = await startLocalAuthHarness();
+	try {
+		const owner = await harness.ownerToken();
+		const registered = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceThree,
+			requestId: crypto.randomUUID(),
+		});
+		expect(registered.status).toBe(200);
+		const credential = agentCredentialSchema.parse(await registered.json());
+		const token = await workspaceToken({ harness, credential, workspaceId: workspaceThree });
+		const signed = await jwtVerify(
+			token,
+			createRemoteJWKSet(new URL('/api/auth/jwks', harness.issuer)),
+			{
+				issuer: harness.issuer,
+				audience: workspaceAudience(workspaceThree),
+			},
+		);
+		expect(signed.protectedHeader.typ).toBe('at+jwt');
+		expect(signed.payload).toMatchObject({
+			sub: credential.clientId,
+			client_id: credential.clientId,
+			azp: credential.clientId,
+			organization_id: organizationTwo,
+			workspace_id: workspaceThree,
+			aud: workspaceAudience(workspaceThree),
+		});
+		expect(signed.payload).not.toHaveProperty('sid');
+		const beforeAllowed = harness.effects.length;
+		const allowed = await callWorkspaceTool({
+			harness,
+			workspaceId: workspaceThree,
+			token,
+			correlation: 'real-o2-w3-positive',
+		});
+		expect(allowed.status).toBe(200);
+		expect(harness.effects.slice(beforeAllowed)).toEqual([
+			{
+				credential: 'Bearer organization-two-canary',
+				arguments: { correlation: 'real-o2-w3-positive' },
+			},
+		]);
+		const beforeCrossPresentation = [...harness.effects];
+		const refused = await Promise.all(
+			[workspaceOne, workspaceTwo].map(
+				async (workspaceId): Promise<Response> =>
+					callWorkspaceTool({
+						harness,
+						workspaceId,
+						token,
+						correlation: `cross-w3-${workspaceId}`,
+					}),
+			),
+		);
+		expect(refused.map((response) => response.status)).toEqual([401, 401]);
+		expect(harness.effects).toEqual(beforeCrossPresentation);
+	} finally {
+		await harness.close();
+	}
+}, 120_000);
