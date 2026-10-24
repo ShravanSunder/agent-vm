@@ -1,10 +1,12 @@
 import {
-	formatSecretValue,
-	mcpConfigToResolvedProviders,
 	type FormattedSecretValue,
 	type McpConfig,
 	type ResolvedMcpProvider,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import {
+	formatSecretValue,
+	mcpConfigToResolvedProviders,
+} from '@agent-collaboration/tool-host-node';
 
 import type { NormalizedUpstreamMcpServer } from '../upstream-mcp-client-runtime.js';
 

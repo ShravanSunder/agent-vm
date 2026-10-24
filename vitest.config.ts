@@ -36,6 +36,33 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'#agent-vm': repoPath('packages/agent-vm/src'),
+			'@agent-collaboration/tool-engine/standalone-tool-portal': repoPath(
+				'packages/tool-engine/src/standalone-tool-portal/index.ts',
+			),
+			'@agent-collaboration/tool-engine/mcp-gateway': repoPath(
+				'packages/tool-engine/src/mcp-gateway/index.ts',
+			),
+			'@agent-collaboration/tool-engine/upstream-mcp-connectors': repoPath(
+				'packages/tool-engine/src/upstream-mcp-connectors/index.ts',
+			),
+			'@agent-vm/gateway-runtime/managed-tool-engine': repoPath(
+				'packages/gateway-runtime/src/managed-tool-engine',
+			),
+			'@agent-vm/config-contracts-test-support': repoPath('packages/config-contracts/src'),
+			'@agent-vm/tool-portal/policy-comparison': repoPath(
+				'packages/tool-portal/src/tool-portal-service-common.ts',
+			),
+			'@agent-vm/controller-test-support': repoPath('packages/agent-vm/src/controller'),
+			'@agent-collaboration/tool-engine/capability-dispatch': repoPath(
+				'packages/tool-engine/src/capability-dispatch/index.ts',
+			),
+			'@agent-collaboration/tool-access/contracts': repoPath(
+				'packages/tool-access/src/contracts/index.ts',
+			),
+			'@agent-collaboration/tool-access/authorization': repoPath(
+				'packages/tool-access/src/authorization/index.ts',
+			),
 			'@agent-vm/agent-portal-sdk/generated-tools': repoPath(
 				'packages/agent-portal-sdk/src/generated-tools/index.ts',
 			),
@@ -117,6 +144,9 @@ export default defineConfig({
 			'@agent-vm/hermes-gateway': repoPath('packages/hermes-gateway/src/index.ts'),
 			'@agent-vm/managed-vm': repoPath('packages/managed-vm/src/index.ts'),
 			'@agent-vm/secret-management': repoPath('packages/secret-management/src/index.ts'),
+			'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': repoPath(
+				'packages/tool-host-node/src/testing/fake-upstream-mcp-server.ts',
+			),
 			'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': repoPath(
 				'packages/mcp-portal/src/testing/fake-upstream-mcp-server.ts',
 			),
@@ -179,6 +209,17 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
+					name: 'e2e-deployed',
+					include: ['packages/**/*.deployed.e2e.test.ts'],
+					globalSetup: [],
+					fileParallelism: false,
+					maxWorkers: 1,
+					testTimeout: 300_000,
+				},
+			},
+			{
+				extends: true,
+				test: {
 					name: 'unit',
 					pool: 'threads',
 					include: [
@@ -237,7 +278,7 @@ export default defineConfig({
 				test: {
 					name: 'e2e-inventory',
 					include: ['packages/**/*.e2e.test.ts'],
-					exclude: ['**/*.host.e2e.test.ts'],
+					exclude: ['**/*.host.e2e.test.ts', '**/*.deployed.e2e.test.ts'],
 					testTimeout: 900_000,
 					hookTimeout: 300_000,
 					maxWorkers: 2,

@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"types": ["node", "./worker-configuration.gen.d.ts"]
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["dist"]
+}

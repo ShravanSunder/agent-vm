@@ -5,9 +5,8 @@ import importlib
 import socket
 import sys
 import typing as t
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from types import TracebackType
 
 import pytest
 import uvicorn
@@ -18,7 +17,7 @@ from agent_vm_agent_portal_sdk.standard_mcp_transport import (
 )
 from agent_vm_agent_portal_sdk.tool_portal_mcp_client import ToolPortalMcpClient
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from pydantic import BaseModel, SecretStr
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -160,9 +159,8 @@ def test_authenticated_streamable_http_transport_survives_local_task_cancellatio
         release_cancelled_call = asyncio.Event()
         cancelled_call_finished = asyncio.Event()
         request_observations: list[tuple[str, str | None]] = []
-        server = FastMCP(
+        server = MCPServer(
             "agent-vm-tool-portal-http-test",
-            host="127.0.0.1",
             log_level="ERROR",
         )
 
@@ -180,7 +178,7 @@ def test_authenticated_streamable_http_transport_survives_local_task_cancellatio
                     cancelled_call_finished.set()
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text="bounded HTTP fixture result")],
-                structuredContent=_portal_call_result(
+                structured_content=_portal_call_result(
                     operation_id=f"operation-{requestId}",
                     transport_kind="http",
                 ),
@@ -250,7 +248,7 @@ def test_authenticated_streamable_http_transport_survives_local_task_cancellatio
             assert artifact_result.model_dump(by_alias=True, mode="json")["contentBase64"] == "aGVsbG8="
             assert request_observations
             assert all(authorization == f"Bearer {TEST_AUTHORIZATION}" for _, authorization in request_observations)
-            assert any(method == "DELETE" for method, _ in request_observations)
+            assert all(method == "POST" for method, _ in request_observations)
             with pytest.raises(RuntimeError, match="closed"):
                 _ = await client.call(TEST_PORTAL_CALL_REQUEST)
         finally:
@@ -263,10 +261,10 @@ def test_authenticated_streamable_http_transport_survives_local_task_cancellatio
     asyncio.run(exercise_http_transport())
 
 
-def test_failed_initialization_unwinds_session_and_stdio_transport(
+def test_failed_connection_unwinds_client_owned_stdio_transport(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def exercise_failed_initialization() -> None:
+    async def exercise_failed_connection() -> None:
         transport_module = importlib.import_module("agent_vm_agent_portal_sdk.standard_mcp_transport")
         lifecycle_events: list[str] = []
 
@@ -279,40 +277,31 @@ def test_failed_initialization_unwinds_session_and_stdio_transport(
             finally:
                 lifecycle_events.append("stdio-exit")
 
-        class FailingClientSession:
-            def __init__(self, read_stream: object, write_stream: object) -> None:
-                _ = read_stream, write_stream
+        class FailingClient:
+            def __init__(self, server: t.AsyncContextManager[object], *, mode: str) -> None:
+                assert mode == "2026-07-28"
+                self._server = server
 
             async def __aenter__(self) -> t.Self:
-                lifecycle_events.append("session-enter")
-                return self
+                async with AsyncExitStack() as stack:
+                    _ = await stack.enter_async_context(self._server)
+                    lifecycle_events.append("client-enter")
+                    raise RuntimeError("connection rejected")
 
-            async def __aexit__(
-                self,
-                exc_type: type[BaseException] | None,
-                exc_value: BaseException | None,
-                traceback: TracebackType | None,
-            ) -> None:
-                _ = exc_type, exc_value, traceback
-                lifecycle_events.append("session-exit")
-
-            async def initialize(self) -> None:
-                lifecycle_events.append("initialize")
-                raise RuntimeError("initialization rejected")
+            async def __aexit__(self, *args: object) -> None:
+                _ = args
 
         monkeypatch.setattr(transport_module, "stdio_client", fake_stdio_client)
-        monkeypatch.setattr(transport_module, "ClientSession", FailingClientSession)
+        monkeypatch.setattr(transport_module, "Client", FailingClient)
         transport = transport_module.StandardMcpToolPortalTransport(
             transport_module.ToolPortalStdioMcpConfig(executable="unused-test-command"),
         )
 
-        with pytest.raises(RuntimeError, match="initialization rejected"):
+        with pytest.raises(RuntimeError, match="connection rejected"):
             await transport.connect()
         assert lifecycle_events == [
             "stdio-enter",
-            "session-enter",
-            "initialize",
-            "session-exit",
+            "client-enter",
             "stdio-exit",
         ]
         await transport.close()
@@ -320,4 +309,52 @@ def test_failed_initialization_unwinds_session_and_stdio_transport(
         with pytest.raises(RuntimeError, match="closed"):
             await transport.connect()
 
-    asyncio.run(exercise_failed_initialization())
+    asyncio.run(exercise_failed_connection())
+
+
+def test_transport_pins_modern_client_and_uses_one_low_level_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto negotiation and high-level retry must not enter the Portal path."""
+
+    async def exercise_pinned_client() -> None:
+        transport_module = importlib.import_module("agent_vm_agent_portal_sdk.standard_mcp_transport")
+        client_options: list[dict[str, object]] = []
+        calls: list[dict[str, object]] = []
+
+        class RecordingSession:
+            async def call_tool(
+                self,
+                name: str,
+                *,
+                arguments: dict[str, object],
+                meta: object,
+            ) -> types.CallToolResult:
+                calls.append({"name": name, "arguments": arguments, "meta": meta})
+                return types.CallToolResult(content=[], structured_content={"observed": "one-call"})
+
+        class RecordingClient:
+            def __init__(self, server: object, **options: object) -> None:
+                _ = server
+                client_options.append(options)
+                self.session = RecordingSession()
+
+            async def __aenter__(self) -> t.Self:
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                _ = args
+
+        monkeypatch.setattr(transport_module, "Client", RecordingClient)
+        transport = transport_module.StandardMcpToolPortalTransport(
+            ToolPortalStdioMcpConfig(executable="unused-with-recording-client"),
+        )
+        await transport.connect()
+        result = await transport.call_tool("tool_portal_call", {"calls": []}, metadata={"vendor": "token"})
+        await transport.close()
+        await transport.close()
+        assert client_options == [{"mode": "2026-07-28"}]
+        assert calls == [{"name": "tool_portal_call", "arguments": {"calls": []}, "meta": {"vendor": "token"}}]
+        assert result == {"structuredContent": {"observed": "one-call"}}
+
+    asyncio.run(exercise_pinned_client())

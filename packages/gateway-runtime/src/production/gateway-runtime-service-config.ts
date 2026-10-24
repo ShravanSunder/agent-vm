@@ -2,11 +2,8 @@ import { constants, type Stats } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-	gatewayRuntimeManagedToolPortalConfigSchema,
-	mcpConfigSchema,
-	type McpConfig,
-} from '@agent-vm/config-contracts';
+import { mcpConfigSchema, type McpConfig } from '@agent-collaboration/tool-access/contracts';
+import { gatewayRuntimeManagedToolPortalConfigSchema } from '@agent-vm/config-contracts';
 import {
 	GATEWAY_RUNTIME_TOOL_PORTAL_CONTROL_LISTEN_HOST,
 	GatewayRuntimePortalSemanticSnapshotSchema,

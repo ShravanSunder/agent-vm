@@ -1,11 +1,9 @@
+import { googleOAuthApplicationIdSchema } from '@agent-collaboration/tool-access/contracts';
+import { type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 import {
-	googleOAuthApplicationIdSchema,
-	type ResolvedOAuthConfig,
-} from '@agent-vm/config-contracts';
-import {
+	oauthAccountPolicyPageSchema,
 	renderOAuthAccountPolicyPage,
 	renderOAuthOwnerIndex,
-	oauthAccountPolicyPageSchema,
 } from '@agent-vm/oauth-approval-ui';
 import type {
 	OAuthBrowserNavigationStore,
@@ -13,25 +11,25 @@ import type {
 	OAuthLoginContinuationTarget,
 } from '@agent-vm/oauth-broker';
 import {
-	oauthAccountIdSchema,
-	oauthApplicationIdSchema,
 	googleAccountPolicySnapshotSchema,
 	googlePolicyOverrideCellSchema,
+	oauthAccountIdSchema,
+	oauthApplicationIdSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import type { GoogleOAuthBrokerService } from '@agent-vm/oauth-broker/google';
 import { Hono, type Context } from 'hono';
-import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 
 import type { CloudflareAccessIdentityVerifier } from './cloudflare-access-identity-verifier.js';
 import type {
-	GooglePermissionPolicyService,
 	GoogleAccountPolicyView,
+	GooglePermissionPolicyService,
 } from './google-permission-policy-service.js';
 import {
-	oauthNavigationCookieName,
-	oauthNavigationBindingCookieName,
 	beginAccessLogin,
 	createOAuthNavigationCookies,
+	oauthNavigationBindingCookieName,
+	oauthNavigationCookieName,
 	type OAuthBrowserSessionRoutes,
 } from './oauth-browser-session-routes.js';
 

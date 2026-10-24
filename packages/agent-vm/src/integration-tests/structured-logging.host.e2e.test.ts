@@ -8,10 +8,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { mcpConfigSchema } from '@agent-collaboration/tool-access/contracts';
 import {
 	createGatewayRuntimeManagedToolPortalConfig,
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
 } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayRuntimeInputRevision,

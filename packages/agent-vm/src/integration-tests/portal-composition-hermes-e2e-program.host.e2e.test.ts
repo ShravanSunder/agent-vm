@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { startPortalCompositionModelServer } from './portal-composition-hermes-e2e-support.js';
 import {
 	buildPortalCompositionProgram,
 	validatePortalCompositionGeneratedProgramSyntax,
-} from './portal-composition-hermes-e2e-program.js';
-import { startPortalCompositionModelServer } from './portal-composition-hermes-e2e-support.js';
+} from './portal-composition-hermes-e2e-test-fixture.js';
 import {
 	buildPortalCompositionGeneratedTerminalProgram,
 	portalCompositionGeneratedTerminalResultMarker,

@@ -7,6 +7,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/auth/core',
+	'@agent-collaboration/tool-host-core',
+	'@agent-collaboration/tool-host-node',
+	'@agent-collaboration/tool-host-node/catalog-typescript',
+	'@agent-collaboration/tool-engine/mcp-gateway',
+	'@agent-collaboration/tool-engine/upstream-mcp-connectors',
+	'@agent-collaboration/tool-engine/capability-dispatch',
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
+	'@agent-collaboration/tool-access/contracts',
+	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-portal-sdk/adapter-boundary',
 	'@agent-vm/agent-portal-sdk/approval-surface',
@@ -38,7 +48,7 @@ const requiredPortalPackageExports = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -49,6 +59,87 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/auth/core': [
+		'signInConfigurationSchema',
+		'agentRegistrationSchema',
+		'agentRegistrationAllowsToken',
+		'registerAgentClient',
+		'disableAgentClient',
+		'handleSignInRequest',
+		'releaseSignInResponse',
+	],
+	'@agent-collaboration/tool-host-core': [
+		'createHostedMcpProxy',
+		'createWorkspaceAuthority',
+		'createVolatileAuthorityStore',
+		'decideApprovalTokenUse',
+		'workspaceMembershipRow',
+		'workspaceConfigurationSchema',
+	],
+	'@agent-collaboration/tool-host-node': [
+		'startNodeHost',
+		'openNodeOperationStore',
+		'createNodeHostComposition',
+		'nodeHostConfigSchema',
+		'resolveUpstreamServers',
+		'createNodeProviderRuntime',
+		'loadMcpConfig',
+		'formatSecretValue',
+		'mcpPortalConfigSchema',
+		'standaloneToolPortalConfigSchema',
+		'createMcpPortalConfigSchemaArtifact',
+	],
+	'@agent-collaboration/tool-host-node/catalog-typescript': [
+		'compileCatalogTypescriptModules',
+		'fingerprintCatalogTypescriptInput',
+	],
+	'@agent-collaboration/tool-engine/mcp-gateway': [
+		'createMcpGateway',
+		'createWorkspaceToolCatalog',
+		'encodeToolRef',
+		'decodeToolRef',
+		'createAgentCatalogViewCache',
+	],
+	'@agent-collaboration/tool-engine/upstream-mcp-connectors': [
+		'createUpstreamMcpClientRuntime',
+		'redactUpstreamResponse',
+		'UpstreamMcpError',
+	],
+	'@agent-collaboration/tool-engine/standalone-tool-portal': [
+		'mergeToolPortalList',
+		'mergeToolPortalSearch',
+		'mergeToolPortalDescribe',
+	],
+	'@agent-collaboration/tool-engine/capability-dispatch': [
+		'createCapabilityDispatcher',
+		'dispatchInvocationSchema',
+		'operationKeySchema',
+		'operationRecordSchema',
+		'approvalReceiptSchema',
+	],
+	'@agent-collaboration/tool-access/contracts': [
+		'createPersonTokenVerifier',
+		'personTokenClaimsSchema',
+		'personProofSchema',
+		'mcpConfigSchema',
+		'secretValueSchema',
+		'configuredCliPolicySchema',
+		'toolPortalToolSelectorSchema',
+		'hostAccessBinding',
+		'assessAccessInput',
+		'accessFacts',
+		'accessProfileProjection',
+		'accessAssessment',
+		'assessAccessResult',
+		'inputRevisions',
+	],
+	'@agent-collaboration/tool-access/authorization': [
+		'createAccessAssessor',
+		'resolvePortalAccessPolicy',
+		'mcpPortalCallPolicyDecision',
+		'validateCliAllowanceInvocation',
+		'resolveCompiledGoogleCommand',
+	],
 	'@agent-vm/agent-portal-sdk': [
 		'CapabilityReferenceSchema',
 		'JsonObjectSchema',
@@ -197,6 +288,12 @@ const requiredPortalNamedExports = {
 	'@agent-vm/gateway-runtime': [
 		'GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS',
 		'createGatewayRuntimeToolPortalComposition',
+		'createGatewayRuntimeManagedToolPortalComposition',
+		'createManagedToolPortalCapabilityCore',
+		'createManagedMcpProviderBackendFactoryFromConfig',
+		'deterministicOperationId',
+		'directDispatchFingerprint',
+		'ToolPortalManagedServiceInvocationOptionsSchema',
 	],
 	'@agent-vm/mcp-portal': ['UpstreamMcpError', 'createUpstreamMcpClientRuntime'],
 	'@agent-vm/mcp-portal/cli': ['buildProfilePolicyMaps'],
@@ -229,7 +326,7 @@ const requiredPortalNamedExports = {
 		'signApprovalToken',
 		'verifyApprovalToken',
 	],
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server': [
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server': [
 		'createFakeUpstreamTools',
 		'startFakeUpstreamMcpServer',
 	],
@@ -251,6 +348,13 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/auth/core',
+	'@agent-collaboration/tool-host-core',
+	'@agent-collaboration/tool-engine/standalone-tool-portal',
+	'@agent-collaboration/tool-host-node',
+	'@agent-collaboration/tool-host-node/catalog-typescript',
+	'@agent-collaboration/tool-access/contracts',
+	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-portal-sdk/adapter-boundary',
 	'@agent-vm/agent-portal-sdk/approval-surface',
@@ -277,7 +381,7 @@ const requiredPortalNamedExportSpecifiers = [
 	'@agent-vm/mcp-portal/portal-auth/agent-bearer-token',
 	'@agent-vm/mcp-portal/portal-auth/hmac-env',
 	'@agent-vm/mcp-portal/portal-auth/hmac-token',
-	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
+	'@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server',
 	'@agent-vm/tool-portal',
 	'@agent-vm/tool-portal/cli-allowances',
 	'@agent-vm/tool-portal/dispatch-authority',
@@ -302,12 +406,19 @@ const deferredPortalPackageExports = [
 ] as const;
 
 const forbiddenPortalPackageExports = [
+	'@agent-vm/mcp-portal/testing/fake-upstream-mcp-server',
 	'@agent-vm/gateway-runtime/flow-control',
 	'@agent-vm/gateway-runtime/protocol',
 	'@agent-vm/tool-portal/in-process-entrypoint',
 ] as const;
 
 const forbiddenPortalNamedExports = {
+	'@agent-collaboration/tool-engine/mcp-gateway': ['createOrganizationToolCatalog'],
+	'@agent-collaboration/tool-host-node': [
+		'startFakeUpstreamMcpServer',
+		'createFakeUpstreamTools',
+		'fakeUpstreamNamespace',
+	],
 	'@agent-vm/tool-portal': [
 		'createManagedToolPortalInProcessRuntime',
 		'createToolPortalInProcessEntryPoint',
@@ -315,6 +426,8 @@ const forbiddenPortalNamedExports = {
 } as const;
 
 const forbiddenPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-engine/mcp-gateway',
+	'@agent-collaboration/tool-host-node',
 	'@agent-vm/tool-portal',
 ] as const satisfies readonly (keyof typeof forbiddenPortalNamedExports)[];
 
@@ -330,7 +443,7 @@ function packageNameAndSubpathForSpecifier(specifier: string): {
 	readonly packageName: string;
 	readonly subpath: string;
 } {
-	const match = /^@agent-vm\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
+	const match = /^@(?:agent-vm|agent-collaboration)\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
 	if (match?.[1] === undefined) {
 		throw new Error(`Portal export ${specifier} is not an @agent-vm package specifier`);
 	}
@@ -557,6 +670,37 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertAuthCorePlainNodeExecution, verifyAuthPackageClosure } =
+		await import('./verify-auth-package-closure.ts');
+	await assertAuthCorePlainNodeExecution(
+		(await requiredPackageExportTargetsForSpecifier('@agent-collaboration/auth/core')).importUrl,
+	);
+	if (process.argv.includes('--auth-core-only')) {
+		process.stdout.write(
+			'auth core plain Node import and policy probe: passed; full portal exports and packed closure remain unverified\n',
+		);
+		return;
+	}
+	if (process.argv.includes('--packed-auth')) await verifyAuthPackageClosure();
+	const { assertToolHostNodeSourceIsRestricted, verifyToolHostNodeClosure } =
+		await import('./verify-tool-host-node-closure.ts');
+	await assertToolHostNodeSourceIsRestricted();
+	if (process.argv.includes('--packed-host-node')) await verifyToolHostNodeClosure();
+	const { assertToolEngineSourceIsPortable, verifyToolEngineClosure } =
+		await import('./verify-tool-engine-closure.ts');
+	await assertToolEngineSourceIsPortable();
+	const { assertToolHostCoreSourceIsPortable, verifyToolHostCoreClosure } =
+		await import('./verify-tool-host-core-closure.ts');
+	await assertToolHostCoreSourceIsPortable();
+	if (process.argv.includes('--packed-host-core') || process.argv.includes('--packed-engine'))
+		await verifyToolHostCoreClosure();
+	if (process.argv.includes('--packed-engine')) {
+		await verifyToolEngineClosure();
+	}
+	if (process.argv.includes('--packed-access')) {
+		const { verifyToolAccessClosure } = await import('./verify-tool-access-closure.ts');
+		await verifyToolAccessClosure();
+	}
 	await Promise.all(
 		requiredPortalPackageExports.map((specifier) => assertRequiredExportResolves(specifier)),
 	);

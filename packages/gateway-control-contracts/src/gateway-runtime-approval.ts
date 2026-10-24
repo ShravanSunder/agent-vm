@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 
-import { GatewayApprovalDecisionRequestSchema } from '@agent-vm/agent-portal-sdk';
-import { GatewayStablePrincipalDigestSchema } from '@agent-vm/agent-portal-sdk/contracts';
 import {
-	jsonObjectSchema,
 	toolPortalBackendKindSchema,
 	type ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { GatewayApprovalDecisionRequestSchema } from '@agent-vm/agent-portal-sdk';
+import { GatewayStablePrincipalDigestSchema } from '@agent-vm/agent-portal-sdk/contracts';
+import { jsonObjectSchema } from '@agent-vm/config-contracts';
 import { managedGoogleReadyPreflightSchema } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 

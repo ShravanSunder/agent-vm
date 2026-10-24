@@ -1,0 +1,44 @@
+{
+	"name": "@agent-collaboration/tool-access",
+	"version": "0.0.153",
+	"description": "Portable Tool Portal contracts and effect-free access assessment.",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-access"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"imports": {
+		"#tool-access/*": "./src/*.ts"
+	},
+	"exports": {
+		"./contracts": {
+			"types": "./dist/contracts/index.d.ts",
+			"import": "./dist/contracts/index.js"
+		},
+		"./authorization": {
+			"types": "./dist/authorization/index.d.ts",
+			"import": "./dist/authorization/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-access/src"
+	},
+	"dependencies": {
+		"@agent-vm/oauth-broker-contracts": "workspace:*",
+		"jose": "6.1.0",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}

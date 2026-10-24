@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import {
 	PortalArtifactReadRequestSchema,
 	type PortalCallRequest,
@@ -12,10 +13,7 @@ import {
 	type PortalListResult,
 	type PortalSearchResult,
 } from '@agent-vm/agent-portal-sdk';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeApprovalAdmissionResultSchema,
 	GatewayRuntimeApprovalArmDispatchResultSchema,
@@ -33,9 +31,9 @@ import type {
 	ToolPortalApprovalPort,
 	ToolPortalBackendCallOptions,
 	ToolPortalBackendPort,
-	ToolPortalInvocationOptions,
 	ToolPortalCapabilityCore,
-} from '@agent-vm/tool-portal';
+	ToolPortalInvocationOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -187,7 +185,7 @@ interface ExpectedBackendPortFactories {
 
 interface CapturedPrivateUdsProjection {
 	readonly artifactOperations: GatewayRuntimeArtifactProjectionOperations;
-	readonly capabilityCore: ToolPortalCapabilityCore<'managed'>;
+	readonly capabilityCore: ToolPortalCapabilityCore;
 }
 
 interface RecordedBackendCall {

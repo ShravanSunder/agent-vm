@@ -17,6 +17,11 @@ describe('hasAllowedTestSuffix', () => {
 		expect(hasAllowedTestSuffix('packages/example/example.unit.spec.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.integration.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.host.e2e.test.ts')).toBe(true);
+		expect(hasAllowedTestSuffix('packages/example/example.deployed.e2e.test.ts')).toBe(true);
+		expect(isE2eTest('packages/example/example.deployed.e2e.test.ts')).toBe(true);
+		expect(resolveTestFileProjectNames('packages/example/example.deployed.e2e.test.ts')).toEqual([
+			'e2e-deployed',
+		]);
 		expect(hasAllowedTestSuffix('packages/example/example.vm.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.hermes.e2e.test.ts')).toBe(true);
 		expect(hasAllowedTestSuffix('packages/example/example.worker.e2e.test.ts')).toBe(false);

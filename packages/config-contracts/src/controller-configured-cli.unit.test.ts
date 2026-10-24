@@ -1,16 +1,18 @@
+import {
+	controllerConfiguredCliInputSchema,
+	oauthConfiguredCliInputSchema,
+	quickConfiguredCliInputSchema,
+} from '@agent-collaboration/tool-access/contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
 	configuredCliExecutionTargetSchema,
-	controllerConfiguredCliInputSchema,
 	controllerConfiguredCliOperationSchema,
 	controllerEnforcedConfiguredCliOperationSchema,
 	effectiveControllerToolVmConfiguredCliOperationSchema,
 	isControllerToolVmConfiguredCliOperation,
 	isEffectiveControllerToolVmConfiguredCliOperation,
 	normalizePreparedControllerExecutionOperation,
-	oauthConfiguredCliInputSchema,
-	quickConfiguredCliInputSchema,
 } from './controller-configured-cli.js';
 
 function validCredentialedTarget(): unknown {

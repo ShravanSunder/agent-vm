@@ -2,23 +2,32 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { resolveCompiledGoogleCommand } from '@agent-collaboration/tool-access/authorization';
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import type { PortalCallRequest } from '@agent-vm/agent-portal-sdk';
 import {
 	compileOAuthPolicy,
 	configuredGoogleOperationKey,
-	controllerConfiguredCliInputSchema,
 	encodeConfiguredCliPreparedImageIdentity,
 	gatewayRuntimeManagedToolPortalConfigSchema,
 	jsonValueSchema,
-	resolveCompiledGoogleCommand,
 	type EffectiveControllerEphemeralManagedVmConfiguredCliOperation,
 } from '@agent-vm/config-contracts';
 import {
-	deriveGatewayControlStablePrincipal,
 	GATEWAY_RUNTIME_APPROVAL_AUDIENCE,
 	GatewayControlConfiguredCliControllerExecutionResultSchema,
+	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 } from '@agent-vm/gateway-control-contracts';
+import {
+	createManagedToolPortalCapabilityCore,
+	type ToolPortalBackendPort,
+} from '@agent-vm/gateway-runtime';
+import {
+	createRecordingBackendPort,
+	semanticSnapshot,
+	udsOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-service-test-fixture.js';
 import type { ManagedVm, ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import {
 	managedGoogleReadyPreflightSchema,
@@ -27,18 +36,9 @@ import {
 	type ManagedGooglePreflightResult,
 } from '@agent-vm/oauth-broker-contracts';
 import { getGooglePolicyCatalog } from '@agent-vm/oauth-broker/google';
-import {
-	createManagedToolPortalCapabilityCore,
-	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createOAuthPolicyCompilerTestInput } from '../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
-import {
-	createRecordingBackendPort,
-	semanticSnapshot,
-	udsOptions,
-} from '../../../tool-portal/src/tool-portal-service-test-fixture.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';
 import { createControllerApprovalLedger } from '../controller/approval/controller-approval-ledger.js';
 import { createCredentialedRuntimeManager } from '../controller/credentialed-runtime/credentialed-runtime-manager.js';

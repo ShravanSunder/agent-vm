@@ -1,0 +1,331 @@
+# S6 Worker local proof
+
+This is Implementer evidence, not acceptance or a deployed result. The governing
+portable-host design and subsequent Lead decisions own the contract. All runtime
+proof here uses local workerd; no deploy, login, remote Cloudflare resource, or VM
+execution was performed.
+
+## Reproduce
+
+Run from the workspace root, after installing dependencies. Every Node/pnpm
+command uses Node 24.7.0 through mise. Run the quality gate before the suites:
+`pnpm check` rebuilds workspace outputs and must not race test imports.
+
+| Command, preceded by `mise exec node@24.7.0 --` | Result | Exit |
+| --- | --- | --- |
+| `pnpm check` | 16 gates passed: build, architecture/exports/contracts/taxonomy/version guards, lint, format, type-aware lint, all package typechecks | 0 |
+| `pnpm vitest run --project unit packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 456 tests, 39 files passed | 0 |
+| `pnpm vitest run --project integration packages/tool-host-cloudflare packages/tool-access packages/tool-engine` | 35 tests, 3 files passed | 0 |
+| `pnpm vitest run --project e2e-host --fileParallelism=false packages/tool-host-cloudflare/src` | 54 tests, 13 files passed, no skips | 0 |
+
+The quality gate includes `pnpm typecheck`, `pnpm lint`, `pnpm lint:types` and
+`pnpm fmt:check`; each exited 0. Lint warnings remain; no lint errors remain.
+The root TypeScript project excludes the Worker package's different runtime
+globals; recursive `pnpm -r typecheck` still checks that package, including tests,
+with its Cloudflare types.
+
+Versions: Node v24.7.0, pnpm 10.33.0, Wrangler 4.124.0,
+Miniflare 5.20260815.0-alpha, workerd 1.20260815.1 (`workerd 2026-08-15`),
+inbound MCP SDK 2.3.1 and unchanged outbound SDK 1.29.0.
+Wrangler's exact pin was published 2026-08-18, more than two weeks before this run.
+
+Wrangler local mode is the main harness because the repository's permanent host
+E2E lane already owns real subprocess proofs. The separate-heap test uses
+Miniflare's local workerd composition to bind two distinct Worker heaps to the
+same actual Durable Object in a third heap. This does not use a mocked DO.
+
+## Observable checks
+
+- Row 13: a real machine proxy whose source is checked against 08f9e426 and the
+  Worker share one controlled MCP server and configuration. Both address modes
+  compare tool definitions, list/search/describe/call results, helper text bytes,
+  policy refusals, missing approval, provider isError, broken streams and refused
+  connections. Direct native calls also match. Expected additions are checked
+  separately: four search tools in direct, modern resultType/serverInfo, private
+  list caching and TTL. DO failure and an explicitly stalled token recording
+  produce zero upstream effects before recording succeeds.
+- Row 14: two organizations, matching server/agent names, different credentials,
+  two agents each. Missing, forged, expired, wrong-audience and organization-less
+  tokens have no effect. Sending another organization, agent and session in the
+  address/headers retains the token sender's credential and policy. A second
+  agent's denied call has no effect. A warm removed agent's next request is 401. Distinct organization approval keys
+  refuse an A-signed approval in B with zero effects; identical B-signed claims
+  succeed, using both input/address modes and native-direct metadata.
+  A live test issuer serves a real JWKS; tokens are really signed and verified.
+- Row 15: independent literal oracles test request and upstream responses at
+  4 MiB minus one, exactly 4 MiB and plus one. Exact successful upstream output
+  is checked. A secret-heavy oversized response is refused before redaction.
+  Batches of 50 succeed and 51 refuse before effects. Twelve slow responses send
+  headers early and hold bodies: only six enter until a response completes.
+  Whole serialized replies just below and exactly 16 MiB succeed; adding one byte
+  to the JSON-RPC ID crosses the budget and replaces a call with too_large_result.
+  Three overlapping eight-call requests with 3 MiB outputs remain bounded in one
+  observed isolate.
+- Row 16: a capturing analytics binding observes ran/refused/needs-approval/failed
+  points with UUID index, eight strings, three numbers. Long multibyte names are
+  cut to at most 256 UTF-8 bytes on character boundaries. Argument, result, secret
+  and token canaries are absent from captured points and structured logs. A
+  failing analytics binding drops its point and logs only a safe fixed event.
+- Row 2 and raw-wire row 10: authenticated discover initializes servers; concurrent
+  direct/default clients remain independent; a real SDK 2.3.1 client makes repeated
+  calls. SDK 1.29 initialize, metadata/header errors (including resources/read
+  name controls), GET and DELETE refuse with their specified codes/statuses.
+  Arbitrary session IDs are ignored and not echoed. Discover/list work without
+  Mcp-Name. The Worker has no resource/artifact implementation in this slice.
+- Pagination: 170 large-schema tools plus four search tools produce five serialized
+  engine pages: 1031722, 1031725, 1031690, 1031687 and 492255 bytes, each within
+  the 1 MiB engine result budget. Protocol-added metadata is checked separately.
+- Outage: both healthy providers are listed and called with one of three startup
+  servers down; incomplete
+  direct catalog returns 503; the failed server is retried on access. A complete
+  catalog is reused for 60 s and retained after a failed refresh, including direct.
+- Replay across heaps: two named copy heaps have distinct observed isolate IDs,
+  share the authority DO and produce exactly one effect for a concurrent approval
+  token. Removal through one copy immediately refuses the other copy's request.
+- Socket cleanup: the same live PIDs 55116 and 55117 return from warm ESTABLISHED
+  counts 13 and 7 to 13 and 7, with zero CLOSE_WAIT and zero upstream background
+  streams after sequential/concurrent success, failure, abort and stream workloads.
+  An observing factory forwards all protocol/transport operations to native SDK
+  clients and checks every created client closes exactly once.
+
+A production browser-target esbuild bundle of `src/index.ts` also passes, with
+no agent-vm or tool-host-node input and no node:* external import. A scan of all
+35 non-test tool-engine source files finds no node:* imports.
+
+## Wrong-build controls
+
+Each changed source was restored after its run. Raw logs and patches remain in
+checkout-local `tmp/s6-worker-evidence/`; they are disposable artifacts, not
+published secret-bearing captures.
+
+| Wrong build | Intended observed failure | Exit |
+| --- | --- | --- |
+| Worker-memory used-token map | Two actual effects from independent copy heaps; expected one | 1 |
+| Organization read from caller header | Other organization's credential used; expected token organization's credential | 1 |
+| Cached agent admission | Removed warm agent returns 200; expected 401 | 1 |
+| Removed six-call scheduler | Twelve body-held calls enter; expected six | 1 |
+| Analytics text left over 256 bytes | Captured field exceeds independent 256-byte bound | 1 |
+| Native client close skipped | Observed native close count zero; expected exactly one | 1 |
+
+Two initial controls were insensitive and are not counted as red proof: holding
+response headers hid the missing scheduler behind workerd's pending-header limit;
+request-end socket reclamation hid skipped explicit close. The retained controls
+instead hold bodies after headers and observe actual native close calls. Both
+then fail for their intended assertions. The final restored suite above passes.
+
+Wrangler 4.40.2's proxy workerd exceeded 2,000 ESTABLISHED sockets under the heavy
+reply workload while the application workerd had eight; the guard killed only
+this run's processes. The same product/workload passed with the new pinned pair.
+This comparison identifies a runtime-sensitive failure, not an upstream root cause.
+Every local workerd harness now checks its own child PIDs and aborts if either
+ESTABLISHED or CLOSE_WAIT exceeds 2,000. All long proof commands have outer timeouts.
+
+## Decisions, stand-ins and remaining boundaries
+
+The Lead approved request-scoped outbound clients after native workerd rejected
+cross-request transport IO. Organization catalogs contain reusable plain data;
+connections are reused only within the request and its organization/agent/server.
+No fetch or transport shim changes the connector. Shared catalog and typed
+upstream failure policy come from accepted R-S3b. The separately committed
+missing-approval parity repair (266ff58f) was carried onto S3b as d5c0bd1b.
+
+Stand-ins: the issuer/JWKS uses test keys and assumes the E10 claim contract; the
+controlled MCP server supplies deterministic protocol, credentials, stalls and
+failures; analytics uses an unsampled capture binding instead of the real service;
+test-only control routes admit/remove agents and observe clocks/closures. Production
+exports contain none of these control routes. Deployed configuration is supplied
+through the configuration-source interface and Worker secret bindings; a versioned
+database source is deferred.
+
+Deferred: agent-management HTTP route, sign-in agent-client route, owner/manager
+list, per-user consents and the later database configuration source. Still
+unverified: real sign-in integration, deployed Worker, separate deployed copies
+sharing objects, real Analytics Engine, third-party client/model deferral context,
+and CI-only VM/Hermes proof. Deployment remains blocked by B4. Local distinct heaps
+sharing actual DO storage are observed; they do not establish deployed behavior.
+
+## Permanent-proof correction after independent verification
+
+The paired Verifier independently observed the original e0a1767a target passing
+16 quality gates, 447 unit tests, 35 integration tests and 46 host tests, and ran
+ten red/restored wrong builds. It found no product bug, but identified four
+missing permanent assertions. The Lead required all four before acceptance.
+The four-gap correction f43f7a4e changes only tests, fixture configuration and this proof report;
+production Worker, tool-engine and tool-access sources are unchanged from that
+observed target. The original runtime, version and bundle evidence is retained
+with that explicit dependency comparison.
+
+The corrected permanent suite:
+
+1. Captures the actual SDK 1.29 fetch response and asserts HTTP 400, exact error
+   -32022, supported versions [2026-07-28] and zero effects, without replacing
+   any SDK or HTTP behavior. Discover also pins the supported version.
+2. Compares malformed empty calls, duplicate-ID batch errors and mixed requests
+   in both modes against the original proxy. Independent assertions require
+   scalar wrappers for both error branches, literal mixed item order 2/1/0,
+   success/failure/success statuses and two actual effects on each host.
+3. Uses three configured providers. During one outage, the compact list contains
+   both healthy namespaces and both produce effects; direct list reports exactly
+   the failed namespace with 503. Recovery exposes all ten tools, and the recovered
+   provider itself executes before the existing TTL/retained-complete controls.
+4. Gives organizations distinct approval key bindings and values. A's token works
+   in A, cannot produce any B effect, and B's own token then works with identical
+   claims/call/token ID. The invalid signature does not consume B's valid token.
+   This covers input tokens on both addresses and metadata on native direct calls,
+   matching the two existing carrier contracts.
+
+Seven additional wrong builds each exit 1 for the intended assertion: one global
+organization approval key (foreign call produces an extra effect); wrong legacy
+HTTP status; wrong legacy error code; wrong supported-version list; operation-only
+item mapping; sorting numeric request IDs; and keeping only the first healthy
+provider. Exact sources are restored in finally and hash-checked. The supervisor
+uses 40-second per-mutant deadlines and the unmodified 2,000-socket guard.
+The selected red runs skip unrelated cases intentionally; the restored full host
+suite has no skips. Artifacts: `correction-mutation-status.json`, seven matching
+`*-red.log` / `.diff` files and `run-correction-wrong-builds.py` under the local
+evidence directory. Ordered rerun logs are `correction-check.log`,
+`correction-unit.log`, `correction-integration.log` and `correction-host.log`.
+The earlier final-* logs refer to the original freeze and are retained separately.
+
+## Awaited response cleanup correction
+
+A subsequent PR comment identified response cleanup concerns. A permanent unit
+case reproduced the actual bodyless-response defect: the returned response
+settled while its asynchronous cleanup was held behind an explicit barrier
+(`bodyless-cleanup-pre-fix-red.log`, 1 failure, exit 1). The existing helper now
+awaits bodyless cleanup. Stream EOF/error/cancel paths share a single pending
+cleanup promise, so cancellation also waits when EOF has already started closing.
+Four permanent deterministic tests cover bodyless completion, EOF completion,
+concurrent cancellation/EOF and stream error; no provider or SDK behavior is
+mocked or claimed by these unit tests. Existing local workerd native-client and
+socket proofs cover the real provider path separately.
+
+Two restored wrong builds fail: fire-and-forget bodyless cleanup and replacing
+the pending promise with the former boolean. The first attempt at the cancellation
+control was insensitive; draining promise work under a fake clock while cleanup
+remained explicitly blocked made the boolean mutant fail its intended early-settle
+assertion. The corrected red logs are `bodyless-cleanup-fire-forget-red.log` and
+`cleanup-pending-boolean-red.log`; corresponding diffs and the passing four-test
+`request-cleanup-unit-green.log` are retained locally.
+
+The comment's separate ordinary throwing-fetch claim was not reproduced. In the
+pinned SDK 2.3.1, `fetchFace` catches `handle` and factory failures and returns a
+JSON error response. Its earlier `closed` throw does not apply to this fresh,
+request-local handler, which is never closed before fetch. No speculative request
+wrapper or new public contract was added. The helper's internal export is absent
+from the package's public index. Final logs after this production correction are
+`final-correction-check.log`, `final-correction-unit.log`,
+`final-correction-integration.log` and `final-correction-host.log`.
+
+## Validation failures participate in the Worker limits
+
+At frozen 08ccddf7 the paired Verifier observed a product failure: 8,000 malformed
+call descriptors in a 24,011-byte argument object produced 17,207,674 wire bytes,
+exceeding 16 MiB despite zero upstream effects. The Lead authorized a bounded
+Worker-only repair. Permanent pre-fix host cases reproduced that failure and a
+50-item validation reply at exactly 16 MiB plus one; both failed their independent
+wire-size assertions (`validation-budget-pre-fix-red.log`, two failures, exit 1).
+
+The raw array length now precedes every descriptor validation. A batch count
+refusal skips the shared mapper's descriptor parsing and per-call analytics:
+there are no admitted calls. The final Worker projection now counts actual
+validation failures, issue lists and scalar errors alongside successful outputs,
+including JSON-RPC ID and SDK-added resultType/serverInfo. Fitting literal output
+is unchanged. Oversized item output becomes the existing too_large_result while
+fitting siblings remain. A scalar error that cannot fit gets a small too-large
+batch refusal. There is no new request-ID cap. The shared gateway, tool-access and
+Node host are unchanged by this repair.
+
+Permanent real local-workerd observations, all with zero upstream effects:
+
+| Case | Observed wire bytes |
+| --- | --- |
+| 51 raw malformed entries (164 argument bytes) | 610, too_many_calls |
+| Exact 8,000-entry reproducer (24,011 argument bytes) | 610, too_many_calls |
+| 50 validation failures just under budget | 16,777,215, original literal output retained |
+| Same failures exactly at budget | 16,777,216, original literal output retained |
+| Same failures proposed one byte over | 16,441,828; 49 original failures and one too_large_result |
+| Oversized scalar validation failure with 50 raw entries | 16,777,238 before, 624 after |
+
+The failure fixture uses an 83,763-character enum, well below the upstream limit;
+its call arguments and RPC-ID padding are below the 4 MiB request limit. Two
+small actual old-proxy responses independently calibrate the diagnostic size;
+no production size constant/helper supplies the expected limit. Scalar calibration
+also uses actual old-proxy responses and independently asserts the request fits.
+
+The current real Node proxy route is compared with the original proxy's complete
+literal MCP output for all three large-error paths. It remains uncapped here:
+16,777,273 bytes for 50 item failures, 17,207,677 for the malformed 8,000-call
+array, and 16,777,238 for the scalar error. This is expected: these are Worker
+limits. Both Node and Worker produce zero upstream effects in these cases.
+
+Two wrong builds fail separately, then exact source hashes are restored:
+
+- Validation before raw counting: unit getter controls observe 51/8,000 descriptor
+  reads instead of zero; host refusals lose too_many_calls even though the final
+  budget still bounds the response. Both unit/host selected runs exit 1.
+- Failure output excluded from the final budget: the actual 50-item wire reply is
+  16,777,217 bytes; its independent bound assertion fails, exit 1.
+
+Raw commands, patches and exits are retained in `validation-budget-mutations.json`,
+`late-raw-batch-count-{unit,host}-red.log`,
+`failure-results-excluded-from-budget-host-red.log` and their `.diff` files.
+Final ordered runs are `validation-fix-{check,unit,integration,host}.log`:
+16 quality gates, 453 unit tests/39 files, 35 integration tests/3 files and
+52 host tests/13 files, no host skips, all exit 0. Existing normal old/new parity,
+three-request heavy overlap, native close, socket baseline, analytics and shared
+DO observations pass in that full host run. The prior independent proof remains
+anchored to its own frozen commits; this new delta awaits paired observation.
+
+## Mixed replies preserve executed results
+
+A subsequent PR review identified a mixed-overflow ordering defect at 83fee53f.
+The read-only real-workerd probe used 49 large validation failures with numeric
+IDs and one successful call. Its proposed wire size was 16,777,217 bytes; reverse
+Object.keys traversal discarded the successful result, despite one observed
+effect, while retaining all 49 large validation errors. The returned size was
+16,609,496 bytes. The ESM probe exited 0 and preserved frozen source; its earlier
+CommonJS import failure is retained separately as setup failure, not product proof.
+The permanent real-path case then failed on success status (exit 1) before repair.
+
+The Lead approved an explicit policy: trim definite no-effect items first, then
+ran/unknown failures, and completed results last. Within each class use input
+request order. The Worker now records request-local invocation-started facts at
+its existing backend invocation boundary; it does not infer no-effect from an
+item's `ok` flag or error kind. A failed or thrown invocation retains its fact.
+The final projector stably partitions explicit request IDs into those three
+classes. Shared engine/access and Node code remain unchanged.
+
+The permanent real-workerd mixed case runs with the successful call first and
+last in the request. Both produce exactly one effect, retain its successful
+result, trim validation ID 0, preserve response request order and compare every
+untrimmed serialized item's bytes against the original proxy. The bounded reply
+is 16,441,828 bytes in both cases. The actual current Node route keeps the entire
+original literal result, producing 16,777,275 bytes and its one expected effect.
+This Node comparison remains independent of the Worker's trimming policy.
+
+Sensitivity controls, all followed by exact restoration:
+
+- Reverse Object.keys trimming fails both mixed host cases: success becomes failed.
+- Dropping invocation facts fails both ambiguous/thrown unit controls and the
+  success-first real host case, even though the success-last case still passes.
+- Taking order from result object properties fails the competing literal class
+  order assertion, including numeric IDs.
+- Treating every `!ok` item as no-effect fails the same assertion with an early
+  uncertain ran item competing against later validation/approval refusals.
+
+The policy unit intentionally places uncertain ran items first in input order;
+otherwise a mistaken `!ok` classifier could accidentally produce the right order.
+No effect or provider interaction is claimed from that unit test: the real mixed
+host case and invocation-boundary tests supply those separate observations.
+
+Evidence: `mixed-reply-probe-83fee53f.log`,
+`mixed-budget-permanent-pre-fix-red.log`, `mixed-trim-mutations.json`, its four
+matching patches and five intended-red unit/host logs. Each source mutation is
+restored in finally with its hash checked. Final ordered logs are
+`mixed-fix-{check,unit,integration,host}.log`: 16 quality gates, 456 unit tests in
+39 files, 35 integration tests in 3 files, and 54 local host tests in 13 files,
+no host skips, all exit 0. Prior malformed-array, exact-failure-byte boundaries,
+scalar fallback, analytics, normal parity, heavy overlap, shared DO, native close
+and live-PID socket controls pass in this full run. The new frozen delta still
+needs paired independent observation; no deployed or acceptance claim follows.

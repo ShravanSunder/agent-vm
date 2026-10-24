@@ -5,6 +5,10 @@
 	"description": "Sandboxed VM controller and gateway packages for autonomous coding agents",
 	"author": "Shravan Sunder <ShravanSunder@users.noreply.github.com>",
 	"type": "module",
+	"imports": {
+		"#auth-owner-cli": "./packages/auth/src/native-owner-cli/owner-cli.ts",
+		"#auth-verification-cli": "./packages/auth/src/test-fixtures/auth-verification-cli.ts"
+	},
 	"scripts": {
 		"build": "pnpm -r build",
 		"clean": "git clean -fdX packages",

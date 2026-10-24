@@ -2,13 +2,13 @@
 import { access, mkdir, readFile, watch, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
-import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import {
 	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
 	type StartedFakeUpstreamMcpServer,
-} from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
+} from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
+import { PortalCallResultSchema } from '@agent-vm/agent-portal-sdk';
+import type { ManagedVmCreateRequest } from '@agent-vm/managed-vm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod/v4';
 
@@ -45,6 +45,12 @@ import {
 	buildPortalCompositionLossScriptBody,
 } from './portal-composition-hermes-e2e-config.js';
 import {
+	requestPortalCompositionHermesTurn,
+	snapshotPortalCompositionModelProgress,
+	startPortalCompositionModelServer,
+	waitForPortalCompositionHermesHealth,
+} from './portal-composition-hermes-e2e-support.js';
+import {
 	buildPortalCompositionProgram as buildSharedPortalCompositionProgram,
 	portalCompositionArtifactNamespace,
 	portalCompositionArtifactOperationName,
@@ -52,13 +58,7 @@ import {
 	portalCompositionLossCancellationWindowMilliseconds,
 	portalCompositionLossProbeOperationName,
 	validatePortalCompositionGeneratedProgramSyntax,
-} from './portal-composition-hermes-e2e-program.js';
-import {
-	requestPortalCompositionHermesTurn,
-	snapshotPortalCompositionModelProgress,
-	startPortalCompositionModelServer,
-	waitForPortalCompositionHermesHealth,
-} from './portal-composition-hermes-e2e-support.js';
+} from './portal-composition-hermes-e2e-test-fixture.js';
 
 const architecture = currentE2eArchitecture();
 const runPortalCompositionHermesE2e =

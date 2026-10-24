@@ -3,11 +3,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { type OAuthConfig } from '@agent-vm/config-contracts';
 import {
-	googleAccountPolicySnapshotSchema,
 	googleAccountPolicyBindingSchema,
+	googleAccountPolicySnapshotSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod';
 

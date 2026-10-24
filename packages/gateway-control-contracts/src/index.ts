@@ -1,4 +1,9 @@
 import {
+	controllerConfiguredCliInputSchema,
+	resolveConfiguredCliTimeout,
+	type ConfiguredCliInput,
+} from '@agent-collaboration/tool-access/contracts';
+import {
 	GatewayApprovalDecisionRequestSchema,
 	GatewayApprovalDecisionResultSchema,
 	PortalAttachmentRequestSchema,
@@ -6,39 +11,34 @@ import {
 } from '@agent-vm/agent-portal-sdk';
 import {
 	GatewayRuntimeTrustedInvocationContextSchema,
-	type GatewayRuntimeTrustedInvocationPrincipal,
 	GatewayRuntimeTrustedInvocationPrincipalSchema,
 	GatewayStablePrincipalDigestSchema,
+	type GatewayRuntimeTrustedInvocationPrincipal,
 } from '@agent-vm/agent-portal-sdk/contracts';
-import {
-	controllerConfiguredCliInputSchema,
-	resolveConfiguredCliTimeout,
-	type ConfiguredCliInput,
-} from '@agent-vm/config-contracts';
 import {
 	CONTROL_PROTOCOL_VERSION,
 	ControlCorrelationSchema,
 	ControlRpcErrorSchema,
 	ControlRpcResultBaseSchema,
 	ControlSessionStateSchema,
-	type ControlSessionControllerToPeerEvents,
-	type ControlSessionPeerToControllerEvents,
 	KnownControlDomainSchema,
 	type ControlDeliveryPolicy,
 	type ControlEnvelope,
 	type ControlMessageKind,
+	type ControlSessionControllerToPeerEvents,
+	type ControlSessionPeerToControllerEvents,
 } from '@agent-vm/control-protocol-contracts';
 import {
+	managedGooglePreflightResultSchema,
 	oauthAuthorizationActionResultSchema,
 	oauthAuthorizationBeginRequestSchema,
 	oauthAuthorizationCancelRequestSchema,
+	oauthAuthorizationDisconnectRequestSchema,
 	oauthAuthorizationListRequestSchema,
 	oauthAuthorizationReauthorizeRequestSchema,
-	oauthAuthorizationDisconnectRequestSchema,
 	oauthAuthorizationStatusRequestSchema,
 	oauthToolAvailabilityBatchRequestSchema,
 	oauthToolAvailabilityBatchResultSchema,
-	managedGooglePreflightResultSchema,
 } from '@agent-vm/oauth-broker-contracts';
 import { z } from 'zod/v4';
 
@@ -54,9 +54,9 @@ import {
 import { GatewayRuntimePortalSurfaceClassSchema } from './gateway-runtime-portal-context.js';
 import { GatewayRuntimeReadinessSnapshotSchema } from './gateway-runtime-readiness-snapshot.js';
 
-export * from './gateway-control-admission.js';
-export * from './gateway-control-admission-executor.js';
 export * from './gateway-control-admission-classification.js';
+export * from './gateway-control-admission-executor.js';
+export * from './gateway-control-admission.js';
 export * from './gateway-control-principal.js';
 export * from './gateway-runtime-approval.js';
 export * from './gateway-runtime-control-endpoint.js';

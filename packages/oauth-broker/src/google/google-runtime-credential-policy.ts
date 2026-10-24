@@ -1,21 +1,21 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type ResolvedOAuthConfig,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { type ResolvedOAuthConfig } from '@agent-vm/config-contracts';
 
 import { type OAuthKeyEncryptionKey } from '../envelope-codec.js';
 import {
-	type OAuthStoredGrant,
 	type OAuthCredentialCatalog,
+	type OAuthStoredGrant,
 } from '../oauth-credential-catalog-contracts.js';
 import { decryptGoogleCredentialPayload } from './google-credential-payload.js';
 import { type GoogleCredentialRefreshCoordinator } from './google-credential-refresh-coordinator.js';
 import { getGoogleGogCommandDescriptors } from './google-gog-command-catalog.js';
 import { type GoogleWebClientCredentials } from './google-oauth-adapter.js';
 import {
-	type GoogleOAuthRuntimeCredentialRequest,
 	type GoogleOAuthRuntimeCredentialBinding,
+	type GoogleOAuthRuntimeCredentialRequest,
 	type GoogleOAuthRuntimeCredentialResolution,
 	type GoogleOAuthRuntimeCredentialSnapshotValidation,
 } from './google-oauth-broker-contracts.js';

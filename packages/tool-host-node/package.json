@@ -1,0 +1,63 @@
+{
+	"name": "@agent-collaboration/tool-host-node",
+	"version": "0.0.153",
+	"description": "Node host adapters for Tool Portal.",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-host-node"
+	},
+	"bin": {
+		"tool-host-node": "./dist/bin/tool-host-node.js"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"imports": {
+		"#node-host/*": "./src/*.ts"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./catalog-typescript": {
+			"types": "./dist/catalog-typescript/index.d.ts",
+			"import": "./dist/catalog-typescript/index.js"
+		},
+		"./testing/fake-upstream-mcp-server": {
+			"types": "./dist/testing/fake-upstream-mcp-server.d.ts",
+			"import": "./dist/testing/fake-upstream-mcp-server.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"@agent-collaboration/tool-engine": "workspace:*",
+		"@agent-vm/agent-portal-sdk": "workspace:*",
+		"@logtape/logtape": "2.3.0",
+		"@logtape/otel": "2.3.0",
+		"@modelcontextprotocol/client": "2.3.1",
+		"@modelcontextprotocol/core": "2.3.1",
+		"@modelcontextprotocol/node": "2.1.1",
+		"@modelcontextprotocol/server": "2.3.1",
+		"json-schema-to-typescript": "16.0.0",
+		"jsonc-parser": "^3.3.1",
+		"typescript": "6.0.3",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@hono/node-server": "2.0.10",
+		"@modelcontextprotocol/sdk": "1.29.0",
+		"hono": "4.12.34",
+		"vitest": "^4.1.5"
+	}
+}

@@ -24,6 +24,12 @@
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"imports": {
+		"#agent-vm/*": {
+			"types": "./src/*.ts",
+			"default": "./dist/*.js"
+		}
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -39,6 +45,9 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"@agent-collaboration/tool-engine": "workspace:*",
+		"@agent-collaboration/tool-host-node": "workspace:*",
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@agent-vm/config-contracts": "workspace:*",
 		"@agent-vm/control-protocol-contracts": "workspace:*",

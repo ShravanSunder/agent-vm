@@ -2,21 +2,29 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { controllerConfiguredCliInputSchema } from '@agent-collaboration/tool-access/contracts';
 import type { JsonValue, PortalCallRequest, PortalCallResult } from '@agent-vm/agent-portal-sdk';
 import {
 	compileOAuthPolicy,
 	configuredGoogleOperationKey,
-	controllerConfiguredCliInputSchema,
 	createGatewayRuntimeManagedToolPortalConfig,
 	jsonValueSchema,
 } from '@agent-vm/config-contracts';
 import {
+	GatewayControlConfiguredCliControllerExecutionResultSchema,
+	GatewayRuntimeApprovalFingerprintSchema,
 	deriveGatewayControlControllerExecutionRpcWindow,
 	deriveGatewayControlStablePrincipal,
-	GatewayRuntimeApprovalFingerprintSchema,
-	GatewayControlConfiguredCliControllerExecutionResultSchema,
 	type GatewayControlToolPortalControllerExecutionPayload,
 } from '@agent-vm/gateway-control-contracts';
+import {
+	createManagedToolPortalCapabilityCore,
+	type ToolPortalBackendPort,
+} from '@agent-vm/gateway-runtime';
+import {
+	createRecordingBackendPort,
+	udsOptions,
+} from '@agent-vm/gateway-runtime/managed-tool-engine/test-fixtures/managed-service-test-fixture.js';
 import type {
 	ManagedVm,
 	ManagedVmCreateRequest,
@@ -34,10 +42,6 @@ import {
 	createGoogleOAuthBrokerService,
 	getGooglePolicyCatalog,
 } from '@agent-vm/oauth-broker/google';
-import {
-	createManagedToolPortalCapabilityCore,
-	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createOAuthPolicyCompilerTestInput } from '../../../../config-contracts/src/oauth-policy-compiler-test-fixture.js';
@@ -50,10 +54,6 @@ import {
 	clientCredentials,
 	wrappingKey,
 } from '../../../../oauth-broker/src/oauth-catalog-test-fixture.js';
-import {
-	createRecordingBackendPort,
-	udsOptions,
-} from '../../../../tool-portal/src/tool-portal-service-test-fixture.js';
 import {
 	deploymentGeneratedDirForStorageRoot,
 	type LoadedSystemConfig,

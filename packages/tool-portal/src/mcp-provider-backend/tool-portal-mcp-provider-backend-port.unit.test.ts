@@ -1,8 +1,6 @@
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import { PortalCallRequestSchema, PortalListRequestSchema } from '@agent-vm/agent-portal-sdk';
-import type {
-	ManagedToolPortalConfig,
-	StandaloneToolPortalConfig,
-} from '@agent-vm/config-contracts';
+import { type ManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	GatewayRuntimeMcpProviderDispatchGrantSchema,
 	type GatewayRuntimeTrustedInvocationContext,

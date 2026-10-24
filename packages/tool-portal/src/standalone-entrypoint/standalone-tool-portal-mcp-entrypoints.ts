@@ -1,4 +1,4 @@
-import type { StandaloneToolPortalConfig } from '@agent-vm/config-contracts';
+import { type StandaloneToolPortalConfig } from '@agent-collaboration/tool-host-node';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import type {

@@ -114,7 +114,7 @@ async function discoverAgentVmConsumerClosure(): Promise<readonly WorkspacePacka
 }
 
 function tarballFileName(workspacePackage: WorkspacePackage): string {
-	return `${workspacePackage.manifest.name.replace('@agent-vm/', 'agent-vm-')}-${workspacePackage.manifest.version}.tgz`;
+	return `${workspacePackage.manifest.name.replace(/^@/u, '').replace('/', '-')}-${workspacePackage.manifest.version}.tgz`;
 }
 
 function assertPathWithinDirectory(candidatePath: string, parentDirectory: string): void {
@@ -182,7 +182,7 @@ describe('packed stock Gondolin consumer', () => {
 		try {
 			await Promise.all([mkdir(packDirectory), mkdir(consumerDirectory)]);
 			const workspacePackages = await discoverAgentVmConsumerClosure();
-			expect(workspacePackages).toHaveLength(17);
+			expect(workspacePackages).toHaveLength(20);
 			const agentVmWorkspacePackage = requireWorkspacePackage(
 				workspacePackages,
 				'@agent-vm/agent-vm',

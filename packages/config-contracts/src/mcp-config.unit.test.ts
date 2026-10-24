@@ -2,9 +2,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { loadMcpConfig, mcpConfigToResolvedProviders } from '@agent-collaboration/tool-host-node';
 import { describe, expect, it } from 'vitest';
-
-import { loadMcpConfig, mcpConfigToResolvedProviders } from './mcp-config.js';
 
 async function writeConfigFile(text: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), 'agent-vm-mcp-config-'));

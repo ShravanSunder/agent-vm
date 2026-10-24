@@ -1,8 +1,8 @@
 import {
 	googleOAuthApplicationIdSchema,
 	type GoogleOAuthApplicationId,
-	type OAuthConfig,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-access/contracts';
+import { type OAuthConfig } from '@agent-vm/config-contracts';
 import {
 	oauthApplicationIdSchema,
 	type OAuthBrowserSessionIdentity,
@@ -18,8 +18,8 @@ import {
 } from '../oauth-credential-catalog-contracts.js';
 import {
 	sameOAuthBrowserSession,
-	type OAuthCompletionSession,
 	type OAuthCeremonyTransaction,
+	type OAuthCompletionSession,
 	type OAuthTransactionStore,
 } from '../oauth-transaction-store.js';
 import { decryptGoogleCredentialPayload } from './google-credential-payload.js';

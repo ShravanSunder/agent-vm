@@ -1,8 +1,7 @@
+import { mcpConfigSchema, type McpConfig } from '@agent-collaboration/tool-access/contracts';
 import {
 	effectiveManagedToolPortalConfigSchema,
-	mcpConfigSchema,
 	type EffectiveManagedToolPortalConfig,
-	type McpConfig,
 } from '@agent-vm/config-contracts';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
@@ -12,8 +11,8 @@ import {
 } from './gateway-runtime-portal-context.js';
 import {
 	assertGatewayRuntimePortalSemanticSnapshotMatchesInputs,
-	deriveManagedAgentProjection,
 	deriveGatewayRuntimePortalSemanticSnapshot,
+	deriveManagedAgentProjection,
 	type ManagedAgentProjectionInput,
 } from './gateway-runtime-portal-semantic-revision.js';
 

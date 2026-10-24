@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { type ToolPortalBackendKind } from '@agent-collaboration/tool-access/contracts';
 import type {
 	SandboxOperationIdentity,
 	SandboxProcessHandle,
@@ -14,18 +15,16 @@ import {
 	type GatewayRuntimeAttachmentMetadata,
 	type GatewayRuntimeClientTrustedInvocationContext,
 } from '@agent-vm/agent-portal-sdk/gateway-runtime-client';
-import type {
-	GatewayRuntimeManagedToolPortalConfig,
-	ToolPortalBackendKind,
-} from '@agent-vm/config-contracts';
+import { type GatewayRuntimeManagedToolPortalConfig } from '@agent-vm/config-contracts';
 import {
 	deriveGatewayControlStablePrincipal,
 	type GatewayRuntimePortalSemanticSnapshot,
 	type GatewayRuntimeToolPortalDispatchAuthorityForBackendKind,
 } from '@agent-vm/gateway-control-contracts';
 import {
-	createGatewayRuntimeManagedToolPortalComposition,
+	GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 	createGatewayControlControllerExecutionBackendPort,
+	createGatewayRuntimeManagedToolPortalComposition,
 	createGatewayRuntimePaths,
 	createGatewayRuntimePrivateUdsDispatcher,
 	createGatewayRuntimeProductionSandboxDispatcher,
@@ -35,7 +34,6 @@ import {
 	createManagedPluginAttachmentState,
 	createStrictToolVmSshClient,
 	createStrictToolVmSshTransport,
-	GATEWAY_RUNTIME_AUTHENTICATED_PRIVATE_UDS_OPERATION_GROUPS,
 	gatewayRuntimeArtifactStablePrincipalFromTrustedContext,
 	resolveGatewayRuntimeOperationGroup,
 	startGatewayRuntimeUdsServer,
@@ -56,10 +54,11 @@ import {
 	type StrictToolVmSshProcessChannel,
 	type StrictToolVmSshProcessChannelClient,
 	type StrictToolVmSshTerminalSize,
+	type ToolPortalApprovalPort,
+	type ToolPortalBackendPort,
 } from '@agent-vm/gateway-runtime';
 import type { ManagedVm, ManagedVmSshAccess } from '@agent-vm/managed-vm';
 import { createStaticSecretResolver } from '@agent-vm/secret-management';
-import { type ToolPortalApprovalPort, type ToolPortalBackendPort } from '@agent-vm/tool-portal';
 
 import { runBuildCommand } from '../cli/build-command.js';
 import { createManagedVmRuntimeComposition } from '../composition/gondolin-managed-vm-provider.js';

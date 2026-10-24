@@ -1,5 +1,5 @@
-import type { ResolvedMcpPortalProfile } from '@agent-vm/config-contracts';
-import { mcpPortalCallPolicyDecision } from '@agent-vm/config-contracts';
+import { mcpPortalCallPolicyDecision } from '@agent-collaboration/tool-access/authorization';
+import { type ResolvedMcpPortalProfile } from '@agent-collaboration/tool-access/contracts';
 
 import type { PortalAgentIdentity } from '../portal-access-policy.js';
 import { hashCallArguments, verifyApprovalToken } from '../portal-auth/hmac-token.js';

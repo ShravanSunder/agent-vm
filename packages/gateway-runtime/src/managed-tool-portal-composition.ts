@@ -1,9 +1,9 @@
+import { createManagedToolPortalCapabilityCore } from '@agent-vm/gateway-runtime/managed-tool-engine/managed-portal-facade.js';
 import {
-	createManagedToolPortalCapabilityCore,
 	type CreateManagedToolPortalCapabilityCoreProps,
 	type ToolPortalApprovalPort,
 	type ToolPortalBackendPort,
-} from '@agent-vm/tool-portal';
+} from '@agent-vm/gateway-runtime/managed-tool-engine/models/managed-portal-ports.js';
 
 import {
 	createGatewayRuntimeArtifactCurrentAuthorityRegistry,
@@ -120,6 +120,7 @@ export async function createGatewayRuntimeManagedToolPortalComposition<TUdsProje
 		}) =>
 			createManagedToolPortalCapabilityCore({
 				approvalPort: serviceProps.approvalPort,
+				now: props.artifactRuntime.now,
 				backendPorts,
 				config: props.toolPortalConfig,
 				...(props.oauthAvailabilityPort === undefined

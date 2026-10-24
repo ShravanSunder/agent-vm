@@ -437,9 +437,19 @@ export async function waitForPortalCompositionHermesHealth(options: {
 		}
 		await waitForProtocolRetryInterval(250);
 	}
-	const serviceLog = await options
-		.resolveVm()
-		?.exec('tail -n 200 /var/log/agent-vm/hermes-service.log 2>&1 || true');
+	const healthFailure = new Error(
+		`Timed out waiting for portal composition Hermes health: ${JSON.stringify({ lastError, lastStatus })}`,
+	);
+	let serviceLog: string | undefined;
+	let serviceLogError: string | undefined;
+	try {
+		const result = await options
+			.resolveVm()
+			?.exec('tail -n 200 /var/log/agent-vm/hermes-service.log 2>&1 || true');
+		serviceLog = result?.stdout.toString();
+	} catch (error: unknown) {
+		serviceLogError = error instanceof Error ? error.message : String(error);
+	}
 	const [zoneStatus, zoneLogs] = await Promise.all(
 		['status', 'logs'].map(async (operation) => {
 			try {
@@ -453,9 +463,8 @@ export async function waitForPortalCompositionHermesHealth(options: {
 			}
 		}),
 	);
-	throw new Error(
-		`Timed out waiting for portal composition Hermes health: ${JSON.stringify({ lastError, lastStatus, serviceLog: serviceLog?.stdout.toString(), zoneLogs, zoneStatus })}`,
-	);
+	healthFailure.message += ` Diagnostics: ${JSON.stringify({ serviceLog, serviceLogError, zoneLogs, zoneStatus })}`;
+	throw healthFailure;
 }
 
 export async function requestPortalCompositionHermesTurn(options: {

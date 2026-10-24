@@ -26,6 +26,27 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
+			"@agent-collaboration/tool-host-core": ["./packages/tool-host-core/src/index.ts"],
+			"@agent-vm/gateway-runtime/managed-tool-engine/*": [
+				"./packages/gateway-runtime/src/managed-tool-engine/*"
+			],
+			"@agent-vm/config-contracts-test-support/*": ["./packages/config-contracts/src/*"],
+			"@agent-vm/tool-portal/policy-comparison": [
+				"./packages/tool-portal/src/tool-portal-service-common.ts"
+			],
+			"@agent-vm/controller-test-support/*": ["./packages/agent-vm/src/controller/*"],
+			"@agent-collaboration/tool-engine/capability-dispatch": [
+				"./packages/tool-engine/src/capability-dispatch/index.ts"
+			],
+			"@agent-collaboration/tool-engine/standalone-tool-portal": [
+				"./packages/tool-engine/src/standalone-tool-portal/index.ts"
+			],
+			"@agent-collaboration/tool-access/contracts": [
+				"./packages/tool-access/src/contracts/index.ts"
+			],
+			"@agent-collaboration/tool-access/authorization": [
+				"./packages/tool-access/src/authorization/index.ts"
+			],
 			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
 			"@agent-vm/agent-portal-sdk/generated-tools": [
 				"./packages/agent-portal-sdk/src/generated-tools/index.ts"
@@ -124,7 +145,13 @@
 			"@agent-vm/tool-portal/dispatch-authority": [
 				"./packages/tool-portal/src/dispatch-authority.ts"
 			],
-			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"]
+			"@agent-vm/tool-portal/testing": ["./packages/tool-portal/src/testing/index.ts"],
+			"@agent-collaboration/tool-engine/mcp-gateway": [
+				"./packages/tool-engine/src/mcp-gateway/index.ts"
+			],
+			"@agent-collaboration/tool-engine/upstream-mcp-connectors": [
+				"./packages/tool-engine/src/upstream-mcp-connectors/index.ts"
+			]
 		}
 	}
 }

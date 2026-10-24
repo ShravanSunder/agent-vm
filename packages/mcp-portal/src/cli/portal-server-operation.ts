@@ -1,17 +1,19 @@
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 
+import { resolveMcpPortalProfile } from '@agent-collaboration/tool-access/authorization';
+import {
+	type ResolvedMcpPortalProfile,
+	type SecretValue,
+} from '@agent-collaboration/tool-access/contracts';
 import {
 	loadMcpConfig,
 	loadMcpPortalConfig,
-	resolveMcpPortalProfile,
 	type McpPortalAgentConfig,
 	type McpPortalConfig,
 	type McpPortalExternalAuthConfig,
 	type McpPortalProxyConfig,
-	type ResolvedMcpPortalProfile,
-	type SecretValue,
-} from '@agent-vm/config-contracts';
+} from '@agent-collaboration/tool-host-node';
 import {
 	createCompositeSecretResolver,
 	createSecretResolver as createOnePasswordSecretResolver,

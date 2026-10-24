@@ -8,7 +8,7 @@ import {
 	fakeUpstreamNamespace,
 	startFakeUpstreamMcpServer,
 	type StartedFakeUpstreamMcpServer,
-} from '@agent-vm/mcp-portal/testing/fake-upstream-mcp-server';
+} from '@agent-collaboration/tool-host-node/testing/fake-upstream-mcp-server';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { startGatewayZone } from '../gateway/gateway-zone-orchestrator.js';
