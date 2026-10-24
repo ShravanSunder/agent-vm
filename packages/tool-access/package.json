@@ -3,6 +3,11 @@
 	"version": "0.0.153",
 	"description": "Portable Tool Portal contracts and effect-free access assessment.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-access"
+	},
 	"files": [
 		"dist"
 	],

@@ -3,6 +3,11 @@
 	"version": "0.0.153",
 	"description": "Runtime-neutral hosted MCP proxy with injected authority, analytics and host ports.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-host-core"
+	},
 	"files": [
 		"dist"
 	],

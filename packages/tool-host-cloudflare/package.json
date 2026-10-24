@@ -3,6 +3,11 @@
 	"version": "0.0.153",
 	"description": "Workspace-scoped Tool Portal host for Cloudflare Workers.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-host-cloudflare"
+	},
 	"files": [
 		"dist",
 		"worker-configuration.gen.d.ts",

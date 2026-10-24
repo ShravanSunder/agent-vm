@@ -3,6 +3,11 @@
 	"version": "0.0.153",
 	"description": "Portable capability dispatch over resource-owned backends and approval ports.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-engine"
+	},
 	"files": [
 		"dist"
 	],
