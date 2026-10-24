@@ -16,3 +16,5 @@ export * from '#tool-access/contracts/provider-secret-reference';
 export * from '#tool-access/contracts/profile-assignment';
 
 export * from '#tool-access/contracts/config-schema-identities';
+
+export * from '#tool-access/contracts/workspace-resource';

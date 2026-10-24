@@ -38,3 +38,6 @@ export * from '#tool-host-core/organization-authority/models/organization-author
 export * from '#tool-host-core/organization-authority/models/organization-authority-state';
 export * from '#tool-host-core/organization-authority/models/authority-clock';
 export * from '#tool-host-core/organization-engines/proxy-profile-policy';
+
+export * from '#tool-host-core/agent-management/agent-client-management-port';
+export type { AgentClientManagementPort } from '#tool-host-core/agent-management/agent-client-management-port';
