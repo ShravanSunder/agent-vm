@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
+import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -189,6 +190,10 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	expect(gatewayResponses.map((response) => response.status)).toEqual([
 		403, 403, 403, 403, 403, 403,
 	]);
+	const gatewayBodies: readonly unknown[] = await Promise.all(
+		gatewayResponses.map((response: Response): Promise<unknown> => response.json()),
+	);
+	for (const body of gatewayBodies) expectNoIssuedCredentials(body);
 	// Independent S1 contract: do not filter this inventory through the product's allowlist.
 	const publicProviderPaths = new Set([
 		'/api/auth/sign-in/social',

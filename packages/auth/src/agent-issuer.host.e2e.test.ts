@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/client-authentication-refusal';
+import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -62,31 +63,6 @@ async function accessToken(credentials: {
 			refresh_token: z.never().optional(),
 		})
 		.parse(await response.json()).access_token;
-}
-function expectNoIssuedCredentials(value: unknown): void {
-	if (Array.isArray(value)) {
-		for (const item of value) expectNoIssuedCredentials(item);
-		return;
-	}
-	const object = z.record(z.string(), z.unknown()).safeParse(value);
-	if (!object.success) return;
-	for (const [key, child] of Object.entries(object.data)) {
-		expect(
-			[
-				'access_token',
-				'accessToken',
-				'refresh_token',
-				'refreshToken',
-				'id_token',
-				'idToken',
-				'client_id',
-				'client_secret',
-				'clientId',
-				'clientSecret',
-			].includes(key),
-		).toBe(false);
-		expectNoIssuedCredentials(child);
-	}
 }
 async function toolCall(token: string, correlation: string, secondHeap = false): Promise<Response> {
 	return harness.gateway(
