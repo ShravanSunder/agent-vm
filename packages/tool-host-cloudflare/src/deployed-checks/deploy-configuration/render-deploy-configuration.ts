@@ -53,7 +53,7 @@ export function analyticsEvidenceQuery(configuration: PrivateDeployFile): string
 			quoteAnalyticsSqlLiteral(analyticsText(`${configuration.runId}:${workspace.label}`)),
 		)
 		.join(', ');
-	return `SELECT index1, blob1, blob2, blob3, blob4, blob5, blob6, blob7, blob8, blob9, double1, double2, double3, _sample_interval FROM ${configuration.analyticsDataset} WHERE index1 IN (${ids}) AND blob2 IN (${names}) ORDER BY timestamp DESC LIMIT 1000 FORMAT JSON
+	return `SELECT index1, blob1, blob2, blob3, blob4, blob5, blob6, blob7, blob8, blob9, double1, double2, double3, _sample_interval FROM ${configuration.analyticsDataset} WHERE index1 IN (${ids}) AND blob2 IN (${names}) LIMIT 1000 FORMAT JSON
 `;
 }
 

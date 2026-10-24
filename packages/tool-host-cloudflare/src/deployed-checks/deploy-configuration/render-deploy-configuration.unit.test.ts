@@ -260,3 +260,20 @@ it.each(['credential', 'approvalKeyHex'] as const)(
 		).toBe(false);
 	},
 );
+
+it('orders analytics evidence only by selected columns', () => {
+	// Arrange: Analytics Engine requires ORDER BY columns in the projection.
+	const configuration = privateDeployFixture('/tmp/synthetic-analytics-query');
+	// Act: inspect the actual generated statement, including optional ordering.
+	const query = analyticsEvidenceQuery(configuration);
+	const selectedColumns =
+		query
+			.split(' FROM ')[0]
+			?.replace(/^SELECT /u, '')
+			.split(',')
+			.map((column) => column.trim()) ?? [];
+	const ordering = / ORDER BY (.+?)(?: LIMIT | FORMAT |$)/u.exec(query)?.[1];
+	const orderedColumns = ordering?.split(',').map((term) => term.trim().split(/\s+/u)[0]) ?? [];
+	// Assert: an unselected timestamp must never reach the provider.
+	expect(selectedColumns).toEqual(expect.arrayContaining(orderedColumns));
+});
