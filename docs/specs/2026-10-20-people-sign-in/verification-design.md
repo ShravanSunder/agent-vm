@@ -7,34 +7,35 @@ This is the plan for showing that people's sign-in does what the [Specification]
 **Before any row can pass, the owner must grant:**
 - a Cloudflare test account where the test deployments run (prerequisite P1 in the build plan);
 - Google and GitHub test OAuth apps;
-- four test identities:
-  - an owner Google account, used as the deployment's `ownerEmail`;
-  - a Google account the owner will allowlist;
+- five test identities:
+  - two owner Google accounts, configured as the owners of test organizations O1 and O2;
+  - a Google account both owners will allowlist (Person A in C1 and Alice in C5);
   - a GitHub account with the same verified email as that Google account;
   - a second Google account that is never listed.
 
-No `verify-*` skill exists in this repository, so every journey below is `needed`. The plan builds them under a new `verify-auth` skill.
+The `verify-auth` skill exists with two journeys, `bootstrap` and `agent`, on the local target `T3` (`.agents/skills/verify-auth/` on the code branch, built in S1 and the workspace cutover). Both change with this revision: they drive one deployment-wide owner today and must sign in to a named organization. Every other journey below is `needed`.
 
 ## What will prove each need
 
 | Need | In plain words | Proven by | Stays unverified |
 | --- | --- | --- | --- |
 | `U1` | Sign in with Google, GitHub or a passkey, and nothing else | On the test deployment, sign in with each provider and with a passkey, and land on the same person each time. A well-formed attempt through any other method creates nothing. A second provider with the same email is refused until it is linked on purpose. The stored logins hold no Google or GitHub tokens. | real people's devices and browsers beyond the one used |
-| `U2` | Only people the owner approved get into private apps | A fresh deployment admits only the owner first. An unlisted account is turned away and nothing is stored. After the owner removes someone, their passkey, their old browser session, their tokens and their pending Accept all fail. That includes requests caught halfway when the removal lands. | how long the hosted database takes to make a removal visible everywhere (only the local runtime holds steps in order) |
+| `U2` | Only people an organization's owner approved get into that organization | A freshly registered organization admits only its owner first. An unlisted account is turned away and nothing is stored. After the owner removes someone, their passkey, their old browser session, their tokens and their pending Accept in that organization all fail. That includes requests caught halfway when the removal lands, and sessions left behind when cleaning them up fails. | how long the hosted database takes to make a deleted session visible everywhere (only the local runtime holds steps in order) |
 | `U3` | Public apps let anyone register | Register on the public deployment, then show its proof being refused by the private deployment's Tool Portal. | runs when the public deployment is built. Building private first is the Lead's proposal, waiting on the owner (`SD2`) |
 | `U4` | Each service gets proof that works only for itself | The console's proof is refused by Tool Portal, and Tool Portal's is accepted. A proof with two audiences, or one that doesn't stand for a person, is refused. | the real console (a scripted stand-in calls instead) |
 | `U5` | Runs on the owner's Cloudflare with its own database, no vendor | Read the deployment settings and the deployed Worker's own record: the owner's account, a database of its own, and no sign-in vendor in the code. | Workers Free CPU fit (`SD6`), measured separately |
 | `U6` | Machines and VMs never use people's sign-in | The VM test lanes run with no sign-in service present. No machine is registered as a sign-in client, and no machine package depends on the sign-in package. | VPN and Router traffic through Cloudflare, which live outside this repository |
 | `U7` | Every change to who may sign in, or how, is recorded, with no secrets | Make each kind of change, then read the audit table: one record per change, with who, what and when. A change whose record can't be written doesn't happen. Search the table and the Worker's logs for the real codes, tokens and cookies seen during the run; none appear. | how long records are kept (Tool Portal D6) |
+| `U9` | You sign in to an organization; only its owner administers it; organizations are kept apart | Two organizations share one deployment and one person. Removing her from one leaves her other organization's session, tokens and decisions working, and a proof for one is refused for the other. Each owner, a member and an agent try every owner action on each organization: only the right owner succeeds. One organization's admission state is made unreachable: only that organization stops. | hosted Durable Object placement and latency (only `T1` hosts them, without held steps) |
 | `U8` | Agents sign in as themselves, one workspace at a time | Add a test agent to two workspaces of one organization. Read back that it can only use its own sign-in, that the other grant is refused, and that it gets no token for another organization's workspace. Call each workspace with that workspace's own real token; the other workspace and a person check refuse it. Remove it from one workspace: on the same running instances its old call there and a new token for that workspace both fail, while a new token for the other workspace still works. Retire it, and every token request and call fails. Both operations are also tried failing halfway and with a request caught in flight. | the real console (the person verifier stands in); each host's credential storage; creating and closing workspaces (not in this work) |
 
 ## Targets
 
 | Id | What | Used for |
 | --- | --- | --- |
-| `T1` | The private test deployment: the `@agent-collaboration/auth` Worker at the delivered commit, deployed to the owner's Cloudflare test account with its own D1 (read replication off), `mode: "private"`, the test OAuth apps, and `ownerEmail` set to the owner test account | every journey |
+| `T1` | The private test deployment: the `@agent-collaboration/auth` Worker at the delivered commit, deployed to the owner's Cloudflare test account with its own D1 (read replication off) and its organization admission namespace, `mode: "private"`, the test OAuth apps, and `organizations` registering O1 and O2 with the two owner test accounts | every journey |
 | `T2` | The public test deployment: the same commit, `mode: "public"`, its own Worker and D1 | `U3`, when built |
-| `T3` | The same Worker build on a local Workers runtime with a local D1 | held interleavings and forced audit-write failures. Not hosted proof: it keeps Better Auth, the hooks, the request handler and the database statements real, but not D1's replication |
+| `T3` | The same Worker build on a local Workers runtime with a local D1 and the organization admission objects, the same two organizations | held interleavings, forced audit-write and session-cleanup failures, an unreachable organization object. Not hosted proof: it keeps Better Auth, the hooks, the request handler, the objects and the database statements real, but not D1's replication or hosted object placement. A proof-only readback of each organization object's entries, owner binding and records exists only in the test composition |
 | `T4` | Tool Portal at the slice that delivers `decide`, using the production person-proof verifier configured to trust `T1` | decisions, audiences, freshness |
 | `T5` | Tool Portal's Worker (`tool-host-cloudflare`) serving organization O1's workspaces W1 and W2 and organization O2's workspace W3, each with its own Durable Object, and its agent-management handler, using the production agent verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account, bound to the sign-in Worker's agent-client route | agent calls, removal, held interleavings |
 | client | A scripted stand-in for the console: a registered client that runs authorization code with S256 PKCE | asking for proofs. It stands in until the console exists, and it is never counted as console proof |
@@ -43,13 +44,15 @@ No `verify-*` skill exists in this repository, so every journey below is `needed
 
 Each observation is described once; the rows below say which obligations it decides.
 
-**H. Owner bootstrap** (`verify-auth` `bootstrap`, needed, lasting). Starts from a freshly deployed `T1` with an empty D1.
+**H. Owner bootstrap** (`verify-auth` `bootstrap`, existing on `T3` and changed by this revision to name the organization; needed on `T1`; lasting). Starts from a freshly deployed `T1` with an empty D1 and no organization object yet.
 - **Steps:**
-  1. The allowlisted-later Google account tries to sign in.
-  2. The owner signs in with Google.
-  3. The never-listed Google account tries.
-  4. The owner opens the admin surface.
-- **Read:** each outcome; `deployment_owner`; the seeded `allowed_email` row; the `owner-bound` audit record.
+  1. The allowlisted-later Google account tries to sign in to O1.
+  2. O1's owner signs in to O1 with Google.
+  3. The never-listed Google account tries O1.
+  4. O1's owner opens O1's admin surface.
+  5. O2's owner tries O1's admin surface; the allowlisted-later account tries O2, which is still awaiting its owner.
+  6. A sign-in names no organization, and one names an unregistered organization.
+- **Read:** each outcome; O1's object: the seeded owner entry, the owner binding and its `owner-bound` record (through the owner's own reads, and on `T3` the proof-only readback); O2's object: still awaiting its owner; D1: no `user`, `account` or `session` row for any refused attempt.
 
 **A. Provider sign-in** (`verify-auth` `provider-sign-in`, needed, lasting). On `T1` after H, in a real browser.
 - **Steps:**
@@ -63,7 +66,7 @@ Each observation is described once; the rows below say which obligations it deci
   8. A well-formed attempt goes through each method that isn't offered: email sign-in, email sign-up, magic link, generic OAuth and anonymous.
 - **Read:**
   - the screen and response for each step;
-  - the D1 `user`, `account`, `session`, `allowed_email` and `sign_in_audit` rows, through read-only queries, including the token columns of every `account` row.
+  - the D1 `user`, `account`, `session` (with its `organizationId`) and `sign_in_audit` rows, through read-only queries, including the token columns of every `account` row, and O1's entries and records through the owner's reads.
 - **Human step:** Google's and GitHub's own login screens may need a person. The script pauses there and records who completed the step.
 
 **B. Passkey** (`verify-auth` `passkey`, needed, lasting). A scripted browser with a virtual WebAuthn authenticator, on `T1`.
@@ -81,9 +84,9 @@ Each observation is described once; the rows below say which obligations it deci
 
 Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** the verifier's result kind and reason, and Tool Portal's response. When `T2` exists, a `T2` token goes to `T4` too.
 
-**D. Removal and sign-out** (`verify-auth` `removal`, needed, lasting). On `T1` and `T4`.
-- **Setup:** Person A holds a Google browser session and a second browser's passkey session. A also holds a Tool Portal token taken before removal, and a pending proposal in `T4`. A copy of each session cookie is kept.
-- **Act:** the owner removes A through the admin surface.
+**D. Removal and sign-out** (`verify-auth` `removal`, needed, lasting). On `T1` and `T4`, in organization O1.
+- **Setup:** Person A holds a Google browser session and a second browser's passkey session, both signed in to O1. A also holds a Tool Portal token naming O1, taken before removal, and a pending proposal in `T4`. A copy of each session cookie is kept.
+- **Act:** O1's owner removes A through O1's admin surface.
 - **Attempt:**
   - a passkey sign-in;
   - a new token from each kept session cookie;
@@ -92,33 +95,36 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - with each kept cookie: passkey registration, consent, linking, unlinking, and an admin call.
 - **Read:**
   - each refusal;
-  - the E8 `removedAt`;
-  - that no `session` row remains for A;
+  - the E8 `removedAt` in O1's object and its `allowlist-removed` record;
+  - that no `session` row remains for A in O1;
   - that no new `passkey`, `account` or consent row appears;
   - the audit records;
   - the proposal's state in `T4`.
 - **Re-add:** the owner re-adds A's address. A signs in again and reaches the same Person id. The audit shows `reactivatedPersonId`.
 - **Sign-out branch:** Person B signs out. Then request a new token with B's old cookie, and introspect B's earlier token.
-- **Owner branch:** the owner removes their own entry. Their next admin call is refused.
+- **Owner branch:** the owner removes their own entry. Their next admin call is refused (`owner-not-admitted`).
+- **Cleanup-failure branch** (on `T3`): the D1 session delete after a removal is made to fail. Each kept cookie's attempt above is still refused, because every use reads O1's object; the owner sees the cleanup reported incomplete, and a retry deletes the rows.
 - **Two-entry branch:** Person C has two allowlisted addresses, both bound to them: C signed in with Google on one and linked GitHub on the other. The owner removes one address. C's passkey sign-in, a new token and an Accept are all refused. Re-adding that address restores C.
 
-**E. Held interleavings** (automated integration on `T3`, no journey). The test's composition can hold a request at a named step while the removal batch, or a sign-out, commits on another request. Each case is a separate run:
+**E. Held interleavings** (automated integration on `T3`, no journey). The test's composition can hold a request at a named step while a removal commits in the organization's object, or a sign-out commits in D1, on another request. Each case is a separate run, in O1:
 1. A passkey sign-in held after its session insert, before the final check. **Expect:** refused; no session row for A.
-2. The same sign-in held after the final check, before the response leaves. **Expect:** the session reaches the browser, but the removal has deleted its row, so the next request with it fails.
+2. The same sign-in held after the final check, before the response leaves. **Expect:** the session reaches the browser, but the next request with it fails: O1's object reads A removed, and the cleanup deletes the row.
 3. A Google sign-in held before its session insert. **Expect:** refused at the final check.
 4. A token request held after signing, before the final check. **Expect:** `invalid_grant`, and no token reaches the client.
 5. The same, with a sign-out committing instead of a removal. **Expect:** `invalid_grant`.
 6. A token request held after the final check. **Expect:** the token reaches the client; introspection of it is inactive; its `exp` is within `SD3`.
 7. Introspection held after Better Auth's own `sid` read, before the final check. **Expect:** `{ active: false }`.
 8. Introspection held after the final check. **Expect:** `active` with a `checkedAt` before the removal.
-9. A first Google sign-in held at two points while the owner removes that entry: (a) after the gate's read, before either of Better Auth's writes; (b) after both writes, before the bind. **Expect:** refused in both. Read back the `user`, `account`, `allowed_email` binding, `session` and `sign_in_audit` rows: no `user` or `account` row for that login remains, and there is no session.
-10. The same hold on the owner's first sign-in on an empty deployment, while a second, never-listed account tries. **Expect:** exactly one `deployment_owner` row naming the owner, and one `owner-bound` record.
+9. A first Google sign-in held at two points while the owner removes that entry: (a) after the early check's read, before either of Better Auth's writes; (b) after both writes, before `admitSignIn`. **Expect:** refused in both. Read back the `user`, `account`, `organization_admission_claim`, `session` and `sign_in_audit` rows and O1's entries: no `user` or `account` row for that login remains, no claim remains, no entry is bound to it, and there is no session.
+10. The same hold on O1's owner's first sign-in to a freshly registered organization, while a second, never-listed account tries. **Expect:** exactly one owner binding in O1's object naming the owner, and one `owner-bound` record.
 11. Case 9(b) with the cleanup batch made to fail. **Expect:** the `user` and `account` rows remain, unbound. The failure is recorded, and a later sign-in with that login is refused while its entry stays removed.
 12. Case 9(c): the first sign-in's check binds the entry, then the removal commits before the final check. **Expect:** refused. The `user`, `account` and binding remain as a removed Person, with no session. Re-adding the address reactivates that same Person id.
-13. Request A is refused at its final check and held before its cleanup batch. The owner re-adds the address, and request B signs in with the same provider account and is admitted. Then A's cleanup runs. **Expect:** B's Person id, `account` row, binding and session all survive; A's cleanup deletes nothing; A ends "not allowed".
-14. The reverse order: A's cleanup commits first, then B's bind runs against the deleted user. **Expect:** B's bind binds nothing, B is refused with no binding left pointing at a missing user, and B's retry creates a fresh Person.
+13. Request A, signing in to O1, is refused at its final check and held before its cleanup batch. Request B signs in to O2 with the same provider account (allowed there) and is admitted: its claim commits, O2's object binds it. Then A's cleanup runs. **Expect:** B's Person id, `account` row, claim, O2 binding and session all survive; A's cleanup deletes nothing; A ends "not allowed".
+14. The reverse order: A's cleanup commits first, then B's claim insert runs against the deleted user. **Expect:** the claim insert finds no user, O2's object is never asked to bind, B is refused with no binding anywhere pointing at a missing user, and B's retry creates a fresh Person.
+15. O1's object made unreachable for one request (in the test composition): a sign-in to O1, a token for an O1 session, an introspection of an O1 token and an O1 admin call. **Expect:** each refused, never accepted; the same requests in O2 succeed.
+16. A Person token request for an O1 session where the test composition makes the token's `organization_id` name O2 (a resource custom claim, and separately a forged consent reference). **Expect:** the final check refuses (`invalid_grant`); no token naming O2 is released.
 
-**Read:** each response, and D1's `session`, OAuth code and token rows. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback. A cleanup that deletes by request alone fails case 13.
+**Read:** each response, D1's `session`, claim, OAuth code and token rows, and the organization objects through the proof-only readback. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback. A cleanup that deletes by request alone, or without the claim guard, fails case 13 or 14. A build that treats an unanswered object call as admitted fails case 15. A final check that skips the organization comparison fails case 16.
 
 **F. Decision freshness** (Tool Portal integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
 1. the live check passes, then the apply is held past `SD8`;
@@ -131,13 +137,17 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - *The verifier's token rules*, with real JOSE signing over test keys. Each of these must give its own reason: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another service, an `aud` array containing this service (from `openid` and from two resources), expired, and `sid` missing. A token that is correct in every way verifies.
 - *Each verifier's identity-class check, isolated.* Signed test fixtures that pass every earlier check of the verifier under test (its own `typ`, issuer and audience, unexpired), differing only in the identity claims: one without `sid` at the person verifier gives `not-a-person`, and one with `sid` at the agent verifier for a workspace audience gives `not-an-agent`. These are test fixtures, not tokens the issuer can produce.
 - *The agent verifier's token rules*, the same way: wrong `typ`, bad signature, wrong `iss`, an `aud` that is another workspace's address (including one in the same organization), expired, a `sid` present or `organization_id` or `workspace_id` missing (`not-an-agent`), a `workspace_id` naming a different workspace than the address (`wrong-workspace`), and a `scope` without `tool-portal:agent` (`wrong-scope`) each give their own reason. A correct agent token verifies and projects `AgentProof` with its `workspaceId`.
-- *The allowlist gate:*
-  - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches;
-  - **derived active state:**
-    - every bound entry allowed: active;
-    - any bound entry removed: inactive, including when another bound entry is still allowed;
-    - re-added with the rest allowed: active again;
-    - no bound entry: bind the matching allowed entry, or inactive.
+- *The person verifier's organization rule:* a token correct in every way but without `organization_id` gives `no-organization`; with it, `PersonProof.organizationId` equals the claim.
+- *The organization admission object*, against its real storage in a local Durable Object:
+  - **email rule**, over the profile shapes Better Auth's Google and GitHub mappers produce: verified and listed matches, with case ignored; unverified never matches; removed never matches; an entry of another organization never matches;
+  - **derived standing:**
+    - every bound entry allowed: admitted;
+    - any bound entry removed: not admitted (`removed`), including when another bound entry is still allowed;
+    - re-added with the rest allowed: admitted again;
+    - no bound entry: bind the matching allowed entry, or `never-admitted`;
+    - before the owner binding exists: everyone but the configured owner's email reads `awaiting-owner`;
+  - **owner rules:** only the bound owner, admitted, gets `role: "owner"`; a changed configured owner email gives `owner-mismatch` for every owner-only call and leaves members' standing alone; `changeAllowlist`, `readAllowlist` and `readAdmissionRecords` refuse a member, a non-member and a removed owner with nothing written;
+  - **transactions:** a forced storage failure during `changeAllowlist` leaves neither the change nor its record.
 
 **I. Audit coverage** (`verify-auth` `audit`, needed, lasting; plus forced failures on `T3`).
 - **On `T1`:**
@@ -147,7 +157,18 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - make the before-change audit write fail during a passkey registration, a link and an agent-client registration; no `passkey`, `account` or E9 row may appear;
   - make the agent client's resource-link write, then its outcome write, fail during registration; no credential is returned, no membership is written, the registration reads as incomplete, and the owner's retry completes it;
   - make the outcome write fail after a change; the before-change record must still be there;
-  - make an allowlist batch fail; neither the change nor its record may land.
+  - make an allowlist change's object transaction fail; neither the change nor its record may land;
+  - every D1 record that belongs to an organization names it, and the owner's audit list for O1 shows none of O2's records.
+
+**K. Two organizations** (`verify-auth` `organizations`, needed, lasting, on `T1` with `T4`; plus the unreachable-object case on `T3`). Spec C5. Setup: O1 owned by Olive, O2 owned by Bob, both bound through H; both list Alice's address.
+- **Steps:**
+  1. Alice signs in to O1 and takes a Tool Portal token; she asks `T4` for a decision in O1, then for one in O2, with that token.
+  2. Alice signs in to O2 in the same browser, with the same Google login, and takes a token.
+  3. Bob tries to list O1's allowlist, read O1's records, add an address to O1 and add an agent to an O1 workspace; Olive tries the same on O2; Alice tries both.
+  4. Olive removes Alice from O1. Alice tries O1 again (passkey sign-in, a new token from her O1 cookie, an Accept in O1), then uses her O2 session and O2 token (a new token, an Accept in O2).
+- **Read:** each response; the `sub` and `organization_id` of each token; the session rows and their `organizationId`; each object's entries and records; `T4`'s decisions.
+- **Expect:** step 1's token names O1 and works only for O1's decision; step 2 reaches the same Person id with a new session naming O2; every step 3 attempt is refused with nothing changed or listed; after step 4, every O1 attempt is refused and every O2 attempt works.
+- **Wrong builds that fail it:** a session without an organization (step 1's O2 decision is accepted); a deployment-wide allowlist (step 4's O2 attempts fail, or a list leaks); an owner check that ignores the organization (Bob changes O1); a proof without `organization_id` checked against the action (step 1's O2 decision applies).
 
 **J. Agent sign-in, workspaces and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding, removing and retiring an agent](./program-design.md#adding-removing-and-retiring-an-agent-r17-r18). Setup: organization O1 with workspaces W1 and W2, and organization O2 with workspace W3, all served by `T5`.
 - **Register and link:** through `T5`'s agent-management handler, add a test agent to W1, then to W2. The second add returns no credential. Read straight from D1:
@@ -163,7 +184,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - present Person A's Tool Portal token to `T5`'s agent check at W1: `wrong-audience` (G isolates `not-an-agent`);
   - ask for a W1 token from Person A's session with the ordinary stand-in client, which isn't linked to W1: `invalid_target`;
   - with a person code client that the test composition links to W1 and allows `tool-portal:agent`, so the library's link and scope checks pass, ask for a W1 token from Person A's session: refused `invalid_target` by the issuance checks, with no token in the response.
-- **Refused management** (through `T5`'s handler and the real service binding): an add with no person token, with the agent's own E10, with a revoked session, and by a Person who isn't the bound owner; and an add of O1's agent to W3, O2's workspace. **Expect:** each refused, and D1 shows no new resource, client or link, and no membership is written.
+- **Refused management** (through `T5`'s handler and the real service binding): an add with no person token, with the agent's own E10, with a revoked session, by a member of O1 who isn't its owner, by O2's owner signed in to O2, and by O1's owner presenting an O1 token for an O2 operation; and an add of O1's agent to W3, O2's workspace. **Expect:** each refused, and D1 shows no new resource, client or link, and no membership is written.
 - **Remove from W1, warm:** keep the W1 token (`tok-w1-old`). Remove the agent from W1 through the handler. Then, on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
   - call W1 with `tok-w1-old`: refused, not a member;
   - request a new W1 token: `invalid_target`;
@@ -224,7 +245,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reuses:** none.
 - **Unverified:** browsers and authenticators other than the one used; real hardware passkeys (a virtual authenticator stands in).
 
-### `U2` — only approved people get into private apps
+### `U2` — only people an organization's owner approved get into that organization
 
 - **Obligations:** `R3`, `R4`, `R9`, `R13`, `R14` · proof obligations `V2`, `V3`, `V10` · seams: trace rows R3, R4, R9, R13, R14.
 - **Proven by:**
@@ -237,9 +258,9 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reference:** Spec C1 setup and steps 2 and 6; `R4`'s cutoff ("takes effect when it is recorded"); `R9`'s `SD8` bound; `R13`; `R14`; the Specification's failure table.
 - **Target and journey:** `T1`, `T3`, `T4`; `bootstrap`, `provider-sign-in` and `removal`, all lasting.
 - **Passes when:**
-  - in H, the first non-owner attempt and the never-listed account are refused. The owner becomes the bound owner, with one `owner-bound` record;
+  - in H, the first non-owner attempt and the never-listed account are refused. O1's owner becomes its bound owner, with one `owner-bound` record in O1's object, while O2 still reads awaiting its owner; a sign-in naming no organization or an unregistered one creates nothing;
   - the unlisted account ends at "not allowed", and D1 gains no `user`, `account` or `session` row for it;
-  - after removal, every attempt in D is refused or inactive, writes nothing, and leaves no session row for A. The proposal stays pending;
+  - after removal, every attempt in D is refused or inactive, writes nothing, and leaves no session row for A in O1 once cleanup has run. With the cleanup made to fail, the leftover sessions' attempts are still refused. The proposal stays pending;
   - in the two-entry branch, removing one of C's two addresses stops C, and re-adding it restores C;
   - the re-added person reaches the same Person id;
   - in E, every case gives its expected result;
@@ -253,10 +274,12 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - introspection that ignores the session row (B's earlier token stays active);
   - no freshness bound (F's held apply proceeds without a second check);
   - admin checked by owner id alone (the self-removed owner still administers);
-  - "first user becomes owner" (H's first non-owner attempt gets in).
+  - "first user becomes owner" (H's first non-owner attempt gets in);
+  - removal that relies on deleting sessions instead of the organization's standing (the cleanup-failure branch's leftover session acts);
+  - session-authenticated routes that skip the standing read (a kept cookie registers a passkey after removal).
 - **Reuses:** none.
 - **Unverified:**
-  - D1 replication behavior on the hosted database (E runs on `T3`, and `T1` keeps read replication off);
+  - D1 replication behavior on the hosted database (E runs on `T3`, and `T1` keeps read replication off), and hosted Durable Object placement under held steps;
   - ordinary use continuing until the token expires, which the owner bounds through `SD3`;
   - the `SD8` value, a Lead default awaiting the owner.
 
@@ -285,7 +308,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Passes when:**
   - the console token is refused with `wrong-audience`, and Tool Portal's token verifies;
   - the `openid` token and the two-resource token, both with an array `aud`, are refused with `wrong-audience`;
-  - in G, a token without `sid` is refused as `not-a-person`, and each other bad token gives its own reason;
+  - in G, a token without `sid` is refused as `not-a-person`, one without `organization_id` as `no-organization`, and each other bad token gives its own reason; every issued person token names its session's organization;
   - no person-facing client lists `client_credentials`; only agent clients do, with no other grant.
 
   Wrong builds that fail it:
@@ -335,14 +358,15 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reference:** C1 setup and step 1; `R12`'s list of changes, and of what must never be recorded.
 - **Target and journey:** `T1` and `T3`; `audit`, `bootstrap`, `provider-sign-in` and `removal`, lasting.
 - **Passes when:**
-  - each change kind `R12` lists has its record, naming the actor, the change and the time. For a change Better Auth writes itself, a before-change record and an outcome record are linked by request id;
+  - each change kind `R12` lists has its record, naming the actor, the change, the organization it belongs to and the time; an organization's admission changes are recorded in its object, in the same transaction. For a change Better Auth writes itself, a before-change record and an outcome record are linked by request id;
   - each sign-in success and refusal has a record;
   - the search finds none of the captured values;
   - on `T3`:
     - a failed before-change write leaves no `passkey`, `account` or E9 row;
     - a failed resource-link or outcome write during agent-client registration returns no credential and writes no membership, until a retry completes it;
     - a failed outcome write leaves the before-change record;
-    - a failed allowlist batch leaves neither the change nor its record.
+    - a failed allowlist transaction leaves neither the change nor its record;
+    - O1's owner sees none of O2's records.
 
   Wrong builds that fail it:
   - an audit row that stores the raw request body;
@@ -351,6 +375,25 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - a log line with a token.
 - **Reuses:** none.
 - **Unverified:** retention and readers of the record (Tool Portal D6).
+
+### `U9` — you sign in to an organization; only its owner administers it; organizations are kept apart
+
+- **Obligations:** `R19`, `R20`; with `R3`, `R4`, `R6`, `R12`, `R14` per organization · proof obligations `V13`, `V14` · seams: trace rows R19, R20.
+- **Proven by:** observation K on the deployed service and Tool Portal, observation E's cases 13–16 held on the local runtime, H's step 5, J's refused-management cases, and G's object rules. Two organizations share one person: removing her from one leaves the other working, a proof for one is refused for the other, and each owner can administer only their own.
+- **Reference:** Spec C5; `R19`; `R20`; `SD1` and `SD9` as decided in Requirements.
+- **Target and journey:** `T1` with `T4`, and `T3` for E and the unreachable object. Journey `verify-auth` `organizations`, needed, lasting: it must sign in to a named organization, read session rows and each organization's entries and records through the owner's reads, drive `T4` decisions in both organizations, and drive owner actions as each actor.
+- **Passes when:**
+  - K's expectations hold: each token names its session's organization and works only there; the same Person reaches both organizations through separate sessions; after removal from O1, every O1 attempt fails and every O2 attempt works;
+  - every owner action by anyone other than that organization's admitted owner is refused, with nothing changed or listed (K step 3, H step 5, J's refused management);
+  - E case 15: with O1's object unreachable, O1's sign-in, token, live check and admin are refused while O2's succeed; case 16: a token naming the wrong organization is never released.
+
+  Wrong builds that fail it:
+  - a deployment-wide allowlist or owner (K step 4, H step 5);
+  - a session or proof without an organization, or a relying service that doesn't compare it (K step 1);
+  - an owner check that ignores the organization (K step 3);
+  - a build that treats an unreachable object as admitted (E case 15).
+- **Reuses:** none.
+- **Unverified:** hosted Durable Object placement and latency under held steps (only `T3` holds steps); the real console (the stand-in client acts for it); changing an organization's owner, which is outside the design.
 
 ### `U8` — agents sign in as themselves, one workspace at a time
 
@@ -382,18 +425,19 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - a person guard that relies on `allowedScopes` alone (the linked person code client);
   - an agent client without its first resource link (readback, and its own token request fails `invalid_target`).
 - **Reuses:** none yet.
-- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring; D1's hosted replication timing (only `T3` holds steps in order); creating and closing workspaces, which aren't in this work; and where an organization's owner and allowlist are kept, which waits on the owner.
+- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring; D1's hosted replication timing (only `T3` holds steps in order); creating and closing workspaces, which aren't in this work; The owner and allowlist checks of the management route now read the organization's object (U9 decides who may act).
 
 ## What the plan must add
 
-- **Journeys, all lasting:** `verify-auth` with `bootstrap`, `provider-sign-in`, `passkey`, `proof-audience`, `removal`, `audit` and `agent`, as scripts in the project's scripts location.
+- **Journeys, all lasting:** `verify-auth` with `bootstrap` and `agent` (existing on `T3`, changed to sign in to a named organization), and `provider-sign-in`, `passkey`, `proof-audience`, `removal`, `audit` and `organizations` (needed), as scripts in the project's scripts location.
 - **Automated tests, no journey:**
   - E: held interleavings on `T3`, using a hold seam in the test composition only;
   - J's held races and between-writes case, on `T3` with `T5` local, using the same hold seam and a one-time failure of the agent-client route in the test composition only;
   - F: decision freshness at Tool Portal's `decide`;
-  - G: verifier and gate rules;
+  - G: verifier rules and the organization object's rules, against real Durable Object storage;
+  - a proof-only readback of each organization object's entries, owner binding and records, in the test composition only, never in the production entry;
   - the forced audit-write failures in I.
-- **Owner access, before any of it runs:** the Cloudflare test account, the Google and GitHub test OAuth apps, and the four test identities.
+- **Owner access, before any of it runs:** the Cloudflare test account, the Google and GitHub test OAuth apps, and the five test identities.
 
 ## Rendering
 
