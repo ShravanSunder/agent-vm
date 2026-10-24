@@ -1,0 +1,34 @@
+{
+	"name": "@agent-collaboration/tool-engine",
+	"version": "0.0.153",
+	"description": "Portable capability dispatch over resource-owned backends and approval ports.",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"imports": {
+		"#capability-dispatch/*": "./src/capability-dispatch/*.ts"
+	},
+	"exports": {
+		"./capability-dispatch": {
+			"types": "./dist/capability-dispatch/index.d.ts",
+			"import": "./dist/capability-dispatch/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsdown",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-engine/src"
+	},
+	"dependencies": {
+		"@agent-collaboration/tool-access": "workspace:*",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"vitest": "^4.1.5"
+	}
+}
