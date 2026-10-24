@@ -119,6 +119,7 @@ export default {
 			return Response.json({ ok: true });
 		}
 		host ??= createHostedMcpProxy({
+			sessionClientId: 'central',
 			toolPortalOrigin: bindings.TOOL_PORTAL_ORIGIN,
 			createClient: createObservedNativeClient,
 			analytics: createAnalyticsEngineSink({

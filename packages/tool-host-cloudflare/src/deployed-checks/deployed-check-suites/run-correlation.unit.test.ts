@@ -6,6 +6,8 @@ it('runId is inert for both loading modes, token organization, sender and caller
 	const evaluate = async (query: string): Promise<unknown> => ({
 		loading: resolveToolLoading(`https://portal.invalid/mcp?${query}`),
 		caller: await checkHostedCaller({
+			sessionClientId: 'central',
+			organizationId: '11111111-1111-4111-8111-111111111111',
 			workspaceId: '11111111-1111-4111-8111-111111111111',
 			toolPortalOrigin: 'https://portal.invalid',
 			request: new Request(`https://portal.invalid/mcp?${query}`, {
@@ -28,7 +30,6 @@ it('runId is inert for both loading modes, token organization, sender and caller
 					},
 				}),
 			},
-			workspaces: { forWorkspace: () => ({ readMembership: async () => ({ persona: 'one' }) }) },
 		}),
 	});
 	expect(await evaluate('runId=test-run')).toEqual(await evaluate(''));

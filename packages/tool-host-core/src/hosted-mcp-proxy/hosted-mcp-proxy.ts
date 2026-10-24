@@ -1,3 +1,4 @@
+import { workspacePrincipalKey } from '@agent-collaboration/tool-access/authorization';
 import {
 	createAgentTokenVerifier,
 	type AgentTokenVerifier,
@@ -21,6 +22,7 @@ import type {
 } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
 import { createHostedRequestLimits } from '#tool-host-core/request-limits/hosted-call-limits';
 import type { SettledWorkspaceCatalog } from '#tool-host-core/workspace-engines/models/workspace-engine';
+import { resolveHostedCallerProfiles } from '#tool-host-core/workspace-engines/proxy-profile-policy';
 import { createWorkspaceEngine } from '#tool-host-core/workspace-engines/workspace-engine';
 
 interface HostedWorkspaceContext {
@@ -40,7 +42,10 @@ function callerRefusalResponse(
 						? 'profile-unassigned'
 						: 'unknown-caller',
 		},
-		{ status: caller.kind === 'unavailable' ? 503 : 401 },
+		{
+			status:
+				caller.kind === 'unavailable' ? 503 : caller.reason === 'profile-unassigned' ? 403 : 401,
+		},
 	);
 }
 
@@ -66,26 +71,34 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			const matched = /^\/workspaces\/([^/]+)\/mcp$/u.exec(new URL(request.url).pathname);
 			const selected = z.uuid().safeParse(matched?.[1]);
 			if (!selected.success) return Response.json({ error: 'not-found' }, { status: 404 });
+			let admissionContext: HostedWorkspaceContext;
+			try {
+				admissionContext = await workspaceContext(selected.data);
+			} catch {
+				return callerRefusalResponse({ kind: 'unavailable', reason: 'admission-unavailable' });
+			}
 			const caller = await checkHostedCaller({
+				organizationId: admissionContext.configuration.organizationId,
+				sessionClientId: props.sessionClientId,
 				workspaceId: selected.data,
 				toolPortalOrigin: props.toolPortalOrigin,
 				request,
 				verifier: props.verifier,
-				workspaces: props.workspaces,
 			});
 			if (caller.kind !== 'verified') {
 				log({ event: 'caller-refused', reason: caller.reason });
 				return callerRefusalResponse(caller);
 			}
-			const pendingContext = workspaceContext(caller.workspaceId);
-			// Preserve the existing SDK error path for failed configuration reads;
-			// a readable but unassigned profile is an admission refusal before MCP handling.
-			const admissionContext = await pendingContext.catch(() => undefined);
-			if (admissionContext !== undefined) {
-				if (admissionContext.configuration.portal.profiles[caller.persona] === undefined) {
-					log({ event: 'caller-refused', reason: 'profile-unassigned' });
-					return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
-				}
+			if (
+				resolveHostedCallerProfiles({
+					principal: caller.principal,
+					persona: caller.persona,
+					sessionDefaultProfile: admissionContext.configuration.portal.sessionDefaultProfile,
+					profiles: admissionContext.configuration.portal.profiles,
+				}) === undefined
+			) {
+				log({ event: 'caller-refused', reason: 'profile-unassigned' });
+				return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
 			}
 			const mode = toolLoadingMode(resolveToolLoading(request.url));
 			const requestId = props.newId();
@@ -96,7 +109,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			let catalogError: PortalCatalogPreparationError | undefined;
 			const handler = createMcpHandler(
 				async () => {
-					const context = await pendingContext;
+					const context = admissionContext;
 					const engine = await createWorkspaceEngine({
 						workspaceId: caller.workspaceId,
 						configuration: context.configuration,
@@ -115,13 +128,16 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 					)
 						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
-						agentClientId: caller.agentClientId,
+						principal: caller.principal,
 						persona: caller.persona,
 						invoke: limits.invoke,
 						consumeTokenId: async (tokenId, expiresAtMs) =>
 							props.workspaces
 								.forWorkspace(caller.workspaceId)
-								.consumeApprovalToken(`${caller.agentClientId}:${tokenId}`, expiresAtMs),
+								.consumeApprovalToken(
+									`${workspacePrincipalKey(caller.principal)}:${tokenId}`,
+									expiresAtMs,
+								),
 					});
 					closeGateway = requestEngine.close;
 					if (mode === 'direct' && request.headers.get('Mcp-Method') === 'tools/list')
@@ -137,7 +153,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 								organizationId: caller.organizationId,
 								workspaceId: caller.workspaceId,
 								workspaceName: engine.configuration.workspaceName,
-								agentClientId: caller.agentClientId,
+								principalKey: workspacePrincipalKey(caller.principal),
 								mode,
 								input,
 								result,
@@ -188,10 +204,12 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 export function hostedAgentVerifier(props: {
 	readonly deployment: string;
 	readonly jwksUrl: string;
+	readonly now?: () => number;
 }): AgentTokenVerifier {
 	return createAgentTokenVerifier({
 		deployment: props.deployment,
 		jwksUrl: new URL(props.jwksUrl),
+		...(props.now === undefined ? {} : { now: props.now }),
 	});
 }
 

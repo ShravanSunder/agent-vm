@@ -54,6 +54,7 @@ export default {
 			if (!z.uuid().safeParse(workspace?.[1]).success)
 				return Response.json({ error: 'not-found' }, { status: 404 });
 			host ??= createHostedMcpProxy({
+				sessionClientId: z.string().min(1).parse(bindings.FLEET_CENTRAL_CLIENT_ID),
 				toolPortalOrigin: bindings.TOOL_PORTAL_ORIGIN,
 				analytics: createAnalyticsEngineSink(bindings.CALL_ANALYTICS),
 				log: writeObservationLog,

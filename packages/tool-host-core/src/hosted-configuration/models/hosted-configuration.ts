@@ -7,6 +7,7 @@ import { z } from 'zod';
 export const hostedPortalConfigurationSchema = z.strictObject({
 	$schema: z.string().min(1).optional(),
 	schemaVersion: z.literal(1),
+	sessionDefaultProfile: z.string().min(1),
 	externalAuth: z.strictObject({ masterKey: secretValueSchema }).optional(),
 	mcpProxy: z.unknown().optional(),
 	agents: z

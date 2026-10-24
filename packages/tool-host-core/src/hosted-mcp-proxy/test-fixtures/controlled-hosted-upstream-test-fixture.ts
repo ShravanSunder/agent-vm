@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { z } from 'zod';
 
 const rpcSchema = z.object({
@@ -17,7 +17,7 @@ export interface ControlledHostedUpstream {
 	readonly url: string;
 	readonly effects: readonly HostedUpstreamEffect[];
 	readonly requests: readonly string[];
-	readonly sign: (agentId?: string) => Promise<string>;
+	readonly sign: (agentId?: string, changes?: JWTPayload) => Promise<string>;
 	readonly close: () => Promise<void>;
 }
 
@@ -111,7 +111,7 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 		url,
 		effects,
 		requests,
-		sign: async (agentId = 'sender') => {
+		sign: async (agentId = 'sender', changes = {}) => {
 			const now = Math.floor(Date.now() / 1000);
 			return new SignJWT({
 				iss: url,
@@ -125,6 +125,11 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 				scope: 'tool-portal:agent',
 				organization_id: '11111111-1111-4111-8111-111111111111',
 				workspace_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+				principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
+				persona: { kind: 'named', name: 'fixture' },
+				grant_revision: 7,
+				grant_expires_at: now + 300,
+				...changes,
 			})
 				.setProtectedHeader({ alg: 'ES256', kid: 'fixture', typ: 'at+jwt' })
 				.sign(keys.privateKey);

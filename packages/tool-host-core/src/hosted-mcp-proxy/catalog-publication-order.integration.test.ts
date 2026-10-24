@@ -45,6 +45,7 @@ it.each([200, 100])(
 				},
 				portal: {
 					schemaVersion: 1,
+					sessionDefaultProfile: 'fixture',
 					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
@@ -59,6 +60,7 @@ it.each([200, 100])(
 				},
 			});
 			const proxy = createHostedMcpProxy({
+				sessionClientId: 'central',
 				toolPortalOrigin: 'https://portal.invalid',
 				verifier: hostedAgentVerifier({
 					deployment: upstream.url,

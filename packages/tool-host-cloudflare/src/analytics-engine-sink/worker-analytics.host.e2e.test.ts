@@ -46,6 +46,7 @@ function configurations(url: string): unknown {
 			mcp: { schemaVersion: 1, providers: { fixture: { ...provider, namespace: serverName } } },
 			portal: {
 				schemaVersion: 1,
+				sessionDefaultProfile: 'fixture',
 				agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 				profiles: {
 					one: {

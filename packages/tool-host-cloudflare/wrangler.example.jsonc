@@ -11,6 +11,7 @@
 		},
 	],
 	"vars": {
+		"FLEET_CENTRAL_CLIENT_ID": "replace-with-central-client-id",
 		"MANAGEMENT_AUDIENCE": "replace-with-management-audience",
 		"WORKSPACE_CONFIGURATIONS": "{}",
 		"SIGN_IN_ISSUER": "https://sign-in.example.invalid",

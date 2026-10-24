@@ -1,9 +1,14 @@
-import { mcpPortalCallPolicyDecision } from '@agent-collaboration/tool-access/authorization';
+import {
+	mcpPortalCallPolicyDecision,
+	toolPortalSelectorAllowsOperation,
+} from '@agent-collaboration/tool-access/authorization';
 import {
 	resolvedMcpPortalProfileSchema,
 	type McpPortalProfileDefinition,
 	type ResolvedMcpPortalProfile,
 	type AssessAccessInput,
+	type Principal,
+	type PersonaRef,
 } from '@agent-collaboration/tool-access/contracts';
 import type { PortalToolRecord } from '@agent-collaboration/tool-engine/mcp-gateway';
 
@@ -47,36 +52,69 @@ export function resolveHostedProxyProfile(
 	});
 }
 
-/** Translate today's proxy policy to dispatcher facts for the exact tool being assessed. */
-export function assessedProxyProfile(props: {
-	readonly profileId: string;
+export interface ResolvedHostedProxyProfile {
 	readonly profile: McpPortalProfileDefinition;
 	readonly resolved: ResolvedMcpPortalProfile;
+}
+
+export function resolveHostedCallerProfiles(props: {
+	readonly principal: Principal;
+	readonly persona: PersonaRef;
+	readonly sessionDefaultProfile: string;
+	readonly profiles: Readonly<Record<string, McpPortalProfileDefinition>>;
+}): readonly ResolvedHostedProxyProfile[] | undefined {
+	const profileNames =
+		props.principal.kind === 'bot'
+			? props.persona.kind === 'named'
+				? [props.persona.name]
+				: []
+			: props.persona.kind === 'named'
+				? [props.sessionDefaultProfile, props.persona.name]
+				: [props.sessionDefaultProfile];
+	const profiles = profileNames.map((name) => props.profiles[name]);
+	if (profiles.length === 0 || profiles.some((profile) => profile === undefined)) return undefined;
+	return profiles.flatMap((profile) =>
+		profile === undefined ? [] : [{ profile, resolved: resolveHostedProxyProfile(profile) }],
+	);
+}
+
+/** Assess each policy independently; intersection makes neither profile more permissive. */
+export function assessedProxyProfile(props: {
+	readonly profileId: string;
+	readonly profiles: readonly ResolvedHostedProxyProfile[];
 	readonly tool: PortalToolRecord | undefined;
 	readonly capability: AssessAccessInput['capability'];
 }): AssessAccessInput['facts']['assignment']['profile'] {
-	const namespace = props.profile.namespaces[props.capability.namespace];
-	if (namespace === undefined || props.tool === undefined)
+	if (props.tool === undefined || props.profiles.length === 0)
 		return { profileId: props.profileId, namespaces: {} };
-	const decision = mcpPortalCallPolicyDecision(props.resolved, {
-		namespace: props.tool.namespace,
-		toolName: props.tool.toolName,
-		...(props.tool.annotations === undefined ? {} : { annotations: props.tool.annotations }),
+	const tool = props.tool;
+	const decisions = props.profiles.map(({ profile, resolved }) => {
+		const namespace = profile.namespaces[props.capability.namespace];
+		if (
+			namespace === undefined ||
+			!toolPortalSelectorAllowsOperation(namespace.tools, tool.toolName)
+		)
+			return { kind: 'blocked' } as const;
+		return mcpPortalCallPolicyDecision(resolved, {
+			namespace: tool.namespace,
+			toolName: tool.toolName,
+			...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+		});
 	});
+	const available = decisions.every((decision) => decision.kind !== 'blocked');
+	const withoutApproval =
+		available && decisions.every((decision) => decision.kind === 'allow_without_approval');
 	return {
 		profileId: props.profileId,
 		namespaces: {
 			[props.capability.namespace]: {
 				backendKind: 'mcp_provider',
-				tools: namespace.tools,
+				tools: { allow: available ? [props.capability.tool] : [], deny: [] },
 				calls: {
 					kind: 'selectors',
-					withoutApproval: {
-						allow: decision.kind === 'allow_without_approval' ? [props.capability.tool] : [],
-						deny: [],
-					},
+					withoutApproval: { allow: withoutApproval ? [props.capability.tool] : [], deny: [] },
 					requiresApproval: {
-						allow: decision.kind === 'requires_approval' ? [props.capability.tool] : [],
+						allow: available && !withoutApproval ? [props.capability.tool] : [],
 						deny: [],
 					},
 				},

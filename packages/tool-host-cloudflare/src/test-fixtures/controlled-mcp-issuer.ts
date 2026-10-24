@@ -273,6 +273,7 @@ export function workspaceConfigurations(url: string): unknown {
 		},
 		portal: {
 			schemaVersion: 1,
+			sessionDefaultProfile: 'fixture',
 			agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 			profiles: {
 				one: {

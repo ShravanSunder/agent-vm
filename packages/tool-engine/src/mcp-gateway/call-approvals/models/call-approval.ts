@@ -35,6 +35,7 @@ export type PortalCallAuthorization =
 export type ApprovalTokenCallDigest = z.infer<typeof approvalTokenCallDigestSchema>;
 
 export interface SignApprovalTokenProps {
+	/** Canonical principal key supplied by the host; never an OAuth credential ID. */
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
 	readonly expiresAtMs: number;
@@ -48,6 +49,7 @@ export interface SignAudienceScopedApprovalTokenProps extends SignApprovalTokenP
 }
 
 export interface VerifyApprovalTokenProps {
+	/** Canonical principal key supplied by the host; never an OAuth credential ID. */
 	readonly agentId: string;
 	readonly calls: readonly ApprovalTokenCallDigest[];
 	readonly key: Uint8Array;
