@@ -505,7 +505,7 @@ flowchart LR
   - The JWT plugin is supporting infrastructure, not a sign-in method. Its own generic token endpoint is disabled, as the provider's documentation composes it ([oauth-provider.mdx:39](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/docs/content/docs/plugins/oauth-provider.mdx#L39)).
   - Email and password stay disabled. Better Auth's core email routes still exist and answer with their "disabled" error ([sign-in.ts:514](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/sign-in.ts#L514), [sign-up.ts:186](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/sign-up.ts#L186)); nothing is created through them.
   - No magic-link, OAuth-proxy, generic-OAuth or anonymous plugin is installed.
-  - The package is pinned at 1.7.11 or later.
+  - `better-auth`, `@better-auth/oauth-provider` and `@better-auth/passkey` are pinned at exactly 1.7.11 (no open-ended range). 1.7.11's optional private-key client self-rotation endpoint stays off.
   - The passkey plugin prefers user verification but doesn't require it (`requireUserVerification: false`). A passkey proves possession of the registered credential; it is not a biometric or PIN step-up.
 - **Current-person check (`R3`, `R4`, `R9`, `R13`):** the Admission gate answers "is this Person admitted in this session's organization, and is this session present" by reading the session from D1 and asking that organization's object. A check that can't read either refuses. The final checks are decisive; the early checks only refuse sooner. All attachment points below are at Better Auth v1.7.11:
 

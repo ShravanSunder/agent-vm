@@ -68,7 +68,7 @@ Fleet central holds every truth about who belongs where and decides every grant.
 
 - **Compatibility-bound** on the fleet's existing workspace IDs, project records and machine enrollment.
 - **Migration-bound** on the Tool Portal's workspace store, where approval state must survive.
-- **Platform-bound** on Better Auth 1.7.8: client credentials, `private_key_jwt`, an extension-grant surface and `customAccessTokenClaims`; no token exchange; the subject and expiry are owned by the provider.
+- **Platform-bound** on Better Auth, analyzed at the installed 1.7.8 and built at exactly 1.7.11 (the people sign-in design's pin). Every seam this design relies on is identical between the two (client authentication, resource policy and links, claim precedence, extension input and `issueTokens`, the client-management privilege gate, the client key cache, passkey verification; public tags v1.7.8 `5f4cc5c1` and v1.7.11 `52ab801c`). The provider has client credentials, `private_key_jwt`, an extension-grant surface and `customAccessTokenClaims`; no token exchange; the subject and expiry are owned by the provider.
 
 **What stays authoritative:** the fleet's workspaces, projects and machine enrollments; the issuer's signing keys and published key set; the Tool Portal's tool profiles and approval rules.
 
