@@ -54,11 +54,12 @@ flowchart TB
 The Portal core (E1) implements every Tool Portal rule and decision: caller admission, the workspace boundary, persona narrowing, the `direct` and `indirect` cases, search and describe, dispatch through the one dispatcher, approval checks and one-use, removal fencing, today's limits, result and error projection, secret redaction, and the analytics data point. A host (E2) implements none of them.
 - **Pass:** the same scenario gives the same outcome on the Cloudflare host and the Node host: the same tools listed, the same results, the same refusals with the same codes, the same approval outcomes, and the same analytics data point.
 - **The one allowed difference: host-supplied limit values.** The rule that enforces a limit is the core's; the value is the host's. Today's values stay as the Tool Portal design sets them (checks 8 and 15):
-  - On the Worker: 50 calls per batch, 6 in flight, 4 MiB per upstream response and 16 MiB per reply (`tool-host-cloudflare/src/worker-limits.ts` at `2dfea38e`), and its approval-use cap.
-  - On Node: none of the first four, and its own approval-use cap.
+  - On both hosts: 4 MiB per upstream response, today's engine limit (`tool-engine` `upstream-mcp-protocol.ts:126` `defaultMaxResponseBytes`, used at `upstream-mcp-client-runtime.ts:58` at `2dfea38e`). It is shared, not a host difference.
+  - On the Worker only: 50 calls per batch, 6 in flight and 16 MiB per reply (`tool-host-cloudflare/src/worker-limits.ts` at `2dfea38e`), and its approval-use cap.
+  - On Node: none of the Worker-only three, and its own approval-use cap.
 
-  A scenario that crosses a limit passes when each host gives its own expected answer: a refusal on the Worker and a normal result on Node.
-- **Fail:** any scenario whose outcome differs between hosts other than by a host-supplied limit value; any rule implemented in a host's own code; a Worker limit added to Node, or removed from the Worker.
+  A scenario that crosses a Worker-only limit passes when each host gives its own expected answer: a refusal on the Worker and a normal result on Node. A scenario that crosses the shared upstream-response limit gets the same refusal on both.
+- **Fail:** any scenario whose outcome differs between hosts other than by a host-supplied limit value; any rule implemented in a host's own code; a Worker-only limit added to Node, the shared upstream-response limit removed from either host, or a Worker limit removed from the Worker.
 - **Unchanged:** the standalone Tool Portal's routes (its `tool_portal_*` MCP tools and its JSON route) and stdio stay on the Node host only, as the Tool Portal design says; they too dispatch through the core.
 
 **R2 — The Node host runs the core.** (U1)

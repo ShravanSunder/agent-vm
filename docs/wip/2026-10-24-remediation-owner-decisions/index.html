@@ -52,6 +52,8 @@ flowchart LR
 
 <p><strong>Where the agents stand:</strong> the Lead recommends reverting the gates first. The Opus second reviewer found the earlier recommendation hid the gate cost (finding O3); this option removes it. No reviewer argued for holding or closing.</p>
 
+<p><strong>Decided with it:</strong> the recommended option enacts RD5 (remove the 26 scripts and the <code>e2e-deployed</code> project #262 added). Choosing it means choosing RD5 too; any script worth keeping comes back later as its own check, with your approval.</p>
+
 <p><strong>If you defer:</strong> no slice can start, because its base is undecided. The design work and reviews continue.</p>
 
 <h2 id="schemas">2. The two schemas (RD1, OD4)</h2>
@@ -158,6 +160,23 @@ flowchart LR
 | OD2 | Default token lifetime | 5 minutes (configurable) | nothing; the Lead uses 5 |
 | OD3 | Is a bot a collaborator of every other workspace? | Only where you allow it | bot collaboration (F6/F7) |
 | SD8 | How fresh a person's session check must be for owner actions | inherited from people sign-in; still yours | the owner guard (F2) |
+
+</div>
+
+<h2 id="choices-made">Design choices made during the review corrections</h2>
+
+<p>These came out of the three reviews. Each is inside the boundary you set, so I made the call; they're listed so you can overrule any of them.</p>
+
+<div data-width="canvas">
+
+| Choice | Why | Cost |
+|---|---|---|
+| The removal notice carries the token's own session shape, and one derived key joins notice and token | without one key, a removal could silently miss the token it should stop | central converts its internal session reference when it writes a notice |
+| `store_meta`: each Portal database records its workspace and a time that never goes backwards | a used approval can't come back after a clock jump, and a mis-routed database refuses instead of mixing workspaces | one small table |
+| `admitted_person_guard` plus one claim per sign-in attempt | a refused sign-in can't delete someone Fleet admitted; an unknown answer from Fleet never releases a claim | a never-admitted person's rows can stay, unbound and inactive, after an unknown answer |
+| A spill directory outside the state directory (RD6's second field) | raw request data never lands in durable state or its backups | one more optional config field |
+| The joint cut repairs forward, never back | store version 2 drops the old tables and retires old keys, so an old build can't run against it | the private test stack stays down until a fixed build lands |
+| Sign-in builds its own platform adapters | no dependency from sign-in on the Tool Portal's packages | a few small adapter functions exist twice |
 
 </div>
 

@@ -44,6 +44,8 @@ The `verify-auth` skill exists with two journeys, `bootstrap` and `agent`, on th
 
 Each observation is described once; the rows below say which obligations it decides.
 
+**"O1's object" below means O1's organization authority in Fleet central** (agent identity: central's per-organization object owns admission, the owner binding and their records). On `T1` it is reached through central's real K3 calls after the joint cut. Before the cut, and on `T3`, it is reached through the central stand-in that honors K3, and its entries and records are read back from the stand-in in the test composition only. Nothing in the sign-in Worker holds them.
+
 **H. Owner bootstrap** (`verify-auth` `bootstrap`, existing on `T3` and changed by this revision to name the organization; needed on `T1`; lasting). Starts from a freshly deployed `T1` with an empty D1 and no organization object yet.
 - **Steps:**
   1. The allowlisted-later Google account tries to sign in to O1.
@@ -170,7 +172,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   2. Alice signs in to O2 in the same browser, with the same Google login, and takes a token.
   3. Bob tries to list O1's allowlist, read O1's records, and add an address to O1; Olive tries the same on O2; Alice tries both.
   4. Olive removes Alice from O1. Alice tries O1 again (passkey sign-in, a new token from her O1 cookie, an Accept in O1), then uses her O2 session and O2 token (a new token, an Accept in O2).
-- **Read:** each response; the `sub` and `organization_id` of each token; the session rows and their `organizationId`; each object's entries and records; `T4`'s decisions.
+- **Read:** each response; the `sub` and `organization_id` of each token; the session rows and their `organizationId`; each organization's entries and records through the owner's reads at central (or, before the joint cut, the central stand-in's recorded entries); `T4`'s decisions.
 - **Expect:** step 1's token names O1 and works only for O1's decision; step 2 reaches the same Person id with a new session naming O2; every step 3 attempt is refused with nothing changed or listed; after step 4, every O1 attempt is refused and every O2 attempt works.
 - **Wrong builds that fail it:** a session without an organization (step 1's O2 decision is accepted); a deployment-wide allowlist (step 4's O2 attempts fail, or a list leaks); an owner check that ignores the organization (Bob changes O1); a proof without `organization_id` checked against the action (step 1's O2 decision applies).
 
@@ -372,7 +374,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 ### `U9` — you sign in to an organization; only its owner administers it; organizations are kept apart
 
 - **Obligations:** `R19`, `R20`; with `R3`, `R4`, `R6`, `R12`, `R14` per organization · proof obligations `V13`, `V14` · seams: trace rows R19, R20.
-- **Proven by:** observation K on the deployed service and Tool Portal, observation E's cases 13–16 held on the local runtime, H's step 5, and G's object rules; bot management is central's, refused per organization in agent identity SO4. Two organizations share one person: removing her from one leaves the other working, a proof for one is refused for the other, and each owner can administer only their own.
+- **Proven by:** observation K on the deployed service and Tool Portal, observation E's cases 13–16 held on the local runtime, H's step 5, and G's verifier rules (organization admission rules are central's, proven by agent identity SO4); bot management is central's, refused per organization in agent identity SO4. Two organizations share one person: removing her from one leaves the other working, a proof for one is refused for the other, and each owner can administer only their own.
 - **Reference:** Spec C5; `R19`; `R20`; `SD1` and `SD9` as decided in Requirements.
 - **Target and journey:** `T1` with `T4`, and `T3` for E and the unreachable object. Journey `verify-auth` `organizations`, needed, lasting: it must sign in to a named organization, read session rows and each organization's entries and records through the owner's reads, drive `T4` decisions in both organizations, and drive owner actions as each actor.
 - **Passes when:**
@@ -421,7 +423,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - E: held interleavings on `T3`, using a hold seam in the test composition only;
   - J's held races, on `T3`, using the same hold seam;
   - F: decision freshness at Tool Portal's `decide`;
-  - G: verifier rules and the organization object's rules, against real Durable Object storage;
+  - G: verifier rules; the organization admission rules G used to hold now belong to Fleet central and are proven by agent identity SO4 on both central hosts;
   - a proof-only readback of each organization object's entries, owner binding and records, in the test composition only, never in the production entry;
   - the forced audit-write failures in I.
 - **Owner access, before any of it runs:** the Cloudflare test account, the Google and GitHub test OAuth apps, and the five test identities.

@@ -44,7 +44,7 @@ A fixed scenario script drives the MCP proxy way in on both hosts with the same 
 - a reply over 16 MiB;
 - a proxy approval presented with the approval-use cap full.
 
-Expected: on the Worker, the limit refusal Tool Portal check 15 defines, each with its code; on Node, the normal result, because Node has none of the first four limits (check 8). A full approval-use cap answers `saturated` on both hosts, at each host's own cap.
+Expected: the upstream response over 4 MiB is refused on both hosts with the same code, because that limit is the engine's and shared (check 8). The batch of 51, the seventh concurrent call and the reply over 16 MiB get the limit refusal Tool Portal check 15 defines on the Worker, each with its code, and the normal result on Node, which has none of those three (check 8). A full approval-use cap answers `saturated` on both hosts, at each host's own cap.
 - **Entry:** HTTP to `/workspaces/‹id›/mcp` on workerd; HTTP to the Node listener; the Node standalone MCP and JSON routes.
 - **Reads:** response bodies, status codes, refusal codes, and the analytics sink's recorded data points.
 - **Deployed limits again:** the deployed row 15 checks on the private test Worker (batch size, upstream response size and the six in flight, which cycle 6 did not run) are run again after slice A7 (large requests) and after A8 (the cutover), because R26 rewrites the request path in front of those limits.
