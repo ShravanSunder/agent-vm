@@ -10,7 +10,7 @@
 <body>
 <ex-nav for="content"></ex-nav>
 
-<ex-presentation id="path-options" title="Every option, one at a time" description="Fifteen questions, each drawn with the options we weighed. Thirteen are settled; two wait on you.">
+<ex-presentation id="path-options" title="Every option, one at a time" description="Seventeen questions, each with the options we weighed. Fifteen are settled; two wait on you.">
   <ex-step to="alternatives--1-who-is-the-identity-when-your-agent-acts" icon="robot">**Who acts for you?** A registered name, a session you approve, or the session itself.</ex-step>
   <ex-step to="alternatives--2-which-workspace-does-a-session-belong-to" icon="folder">**Where does a session belong?** By folder, by machine, or by project.</ex-step>
   <ex-step to="alternatives--3-who-holds-the-truth-and-who-mints-tokens" icon="database">**Who holds the truth, who mints?** Y, Z, X and X′ side by side.</ex-step>
@@ -26,6 +26,8 @@
   <ex-step to="alternatives--13-what-about-sessions-sharing-a-machine" icon="cpu">**Sessions sharing a machine.** The four isolation kinds, and why nothing is enforced yet.</ex-step>
   <ex-step to="alternatives--14-open-who-may-start-a-session-in-a-workspace-od1" icon="users">**Open: who may start a session?** Three options for you to choose from.</ex-step>
   <ex-step to="alternatives--15-open-is-a-bot-automatically-a-collaborator-of-every-other-workspace-od3" icon="robot">**Open: are bots collaborators everywhere?** Two readings of "rest collaborator".</ex-step>
+  <ex-step to="alternatives--16-how-do-the-services-prove-who-s-calling-each-other" icon="lock">**How services prove who's calling.** Why a token per receiver and operation.</ex-step>
+  <ex-step to="alternatives--17-how-does-a-token-say-which-session-it-is-for" icon="key">**How a token names its session.** What Better Auth lets us set, and what we add.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-tool-call" title="A session calls a tool" description="From your need to the token, the call, and how it will be proven.">
@@ -49,7 +51,7 @@
   <ex-step to="requirements--needs" icon="users">The needs: a bot proves itself, and is a member of at most one workspace you pick.</ex-step>
   <ex-step to="specification--membership-and-collaboration" icon="book-open">Membership, collaboration, and the open bot question.</ex-step>
   <ex-step to="specification--c2-token-issuance" icon="key">What issuance answers, including each refusal.</ex-step>
-  <ex-step to="program-design--how-a-bot-gets-its-token" icon="path">The bot's round trip.</ex-step>
+  <ex-step to="program-design--how-a-bot-gets-its-tokens" icon="path">The bot's round trip.</ex-step>
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven.</ex-step>
 </ex-presentation>
 
@@ -119,10 +121,10 @@ Its meaning: the three kinds of identity and how each relates to a workspace, in
 Its meaning: what a workspace token says and how the Tool Portal answers it, in [C1 workspace token](#specification--c1-workspace-token). Its picture: [how a session gets and uses its token](#program-design--how-a-session-gets-and-uses-its-token).
 
 - **Needs:** U10–U16 in [Requirements](#requirements--needs).
-- **Rules:** [tokens and tool calls](#specification--tokens-and-tool-calls), [removal](#specification--removal), [hosts and outages](#specification--hosts-and-outages).
-- **Who enforces them:** [components](#program-design--components), [how a removal reaches the Tool Portal](#program-design--how-a-removal-reaches-the-tool-portal), [state](#program-design--state).
+- **Rules:** [tokens and tool calls](#specification--tokens-and-tool-calls), [removal](#specification--removal), [hosts, outages and service requests](#specification--hosts-outages-and-service-requests).
+- **Who enforces them:** [components](#program-design--components), [service requests](#program-design--service-requests-r27-c7), [removal across owners](#program-design--removal-across-owners-r19-r21), [how a removal reaches the Tool Portal](#program-design--how-a-removal-reaches-the-tool-portal), [state](#program-design--state).
 - **How they're proven:** [coverage rows](#verification-design--coverage-rows).
-- **Options weighed:** [who mints](#alternatives--3-who-holds-the-truth-and-who-mints-tokens), [how the Tool Portal knows](#alternatives--4-how-does-the-tool-portal-know-who-is-a-member), [token lifetime](#alternatives--5-how-long-does-a-token-live), [ordering](#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order), [how the token travels](#alternatives--8-how-does-a-session-s-token-reach-the-tool-portal).
+- **Options weighed:** [who mints](#alternatives--3-who-holds-the-truth-and-who-mints-tokens), [how the Tool Portal knows](#alternatives--4-how-does-the-tool-portal-know-who-is-a-member), [token lifetime](#alternatives--5-how-long-does-a-token-live), [ordering](#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order), [how the token travels](#alternatives--8-how-does-a-session-s-token-reach-the-tool-portal), [how services prove who's calling](#alternatives--16-how-do-the-services-prove-who-s-calling-each-other), [how a token names its session](#alternatives--17-how-does-a-token-say-which-session-it-is-for).
 
 <h2 id="machines">Machines and what they share</h2>
 
@@ -141,11 +143,11 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
     <ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
   </section>
   <section id="tab-specification" label="Specification" icon="book-open">
-    <p>The entities and their map, obligations R1–R26, five contracts, and the failure cases: Fleet central unavailable, a notice not delivered, a Tool Portal restart, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine, and files read across a shared machine.</p>
+    <p>The entities and their map, obligations R1–R26, five contracts, and the failure cases: Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</p>
     <ex-markdown id="specification" label="Specification" src="./specification.md"></ex-markdown>
   </section>
   <section id="tab-program-design" label="Program Design" icon="stack">
-    <p>The structure, where each entity lives, four flows, state, trust boundaries, and failure handling: Fleet central unreachable, a notice not acknowledged, a duplicate notice, a restart, issuance racing a removal, a sender mismatch, and a signing key rotation.</p>
+    <p>The structure, the token and decision shapes, service requests, removal across owners, five flows, state, trust boundaries, and failure handling: Fleet central unreachable, a delayed mint, a notice not acknowledged, notices out of order, a duplicate notice, a restart, a removal racing a grant, an interrupted machine revocation or credential retirement, a stale binding, and a signing key rotation.</p>
     <ex-markdown id="program-design" label="Program Design" src="./program-design.md"></ex-markdown>
   </section>
   <section id="tab-verification-design" label="Verification Design" icon="test-tube">
@@ -153,7 +155,7 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
     <ex-markdown id="verification-design" label="Verification Design" src="./verification-design.md"></ex-markdown>
   </section>
   <section id="tab-alternatives" label="Alternatives" icon="git-branch">
-    <p>Fifteen questions, each drawn with its options and what each gains and costs. Two are still open.</p>
+    <p>Seventeen questions, each with its options and what each gains and costs. Two are still open.</p>
     <ex-markdown id="alternatives" label="Alternatives" src="./alternatives.md"></ex-markdown>
   </section>
 </ex-tabs>

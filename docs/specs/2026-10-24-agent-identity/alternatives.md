@@ -11,16 +11,18 @@ Each section gives the question, a picture with one row per option, then a table
 | 3 | Who holds the truth, and who mints tokens? | X′: Fleet central decides, Better Auth mints | you (the shape); the Lead (the details) |
 | 4 | How does the Tool Portal know who is a member? | Token-only, with pushed removals | you |
 | 5 | How long does a token live? | Configurable, at most 60 minutes | you; the default is open (OD2) |
-| 6 | How do a removal and a token minted at about the same time stay in order? | Grant revision numbers | the Lead |
+| 6 | How do a removal and a token minted at about the same time stay in order? | Every grant and every removal gets its own number in one order | the Lead |
 | 7 | How does a machine prove it is yours? | Its existing enrolled connection | you |
 | 8 | How does a session's token reach the Tool Portal? | A Router forwarder attaches it | the Lead |
 | 9 | Who asks the issuer for a session's token? | Fleet central, as a service client | the Lead |
-| 10 | Where is a session's persona narrowing checked? | At the Tool Portal, on each call | the Lead |
+| 10 | Where is a session's persona narrowing checked? | At the Tool Portal, on each call: the session gets what both its default and its persona allow | the Lead |
 | 11 | How are organizations kept apart? | One organization authority per organization | you (D2); the Lead (where it lives) |
 | 12 | Who may message across workspaces? | Members, where you allow the workspace pair | you |
 | 13 | What about sessions sharing a machine? | Record and show the shared bucket now; enforce later | you |
 | 14 | Who may start a session in a workspace? | **Open: OD1** | waits on you |
 | 15 | Is a bot automatically a collaborator of every other workspace? | **Open: OD3** | waits on you |
+| 16 | How do the services prove who's calling each other? | Short-lived service tokens, one per receiver and operation | the Lead |
+| 17 | How does a token say which session it is for? | A separate principal claim; Better Auth keeps its own subject | the Lead |
 
 ## 1. Who is the identity when your agent acts?
 
@@ -146,6 +148,13 @@ The lifetime bounds how long a removal can go unenforced if its notice is lost, 
 | Configurable, at most 60 minutes | You trade the two costs per organization. | A lost notice can leave access open for up to the configured lifetime. | **Chosen** by you ([U12](requirements.md#needs)). The default is open: [OD2](requirements.md#open-owner-decisions). |
 | Hours | Rare issuance. | A lost notice leaves hours of access, and a Fleet central outage goes unnoticed for hours. | Turned down by you (the 1-hour maximum) |
 
+**When does the clock start?** The first draft counted a token's life from when it was minted. Review found the hole: a grant decided before a removal, but minted late enough, would outlive the removal's notice at the Tool Portal.
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| From minting | Simple; it is what the issuer does by default. | A delayed or repeated mint stretches an old grant past its removal. | Turned down by the Lead after review |
+| From the grant decision, and nothing mints more than 60 seconds after it | A grant's end is fixed when Fleet central decides, however late the token is minted. | The Tool Portal checks one more time field. | **Chosen** by the Lead ([R16](specification.md#tokens-and-tool-calls)) |
+
 ## 6. How do a removal and a token minted at about the same time stay in order?
 
 The risk: Fleet central decides a session is a member, you remove it a moment later, and the token for the earlier decision is minted after the removal notice has already gone out.
@@ -155,19 +164,22 @@ sequenceDiagram
   participant C as Fleet central
   participant B as Better Auth
   participant P as Tool Portal
-  C->>C: decide S is a member (revision 41)
-  Note over C: you remove S (revision 42)
-  C->>P: removal notice: revoked through 42
-  C->>B: mint the revision-41 decision
+  C->>C: decide S is a member (number 41)
+  Note over C: you remove S (number 42)
+  C->>P: removal notice: removal at 42
+  C->>B: mint the number-41 decision
   B-->>P: a call arrives with that token, minted after the notice
   Note over P: By clock: minted after the removal, so accepted. Wrong.
-  Note over P: By revision: 41 is at most 42, so refused. Right.
+  Note over P: By order: 41 comes before 42, so refused. Right.
+  C->>C: a new decision for S after the removal (number 43)
+  Note over P: 43 comes after 42, so accepted. Right.
 ```
 
 | Option | How it works | Gains | Costs | Verdict |
 |---|---|---|---|---|
 | Wall-clock times | A notice says "removed at 10:00:05", and tokens minted later are trusted. | Familiar. | A decision taken before the removal but minted after it slips through, and clocks on different services drift. | Turned down by the Lead |
-| Grant revisions | Fleet central counts every grant and removal in an organization. Each token carries the count its decision read, and a notice covers every token up to its count. | Exact order, no clocks. | Every token carries one more number. | **Chosen** by the Lead ([Program Design](program-design.md#how-a-removal-reaches-the-tool-portal)) |
+| Count only the removals | A token carries the latest removal count its decision saw; a notice covers every token up to its own count. | No write per grant. | A token decided right after a persona change carries the change's own number and is wrongly refused. | Turned down by the Lead after review |
+| One order for grants and removals | Fleet central gives every grant decision and every removal in an organization its own next number. Each token carries its decision's number, and a notice covers every token with a smaller number. The Tool Portal keeps the highest removal number it has received. | Exact order, no ties, no clocks; a late notice can't undo a newer one. | One durable write per grant decision, about once per token lifetime per identity. | **Chosen** by the Lead ([Program Design](program-design.md#how-a-removal-reaches-the-tool-portal)) |
 
 ## 7. How does a machine prove it is yours?
 
@@ -230,14 +242,15 @@ flowchart TB
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
 | The Router | Fleet central isn't involved in minting. | The Router would need its own credential at the issuer: a new machine secret, against [U17](requirements.md#needs). | Turned down by the Lead |
-| Fleet central, as a service client of the issuer | No machine secrets, and Fleet central already makes the decision. | Fleet central's service key becomes the most valuable key in the system: with it, any session's token can be minted. It lives in Fleet central's host secret store. | **Chosen** by the Lead ([Program Design: trust boundaries](program-design.md#trust-boundaries)) |
+| Fleet central, as a client of the issuer | No machine secrets, and Fleet central already makes the decision. | Fleet central's client key becomes the most valuable key in the system: with it, any session's token can be minted and removal notices sent. It lives in Fleet central's host secret store. | **Chosen** by the Lead ([Program Design: trust boundaries](program-design.md#trust-boundaries)) |
 
 ## 10. Where is a session's persona narrowing checked?
 
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
 | At Fleet central, when the session starts | A too-wide persona is refused at start. | Fleet central would need a copy of every workspace's tool profiles, a second owner. | Turned down by the Lead |
-| At the Tool Portal, on each call | Tool profiles keep one owner, the Tool Portal. | A widened persona is refused on its first tool call, not at start. | **Chosen** by the Lead. Reopen if you want the refusal at start. |
+| At the Tool Portal, refusing a wider persona on its first call (first draft) | Tool profiles keep one owner. | "Wider" between two profiles was never defined, and a default changed later wasn't handled. | Turned down by the Lead after review |
+| At the Tool Portal, on each call: the session gets what both its default and its persona allow | Widening is impossible by construction. Tool profiles keep one owner. A changed default applies from the next call. | A wider persona is quietly clipped to the default rather than refused. | **Chosen** by the Lead ([R9](specification.md#membership-and-collaboration)). Reopen if you want the refusal at start. |
 
 ## 11. How are organizations kept apart?
 
@@ -322,3 +335,32 @@ flowchart TB
 | B. Where you allow it | Matches how you chose workspace pairs ([U8](requirements.md#needs)). A bot you don't own reaches only the workspaces you pick. | One admin action per bot per workspace. |
 
 **Recommended: B. Not decided.** Until you decide, only whether a bot collaboration needs your allowance ([R11](specification.md#membership-and-collaboration)) waits; the rest of the design doesn't depend on it.
+
+## 16. How do the services prove who's calling each other?
+
+Fleet central, the sign-in service and the Tool Portal call each other for four things: deciding a bot's grant, minting a session's token, delivering a removal notice, and confirming a person's session for an admin action.
+
+```mermaid
+flowchart LR
+  C["Fleet central"] -- "service token: Portal, notices" --> P["Tool Portal"]
+  S["Sign-in service"] -- "service token: central, decisions" --> C
+  C -- "client key: fleet-session grant" --> S
+  C -- "service token: sign-in, confirmation" --> S
+```
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| "A signed client assertion on every request" (first draft) | Sounded uniform. | That kind of assertion only authenticates a client at the token endpoint; it says nothing about which request or operation it is for. | Turned down by the Lead after review |
+| Sign each request body | Proof survives outside the encrypted connection. | A second signing scheme to build and rotate, for no threat this design has. | Not chosen. Reopen if requests must stay verifiable after leaving TLS. |
+| Short-lived service tokens from the issuer, each for one receiving service and one operation, over TLS | Reuses the issuer, its keys and client authentication. A token for one receiver or operation is refused everywhere else. | Each receiver pins the issuer, the expected client and the operation. | **Chosen** by the Lead ([R27](specification.md#hosts-outages-and-service-requests)) |
+
+## 17. How does a token say which session it is for?
+
+Better Auth 1.7.8 sets a token's subject itself: always the signed-in user, or else the client that asked. Every session token is asked for by Fleet central, so the subject would be Fleet central for all of them.
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| Make the subject the session | Standard field. | Not possible in 1.7.8 without patching the provider. | Not possible |
+| Create a user record per session | The subject becomes the session. | Fake "people" for every conversation, mixed into sign-in records. | Turned down by the Lead |
+| Keep Better Auth's subject, add a principal claim naming the bot or the whole session | Uses the provider as documented. The Tool Portal also checks that only Fleet central's client issued session tokens. | Every consumer reads the principal, never the subject. | **Chosen** by the Lead ([Program Design](program-design.md#workspace-and-collaboration-token-claims)) |
+

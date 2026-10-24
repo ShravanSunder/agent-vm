@@ -27,9 +27,10 @@ The set is one concern, so it has no capability through-lines. The task paths be
 2. [Specification: removal](specification.md#removal)
 3. [Specification: C3 removal notice](specification.md#c3-removal-notice)
 4. [Program Design: how a removal reaches the Tool Portal](program-design.md#how-a-removal-reaches-the-tool-portal)
-5. [Program Design: state](program-design.md#state)
-6. [Verification Design: coverage rows](verification-design.md#coverage-rows)
-7. [Alternatives: keeping a removal and a token in order](alternatives.md#6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order)
+5. [Program Design: removal across owners](program-design.md#removal-across-owners-r19r21)
+6. [Program Design: state](program-design.md#state)
+7. [Verification Design: coverage rows](verification-design.md#coverage-rows)
+8. [Alternatives: keeping a removal and a token in order](alternatives.md#6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order)
 
 ## Reading path: a bot gets a token
 
@@ -37,7 +38,7 @@ The set is one concern, so it has no capability through-lines. The task paths be
 2. [Specification: identity and proof](specification.md#identity-and-proof)
 3. [Specification: membership and collaboration](specification.md#membership-and-collaboration)
 4. [Specification: C2 token issuance](specification.md#c2-token-issuance)
-5. [Program Design: how a bot gets its token](program-design.md#how-a-bot-gets-its-token)
+5. [Program Design: how a bot gets its tokens](program-design.md#how-a-bot-gets-its-tokens)
 6. [Verification Design: coverage rows](verification-design.md#coverage-rows)
 
 ## Reading path: a session messages another workspace
@@ -51,7 +52,7 @@ The set is one concern, so it has no capability through-lines. The task paths be
 ## Reading path: Fleet central is down
 
 1. [Requirements: need U14](requirements.md#needs)
-2. [Specification: hosts and outages](specification.md#hosts-and-outages)
+2. [Specification: hosts, outages and service requests](specification.md#hosts-outages-and-service-requests)
 3. [Specification: failure and partial outcomes](specification.md#failure-and-partial-outcomes)
 4. [Program Design: failure, recovery and concurrency](program-design.md#failure-recovery-and-concurrency)
 5. [Verification Design: coverage rows](verification-design.md#coverage-rows)
@@ -64,6 +65,15 @@ The set is one concern, so it has no capability through-lines. The task paths be
 4. [Verification Design: coverage rows](verification-design.md#coverage-rows)
 5. [Alternatives: how a machine proves it is yours](alternatives.md#7-how-does-a-machine-prove-it-is-yours)
 6. [Alternatives: sessions sharing a machine](alternatives.md#13-what-about-sessions-sharing-a-machine)
+
+## Reading path: services calling each other
+
+1. [Requirements: needs U13, U15, U16](requirements.md#needs)
+2. [Specification: R27](specification.md#hosts-outages-and-service-requests)
+3. [Specification: C7 service requests](specification.md#c7-service-requests)
+4. [Program Design: service requests](program-design.md#service-requests-r27-c7)
+5. [Verification Design: shared observations (SO7)](verification-design.md#shared-observations)
+6. [Alternatives: how services prove who's calling](alternatives.md#16-how-do-the-services-prove-whos-calling-each-other)
 
 ## Open owner decisions
 

@@ -1,46 +1,50 @@
 # Agent identity and workspace access: Program Design
 
-How the fleet, the sign-in service and the Tool Portal realize the [Specification](specification.md)'s obligations. Authority: [Requirements](requirements.md). Proof plan: [Verification Design](verification-design.md).
+How the fleet, the sign-in service and the Tool Portal realize the [Specification](specification.md)'s obligations. Authority: [Requirements](requirements.md). Proof plan: [Verification Design](verification-design.md). Options weighed: [Alternatives](alternatives.md).
 
 ## The structure in one picture
 
 ```mermaid
 flowchart TB
   subgraph ROUTER[Your machine: the Router]
-    RB[Session binding<br/>one MCP address per session]
+    RB[Session binding<br/>one binding per session]
     RR[Session registrar]
     RF[Tool Portal forwarder<br/>attaches the session's token]
   end
   subgraph CENTRAL[Fleet central - Rust - the truth]
-    OA[Organization authority<br/>one per organization:<br/>bots, memberships, allowances,<br/>pairs, sessions, removal outbox]
+    OA[Organization authority<br/>one per organization:<br/>bots, memberships, allowances,<br/>pairs, sessions, ordered marks,<br/>removal outbox]
     FO[Fleet object<br/>workspaces, projects - existing]
-    REG[Machine registry - existing]
+    REG[Machine registry - existing<br/>+ revocation fan-out]
     STB[Session token broker]
-    ADM[Admin surface]
+    ADM[Admin surface<br/>owner-only]
     CA[Collaboration admission]
   end
   subgraph AUTH[Sign-in service - TypeScript - Better Auth]
-    BAI[Token issuer - existing<br/>bot credentials, session grant]
+    BAI[Token issuer - existing<br/>bot gate, fleet-session grant,<br/>service tokens]
   end
   subgraph PORTAL[Tool Portal]
     CC[Caller check - existing]
-    WS[Workspace store - existing<br/>approval uses + removal notices]
+    WS[Workspace store - existing<br/>approval uses + removal marks]
   end
+  BOT[Bot]
   RR -- register session over the enrolled connection --> OA
   RF -- ask for a session token --> STB
   STB -- decide --> OA
-  STB -- mint, as a service client --> BAI
-  BAI -- ask before minting a bot token --> OA
-  OA -- push removal notices --> WS
+  STB -- fleet-session grant --> BAI
+  BOT -- client credentials --> BAI
+  BAI -- decide for a bot --> OA
+  OA -- removal notices --> WS
+  REG -- machine revoked --> OA
   RF -- tool call + token --> CC
-  CC -- covered by a notice? --> WS
+  BOT -- tool call + token --> CC
+  CC -- covered? --> WS
   RB -- bound actor --> CA
+  BOT -- message + collaboration token --> CA
   ADM --> OA
   OA -- project to workspace --> FO
-  OA -- enrolled? --> REG
 ```
 
-Fleet central holds every truth about who belongs where. The sign-in service proves bots and people and mints every token. The Tool Portal checks tokens and keeps two kinds of per-workspace state: approval single-use counts (as today) and the removal notices Fleet central pushes. No component calls Fleet central on a tool call.
+Fleet central holds every truth about who belongs where and decides every grant. The sign-in service proves bots and people and mints every token. The Tool Portal checks tokens and keeps two kinds of per-workspace state: approval single-use counts (as today) and the removal marks Fleet central pushes. No component calls Fleet central on a tool call.
 
 ## What exists today
 
@@ -49,41 +53,42 @@ Fleet central holds every truth about who belongs where. The sign-in service pro
 | Fleet identities | An actor is a `SessionRef` (Router installation, harness endpoint, conversation ID) or a human ID. Central's callers are only `Machine` or `Owner`. | `message-board/src/board_identity.rs:204–213`; `collaboration-central-core/src/access_contract.rs:33` |
 | Fleet sender | The collaboration MCP server is stateless. It takes the sender from call arguments, and checks only that the service ID is this Router's. | `collaboration-mcp/src/collaboration_api_router.rs:1–3`; `collaboration-service/.../message_operations.rs:52–61` |
 | Fleet session context | A session's workspace is looked up: working directory, then git origin, then attached workspaces, then projects. No stored link exists. | `collaboration-service/.../board_hook_operations.rs:169–320` |
+| ACP MCP servers | One provider-wide MCP server list, cloned into each session. | `acp-client-runtime/src/agent_session_client/provider_connection_task.rs:280–286, 451–453` |
+| Helper starts | A Lead starts a helper with `conversation create`; the creator defaults to the calling session and the approver to the creator; a creator from another machine's service is refused. | Fleet Lead, 2026-10-24 (anchors pending in its evidence answer) |
 | Machines | Owner-only enrollment. A Router connects with an Access service token plus a Bearer enrollment credential, and the connection is bound to that machine. No key column. | `registry_migrations/0001_machine_enrollments.sql`; `machine_enrollment.rs:400–445`; `central_router.rs:119–275` |
 | Central hosts | One core, with Cloudflare Durable Object and Tokio hosts. Its object addresses are Copy, Registry, Fleet, Connection and Mailbox. | `platform_capabilities.rs:45`; `core_contract.rs:36–42` |
-| Sign-in issuer | Better Auth 1.7.8 with the OAuth provider. Agent clients use client credentials, and a token is issued only for a linked workspace resource. | `packages/auth/src/sign-in-core/response-release/sign-in-response-release.ts:114–146`; `provider-configuration.ts:260` |
+| Sign-in issuer | Better Auth 1.7.8 with the OAuth provider. Agent clients use client credentials, a token is issued only for a linked workspace resource, and `customAccessTokenClaims` stamps claims. | `packages/auth/src/sign-in-core/response-release/sign-in-response-release.ts:114–146`; `provider-configuration.ts:220–276` |
+| Better Auth minting | Extension grants and companion endpoints mint through `issueTokens`, which takes a client, an optional user, resources and additive `accessTokenClaims`. The subject is always `user.id ?? client.clientId`; reserved claims (`sub`, `aud`, `exp`, `iat`, `jti`, `client_id`, `scope` and others) are stripped from contributed claims; expiry comes from the provider's options. | installed `@better-auth/oauth-provider` 1.7.8: `dist/oauth-C_RnL2nt.d.mts:770–872`; `dist/introspect-H3uoUiuS.mjs:180–267, 1267–1290, 1342–1364` |
 | Tool Portal check | Verify the token offline, then read membership and persona from the workspace's store. Persona is a key into the workspace's tool profiles. | `tool-host-core/src/caller-admission/caller-check.ts:19–38`; `hosted-mcp-proxy.ts:85,119` |
+| Tool profiles | A profile lists, per namespace, which tools are available and which run with or without approval; `resolvedMcpPortalProfileSchema` is the resolved form. | `tool-access/src/authorization/mcp-profile-resolution.ts`; `tool-access/src/contracts/mcp-approval-profile.ts:108` |
 | Tool Portal store | Holds membership/persona records, agent-management and retirement state, and approval single-use counts. | `tool-host-core/src/workspace-authority/models/workspace-authority-state.ts`; `approval-token-use-rules.ts` |
 
 **Constraint degree:**
 
 - **Compatibility-bound** on the fleet's existing workspace IDs, project records and machine enrollment.
 - **Migration-bound** on the Tool Portal's workspace store, where approval state must survive.
-- **Platform-bound** on Better Auth 1.7.8, which has client credentials, `private_key_jwt` and an extension-grant surface, but no token exchange.
+- **Platform-bound** on Better Auth 1.7.8: client credentials, `private_key_jwt`, an extension-grant surface and `customAccessTokenClaims`; no token exchange; the subject and expiry are owned by the provider.
 
-**What stays authoritative:**
+**What stays authoritative:** the fleet's workspaces, projects and machine enrollments; the issuer's signing keys and published key set; the Tool Portal's tool profiles and approval rules.
 
-- The fleet's workspaces, projects and machine enrollments.
-- The issuer's signing keys and published key set.
-- The Tool Portal's tool profiles and approval rules.
-
-**What changes:**
-
-- Who holds membership: it moves out of the Tool Portal and sign-in into Fleet central.
-- How a session is identified: bound by the Router, not declared by the caller.
-- How removal reaches the Portal: pushed notices.
+**What changes:** who holds membership (it moves out of the Tool Portal and sign-in into Fleet central); how a session is identified (bound by the Router, not declared by the caller); how removal reaches the Portal (pushed notices, ordered by marks).
 
 ## The choices, and why
 
 | Choice | Selected | Credible alternative | Why selected | Accepted cost, and who pays | Reopen if |
 |---|---|---|---|---|---|
-| Who mints tokens | The sign-in service (Better Auth) | Fleet central mints in Rust; or a TypeScript identity service that owns all truth (Y) | Keeps the tested issuer on a maintained library and keeps truth where workspaces already live (owner: "same design") | Two services involved in every issuance. The Fleet and sign-in teams maintain one contract between them. | Better Auth can't host the session grant, or a Portal-only product without Fleet central becomes the priority (then Y) |
-| How the Portal knows membership | **Token-only**, plus pushed removal notices | A live check per call (rejected by the owner as too heavy); copies of membership (the owner found them "fishy") | Lightest per-call path. Removal bites on push, and expiry is the backstop. | Up to one token lifetime of stale access if a push is lost. The admin sees pending notices. | Removals must be guaranteed instant even when the Portal is unreachable |
-| How a machine proves itself | Its existing enrolled connection | Per-machine key files (rejected by the owner); platform identity such as Fly OIDC (later) | No new secrets on machines | Vouching needs Fleet central reachable | Cloud VMs arrive (then platform identity) |
-| How a session gets its token to the Portal | A Router forwarder attaches it | Token in the harness's MCP config (can't refresh); the session fetches its own token (an agent holding a credential) | The agent never holds a credential, and refresh is invisible | A new Router component on the tool path | A harness gains native per-call auth headers the Router can set |
-| Who asks the issuer for a session token | Fleet central, as a service client of the issuer | The Router as client (needs a machine credential at the issuer, a new machine secret) | No machine secrets; central already decides | Central holds one service credential for the issuer | — |
-| How removal and issuance stay ordered | **Grant revision numbers** from the organization authority | Wall-clock effective times | A decision made just before a removal, but minted after it, is still covered. No clock skew. | Every token carries a revision | — |
-| Where narrowing is enforced | The Tool Portal, at call time against the workspace's profiles | Fleet central at session start (would need a copy of profile definitions) | Profiles have one owner, the Portal | A widened persona is refused on the first call, not at start | Owner wants refusal at start |
+| Who mints tokens | The sign-in service (Better Auth) | Fleet central mints in Rust; or a TypeScript identity service that owns all truth (Y) | Keeps the tested issuer on a maintained library and keeps truth where workspaces already live | Two services take part in every issuance. The Fleet and sign-in teams maintain one contract between them. | Better Auth can't carry the claims below, or a Portal-only product without Fleet central becomes the priority (then Y) |
+| How the Portal knows membership | **Token-only**, plus pushed removal notices | A live check per call (owner: too heavy); copies of membership (owner: "fishy") | Lightest per-call path. Removal bites on push, and grant expiry is the backstop. | Up to one token lifetime of stale access if a push is lost. The admin sees pending removals. | Removals must be guaranteed instant even when the Portal is unreachable |
+| How the token says who it is for | Better Auth keeps `sub` (the authenticated client); a separate `principal` claim names the bot or the whole session reference | A companion plugin that sets `sub` to the session; fake user rows per session | Uses the documented `issueTokens` surface without fighting the provider's ownership of `sub` | Every consumer reads `principal`, never `sub`; the Portal pins which client may issue session principals | A future Better Auth lets a grant set the subject |
+| How long a token is usable | A `grant_expires_at` claim fixed at decision time; the Portal enforces it beside `exp`; the issuer's own `exp` is set to the 60-minute maximum | Per-call `exp` (not offered by 1.7.8); per-resource lifetimes at the issuer (a copy of organization settings) | Delayed or repeated minting can't extend a grant (S-F1); per-organization lifetimes need no issuer copy | Clients learn the real end from the claim or a refusal, not `expires_in` | 1.7.8 or later offers per-issuance expiry |
+| How removal and issuance stay ordered | **One ordered counter per organization; every grant decision and every removal takes its own next value**; a notice covers grants with a smaller value | Counter raised only by removals (a fresh grant then ties a removal); wall-clock effective times | Exact order with no ties and no clocks | One durable write per grant decision (about once per lifetime per identity and workspace) | — |
+| How services prove who's calling | Short-lived **service tokens** from the issuer, each naming one receiving service and one operation, over TLS | Signing each request body (HTTP message signatures) | Reuses the issuer, its keys and client authentication; TLS already protects the body in transit | Each receiver pins issuer, client and scope per operation | A request must stay verifiable after leaving TLS (then sign bodies) |
+| How a machine proves itself | Its existing enrolled connection | Per-machine key files (owner: no); platform identity such as Fly OIDC (later) | No new secrets on machines | Vouching needs Fleet central reachable | Cloud VMs arrive (then platform identity) |
+| How a session's token reaches the Portal | A Router forwarder attaches it | Token in the harness's MCP config (can't refresh); the session fetches its own (an agent holding a credential) | The agent never holds a credential; refresh is invisible | A new Router component on the tool path | A harness lets the Router set per-call headers itself |
+| Who asks the issuer for a session token | Fleet central, as a `private_key_jwt` client using a fleet-session extension grant | The Router as client (a new machine secret) | No machine secrets; central already decides | Central's client key is the system's most valuable key | — |
+| How a session's persona is narrowed | The Portal evaluates each call under both the current session default and the named persona and takes the stricter outcome | Refuse a wider persona at start (central would need profile copies); merge profile structures | Widening is impossible by construction; profiles keep one owner; a default change applies from the next call | A wider named persona is silently clipped, not refused | Owner wants a refusal at start |
+| How a collaborator bot reaches Fleet | A collaboration token (audience: Fleet's collaboration address) from the same issuer | Reusing a workspace token (audience confusion; collaborators have none) | Keeps tools and messaging on separate audiences | One more resource at the issuer | — |
+| How a removal crosses owners | Each removal commits at its owner; a durable outbox carries it to every affected organization and workspace; issuance is fenced from the owner's commit | One distributed transaction (not available across Registry, Better Auth and organization objects) | Restart-safe, and honest about "pending" | Some removals show pending for a while | — |
 | Organization isolation (D2) | One organization authority per organization (a Durable Object on Cloudflare; its own SQLite database on Tokio) | One shared store keyed by organization | D2's "segregated by durable objects", any host (U16) | One object per organization to operate | — |
 
 ## Where each entity lives
@@ -109,6 +114,7 @@ flowchart LR
     E3[E3 Person] --- BA[Better Auth - existing]
     E5[E5 Bot credential] --- BA
     E11[E11 Workspace token - minted] --- BA
+    E18[E18 Collaboration token - minted] --- BA
   end
   subgraph P[Tool Portal]
     E10[E10 Persona = tool profile] --- CFG[Workspace configuration - existing]
@@ -119,75 +125,169 @@ flowchart LR
 | E | Semantic owner | Package or module home | Schema/type home | Shape at each boundary | Disposition | Convention |
 |---|---|---|---|---|---|---|
 | E1 Organization | Organization authority | `collaboration-central-core` (new module `organization_authority`) | `collaboration-central-core/src/identity_contract.rs` (new) | `organization_id`: UUID string in tokens, admin API and notices | persisted | Rust newtype with fallible constructor; serde-tagged enums (`access_contract.rs:31`) |
-| E2 Workspace | Fleet object (existing) | `collaboration-central-core` workspaces table (existing) | `message-board/src/board_metadata.rs:119` `Workspace` (existing) | `workspace_id`: UUIDv7 string; the Portal's MCP address is derived from its origin plus `workspace_id` (existing `workspaceResourceIdentifier`, `tool-access` contracts) | persisted | existing |
+| E2 Workspace | Fleet object (existing) | `collaboration-central-core` workspaces table (existing) | `message-board/src/board_metadata.rs:119` `Workspace` (existing) | `workspace_id`: UUIDv7 string; the Portal's MCP address is derived from its origin plus `workspace_id` (existing `workspaceResourceIdentifier`) | persisted | existing |
 | E16 Project | Fleet object (existing) | `project_directory` (existing) | `board_metadata.rs` `ProjectDirectoryEntry` (existing) | `project_id` string in session registration and token | persisted | existing |
-| E3 Person | Better Auth (existing) | `packages/auth` (existing) | Better Auth user (existing) | person ID string in the person token; central's person membership keys on it | persisted | existing |
-| E4 Bot | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `BotId`, `BotRecord` (new) | `bot_id` UUIDv7 string; token `sub` for bots is `bot_id` | persisted | Rust newtype |
-| E5 Bot credential | Better Auth (existing agent-client store) | `packages/auth` `d1-persistence/agent-registration-store.ts` (modified: binds `bot_id`; workspace links removed) | Better Auth OAuth client plus metadata (modified) | `client_id` string; metadata `{ botId }` set only through central's admin path | persisted | Zod at the boundary (`domain-typescript`) |
-| E6 Fleet machine | Machine registry (existing) | `machine_enrollments` (existing) | `machine_enrollment.rs` `AdmittedMachine` (existing) | installation `service_id` and `peer_id`; the token's `machine` field is the installation ID | persisted | existing |
-| E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId, state }` | persisted | Rust |
-| E7 Fleet harness session | Organization authority | `organization_authority` session registry (new) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new) | session registration request; token `sub` = canonical `SessionRef` string; the token's `session` object | persisted (with retention) | existing `SessionRef` plus Rust |
-| E8 Membership | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Membership { workspace, principal: Principal, persona, state, revision }` (new) | issuance decision; admin lookup | persisted | Rust tagged enum `Principal { Person, Bot, FleetHarnessSession }` |
+| E3 Person | Better Auth (existing) | `packages/auth` (existing) | Better Auth user (existing) | person ID in the person token; central's ownership and person membership key on it | persisted | existing |
+| E4 Bot | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `BotId`, `BotRecord` (new) | `bot_id` UUIDv7 string in `principal`; never equal to a credential's client ID | persisted | Rust newtype |
+| E5 Bot credential | Better Auth (existing agent-client store) | `packages/auth` `d1-persistence/agent-registration-store.ts` (modified: binds `botId`; workspace links removed) | Better Auth OAuth client plus metadata (modified) | `client_id`; metadata `{ botId }` set only through central's admin path | persisted | Zod at the boundary |
+| E6 Fleet machine | Machine registry (existing) | `machine_enrollments` (existing) | `machine_enrollment.rs` `AdmittedMachine` (existing) | installation `service_id`; the session reference's installation | persisted | existing |
+| E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId }` | persisted | Rust |
+| E7 Fleet harness session | Organization authority | `organization_authority` session registry (new) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new) | `principal.session_ref` object in tokens; `session` in registration | persisted (with retention) | existing `SessionRef` plus Rust |
+| E8 Membership | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Membership { workspace, principal, persona: PersonaRef, state }` (new) | issuance decision; admin lookup | persisted | Rust tagged enum `Principal { Person, Bot, FleetHarnessSession }` |
 | E9 Bot collaboration | Organization authority | `organization_authority` (new) | `identity_contract.rs` (new) | admin API; collaboration admission | persisted | Rust |
 | E17 Workspace pair | Organization authority | `organization_authority` (new) | `identity_contract.rs` (new) | admin API; collaboration admission | persisted | Rust |
-| E10 Persona | Tool Portal workspace configuration (existing) | `tool-access` profile resolution (existing), plus a new `portal.sessionDefaultProfile` key | `tool-access` configuration schema (modified) | persona name string in the token | persisted (configuration) | Zod, `z.infer` |
-| E11 Workspace token | Better Auth issuer (existing, modified claims) | `packages/auth` (modified) | `tool-access` contracts: `workspaceTokenClaimsSchema` (new; the single home, imported by `packages/auth` and `tool-host-core`; Rust consumers test against fixtures generated from it) | JWT claims, below | derived (signed, never stored) | Zod discriminated union |
-| E12 Removal notice | Organization authority (sends); Portal workspace store (keeps) | central outbox (new); Portal store (modified) | `identity_contract.rs` `RemovalNotice` (new, the contract home); the Portal derives its Zod schema from the generated JSON Schema, checked by a contract test | HTTP JSON, below | persisted on both sides | Rust serde, with the Zod derived from it |
-| E13 Isolation record | Organization authority | session registry (new) | `identity_contract.rs`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design) | session registration; the token's `session.isolation` | persisted | Rust tagged enum |
+| E10 Persona | Tool Portal workspace configuration (existing) | `tool-access` profile resolution (existing), plus a new `portal.sessionDefaultProfile` key | `tool-access` configuration schema (modified) | `persona` claim: `{ kind: "sessionDefault" }` or `{ kind: "named", name }` | persisted (configuration) | Zod, `z.infer` |
+| E11 Workspace token | Better Auth issuer (existing, modified claims) | `packages/auth` (modified) | `tool-access` contracts: `workspaceTokenClaimsSchema` (new; the single home; Rust consumers test against fixtures generated from it) | JWT claims, below | derived (signed, never stored) | Zod discriminated union |
+| E18 Collaboration token | Better Auth issuer | `packages/auth` (modified) | `tool-access` contracts: `collaborationTokenClaimsSchema` (new) | JWT claims, below | derived | Zod |
+| E12 Removal notice | Organization authority (sends); Portal workspace store (keeps) | central outbox (new); Portal store (modified) | `identity_contract.rs` `RemovalNotice` (new, the contract home); the Portal derives its Zod schema from the generated JSON Schema, checked by a contract test | HTTP JSON, below | persisted on both sides | Rust serde, Zod derived |
+| E13 Isolation record | Organization authority | session registry (new) | `identity_contract.rs`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design) | registration; the token's `principal` | persisted | Rust tagged enum |
 | E14 Shared bucket | Organization authority (a derived query) | `organization_authority` (new) | `identity_contract.rs` lookup result (new) | admin lookup | derived | Rust |
 
-### Shapes that cross boundaries
+### Encoding rules for every boundary below
 
-**Workspace token claims** (issuer → Tool Portal, and Fleet central for bot collaboration), `tool-access` contracts:
+- **Versions:** every route is under `/v1/`. A breaking change is a new path prefix; contract types carry no version field.
+- **Casing:** JWT claims are `snake_case`; HTTP JSON bodies are `camelCase` (the Fleet's serde convention). Rust types say `rename_all` on structs and enums alike.
+- **Numbers:** marks (grant and removal) are integers in `0..=2^53−1`, encoded as JSON numbers; the Rust newtype refuses larger values. Times are Unix seconds.
+- **Clock difference:** every receiver allows at most 60 seconds.
+
+### Workspace and collaboration token claims
+
+The issuer owns `iss`, `sub`, `aud`, `exp`, `iat`, `jti`, `client_id` and `scope`. `sub` is the authenticated client: a bot's credential, or Fleet central's session-issuing client. Every consumer identifies the caller by `principal`, never by `sub`. Home: `tool-access` contracts.
 
 ```ts
+const sessionRefSchema = z.object({
+  installation: z.string().uuid(),   // the Router service ID
+  harness_endpoint: z.string(),      // "codex-local" | "claude-local" | "cursor-local" …
+  conversation_id: z.string().min(1),
+});
+const machineEnvironmentSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("physical") }),
+  z.object({ kind: z.literal("cloudVm"), provider: z.string(), instance: z.string() }),
+]);
 const isolationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("host") }),
-  z.object({ kind: z.literal("processSandbox"), mechanism: z.enum(["seatbelt", "bubblewrap", "landlock"]), instanceId: z.string() }),
-  z.object({ kind: z.literal("container"), runtime: z.string(), containerId: z.string(), instanceId: z.string() }),
-  z.object({ kind: z.literal("vm"), launcher: z.literal("agent-vm"), vmId: z.string(), instanceId: z.string() }),
+  z.object({ kind: z.literal("host"), instance_id: z.string() }),
+  z.object({ kind: z.literal("processSandbox"), mechanism: z.enum(["seatbelt", "bubblewrap", "landlock"]), instance_id: z.string() }),
+  z.object({ kind: z.literal("container"), runtime: z.string(), container_id: z.string(), instance_id: z.string() }),
+  z.object({ kind: z.literal("vm"), launcher: z.literal("agent-vm"), vm_id: z.string(), instance_id: z.string() }),
 ]);
-export const workspaceTokenClaimsSchema = z.discriminatedUnion("subject_kind", [
+const principalSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("bot"), bot_id: z.string().uuid() }),
   z.object({
-    subject_kind: z.literal("bot"),
-    iss: z.string(), aud: z.string(), sub: z.string(), jti: z.string(), iat: z.number().int(), exp: z.number().int(),
-    organization_id: z.string(), workspace_id: z.string(), persona: z.string().min(1),
-    grant_revision: z.number().int().nonnegative(),
-  }),
-  z.object({
-    subject_kind: z.literal("fleetHarnessSession"),
-    iss: z.string(), aud: z.string(), sub: z.string(), jti: z.string(), iat: z.number().int(), exp: z.number().int(),
-    organization_id: z.string(), workspace_id: z.string(), persona: z.string().min(1),
-    grant_revision: z.number().int().nonnegative(),
-    session: z.object({ machine: z.string(), harness: z.string(), project_id: z.string(), isolation: isolationSchema }),
+    kind: z.literal("fleetHarnessSession"),
+    session_ref: sessionRefSchema,
+    machine_environment: machineEnvironmentSchema,
+    project_id: z.string(),
+    isolation: isolationSchema,
   }),
 ]);
+const personaRefSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("sessionDefault") }),
+  z.object({ kind: z.literal("named"), name: z.string().min(1) }),
+]);
+const mark = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const issuerOwned = {
+  iss: z.string(), aud: z.string(), sub: z.string(), client_id: z.string(),
+  jti: z.string(), iat: z.number().int(), exp: z.number().int(),
+};
+export const workspaceTokenClaimsSchema = z.object({
+  ...issuerOwned,
+  principal: principalSchema,
+  organization_id: z.string().uuid(),
+  workspace_id: z.string().uuid(),
+  persona: personaRefSchema,          // bots: always "named"
+  grant_revision: mark,
+  grant_expires_at: z.number().int(),
+}).refine((c) => c.principal.kind === "fleetHarnessSession" || c.persona.kind === "named");
+export const collaborationTokenClaimsSchema = z.object({
+  ...issuerOwned,
+  principal: z.object({ kind: z.literal("bot"), bot_id: z.string().uuid() }),
+  organization_id: z.string().uuid(),
+  grant_revision: mark,
+  grant_expires_at: z.number().int(),
+});
 export type WorkspaceTokenClaims = z.infer<typeof workspaceTokenClaimsSchema>;
 ```
 
-**Issuance decision** (Fleet central → sign-in service; Fleet central's session token broker), `identity_contract.rs`:
+**Portal acceptance (C1), in order:** signature against the issuer's published keys; `aud` is W's address; `workspace_id` is W and `organization_id` is W's configured organization; `now < min(exp, grant_expires_at) + 60 s`; for a session principal, `client_id` is Fleet central's pinned session-issuing client and nothing else; no removal mark covers it (below); then the persona check.
+
+### Grant decisions
+
+Home: `identity_contract.rs`. Only bots and sessions receive workspace tokens, so the subject excludes people.
 
 ```rust
 #[serde(tag = "kind", rename_all = "camelCase")]
+pub enum WorkspaceTokenSubject {
+    Bot { bot_id: BotId },
+    #[serde(rename_all = "camelCase")]
+    FleetHarnessSession { session_ref: SessionRef, machine_environment: MachineEnvironment, project_id: ProjectId, isolation: AgentIsolation },
+}
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PersonaRef { SessionDefault, Named { name: PersonaName } }
+
+#[serde(tag = "result", rename_all = "camelCase")]
 pub enum IssuanceDecision {
+    #[serde(rename_all = "camelCase")]
     Grant {
         organization_id: OrganizationId,
         workspace_id: WorkspaceId,
-        subject: Principal,
-        persona: PersonaName,
-        grant_revision: GrantRevision,
-        lifetime_seconds: TokenLifetimeSeconds, // <= 3600, the organization's configured value
-        session: Option<SessionGrantFacts>,     // machine, harness, project, isolation
+        subject: WorkspaceTokenSubject,
+        persona: PersonaRef,
+        grant_revision: Mark,          // this decision's own place in the organization's order
+        decided_at: UnixSeconds,
+        grant_expires_at: UnixSeconds, // decided_at + the organization's lifetime (≤ 3600)
     },
     Refuse { reason: IssuanceRefusal },
 }
 #[serde(rename_all = "camelCase")]
 pub enum IssuanceRefusal { NotMember, IdentityNotProven, MachineNotAllowed, Retired }
+
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum CollaborationDecision {
+    #[serde(rename_all = "camelCase")]
+    Grant { organization_id: OrganizationId, bot_id: BotId, grant_revision: Mark, decided_at: UnixSeconds, grant_expires_at: UnixSeconds },
+    Refuse { reason: IssuanceRefusal },
+}
 ```
 
-`Unavailable` is not a decision: a transport failure or timeout. Callers treat it as refuse-unavailable (R25).
+`Unavailable` is not a decision: a transport failure or timeout, which every caller treats as a refusal (R25).
 
-**Removal notice** (Fleet central → Tool Portal), `identity_contract.rs`:
+**Redemption window:** the issuer mints from a `Grant` only while `now ≤ decided_at + 60 s`, and stamps `grant_expires_at` exactly as decided. A repeat inside the window mints an equivalent token that ends at the same moment; nothing can mint later.
+
+### Requests over the enrolled connection (Router → Fleet central)
+
+```rust
+#[serde(rename_all = "camelCase")]
+pub struct RegisterFleetSession {
+    pub session: SessionRef,                    // bound by the Router, never declared by the agent
+    pub project_id: ProjectId,
+    pub starter: Starter,                       // tagged: owner { personId } | memberSession { session } (OD1)
+    pub requested_persona: Option<PersonaName>, // None means the session default
+    pub isolation: AgentIsolation,
+    pub machine_environment: MachineEnvironment,
+}
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum RegisterFleetSessionResult {
+    #[serde(rename_all = "camelCase")]
+    Registered { workspace_id: WorkspaceId, persona: PersonaRef },
+    Refused { reason: SessionRefusal }, // projectUnknown | machineNotAllowed | starterNotAllowed | alreadyEnded
+}
+
+#[serde(rename_all = "camelCase")]
+pub struct IssueSessionToken { pub session: SessionRef }
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum IssueSessionTokenResult {
+    #[serde(rename_all = "camelCase")]
+    Issued { access_token: String, grant_expires_at: UnixSeconds },
+    Refused { reason: IssuanceRefusal },
+}
+
+#[serde(rename_all = "camelCase")]
+pub struct EndFleetSession { pub session: SessionRef, pub cause: SessionEndCause } // archived | deleted
+```
+
+The Router may only name sessions on its own installation; central refuses any other.
+
+### Removal notice (Fleet central → Tool Portal)
 
 ```rust
 #[serde(rename_all = "camelCase")]
@@ -195,74 +295,105 @@ pub struct RemovalNotice {
     pub notice_id: NoticeId,               // UUIDv7, the idempotency key
     pub organization_id: OrganizationId,
     pub workspace_id: WorkspaceId,
-    pub subject: RemovalSubject,           // tagged: bot | fleetHarnessSession | machine
-    pub revoked_through: GrantRevision,    // tokens with grant_revision <= this are covered
+    pub subject: RemovalSubject,           // tagged: bot { botId } | fleetHarnessSession { sessionRef } | machine { installation }
+    pub removal_revision: Mark,            // covers tokens with grant_revision < this
     pub reason: RemovalReason,             // membershipEnded | personaChanged | botRetired | credentialRetired
-                                           // | machineRevoked | allowanceWithdrawn | sessionRemoved
+                                           // | machineRevoked | allowanceWithdrawn | sessionRemoved | sessionEnded
 }
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RemovalNoticeAck { Recorded { notice_id: NoticeId }, AlreadyRecorded { notice_id: NoticeId } }
 ```
 
-**Session registration** (Router → Fleet central, over the enrolled connection), `identity_contract.rs`:
+The Portal keeps, per workspace and subject, the **highest** `removal_revision` received (a late lower one changes nothing), and the notice IDs for idempotency. It answers only after both are durably written.
+
+### Decision requests (sign-in service → Fleet central)
 
 ```rust
-pub struct RegisterFleetSession {
-    pub session: SessionRef,                    // bound by the Router, never declared by the agent
-    pub project_id: ProjectId,
-    pub starter: Starter,                       // tagged: owner { person_id } | memberSession { session } (OD1)
-    pub requested_persona: Option<PersonaName>, // None means the workspace's session default
-    pub isolation: AgentIsolation,
-    pub machine_environment: MachineEnvironment,
-}
-#[serde(tag = "result", rename_all = "camelCase")]
-pub enum RegisterFleetSessionResult {
-    Registered { workspace_id: WorkspaceId, persona: PersonaName },
-    Refused { reason: SessionRefusal }, // projectUnknown | machineNotAllowed | starterNotAllowed | personaUnknown
+#[serde(tag = "resource", rename_all = "camelCase")]
+pub enum DecideBotIssuance {
+    #[serde(rename_all = "camelCase")]
+    Workspace { client_id: ClientId, workspace_id: WorkspaceId }, // → IssuanceDecision
+    #[serde(rename_all = "camelCase")]
+    Collaboration { client_id: ClientId },                       // → CollaborationDecision
 }
 ```
+
+### Admin commands and lookups (person → Fleet central)
+
+Every command and lookup names its organization and is refused unless the guard below passes. Results are `Applied { removal: Option<RemovalStatus> }` or `Refused { reason: NotOwner | NotFound | Conflict }`; a refused command reveals nothing.
+
+| Command | Request fields | Removal it writes |
+|---|---|---|
+| `CreateWorkspace` | organizationId, name | — |
+| `RegisterBot`, `RetireBot` | organizationId, botId | `botRetired` per member workspace |
+| `AddBotCredential`, `RetireBotCredential` | organizationId, botId, clientId | `credentialRetired` (subject: the bot) |
+| `SetBotMembership`, `RemoveBotMembership` | organizationId, botId, workspaceId, persona | `personaChanged` / `membershipEnded` |
+| `SetBotCollaboration`, `WithdrawBotCollaboration` | organizationId, botId, workspaceId | — (collaboration is checked live at central) |
+| `SetPersonMembership`, `RemovePersonMembership` | organizationId, personId, workspaceId, persona | `personaChanged` / `membershipEnded` |
+| `AllowMachine`, `WithdrawMachineAllowance` | organizationId, installation, workspaceId | `allowanceWithdrawn` |
+| `RevokeMachine` (existing, extended) | installation | `machineRevoked` per affected workspace (fan-out below) |
+| `AllowWorkspacePair`, `WithdrawWorkspacePair` | organizationId, fromWorkspaceId, toWorkspaceId | — |
+| `RemoveSession` | organizationId, session | `sessionRemoved` |
+| `SetTokenLifetime` | organizationId, seconds (60..=3600) | — |
+| Lookups: `IdentityLookup`, `WorkspaceLookup`, `MachineLookup`, `RemovalStatus` | organizationId plus the subject | — |
+
+**Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). The guard refuses everyone else before any read or write.
+
+## Service requests (R27, C7)
+
+| Edge | Credential | Receiver checks | Repeat |
+|---|---|---|---|
+| Fleet central → sign-in: mint a session's token | `private_key_jwt` client authentication at the token endpoint (RFC 7523 §2.2), grant type `urn:agent-collaboration:grant-type:fleet-session`, the `Grant` in the request body | client is central's pinned session-issuing client; assertion audience is the token endpoint, single-use `jti`; the `Grant` is inside its redemption window | equivalent token, same `grant_expires_at` |
+| Sign-in → Fleet central: decide for a bot | a service token the sign-in service signs with its published signing key: `aud` = central's decision address, `scope` = `issuance-decisions`, lifetime ≤ 60 s | issuer and key from the pinned published key set; audience; scope; expiry | decides again with a new mark |
+| Fleet central → Tool Portal: deliver a notice | a service token from the issuer by client credentials with central's `private_key_jwt`: `aud` = the Portal's notice address, `scope` = `removal-notices` | issuer key; audience; scope; `client_id` is central's pinned client; the notice's organization and workspace are hosted here | no further effect (notice ID) |
+| Fleet central → sign-in: confirm a person's session | a service token as in the previous row, `aud` = the sign-in service's confirmation address, `scope` = `session-confirmation` | as above | confirms again |
+
+All edges run over TLS, including Cloudflare service bindings, which carry the same tokens. **Trust configuration** is pinned at deploy: each receiver's issuer URL, published-key URL and the client ID expected per operation. **Rotation:** central publishes its client key set at a fixed address the issuer reads; it adds a new key, waits one refresh, then signs with it. The issuer rotates its signing keys the existing way; receivers refetch the key set once on an unknown key ID.
+
+## Removal across owners (R19–R21)
+
+No transaction spans the Registry, Better Auth and organization objects. Each removal commits at its owner, is fenced from that commit, and reaches every workspace through a durable outbox.
+
+| Reason | Owner and commit | Fence: no new grant from | Notices | The admin sees done when |
+|---|---|---|---|---|
+| membership ended, persona changed, bot retired, allowance withdrawn, session removed, session ended | organization authority, one transaction: the change, its own next mark, one outbox row per affected workspace | that transaction (decisions read the same state) | outbox → Portal, resent with capped backoff | every row acknowledged |
+| credential retired | organization authority, one transaction: the credential marked retiring, its mark, outbox rows for the bot's member workspace, and an outbox step "disable client at the issuer" | that transaction: decisions refuse that client | outbox → Portal; outbox → issuer (disable the client) | Portal rows acknowledged and the issuer confirms |
+| machine revoked | Registry, existing revocation: new connections refused at commit, open sessions end when the revocation reaches them (FL-12); plus a new Registry fan-out step per organization authority | the Registry commit: the broker checks enrollment on every decision | each organization authority, on receipt, withdraws that machine's allowances in one transaction with one mark and writes a machine notice per affected workspace | every organization has recorded it and every notice is acknowledged |
+| a tool profile or the session default changes at the Portal | Portal configuration | not needed: tokens carry the persona name or the default reference, and the Portal resolves both at each call | none | immediately |
+
+**Discovery:** an organization authority knows its own memberships, allowances and sessions; the Registry fan-out visits every organization authority of the fleet. **Restart:** every step is an idempotent outbox row; a host restart resumes from the outbox. A removal shows `pending` in `RemovalStatus` until its last step completes; nothing reports done early.
 
 ## Components
 
 | Component | Owns | Home | Consumers | Changes when |
 |---|---|---|---|---|
-| **Organization authority** (new) | E1, E4, E7, E8, E9, E13, E15, E17; grant revisions; the configured token lifetime; the removal outbox; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (issuance decisions) | membership or issuance policy changes |
-| **Session token broker** (new) | Turning a Router's request into a token: decide, then mint as a service client | `collaboration-central-core` | Router forwarder | the session grant contract changes |
-| **Admin surface** (modified) | Owner-only commands and lookups (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
-| **Collaboration admission** (modified) | Who may post or message where: bound actor, workspace pairs, bot collaborations | `project_admission`, `session_request_admission` (modified); a new bot collaboration route | Router (forwarded writes), bots | collaboration rules change |
-| **Fleet object** (existing) | E2, E16 | existing | organization authority (project → workspace) | — |
-| **Machine registry** (existing) | E6 | existing | organization authority, session token broker | — |
-| **Session binding** (new, Router) | Which session each collaboration call came from | `collaboration-mcp` and `collaboration-service` (modified); `acp-client-runtime` per-session MCP list (modified) | collaboration MCP tools | harness wiring changes |
-| **Session registrar** (new, Router) | Registering each launched or attached session with its project, starter, persona and isolation | `collaboration-service` (new module `fleet_session_registrar`) | session binding, forwarder | launch facts change |
-| **Tool Portal forwarder** (new, Router) | Getting, caching in memory and attaching each session's token; one retry on 401 | `codex-router-host` (new module `portal_session_forwarder`) | the harness's Tool Portal MCP entry | token lifetime or Portal contract changes |
-| **Token issuer** (existing, modified) | Bot credentials (E5), minting (E11), the session grant | `packages/auth` | bots, session token broker, Tool Portal (published keys), Fleet central (published keys) | token claims or grants change |
-| **Caller check** (existing, modified) | Admit or refuse a call: token, notices, persona | `tool-host-core/src/caller-admission` | hosted MCP proxy | admission rules change |
-| **Workspace store** (existing, modified) | Approval single-use counts (unchanged) and received removal notices (new) | `tool-host-core/src/workspace-authority`; Cloudflare `WorkspaceAuthority` Durable Object; Node store | caller check, removal receiver, approval use | store shape changes |
-| **Removal receiver** (new, Portal) | Accepting only Fleet central's notices; acknowledging | `tool-host-core` (new route `/internal/v1/removal-notices`) | Fleet central | notice contract changes |
+| **Organization authority** (new) | E1, E4, E7, E8, E9, E13, E15, E17; the ordered marks; the configured lifetime; the removal outbox; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (decisions) | membership or issuance policy changes |
+| **Session token broker** (new) | Turning a Router's request into a token: decide, then mint through the fleet-session grant | `collaboration-central-core` | Router forwarder | the session grant contract changes |
+| **Admin surface** (modified) | Owner-only commands and lookups, and their guard (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
+| **Collaboration admission** (modified) | Who may post or message where: bound actor, workspace pairs, bot collaborations, collaboration tokens | `project_admission`, `session_request_admission` (modified); a new bot collaboration route | Router (forwarded writes), bots | collaboration rules change |
+| **Registry revocation fan-out** (new, small) | Delivering a machine revocation to every organization authority | Registry object (modified) | organization authorities | revocation flow changes |
+| **Fleet object** (existing) | E2, E16 | existing | organization authority | — |
+| **Session binding** (new, Router) | Which session each collaboration call came from; binding lifecycle | `collaboration-mcp`, `collaboration-service` (modified); `acp-client-runtime` per-session MCP list (modified) | collaboration MCP tools | harness wiring changes |
+| **Session registrar** (new, Router) | Registering each launched or attached session; reporting its end | `collaboration-service` (new module `fleet_session_registrar`) | session binding, forwarder | launch facts change |
+| **Tool Portal forwarder** (new, Router) | Getting, caching in memory and attaching each session's token; refetching before `grant_expires_at` and once on a 401 | `codex-router-host` (new module `portal_session_forwarder`) | the harness's Tool Portal MCP entry | token or Portal contract changes |
+| **Token issuer** (existing, modified) | Bot credentials (E5); the bot gate and claim stamping; the fleet-session grant; service tokens; person confirmation | `packages/auth` | bots, Fleet central, Tool Portal (published keys) | claims or grants change |
+| **Caller check** (existing, modified) | Admit or refuse a call: token, marks, persona narrowing | `tool-host-core/src/caller-admission`; narrowing in `tool-access/src/authorization` | hosted MCP proxy | admission rules change |
+| **Workspace store** (existing, modified) | Approval single-use counts (unchanged, keyed by `principal`) and received removal marks (new) | `tool-host-core/src/workspace-authority`; Cloudflare `WorkspaceAuthority` Durable Object; Node store | caller check, removal receiver, approval use | store shape changes |
+| **Removal receiver** (new, Portal) | Accepting only central's notices (service token); recording durably; acknowledging | `tool-host-core` (new route `/internal/v1/removal-notices`) | Fleet central | notice contract changes |
 
-**Removed:**
+**Removed:** the Tool Portal's agent-management route and retirement (`workspace-agent-management.ts`, `workspace-agent-retirement.ts`, `agent-retirement.ts`) and its membership records; the sign-in service's workspace links.
 
-- The Tool Portal's agent-management route and retirement (`workspace-agent-management.ts`, `workspace-agent-retirement.ts`, `agent-retirement.ts`), and its membership records.
-- The sign-in service's workspace links (E11 in the people sign-in design).
-
-The owner now manages access through the admin surface, and membership lives only in the organization authority.
-
-**Allowed edges:**
-
-- Router → Fleet central, over the enrolled connection.
-- Fleet central → issuer, as a service client.
-- Issuer → Fleet central, for issuance decisions.
-- Fleet central → Tool Portal, for removal notices only.
-- Tool Portal → issuer published keys, and Fleet central → issuer published keys, both cached.
+**Allowed edges:** Router → Fleet central over the enrolled connection; the four service-request edges above; bots → issuer, Tool Portal and collaboration admission; people → admin surface; the Tool Portal and Fleet central → the issuer's published keys (cached).
 
 **Forbidden edges, and how they're enforced:**
 
 | Forbidden edge | Enforced by |
 |---|---|
 | Tool Portal → Fleet central on a tool call (R17) | the caller check has no Fleet client: a dependency rule, checked by lint and review |
-| An agent or bot → the admin surface | a person token is required: runtime guard |
-| An agent supplying its own sender | the bound actor is required: runtime guard |
-| The issuer minting without a decision | the response-release gate: runtime guard (existing seam) |
+| Anyone but the organization's current owner → the admin surface | the owner guard: runtime |
+| An agent supplying its own sender | the bound actor: runtime |
+| The issuer minting a workspace or collaboration token without a decision | the response-release gate and the fleet-session grant handler: runtime |
+| Any consumer identifying a caller by `sub` | the claims schema exposes `principal`; review rule |
 
 ## How a session gets and uses its token
 
@@ -275,42 +406,34 @@ sequenceDiagram
   participant B as Token issuer
   participant P as Tool Portal
   Note over R: start session S for project X
-  R->>OA: RegisterFleetSession(S, X, starter, persona?, isolation)
-  OA->>OA: X's workspace W; machine allowed for W; starter allowed (OD1)
-  OA-->>R: Registered(W, persona) or Refused(reason)
-  H->>R: MCP tools/call on S's own Portal address
+  R->>OA: RegisterFleetSession(S, X, starter, persona?, isolation, environment)
+  OA->>OA: X's workspace W, machine allowed for W, starter allowed (OD1)
+  OA-->>R: Registered(W, persona ref) or Refused(reason)
+  H->>R: MCP tools/call on S's binding
   R->>OA: IssueSessionToken(S)  [session token broker]
-  OA->>OA: decide: S active, machine enrolled and allowed, revision g
-  OA->>B: session grant with the Grant decision (central is the client)
-  B-->>OA: token (exp = iat + lifetime, grant_revision g)
-  OA-->>R: token
+  OA->>OA: S active, machine enrolled and allowed, take mark g, grant expires at t+L
+  OA->>B: fleet-session grant: Grant(g, decided t, expires t+L), private_key_jwt
+  B->>B: client is central, inside the 60 s window
+  B-->>OA: token (sub = central's client, principal = S, grant_expires_at = t+L)
+  OA-->>R: Issued(token, t+L)
   R->>P: tools/call + bearer token
-  P->>P: verify signature, audience W, expiry
-  P->>P: workspace store: any notice for S, or S's machine, with revoked_through >= g?
-  P->>P: persona within W's session default?
+  P->>P: signature, audience W, workspace and organization, both expiries, client is central
+  P->>P: highest removal mark for S or S's machine in W > g ?
+  P->>P: evaluate the call under the session default and the named persona, take the stricter
   P-->>R: result, or refused (unauthenticated | not permitted)
   R-->>H: result
 ```
 
-The forwarder caches the token in memory and fetches a new one before it expires. It never hands the token to the harness.
+The forwarder keeps the token in memory, refetches before `grant_expires_at`, and never hands the token to the harness.
 
 **Change from today:**
 
-- **Added:**
-  - session registration;
-  - the session token broker and the session grant;
-  - the forwarder;
-  - the store's notice check.
+- **Added:** session registration; the broker and the fleet-session grant; the forwarder; the mark check; persona narrowing.
 - **Removed:** the Portal reading membership from its store (`caller-check.ts:28–31`).
-- **Changed:**
-  - persona comes from the token claim, not the store;
-  - the token subject is a session, not an agent client.
-- **Unchanged, and must stay:**
-  - offline signature verification;
-  - audience derived from the configured origin, never Host;
-  - approval single-use in the store.
+- **Changed:** persona comes from the token; the caller is `principal`, not `sub`; usability ends at `grant_expires_at`.
+- **Unchanged, and must stay:** offline signature verification; audience derived from the configured origin, never Host; approval single-use in the store.
 
-## How a bot gets its token
+## How a bot gets its tokens
 
 ```mermaid
 sequenceDiagram
@@ -319,18 +442,20 @@ sequenceDiagram
   participant B as Token issuer
   participant OA as Organization authority
   participant P as Tool Portal
-  BOT->>B: client credentials (private_key_jwt or secret), resource = W's address
-  B->>OA: DecideBotIssuance(bot, W)
-  OA-->>B: Grant(persona, revision g, lifetime) or Refuse(reason)
+  participant CA as Collaboration admission
+  BOT->>B: client credentials, resource = W's address (or the collaboration address)
+  B->>OA: DecideBotIssuance(client, W) with a service token
+  OA-->>B: Grant(bot, persona, g, decided t, expires t+L) or Refuse(reason)
+  B->>B: gate keeps the Grant for this request, claim hook stamps principal, marks, expiry
   B-->>BOT: token, or invalid_client / invalid_target
-  BOT->>P: tools/call + token
+  BOT->>P: tools/call + workspace token
   P-->>BOT: result, or refused
+  BOT->>CA: message + collaboration token
+  CA->>CA: verify token, bot and credential active, collaboration or pair allows the target
+  CA-->>BOT: delivered, or refused
 ```
 
-**Change from today:**
-
-- **Changed:** the issuance gate (`sign-in-response-release.ts:114–146`). It no longer reads its own workspace links; it asks Fleet central. If Fleet central doesn't answer within the timeout, the token is refused (fail closed).
-- **Removed:** the workspace link store.
+**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The existing response-release gate (`sign-in-response-release.ts:114–146`) asks central once and keeps the `Grant` in request-scoped state; the existing `customAccessTokenClaims` hook (`provider-configuration.ts:220`) stamps the claims from it. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback** if the request-scoped handoff can't be made reliable: a bot extension grant that calls `issueTokens` with `accessTokenClaims`, the same surface the fleet-session grant uses. The plan's first slice proves which.
 
 ## How a removal reaches the Tool Portal
 
@@ -341,21 +466,21 @@ sequenceDiagram
   participant OA as Organization authority
   participant P as Tool Portal (removal receiver)
   participant WS as Workspace store
-  O->>OA: RemoveMembership(W, subject)
-  OA->>OA: one transaction: membership removed, revision r, outbox notice N (revoked_through r)
-  OA-->>O: done, notice N pending
+  O->>OA: RemoveBotMembership(W, bot)
+  OA->>OA: one transaction: membership removed, next mark r, outbox notice N (removal r)
+  OA-->>O: applied, removal pending
   loop until acknowledged
-    OA->>P: POST notice N (signed by central's service key)
-    P->>P: verify sender is Fleet central
-    P->>WS: record N (idempotent by notice ID)
+    OA->>P: POST notice N with a service token
+    P->>P: verify issuer, audience, scope, central's client
+    P->>WS: keep max(stored, r) for the bot in W, record N's ID (durably)
     P-->>OA: Recorded or AlreadyRecorded
   end
   OA->>OA: mark N acknowledged
 ```
 
-**Why revisions instead of times:** the Specification's grant mark (C1) is `grant_revision`, and its revoked-through mark (C3) is `revoked_through`. A token decided at revision g ≤ r is covered, however late it was minted. A decision taken after the removal refuses, because the membership is gone. The organization authority serializes its own writes, so revisions are ordered within an organization.
+**Why ordered marks:** every grant decision and every removal takes the next value of one per-organization counter inside the organization authority's serialized write. A token whose grant took g is covered by a removal r exactly when g < r. A grant decided before the removal is covered however late it was minted; a grant decided after it (the next value, r + 1 or later) is accepted, including right after a persona change. The Specification's grant mark is `grant_revision`, and its removal mark is `removal_revision`.
 
-Every way access is lost writes a notice in the same transaction as the change: membership ended, persona changed, bot retired, credential retired, machine revoked, allowance withdrawn, session removed. For a machine revocation the notice subject is the machine, so it covers every session on it (R20).
+**Retention:** a covered grant was decided before r, so its `grant_expires_at` is at most 60 minutes after the removal. The Portal keeps each mark and notice ID for 61 minutes after receipt.
 
 ## How a collaboration call is attributed
 
@@ -365,8 +490,8 @@ sequenceDiagram
   participant H as Harness session S
   participant RB as Router session binding
   participant CA as Collaboration admission (central)
-  H->>RB: board post on S's own MCP address (declares sender T)
-  RB->>RB: bound actor = S
+  H->>RB: board post on S's binding (declares sender T)
+  RB->>RB: binding valid, on this installation, S active, bound actor = S
   alt T differs from S
     RB-->>H: refused: sender mismatch, nothing recorded
   else T is S or absent
@@ -376,56 +501,58 @@ sequenceDiagram
   end
 ```
 
-**Session binding:**
+**Session binding** is a bearer capability, not a secret the session proves:
 
-- **Codex:** each app-server thread's tool connection carries the harness-stamped thread ID.
-- **Claude and Cursor (ACP):** the Router gives each session its own MCP address, holding an unguessable binding ID minted at launch. The provider runtime's MCP server list moves from one per provider to one per session (`provider_connection_task.rs:280–286, 451–453`).
+- **Codex:** each app-server thread's tool connection carries the harness-stamped thread ID, which the Router maps to the session.
+- **Claude and Cursor (ACP):** the Router gives each session its own MCP address holding a random 128-bit binding ID. The provider runtime's MCP server list moves from one per provider to one per session (`provider_connection_task.rs:280–286, 451–453`).
+- **Lifecycle:** minted at launch; kept in Router memory and in that session's harness configuration; re-issued (and the configuration rewritten) when a session is resumed after a Router restart; retired when the session ends and never reused; valid only on the installation that minted it.
+- **Limit:** any process of the same machine user that reads another session's configuration holds its binding. That is E14's shared bucket, recorded and shown, not prevented.
 
-**Change from today:**
+**Change from today:** the sender is no longer taken from call arguments (`message_tools.rs:18`); added the binding, the mismatch refusal and the pair check; central records the forwarded actor as the bound session.
 
-- **Removed:** taking the sender from the call arguments (`message_tools.rs:18`).
-- **Added:**
-  - the binding lookup;
-  - the mismatch refusal;
-  - the pair check in central.
-- **Changed:** central records the forwarded actor as the bound session.
+## How a session's persona is narrowed (R9)
+
+The token carries `persona` as `sessionDefault` or `named`. At each call the Portal resolves the workspace's current `portal.sessionDefaultProfile`, and, for `named`, that profile too. It runs the existing access assessment once per profile and takes the stricter result: the tool is available only if both make it available, and runs without approval only if both allow that. An undefined named profile makes nothing available. Bots carry `named` personas set by the admin and are assessed against that one profile.
 
 ## State
 
 **A fleet harness session** (organization authority):
 
-| State | Entered by | Leaves to | Guard |
+| State | Entered by | Leaves to | Guard and effect |
 |---|---|---|---|
 | active | `RegisterFleetSession` accepted | removed, ended | The project exists, the machine is allowed for its workspace, and the starter is allowed (OD1). |
-| removed | The admin removes it, or its allowance or machine is withdrawn | — (terminal) | Writes a removal notice. |
-| ended | The Router reports the conversation archived or deleted | — (terminal) | The Router stops attaching tokens. |
+| removed | The admin removes it, or its allowance or machine is withdrawn | — (terminal) | Membership ends; a mark; `sessionRemoved` (or the machine/allowance) notice. |
+| ended | The Router reports the conversation archived or deleted (`EndFleetSession`) | — (terminal) | Membership ends; a mark; `sessionEnded` notice; the binding is retired. |
 
-An illegal transition is any return from removed or ended to active. It is refused: a new conversation is a new session.
+Any return from removed or ended to active is refused: a new conversation is a new session.
 
-**A removal notice** (outbox, organization authority):
+**A removal** (organization authority outbox):
 
 | State | Entered by | Leaves to | Guard |
 |---|---|---|---|
-| pending | The transaction that caused the removal | acknowledged | Resent with capped backoff. Shown to the admin while pending. |
-| acknowledged | `Recorded` or `AlreadyRecorded` from the Portal | lapsed | — |
-| lapsed | 60 minutes after acknowledgment | — | Kept as history. The Portal may drop it after 60 minutes. |
+| pending | The transaction that caused it | acknowledged | Resent with capped backoff. Shown in `RemovalStatus`. |
+| acknowledged | Every row `Recorded` or `AlreadyRecorded` (and, for a credential, the issuer's confirmation) | lapsed | — |
+| lapsed | 61 minutes after the last acknowledgment | — | Kept as history. |
 
-**Grant revision:** one counter per organization, raised by every change that grants or removes access. Each decision reads it and stamps it into the token.
+**Marks:** one counter per organization authority. Every grant decision and every removal takes the next value in the same serialized write that reads or changes the state it depends on.
 
 ## Failure, recovery and concurrency
 
 | Situation | Detected by | Handling | Owner |
 |---|---|---|---|
-| Fleet central unreachable for issuance | timeout on the decision or token request | Refuse (C2 unavailable). The forwarder retries on the next call, and existing tokens run to expiry. | Session token broker; token issuer |
-| Fleet central unreachable for a bot's decision | the issuer's timeout | Refuse with `temporarily_unavailable` | Token issuer |
-| Tool Portal unreachable for a notice | no acknowledgment | Resend with capped backoff, and show as pending. Expiry is the backstop. | Organization authority |
-| Duplicate notice | same notice ID | `AlreadyRecorded`, no effect | Removal receiver |
-| Portal restart | — | Notices are persisted in the store and survive a restart | Workspace store |
-| Issuance racing a removal | revisions | Covered by `revoked_through` if g ≤ r, or refused if the decision comes after | Organization authority |
-| A session's token expiring mid-call | — | The call admitted at its start completes. The next call needs a fresh token. | Caller check |
-| Two starts for one conversation | same `SessionRef` | The second returns the existing registration, or is refused if the session is removed or ended | Organization authority |
-| Sender mismatch | binding lookup | Refused, nothing recorded | Session binding |
-| The issuer's signing key rotates | published key set | The Portal and central refetch the key set on an unknown key ID, once per request | Caller check |
+| Fleet central unreachable for issuance | timeout on the decision or token request | Refuse (C2 unavailable). The forwarder retries on the next call; existing tokens run to `grant_expires_at`. | broker; issuer |
+| A grant's mint is delayed or repeated | `decided_at` vs. now | Nothing mints after 60 s; a repeat inside it ends at the same moment | issuer |
+| Tool Portal unreachable for a notice | no acknowledgment | Resend with capped backoff; show pending; grant expiry is the backstop | organization authority |
+| Notices arrive out of order | lower mark than stored | Keep the higher; acknowledge | removal receiver |
+| Duplicate notice | same notice ID | `AlreadyRecorded`, no effect | removal receiver |
+| Portal restart | — | Marks and notice IDs are persisted before acknowledging | workspace store |
+| A grant racing a removal | marks | g < r covered; a decision after the removal takes a larger mark | organization authority |
+| Machine revoked; fan-out interrupted | Registry outbox | Issuance already fenced by the Registry commit; fan-out resumes; pending until every organization records | Registry; organization authorities |
+| Credential retired; issuer step fails | outbox | Decisions already refuse that client; the disable step retries; pending until confirmed | organization authority |
+| A session's token expires mid-call | — | The call admitted at its start completes; the next needs a fresh token | caller check |
+| Two starts for one conversation | same `SessionRef` | The second returns the existing registration, or `alreadyEnded` | organization authority |
+| Sender mismatch, stale or foreign binding | binding lookup | Refused, nothing recorded | session binding |
+| The issuer's signing key rotates | published key set | Receivers refetch once on an unknown key ID | each receiver |
 
 ## Trust boundaries
 
@@ -436,14 +563,15 @@ flowchart LR
     RT[Router: binding, registrar, forwarder<br/>holds the enrollment credential, a 0600 file]
   end
   subgraph CL[Cloud - trusted services]
-    C[Fleet central<br/>truth, service key]
+    C[Fleet central<br/>truth, client key]
     I[Token issuer<br/>signing key, bot credentials]
-    T[Tool Portal<br/>tool credentials, approvals, notices]
+    T[Tool Portal<br/>tool credentials, approvals, marks]
   end
   BOT[Bot - untrusted secret storage] -->|own credential| I
   RT -->|enrolled connection: Access + credential| C
-  C -->|service client, private_key_jwt| I
-  C -->|signed notices| T
+  C -->|private_key_jwt: fleet-session grant, service tokens| I
+  C -->|notices, service token| T
+  I -->|decision requests, service token| C
   RT -->|token on each call| T
   I -.->|published keys| T
   I -.->|published keys| C
@@ -452,37 +580,29 @@ flowchart LR
 | Asset | Where | Protects | If stolen |
 |---|---|---|---|
 | Enrollment credential | Router, a 0600 file (the owner rejected the Keychain) | Machine vouching | Every session on that machine can be impersonated until you revoke it |
-| Central's service key | Central's host secret store | Getting session tokens minted; signing notices | Tokens for any session, and forged notices, until rotated. This is the highest-value key. |
-| Issuer signing key | Better Auth (existing) | Every token | Any token, until rotated |
+| Central's client key | Central's host secret store | Fleet-session grants and central's service tokens | Tokens for any session and forged notices until rotated. The most valuable key; one key for both uses is accepted because both are central's own authority. |
+| Issuer signing key | Better Auth (existing) | Every token, including service tokens it self-signs | Any token, until rotated |
 | Bot secret or key | The bot's own storage (unknown) | That bot | That bot, until retired (accepted limit, U2) |
-| Session binding ID | Router memory and that session's MCP config | Attribution | Another process on the same machine (same user) could post as that session. This is the shared-bucket limit, recorded in E14. |
+| Session binding | Router memory and that session's harness configuration | Attribution | Another process of the same user can act as that session: the shared-bucket limit (E14) |
 
-Sessions on one machine are not isolated from each other unless their isolation kind says so (R23). The Router is trusted for every session on its machine.
+The Router is trusted for every session on its machine. Sessions on one machine are not separated from each other unless their isolation kind does it (R23).
 
 ## Other qualities
 
 | Quality | Realization |
 |---|---|
-| Privacy | Tokens carry the machine, project and isolation only for sessions, and nothing secret. Notices carry IDs and reasons only. |
-| Reliability | Fail closed on issuance. The outbox with acknowledgment and backoff for notices. Persisted notices at the Portal. |
-| Performance | Per call, the Portal verifies the signature and reads the workspace store once, which replaces today's membership read. Issuance happens once per token lifetime per identity and workspace. |
-| Observability | Admin lookups show pending notices, shared buckets, and identities with their workspaces. Each refusal logs a bounded reason class. |
-| Platform | One contract, any host. Central runs on a Cloudflare Durable Object per organization, or on Tokio with SQLite per organization. The Portal runs on Cloudflare or Node. Every service-to-service request carries a signed client assertion and is verified against the sender's published keys, including over a service binding. |
+| Privacy | Tokens carry the machine environment, project and isolation only for sessions, and nothing secret. Notices carry IDs, marks and reasons only. |
+| Reliability | Fail closed on issuance. Outboxes with acknowledgment and backoff. Durable marks at the Portal before acknowledging. |
+| Performance | Per call, the Portal verifies the signature, reads one stored mark, and assesses up to two profiles. Issuance happens once per lifetime per identity and workspace, each with one durable mark write. |
+| Observability | Lookups show pending removals, shared buckets, and identities with their workspaces. Each refusal logs a bounded reason class. |
+| Platform | One contract, any host. Central runs on a Durable Object per organization or on Tokio with SQLite per organization. The Portal runs on Cloudflare or Node. The sign-in service runs on Cloudflare and gains a Node host entry (new work, below). |
 | Isolation (first round) | Recorded and shown. Never enforced. |
 
 ## Changes and cutover
 
-- **Tool Portal (#262 line):**
-  - membership records and the agent-management route are removed;
-  - the store keeps approval counts and adds notices;
-  - the caller check reads the token's persona.
-- **Sign-in (#263 line):**
-  - workspace links are removed;
-  - the issuance gate asks Fleet central;
-  - the session grant is added;
-  - bot credentials carry `botId`;
-  - people sign-in asks Fleet central for organization admission (D2's location).
-- **Fleet:** the organization authority, the session token broker, binding, the registrar, the forwarder, admin commands and lookups, and collaboration admission.
+- **Tool Portal (#262 line):** membership records and the agent-management route are removed; the store keeps approval counts (keyed by `principal`) and adds removal marks; the caller check reads the token's principal and persona and narrows.
+- **Sign-in (#263 line):** workspace links removed; the gate asks Fleet central; the fleet-session grant, the collaboration resource, service tokens and person confirmation added; bot credentials carry `botId`; people sign-in asks Fleet central for organization admission (D2's location); a Node host entry for the sign-in service.
+- **Fleet:** the organization authority, broker, Registry fan-out, binding, registrar, forwarder, admin commands, guard and lookups, and collaboration admission.
 
 There is no coexistence period. The test deployments are the only consumers, so the cutover is a hard replacement, with no migration of the old Portal membership records.
 
@@ -490,43 +610,42 @@ There is no coexistence period. The test deployments are the only consumers, so 
 
 | U | R | E | Owner | Interface | Shape and home | State | Failure | Proof |
 |---|---|---|---|---|---|---|---|---|
-| U1 | R1: three kinds only | E3, E4, E7 | Organization authority; token issuer | `Principal` enum; token `subject_kind` | `identity_contract.rs`; `workspaceTokenClaimsSchema` | none: classification | Unknown kind rejected at parse | Contract: claims and principal parse/refuse |
-| U3, U17 | R2: a session is accepted only as vouched for by its machine | E6, E7 | Session token broker | `IssueSessionToken` over the enrolled connection | `identity_contract.rs` | session active | Revoked or expired machine → `IdentityNotProven` | Fleet integration: an enrolled and a revoked machine each request |
-| U19 | R3: attribution to the arriving session | E7 | Session binding | per-session MCP address; mismatch refusal | `collaboration-mcp` error variant `SenderMismatch` (new) | none: per call | Mismatch refused, nothing written | Real harness runs: Codex, Claude, Cursor A-as-B |
-| U2 | R4: bot accepted only with an active credential; storage note shown | E4, E5 | Token issuer | client credentials; lookup | Better Auth client + `botId`; `BotRecord` | credential active/retired | Retired → `invalid_client` | Sign-in integration; admin lookup |
-| U20 | R5: people sign-in as designed | E1, E3 | Token issuer | the people sign-in design's interfaces | existing | as in that design | as in that design | The people sign-in design's proof |
-| U5 | R6: a bot is a member of at most one workspace | E4, E8 | Organization authority | admin `SetBotMembership` | `Membership` | membership active/removed | A second membership → refused | Central unit + admin API |
-| U6 | R7: a session is a member of its project's workspace | E7, E8, E16 | Organization authority | `RegisterFleetSession` | `RegisterFleetSession` | session active | Unknown project → refused | Router + central integration with a real session |
-| U6 | R8: no allowance → start refused (OD1 gap for the starter rule) | E6, E7, E15 | Organization authority | `RegisterFleetSession` | `SessionRefusal::MachineNotAllowed` | — | Refused | Central integration; **gap: OD1 starter rule** |
-| U11 | R9: persona = session default or narrower | E8, E10 | Caller check | profile comparison at call | `portal.sessionDefaultProfile` | none | Wider → refused "not permitted" | Portal unit + host e2e |
-| U20, U21 | R10: person membership is admin-managed | E3, E8 | Organization authority | admin `SetPersonMembership` | `Membership` | active/removed | Non-admin refused | Admin API integration |
-| U7 | R11: a bot collaborator may message, nothing more (OD3 gap: allowed or automatic) | E9 | Collaboration admission | bot collaboration route | bot token + `BotCollaboration` | collaboration active/withdrawn | Tool, start or role refused | Central integration + Portal refusal; **gap: OD3 admission rule** |
-| U8, U7 | R12: messaging across workspaces needs a pair | E17 | Collaboration admission | pair check on forwarded writes | `WorkspacePair` | pair active/withdrawn | No pair → refused | Router + central integration |
-| U21 | R13: admin actions only by people | E2, E4, E6, E8, E9, E15, E17 | Admin surface | person-token guard | person token claims | none | Bot or session → refused, nothing changed | Admin API integration |
-| U9 | R14: lookups answer | E2–E17 | Organization authority | admin lookups | `identity_contract.rs` lookup results | none: read | — | Admin API integration |
-| U10 | R15: tokens only to active members; claim fields | E8, E11 | Token issuer + organization authority | `IssuanceDecision::Grant`; claims | `workspaceTokenClaimsSchema` | — | Refuse → no token | Contract + sign-in integration |
-| U12 | R16: lifetime ≤ configured ≤ 60 min; default 5 | E11 | Organization authority | `lifetime_seconds` in the decision | `TokenLifetimeSeconds` (bounded newtype) | organization setting | Out of range unrepresentable | Unit on the newtype + issued token `exp - iat` |
-| U10, U12 | R17: Portal admission with no fleet call | E10, E11, E12 | Caller check | `checkHostedCaller` (modified) | claims schema; store notice read | none | Each C1 refusal before tools run | Portal host e2e (production entry) |
-| U14, U15 | R18: consult the truth once; allowance for sessions | E8, E11, E15 | Organization authority | `IssuanceDecision` | `identity_contract.rs` | grant revision | Unavailable → refuse | Central integration; sign-in integration with central down |
-| U13 | R19: every removal kind sends a notice; refuse from receipt | E8, E12, E15 | Organization authority; workspace store | outbox; `RemovalNotice` | `identity_contract.rs` | notice pending → acknowledged | Lost → resend; expiry backstop | Central + Portal integration per reason |
-| U13 | R20: coverage by revision; machine covers all its sessions | E11, E12 | Caller check | `revoked_through` vs `grant_revision` | both shapes | — | — | Portal unit (property) + e2e |
-| U13 | R21: resend until acknowledged; visible; kept 60 min; survives restart | E12 | Organization authority; workspace store | outbox; persisted notices | `RemovalNotice` | notice states | Restart → still applied | Integration with Portal down and restarted |
-| U13, U15 | R22: notices only from Fleet central | E12 | Removal receiver | signed-request verification | central's published keys | none | Forged → refused | Portal host e2e with a forged notice |
-| U18 | R23: isolation recorded and shown, not enforced | E7, E13, E14 | Organization authority | registration; lookup | `AgentIsolation`, `MachineEnvironment` | recorded | — | Central integration + token claims |
-| U17 | R24: no new machine keys | E6 | Router | enrolled connection only | none: no new key material | none | — | Structural review: no key generation path |
-| U14 | R25: no issuance while the truth is unavailable; stop at expiry | E11 | Token issuer; session token broker | decision timeout → refuse | — | — | Fail closed | Integration with central stopped |
-| U16 | R26: one contract, any host | all | Each service's host adapter | versioned HTTP + JSON; signed requests | `identity_contract.rs` generated JSON Schema; Zod derived | — | — | The same suites on Cloudflare and on Tokio/Node |
+| U1 | R1: three kinds only | E3, E4, E7 | organization authority; issuer | `Principal`; `principal` claim | `identity_contract.rs`; claims schema | none | unknown kind rejected at parse | contract: claims and principal parse/refuse |
+| U3, U17 | R2: a session only as vouched by its machine | E6, E7 | broker | `IssueSessionToken` over the enrolled connection | `identity_contract.rs` | session active | revoked machine → `IdentityNotProven` | Fleet integration: enrolled vs revoked |
+| U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
+| U2 | R4: bot only with an active credential | E4, E5 | issuer + organization authority | client credentials; `DecideBotIssuance` | Better Auth client + `botId`; `BotRecord` | credential active/retiring/retired | retired → `invalid_client` | sign-in integration; two-credential bot |
+| U20 | R5: people sign-in as designed | E1, E3 | issuer | the people sign-in design | existing | as there | as there | that design's proof |
+| U5 | R6: a bot in at most one workspace | E4, E8 | organization authority | `SetBotMembership` | `Membership` | active/removed | second → refused | central unit + admin API |
+| U6 | R7: session in its project's workspace | E7, E8, E16 | organization authority | `RegisterFleetSession` | as named | session active | unknown project refused | Router + central with a real session |
+| U6 | R8: no allowance → start refused (OD1 gap) | E6, E7, E15 | organization authority | `RegisterFleetSession` | `SessionRefusal::MachineNotAllowed` | — | refused | central integration; **gap: OD1 starter rule** |
+| U11 | R9: effective persona = both allow | E8, E10 | caller check | two assessments, stricter wins | `personaRefSchema`; `portal.sessionDefaultProfile` | none | undefined → nothing | Portal unit + host e2e |
+| U20, U21 | R10: person membership admin-managed | E3, E8 | admin surface | `SetPersonMembership` | `Membership` | active/removed | non-owner refused | admin API through the guard |
+| U7, U2 | R11: bot collaborator messages with a collaboration token (OD3 gap) | E9, E18 | collaboration admission; issuer | collaboration resource; `CollaborationDecision` | `collaborationTokenClaimsSchema` | collaboration active/withdrawn | tool, start, role refused; wrong audience refused | central + Portal; **gap: OD3 admission rule** |
+| U8, U7 | R12: messaging needs a pair | E17 | collaboration admission | pair check | `WorkspacePair` | active/withdrawn | no pair → refused | Router + central |
+| U21, U20 | R13: only the current owner administers | E2, E4, E6, E8, E9, E15, E17 | admin surface | owner guard + person confirmation | person token; confirmation request | none | anyone else refused, nothing revealed | admin API: owner, member, other owner, removed owner, stale session, bot, session |
+| U9 | R14: lookups answer | E2–E18 | organization authority | lookups | lookup results | none: read | — | admin API |
+| U10 | R15: tokens only to active members; claims | E8, E11 | issuer + organization authority | `IssuanceDecision::Grant`; claims | claims schema | — | refuse → no token | contract + sign-in integration |
+| U12 | R16: grant expiry fixed at decision; redemption window; ≤ 60 min | E11, E18 | organization authority; issuer | `grant_expires_at`; 60 s window | `TokenLifetimeSeconds`; `UnixSeconds` | organization setting | late mint → nothing | unit + delayed-mint integration |
+| U10, U12 | R17: Portal admission, no fleet call | E10, E11, E12 | caller check | `checkHostedCaller` (modified) | claims; stored marks | none | each C1 refusal before tools run | Portal host e2e (production entry) |
+| U14, U15 | R18: consult once; ended session refused | E8, E11, E15 | organization authority | `IssuanceDecision` | `identity_contract.rs` | marks | unavailable → refuse | central + sign-in integration |
+| U13 | R19: every removal kind; fenced; pending shown | E8, E12, E15 | organization authority; Registry fan-out | outboxes | `RemovalNotice` | removal states | interrupted fan-out resumes | interruption cases per owner |
+| U13 | R20: ordered marks; strict cover; no lowering | E11, E12 | organization authority; caller check | `removal_revision` vs `grant_revision` | both shapes | marks | — | property test + e2e |
+| U13 | R21: resend; durable before ack; retention | E12 | organization authority; workspace store | outbox; persisted marks | `RemovalNotice` | notice states | restart → still applied | Portal down and restarted; retention boundary |
+| U13, U15 | R22: notices only from central | E12 | removal receiver | service token check | pinned trust | none | forged → refused | Portal host e2e with forged notices |
+| U18 | R23: isolation recorded and shown | E7, E13, E14 | organization authority | registration; lookup | `AgentIsolation`, `MachineEnvironment` | recorded | — | central + token claims round trip |
+| U17 | R24: no new machine keys | E6 | Router | enrolled connection only | none | none | — | structural review |
+| U14 | R25: fail closed; no late mint | E11, E18 | issuer; broker | timeout → refuse; window | — | — | fail closed | central stopped between decision and mint |
+| U16 | R26: one contract, any host | all | each host adapter | `/v1/` HTTP + JSON | generated JSON Schema; Zod derived | — | — | the same suites on Cloudflare and Tokio/Node |
+| U13, U15, U16 | R27: service requests authenticated per edge and operation | all | each receiver | service tokens; `private_key_jwt` | pinned trust configuration | — | wrong caller/operation/receiver refused | per-edge negative cases |
 
-**Coverage:**
-
-- **R1–R26:** every row above is covered, except **R8**, whose starter rule waits on **OD1**, and **R11**, whose admission rule waits on **OD3**.
-- **E1–E17:** each is bound in the binding table.
-- **Supersessions:** as listed in the Specification.
+**Coverage:** R1–R27 each have a row; **R8** waits on **OD1** and **R11**'s admission rule on **OD3**. E1–E18 are each bound above. Supersessions are as listed in the Specification.
 
 ## Deviations and unresolved decisions
 
-- **OD1:** who may start a session for W (the starter check in `RegisterFleetSession`). The slot is designed; the rule waits on the owner.
-- **OD3:** whether a bot collaboration needs the admin's allowance. The design holds `BotCollaboration` records the admin sets, which is the recommended answer. If the owner chooses "automatic", collaboration admission derives a collaboration for every workspace in the bot's organization other than its member workspace, and the record becomes a withdrawal instead.
-- **agent-vm VM sessions:** the `Vm` isolation kind and its launch record need agent-vm to hand the host Router a launch record over a local channel. That is agent-vm's work. In the first round, only Router-launched `Host` and `ProcessSandbox` sessions are registered.
-- **Persona widening** is refused at the first call, not at session start. Profiles are owned by the Tool Portal, and Fleet central keeps no copy of them.
+- **OD1:** who may start a session for W (the starter check in `RegisterFleetSession`). Today any session on the same Router can start one with no workspace check (Fleet Lead); the recommended rule adds membership of W.
+- **OD3:** whether a bot collaboration needs the admin's allowance. The design holds `BotCollaboration` records the admin sets (the recommendation). If the owner chooses "automatic", collaboration admission derives a collaboration for every workspace in the bot's organization except its member workspace, and the record becomes a withdrawal.
+- **Persona narrowing clips rather than refuses** a wider named persona; it never widens. Refusal at start would need profile copies at central.
+- **Better Auth mapping:** session tokens use a fleet-session extension grant; bot tokens use the existing gate and claim hook, with a bot extension grant as the stated fallback. Neither is proven until the plan's first slice runs against the pinned 1.7.8.
+- **Sign-in on a non-Cloudflare host** is new work (U16 covers every service).
+- **agent-vm VM sessions:** the `Vm` kind and its launch record need agent-vm to hand the host Router a launch record over a local channel. In the first round, only Router-launched `Host` and `ProcessSandbox` sessions are registered.
 - **People's organization admission** moves to Fleet central. The D2 sign-in revision (people sign-in, 34d1a0e0) changes location before it is built.
