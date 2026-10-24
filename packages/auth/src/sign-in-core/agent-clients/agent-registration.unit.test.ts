@@ -6,25 +6,27 @@ import {
 } from '#auth/sign-in-core/agent-clients/agent-registration';
 
 const organizationId = '11111111-1111-4111-8111-111111111111';
-const audience = 'https://portal.invalid/mcp';
+const botId = '66666666-6666-4666-8666-666666666666';
 const registration = {
-	clientId: 'registered-agent',
-	metadata: { kind: 'agent', organizationId },
+	clientId: 'registered-bot-credential',
+	metadata: { botId, organizationId },
 	grantTypes: ['client_credentials'],
 	clientCredentialsScopes: ['tool-portal:agent'],
 	tokenEndpointAuthMethod: 'client_secret_basic',
-	resourceIds: [audience],
 	disabled: false,
-	registrationComplete: true,
 };
 
-describe('strict E9 registration and final release policy', () => {
-	it('admits the completed, active, audience-bound registration', () => {
+describe('bot credential identity without a membership copy', () => {
+	it('keeps the bot distinct from its credential and requires no workspace links', () => {
+		// Arrange / Act: a credential identifies one bot and organization, without resourceIds.
+		const parsed = agentRegistrationSchema.parse(registration);
+		// Assert: taking the client ID as the bot, or requiring links, fails this contract.
+		expect(parsed.metadata).toEqual({ botId, organizationId });
+		expect(parsed.metadata.botId).not.toBe(parsed.clientId);
 		expect(
 			agentRegistrationAllowsToken({
-				registration: agentRegistrationSchema.parse(registration),
-				clientId: 'registered-agent',
-				audience,
+				registration: parsed,
+				clientId: parsed.clientId,
 				signedOrganizationId: organizationId,
 			}),
 		).toBe(true);
@@ -34,83 +36,32 @@ describe('strict E9 registration and final release policy', () => {
 		{ grantTypes: ['authorization_code'] },
 		{ clientCredentialsScopes: ['tool-portal:agent', 'offline_access'] },
 		{ tokenEndpointAuthMethod: 'none' },
-		{ metadata: { kind: 'person', organizationId } },
-		{ metadata: { kind: 'agent', organizationId, owner: 'forged' } },
-	])('rejects an E9 with unauthorized shape: %j', (changes) => {
+		{ metadata: { kind: 'agent', organizationId } },
+		{ metadata: { botId, organizationId, owner: 'forged' } },
+		{ resourceIds: ['https://portal.invalid/workspaces/old/mcp'] },
+	])('rejects unauthorized credential shape %j', (changes) => {
+		// Arrange / Act / Assert: old links and agent-only metadata cannot survive the cutover.
 		expect(agentRegistrationSchema.safeParse({ ...registration, ...changes }).success).toBe(false);
 	});
-	it.each([
-		{ resourceIds: [] },
-		{ resourceIds: [audience] },
-		{
-			resourceIds: [
-				audience,
-				'https://portal.invalid/workspaces/22222222-2222-4222-8222-222222222222/mcp',
-			],
-		},
-	])(
-		'keeps zero or many workspace links as agent state: %j',
-		({ resourceIds }: { readonly resourceIds: readonly string[] }) => {
-			expect(agentRegistrationSchema.parse({ ...registration, resourceIds }).resourceIds).toEqual(
-				resourceIds,
-			);
+	it.each(['client_secret_basic', 'client_secret_post', 'private_key_jwt'])(
+		'keeps the supported authenticated credential method %s',
+		(tokenEndpointAuthMethod) => {
+			expect(
+				agentRegistrationSchema.parse({ ...registration, tokenEndpointAuthMethod })
+					.tokenEndpointAuthMethod,
+			).toBe(tokenEndpointAuthMethod);
 		},
 	);
-	it('accepts a linked workspace beyond the first without widening another audience', () => {
-		const secondAudience =
-			'https://portal.invalid/workspaces/22222222-2222-4222-8222-222222222222/mcp';
-		const multiWorkspace = agentRegistrationSchema.parse({
-			...registration,
-			resourceIds: [audience, secondAudience],
-		});
-		expect(
-			agentRegistrationAllowsToken({
-				registration: multiWorkspace,
-				clientId: registration.clientId,
-				audience: secondAudience,
-				signedOrganizationId: organizationId,
-			}),
-		).toBe(true);
-		expect(
-			agentRegistrationAllowsToken({
-				registration: multiWorkspace,
-				clientId: registration.clientId,
-				audience: 'https://portal.invalid/unlinked',
-				signedOrganizationId: organizationId,
-			}),
-		).toBe(false);
-	});
 	it.each([
-		{ disabled: true, registrationComplete: true },
-		{ disabled: false, registrationComplete: false },
-	])('refuses token release for state %j', (state) => {
-		expect(
-			agentRegistrationAllowsToken({
-				registration: agentRegistrationSchema.parse({ ...registration, ...state }),
-				clientId: 'registered-agent',
-				audience,
-				signedOrganizationId: organizationId,
-			}),
-		).toBe(false);
-	});
-	it.each([
-		{ clientId: 'different-agent', audience, signedOrganizationId: organizationId },
+		{ disabled: true, clientId: registration.clientId, signedOrganizationId: organizationId },
+		{ disabled: false, clientId: 'another-credential', signedOrganizationId: organizationId },
 		{
-			clientId: 'registered-agent',
-			audience: 'https://other.invalid',
-			signedOrganizationId: organizationId,
-		},
-		{
-			clientId: 'registered-agent',
-			audience,
+			disabled: false,
+			clientId: registration.clientId,
 			signedOrganizationId: '22222222-2222-4222-8222-222222222222',
 		},
-	])('refuses mismatched signed identity or resource %j', (claims) => {
-		expect(
-			agentRegistrationAllowsToken({
-				registration: agentRegistrationSchema.parse(registration),
-				...claims,
-			}),
-		).toBe(false);
+	])('refuses disabled or mismatched credential identity %j', ({ disabled, ...claims }) => {
+		const parsed = agentRegistrationSchema.parse({ ...registration, disabled });
+		expect(agentRegistrationAllowsToken({ registration: parsed, ...claims })).toBe(false);
 	});
 });

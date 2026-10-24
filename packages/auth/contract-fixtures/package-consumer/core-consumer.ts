@@ -6,18 +6,16 @@ import {
 const organizationId = '11111111-1111-4111-8111-111111111111';
 const registration: AgentRegistration = {
 	clientId: 'packed-agent',
-	metadata: { kind: 'agent', organizationId },
+	metadata: { botId: '66666666-6666-4666-8666-666666666666', organizationId },
 	grantTypes: ['client_credentials'],
 	clientCredentialsScopes: ['tool-portal:agent'],
 	tokenEndpointAuthMethod: 'client_secret_basic',
-	resourceIds: ['https://portal.invalid/mcp'],
+
 	disabled: false,
-	registrationComplete: true,
 };
 const input = {
 	registration,
 	clientId: 'packed-agent',
-	audience: 'https://portal.invalid/mcp',
 	signedOrganizationId: organizationId,
 };
 if (!agentRegistrationAllowsToken(input))

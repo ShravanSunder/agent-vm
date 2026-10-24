@@ -1,4 +1,3 @@
-import type { PersonProof } from '@agent-collaboration/tool-access/contracts';
 import { oauthProvider } from '@better-auth/oauth-provider';
 import { passkey } from '@better-auth/passkey';
 import { betterAuth, type Auth, type BetterAuthOptions } from 'better-auth';
@@ -14,10 +13,7 @@ import { workspaceResourceHasIssuancePolicy } from '#auth/sign-in-core/agent-cli
 import type { SignInConfiguration } from '#auth/sign-in-core/models/deployment-configuration';
 import type { IssuedPersonSession } from '#auth/sign-in-core/response-release/sign-in-response-release';
 
-export type ProviderAuthority =
-	| { readonly kind: 'public' }
-	| { readonly kind: 'person-proof'; readonly proof: PersonProof }
-	| { readonly kind: 'owner-bootstrap' };
+export type ProviderAuthority = { readonly kind: 'public' } | { readonly kind: 'owner-bootstrap' };
 
 export interface ProviderRequestState {
 	readonly createdUserIds: string[];
@@ -42,19 +38,8 @@ type SignInProviderOptions = BetterAuthOptions & {
 };
 export type SignInProvider = Auth<SignInProviderOptions>;
 
-export interface ManagementObservation {
-	readonly point: 'before-provider-owner-read';
-	readonly requestId: string;
-}
-export type ManagementObserver = (event: ManagementObservation) => Promise<void>;
-
-/** Every invocation owns its context. Only the named-binding caller supplies person-proof authority. */
-export function createSignInProvider(
-	props: SignInProviderProps,
-	controls: {
-		readonly management?: { readonly requestId: string; readonly observe: ManagementObserver };
-	} = {},
-): SignInProvider {
+/** Every invocation owns its provider context; only owner bootstrap may administer its fixed client. */
+export function createSignInProvider(props: SignInProviderProps): SignInProvider {
 	const persons = createPersonAdmissionStore({
 		database: props.database.sql,
 		ownerEmail: props.configuration.ownerEmail,
@@ -103,24 +88,6 @@ export function createSignInProvider(
 			},
 		},
 		hooks: {
-			...(props.authority.kind !== 'person-proof'
-				? {}
-				: {
-						before: createAuthMiddleware(async () => {
-							if (props.authority.kind !== 'person-proof') throw new APIError('FORBIDDEN');
-							if (controls.management !== undefined)
-								await controls.management.observe({
-									point: 'before-provider-owner-read',
-									requestId: controls.management.requestId,
-								});
-							const current = await persons.readOwnerSession(
-								props.authority.proof.subject,
-								props.authority.proof.sessionRef,
-							);
-							if (current === null) throw new APIError('FORBIDDEN');
-							return { context: { context: { session: current } } };
-						}),
-					}),
 			after: createAuthMiddleware(async (context) => {
 				const candidate = context.context.newSession ?? context.context.session;
 				if (
@@ -204,7 +171,7 @@ export function createSignInProvider(
 				allowDynamicClientRegistration: false,
 				allowClientKeyRotation: false,
 				cachedTrustedClients: new Set<string>(),
-				enforcePerClientResources: true,
+				enforcePerClientResources: false,
 				accessTokenExpiresIn: props.configuration.accessTokenSeconds,
 				m2mAccessTokenExpiresIn: props.configuration.accessTokenSeconds,
 				resources: [
@@ -241,14 +208,13 @@ export function createSignInProvider(
 					if (
 						current === null ||
 						current.disabled ||
-						!current.registrationComplete ||
 						current.metadata.organizationId !== registration.data.organizationId
 					)
 						throw new APIError('BAD_REQUEST', { error: 'invalid_client' });
 					if (resources?.length !== 1)
 						throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
 					const identifier = resources[0];
-					if (identifier === undefined || !current.resourceIds.includes(identifier))
+					if (identifier === undefined)
 						throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
 					const resource = await workspaces.read(identifier);
 					if (

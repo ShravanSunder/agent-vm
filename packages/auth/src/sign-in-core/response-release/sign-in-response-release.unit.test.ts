@@ -46,13 +46,12 @@ function ports(changes: Partial<SignInResponseReleasePorts> = {}): SignInRespons
 		readAgent: async () =>
 			agentRegistrationSchema.parse({
 				clientId: 'agent-one',
-				metadata: { kind: 'agent', organizationId },
+				metadata: { botId: '66666666-6666-4666-8666-666666666666', organizationId },
 				grantTypes: ['client_credentials'],
 				clientCredentialsScopes: ['tool-portal:agent'],
 				tokenEndpointAuthMethod: 'client_secret_basic',
-				resourceIds: [agentAudience],
+
 				disabled: false,
-				registrationComplete: true,
 			}),
 		readWorkspaceResource: async (identifier: string) =>
 			identifier === agentAudience
@@ -154,19 +153,6 @@ describe('outer response release after the signing effect', () => {
 			ports: ports({ isPersonSessionActive: async () => false }),
 		});
 		expect(await result.json()).toEqual({ error: 'invalid_grant' });
-	});
-	it('reports invalid_target when an unlink commits before the post-signing link read', async () => {
-		const current = await ports().readAgent('agent-one');
-		const result = await releaseSignInResponse({
-			response: await tokenResponse(),
-			tokenGrant: 'client_credentials',
-			issuedSessions: [],
-			createdUserIds: [],
-			ports: ports({
-				readAgent: async () => (current === null ? null : { ...current, resourceIds: [] }),
-			}),
-		});
-		expect(await result.json()).toEqual({ error: 'invalid_target' });
 	});
 	it('reads resource organization again after signing instead of trusting the earlier client claim', async () => {
 		const resource = await ports().readWorkspaceResource(agentAudience);

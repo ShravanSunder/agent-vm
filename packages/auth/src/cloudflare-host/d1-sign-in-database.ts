@@ -15,11 +15,11 @@ class D1SignInStatement implements SignInSqlStatement {
 	}
 
 	async first(): Promise<Record<string, unknown> | null> {
-		return this.statement.first<Record<string, unknown>>();
+		return this.statement.first();
 	}
 
 	async all(): Promise<{ readonly results: readonly Record<string, unknown>[] }> {
-		return this.statement.all<Record<string, unknown>>();
+		return this.statement.all();
 	}
 
 	async run(): Promise<void> {

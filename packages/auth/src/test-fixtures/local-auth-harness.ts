@@ -314,11 +314,6 @@ export async function startLocalAuthHarness(): Promise<{
 									compatibilityDate: '2026-08-15',
 									env: {
 										...textBindings(gatewayBindings),
-										SIGN_IN: {
-											type: 'worker',
-											workerName: 'sign-in',
-											exportName: 'AgentClientManagement',
-										},
 										WORKSPACES: {
 											type: 'durable-object',
 											workerName: 'gateway-one',

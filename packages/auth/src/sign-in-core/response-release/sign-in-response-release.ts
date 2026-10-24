@@ -126,7 +126,6 @@ export async function releaseSignInResponse(props: {
 			if (
 				registration === null ||
 				registration.disabled ||
-				!registration.registrationComplete ||
 				registration.clientId !== claims.client_id ||
 				registration.metadata.organizationId !== claims.organization_id
 			)
@@ -144,8 +143,6 @@ export async function releaseSignInResponse(props: {
 				resource.metadata.workspaceId !== claims.workspace_id
 			)
 				return refuse('invalid_client');
-			if (!registration.resourceIds.includes(props.ports.requestedResource))
-				return refuse('invalid_target');
 		} else {
 			const resource = await props.ports.readWorkspaceResource(claims.aud);
 			if (resource !== null) return refuse('invalid_target');

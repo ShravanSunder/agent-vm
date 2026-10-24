@@ -1,10 +1,9 @@
 /** Owner management CLI: browser code+S256 login, live owner checks on every server command, no refresh. */
-import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
 import { z } from 'zod';
 
-import { readAuthTarget, requirePrivateRuntimePath } from '#auth/native-owner-cli/auth-target';
+import { readAuthTarget } from '#auth/native-owner-cli/auth-target';
 import { ownerManagementToken } from '#auth/native-owner-cli/owner-cli-login';
 
 export async function runOwnerCli(args: readonly string[]): Promise<number> {
@@ -16,49 +15,24 @@ export async function runOwnerCli(args: readonly string[]): Promise<number> {
 			target: { type: 'string' },
 			'force-auth': { type: 'boolean' },
 			'no-browser': { type: 'boolean' },
-			'request-id': { type: 'string' },
-			'client-id': { type: 'string' },
-			persona: { type: 'string' },
-			output: { type: 'string' },
 		},
 	});
 
 	if (values.help === true) {
 		process.stdout
 			.write(`Usage: mise exec -- node scripts/verify-auth/owner-cli.ts --target FILE COMMAND [OPTIONS]
-Commands: login | add-agent --persona PROFILE --request-id UUID [--client-id ID | --output FILE] | remove-agent --client-id ID --request-id UUID | retire-agent --client-id ID --request-id UUID | agent-status --client-id ID
+Commands: login
 Target JSON: issuer, managementAudience, gatewayUrl, organizationId, workspaceId, ownerCliClientId, ownerCliRedirectUri, tokenCachePath.
-Target and token cache are owned mode-0600 files outside Git checkouts. Credential output is created mode0600 and must not exist.
+Target and token cache are owned mode-0600 files outside Git checkouts.
 --force-auth starts a new browser authorization. Expiry requires another authorization; no refresh token is requested or accepted.
 --no-browser prints the authorization URL for a browser on another machine; it never prints a credential.
-This switch makes no hardware-presence or per-command human-intent claim. Every management request checks the live Person/session.\n`);
+This switch makes no hardware-presence or per-command human-intent claim. Fleet administration owns bot credential and workspace changes.\n`);
 	} else {
 		try {
 			const target = await readAuthTarget(z.string().min(1).parse(values.target));
-			const command = z
-				.enum(['login', 'add-agent', 'remove-agent', 'retire-agent', 'agent-status'])
-				.parse(positionals[0]);
+			z.literal('login').parse(positionals[0]);
 			if (positionals.length !== 1) throw new Error('Expected exactly one owner command');
-			const requestId =
-				command === 'add-agent' || command === 'remove-agent' || command === 'retire-agent'
-					? z.uuid().parse(values['request-id'])
-					: undefined;
-			const clientId =
-				command === 'login'
-					? undefined
-					: command === 'add-agent'
-						? values['client-id'] === undefined
-							? undefined
-							: z.string().min(1).parse(values['client-id'])
-						: z.string().min(1).parse(values['client-id']);
-			const persona = command === 'add-agent' ? z.string().min(1).parse(values.persona) : undefined;
-			const output =
-				command === 'add-agent' && clientId === undefined
-					? await requirePrivateRuntimePath(z.string().min(1).parse(values.output), false)
-					: undefined;
-			if (clientId !== undefined && values.output !== undefined)
-				throw new Error('Linking an existing agent never returns a credential output');
-			const token = await ownerManagementToken({
+			await ownerManagementToken({
 				target,
 				forceAuth: values['force-auth'] === true,
 				...(values['no-browser'] === true
@@ -69,60 +43,9 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 						}
 					: {}),
 			});
-			if (command === 'login')
-				process.stdout.write(
-					'Owner management credential ready. Each command still checks the live session.\n',
-				);
-			else {
-				const endpoint = new URL(
-					command === 'retire-agent'
-						? `/management/organizations/${target.organizationId}/agents/${encodeURIComponent(z.string().parse(clientId))}`
-						: `/management/workspaces/${target.workspaceId}/agents${command === 'add-agent' ? '' : `/${encodeURIComponent(z.string().parse(clientId))}`}`,
-					target.gatewayUrl,
-				);
-				const method =
-					command === 'add-agent' ? 'POST' : command === 'agent-status' ? 'GET' : 'DELETE';
-				const body =
-					method === 'GET'
-						? undefined
-						: JSON.stringify({
-								requestId,
-								...(command === 'add-agent'
-									? { persona, ...(clientId === undefined ? {} : { clientId }) }
-									: {}),
-							});
-				const response = await fetch(endpoint, {
-					method,
-					headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-					...(body === undefined ? {} : { body }),
-				});
-				if (!response.ok)
-					throw new Error(`Owner management refused (${response.status}); no credential released`);
-				const result: unknown = await response.json();
-				if (output !== undefined) {
-					const registration = z
-						.strictObject({
-							kind: z.literal('registered'),
-							clientId: z.string(),
-							clientSecret: z.string(),
-							workspaceId: z.literal(target.workspaceId),
-							resource: z.url(),
-						})
-						.parse(result);
-					await writeFile(output, JSON.stringify(registration), { mode: 0o600, flag: 'wx' });
-					process.stdout.write('Agent credential saved to the private output file.\n');
-				} else {
-					const status = z
-						.strictObject({
-							kind: z.enum(['linked', 'member', 'removed', 'removal-pending']),
-							clientId: z.string(),
-							workspaceId: z.literal(target.workspaceId).optional(),
-							resource: z.url().optional(),
-						})
-						.parse(result);
-					process.stdout.write(`${status.kind}: ${status.clientId}\n`);
-				}
-			}
+			process.stdout.write(
+				'Owner sign-in credential ready. Administration checks the live session.\n',
+			);
 		} catch (error) {
 			process.stderr.write(`${error instanceof Error ? error.message : 'Owner command failed'}\n`);
 			return 1;

@@ -44,13 +44,12 @@ export async function assertAuthCorePlainNodeExecution(entry: string): Promise<v
 			rule({
 				registration: {
 					clientId: 'plain-node-agent',
-					metadata: { kind: 'agent', organizationId },
+					metadata: { botId: '66666666-6666-4666-8666-666666666666', organizationId },
 					grantTypes: ['client_credentials'],
 					clientCredentialsScopes: ['tool-portal:agent'],
 					tokenEndpointAuthMethod: 'client_secret_basic',
-					resourceIds: ['https://portal.invalid/mcp'],
+
 					disabled: false,
-					registrationComplete: true,
 				},
 				clientId: 'plain-node-agent',
 				audience: 'https://portal.invalid/mcp',

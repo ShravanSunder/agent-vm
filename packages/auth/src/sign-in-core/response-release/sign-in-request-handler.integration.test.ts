@@ -27,13 +27,12 @@ let upstreamEffects = 0;
 let beforeFinalCheck: (() => Promise<void>) | undefined;
 const registration = agentRegistrationSchema.parse({
 	clientId: 'agent-one',
-	metadata: { kind: 'agent', organizationId },
+	metadata: { botId: '66666666-6666-4666-8666-666666666666', organizationId },
 	grantTypes: ['client_credentials'],
 	clientCredentialsScopes: ['tool-portal:agent'],
 	tokenEndpointAuthMethod: 'client_secret_basic',
-	resourceIds: [agentAudience],
+
 	disabled: false,
-	registrationComplete: true,
 });
 const ports: SignInResponseReleasePorts = {
 	issuer,

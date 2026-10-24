@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-import type { ManagementObservation } from '#auth/better-auth-provider/provider-configuration';
+interface ManagementObservation {
+	readonly point: 'before-provider-owner-read';
+	readonly requestId: string;
+}
 
 export interface ManagementProofControls {
 	readonly armManagementHold: (requestId: string) => Promise<{ readonly armed: boolean }>;
