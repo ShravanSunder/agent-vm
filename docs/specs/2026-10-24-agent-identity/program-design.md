@@ -297,7 +297,7 @@ The Router may only name sessions on its own installation; central refuses any o
 
 **Bindings at start and restore:** before a create, the registrar mints a binding and hands it over with the create command: for Codex, in the native `StartThread` or `ForkThread` config wherever it is built (today the client bridge's creation, `session_creation.rs:313–330`, for helper starts, and the native preparation for delivery), and the same address again at `thread/resume`; for Claude and Cursor, the session's own MCP list on the ACP create, load or resume request. Today's create and restore commands carry no session context, so they gain the binding. The binding becomes active only for the conversation the provider returns, once `Registered` arrives; a pending, failed or ambiguous creation activates nothing, so its binding admits no effect. Before a restore, it looks up the session's persisted binding and lifecycle state and reuses that binding and address; a retired or abandoned binding is never restored. The registrar persists the registration's immutable input, the binding ID and address, and the result. A provider that doesn't advertise HTTP MCP support can't carry a binding, so its start is refused rather than run without one. The address must not move: the Router refuses to register sessions while its configured listener port is zero, or when its configured origin differs from the one recorded with a registration. The listener itself is already fixed by configuration (`127.0.0.1:8788` in production, `host_command/mod.rs:374–391`).
 
-**Order and late outcomes:** a start is admitted first (`StartWork`, which proves the starter and returns an admission ID); then the provider creates the conversation; then it is registered, consuming that admission. The registrar persists the admission ID, never a token: the starter's credential is used once, at admission. Three outcomes are distinct. Refused at admission: nothing is created. Created, then registration refused (for example, an allowance withdrawn between the two checks): the conversation exists, its binding never activates, and it is sent no prompt. A lost create reply: the binding stays prepared until the registrar learns the outcome. Nothing replays a create or deletes a conversation automatically; such a conversation is idle and acts as no member.
+**Order and late outcomes:** a start is admitted first (`StartWork`, which proves the starter and returns an admission ID); then the provider creates the conversation; then it is registered, consuming that admission. The registrar persists the admission ID, never a token: the starter's credential is used once, at admission. **The start admission is the persisted authority for that one start.** `RegisterFleetSession` must match it (the same installation, project and requested persona) and consumes it in the same transaction that registers the session. Resending the identical registration after it was consumed, for example after a lost reply, returns the original `Registered`. A registration for another session, or with a different project, persona or installation, is refused `admissionInvalid`. This set sets no expiry for an unused admission. Three outcomes are distinct. Refused at admission: nothing is created. Created, then registration refused (for example, an allowance withdrawn between the two checks): the conversation exists, its binding never activates, and it is sent no prompt. A lost create reply: the binding stays prepared until the registrar learns the outcome. Nothing replays a create or deletes a conversation automatically; such a conversation is idle and acts as no member.
 
 ### Collaboration admission (Router → Fleet central, R28)
 
@@ -319,8 +319,22 @@ pub enum CollaborationOperation {
     FleetWrite { workspace_id: WorkspaceId, write: FleetWriteKind }, // workspace rename or archive | board create, update, close or archive | repository attach or detach | project directory create or update | decision record create or transition | definition register
 }
 #[serde(tag = "result", rename_all = "camelCase")]
-pub enum CollaborationAdmission { Admit { admission_id: AdmissionId }, Refuse { reason: CollaborationRefusal } } // notMember | noPair | noCollaboration | forbidden
-// An admission is single-use; a StartWork admission is consumed by its session's registration.
+pub enum CollaborationAdmission {
+    Admit,                                        // good for the one effect that asked; never cached
+    #[serde(rename_all = "camelCase")]
+    AdmitStart { admission_id: AdmissionId },     // StartWork only: a recorded start admission, below
+    Refuse { reason: CollaborationRefusal },      // notMember | noPair | noCollaboration | forbidden
+}
+#[serde(rename_all = "camelCase")]
+pub struct StartAdmission {                       // recorded by the organization authority when it admits StartWork
+    pub admission_id: AdmissionId,
+    pub installation: InstallationId,             // the enrolled connection the start came on
+    pub operation_id: OperationId,                // the start request's own ID
+    pub project_id: ProjectId,
+    pub requested_persona: Option<PersonaName>,
+    pub starter: StarterRecord,                   // owner { personId } | memberSession { session }: who was proven, never a credential
+    pub state: StartAdmissionState,               // unused | consumed { session: SessionRef }
+}
 ```
 
 Rules: a member of the target's workspace may do what its board role allows; a workspace pair or a bot collaboration admits only `DirectMessage` and `Task` to members. A bot collaboration in W admits them both ways, between the bot and W's members, while it is active; a member's reply to a bot needs it like any other message. A `Task` is a message to a member; it never changes a board's task records. An admission is good for the one effect that asked for it and is never cached. Unreachable central refuses.
@@ -538,7 +552,7 @@ sequenceDiagram
   participant P as Tool Portal
   Note over R: start admitted (StartWork, starter proven, OD1), then S created for project X
   R->>OA: RegisterFleetSession(S, X, admission, persona?, isolation, environment)
-  OA->>OA: X's workspace W, machine allowed for W, admission valid and unused
+  OA->>OA: X's workspace W, machine allowed for W, admission matches and is unused (or already consumed by S)
   OA-->>R: Registered(W, persona ref) or Refused(reason)
   H->>R: MCP tools/call on S's binding
   R->>OA: IssueSessionToken(S)  [session token broker]
@@ -689,7 +703,7 @@ The token carries `persona` as `sessionDefault` or `named`. At each call the Por
 
 | State | Entered by | Leaves to | Guard and effect |
 |---|---|---|---|
-| active | `RegisterFleetSession` accepted | removed, ended | The project exists, the machine is allowed for its workspace, and its start admission (where the starter was proven, OD1) is valid and unused. |
+| active | `RegisterFleetSession` accepted | removed, ended | The project exists, the machine is allowed for its workspace, and its start admission (where the starter was proven, OD1) matches and is consumed by this registration. |
 | removed | The admin removes it, or its allowance or machine is withdrawn | — (terminal) | Membership ends; a mark; `sessionRemoved` (or the machine/allowance) notice. |
 | ended | The Router reports the conversation archived or deleted (`EndFleetSession`) | — (terminal) | Membership ends; a mark; `sessionEnded` notice; the binding is retired. |
 
@@ -739,6 +753,7 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 | An owner's records can't be read for the audit view | the read fails | That part shown unavailable; nothing inferred | admin surface |
 | Registration refused after the conversation was created | `Refused` | The binding never activates; the conversation gets no prompt; nothing deletes it | session registrar |
 | A lost create reply | no provider answer | The binding stays prepared until the outcome is known; no automatic replay | session registrar |
+| A registration resent after its admission was consumed | admission consumed by this session | The original `Registered`; another session or changed intent: `admissionInvalid` | organization authority |
 | The owner changes while a Fleet-applied command waits | the handoff re-check | Not yet handed off: cancelled, nothing applied | organization authority |
 | The issuer's signing key rotates | published key set | Receivers refetch once on an unknown key ID | each receiver |
 

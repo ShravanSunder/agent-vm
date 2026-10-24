@@ -246,7 +246,7 @@ Each request is authenticated as R27 states. A credential is accepted only by th
 | A collaborator calls W's tools | Refused: it holds no token for W. |
 | A machine is revoked, or its allowance withdrawn, mid-session | No new tokens for its sessions in that workspace, and a removal notice reaches each affected workspace. |
 | A bot's secret leaks | Whoever holds it is that bot until the admin retires the credential. This is the accepted limit in U2. |
-| A Router restarts while a session is being started or registered | The conversation is registered once. Until its registration completes, its binding admits nothing; a start that never completes leaves no effect. A conversation created before a refused or lost registration may remain, idle: it is sent no prompt and can act as no member. |
+| A Router restarts while a session is being started or registered | The conversation is registered once. Until its registration completes, its binding admits nothing; a start that never completes leaves no member effect. A conversation created before a refused or lost registration may remain, idle: it is sent no prompt and can act as no member. |
 | A machine is compromised, or a process on it reads another session's binding | Every session on it can be impersonated, and its isolation records can't be trusted, until the machine is revoked. |
 | A session reads another workspace's files on a shared machine | Not prevented in the first round. The shared bucket shows it is possible. Only `Vm` would prevent it. |
 

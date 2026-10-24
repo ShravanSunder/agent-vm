@@ -37,7 +37,7 @@ Several rows use the same observation. Each is described once here.
 - **What runs:** that Router and its sessions, a local Fleet central (Tokio, plus local workerd), the local sign-in Worker from `verify-auth`'s harness, and the Tool Portal through its production `index.ts` host entry.
 - **What it drives:**
   1. enroll the machine and allow it for workspace W;
-  2. start two sessions for a project in W on each path (Codex helper starts through the client's bridge into the app-server's native start), naming the project; try a start with no project, with a starter it only declares, from a session that isn't a member, and from a provider that doesn't support HTTP MCP; withdraw the machine's allowance between admission and registration, and lose a create reply (the conversation gets no prompt and acts as no member);
+  2. start two sessions for a project in W on each path (Codex helper starts through the client's bridge into the app-server's native start), naming the project; try a start with no project, with a starter it only declares, from a session that isn't a member, and from a provider that doesn't support HTTP MCP; withdraw the machine's allowance between admission and registration, and lose a create reply (the conversation gets no prompt and acts as no member); resend the identical registration after its reply is lost (the original `Registered`), and register with a consumed admission for another session, or with a changed project or persona (both refused);
   3. call a Portal tool through the forwarder from each;
   4. try posting as another session, naming another session or a person as its sender or creator, declaring an approver and a person it acts for (recorded as declared, granting nothing), cancelling another's message, marking another's message read, and with a stale and a foreign binding;
   5. send messages, tasks and board writes across a paired and an unpaired workspace, on the Router holding the project, forwarded from a second Router, and as direct messages; with the pair, try a board write, a role claim and a session start; withdraw the pair and retry, including replying to a message received while the pair was active; start a conversation and make Fleet writes (a board, a repository attachment, a decision record) as a member and as a non-member; try creating a workspace through the Fleet write path; have a bot message a member and the member reply; read the bot's mailbox with each of its two credentials, and with another bot's token (refused); withdraw the bot collaboration and have the member reply again (refused);
@@ -52,7 +52,7 @@ Several rows use the same observation. Each is described once here.
   - decoded token claims;
   - central's lookups, including `RemovalStatus`;
   - board records, stored writes and delivered tasks;
-  - after every refusal: no provider conversation created, nothing stored, nothing delivered.
+  - after each refusal, what that refusal promises: a start refused before creation leaves no new conversation; one refused at registration leaves a known conversation idle and unprompted, its binding inactive, with no member effect; any other refused effect leaves nothing stored or delivered.
 
 **SO2: sign-in issuance journey** (existing `verify-auth` agent journey, to update, lasting). Its target is the local T3 sign-in Worker on real workerd, D1 and the locked Better Auth 1.7.11 (observations made at 1.7.8 count only for 1.7.8). Changes:
 
@@ -115,7 +115,7 @@ Sampling covers arrival and refusal only.
 
 | Journey | Status | Lifetime | Entry it drives | What it reads |
 |---|---|---|---|---|
-| `verify-codex-router` `fleet-identity` (SO1) | needed: reuses the central arrangement through its TypeScript replacement, adds a native launch part per provider path | lasting | Router session start and restore on each path, forwarder, board posts, Fleet writes, bot messages, session end, machine revocation, stopping central | effect counts, refusal classes, claims, board records, lookups, no conversation after a refused start |
+| `verify-codex-router` `fleet-identity` (SO1) | needed: reuses the central arrangement through its TypeScript replacement, adds a native launch part per provider path | lasting | Router session start and restore on each path, forwarder, board posts, Fleet writes, bot messages, session end, machine revocation, stopping central | effect counts, refusal classes, claims, board records, lookups, and each refusal's own outcome (no conversation before creation; an idle, unprompted one after) |
 | `verify-auth` agent journey (SO2) | existing, update | lasting | bot client credentials (two credentials); fleet-session grant; collaboration resource; mint timing | claims; refusal classes |
 | agent-vm host e2e admission (SO3) | existing, extend | lasting | the Portal's production entry | effect counter; refusals; stored marks after restart |
 | `verify-codex-router` central runtime (SO4) | existing, extend with named scenarios | lasting | organization authority commands, guard, outbox, the Registry's organization list and fan-out, and each owner's records, on Tokio and workerd | durable readback |
