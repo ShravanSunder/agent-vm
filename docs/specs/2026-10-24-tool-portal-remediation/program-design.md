@@ -409,20 +409,26 @@ export function createWorkspaceStore(props: {
 	readonly limits: WorkspaceStoreLimits; // host-supplied, today's values; see "The caps"
 }): WorkspaceStore;
 
+// Each cap keeps today's measure: the Worker's proxy cap is UTF-8 JSON bytes, the others are entry counts.
+export type UseCap =
+	| { readonly kind: 'utf8-json-bytes'; readonly bytes: number }
+	| { readonly kind: 'entries'; readonly count: number };
+
 export interface WorkspaceStoreLimits {
-	readonly maximumUnexpiredProxyTokenUses: number;
-	readonly maximumUnexpiredBatchApprovalUses: number;
+	readonly proxyTokenUses: UseCap; // Worker: { kind: 'utf8-json-bytes', bytes: 524_288 }; Node: { kind: 'entries', count: 4_096 }
+	readonly batchApprovalUses: UseCap; // Node: { kind: 'entries', count: 4_096 }
 }
 ```
 
-**The caps (F11).** Today's caps keep their values, written as unexpired-row counts because the store now holds rows, not a JSON blob:
+**The caps (F11, corrected).** Today's caps keep their values *and their measures*; no byte cap is turned into a row count:
 
 | Cap | Today (`2dfea38e`) | Now | Host |
 |---|---|---|---|
-| proxy token uses | Worker: 512 KiB of `{ jti: expiresAtMs }` JSON (`worker-limits.ts:16` `workerApprovalUsesBytes`, checked in `approval-token-use-rules.ts`). Node: 4,096 entries (`approval-token-use.ts`, `limit ?? 4096`) | Worker: **9,892** rows. Each entry is `"<36-character UUID>":<13-digit ms>,` = 53 bytes, plus 2 for the braces, so `53n + 1 ≤ 524,288` gives `n ≤ 9,892`, the same bound for the UUID token ids the issuer mints. Node: **4,096** rows | host-supplied, as today |
-| batch approval uses | 4,096 tombstones (`standalone-batch-approval.ts:11` `defaultMaximumConsumedApprovalTokens`) | **4,096** rows | Node (the only host with the standalone service) |
+| proxy token uses, Worker | 512 KiB of the UTF-8 JSON object `{ "<key>": expiresAtMs, … }` over every unexpired use plus the new one, where `<key>` is the proxy's use key `${caller}:${tokenId}` (`hosted-mcp-proxy.ts:121–124`; measured in `approval-token-use-rules.ts:14–23`; `worker-limits.ts:16` `workerApprovalUsesBytes`) | the same byte rule. Each `proxy_token_use` row stores `entry_bytes`: the UTF-8 length of `JSON.stringify(key)` + `:` + the decimal `expires_at_ms`, for the same key the proxy uses (after the identity cutover, `${principal}:${tokenId}`). Inside the transaction, after pruning: `2 + sum(entry_bytes) + count` (braces and commas) plus the new entry must stay ≤ 524,288, else `saturated` | host-supplied value, as today |
+| proxy token uses, Node | 4,096 entries (`approval-token-use.ts`, `limit ?? 4096`) | **4,096** unexpired rows | host-supplied, as today |
+| batch approval uses | 4,096 tombstones (`standalone-batch-approval.ts:11` `defaultMaximumConsumedApprovalTokens`) | **4,096** unexpired rows | Node (the only host with the standalone service) |
 
-The count is taken inside the same transaction as the insert, after expired rows are pruned (`select count(*) … where expires_at_ms > now` through the query builder), so two concurrent presentations cannot both pass a full cap. A presentation at the cap answers `saturated`, as `replay-cache-full` does today.
+`WorkspaceStoreLimits` carries each cap as a tagged measure, `{ kind: 'utf8-json-bytes'; bytes }` or `{ kind: 'entries'; count }`, so a host supplies today's measure, not a converted one. The sum or count is taken inside the same transaction as the insert, after expired rows are pruned, through the query builder, so two concurrent presentations cannot both pass a full cap. A presentation over the cap answers `saturated`, as `replay-cache-full` does today. The byte arithmetic equals today's `JSON.stringify(retained)` length for the same entries; a property test compares the two over generated keys and expiries.
 
 Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile, { schema })` (`better-sqlite3`) produce a `WorkspaceStoreDatabase` without a cast. This is settled: the C experiment observed the `'sync'` type on both drivers (`c-drizzle-drivers/experiment-2/report-2.md` §4).
 
@@ -433,7 +439,7 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 | Table | Columns | Keys and checks | Holds |
 |---|---|---|---|
 | `store_meta` | `id` integer primary key · `workspace_id` text not null · `security_time_ms` integer not null | `id` check `= 1` (one row) | which workspace this database belongs to, and the store's security time |
-| `proxy_token_use` | `token_id` text not null · `principal` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null | primary key (`token_id`, `principal`); index on `expires_at_ms` | E5 for the MCP proxy approval token |
+| `proxy_token_use` | `token_id` text not null · `principal` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null · `entry_bytes` integer not null (this use's share of today's byte measure) | primary key (`token_id`, `principal`); index on `expires_at_ms` | E5 for the MCP proxy approval token |
 | `batch_approval_use` | `token_id` text primary key · `principal` text not null · `state` text not null · `batch_fingerprint` text not null · `operation_ids` text not null (JSON array of UUIDv7) · `service_generation` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null | `state` check in (`reserved`, `armed`, `proven-not-dispatched`); index on `expires_at_ms` | E5 for the standalone batch approval |
 | `membership` | `principal` text primary key · `state` text not null · `persona` text null | `state` check in (`member`, `removed`); `persona` not null when `state = 'member'` | Tool Portal E4 Membership, as today |
 | `membership_removal` | `principal` text primary key · `status` text not null · `operation` text not null · `request_id` text not null | `status` check in (`pending`, `complete`); `operation` check in (`unlink`, `disable`) | today's agent-retirement intents |
