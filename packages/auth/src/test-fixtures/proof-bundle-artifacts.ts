@@ -9,7 +9,7 @@ import { requirePrivateRuntimePath } from '#auth/native-owner-cli/auth-target';
 
 const proofEntries = {
 	auth: 'packages/auth/src/test-fixtures/auth-proof-entrypoint.ts',
-	gateway: 'packages/tool-host-cloudflare/src/test-fixtures/auth-gateway-proof-entrypoint.ts',
+	gateway: 'packages/tool-host-cloudflare/src/test-fixtures/workspace-gateway-proof-entrypoint.ts',
 } as const;
 
 const bundleIdentitySchema = z.strictObject({ file: z.string(), sha256: z.string().length(64) });
@@ -35,6 +35,7 @@ export async function proofSourceIdentities(root: string): Promise<{
 			'packages/auth/src/test-fixtures/native-cli-proof.ts',
 			'packages/auth/src/native-owner-cli/owner-cli.ts',
 			'packages/auth/src/native-owner-cli/owner-cli-login.ts',
+			'packages/auth/src/test-fixtures/workspace-agent-proof.ts',
 		].map((file) => readFile(path.join(root, file), 'utf8')),
 	);
 	return {

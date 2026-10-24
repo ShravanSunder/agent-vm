@@ -1,10 +1,11 @@
+import { normalizeToolPortalOrigin } from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
 
 export const signInConfigurationSchema = z.strictObject({
 	issuer: z.url(),
 	mode: z.literal('private'),
 	ownerEmail: z.email().transform((email) => email.toLowerCase()),
-	agentAudience: z.url(),
+	toolPortalOrigin: z.string().transform(normalizeToolPortalOrigin),
 	managementAudience: z.url(),
 	organizationIds: z.array(z.uuid()).min(1),
 	ownerCliClientId: z.string().min(1),

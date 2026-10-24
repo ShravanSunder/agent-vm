@@ -3,10 +3,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/client-authentication-refusal';
+import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
+	workspaceOne,
 	organizationTwo,
+	workspaceThree,
 	registrationRequestId,
 	registeredClientId,
 	agentAudience,
@@ -17,16 +20,20 @@ const registrationSchema = z.strictObject({
 	kind: z.literal('registered'),
 	clientId: z.string(),
 	clientSecret: z.string(),
+	workspaceId: z.literal(workspaceOne),
+	resource: z.literal(agentAudience),
 });
 
 function managementPath(clientId?: string): string {
-	return `/management/organizations/${organizationOne}/agents${clientId === undefined ? '' : `/${encodeURIComponent(clientId)}`}`;
+	return clientId === undefined
+		? `/management/workspaces/${workspaceOne}/agents`
+		: `/management/organizations/${organizationOne}/agents/${encodeURIComponent(clientId)}`;
 }
 async function register(owner: string): Promise<z.infer<typeof registrationSchema>> {
 	const response = await harness.gateway(managementPath(), {
 		method: 'POST',
 		headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-		body: JSON.stringify({ requestId: registrationRequestId }),
+		body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 	});
 	expect(response.status).toBe(200);
 	return registrationSchema.parse(await response.json());
@@ -65,7 +72,7 @@ async function accessToken(credentials: {
 }
 async function toolCall(token: string, correlation: string, secondHeap = false): Promise<Response> {
 	return harness.gateway(
-		'/mcp',
+		`/workspaces/${workspaceOne}/mcp`,
 		{
 			method: 'POST',
 			headers: {
@@ -102,6 +109,72 @@ async function toolCall(token: string, correlation: string, secondHeap = false):
 		secondHeap,
 	);
 }
+
+it.each([
+	{ scenario: 'a verified non-owner', email: 'first-arrival@example.invalid', verified: true },
+	{ scenario: 'an unverified configured owner', email: 'owner@example.invalid', verified: false },
+])(
+	'bootstrap: refuses $scenario first arrival before admitting the configured owner',
+	async ({ email, verified }: { readonly email: string; readonly verified: boolean }) => {
+		const emptyDeployment = await startLocalAuthHarness();
+		try {
+			// Arrange: real migrations and usable public keys, with no admitted Person or native client.
+			const jwks = await emptyDeployment.auth('/api/auth/jwks');
+			expect(jwks.status).toBe(200);
+			z.object({ keys: z.array(z.object({ kid: z.string(), kty: z.string() })).min(1) }).parse(
+				await jwks.json(),
+			);
+			async function identityRows(): Promise<readonly unknown[]> {
+				return Promise.all(
+					[
+						'SELECT id FROM user',
+						'SELECT id FROM account',
+						'SELECT id FROM session',
+						'SELECT user_id FROM deployment_owner',
+						'SELECT clientId FROM oauthClient',
+						'SELECT person_id FROM allowed_email WHERE person_id IS NOT NULL',
+					].map(
+						async (sql: string): Promise<unknown> =>
+							(await emptyDeployment.database.prepare(sql).all()).results,
+					),
+				);
+			}
+			expect(await identityRows()).toEqual([[], [], [], [], [], []]);
+			// Act/Assert: provider protocol stays real; a rejected first arrival leaves no identity authority.
+			await expect(emptyDeployment.personToken(email, verified)).rejects.toThrow();
+			expect(await identityRows()).toEqual([[], [], [], [], [], []]);
+			expect(emptyDeployment.effects).toHaveLength(0);
+			// An allowed later arrival must still complete the delivered CLI and become the sole owner.
+			const owner = await emptyDeployment.ownerToken();
+			const signed = await jwtVerify(
+				owner,
+				createRemoteJWKSet(new URL('/api/auth/jwks', emptyDeployment.issuer)),
+				{
+					issuer: emptyDeployment.issuer,
+					audience: emptyDeployment.target.managementAudience,
+				},
+			);
+			const personId = z.string().parse(signed.payload.sub);
+			expect(
+				(await emptyDeployment.database.prepare('SELECT user_id FROM deployment_owner').all())
+					.results,
+			).toEqual([{ user_id: personId }]);
+			expect(
+				(
+					await emptyDeployment.database
+						.prepare('SELECT email, person_id FROM allowed_email WHERE person_id IS NOT NULL')
+						.all()
+				).results,
+			).toEqual([{ email: 'owner@example.invalid', person_id: personId }]);
+			expect(
+				(await emptyDeployment.database.prepare('SELECT clientId FROM oauthClient').all()).results,
+			).toEqual([{ clientId: emptyDeployment.target.ownerCliClientId }]);
+		} finally {
+			await emptyDeployment.close();
+		}
+	},
+	120_000,
+);
 
 // T3 observes actual local storage and protocol effects. External Google is controlled; hosted login/CPU are unverified.
 describe('S1 real agent issuer through the Gateway', () => {
@@ -240,7 +313,7 @@ describe('S1 real agent issuer through the Gateway', () => {
 			(
 				await harness.database
 					.prepare(
-						'SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = ? ORDER BY phase',
+						"SELECT phase FROM sign_in_audit WHERE request_id = ? AND kind = 'client-changed' AND change_kind = ? ORDER BY phase",
 					)
 					.bind(registrationRequestId, 'registered')
 					.all()
@@ -262,6 +335,7 @@ describe('S1 real agent issuer through the Gateway', () => {
 				azp: z.literal(registeredClientId),
 				aud: z.literal(agentAudience),
 				organization_id: z.literal(organizationOne),
+				workspace_id: z.literal(workspaceOne),
 				scope: z.literal('tool-portal:agent'),
 				iat: z.number(),
 				exp: z.number(),
@@ -282,10 +356,36 @@ describe('S1 real agent issuer through the Gateway', () => {
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
-		).toMatchObject({ [`agent:${registeredClientId}`]: { state: 'listed' } });
+		).toMatchObject({ [`member:${registeredClientId}`]: { state: 'member', persona: 'operator' } });
+		async function foreignTargetState(): Promise<unknown> {
+			return {
+				client: await harness.database
+					.prepare('SELECT * FROM oauthClient WHERE clientId = ?')
+					.bind(registeredClientId)
+					.first(),
+				resources: (
+					await harness.database
+						.prepare('SELECT * FROM oauthClientResource WHERE clientId = ? ORDER BY resourceId')
+						.bind(registeredClientId)
+						.all()
+				).results,
+				admission: await Promise.all(
+					[workspaceOne, workspaceThree].map(
+						async (workspaceId: string): Promise<unknown> =>
+							(
+								await harness.gateway(
+									`/__auth-proof?workspace=${workspaceId}&client=${registeredClientId}`,
+								)
+							).json(),
+					),
+				),
+			};
+		}
+		const protectedBeforeForeign = await foreignTargetState();
+		const effectsBeforeForeign = [...harness.effects];
 		const foreign = await harness.gateway(
 			`/management/organizations/${organizationTwo}/agents/${registeredClientId}`,
 			{
@@ -295,6 +395,9 @@ describe('S1 real agent issuer through the Gateway', () => {
 			},
 		);
 		expect(foreign.status).toBe(403);
+		expectNoIssuedCredentials(await foreign.json());
+		expect(await foreignTargetState()).toEqual(protectedBeforeForeign);
+		expect(harness.effects).toEqual(effectsBeforeForeign);
 	});
 	it('agent: wrong grant, resource and dynamic registration never return a token or client', async () => {
 		const credentials = await register(await harness.ownerToken());
@@ -339,12 +442,33 @@ describe('S1 real agent issuer through the Gateway', () => {
 			].map((changes) => tokenResponse(credentials, changes)),
 		);
 		expect(denied.every((response) => !response.ok)).toBe(true);
+		const deniedBodies: unknown[] = await Promise.all(
+			denied.map((response: Response): Promise<unknown> => response.json()),
+		);
+		for (const body of deniedBodies) expectNoIssuedCredentials(body);
+		expect(deniedBodies[2]).toMatchObject({ error: 'invalid_target' });
+		const clientsBeforeDynamic = (
+			await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all()
+		).results;
 		const dynamic = await harness.auth('/api/auth/oauth2/register', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ client_name: 'forbidden' }),
+			body: JSON.stringify({
+				client_name: 'forbidden',
+				grant_types: ['authorization_code'],
+				response_types: ['code'],
+				redirect_uris: [harness.target.ownerCliRedirectUri],
+				token_endpoint_auth_method: 'none',
+				application_type: 'native',
+			}),
 		});
+		const clientsAfterDynamic = (
+			await harness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all()
+		).results;
+		expect(clientsAfterDynamic).toEqual(clientsBeforeDynamic);
+		expect(clientsAfterDynamic).toHaveLength(clientsBeforeDynamic.length);
 		expect(dynamic.ok).toBe(false);
+		expectNoIssuedCredentials(await dynamic.json());
 	});
 	it('agent: failed disable keeps admission removed in two warm Gateway heaps and a later owner request completes it', async () => {
 		const owner = await harness.ownerToken();
@@ -378,12 +502,12 @@ describe('S1 real agent issuer through the Gateway', () => {
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
 		).toMatchObject({
-			[`agent:${registeredClientId}`]: { state: 'removed' },
-			[`agent-retirement:${registeredClientId}`]: { kind: 'complete' },
+			[`member:${registeredClientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${registeredClientId}`]: { kind: 'complete' },
 		});
 	});
 });

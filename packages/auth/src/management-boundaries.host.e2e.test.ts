@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
+import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -10,6 +11,7 @@ import {
 	registeredClientId,
 	agentAudience,
 	managementAudience,
+	workspaceOne,
 } from '#auth/test-fixtures/local-auth-harness';
 import {
 	managementClientReadbackSql,
@@ -49,7 +51,7 @@ async function protectedRows(): Promise<ManagementReadback> {
 			.all()
 			.then((result) => result.results),
 		harness
-			.gateway(`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`)
+			.gateway(`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`)
 			.then((response) => response.json()),
 	]);
 	const auditRows = (await harness.database.prepare(managementAuditReadbackSql).all()).results;
@@ -62,11 +64,11 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 		.object({ sub: z.string(), sid: z.string(), iat: z.number(), exp: z.number() })
 		.parse(decodeJwt(owner));
 	expect(person.exp - person.iat).toBeLessThanOrEqual(300);
-	const endpoint = `/management/organizations/${organizationOne}/agents`;
+	const endpoint = `/management/workspaces/${workspaceOne}/agents`;
 	const registered = await harness.gateway(endpoint, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-		body: JSON.stringify({ requestId: registrationRequestId }),
+		body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 	});
 	expect(registered.status).toBe(200);
 	const client = z
@@ -144,25 +146,36 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 				}),
 			).toBe(false);
 			const refused = await Promise.all([
-				binding.SIGN_IN.changeClient({
+				binding.SIGN_IN.registerAndLink({
 					token,
-					operation: {
-						kind: 'register',
-						organizationId: organizationOne,
-						requestId: crypto.randomUUID(),
-					},
+					workspaceId: workspaceOne,
+					organizationId: organizationOne,
+					requestId: crypto.randomUUID(),
 				}),
-				binding.SIGN_IN.changeClient({
+				binding.SIGN_IN.link({
 					token,
-					operation: {
-						kind: 'disable',
-						organizationId: organizationOne,
-						clientId: registeredClientId,
-						requestId: crypto.randomUUID(),
-					},
+					organizationId: organizationOne,
+					workspaceId: workspaceOne,
+					clientId: registeredClientId,
+					requestId: crypto.randomUUID(),
+				}),
+				binding.SIGN_IN.unlink({
+					token,
+					organizationId: organizationOne,
+					workspaceId: workspaceOne,
+					clientId: registeredClientId,
+					requestId: crypto.randomUUID(),
+				}),
+				binding.SIGN_IN.disable({
+					token,
+					organizationId: organizationOne,
+					clientId: registeredClientId,
+					requestId: crypto.randomUUID(),
 				}),
 			]);
 			expect(refused).toEqual([
+				{ kind: 'refused', reason: 'not-owner' },
+				{ kind: 'refused', reason: 'not-owner' },
 				{ kind: 'refused', reason: 'not-owner' },
 				{ kind: 'refused', reason: 'not-owner' },
 			]);
@@ -174,7 +187,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 			harness.gateway(endpoint, {
 				method: 'POST',
 				headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ requestId: registrationRequestId }),
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 			}),
 			harness.gateway(`${endpoint}/${registeredClientId}`, {
 				headers: { authorization: `Bearer ${token}` },
@@ -189,6 +202,9 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	expect(gatewayResponses.map((response) => response.status)).toEqual([
 		403, 403, 403, 403, 403, 403,
 	]);
+	const gatewayBodies: readonly unknown[] = await Promise.all(
+		gatewayResponses.map((response: Response): Promise<unknown> => response.json()),
+	);
 	// Independent S1 contract: do not filter this inventory through the product's allowlist.
 	const publicProviderPaths = new Set([
 		'/api/auth/sign-in/social',
@@ -286,11 +302,16 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	);
 	await requireUnchangedProtectedState();
 	expect(harness.effects).toHaveLength(0);
+	for (const body of gatewayBodies) expectNoIssuedCredentials(body);
 	const ownerRead = await harness.gateway(`${endpoint}/${registeredClientId}`, {
 		headers: { authorization: `Bearer ${owner}` },
 	});
-	expect(await ownerRead.json()).toEqual({ kind: 'listed', clientId: registeredClientId });
-	const personAtAgentEdge = await harness.gateway('/mcp', {
+	expect(await ownerRead.json()).toEqual({
+		kind: 'member',
+		clientId: registeredClientId,
+		workspaceId: workspaceOne,
+	});
+	const personAtAgentEdge = await harness.gateway(`/workspaces/${workspaceOne}/mcp`, {
 		method: 'POST',
 		headers: { authorization: `Bearer ${owner}` },
 	});

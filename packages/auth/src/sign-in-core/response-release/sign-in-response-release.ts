@@ -1,9 +1,11 @@
+import { workspaceResourceIdentifier } from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
 
+import type { AgentRegistration } from '#auth/sign-in-core/agent-clients/agent-registration';
 import {
-	agentRegistrationAllowsToken,
-	type AgentRegistration,
-} from '#auth/sign-in-core/agent-clients/agent-registration';
+	workspaceResourceHasIssuancePolicy,
+	type WorkspaceResource,
+} from '#auth/sign-in-core/agent-clients/workspace-resource';
 
 export const accessTokenReleaseClaimsSchema = z.looseObject({
 	iss: z.string(),
@@ -15,6 +17,7 @@ export const accessTokenReleaseClaimsSchema = z.looseObject({
 	azp: z.string(),
 	sid: z.string().optional(),
 	organization_id: z.string().optional(),
+	workspace_id: z.string().optional(),
 });
 export type AccessTokenReleaseClaims = z.infer<typeof accessTokenReleaseClaimsSchema>;
 
@@ -24,12 +27,14 @@ export interface IssuedPersonSession {
 }
 export interface SignInResponseReleasePorts {
 	readonly issuer: string;
-	readonly agentAudience: string;
+	readonly toolPortalOrigin: string;
+	readonly requestedResource: string | null;
 	readonly managementAudience: string;
 	readonly accessTokenSeconds: number;
 	readonly now: () => number;
 	readonly inspectSignedToken: (token: string) => AccessTokenReleaseClaims;
 	readonly readAgent: (clientId: string) => Promise<AgentRegistration | null>;
+	readonly readWorkspaceResource: (identifier: string) => Promise<WorkspaceResource | null>;
 	readonly isPersonSessionActive: (personId: string, sessionId: string) => Promise<boolean>;
 	readonly deleteSession: (sessionId: string) => Promise<void>;
 	readonly cleanupUnboundPerson: (personId: string) => Promise<void>;
@@ -44,7 +49,7 @@ export async function releaseSignInResponse(props: {
 	readonly ports: SignInResponseReleasePorts;
 }): Promise<Response> {
 	async function refuse(
-		error: 'invalid_client' | 'invalid_grant' | 'not-allowed',
+		error: 'invalid_client' | 'invalid_target' | 'invalid_grant' | 'not-allowed',
 	): Promise<Response> {
 		await Promise.all(
 			props.issuedSessions.map((session) => props.ports.deleteSession(session.sessionId)),
@@ -110,6 +115,9 @@ export async function releaseSignInResponse(props: {
 			if (
 				Object.hasOwn(claims, 'sid') ||
 				claims.organization_id === undefined ||
+				claims.workspace_id === undefined ||
+				props.ports.requestedResource === null ||
+				claims.aud !== props.ports.requestedResource ||
 				claims.sub !== claims.client_id ||
 				claims.azp !== claims.client_id
 			)
@@ -117,21 +125,37 @@ export async function releaseSignInResponse(props: {
 			const registration = await props.ports.readAgent(claims.client_id);
 			if (
 				registration === null ||
-				!agentRegistrationAllowsToken({
-					registration,
-					clientId: claims.client_id,
-					audience: props.ports.agentAudience,
-					signedOrganizationId: claims.organization_id,
-				}) ||
-				claims.aud !== props.ports.agentAudience
+				registration.disabled ||
+				!registration.registrationComplete ||
+				registration.clientId !== claims.client_id ||
+				registration.metadata.organizationId !== claims.organization_id
 			)
 				return refuse('invalid_client');
-		} else if (
-			claims.sid === undefined ||
-			claims.aud !== props.ports.managementAudience ||
-			!(await props.ports.isPersonSessionActive(claims.sub, claims.sid))
-		)
-			return refuse('invalid_grant');
+			const resource = await props.ports.readWorkspaceResource(props.ports.requestedResource);
+			if (resource === null || !workspaceResourceHasIssuancePolicy(resource))
+				return refuse('invalid_target');
+			if (
+				resource.identifier !== props.ports.requestedResource ||
+				workspaceResourceIdentifier({
+					toolPortalOrigin: props.ports.toolPortalOrigin,
+					workspaceId: resource.metadata.workspaceId,
+				}) !== resource.identifier ||
+				resource.metadata.organizationId !== registration.metadata.organizationId ||
+				resource.metadata.workspaceId !== claims.workspace_id
+			)
+				return refuse('invalid_client');
+			if (!registration.resourceIds.includes(props.ports.requestedResource))
+				return refuse('invalid_target');
+		} else {
+			const resource = await props.ports.readWorkspaceResource(claims.aud);
+			if (resource !== null) return refuse('invalid_target');
+			if (
+				claims.sid === undefined ||
+				claims.aud !== props.ports.managementAudience ||
+				!(await props.ports.isPersonSessionActive(claims.sub, claims.sid))
+			)
+				return refuse('invalid_grant');
+		}
 		return props.response;
 	} catch {
 		if (props.tokenGrant === 'introspection')

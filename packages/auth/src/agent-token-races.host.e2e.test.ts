@@ -1,30 +1,36 @@
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
+import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
 import {
 	startLocalAuthHarness,
 	organizationOne,
+	workspaceOne,
+	workspaceTwo,
 	organizationTwo,
 	registrationRequestId,
 	registeredClientId,
 	agentAudience,
 } from '#auth/test-fixtures/local-auth-harness';
 
-it.each(['disable', 'resource-organization'] as const)(
+it.each([
+	'disable',
+	'resource-organization',
+	'unlink',
+	'resource-workspace',
+	'resource-organization-after-signing',
+] as const)(
 	'agent: discards the actual signed token after a held $0 race before the final D1 read',
 	async (race) => {
 		const harness = await startLocalAuthHarness();
 		let pending: Promise<Response> | undefined;
 		try {
 			const owner = await harness.ownerToken();
-			const registration = await harness.gateway(
-				`/management/organizations/${organizationOne}/agents`,
-				{
-					method: 'POST',
-					headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-					body: JSON.stringify({ requestId: registrationRequestId }),
-				},
-			);
+			const registration = await harness.gateway(`/management/workspaces/${workspaceOne}/agents`, {
+				method: 'POST',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
+			});
 			expect(registration.status).toBe(200);
 			const credentials = z
 				.object({ clientId: z.literal(registeredClientId), clientSecret: z.string().min(1) })
@@ -41,6 +47,11 @@ it.each(['disable', 'resource-organization'] as const)(
 						.first(),
 				).toEqual({ customClaims: JSON.stringify({ organization_id: organizationTwo }) });
 			}
+			if (race === 'resource-workspace')
+				await harness.database
+					.prepare('UPDATE oauthResource SET customClaims = ? WHERE identifier = ?')
+					.bind(JSON.stringify({ workspace_id: workspaceTwo }), agentAudience)
+					.run();
 			const control = `/__auth-proof/hold/`;
 			expect(
 				(await harness.auth(`${control}arm?client=${registeredClientId}`, { method: 'POST' }))
@@ -65,8 +76,48 @@ it.each(['disable', 'resource-organization'] as const)(
 			expect(await signed.json()).toEqual({
 				signed: true,
 				clientId: registeredClientId,
-				organizationId: race === 'disable' ? organizationOne : organizationTwo,
+				organizationId: race === 'resource-organization' ? organizationTwo : organizationOne,
+				workspaceId: race === 'resource-workspace' ? workspaceTwo : workspaceOne,
 			});
+			if (race === 'unlink') {
+				const bindings = await harness.miniflare.getBindings<{
+					readonly SIGN_IN: ReturnType<typeof createSignInManagementBinding>;
+				}>('gateway-one');
+				expect(
+					await bindings.SIGN_IN.unlink({
+						token: owner,
+						organizationId: organizationOne,
+						workspaceId: workspaceOne,
+						clientId: registeredClientId,
+						requestId: crypto.randomUUID(),
+					}),
+				).toMatchObject({ kind: 'unlinked' });
+				expect(
+					(
+						await harness.database
+							.prepare('SELECT * FROM oauthClientResource WHERE clientId = ? AND resourceId = ?')
+							.bind(registeredClientId, agentAudience)
+							.all()
+					).results,
+				).toEqual([]);
+			}
+			if (race === 'resource-organization-after-signing') {
+				const metadata = JSON.stringify({
+					kind: 'workspace',
+					organizationId: organizationTwo,
+					workspaceId: workspaceOne,
+				});
+				await harness.database
+					.prepare('UPDATE oauthResource SET metadata = ? WHERE identifier = ?')
+					.bind(metadata, agentAudience)
+					.run();
+				expect(
+					await harness.database
+						.prepare('SELECT metadata FROM oauthResource WHERE identifier = ?')
+						.bind(agentAudience)
+						.first(),
+				).toEqual({ metadata });
+			}
 			if (race === 'disable') {
 				await harness.database
 					.prepare('UPDATE oauthClient SET disabled = 1 WHERE clientId = ?')
@@ -85,7 +136,9 @@ it.each(['disable', 'resource-organization'] as const)(
 			).toBe(200);
 			const refused = await pending;
 			expect(refused.status).toBe(400);
-			expect(await refused.json()).toEqual({ error: 'invalid_client' });
+			expect(await refused.json()).toEqual({
+				error: race === 'unlink' ? 'invalid_target' : 'invalid_client',
+			});
 			expect(refused.headers.has('set-cookie')).toBe(false);
 			expect(harness.effects).toHaveLength(0);
 		} finally {

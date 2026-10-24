@@ -18,6 +18,7 @@ export async function runOwnerCli(args: readonly string[]): Promise<number> {
 			'no-browser': { type: 'boolean' },
 			'request-id': { type: 'string' },
 			'client-id': { type: 'string' },
+			persona: { type: 'string' },
 			output: { type: 'string' },
 		},
 	});
@@ -25,8 +26,8 @@ export async function runOwnerCli(args: readonly string[]): Promise<number> {
 	if (values.help === true) {
 		process.stdout
 			.write(`Usage: mise exec -- node scripts/verify-auth/owner-cli.ts --target FILE COMMAND [OPTIONS]
-Commands: login | add-agent --request-id UUID --output FILE | remove-agent --client-id ID --request-id UUID | agent-status --client-id ID
-Target JSON: issuer, managementAudience, gatewayUrl, organizationId, ownerCliClientId, ownerCliRedirectUri, tokenCachePath.
+Commands: login | add-agent --persona PROFILE --request-id UUID [--client-id ID | --output FILE] | remove-agent --client-id ID --request-id UUID | retire-agent --client-id ID --request-id UUID | agent-status --client-id ID
+Target JSON: issuer, managementAudience, gatewayUrl, organizationId, workspaceId, ownerCliClientId, ownerCliRedirectUri, tokenCachePath.
 Target and token cache are owned mode-0600 files outside Git checkouts. Credential output is created mode0600 and must not exist.
 --force-auth starts a new browser authorization. Expiry requires another authorization; no refresh token is requested or accepted.
 --no-browser prints the authorization URL for a browser on another machine; it never prints a credential.
@@ -35,21 +36,28 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 		try {
 			const target = await readAuthTarget(z.string().min(1).parse(values.target));
 			const command = z
-				.enum(['login', 'add-agent', 'remove-agent', 'agent-status'])
+				.enum(['login', 'add-agent', 'remove-agent', 'retire-agent', 'agent-status'])
 				.parse(positionals[0]);
 			if (positionals.length !== 1) throw new Error('Expected exactly one owner command');
 			const requestId =
-				command === 'add-agent' || command === 'remove-agent'
+				command === 'add-agent' || command === 'remove-agent' || command === 'retire-agent'
 					? z.uuid().parse(values['request-id'])
 					: undefined;
 			const clientId =
-				command === 'remove-agent' || command === 'agent-status'
-					? z.string().min(1).parse(values['client-id'])
-					: undefined;
+				command === 'login'
+					? undefined
+					: command === 'add-agent'
+						? values['client-id'] === undefined
+							? undefined
+							: z.string().min(1).parse(values['client-id'])
+						: z.string().min(1).parse(values['client-id']);
+			const persona = command === 'add-agent' ? z.string().min(1).parse(values.persona) : undefined;
 			const output =
-				command === 'add-agent'
+				command === 'add-agent' && clientId === undefined
 					? await requirePrivateRuntimePath(z.string().min(1).parse(values.output), false)
 					: undefined;
+			if (clientId !== undefined && values.output !== undefined)
+				throw new Error('Linking an existing agent never returns a credential output');
 			const token = await ownerManagementToken({
 				target,
 				forceAuth: values['force-auth'] === true,
@@ -67,12 +75,22 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 				);
 			else {
 				const endpoint = new URL(
-					`/management/organizations/${target.organizationId}/agents${clientId === undefined ? '' : `/${encodeURIComponent(clientId)}`}`,
+					command === 'retire-agent'
+						? `/management/organizations/${target.organizationId}/agents/${encodeURIComponent(z.string().parse(clientId))}`
+						: `/management/workspaces/${target.workspaceId}/agents${command === 'add-agent' ? '' : `/${encodeURIComponent(z.string().parse(clientId))}`}`,
 					target.gatewayUrl,
 				);
 				const method =
-					command === 'add-agent' ? 'POST' : command === 'remove-agent' ? 'DELETE' : 'GET';
-				const body = method === 'GET' ? undefined : JSON.stringify({ requestId });
+					command === 'add-agent' ? 'POST' : command === 'agent-status' ? 'GET' : 'DELETE';
+				const body =
+					method === 'GET'
+						? undefined
+						: JSON.stringify({
+								requestId,
+								...(command === 'add-agent'
+									? { persona, ...(clientId === undefined ? {} : { clientId }) }
+									: {}),
+							});
 				const response = await fetch(endpoint, {
 					method,
 					headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -87,6 +105,8 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 							kind: z.literal('registered'),
 							clientId: z.string(),
 							clientSecret: z.string(),
+							workspaceId: z.literal(target.workspaceId),
+							resource: z.url(),
 						})
 						.parse(result);
 					await writeFile(output, JSON.stringify(registration), { mode: 0o600, flag: 'wx' });
@@ -94,8 +114,10 @@ This switch makes no hardware-presence or per-command human-intent claim. Every 
 				} else {
 					const status = z
 						.strictObject({
-							kind: z.enum(['listed', 'unlisted', 'removed', 'removal-pending']),
+							kind: z.enum(['linked', 'member', 'removed', 'removal-pending']),
 							clientId: z.string(),
+							workspaceId: z.literal(target.workspaceId).optional(),
+							resource: z.url().optional(),
 						})
 						.parse(result);
 					process.stdout.write(`${status.kind}: ${status.clientId}\n`);

@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import {
 	startLocalAuthHarness,
-	organizationOne,
+	workspaceOne,
 	registeredClientId,
 	managementAudience,
 } from '#auth/test-fixtures/local-auth-harness';
@@ -141,10 +141,10 @@ it('agent: native owner code rejects wrong PKCE/redirect, missing or plain PKCE,
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
-		).not.toHaveProperty(`agent:${registeredClientId}`);
+		).not.toHaveProperty(`member:${registeredClientId}`);
 		expect(harness.effects).toHaveLength(0);
 	} finally {
 		await harness.close();

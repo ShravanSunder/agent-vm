@@ -7,7 +7,9 @@ import { jwt } from 'better-auth/plugins/jwt';
 
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
+import { createWorkspaceResourceStore } from '#auth/d1-persistence/workspace-resource-store';
 import { agentRegistrationMetadataSchema } from '#auth/sign-in-core/agent-clients/agent-registration';
+import { workspaceResourceHasIssuancePolicy } from '#auth/sign-in-core/agent-clients/workspace-resource';
 import type { SignInConfiguration } from '#auth/sign-in-core/models/deployment-configuration';
 import type { IssuedPersonSession } from '#auth/sign-in-core/response-release/sign-in-response-release';
 
@@ -58,6 +60,7 @@ export function createSignInProvider(
 		now: props.now,
 	});
 	const agents = createAgentRegistrationStore(props);
+	const workspaces = createWorkspaceResourceStore(props.database);
 	async function ownerPrivilege(
 		userId: string | undefined,
 		sessionId: string | undefined,
@@ -204,11 +207,6 @@ export function createSignInProvider(
 				m2mAccessTokenExpiresIn: props.configuration.accessTokenSeconds,
 				resources: [
 					{
-						identifier: props.configuration.agentAudience,
-						accessTokenTtl: props.configuration.accessTokenSeconds,
-						allowedScopes: ['tool-portal:agent'],
-					},
-					{
 						identifier: props.configuration.managementAudience,
 						accessTokenTtl: props.configuration.accessTokenSeconds,
 						allowedScopes: ['tool-portal:management'],
@@ -219,8 +217,17 @@ export function createSignInProvider(
 					: { generateClientId: () => props.generatedClientId ?? crypto.randomUUID() }),
 				clientPrivileges: async ({ user, session }) => ownerPrivilege(user?.id, session?.id),
 				resourcePrivileges: async ({ user, session }) => ownerPrivilege(user?.id, session?.id),
-				async customAccessTokenClaims({ user, metadata }): Promise<Record<string, unknown>> {
+				async customAccessTokenClaims({
+					user,
+					metadata,
+					resources,
+				}): Promise<Record<string, unknown>> {
 					if (user !== undefined && user !== null) {
+						const requestedWorkspaces = await Promise.all(
+							(resources ?? []).map((identifier: string) => workspaces.read(identifier)),
+						);
+						if (requestedWorkspaces.some((resource) => resource !== null))
+							throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
 						if (!(await persons.ensurePersonActive(user.id)))
 							throw new APIError('BAD_REQUEST', { error: 'invalid_grant' });
 						return {};
@@ -236,7 +243,22 @@ export function createSignInProvider(
 						current.metadata.organizationId !== registration.data.organizationId
 					)
 						throw new APIError('BAD_REQUEST', { error: 'invalid_client' });
-					return { organization_id: current.metadata.organizationId };
+					if (resources?.length !== 1)
+						throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
+					const identifier = resources[0];
+					if (identifier === undefined || !current.resourceIds.includes(identifier))
+						throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
+					const resource = await workspaces.read(identifier);
+					if (
+						resource === null ||
+						!workspaceResourceHasIssuancePolicy(resource) ||
+						resource.metadata.organizationId !== current.metadata.organizationId
+					)
+						throw new APIError('BAD_REQUEST', { error: 'invalid_target' });
+					return {
+						organization_id: current.metadata.organizationId,
+						workspace_id: resource.metadata.workspaceId,
+					};
 				},
 			}),
 			passkey({

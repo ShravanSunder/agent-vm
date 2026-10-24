@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { workspaceResourceIdentifier } from '@agent-collaboration/tool-access/contracts';
 import {
 	Miniflare,
 	Response as WorkerResponse,
@@ -29,7 +30,14 @@ export const organizationOne = '11111111-1111-4111-8111-111111111111';
 export const organizationTwo = '22222222-2222-4222-8222-222222222222';
 export const registrationRequestId = 'b015079b-19b6-4aa2-9b82-1298efcb2f79';
 export const registeredClientId = `agent-${organizationOne}-${registrationRequestId}`;
-export const agentAudience = 'https://portal-test.invalid/mcp';
+export const workspaceOne = '33333333-3333-4333-8333-333333333333';
+export const workspaceTwo = '44444444-4444-4444-8444-444444444444';
+export const workspaceThree = '55555555-5555-4555-8555-555555555555';
+export const toolPortalOrigin = 'https://portal-test.invalid';
+export function workspaceAudience(workspaceId: string): string {
+	return workspaceResourceIdentifier({ toolPortalOrigin, workspaceId });
+}
+export const agentAudience = workspaceAudience(workspaceOne);
 export const managementAudience = 'https://portal-test.invalid/management';
 
 function workerManifest(script: string): NonNullable<WorkerOptions['config']['manifest']> {
@@ -43,10 +51,11 @@ function textBindings(
 	);
 }
 
-function organizationConfigurations(upstream: string): unknown {
-	function configuration(name: string, credential: string): unknown {
+export function workspaceConfigurations(upstream: string): unknown {
+	function configuration(name: string, organizationId: string, credential: string): unknown {
 		return {
-			organizationName: name,
+			organizationId,
+			workspaceName: name,
 			approvalKeyBinding: 'APPROVAL_KEY',
 			mcp: {
 				schemaVersion: 1,
@@ -64,7 +73,7 @@ function organizationConfigurations(upstream: string): unknown {
 			},
 			portal: {
 				schemaVersion: 1,
-				agents: { [registeredClientId]: { profile: 'operator' } },
+				agents: { [registeredClientId]: {} },
 				profiles: {
 					operator: {
 						namespaces: {
@@ -82,8 +91,9 @@ function organizationConfigurations(upstream: string): unknown {
 		};
 	}
 	return {
-		[organizationOne]: configuration('proof-one', 'ONE_CREDENTIAL'),
-		[organizationTwo]: configuration('proof-two', 'TWO_CREDENTIAL'),
+		[workspaceOne]: configuration('proof-one', organizationOne, 'ONE_CREDENTIAL'),
+		[workspaceTwo]: configuration('proof-two', organizationOne, 'TWO_CREDENTIAL'),
+		[workspaceThree]: configuration('proof-three', organizationTwo, 'THREE_CREDENTIAL'),
 	};
 }
 
@@ -97,7 +107,7 @@ export async function startLocalAuthHarness(): Promise<{
 	readonly cookie: () => string;
 	readonly managementHolds: ManagementProofControls;
 	readonly ownerToken: () => Promise<string>;
-	readonly personToken: (email: string) => Promise<string>;
+	readonly personToken: (email: string, verified?: boolean) => Promise<string>;
 	readonly auth: (pathname: string, init?: RequestInit) => Promise<Response>;
 	readonly gateway: (
 		pathname: string,
@@ -143,7 +153,10 @@ export async function startLocalAuthHarness(): Promise<{
 					response.end(Buffer.from(await barrierResponse.arrayBuffer()));
 					return;
 				}
-				const gatewayRequest = pathname.startsWith('/management/') || pathname.startsWith('/mcp');
+				const gatewayRequest =
+					pathname.startsWith('/management/') ||
+					pathname.startsWith('/workspaces/') ||
+					pathname.startsWith('/mcp');
 				const headers = Object.fromEntries(
 					Object.entries(request.headers).flatMap(([name, value]) =>
 						value === undefined ? [] : [[name, Array.isArray(value) ? value.join(', ') : value]],
@@ -214,7 +227,7 @@ export async function startLocalAuthHarness(): Promise<{
 		issuer,
 		mode: 'private',
 		ownerEmail: 'owner@example.invalid',
-		agentAudience,
+		toolPortalOrigin,
 		managementAudience,
 		organizationIds: [organizationOne, organizationTwo],
 		ownerCliClientId: 'owner-cli-local',
@@ -252,11 +265,12 @@ export async function startLocalAuthHarness(): Promise<{
 	const gatewayBindings = {
 		SIGN_IN_ISSUER: issuer,
 		SIGN_IN_JWKS_URL: `${issuer}/api/auth/jwks`,
-		TOOL_PORTAL_AUDIENCE: agentAudience,
+		TOOL_PORTAL_ORIGIN: toolPortalOrigin,
 		MANAGEMENT_AUDIENCE: managementAudience,
-		ORGANIZATION_CONFIGURATIONS: JSON.stringify(organizationConfigurations(upstream.url)),
+		WORKSPACE_CONFIGURATIONS: JSON.stringify(workspaceConfigurations(upstream.url)),
 		ONE_CREDENTIAL: 'Bearer organization-one-canary',
-		TWO_CREDENTIAL: 'Bearer organization-two-canary',
+		TWO_CREDENTIAL: 'Bearer workspace-two-canary',
+		THREE_CREDENTIAL: 'Bearer organization-two-canary',
 		APPROVAL_KEY: '12'.repeat(32),
 	};
 	const miniflare = await Promise.resolve()
@@ -303,17 +317,17 @@ export async function startLocalAuthHarness(): Promise<{
 											workerName: 'sign-in',
 											exportName: 'AgentClientManagement',
 										},
-										ORGANIZATIONS: {
+										WORKSPACES: {
 											type: 'durable-object',
 											workerName: 'gateway-one',
-											exportName: 'OrganizationAuthorization',
+											exportName: 'WorkspaceAuthority',
 										},
 										CALL_ANALYTICS: { type: 'analytics-engine-dataset', name: 'auth-proof-calls' },
 									},
 									...(name === 'gateway-one'
 										? {
 												exports: {
-													OrganizationAuthorization: { type: 'durable-object', storage: 'sqlite' },
+													WorkspaceAuthority: { type: 'durable-object', storage: 'sqlite' },
 												},
 											}
 										: {}),
@@ -376,6 +390,7 @@ export async function startLocalAuthHarness(): Promise<{
 		managementAudience,
 		gatewayUrl: issuer,
 		organizationId: organizationOne,
+		workspaceId: workspaceOne,
 		ownerCliClientId: configuration.ownerCliClientId,
 		ownerCliRedirectUri: configuration.ownerCliRedirectUri,
 		tokenCachePath: path.join(runtimeDirectory, 'owner-token.json'),
@@ -391,7 +406,7 @@ export async function startLocalAuthHarness(): Promise<{
 		});
 	}
 	await recordTarget(false);
-	async function personToken(email: string): Promise<string> {
+	async function personToken(email: string, verified = true): Promise<string> {
 		process.stderr.write('[auth-harness] owner login started\n');
 		const token = await loginThroughNativeOwnerCli({
 			target,
@@ -409,7 +424,7 @@ export async function startLocalAuthHarness(): Promise<{
 				if (!signin.ok) throw new Error('Real provider sign-in initiation refused');
 				process.stderr.write('[auth-harness] provider sign-in initiated\n');
 				const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
-				const callback = google.authorize(new URL(providerUrl), email);
+				const callback = google.authorize(new URL(providerUrl), email, verified);
 				const admitted = await auth(callback.toString(), {
 					headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
 				});

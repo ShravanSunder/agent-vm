@@ -10,6 +10,7 @@ export const authTargetSchema = z.strictObject({
 	ownerCliClientId: z.string().min(1),
 	ownerCliRedirectUri: z.url(),
 	organizationId: z.uuid(),
+	workspaceId: z.uuid(),
 	tokenCachePath: z.string().min(1),
 });
 export type AuthTarget = z.infer<typeof authTargetSchema>;

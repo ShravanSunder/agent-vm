@@ -2,6 +2,7 @@ import {
 	createPersonTokenVerifier,
 	type PersonProof,
 } from '@agent-collaboration/tool-access/contracts';
+import type { z } from 'zod';
 
 import { manageAgentClient } from '#auth/better-auth-provider/agent-client-management';
 import type { ManagementObserver } from '#auth/better-auth-provider/provider-configuration';
@@ -11,7 +12,15 @@ import {
 } from '#auth/better-auth-provider/sign-in-http-handler';
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
-import type { AgentClientChangeResult } from '#auth/sign-in-core/agent-clients/agent-registration';
+import type {
+	workspaceAgentChangeSchema,
+	agentClientChangeSchema,
+	RegisterAndLinkResult,
+	LinkResult,
+	UnlinkResult,
+	DisableResult,
+	AgentManagementResult,
+} from '#auth/sign-in-core/agent-clients/agent-registration';
 
 /** Internal named-entrypoint implementation. Public HTTP never dispatches these methods. */
 export function createSignInManagementBinding(
@@ -36,10 +45,24 @@ export function createSignInManagementBinding(
 		readonly organizationId: string;
 		readonly clientId: string;
 	}) => Promise<boolean>;
-	readonly changeClient: (props: {
-		readonly token: string;
-		readonly operation: unknown;
-	}) => Promise<AgentClientChangeResult>;
+	readonly registerAndLink: (
+		props: { readonly token: string } & z.infer<typeof workspaceAgentChangeSchema>,
+	) => Promise<RegisterAndLinkResult>;
+	readonly link: (
+		props: { readonly token: string; readonly clientId: string } & z.infer<
+			typeof workspaceAgentChangeSchema
+		>,
+	) => Promise<LinkResult>;
+	readonly unlink: (
+		props: { readonly token: string; readonly clientId: string } & z.infer<
+			typeof workspaceAgentChangeSchema
+		>,
+	) => Promise<UnlinkResult>;
+	readonly disable: (
+		props: { readonly token: string; readonly clientId: string } & z.infer<
+			typeof agentClientChangeSchema
+		>,
+	) => Promise<DisableResult>;
 } {
 	const publicHandler = createSignInHttpHandler(configuration);
 	const verifier = createPersonTokenVerifier({
@@ -65,6 +88,20 @@ export function createSignInManagementBinding(
 			return null;
 		return result.proof;
 	}
+	async function runOperation(token: string, operation: unknown): Promise<AgentManagementResult> {
+		if (configuration.configuration.managementHumanCheck !== 'remembered-login')
+			return { kind: 'refused', reason: 'human-check-not-implemented' };
+		const proof = await ownerProof(token);
+		if (proof === null) return { kind: 'refused', reason: 'not-owner' };
+		return manageAgentClient({
+			provider: { ...configuration, requestState: { createdUserIds: [], issuedSessions: [] } },
+			proof,
+			operation,
+			...(controls.observeManagement === undefined
+				? {}
+				: { observeManagement: controls.observeManagement }),
+		});
+	}
 	return {
 		async humanCheckStatus() {
 			const level = configuration.configuration.managementHumanCheck;
@@ -89,19 +126,31 @@ export function createSignInManagementBinding(
 					.organizationId === organizationId
 			);
 		},
-		async changeClient({ token, operation }): Promise<AgentClientChangeResult> {
-			if (configuration.configuration.managementHumanCheck !== 'remembered-login')
-				return { kind: 'refused', reason: 'human-check-not-implemented' };
-			const proof = await ownerProof(token);
-			if (proof === null) return { kind: 'refused', reason: 'not-owner' };
-			return manageAgentClient({
-				provider: { ...configuration, requestState: { createdUserIds: [], issuedSessions: [] } },
-				proof,
-				operation,
-				...(controls.observeManagement === undefined
-					? {}
-					: { observeManagement: controls.observeManagement }),
-			});
+		async registerAndLink({ token, ...operation }): Promise<RegisterAndLinkResult> {
+			const result = await runOperation(token, { ...operation, kind: 'registerAndLink' });
+			return result.kind === 'registered' ||
+				result.kind === 'incomplete' ||
+				result.kind === 'refused'
+				? result
+				: { kind: 'incomplete', clientId: result.clientId };
+		},
+		async link({ token, ...operation }): Promise<LinkResult> {
+			const result = await runOperation(token, { ...operation, kind: 'link' });
+			return result.kind === 'linked' || result.kind === 'incomplete' || result.kind === 'refused'
+				? result
+				: { kind: 'incomplete', clientId: result.clientId };
+		},
+		async unlink({ token, ...operation }): Promise<UnlinkResult> {
+			const result = await runOperation(token, { ...operation, kind: 'unlink' });
+			return result.kind === 'unlinked' || result.kind === 'incomplete' || result.kind === 'refused'
+				? result
+				: { kind: 'incomplete', clientId: result.clientId };
+		},
+		async disable({ token, ...operation }): Promise<DisableResult> {
+			const result = await runOperation(token, { ...operation, kind: 'disable' });
+			return result.kind === 'disabled' || result.kind === 'incomplete' || result.kind === 'refused'
+				? result
+				: { kind: 'incomplete', clientId: result.clientId };
 		},
 	};
 }

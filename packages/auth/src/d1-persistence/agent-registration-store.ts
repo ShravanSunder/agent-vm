@@ -82,8 +82,7 @@ export function createAgentRegistrationStore(props: {
 				.array(z.object({ resourceId: z.string() }))
 				.parse(links.results)
 				.map((link) => link.resourceId);
-			// A partial create/link remains observable but cannot satisfy the strict E9 shape.
-			if (resourceIds.length !== 1) return null;
+			// E9 identity survives unlinking its last workspace; links are independent E11 state.
 			const completion = await readPrimary()
 				.prepare(
 					"SELECT id FROM sign_in_audit WHERE kind = 'client-changed' AND target_id = ? AND change_kind = 'registered' AND phase = 'outcome' LIMIT 1",

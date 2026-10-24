@@ -12,6 +12,7 @@ import {
 } from '#auth/better-auth-provider/provider-configuration';
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
+import { createWorkspaceResourceStore } from '#auth/d1-persistence/workspace-resource-store';
 import {
 	handleSignInRequest,
 	isPublicSignInRoute,
@@ -79,7 +80,8 @@ export function createSignInHttpHandler(
 			const agents = createAgentRegistrationStore(configuration);
 			const ports: SignInResponseReleasePorts = {
 				issuer: configuration.configuration.issuer,
-				agentAudience: configuration.configuration.agentAudience,
+				toolPortalOrigin: configuration.configuration.toolPortalOrigin,
+				requestedResource: body?.getAll('resource').length === 1 ? body.get('resource') : null,
 				managementAudience: configuration.configuration.managementAudience,
 				accessTokenSeconds: configuration.configuration.accessTokenSeconds,
 				now: configuration.now,
@@ -89,6 +91,7 @@ export function createSignInHttpHandler(
 					return accessTokenReleaseClaimsSchema.parse(decodeJwt(token));
 				},
 				readAgent: agents.read,
+				readWorkspaceResource: createWorkspaceResourceStore(configuration.database).read,
 				isPersonSessionActive: persons.isPersonSessionActive,
 				deleteSession: persons.deleteSession,
 				cleanupUnboundPerson: persons.cleanupUnboundPerson,

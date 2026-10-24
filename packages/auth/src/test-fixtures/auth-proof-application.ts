@@ -48,7 +48,11 @@ export async function handleAuthProofRequest(
 			const body = z.object({ access_token: z.string() }).safeParse(await response.clone().json());
 			if (!body.success || decodeProtectedHeader(body.data.access_token).typ !== 'at+jwt') return;
 			const claims = z
-				.object({ client_id: z.string(), organization_id: z.string().optional() })
+				.object({
+					client_id: z.string(),
+					organization_id: z.string().optional(),
+					workspace_id: z.string().optional(),
+				})
 				.parse(decodeJwt(body.data.access_token));
 			await callAuthProofBarrier({
 				bindings,
@@ -59,6 +63,7 @@ export async function handleAuthProofRequest(
 					signed: true,
 					clientId: claims.client_id,
 					organizationId: claims.organization_id ?? null,
+					workspaceId: claims.workspace_id ?? null,
 				},
 			});
 		},

@@ -6,13 +6,19 @@ import { z } from 'zod';
 import { createSignInProvider } from '#auth/better-auth-provider/provider-configuration';
 import { signInWorkerConfiguration } from '#auth/cloudflare-host/worker-configuration';
 
-/** Negative controls only: authentic issuer keys sign a deliberately invalid person profile. */
+/** Negative controls only: authentic issuer keys sign a deliberately invalid Person or legacy Agent profile. */
 export async function handleAuthProofTokenRequest(
 	request: Request,
 	bindings: AuthWorkerEnv,
 ): Promise<Response | null> {
 	const pathname = new URL(request.url).pathname;
-	if (pathname !== '/api/auth/__proof/without-sid' && pathname !== '/__auth-proof/no-hook')
+	if (
+		![
+			'/api/auth/__proof/without-sid',
+			'/api/auth/__proof/legacy-agent',
+			'/__auth-proof/no-hook',
+		].includes(pathname)
+	)
 		return null;
 	const provider = signInWorkerConfiguration(bindings);
 	const auth = createSignInProvider({
@@ -46,6 +52,36 @@ export async function handleAuthProofTokenRequest(
 			{
 				id: 'negative-person-profile-proof',
 				endpoints: {
+					legacyAgent: createAuthEndpoint(
+						'/__proof/legacy-agent',
+						{
+							method: 'POST',
+							body: z.strictObject({ clientId: z.string().min(1), organizationId: z.uuid() }),
+						},
+						async (context) => {
+							const now = Math.floor(provider.now() / 1000);
+							const token = await signJWT(context, {
+								options: {
+									jwt: { issuer: provider.configuration.issuer },
+									jwks: { keyPairConfig: { alg: 'EdDSA' } },
+								},
+								header: { typ: 'at+jwt' },
+								payload: {
+									iss: provider.configuration.issuer,
+									sub: context.body.clientId,
+									aud: `${provider.configuration.toolPortalOrigin}/mcp`,
+									iat: now,
+									exp: now + 300,
+									client_id: context.body.clientId,
+									azp: context.body.clientId,
+									organization_id: context.body.organizationId,
+									scope: 'tool-portal:agent',
+									jti: crypto.randomUUID(),
+								},
+							});
+							return context.json({ token });
+						},
+					),
 					withoutPersonSid: createAuthEndpoint(
 						'/__proof/without-sid',
 						{

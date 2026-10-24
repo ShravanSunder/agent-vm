@@ -11,7 +11,9 @@ import {
 } from '#auth/sign-in-core/response-release/sign-in-response-release';
 
 const issuer = 'https://sign-in.invalid';
-const agentAudience = 'https://portal.invalid/mcp';
+const workspaceId = '33333333-3333-4333-8333-333333333333';
+const agentAudience = `https://portal.invalid/workspaces/${workspaceId}/mcp`;
+const toolPortalOrigin = 'https://portal.invalid';
 const managementAudience = 'https://portal.invalid/management';
 const organizationId = '11111111-1111-4111-8111-111111111111';
 const now = 1_800_000_000;
@@ -28,12 +30,14 @@ const agentClaims = {
 	client_id: 'agent-one',
 	azp: 'agent-one',
 	organization_id: organizationId,
+	workspace_id: workspaceId,
 };
 
 function ports(changes: Partial<SignInResponseReleasePorts> = {}): SignInResponseReleasePorts {
 	return {
 		issuer,
-		agentAudience,
+		toolPortalOrigin,
+		requestedResource: agentAudience,
 		managementAudience,
 		accessTokenSeconds: 300,
 		now: () => now * 1000,
@@ -50,6 +54,16 @@ function ports(changes: Partial<SignInResponseReleasePorts> = {}): SignInRespons
 				disabled: false,
 				registrationComplete: true,
 			}),
+		readWorkspaceResource: async (identifier: string) =>
+			identifier === agentAudience
+				? {
+						identifier,
+						metadata: { kind: 'workspace', organizationId, workspaceId },
+						allowedScopes: ['tool-portal:agent'],
+						customClaims: null,
+						disabled: false,
+					}
+				: null,
 		isPersonSessionActive: async () => true,
 		deleteSession: async () => {},
 		cleanupUnboundPerson: async () => {},
@@ -140,6 +154,76 @@ describe('outer response release after the signing effect', () => {
 			ports: ports({ isPersonSessionActive: async () => false }),
 		});
 		expect(await result.json()).toEqual({ error: 'invalid_grant' });
+	});
+	it('reports invalid_target when an unlink commits before the post-signing link read', async () => {
+		const current = await ports().readAgent('agent-one');
+		const result = await releaseSignInResponse({
+			response: await tokenResponse(),
+			tokenGrant: 'client_credentials',
+			issuedSessions: [],
+			createdUserIds: [],
+			ports: ports({
+				readAgent: async () => (current === null ? null : { ...current, resourceIds: [] }),
+			}),
+		});
+		expect(await result.json()).toEqual({ error: 'invalid_target' });
+	});
+	it('reads resource organization again after signing instead of trusting the earlier client claim', async () => {
+		const resource = await ports().readWorkspaceResource(agentAudience);
+		const result = await releaseSignInResponse({
+			response: await tokenResponse(),
+			tokenGrant: 'client_credentials',
+			issuedSessions: [],
+			createdUserIds: [],
+			ports: ports({
+				readWorkspaceResource: async () =>
+					resource === null
+						? null
+						: {
+								...resource,
+								metadata: {
+									...resource.metadata,
+									organizationId: '22222222-2222-4222-8222-222222222222',
+								},
+							},
+			}),
+		});
+		expect(await result.json()).toEqual({ error: 'invalid_client' });
+	});
+	it('discards a signed workspace claim that does not match the requested resource row', async () => {
+		const result = await releaseSignInResponse({
+			response: await tokenResponse({ workspace_id: '44444444-4444-4444-8444-444444444444' }),
+			tokenGrant: 'client_credentials',
+			issuedSessions: [],
+			createdUserIds: [],
+			ports: ports(),
+		});
+		expect(await result.json()).toEqual({ error: 'invalid_client' });
+	});
+	it('requires the signed workspace claim even when the client and audience are correct', async () => {
+		const result = await releaseSignInResponse({
+			response: await tokenResponse({ workspace_id: undefined }),
+			tokenGrant: 'client_credentials',
+			issuedSessions: [],
+			createdUserIds: [],
+			ports: ports(),
+		});
+		expect(await result.json()).toEqual({ error: 'invalid_client' });
+	});
+	it('refuses a linked person code client at a workspace resource with invalid_target', async () => {
+		const result = await releaseSignInResponse({
+			response: await tokenResponse({
+				sub: 'owner-person',
+				client_id: 'owner-cli',
+				azp: 'owner-cli',
+				sid: 'owner-session',
+			}),
+			tokenGrant: 'person',
+			issuedSessions: [],
+			createdUserIds: [],
+			ports: ports(),
+		});
+		expect(await result.json()).toEqual({ error: 'invalid_target' });
 	});
 	it('cleans an inserted session before refusing its cookie response', async () => {
 		const sessions = new Set(['new-session']);
