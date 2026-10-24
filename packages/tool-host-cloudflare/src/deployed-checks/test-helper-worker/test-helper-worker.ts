@@ -78,7 +78,7 @@ export default {
 					if (input.state === 'listed') await workspace.setMembership(input.agentId, 'one');
 					else {
 						const requestId = crypto.randomUUID();
-						await workspace.beginAgentRemoval(input.agentId, requestId, 'unlink');
+						await workspace.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
 						await workspace.completeAgentRemoval(input.agentId, requestId, 'unlink');
 					}
 				},

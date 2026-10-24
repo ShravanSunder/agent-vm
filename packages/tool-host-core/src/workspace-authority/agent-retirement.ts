@@ -9,6 +9,10 @@ export const agentRemovalSchema = z.strictObject({
 	requestId: z.uuid(),
 });
 export type AgentRemoval = z.infer<typeof agentRemovalSchema>;
+interface AgentRemovalIntent {
+	readonly operation: AgentRemoval['operation'];
+	readonly replacesPendingRequestId?: string;
+}
 export interface AgentManagementAuthority {
 	readonly readMembership: (clientId: string) => Promise<{ readonly persona: string } | null>;
 	readonly setMembership: (clientId: string, persona: string) => Promise<void>;
@@ -16,7 +20,7 @@ export interface AgentManagementAuthority {
 	readonly beginAgentRemoval: (
 		clientId: string,
 		requestId: string,
-		operation: AgentRemoval['operation'],
+		intent: AgentRemovalIntent,
 	) => Promise<AgentRemoval>;
 	readonly completeAgentRemoval: (
 		clientId: string,
@@ -37,13 +41,25 @@ export function createAgentRemovalAuthority(
 			const stored = await store.read(`member-removal:${clientId}`);
 			return stored === undefined ? null : agentRemovalSchema.parse(stored);
 		},
-		async beginAgentRemoval(clientId, requestId, operation): Promise<AgentRemoval> {
+		async beginAgentRemoval(clientId, requestId, intent): Promise<AgentRemoval> {
 			z.string().min(1).parse(clientId);
+			const { operation, replacesPendingRequestId } = intent;
+			if (replacesPendingRequestId !== undefined) z.uuid().parse(replacesPendingRequestId);
 			const pending = agentRemovalSchema.parse({ kind: 'pending', requestId, operation });
 			return store.transaction(async (storage) => {
 				const stored = await storage.read(`member-removal:${clientId}`);
 				const previous = stored === undefined ? undefined : agentRemovalSchema.parse(stored);
+				const replacement = replacesPendingRequestId !== undefined;
 				if (
+					replacement &&
+					(previous?.kind !== 'pending' ||
+						previous.operation !== operation ||
+						previous.requestId !== replacesPendingRequestId ||
+						previous.requestId === requestId)
+				)
+					throw new Error('Pending membership replacement conflicts');
+				if (
+					!replacement &&
 					previous?.kind === 'pending' &&
 					!(
 						previous.operation === 'unlink' &&
@@ -53,9 +69,9 @@ export function createAgentRemovalAuthority(
 					(previous.requestId !== requestId || previous.operation !== operation)
 				)
 					throw new Error('Pending membership operation conflicts');
-				if (previous?.requestId === requestId && previous.operation !== operation)
+				if (!replacement && previous?.requestId === requestId && previous.operation !== operation)
 					throw new Error('Membership operation intent conflicts');
-				if (previous?.operation === 'disable' && previous.requestId !== requestId)
+				if (!replacement && previous?.operation === 'disable' && previous.requestId !== requestId)
 					throw new Error('Retired client cannot be changed');
 				const row = await storage.read(`member:${clientId}`);
 				// An absent member stays absent: removal never fabricates a persona.

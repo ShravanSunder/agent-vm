@@ -201,6 +201,85 @@ it('agent: a named management request ID cannot change operation, client, organi
 	}
 });
 
+it('agent: a Portal unlink reports a reused registration ID and recovers with a fresh removal ID', async () => {
+	const harness = await startLocalAuthHarness();
+	try {
+		const owner = await harness.ownerToken();
+		const registration = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceOne,
+			requestId: registrationRequestId,
+		});
+		expect(registration.status).toBe(200);
+		const credential = agentCredentialSchema.parse(await registration.json());
+		const endpoint = `/management/workspaces/${workspaceOne}/agents/${credential.clientId}`;
+		async function remove(requestId: string): Promise<Response> {
+			return harness.gateway(endpoint, {
+				method: 'DELETE',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId }),
+			});
+		}
+		async function workspaceState(): Promise<unknown> {
+			return (
+				await harness.gateway(
+					`/__auth-proof?workspace=${workspaceOne}&client=${credential.clientId}`,
+				)
+			).json();
+		}
+		async function issuerState(): Promise<unknown> {
+			return Promise.all([
+				harness.database
+					.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
+					.bind(credential.clientId)
+					.first(),
+				harness.database
+					.prepare(
+						'SELECT resourceId FROM oauthClientResource WHERE clientId = ? ORDER BY resourceId',
+					)
+					.bind(credential.clientId)
+					.all()
+					.then((result) => result.results),
+			]);
+		}
+		const beforeIssuer = await issuerState();
+		const refused = await remove(registrationRequestId);
+		expect(refused.status).toBe(403);
+		const refusal = await refused.json();
+		expect(refusal).toEqual({ kind: 'refused', reason: 'operation-conflict' });
+		expectNoIssuedCredentials(refusal);
+		expect(await issuerState()).toEqual(beforeIssuer);
+		expect(await workspaceState()).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'pending',
+				operation: 'unlink',
+				requestId: registrationRequestId,
+			},
+		});
+		const recoveryId = crypto.randomUUID();
+		const recovered = await remove(recoveryId);
+		expect(recovered.status).toBe(200);
+		expect(await recovered.json()).toEqual({
+			kind: 'removed',
+			clientId: credential.clientId,
+			workspaceId: workspaceOne,
+		});
+		expect(await workspaceState()).toEqual({
+			[`member:${credential.clientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${credential.clientId}`]: {
+				kind: 'complete',
+				operation: 'unlink',
+				requestId: recoveryId,
+			},
+		});
+		expect(await issuerState()).toEqual([{ disabled: 0 }, []]);
+	} finally {
+		await harness.close();
+	}
+});
+
 it('agent: an incompatible workspace resource is never overwritten or linked by management', async () => {
 	const harness = await startLocalAuthHarness();
 	try {

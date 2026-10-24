@@ -384,7 +384,9 @@ describe('workspace agent management', () => {
 	it('retirement supersedes a pending unlink without calling it', async () => {
 		const target = await fixture();
 		await target.authority(workspaceOne).setMembership('agent-one', 'reader');
-		await target.authority(workspaceOne).beginAgentRemoval('agent-one', requestId, 'unlink');
+		await target
+			.authority(workspaceOne)
+			.beginAgentRemoval('agent-one', requestId, { operation: 'unlink' });
 		const retirementId = 'b015079b-19b6-4aa2-9b82-1298efcb2f80';
 		expect(
 			(
@@ -406,7 +408,9 @@ describe('workspace agent management', () => {
 	});
 	it('a stale unlink retry after retirement reads retired completion and never unlinks', async () => {
 		const target = await fixture();
-		await target.authority(workspaceOne).beginAgentRemoval('agent-one', requestId, 'unlink');
+		await target
+			.authority(workspaceOne)
+			.beginAgentRemoval('agent-one', requestId, { operation: 'unlink' });
 		const retirementId = 'b015079b-19b6-4aa2-9b82-1298efcb2f80';
 		expect(
 			(

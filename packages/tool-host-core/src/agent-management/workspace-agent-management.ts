@@ -5,12 +5,16 @@ import {
 import { z } from 'zod';
 
 import {
-	disableResultSchema,
 	linkResultSchema,
 	registerAndLinkResultSchema,
 	unlinkResultSchema,
 	type AgentClientManagementPort,
+	type UnlinkResult,
 } from '#tool-host-core/agent-management/agent-client-management-port';
+import {
+	createWorkspaceAgentRetirement,
+	type RemovalOutcome,
+} from '#tool-host-core/agent-management/workspace-agent-retirement';
 import type { WorkspaceConfigurationSource } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import type {
 	AgentManagementAuthority,
@@ -32,6 +36,25 @@ function pendingRemovalResponse(clientId: string): Response {
 	return Response.json({ kind: 'removal-pending', clientId }, { status: 202 });
 }
 
+function removalResponse(
+	outcome: RemovalOutcome,
+	clientId: string,
+	workspaceId?: string,
+): Response {
+	switch (outcome.kind) {
+		case 'refused':
+			return Response.json(outcome, { status: 403 });
+		case 'pending':
+			return pendingRemovalResponse(clientId);
+		case 'complete':
+			return Response.json({
+				kind: 'removed',
+				clientId,
+				...(workspaceId === undefined ? {} : { workspaceId }),
+			});
+	}
+}
+
 /** Coordinates workspace membership and sign-in links without sharing either owner's storage. */
 export function createWorkspaceAgentManagement(props: {
 	readonly verifier: PersonTokenVerifier;
@@ -40,6 +63,7 @@ export function createWorkspaceAgentManagement(props: {
 	readonly configurations: WorkspaceConfigurationSource;
 	readonly workspaces: { readonly forWorkspace: (workspaceId: string) => AgentManagementAuthority };
 }): { readonly handle: (request: Request) => Promise<Response> } {
+	const retirements = createWorkspaceAgentRetirement(props);
 	async function authorized(token: string, organizationId: string): Promise<boolean> {
 		return (
 			(await props.verifier.verify(token)).kind === 'verified' &&
@@ -50,12 +74,18 @@ export function createWorkspaceAgentManagement(props: {
 		scope: ClientScope,
 		workspaceId: string,
 		removal: AgentRemoval,
-	): Promise<Response> {
+	): Promise<RemovalOutcome> {
 		const authority = props.workspaces.forWorkspace(workspaceId);
-		const parsed = unlinkResultSchema.safeParse(
-			await props.signIn.unlink({ ...scope, workspaceId, requestId: removal.requestId }),
-		);
-		const result = parsed.success ? parsed.data : null;
+		let result: UnlinkResult | null = null;
+		try {
+			const parsed = unlinkResultSchema.safeParse(
+				await props.signIn.unlink({ ...scope, workspaceId, requestId: removal.requestId }),
+			);
+			result = parsed.success ? parsed.data : null;
+		} catch {
+			return { kind: 'pending' };
+		}
+		if (result?.kind === 'refused') return result;
 		if (
 			result?.kind !== 'unlinked' ||
 			result.clientId !== scope.clientId ||
@@ -63,7 +93,7 @@ export function createWorkspaceAgentManagement(props: {
 			result.resource !==
 				workspaceResourceIdentifier({ toolPortalOrigin: props.toolPortalOrigin, workspaceId })
 		)
-			return pendingRemovalResponse(scope.clientId);
+			return { kind: 'pending' };
 		await authority.completeAgentRemoval(scope.clientId, removal.requestId, 'unlink');
 		const completed = await authority.readAgentRemoval(scope.clientId);
 		if (
@@ -73,73 +103,7 @@ export function createWorkspaceAgentManagement(props: {
 			completed.requestId !== removal.requestId
 		)
 			throw new Error('Membership removal readback incomplete');
-		return Response.json({ kind: 'removed', clientId: scope.clientId, workspaceId });
-	}
-	async function finishRetirement(
-		scope: ClientScope,
-		requestId: string,
-		workspaceIds: readonly string[],
-	): Promise<Response> {
-		// Every removal completes before the global disable; retirement never unlinks resources.
-		const removals = await Promise.allSettled(
-			workspaceIds.map(async (workspaceId): Promise<void> => {
-				const authority = props.workspaces.forWorkspace(workspaceId);
-				await authority.beginAgentRemoval(scope.clientId, requestId, 'disable');
-				if ((await authority.readMembership(scope.clientId)) !== null)
-					throw new Error('Membership removal readback incomplete');
-			}),
-		);
-		if (removals.some((result) => result.status === 'rejected'))
-			throw new Error('Workspace retirement removal incomplete');
-		const parsed = disableResultSchema.safeParse(
-			await props.signIn.disable({ ...scope, requestId }),
-		);
-		if (
-			!parsed.success ||
-			parsed.data.kind !== 'disabled' ||
-			parsed.data.clientId !== scope.clientId
-		)
-			return pendingRemovalResponse(scope.clientId);
-		const completions = await Promise.allSettled(
-			workspaceIds.map(async (workspaceId): Promise<void> => {
-				const authority = props.workspaces.forWorkspace(workspaceId);
-				await authority.completeAgentRemoval(scope.clientId, requestId, 'disable');
-				const completed = await authority.readAgentRemoval(scope.clientId);
-				if (
-					completed?.kind !== 'complete' ||
-					completed.operation !== 'disable' ||
-					completed.requestId !== requestId ||
-					(await authority.readMembership(scope.clientId)) !== null
-				)
-					throw new Error('Retirement readback incomplete');
-			}),
-		);
-		if (completions.some((result) => result.status === 'rejected'))
-			throw new Error('Workspace retirement completion incomplete');
-		return Response.json({ kind: 'removed', clientId: scope.clientId });
-	}
-	async function resumeRetirement(
-		scope: ClientScope,
-		workspaceIds: readonly string[],
-	): Promise<Response | null> {
-		const removals = await Promise.all(
-			workspaceIds.map((workspaceId) =>
-				props.workspaces.forWorkspace(workspaceId).readAgentRemoval(scope.clientId),
-			),
-		);
-		const retirement = removals.find((removal) => removal?.operation === 'disable');
-		if (retirement !== undefined && retirement !== null) {
-			const completed = removals.every(
-				(removal) =>
-					removal?.operation === 'disable' &&
-					removal.kind === 'complete' &&
-					removal.requestId === retirement.requestId,
-			);
-			return completed
-				? Response.json({ kind: 'removed', clientId: scope.clientId })
-				: finishRetirement(scope, retirement.requestId, workspaceIds);
-		}
-		return null;
+		return { kind: 'complete' };
 	}
 	return {
 		async handle(request): Promise<Response> {
@@ -180,21 +144,43 @@ export function createWorkspaceAgentManagement(props: {
 					const scope = { token, organizationId, clientId };
 					if (!(await props.signIn.ownsAgentClient(scope)))
 						return Response.json({ error: 'not-authorized' }, { status: 403 });
-					const resumed = await resumeRetirement(scope, workspaceIds);
-					if (resumed !== null) return resumed;
-					if (retirementMatch !== null) {
-						if (request.method === 'GET') return Response.json({ kind: 'not-retired', clientId });
-						if (request.method !== 'DELETE')
-							return Response.json({ error: 'method-not-allowed' }, { status: 405 });
+					if (retirementMatch !== null && request.method === 'DELETE') {
 						const body = removeBodySchema.safeParse(await request.json());
 						if (!body.success)
 							return Response.json({ error: 'invalid-operation' }, { status: 400 });
-						return await finishRetirement(scope, body.data.requestId, workspaceIds);
+						const outcome = await retirements.resume(scope, workspaceIds, body.data.requestId);
+						if (outcome === null) throw new Error('Retirement intent missing');
+						return removalResponse(outcome, clientId);
+					}
+					const resumed = await retirements.resume(scope, workspaceIds);
+					if (resumed !== null) return removalResponse(resumed, clientId);
+					if (retirementMatch !== null) {
+						if (request.method === 'GET') return Response.json({ kind: 'not-retired', clientId });
+						return Response.json({ error: 'method-not-allowed' }, { status: 405 });
 					}
 					const authority = props.workspaces.forWorkspace(selectedId.data);
 					const removal = await authority.readAgentRemoval(clientId);
-					if (removal?.kind === 'pending')
-						return await finishUnlink(scope, selectedId.data, removal);
+					if (removal?.kind === 'pending') {
+						const outcome = await finishUnlink(scope, selectedId.data, removal);
+						if (outcome.kind !== 'refused' || request.method !== 'DELETE')
+							return removalResponse(outcome, clientId, selectedId.data);
+						const body = removeBodySchema.safeParse(await request.json());
+						if (!body.success)
+							return Response.json({ error: 'invalid-operation' }, { status: 400 });
+						if (body.data.requestId === removal.requestId)
+							return removalResponse(outcome, clientId, selectedId.data);
+						const replacement = await authority.beginAgentRemoval(clientId, body.data.requestId, {
+							operation: 'unlink',
+							replacesPendingRequestId: removal.requestId,
+						});
+						return removalResponse(
+							await finishUnlink(scope, selectedId.data, replacement),
+							clientId,
+							selectedId.data,
+						);
+					}
+					if (removal?.kind === 'complete' && (await authority.readMembership(clientId)) === null)
+						return removalResponse({ kind: 'complete' }, clientId, selectedId.data);
 					if (request.method === 'GET')
 						return Response.json({
 							kind: (await authority.readMembership(clientId)) === null ? 'removed' : 'member',
@@ -205,10 +191,16 @@ export function createWorkspaceAgentManagement(props: {
 						return Response.json({ error: 'method-not-allowed' }, { status: 405 });
 					const body = removeBodySchema.safeParse(await request.json());
 					if (!body.success) return Response.json({ error: 'invalid-operation' }, { status: 400 });
-					return await finishUnlink(
-						scope,
+					return removalResponse(
+						await finishUnlink(
+							scope,
+							selectedId.data,
+							await authority.beginAgentRemoval(clientId, body.data.requestId, {
+								operation: 'unlink',
+							}),
+						),
+						clientId,
 						selectedId.data,
-						await authority.beginAgentRemoval(clientId, body.data.requestId, 'unlink'),
 					);
 				}
 				if (request.method !== 'POST' || configuration === null)
@@ -229,12 +221,17 @@ export function createWorkspaceAgentManagement(props: {
 					return Response.json({ error: 'not-authorized' }, { status: 403 });
 				if (body.data.clientId !== undefined) {
 					const scope = { token, organizationId, clientId: body.data.clientId };
-					const resumed = await resumeRetirement(scope, workspaceIds);
-					if (resumed !== null) return resumed;
+					const resumed = await retirements.resume(scope, workspaceIds);
+					if (resumed !== null) return removalResponse(resumed, scope.clientId);
 					const removal = await props.workspaces
 						.forWorkspace(workspaceId)
 						.readAgentRemoval(body.data.clientId);
-					if (removal?.kind === 'pending') return await finishUnlink(scope, workspaceId, removal);
+					if (removal?.kind === 'pending')
+						return removalResponse(
+							await finishUnlink(scope, workspaceId, removal),
+							scope.clientId,
+							workspaceId,
+						);
 				}
 				const context = { token, requestId, organizationId, workspaceId };
 				const parsed =

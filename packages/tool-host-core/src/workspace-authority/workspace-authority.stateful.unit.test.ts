@@ -109,7 +109,7 @@ async function consumeToken(scenario: AuthorityScenario, token: IssuedToken): Pr
 
 async function removeMembership(scenario: AuthorityScenario, agentId: string): Promise<void> {
 	const requestId = 'b015079b-19b6-4aa2-9b82-1298efcb2f79';
-	await scenario.authority.beginAgentRemoval(agentId, requestId, 'unlink');
+	await scenario.authority.beginAgentRemoval(agentId, requestId, { operation: 'unlink' });
 	await scenario.authority.completeAgentRemoval(agentId, requestId, 'unlink');
 }
 

@@ -30,7 +30,7 @@ export default {
 				if (input.state === 'listed') await object.setMembership(input.agentId, input.persona);
 				else {
 					const requestId = crypto.randomUUID();
-					await object.beginAgentRemoval(input.agentId, requestId, 'unlink');
+					await object.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
 					await object.completeAgentRemoval(input.agentId, requestId, 'unlink');
 				}
 				return Response.json({ ok: true });

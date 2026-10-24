@@ -37,9 +37,9 @@ export class WorkspaceAuthority extends DurableObject {
 	async beginAgentRemoval(
 		clientId: string,
 		requestId: string,
-		operation: AgentRemoval['operation'],
+		intent: Parameters<ReturnType<typeof createWorkspaceAuthority>['beginAgentRemoval']>[2],
 	): Promise<AgentRemoval> {
-		return this.#authority().beginAgentRemoval(clientId, requestId, operation);
+		return this.#authority().beginAgentRemoval(clientId, requestId, intent);
 	}
 	async completeAgentRemoval(
 		clientId: string,
