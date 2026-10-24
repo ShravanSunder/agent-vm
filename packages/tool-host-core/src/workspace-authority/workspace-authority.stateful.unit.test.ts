@@ -2,9 +2,9 @@ import * as hegel from '@hegeldev/hegel';
 import * as generators from '@hegeldev/hegel/generators';
 import { expect, it } from 'vitest';
 
-import type { OrganizationAuthorityStore } from '#tool-host-core/organization-authority/models/organization-authority-store';
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
+import type { WorkspaceAuthorityStore } from '#tool-host-core/workspace-authority/models/workspace-authority-store';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
 interface IssuedToken {
 	readonly tokenId: string;
@@ -15,8 +15,8 @@ interface AuthorityScenario {
 	readonly cap: number;
 	readonly clock: { nowMs: number };
 	readonly writes: { failNext: boolean };
-	readonly store: OrganizationAuthorityStore;
-	authority: ReturnType<typeof createOrganizationAuthority>;
+	readonly store: WorkspaceAuthorityStore;
+	authority: ReturnType<typeof createWorkspaceAuthority>;
 	readonly issued: hegel.stateful.Pool<IssuedToken>;
 	readonly replayModel: Map<string, number>;
 	readonly admissionModel: Set<string>;
@@ -29,7 +29,7 @@ function createAuthorityScenario(tc: hegel.TestCase): AuthorityScenario {
 	const clock = { nowMs: 100 };
 	const writes = { failNext: false };
 	const retained = createVolatileAuthorityStore();
-	const store: OrganizationAuthorityStore = {
+	const store: WorkspaceAuthorityStore = {
 		read: retained.read,
 		write: (key, value) => store.transaction(async (storage) => storage.write(key, value)),
 		transaction: (decide) =>
@@ -52,7 +52,7 @@ function createAuthorityScenario(tc: hegel.TestCase): AuthorityScenario {
 		clock,
 		writes,
 		store,
-		authority: createOrganizationAuthority({ store, clock: { nowMs: () => clock.nowMs }, cap }),
+		authority: createWorkspaceAuthority({ store, clock: { nowMs: () => clock.nowMs }, cap }),
 		issued: new hegel.stateful.Pool<IssuedToken>(tc),
 		replayModel: new Map(),
 		admissionModel: new Set(),
@@ -107,22 +107,32 @@ async function consumeToken(scenario: AuthorityScenario, token: IssuedToken): Pr
 	for (const [tokenId, expiry] of proposed) scenario.replayModel.set(tokenId, expiry);
 }
 
+async function removeMembership(scenario: AuthorityScenario, agentId: string): Promise<void> {
+	const requestId = 'b015079b-19b6-4aa2-9b82-1298efcb2f79';
+	await scenario.authority.beginAgentRemoval(agentId, requestId, 'unlink');
+	await scenario.authority.completeAgentRemoval(agentId, requestId, 'unlink');
+}
+
 async function setAdmission(
 	scenario: AuthorityScenario,
 	agentId: string,
 	admission: 'listed' | 'removed',
 ): Promise<void> {
 	if (scenario.writes.failNext) {
-		await expect(scenario.authority.setAgentAdmission(agentId, admission)).rejects.toBe(
-			writeFailure,
-		);
+		await expect(
+			admission === 'listed'
+				? scenario.authority.setMembership(agentId, 'fixture')
+				: removeMembership(scenario, agentId),
+		).rejects.toBe(writeFailure);
 	} else {
-		await scenario.authority.setAgentAdmission(agentId, admission);
+		await (admission === 'listed'
+			? scenario.authority.setMembership(agentId, 'fixture')
+			: removeMembership(scenario, agentId));
 		if (admission === 'listed') scenario.admissionModel.add(agentId);
 		else scenario.admissionModel.delete(agentId);
 	}
 	// Check immediately, including when the model was already removed or a write rolled back.
-	expect(await scenario.authority.isAgentListed(agentId)).toBe(
+	expect((await scenario.authority.readMembership(agentId)) !== null).toBe(
 		scenario.admissionModel.has(agentId),
 	);
 }
@@ -154,7 +164,7 @@ const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 		},
 		reopenAuthority: (_tc, scenario) => {
 			// Same process-local retained store, not a claim about durable storage or deployment.
-			scenario.authority = createOrganizationAuthority({
+			scenario.authority = createWorkspaceAuthority({
 				store: scenario.store,
 				clock: { nowMs: () => scenario.clock.nowMs },
 				cap: scenario.cap,
@@ -171,7 +181,7 @@ const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 		},
 		checkAdmission: async (tc, scenario) => {
 			const agentId = tc.draw(generators.sampledFrom(agentIds));
-			expect(await scenario.authority.isAgentListed(agentId)).toBe(
+			expect((await scenario.authority.readMembership(agentId)) !== null).toBe(
 				scenario.admissionModel.has(agentId),
 			);
 		},
@@ -189,7 +199,9 @@ const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 			alwaysCheck: true,
 			check: async (_tc, scenario) => {
 				const listedAgents = await Promise.all(
-					agentIds.map((agentId) => scenario.authority.isAgentListed(agentId)),
+					agentIds.map(
+						async (agentId) => (await scenario.authority.readMembership(agentId)) !== null,
+					),
 				);
 				expect(listedAgents).toEqual(
 					agentIds.map((agentId) => scenario.admissionModel.has(agentId)),

@@ -8,21 +8,22 @@ import type {
 	WorkspaceToolCatalogSnapshot,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 
-import type { OrganizationConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
+import type { WorkspaceConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 
 /** Settled plain data only; never a discovery promise, runtime or client. */
-export interface SettledOrganizationCatalog {
+export interface SettledWorkspaceCatalog {
 	readonly snapshot: WorkspaceToolCatalogSnapshot;
 	/** Discovery start controls publication order and conservative cache expiry. */
 	readonly discoveryStartedAt: number;
 }
 
-export interface OrganizationEngine {
-	readonly configuration: OrganizationConfiguration;
-	readonly settledCatalog: () => SettledOrganizationCatalog | undefined;
+export interface WorkspaceEngine {
+	readonly configuration: WorkspaceConfiguration;
+	readonly settledCatalog: () => SettledWorkspaceCatalog | undefined;
 	readonly refresh: () => Promise<void>;
 	readonly gatewayFor: (props: {
 		readonly agentClientId: string;
+		readonly persona: string;
 		readonly consumeTokenId: ConsumeApprovalTokenId;
 		readonly invoke?: (
 			invocation: DispatchInvocation,

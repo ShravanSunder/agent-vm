@@ -118,12 +118,13 @@ export async function startControlledHostedUpstream(): Promise<ControlledHostedU
 				sub: agentId,
 				client_id: agentId,
 				azp: agentId,
-				aud: 'https://portal.invalid/mcp',
+				aud: 'https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp',
 				exp: now + 3600,
 				iat: now,
 				jti: 'fixture-token',
 				scope: 'tool-portal:agent',
 				organization_id: '11111111-1111-4111-8111-111111111111',
+				workspace_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 			})
 				.setProtectedHeader({ alg: 'ES256', kid: 'fixture', typ: 'at+jwt' })
 				.sign(keys.privateKey);

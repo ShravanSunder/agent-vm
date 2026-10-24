@@ -1,4 +1,4 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 
 import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
 
@@ -6,8 +6,9 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 	return Object.fromEntries(
 		configuration.organizations.map((organization, index) => [
 			organization.organizationId,
-			organizationConfigurationSchema.parse({
-				organizationName: `${configuration.runId}:${organization.label}`,
+			workspaceConfigurationSchema.parse({
+				organizationId: organization.organizationId,
+				workspaceName: `${configuration.runId}:${organization.label}`,
 				approvalKeyBinding: `TEST_APPROVAL_${String(index)}`,
 				mcp: {
 					schemaVersion: 1,
@@ -31,8 +32,8 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 				portal: {
 					schemaVersion: 1,
 					agents: {
-						[configuration.agentId]: { profile: 'one' },
-						[configuration.otherAgentId]: { profile: 'two' },
+						[configuration.agentId]: { credentialVersion: 1 },
+						[configuration.otherAgentId]: { credentialVersion: 1 },
 					},
 					profiles: {
 						one: {

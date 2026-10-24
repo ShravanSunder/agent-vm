@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import type { OrganizationAuthorityStore } from '#tool-host-core/organization-authority/models/organization-authority-store';
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
+import type { WorkspaceAuthorityStore } from '#tool-host-core/workspace-authority/models/workspace-authority-store';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
 const clock = { nowMs: () => 100 };
 
 describe('organization authority over an atomic volatile store in plain Node', () => {
 	it('commits first use and admission through the same exported authority used by the adapter', async () => {
 		const store = createVolatileAuthorityStore();
-		const authority = createOrganizationAuthority({ store, clock, cap: 1024 });
-		expect(await authority.isAgentListed('sender')).toBe(false);
-		await authority.setAgentAdmission('sender', 'listed');
-		expect(await store.read('agent:sender')).toEqual({ state: 'listed' });
-		expect(await authority.isAgentListed('sender')).toBe(true);
+		const authority = createWorkspaceAuthority({ store, clock, cap: 1024 });
+		expect((await authority.readMembership('sender')) !== null).toBe(false);
+		await authority.setMembership('sender', 'fixture');
+		expect(await store.read('member:sender')).toEqual({ state: 'member', persona: 'fixture' });
+		expect((await authority.readMembership('sender')) !== null).toBe(true);
 		expect(await authority.consumeApprovalToken('sender:token', 200)).toEqual({ ok: true });
 		expect(await store.read('approval-uses-v1')).toEqual({ 'sender:token': 200 });
 		expect(await authority.consumeApprovalToken('sender:token', 300)).toEqual({
@@ -24,7 +24,7 @@ describe('organization authority over an atomic volatile store in plain Node', (
 
 	it('allows exactly one of two simultaneous first-use decisions', async () => {
 		const store = createVolatileAuthorityStore();
-		const authority = createOrganizationAuthority({ store, clock, cap: 1024 });
+		const authority = createWorkspaceAuthority({ store, clock, cap: 1024 });
 		const results = await Promise.all([
 			authority.consumeApprovalToken('sender:token', 200),
 			authority.consumeApprovalToken('sender:token', 200),
@@ -38,7 +38,7 @@ describe('organization authority over an atomic volatile store in plain Node', (
 		const store = createVolatileAuthorityStore();
 		const entered = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<void>();
-		const failureStore: OrganizationAuthorityStore = {
+		const failureStore: WorkspaceAuthorityStore = {
 			...store,
 			transaction: (decide) =>
 				store.transaction((storage) =>
@@ -53,7 +53,7 @@ describe('organization authority over an atomic volatile store in plain Node', (
 					}),
 				),
 		};
-		const authority = createOrganizationAuthority({ store: failureStore, clock, cap: 1024 });
+		const authority = createWorkspaceAuthority({ store: failureStore, clock, cap: 1024 });
 		let succeeded = false;
 		const decision = authority.consumeApprovalToken('sender:token', 200).then(
 			(result) => {
@@ -72,7 +72,7 @@ describe('organization authority over an atomic volatile store in plain Node', (
 		expect(succeeded).toBe(false);
 		expect(await store.read('approval-uses-v1')).toBeUndefined();
 		expect(
-			await createOrganizationAuthority({ store, clock, cap: 1024 }).consumeApprovalToken(
+			await createWorkspaceAuthority({ store, clock, cap: 1024 }).consumeApprovalToken(
 				'sender:token',
 				200,
 			),

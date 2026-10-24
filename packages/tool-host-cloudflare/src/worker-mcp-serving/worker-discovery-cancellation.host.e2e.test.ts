@@ -6,7 +6,7 @@ import { expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 	portalAudience,
 	signingKeyHex,
@@ -62,10 +62,8 @@ it.each(['cold', 'expired'] as const)(
 							bindings: {
 								SIGN_IN_ISSUER: fixture.url,
 								SIGN_IN_JWKS_URL: `${fixture.url}/jwks`,
-								TOOL_PORTAL_AUDIENCE: portalAudience,
-								ORGANIZATION_CONFIGURATIONS: JSON.stringify(
-									organizationConfigurations(fixture.url),
-								),
+								TOOL_PORTAL_ORIGIN: new URL(portalAudience).origin,
+								WORKSPACE_CONFIGURATIONS: JSON.stringify(workspaceConfigurations(fixture.url)),
 								ONE_CREDENTIAL: 'one-secret-canary',
 								TWO_CREDENTIAL: 'two-secret-canary',
 								ONE_APPROVAL_KEY: signingKeyHex,
@@ -73,7 +71,7 @@ it.each(['cold', 'expired'] as const)(
 								FIXED_CLOCK: String(now),
 							},
 							durableObjects: {
-								ORGANIZATIONS: { className: 'OrganizationAuthorization', useSQLite: true },
+								WORKSPACES: { className: 'WorkspaceAuthority', useSQLite: true },
 							},
 						},
 					],
@@ -116,12 +114,15 @@ it.each(['cold', 'expired'] as const)(
 				});
 			}
 			async function call(value: string): Promise<Record<string, unknown>> {
-				const response = await fetch(new URL('/mcp', origin), {
-					method: 'POST',
-					headers,
-					body: body(value),
-					signal: AbortSignal.timeout(3_000),
-				});
+				const response = await fetch(
+					new URL('/workspaces/11111111-1111-4111-8111-111111111111/mcp', origin),
+					{
+						method: 'POST',
+						headers,
+						body: body(value),
+						signal: AbortSignal.timeout(3_000),
+					},
+				);
 				expect(response.status).toBe(200);
 				return z.object({ result: z.record(z.string(), z.unknown()) }).parse(await response.json())
 					.result;
@@ -151,7 +152,10 @@ it.each(['cold', 'expired'] as const)(
 				entered.resolve();
 				await release.promise;
 			});
-			const first = httpRequest(new URL('/mcp', origin), { method: 'POST', headers });
+			const first = httpRequest(
+				new URL('/workspaces/11111111-1111-4111-8111-111111111111/mcp', origin),
+				{ method: 'POST', headers },
+			);
 			const clientClosed = new Promise<void>((resolve) => first.once('close', resolve));
 			first.on('error', () => {});
 			first.end(body('cancel'));
@@ -165,22 +169,25 @@ it.each(['cold', 'expired'] as const)(
 			expect(result.isError).not.toBe(true);
 			expect(discoveries).toBe(2);
 			if (state === 'expired') {
-				const catalogResponse = await fetch(new URL('/mcp?tools=direct', origin), {
-					method: 'POST',
-					headers: { ...headers, 'Mcp-Method': 'tools/list' },
-					body: JSON.stringify({
-						jsonrpc: '2.0',
-						id: 'fresh-catalog',
-						method: 'tools/list',
-						params: {
-							_meta: {
-								'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-								'io.modelcontextprotocol/clientCapabilities': {},
+				const catalogResponse = await fetch(
+					new URL('/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct', origin),
+					{
+						method: 'POST',
+						headers: { ...headers, 'Mcp-Method': 'tools/list' },
+						body: JSON.stringify({
+							jsonrpc: '2.0',
+							id: 'fresh-catalog',
+							method: 'tools/list',
+							params: {
+								_meta: {
+									'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+									'io.modelcontextprotocol/clientCapabilities': {},
+								},
 							},
-						},
-					}),
-					signal: AbortSignal.timeout(3_000),
-				});
+						}),
+						signal: AbortSignal.timeout(3_000),
+					},
+				);
 				const refreshed: unknown = await catalogResponse.json();
 				expect(JSON.stringify(refreshed)).toContain('refreshed-generation');
 			}

@@ -1,9 +1,9 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import {
@@ -28,8 +28,8 @@ const canaries = [
 let harness: LocalWorkerHarness;
 function configurations(url: string): unknown {
 	const parsed = z
-		.record(z.string(), organizationConfigurationSchema)
-		.parse(organizationConfigurations(url));
+		.record(z.string(), workspaceConfigurationSchema)
+		.parse(workspaceConfigurations(url));
 	const selected = parsed[organizationOne];
 	if (selected === undefined) throw new Error('Missing fixture organization.');
 	const provider = Object.values(selected.mcp.providers)[0];
@@ -38,11 +38,11 @@ function configurations(url: string): unknown {
 		...parsed,
 		[organizationOne]: {
 			...selected,
-			organizationName: '组织'.repeat(600),
+			workspaceName: '组织'.repeat(600),
 			mcp: { schemaVersion: 1, providers: { fixture: { ...provider, namespace: serverName } } },
 			portal: {
 				schemaVersion: 1,
-				agents: { 'agent-one': { profile: 'one' }, 'agent-two': { profile: 'one' } },
+				agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 				profiles: {
 					one: {
 						namespaces: {

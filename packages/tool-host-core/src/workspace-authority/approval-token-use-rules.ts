@@ -1,7 +1,7 @@
 import {
 	approvalUsesSchema,
 	type ApprovalTokenUseDecision,
-} from '#tool-host-core/organization-authority/models/organization-authority-state';
+} from '#tool-host-core/workspace-authority/models/workspace-authority-state';
 
 /** Preserve the row's insertion order and its existing expiry/replay semantics. */
 export function decideApprovalTokenUse(props: {

@@ -1,7 +1,7 @@
 {
 	"name": "@agent-collaboration/tool-host-cloudflare",
 	"version": "0.0.153",
-	"description": "Organization-scoped Tool Portal host for Cloudflare Workers.",
+	"description": "Workspace-scoped Tool Portal host for Cloudflare Workers.",
 	"license": "MIT",
 	"files": [
 		"dist",

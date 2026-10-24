@@ -3,7 +3,7 @@ import type {
 	OperationRecord,
 } from '@agent-collaboration/tool-engine/capability-dispatch';
 
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 
 /** Protected calls keep their dispatcher receipt entries only for this request. The DO owns replay. */
 export function createRequestOperationEntries(clock: Clock): OperationPort {

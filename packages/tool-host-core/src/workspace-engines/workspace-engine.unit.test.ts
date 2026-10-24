@@ -2,17 +2,18 @@ import { expect, it } from 'vitest';
 
 import { recordBatchCallAnalytics } from '#tool-host-core/call-analytics/batch-call-analytics';
 import type { CallAnalytics } from '#tool-host-core/call-analytics/models/call-analytics';
-import { organizationConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
-import { createOrganizationEngine } from '#tool-host-core/organization-engines/organization-engine';
+import { workspaceConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import { testHostedProxyLimits } from '#tool-host-core/request-limits/test-fixtures/hosted-proxy-limits';
+import { createWorkspaceEngine } from '#tool-host-core/workspace-engines/workspace-engine';
 
 it('keeps each request gateway on its catalog generation across a later request refresh', async () => {
 	let nowMs = 100;
 	let generation = 'first';
-	const engine = await createOrganizationEngine({
-		organizationId: 'fixture',
-		configuration: organizationConfigurationSchema.parse({
-			organizationName: 'fixture',
+	const engine = await createWorkspaceEngine({
+		workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+		configuration: workspaceConfigurationSchema.parse({
+			organizationId: '11111111-1111-4111-8111-111111111111',
+			workspaceName: 'fixture',
 			approvalKeyBinding: 'KEY',
 			mcp: {
 				schemaVersion: 1,
@@ -26,7 +27,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 			},
 			portal: {
 				schemaVersion: 1,
-				agents: { sender: { profile: 'fixture' } },
+				agents: { sender: { credentialVersion: 1 } },
 				profiles: {
 					fixture: {
 						namespaces: {
@@ -56,6 +57,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 	});
 	const first = engine.gatewayFor({
 		agentClientId: 'sender',
+		persona: 'fixture',
 		consumeTokenId: async () => ({ ok: true }),
 	});
 	try {
@@ -66,6 +68,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 		await engine.refresh();
 		const second = engine.gatewayFor({
 			agentClientId: 'sender',
+			persona: 'fixture',
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {
@@ -94,10 +97,11 @@ it.each([true, false])(
 		let requiresApproval = initialRequiresApproval;
 		let upstreamCalls = 0;
 		const clock = { nowMs: () => nowMs, nowIso: () => new Date(nowMs).toISOString() };
-		const engine = await createOrganizationEngine({
-			organizationId: 'fixture',
-			configuration: organizationConfigurationSchema.parse({
-				organizationName: 'fixture',
+		const engine = await createWorkspaceEngine({
+			workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			configuration: workspaceConfigurationSchema.parse({
+				organizationId: '11111111-1111-4111-8111-111111111111',
+				workspaceName: 'fixture',
 				approvalKeyBinding: 'KEY',
 				mcp: {
 					schemaVersion: 1,
@@ -111,7 +115,7 @@ it.each([true, false])(
 				},
 				portal: {
 					schemaVersion: 1,
-					agents: { sender: { profile: 'fixture' } },
+					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
 							namespaces: {
@@ -153,6 +157,7 @@ it.each([true, false])(
 		});
 		const first = engine.gatewayFor({
 			agentClientId: 'sender',
+			persona: 'fixture',
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {
@@ -163,6 +168,7 @@ it.each([true, false])(
 			await engine.refresh();
 			const second = engine.gatewayFor({
 				agentClientId: 'sender',
+				persona: 'fixture',
 				consumeTokenId: async () => ({ ok: true }),
 			});
 			try {
@@ -189,7 +195,7 @@ it.each([true, false])(
 								error: { kind: 'approval_token_missing' },
 							});
 						recordBatchCallAnalytics({
-							organizationId: 'fixture',
+							organizationId: '11111111-1111-4111-8111-111111111111',
 							organizationName: 'fixture',
 							agentClientId: 'sender',
 							mode: 'indirect',
@@ -234,11 +240,12 @@ it.each(['fresh', 'failed-refresh'] as const)(
 			},
 		};
 		let discoveries = 0;
-		const engine = await createOrganizationEngine({
-			organizationId: 'fixture',
+		const engine = await createWorkspaceEngine({
+			workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
 			cachedCatalog: cached,
-			configuration: organizationConfigurationSchema.parse({
-				organizationName: 'fixture',
+			configuration: workspaceConfigurationSchema.parse({
+				organizationId: '11111111-1111-4111-8111-111111111111',
+				workspaceName: 'fixture',
 				approvalKeyBinding: 'KEY',
 				mcp: {
 					schemaVersion: 1,
@@ -252,7 +259,7 @@ it.each(['fresh', 'failed-refresh'] as const)(
 				},
 				portal: {
 					schemaVersion: 1,
-					agents: { sender: { profile: 'fixture' } },
+					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
 							namespaces: {
@@ -288,6 +295,7 @@ it.each(['fresh', 'failed-refresh'] as const)(
 		});
 		const request = engine.gatewayFor({
 			agentClientId: 'sender',
+			persona: 'fixture',
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {

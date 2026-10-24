@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decideApprovalTokenUse } from '#tool-host-core/organization-authority/approval-token-use-rules';
+import { decideApprovalTokenUse } from '#tool-host-core/workspace-authority/approval-token-use-rules';
 
 const input = { tokenId: 'agent:token', expiresAtMs: 200, nowMs: 100, cap: 1024 };
 

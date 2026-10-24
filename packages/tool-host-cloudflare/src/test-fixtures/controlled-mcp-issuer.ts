@@ -5,7 +5,8 @@ import { z } from 'zod';
 
 export const organizationOne = '11111111-1111-4111-8111-111111111111';
 export const organizationTwo = '22222222-2222-4222-8222-222222222222';
-export const portalAudience = 'https://portal-test.invalid/mcp';
+export const portalAudience =
+	'https://portal-test.invalid/workspaces/11111111-1111-4111-8111-111111111111/mcp';
 export const signingKeyHex = '12'.repeat(32);
 export const organizationTwoSigningKeyHex = '34'.repeat(32);
 const rpcSchema = z.object({
@@ -214,7 +215,8 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 			return new SignJWT({
 				iss: url,
 				sub: agentId,
-				aud: portalAudience,
+				aud: `https://portal-test.invalid/workspaces/${input.organizationId ?? organizationOne}/mcp`,
+				workspace_id: input.organizationId ?? organizationOne,
 				exp: now + 3600,
 				iat: now,
 				scope: 'tool-portal:agent',
@@ -246,13 +248,14 @@ function toolCatalog(count: number, descriptionBytes: number): readonly Record<s
 	}));
 }
 
-export function organizationConfigurations(url: string): unknown {
+export function workspaceConfigurations(url: string): unknown {
 	const configuration = (
 		organizationName: string,
 		binding: string,
 		approvalKeyBinding: string,
 	): unknown => ({
-		organizationName,
+		organizationId: binding === 'ONE_CREDENTIAL' ? organizationOne : organizationTwo,
+		workspaceName: organizationName,
 		approvalKeyBinding,
 		mcp: {
 			schemaVersion: 1,
@@ -270,7 +273,7 @@ export function organizationConfigurations(url: string): unknown {
 		},
 		portal: {
 			schemaVersion: 1,
-			agents: { 'agent-one': { profile: 'one' }, 'agent-two': { profile: 'two' } },
+			agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 			profiles: {
 				one: {
 					namespaces: {

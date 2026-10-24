@@ -7,13 +7,13 @@ import {
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { Server, type CallToolResult } from '@modelcontextprotocol/server';
 
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
 import {
 	hostedProtocolIdentity,
 	projectBoundedHostedToolResult,
 } from '#tool-host-core/request-limits/hosted-call-limits';
 import type { HostedProxyLimits } from '#tool-host-core/request-limits/models/hosted-proxy-limits';
 import type { HostedRequestLimits } from '#tool-host-core/request-limits/models/hosted-request-limits';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 
 function toolResult(
 	operation: ProxyMcpOperation,

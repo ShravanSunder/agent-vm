@@ -32,11 +32,11 @@ it('returns the production unbound management response with the service actually
 						bindings: {
 							SIGN_IN_ISSUER: 'https://sign-in.example.invalid',
 							SIGN_IN_JWKS_URL: 'https://sign-in.example.invalid/jwks',
-							TOOL_PORTAL_AUDIENCE: 'https://portal.example.invalid/mcp',
-							ORGANIZATION_CONFIGURATIONS: '{}',
+							TOOL_PORTAL_ORIGIN: 'https://portal.example.invalid/mcp',
+							WORKSPACE_CONFIGURATIONS: '{}',
 						},
 						durableObjects: {
-							ORGANIZATIONS: { className: 'OrganizationAuthorization', useSQLite: true },
+							WORKSPACES: { className: 'WorkspaceAuthority', useSQLite: true },
 						},
 					},
 				],

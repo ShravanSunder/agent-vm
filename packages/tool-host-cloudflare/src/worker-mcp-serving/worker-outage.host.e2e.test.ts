@@ -1,9 +1,9 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import {
@@ -19,8 +19,8 @@ it('keeps healthy tools during a startup outage, retries the failed server, and 
 		setup: (fixture) => fixture.setUnavailablePath('/down', true),
 		configurations: (url) => {
 			const configurations = z
-				.record(z.string(), organizationConfigurationSchema)
-				.parse(organizationConfigurations(url));
+				.record(z.string(), workspaceConfigurationSchema)
+				.parse(workspaceConfigurations(url));
 			const config = configurations[organizationOne];
 			const provider = config?.mcp.providers.fixture;
 			const profile = config?.portal.profiles.one;
@@ -102,7 +102,11 @@ it('keeps healthy tools during a startup outage, retries the failed server, and 
 			'healthy-during-outage',
 			'second-healthy-during-outage',
 		]);
-		const incomplete = await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' });
+		const incomplete = await harness.rpc(
+			'tools/list',
+			{},
+			{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+		);
 		expect(incomplete.status).toBe(503);
 		expect(await incomplete.json()).toEqual({
 			ok: false,
@@ -110,7 +114,11 @@ it('keeps healthy tools during a startup outage, retries the failed server, and 
 		});
 		harness.fixture.setUnavailablePath('/down', false);
 		const complete = await rpcResult(
-			await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }),
+			await harness.rpc(
+				'tools/list',
+				{},
+				{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+			),
 		);
 		expect(z.object({ tools: z.array(z.unknown()) }).parse(complete).tools).toHaveLength(10);
 		const offered = z
@@ -137,20 +145,38 @@ it('keeps healthy tools during a startup outage, retries the failed server, and 
 		);
 		expect(harness.fixture.calls.at(-1)?.arguments.value).toBe('recovered-server');
 		const lists = harness.fixture.discoveryCredentials.length;
-		await rpcResult(await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }));
+		await rpcResult(
+			await harness.rpc(
+				'tools/list',
+				{},
+				{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+			),
+		);
 		expect(harness.fixture.discoveryCredentials).toHaveLength(lists);
 		harness.fixture.setUnavailablePath('/down', true);
 		const clock = await harness.worker.fetch(`/__clock?now=${String(now + 60_001)}`);
 		await clock.body?.cancel();
 		const retained = await rpcResult(
-			await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }),
+			await harness.rpc(
+				'tools/list',
+				{},
+				{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+			),
 		);
 		expect(retained.tools).toEqual(complete.tools);
 		await rpcResult(await harness.rpc('tools/call', portalRead('healthy-after-failed-refresh')));
 		expect(harness.fixture.calls).toHaveLength(4);
 		harness.fixture.setUnavailablePath('/down', false);
 		expect(
-			(await rpcResult(await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }))).tools,
+			(
+				await rpcResult(
+					await harness.rpc(
+						'tools/list',
+						{},
+						{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+					),
+				)
+			).tools,
 		).toEqual(complete.tools);
 	} finally {
 		await harness.close();

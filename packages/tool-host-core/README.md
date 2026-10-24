@@ -1,23 +1,26 @@
 # Hosted MCP proxy core
 
 `@agent-collaboration/tool-host-core` composes the hosted MCP proxy with injected
-organization authority, configuration, secrets, analytics, clock, IDs, limits,
+workspace membership and replay authority, configuration, secrets, analytics, clock, IDs, limits,
 logging and upstream transport creation. `createHostedMcpProxy(ports).handle`
 accepts web `Request` objects and returns web `Response` objects.
 
-An admitted caller still needs a valid configured profile. Missing assignments
-and dangling profile references return the existing admission refusal envelope,
-HTTP 401 with `profile-unassigned`, before any upstream discovery or dispatch.
+The path `/workspaces/<workspace-id>/mcp` selects the workspace. The verifier checks
+that workspace’s configured audience and signed workspace claim on each call. Its
+Durable Object supplies membership and persona without a membership cache. Invalid
+tokens and nonmembers return the same HTTP 401 `unknown-caller` envelope. A member
+whose persona names no configured profile returns HTTP 401 `profile-unassigned`
+before upstream discovery or dispatch.
 There is no default profile. Each request also keeps one catalog generation for
 its views, access checks and analytics. Across requests the proxy caches only
-settled configuration and the last successful catalog snapshot with its fetch
+settled configuration and the last successful catalog snapshot with its discovery-start
 time. Each request owns its engine, discovery runtime and pending work; concurrent
 cold or expired requests discover independently. Failed discovery publishes no
 new cache entry and may serve the previous complete snapshot. A cancelled request
 cannot make the next request await its pending engine or refresh.
 
-Organization authority runs the same admission and approval-use rules over an
-`OrganizationAuthorityStore`. Its atomic callback reads the clock, reads the row,
+Workspace authority runs the same admission and approval-use rules over an
+`WorkspaceAuthorityStore`. Its atomic callback reads the clock, reads the row,
 checks replay, prunes expired uses, checks the byte cap and awaits the write.
 Success is returned after that callback commits. `createVolatileAuthorityStore`
 is an in-memory conformance store; it makes no process-durability guarantee.
@@ -28,7 +31,7 @@ Analytics Engine encoding, the existing limit values and SDK v2 upstream
 transports. No host adapter or Workers type is imported by core production code.
 
 Tool Access owns provider and secret schemas; core re-exports those contracts and
-owns hosted organization configuration, binding lookup and environment-only enforcement.
+owns hosted workspace configuration, binding lookup and environment-only enforcement.
 The core continues to compose Engine's `createMcpGateway`; standalone Portal is
 a separate wire projection of the same Engine.
 
@@ -53,3 +56,10 @@ MCP upstream, through the real MCP handler and injected transport. It checks
 native listing, effects, approval first use, stored bytes and replay refusal.
 It does not establish the real sign-in service, Durable Object persistence or
 deployed analytics.
+
+Agent management uses a separate write port. `createWorkspaceAgentManagement`
+registers and links before writing membership, removes membership before unlinking,
+and removes every configured organization membership before global disable. Failed
+second writes stay pending in the affected workspace objects and retry under a live
+owner command. Retirement supersedes a pending unlink without calling it. No MCP
+module can reach this write port; the architecture audit traces its import closure.

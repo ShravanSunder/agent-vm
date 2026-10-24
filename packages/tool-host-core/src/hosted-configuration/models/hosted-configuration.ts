@@ -14,22 +14,23 @@ export const hostedPortalConfigurationSchema = z.strictObject({
 			z.string().min(1),
 			z.strictObject({
 				credentialVersion: z.number().int().positive().default(1),
-				profile: z.string().min(1),
 				hmacKey: secretValueSchema.optional(),
 			}),
 		)
 		.default({}),
 	profiles: z.record(z.string().min(1), mcpPortalProfileDefinitionSchema),
 });
-export const organizationConfigurationSchema = z.strictObject({
-	organizationName: z.string().min(1),
+export const workspaceConfigurationSchema = z.strictObject({
+	organizationId: z.uuid(),
+	workspaceName: z.string().min(1),
 	mcp: mcpConfigSchema,
 	portal: hostedPortalConfigurationSchema,
 	approvalKeyBinding: z.string().min(1),
 });
-export type OrganizationConfiguration = z.infer<typeof organizationConfigurationSchema>;
-export interface OrganizationConfigurationSource {
-	readonly read: (organizationId: string) => Promise<OrganizationConfiguration>;
+export type WorkspaceConfiguration = z.infer<typeof workspaceConfigurationSchema>;
+export interface WorkspaceConfigurationSource {
+	readonly workspaceIdsForOrganization: (organizationId: string) => Promise<readonly string[]>;
+	readonly read: (workspaceId: string) => Promise<WorkspaceConfiguration>;
 }
 
 export interface SecretSource {

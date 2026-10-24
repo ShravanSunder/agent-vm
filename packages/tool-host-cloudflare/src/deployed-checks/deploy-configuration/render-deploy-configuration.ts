@@ -58,8 +58,8 @@ export async function renderDeployConfiguration(
 		__PORTAL_VARIABLES__: {
 			SIGN_IN_ISSUER: configuration.helper.origin,
 			SIGN_IN_JWKS_URL: `${configuration.helper.origin}/jwks`,
-			TOOL_PORTAL_AUDIENCE: configuration.audience,
-			ORGANIZATION_CONFIGURATIONS: JSON.stringify(portalTestConfigurations(configuration)),
+			TOOL_PORTAL_ORIGIN: configuration.portalA.origin,
+			WORKSPACE_CONFIGURATIONS: JSON.stringify(portalTestConfigurations(configuration)),
 		},
 		__HELPER_VARIABLES__: {
 			TEST_PUBLIC_JWKS: JSON.stringify({
@@ -75,7 +75,7 @@ export async function renderDeployConfiguration(
 	);
 	const helperSecrets = {
 		ADMISSION_SECRET: configuration.admissionSecret,
-		TEST_ORGANIZATIONS: JSON.stringify(
+		TEST_WORKSPACES: JSON.stringify(
 			Object.fromEntries(
 				configuration.organizations.map((organization) => [
 					organization.label,

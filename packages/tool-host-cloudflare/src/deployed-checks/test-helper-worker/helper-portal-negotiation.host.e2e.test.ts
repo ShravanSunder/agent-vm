@@ -133,30 +133,33 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 		const probeBody = await probe.text();
 		// Act: the same allowed control used by deployed row 14, through the production portal entry.
 		const callId = 'allowed-control';
-		const response = await portal.fetch('https://portal-a.invalid/mcp', {
-			method: 'POST',
-			headers: {
-				authorization: `Bearer ${await agentToken(configuration)}`,
-				'content-type': 'application/json',
-				accept: 'application/json, text/event-stream',
-				'MCP-Protocol-Version': '2026-07-28',
-				'Mcp-Method': 'tools/call',
-				'Mcp-Name': 'mcp_portal_call',
-			},
-			body: JSON.stringify({
-				jsonrpc: '2.0',
-				id: 'allowed-control',
-				method: 'tools/call',
-				params: {
-					...portalCall(configuration, callId),
-					_meta: {
-						'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-						'io.modelcontextprotocol/clientCapabilities': {},
-					},
+		const response = await portal.fetch(
+			`https://portal-a.invalid/workspaces/${organization.organizationId}/mcp`,
+			{
+				method: 'POST',
+				headers: {
+					authorization: `Bearer ${await agentToken(configuration)}`,
+					'content-type': 'application/json',
+					accept: 'application/json, text/event-stream',
+					'MCP-Protocol-Version': '2026-07-28',
+					'Mcp-Method': 'tools/call',
+					'Mcp-Name': 'mcp_portal_call',
 				},
-			}),
-			signal: AbortSignal.timeout(90_000),
-		});
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 'allowed-control',
+					method: 'tools/call',
+					params: {
+						...portalCall(configuration, callId),
+						_meta: {
+							'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+							'io.modelcontextprotocol/clientCapabilities': {},
+						},
+					},
+				}),
+				signal: AbortSignal.timeout(90_000),
+			},
+		);
 		const body: unknown = await response.json();
 		const observationResponse = await helper.fetch(
 			`https://helper.invalid/observations?runId=${configuration.runId}`,

@@ -6,14 +6,27 @@ Local development only. From the workspace root:
 mise exec node@24.7.0 -- pnpm --filter @agent-collaboration/tool-host-cloudflare dev
 ```
 
-The checked-in `wrangler.example.jsonc` declares organization authorization storage,
+The checked-in `wrangler.example.jsonc` declares workspace membership and replay storage,
 call analytics and the required variable names. Local development uses this same
 configuration with the source entrypoint. It contains no account, route, or
 deployment command. Remote Cloudflare resources and deployment require a separate owner decision (B4).
 
-Agent management, sign-in client management, owners/managers and per-user
-consents are deferred. Test compositions use an issuer and JWKS with test keys;
-that stand-in does not prove the real sign-in service.
+Only `/workspaces/<workspace-uuid>/mcp` serves agent MCP (`?tools=direct` selects
+native listing). `TOOL_PORTAL_ORIGIN` is trusted deployment configuration;
+`WORKSPACE_CONFIGURATIONS` maps each workspace UUID to its organization, name,
+provider configuration, profiles and approval-key binding. Membership and persona
+live in `WorkspaceAuthority`, reached through `WORKSPACES`; `portal.agents` retains
+credential metadata and no longer chooses a profile. Migration v2 renames the old
+class without deleting its storage; legacy admission rows are never read.
+
+Person-only management routes register/link an agent per workspace, remove a
+workspace membership before unlinking, and retire across the organization’s
+configured workspaces before disabling the client. `SIGN_IN` implements the named
+management RPC port; `MANAGEMENT_AUDIENCE` is separate from workspace audiences.
+Organizations with no configured workspace are refused before any sign-in RPC.
+Per-user consents remain deferred. Controlled test signers establish refusal and
+adapter regression behavior; real workspace issuance and management require the
+separately deployed sign-in service.
 
 Worker types are committed in `worker-configuration.gen.d.ts` and generated with
 Wrangler 4.124.0 from that one example configuration. Build first so its

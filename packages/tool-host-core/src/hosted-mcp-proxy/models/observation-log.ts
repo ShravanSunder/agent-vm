@@ -1,4 +1,5 @@
 export type ObservationLog =
+	| { readonly event: 'caller-refused'; readonly reason: string }
 	| {
 			readonly event: 'request-started' | 'request-ended';
 			readonly isolateId: string;

@@ -6,7 +6,7 @@ import { unstable_dev, type Unstable_DevWorker } from 'wrangler';
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 	organizationTwo,
 	portalAudience,
@@ -41,6 +41,7 @@ export async function startLocalWorkerHarness(
 		readonly setup?: (fixture: ControlledMcpIssuer) => void;
 		readonly configurations?: (url: string) => unknown;
 		readonly fixedClock?: number;
+		readonly persona?: string;
 	} = {},
 ): Promise<LocalWorkerHarness> {
 	const socketGuard = startWorkerdSocketGuard();
@@ -63,9 +64,9 @@ export async function startLocalWorkerHarness(
 				SIGN_IN_ISSUER: fixture.url,
 				...(options.fixedClock === undefined ? {} : { FIXED_CLOCK: String(options.fixedClock) }),
 				SIGN_IN_JWKS_URL: `${fixture.url}/jwks`,
-				TOOL_PORTAL_AUDIENCE: portalAudience,
-				ORGANIZATION_CONFIGURATIONS: JSON.stringify(
-					(options.configurations ?? organizationConfigurations)(fixture.url),
+				TOOL_PORTAL_ORIGIN: new URL(portalAudience).origin,
+				WORKSPACE_CONFIGURATIONS: JSON.stringify(
+					(options.configurations ?? workspaceConfigurations)(fixture.url),
 				),
 				ONE_CREDENTIAL: 'one-secret-canary',
 				TWO_CREDENTIAL: 'two-secret-canary',
@@ -98,7 +99,13 @@ export async function startLocalWorkerHarness(
 	await Promise.all(
 		[organizationOne, organizationTwo].flatMap((organizationId) =>
 			['agent-one', 'agent-two'].map(async (agentId) =>
-				control({ kind: 'admission', organizationId, agentId, state: 'listed' }),
+				control({
+					kind: 'admission',
+					organizationId,
+					agentId,
+					state: 'listed',
+					persona: options.persona ?? (agentId === 'agent-one' ? 'one' : 'two'),
+				}),
 			),
 		),
 	);
@@ -110,7 +117,7 @@ export async function startLocalWorkerHarness(
 		token,
 		control,
 		rpc: async (method, params = {}, options = {}) =>
-			worker.fetch(options.path ?? '/mcp', {
+			worker.fetch(options.path ?? '/workspaces/11111111-1111-4111-8111-111111111111/mcp', {
 				method: 'POST',
 				...(options.signal === undefined ? {} : { signal: options.signal }),
 				headers: {

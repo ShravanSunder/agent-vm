@@ -15,7 +15,10 @@ for (const mode of ['direct', 'indirect'] as const) {
 		const harness = await startLocalWorkerHarness({ fixedClock });
 		const reference = await startLegacyProxyReference(harness.fixture.url, 'indirect');
 		try {
-			const path = mode === 'direct' ? '/mcp?tools=direct' : '/mcp';
+			const path =
+				mode === 'direct'
+					? '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct'
+					: '/workspaces/11111111-1111-4111-8111-111111111111/mcp';
 			const directReference =
 				mode === 'direct'
 					? await startLegacyProxyReference(harness.fixture.url, 'direct')

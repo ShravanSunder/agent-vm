@@ -16,7 +16,8 @@ function mixedOrganizations(modernUrl: string, legacyUrl: string): unknown {
 			return [
 				organizationId,
 				{
-					organizationName: `mixed-${String(index)}`,
+					organizationId,
+					workspaceName: `mixed-${String(index)}`,
 					approvalKeyBinding: index === 0 ? 'ONE_APPROVAL_KEY' : 'TWO_APPROVAL_KEY',
 					mcp: {
 						schemaVersion: 1,
@@ -41,7 +42,10 @@ function mixedOrganizations(modernUrl: string, legacyUrl: string): unknown {
 					},
 					portal: {
 						schemaVersion: 1,
-						agents: { 'agent-one': { profile: 'mixed' }, 'agent-two': { profile: 'mixed' } },
+						agents: {
+							'agent-one': { credentialVersion: 1 },
+							'agent-two': { credentialVersion: 1 },
+						},
 						profiles: {
 							mixed: {
 								namespaces: Object.fromEntries(
@@ -75,12 +79,17 @@ it('real workerd discovers modern and legacy upstreams, calls each twice through
 	try {
 		const activeHarness = await startLocalWorkerHarness({
 			configurations: (legacyUrl) => mixedOrganizations(modern.url, legacyUrl),
+			persona: 'mixed',
 		});
 		harness = activeHarness;
 		async function invokeRound(round: number): Promise<number> {
 			// Act: each authenticated HTTP request creates its own real upstream runtime.
 			const listed = await rpcResult(
-				await activeHarness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }),
+				await activeHarness.rpc(
+					'tools/list',
+					{},
+					{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+				),
 			);
 			const names = z
 				.object({ tools: z.array(z.object({ name: z.string() })) })

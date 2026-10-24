@@ -6,8 +6,8 @@ import type {
 	CallAnalytics,
 	AnalyticsSink,
 } from '#tool-host-core/call-analytics/models/call-analytics';
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
 import { serializedBytes } from '#tool-host-core/request-limits/hosted-call-limits';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 
 export function recordBatchCallAnalytics(props: {
 	readonly organizationId: string;

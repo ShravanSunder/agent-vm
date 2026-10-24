@@ -7,7 +7,9 @@ import {
 } from '#tool-access/contracts/agent-proof';
 
 const deployment = 'https://test-issuer.invalid';
-const audience = 'https://tool-portal.invalid/mcp';
+const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const audience = `https://tool-portal.invalid/workspaces/${workspaceId}/mcp`;
+const expected = { audience, workspaceId };
 const now = 1_800_000_000;
 const organizationId = '11111111-1111-4111-8111-111111111111';
 // Stand-in for the unbuilt sign-in service: test keys issue the complete E10 shape.
@@ -26,6 +28,7 @@ const claims = {
 	azp: 'agent-one',
 	jti: 'test-token',
 	organization_id: organizationId,
+	workspace_id: workspaceId,
 };
 beforeAll(async () => {
 	issuerKeys = await generateKeyPair('ES256');
@@ -52,7 +55,6 @@ async function signToken(
 function verifier(): ReturnType<typeof createAgentTokenVerifier> {
 	return createAgentTokenVerifier({
 		deployment,
-		audience,
 		now: () => now * 1000,
 		jwksUrl: new URL(`${deployment}/jwks`),
 		jwksFetch: async (url) => {
@@ -63,11 +65,18 @@ function verifier(): ReturnType<typeof createAgentTokenVerifier> {
 }
 
 describe('E10 agent proof with real JOSE signatures', () => {
-	it('parses the E10 token and projects only the five proof fields', async () => {
+	it('parses the E10 token and projects only the six proof fields', async () => {
 		expect(agentTokenClaimsSchema.parse(claims)).toEqual(claims);
-		expect(await verifier().verify(await signToken())).toEqual({
+		expect(await verifier().verify(await signToken(), expected)).toEqual({
 			kind: 'verified',
-			proof: { deployment, clientId: 'agent-one', organizationId, audience, expiresAt: now + 60 },
+			proof: {
+				deployment,
+				clientId: 'agent-one',
+				organizationId,
+				workspaceId,
+				audience,
+				expiresAt: now + 60,
+			},
 		});
 	});
 	it.each([
@@ -79,7 +88,10 @@ describe('E10 agent proof with real JOSE signatures', () => {
 		{ reason: 'not-an-agent', token: { changes: { sid: 'person-session' } } },
 		{ reason: 'wrong-scope', token: { changes: { scope: 'tool-portal:person' } } },
 	])('refuses an independently signed bad token: $reason', async ({ reason, token }) => {
-		expect(await verifier().verify(await signToken(token))).toEqual({ kind: 'refused', reason });
+		expect(await verifier().verify(await signToken(token), expected)).toEqual({
+			kind: 'refused',
+			reason,
+		});
 	});
 	it.each([
 		{ changes: { aud: [audience] }, reason: 'wrong-audience' },
@@ -91,7 +103,7 @@ describe('E10 agent proof with real JOSE signatures', () => {
 		{ changes: { scope: 'not-tool-portal:agent-extra' }, reason: 'wrong-scope' },
 		{ changes: { exp: now }, reason: 'expired' },
 	])('refuses malformed/near-match claims $changes', async ({ changes, reason }) => {
-		expect(await verifier().verify(await signToken({ changes }))).toEqual({
+		expect(await verifier().verify(await signToken({ changes }), expected)).toEqual({
 			kind: 'refused',
 			reason,
 		});
@@ -101,6 +113,7 @@ describe('E10 agent proof with real JOSE signatures', () => {
 			(
 				await verifier().verify(
 					await signToken({ changes: { scope: 'other tool-portal:agent more' } }),
+					expected,
 				)
 			).kind,
 		).toBe('verified');
@@ -109,6 +122,7 @@ describe('E10 agent proof with real JOSE signatures', () => {
 		expect(
 			await verifier().verify(
 				await signToken({ forge: true, changes: { iss: 'https://other.invalid', exp: now - 1 } }),
+				expected,
 			),
 		).toEqual({ kind: 'refused', reason: 'bad-signature' });
 	});

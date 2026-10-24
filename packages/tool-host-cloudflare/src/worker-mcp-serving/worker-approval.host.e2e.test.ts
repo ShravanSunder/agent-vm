@@ -49,9 +49,19 @@ describe('Worker awaits its organization approval authority in local workerd', (
 		'$mode/$carrier: rejects another organization approval key and admits its own key',
 		async ({ mode, carrier }) => {
 			const tokenB = await harness.fixture.sign({ organizationId: organizationTwo });
-			const path = mode === 'direct' ? '/mcp?tools=direct' : '/mcp';
+			const path =
+				mode === 'direct'
+					? '/workspaces/22222222-2222-4222-8222-222222222222/mcp?tools=direct'
+					: '/workspaces/22222222-2222-4222-8222-222222222222/mcp';
 			const listed = await rpcResult(
-				await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct', token: tokenB }),
+				await harness.rpc(
+					'tools/list',
+					{},
+					{
+						path: '/workspaces/22222222-2222-4222-8222-222222222222/mcp?tools=direct',
+						token: tokenB,
+					},
+				),
 			);
 			const nativeName = z
 				.object({ tools: z.array(z.object({ name: z.string() })) })
@@ -97,7 +107,9 @@ describe('Worker awaits its organization approval authority in local workerd', (
 						};
 			const before = harness.fixture.calls.length;
 			const ownA = await rpcResult(
-				await harness.rpc('tools/call', requestFor(approvalA), { path }),
+				await harness.rpc('tools/call', requestFor(approvalA), {
+					path: path.replace(organizationTwo, organizationOne),
+				}),
 			);
 			expect(ownA.isError).toBeUndefined();
 			expect(harness.fixture.calls).toHaveLength(before + 1);

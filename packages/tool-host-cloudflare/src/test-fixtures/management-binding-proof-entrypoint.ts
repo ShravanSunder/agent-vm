@@ -1,6 +1,6 @@
 import productionWorker, { type WorkerBindings } from '#worker-host/index';
 
-export { OrganizationAuthorization } from '#worker-host/index';
+export { WorkspaceAuthority } from '#worker-host/index';
 
 export default {
 	async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {

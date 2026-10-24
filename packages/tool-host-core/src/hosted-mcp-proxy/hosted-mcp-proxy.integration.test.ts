@@ -5,15 +5,15 @@ import { expect, it } from 'vitest';
 import { z } from 'zod';
 
 import type { CallAnalytics } from '#tool-host-core/call-analytics/models/call-analytics';
-import { organizationConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
+import { workspaceConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import {
 	createHostedMcpProxy,
 	hostedAgentVerifier,
 } from '#tool-host-core/hosted-mcp-proxy/hosted-mcp-proxy';
 import { startControlledHostedUpstream } from '#tool-host-core/hosted-mcp-proxy/test-fixtures/controlled-hosted-upstream-test-fixture';
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
 import { testHostedProxyLimits } from '#tool-host-core/request-limits/test-fixtures/hosted-proxy-limits';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
 it('authenticates a real Node MCP request, invokes the controlled HTTP upstream, and commits approval before refusing replay', async () => {
 	const upstream = await startControlledHostedUpstream();
@@ -21,20 +21,23 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 		const nowMs = Date.now();
 		const clock = { nowMs: () => nowMs, nowIso: () => new Date(nowMs).toISOString() };
 		const store = createVolatileAuthorityStore();
-		const authority = createOrganizationAuthority({ store, clock, cap: 512 * 1024 });
-		await authority.setAgentAdmission('sender', 'listed');
+		const authority = createWorkspaceAuthority({ store, clock, cap: 512 * 1024 });
+		await authority.setMembership('sender', 'fixture');
 		const events: CallAnalytics[] = [];
 		const proxy = createHostedMcpProxy({
+			toolPortalOrigin: 'https://portal.invalid',
 			verifier: hostedAgentVerifier({
 				deployment: upstream.url,
-				audience: 'https://portal.invalid/mcp',
+
 				jwksUrl: `${upstream.url}/jwks`,
 			}),
-			organizations: { forOrganization: () => authority },
+			workspaces: { forWorkspace: () => authority },
 			configurations: {
+				workspaceIdsForOrganization: async () => [],
 				read: async () =>
-					organizationConfigurationSchema.parse({
-						organizationName: 'fixture-organization',
+					workspaceConfigurationSchema.parse({
+						organizationId: '11111111-1111-4111-8111-111111111111',
+						workspaceName: 'fixture-organization',
 						approvalKeyBinding: 'APPROVAL_KEY',
 						mcp: {
 							schemaVersion: 1,
@@ -54,7 +57,7 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 						},
 						portal: {
 							schemaVersion: 1,
-							agents: { sender: { profile: 'fixture' } },
+							agents: { sender: { credentialVersion: 1 } },
 							profiles: {
 								fixture: {
 									namespaces: {
@@ -92,29 +95,32 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 			direct = false,
 		): Promise<Record<string, unknown>> {
 			const response = await proxy.handle(
-				new Request(`https://portal.invalid/mcp${direct ? '?tools=direct' : ''}`, {
-					method: 'POST',
-					headers: {
-						authorization: `Bearer ${bearer}`,
-						'content-type': 'application/json',
-						accept: 'application/json, text/event-stream',
-						'MCP-Protocol-Version': '2026-07-28',
-						'Mcp-Method': method,
-						...(typeof params.name === 'string' ? { 'Mcp-Name': params.name } : {}),
-					},
-					body: JSON.stringify({
-						jsonrpc: '2.0',
-						id: 'proof',
-						method,
-						params: {
-							_meta: {
-								'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-								'io.modelcontextprotocol/clientCapabilities': {},
-							},
-							...params,
+				new Request(
+					`https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp${direct ? '?tools=direct' : ''}`,
+					{
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${bearer}`,
+							'content-type': 'application/json',
+							accept: 'application/json, text/event-stream',
+							'MCP-Protocol-Version': '2026-07-28',
+							'Mcp-Method': method,
+							...(typeof params.name === 'string' ? { 'Mcp-Name': params.name } : {}),
 						},
-					}),
-				}),
+						body: JSON.stringify({
+							jsonrpc: '2.0',
+							id: 'proof',
+							method,
+							params: {
+								_meta: {
+									'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+									'io.modelcontextprotocol/clientCapabilities': {},
+								},
+								...params,
+							},
+						}),
+					},
+				),
 			);
 			if (response.status !== 200)
 				throw new Error(`MCP ${String(response.status)}: ${await response.text()}`);

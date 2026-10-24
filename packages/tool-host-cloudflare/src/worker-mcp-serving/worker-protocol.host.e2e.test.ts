@@ -23,7 +23,9 @@ describe('row10 Worker protocol raw-wire controls', () => {
 		const exchanges: { readonly status: number; readonly body: unknown }[] = [];
 		const client = new Client({ name: 'legacy-control', version: '1' });
 		const transport = new StreamableHTTPClientTransport(
-			new URL(`http://${harness.worker.address}:${String(harness.worker.port)}/mcp`),
+			new URL(
+				`http://${harness.worker.address}:${String(harness.worker.port)}/workspaces/11111111-1111-4111-8111-111111111111/mcp`,
+			),
 			{
 				requestInit: { headers: { authorization: `Bearer ${harness.token}` } },
 				// Observe the actual SDK request/response; no protocol interaction is replaced.
@@ -113,10 +115,13 @@ describe('row10 Worker protocol raw-wire controls', () => {
 		},
 	);
 	it.each(['GET', 'DELETE'])('refuses %s with405', async (method) => {
-		const response = await harness.worker.fetch('/mcp', {
-			method,
-			headers: { authorization: `Bearer ${harness.token}` },
-		});
+		const response = await harness.worker.fetch(
+			'/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+			{
+				method,
+				headers: { authorization: `Bearer ${harness.token}` },
+			},
+		);
 		expect(response.status).toBe(405);
 	});
 	it('ignores a supplied session and emits no session ID on a valid effect', async () => {

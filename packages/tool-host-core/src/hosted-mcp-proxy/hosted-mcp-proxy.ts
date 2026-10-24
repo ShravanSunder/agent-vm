@@ -8,30 +8,38 @@ import {
 	toolLoadingMode,
 } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 
 import { recordBatchCallAnalytics } from '#tool-host-core/call-analytics/batch-call-analytics';
 import { checkHostedCaller } from '#tool-host-core/caller-admission/caller-check';
 import type { HostedCallerCheck } from '#tool-host-core/caller-admission/models/caller-admission';
-import type { OrganizationConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
+import type { WorkspaceConfiguration } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import { createHostedMcpServer } from '#tool-host-core/hosted-mcp-proxy/hosted-mcp-server';
 import type {
 	HostedMcpProxy,
 	HostedMcpProxyPorts,
 } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
-import type { SettledOrganizationCatalog } from '#tool-host-core/organization-engines/models/organization-engine';
-import { createOrganizationEngine } from '#tool-host-core/organization-engines/organization-engine';
 import { createHostedRequestLimits } from '#tool-host-core/request-limits/hosted-call-limits';
+import type { SettledWorkspaceCatalog } from '#tool-host-core/workspace-engines/models/workspace-engine';
+import { createWorkspaceEngine } from '#tool-host-core/workspace-engines/workspace-engine';
 
-interface HostedOrganizationContext {
-	readonly configuration: OrganizationConfiguration;
-	catalog?: SettledOrganizationCatalog;
+interface HostedWorkspaceContext {
+	readonly configuration: WorkspaceConfiguration;
+	catalog?: SettledWorkspaceCatalog;
 }
 
 function callerRefusalResponse(
 	caller: Exclude<HostedCallerCheck, { readonly kind: 'verified' }>,
 ): Response {
 	return Response.json(
-		{ error: caller.reason },
+		{
+			error:
+				caller.kind === 'unavailable'
+					? 'admission-unavailable'
+					: caller.reason === 'profile-unassigned'
+						? 'profile-unassigned'
+						: 'unknown-caller',
+		},
 		{ status: caller.kind === 'unavailable' ? 503 : 401 },
 	);
 }
@@ -39,39 +47,45 @@ function callerRefusalResponse(
 export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy {
 	// Cache configuration before lazy discovery so an unassigned caller cannot
 	// start upstream clients or poison a later assigned caller's organization engine.
-	const organizations = new Map<string, HostedOrganizationContext>();
+	const workspaces = new Map<string, HostedWorkspaceContext>();
 	const isolateId = props.newId();
 	let activeRequests = 0;
 	const log = props.log;
-	async function organizationContext(organizationId: string): Promise<HostedOrganizationContext> {
-		const existing = organizations.get(organizationId);
+	async function workspaceContext(workspaceId: string): Promise<HostedWorkspaceContext> {
+		const existing = workspaces.get(workspaceId);
 		if (existing !== undefined) return existing;
 		// Concurrent cold requests read independently. Only completed configuration is shared.
-		const configuration = await props.configurations.read(organizationId);
-		const context = organizations.get(organizationId) ?? { configuration };
-		organizations.set(organizationId, context);
+		const configuration = await props.configurations.read(workspaceId);
+		const context = workspaces.get(workspaceId) ?? { configuration };
+		workspaces.set(workspaceId, context);
 		return context;
 	}
 
 	return {
 		async handle(request: Request): Promise<Response> {
+			const matched = /^\/workspaces\/([^/]+)\/mcp$/u.exec(new URL(request.url).pathname);
+			const selected = z.uuid().safeParse(matched?.[1]);
+			if (!selected.success) return Response.json({ error: 'not-found' }, { status: 404 });
 			const caller = await checkHostedCaller({
+				workspaceId: selected.data,
+				toolPortalOrigin: props.toolPortalOrigin,
 				request,
 				verifier: props.verifier,
-				organizations: props.organizations,
+				workspaces: props.workspaces,
 			});
-			if (caller.kind !== 'verified') return callerRefusalResponse(caller);
-			const pendingContext = organizationContext(caller.organizationId);
+			if (caller.kind !== 'verified') {
+				log({ event: 'caller-refused', reason: caller.reason });
+				return callerRefusalResponse(caller);
+			}
+			const pendingContext = workspaceContext(caller.workspaceId);
 			// Preserve the existing SDK error path for failed configuration reads;
 			// a readable but unassigned profile is an admission refusal before MCP handling.
 			const admissionContext = await pendingContext.catch(() => undefined);
 			if (admissionContext !== undefined) {
-				const assignment = admissionContext.configuration.portal.agents[caller.agentClientId];
-				if (
-					assignment === undefined ||
-					admissionContext.configuration.portal.profiles[assignment.profile] === undefined
-				)
+				if (admissionContext.configuration.portal.profiles[caller.persona] === undefined) {
+					log({ event: 'caller-refused', reason: 'profile-unassigned' });
 					return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
+				}
 			}
 			const mode = toolLoadingMode(resolveToolLoading(request.url));
 			const requestId = props.newId();
@@ -83,8 +97,8 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			const handler = createMcpHandler(
 				async () => {
 					const context = await pendingContext;
-					const engine = await createOrganizationEngine({
-						organizationId: caller.organizationId,
+					const engine = await createWorkspaceEngine({
+						workspaceId: caller.workspaceId,
 						configuration: context.configuration,
 						secrets: props.secrets,
 						clock: props.clock,
@@ -102,10 +116,11 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
 						agentClientId: caller.agentClientId,
+						persona: caller.persona,
 						invoke: limits.invoke,
 						consumeTokenId: async (tokenId, expiresAtMs) =>
-							props.organizations
-								.forOrganization(caller.organizationId)
+							props.workspaces
+								.forWorkspace(caller.workspaceId)
 								.consumeApprovalToken(`${caller.agentClientId}:${tokenId}`, expiresAtMs),
 					});
 					closeGateway = requestEngine.close;
@@ -119,8 +134,8 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 						proxyLimits: props.limits,
 						recordCalls: (input, result, startedAt) =>
 							recordBatchCallAnalytics({
-								organizationId: caller.organizationId,
-								organizationName: engine.configuration.organizationName,
+								organizationId: engine.configuration.organizationId,
+								organizationName: engine.configuration.workspaceName,
 								agentClientId: caller.agentClientId,
 								mode,
 								input,
@@ -171,12 +186,10 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 
 export function hostedAgentVerifier(props: {
 	readonly deployment: string;
-	readonly audience: string;
 	readonly jwksUrl: string;
 }): AgentTokenVerifier {
 	return createAgentTokenVerifier({
 		deployment: props.deployment,
-		audience: props.audience,
 		jwksUrl: new URL(props.jwksUrl),
 	});
 }

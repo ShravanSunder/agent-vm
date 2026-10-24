@@ -107,12 +107,16 @@ describe('E7 person proof with real JOSE signatures', () => {
 	it('the existing agent verifier refuses the same valid person token', async () => {
 		const agentVerifier = createAgentTokenVerifier({
 			deployment,
-			audience,
 			now: () => now * 1000,
 			jwksUrl: new URL(`${deployment}/jwks`),
 			jwksFetch: async () => Response.json(jwks),
 		});
-		expect(await agentVerifier.verify(await signToken())).toEqual({
+		expect(
+			await agentVerifier.verify(await signToken(), {
+				audience,
+				workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+			}),
+		).toEqual({
 			kind: 'refused',
 			reason: 'not-an-agent',
 		});

@@ -1,7 +1,7 @@
 import helperWorker from '#worker-host/deployed-checks/test-helper-worker/test-helper-worker';
 export { TestObservations } from '#worker-host/deployed-checks/test-helper-worker/test-helper-worker';
-import { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
-export { OrganizationAuthorization };
+import { WorkspaceAuthority } from '#worker-host/durable-workspace-authority/workspace-authority';
+export { WorkspaceAuthority };
 
 export default {
 	async fetch(
@@ -10,11 +10,11 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 		if (url.pathname === '/__listed') {
-			const stub = bindings.ORGANIZATIONS.get(
-				bindings.ORGANIZATIONS.idFromName(url.searchParams.get('organizationId') ?? ''),
+			const stub = bindings.WORKSPACES.get(
+				bindings.WORKSPACES.idFromName(url.searchParams.get('organizationId') ?? ''),
 			);
 			return Response.json({
-				listed: await stub.isAgentListed(url.searchParams.get('agentId') ?? ''),
+				listed: (await stub.readMembership(url.searchParams.get('agentId') ?? '')) !== null,
 			});
 		}
 		return helperWorker.fetch(request, bindings);

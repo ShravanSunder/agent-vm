@@ -11,6 +11,11 @@ export {
 
 import ts from 'typescript';
 
+import {
+	collectWorkspaceMcpBoundaryViolations,
+	collectProductionReadbackViolations,
+} from './workspace-mcp-boundary.ts';
+
 export interface PortalArchitectureSourceFile {
 	readonly filePath: string;
 	readonly sourceText: string;
@@ -891,6 +896,15 @@ export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
 	const violations = [
+		...(props.files.some((file) => file.filePath === 'packages/tool-host-cloudflare/src/index.ts')
+			? collectProductionReadbackViolations(props.files)
+			: []),
+		...(props.files.some(
+			(file) =>
+				file.filePath === 'packages/tool-host-core/src/hosted-mcp-proxy/hosted-mcp-proxy.ts',
+		)
+			? collectWorkspaceMcpBoundaryViolations(props.files)
+			: []),
 		...props.files.flatMap(collectManagedPortalCutoverViolations),
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),

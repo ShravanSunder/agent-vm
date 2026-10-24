@@ -1,9 +1,9 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { organizationConfigurations } from '#worker-host/test-fixtures/controlled-mcp-issuer';
+import { workspaceConfigurations } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import {
 	startLocalWorkerHarness,
 	rpcResult,
@@ -26,8 +26,8 @@ it('pages170 large schemas under1MiB and serves both real SDKv2 client cases tog
 			),
 		configurations: (url) => {
 			const configs = z
-				.record(z.string(), organizationConfigurationSchema)
-				.parse(organizationConfigurations(url));
+				.record(z.string(), workspaceConfigurationSchema)
+				.parse(workspaceConfigurations(url));
 			for (const config of Object.values(configs))
 				for (const profile of Object.values(config.portal.profiles))
 					for (const policy of Object.values(profile.namespaces)) {
@@ -58,7 +58,7 @@ it('pages170 large schemas under1MiB and serves both real SDKv2 client cases tog
 		let cursor: string | undefined;
 		do {
 			const response = await harness.rpc('tools/list', cursor === undefined ? {} : { cursor }, {
-				path: '/mcp?tools=direct',
+				path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct',
 			});
 			const page = await rpcResult(response);
 			const { _meta: metadata, resultType, ...enginePage } = page;
@@ -86,7 +86,7 @@ it('pages170 large schemas under1MiB and serves both real SDKv2 client cases tog
 				client.connect(
 					new StreamableHTTPClientTransport(
 						new URL(
-							`http://${harness.worker.address}:${String(harness.worker.port)}/mcp${index === 0 ? '?tools=direct' : ''}`,
+							`http://${harness.worker.address}:${String(harness.worker.port)}/workspaces/11111111-1111-4111-8111-111111111111/mcp${index === 0 ? '?tools=direct' : ''}`,
 						),
 						{
 							requestInit: {

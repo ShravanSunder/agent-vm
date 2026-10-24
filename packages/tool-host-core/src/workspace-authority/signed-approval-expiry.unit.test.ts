@@ -7,9 +7,9 @@ import * as hegel from '@hegeldev/hegel';
 import * as generators from '@hegeldev/hegel/generators';
 import { expect, it } from 'vitest';
 
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createApprovalExecutionGateway } from '#tool-host-core/organization-authority/test-fixtures/approval-execution-gateway';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
+import { createApprovalExecutionGateway } from '#tool-host-core/workspace-authority/test-fixtures/approval-execution-gateway';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
 const testSigningKey = new Uint8Array(32).fill(23);
 
@@ -24,7 +24,7 @@ it('rejects expired signed approvals after replay pruning while an unexpired app
 			let nowMs = issuedAtMs;
 			const store = createVolatileAuthorityStore();
 			const clock = { nowMs: () => nowMs };
-			let authority = createOrganizationAuthority({ store, clock, cap: 4096 });
+			let authority = createWorkspaceAuthority({ store, clock, cap: 4096 });
 			const calls = [
 				{
 					namespace: 'fixture',
@@ -70,7 +70,7 @@ it('rejects expired signed approvals after replay pruning while an unexpired app
 			expect((await runCall()).ok).toBe(false);
 			expect(effects).toHaveLength(1);
 			nowMs = expiresAtMs + lateByMs;
-			authority = createOrganizationAuthority({ store, clock, cap: 4096 });
+			authority = createWorkspaceAuthority({ store, clock, cap: 4096 });
 			// A different first use prunes the original replay record, including exactly at expiry.
 			expect(await authority.consumeApprovalToken('pruning-token', nowMs + 100)).toEqual({
 				ok: true,

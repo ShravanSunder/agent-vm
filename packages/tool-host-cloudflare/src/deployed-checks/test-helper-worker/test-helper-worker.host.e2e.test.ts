@@ -43,7 +43,7 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 							},
 						],
 					}),
-					TEST_ORGANIZATIONS: JSON.stringify({
+					TEST_WORKSPACES: JSON.stringify({
 						alpha: { organizationId, credential: 'controlled-test-secret' },
 					}),
 					ADMISSION_SECRET: 'separate-admission-secret',

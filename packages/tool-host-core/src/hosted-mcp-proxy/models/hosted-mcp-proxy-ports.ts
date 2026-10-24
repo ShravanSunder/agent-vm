@@ -3,20 +3,20 @@ import type { ConsumeApprovalTokenId } from '@agent-collaboration/tool-engine/mc
 import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 
 import type { AnalyticsSink } from '#tool-host-core/call-analytics/models/call-analytics';
-import type { OrganizationAdmission } from '#tool-host-core/caller-admission/models/caller-admission';
+import type { WorkspaceMembershipRead } from '#tool-host-core/caller-admission/models/caller-admission';
 import type {
-	OrganizationConfigurationSource,
+	WorkspaceConfigurationSource,
 	SecretSource,
 } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import type { ObservationLog } from '#tool-host-core/hosted-mcp-proxy/models/observation-log';
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
 import type { HostedProxyLimits } from '#tool-host-core/request-limits/models/hosted-proxy-limits';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 
-export interface OrganizationAuthorizationPort extends OrganizationAdmission {
+export interface WorkspaceAuthorizationPort extends WorkspaceMembershipRead {
 	readonly consumeApprovalToken: ConsumeApprovalTokenId;
 }
-export interface HostedOrganizations {
-	readonly forOrganization: (organizationId: string) => OrganizationAuthorizationPort;
+export interface HostedWorkspaces {
+	readonly forWorkspace: (workspaceId: string) => WorkspaceAuthorizationPort;
 }
 export interface HostedMcpProxy {
 	readonly handle: (request: Request) => Promise<Response>;
@@ -24,8 +24,9 @@ export interface HostedMcpProxy {
 
 export interface HostedMcpProxyPorts {
 	readonly verifier: AgentTokenVerifier;
-	readonly organizations: HostedOrganizations;
-	readonly configurations: OrganizationConfigurationSource;
+	readonly toolPortalOrigin: string;
+	readonly workspaces: HostedWorkspaces;
+	readonly configurations: WorkspaceConfigurationSource;
 	readonly secrets: SecretSource;
 	readonly log: (event: ObservationLog) => void;
 	readonly analytics: AnalyticsSink;

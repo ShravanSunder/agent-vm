@@ -30,21 +30,21 @@ import { z } from 'zod';
 
 import { mcpConfigToResolvedProviders } from '#tool-host-core/hosted-configuration/mcp-configuration';
 import type {
-	OrganizationConfiguration,
+	WorkspaceConfiguration,
 	SecretSource,
 } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import { formatSecretValue } from '#tool-host-core/hosted-configuration/secret-values';
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
+import type { HostedProxyLimits } from '#tool-host-core/request-limits/models/hosted-proxy-limits';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 import type {
-	OrganizationEngine,
-	SettledOrganizationCatalog,
-} from '#tool-host-core/organization-engines/models/organization-engine';
+	WorkspaceEngine,
+	SettledWorkspaceCatalog,
+} from '#tool-host-core/workspace-engines/models/workspace-engine';
 import {
 	assessedProxyProfile,
 	resolveHostedProxyProfile,
-} from '#tool-host-core/organization-engines/proxy-profile-policy';
-import { createRequestOperationEntries } from '#tool-host-core/organization-engines/request-operation-entries';
-import type { HostedProxyLimits } from '#tool-host-core/request-limits/models/hosted-proxy-limits';
+} from '#tool-host-core/workspace-engines/proxy-profile-policy';
+import { createRequestOperationEntries } from '#tool-host-core/workspace-engines/request-operation-entries';
 
 const unavailableApproval: ApprovalPort = {
 	challenge: async () => ({ kind: 'unavailable' }),
@@ -53,18 +53,18 @@ const unavailableApproval: ApprovalPort = {
 };
 
 /** One request owns its engine and all discovery I/O; only settled catalog data is reusable. */
-export async function createOrganizationEngine(props: {
-	readonly organizationId: string;
-	readonly configuration: OrganizationConfiguration;
+export async function createWorkspaceEngine(props: {
+	readonly workspaceId: string;
+	readonly configuration: WorkspaceConfiguration;
 	readonly secrets: SecretSource;
 	readonly clock: Clock;
 	readonly limits: HostedProxyLimits;
-	readonly cachedCatalog?: SettledOrganizationCatalog;
+	readonly cachedCatalog?: SettledWorkspaceCatalog;
 	readonly createClient?: UpstreamMcpRuntimeOptions['createClient'];
 	readonly createUpstreamMcpTransport: NonNullable<
 		UpstreamMcpRuntimeOptions['createUpstreamMcpTransport']
 	>;
-}): Promise<OrganizationEngine> {
+}): Promise<WorkspaceEngine> {
 	const { configuration } = props;
 	const rawSecrets: string[] = [];
 	const providers = mcpConfigToResolvedProviders(configuration.mcp).map((provider) => {
@@ -113,7 +113,7 @@ export async function createOrganizationEngine(props: {
 	const workspaceCatalog = createWorkspaceToolCatalog({
 		namespaces: providers.map((provider) => provider.namespace),
 		runtime: catalogRuntime,
-		discoveryScope: '$organization-catalog',
+		discoveryScope: '$workspace-catalog',
 		catalogTtlMs: 60_000,
 		now: props.clock.nowMs,
 	});
@@ -143,17 +143,14 @@ export async function createOrganizationEngine(props: {
 	}
 	await refresh();
 
-	const revision = { owner: props.organizationId, revision: 'deployed-v1' };
+	const revision = { owner: props.workspaceId, revision: 'deployed-v1' };
 	return {
 		configuration,
 		refresh,
 		settledCatalog: () => settledCatalog,
-		gatewayFor: ({ agentClientId, consumeTokenId, invoke }) => {
-			const assignment = configuration.portal.agents[agentClientId];
-			const profile =
-				assignment === undefined ? undefined : configuration.portal.profiles[assignment.profile];
-			if (profile === undefined || assignment === undefined)
-				throw new Error('Agent profile unavailable.');
+		gatewayFor: ({ agentClientId, persona, consumeTokenId, invoke }) => {
+			const profile = configuration.portal.profiles[persona];
+			if (profile === undefined) throw new Error('Agent profile unavailable.');
 			const resolvedProfile = resolveHostedProxyProfile(profile);
 			const requestSnapshot = snapshot;
 			if (requestSnapshot === undefined) throw new Error('Request catalog was not prepared.');
@@ -207,7 +204,7 @@ export async function createOrganizationEngine(props: {
 			const gateway = createMcpGateway({
 				caller: {
 					identity,
-					authority: props.organizationId,
+					authority: props.workspaceId,
 					principal: agentClientId,
 					verifiedContextRef: agentClientId,
 				},
@@ -233,7 +230,7 @@ export async function createOrganizationEngine(props: {
 								revision,
 								profileRevision: revision,
 								profile: assessedProxyProfile({
-									profileId: assignment.profile,
+									profileId: persona,
 									profile,
 									resolved: resolvedProfile,
 									capability,

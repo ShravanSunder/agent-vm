@@ -1,4 +1,7 @@
-import { hashCallArguments } from '@agent-collaboration/tool-access/contracts';
+import {
+	workspaceResourceIdentifier,
+	hashCallArguments,
+} from '@agent-collaboration/tool-access/contracts';
 import { signApprovalToken } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { generateKeyPair, importJWK, SignJWT, type JWTPayload } from 'jose';
 import { z } from 'zod';
@@ -56,7 +59,11 @@ export async function agentToken(
 	return new SignJWT({
 		iss: configuration.helper.origin,
 		sub: agentId,
-		aud: configuration.audience,
+		aud: workspaceResourceIdentifier({
+			toolPortalOrigin: configuration.portalA.origin,
+			workspaceId: (options.organization ?? configuration.organizations[0]).organizationId,
+		}),
+		workspace_id: (options.organization ?? configuration.organizations[0]).organizationId,
 		iat: now,
 		exp: now + 3600,
 		scope: 'tool-portal:agent',
@@ -80,7 +87,10 @@ export async function portalRpc(
 	readonly bytes: number;
 }> {
 	const origin = options.copy === 'b' ? configuration.portalB.origin : configuration.portalA.origin;
-	const url = new URL('/mcp', origin);
+	const url = new URL(
+		`/workspaces/${(options.organization ?? configuration.organizations[0]).organizationId}/mcp`,
+		origin,
+	);
 	url.search = options.query ?? '';
 	url.searchParams.set('runId', configuration.runId);
 	const body = JSON.stringify({

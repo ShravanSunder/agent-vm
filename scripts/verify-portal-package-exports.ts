@@ -70,11 +70,11 @@ const requiredPortalNamedExports = {
 	],
 	'@agent-collaboration/tool-host-core': [
 		'createHostedMcpProxy',
-		'createOrganizationAuthority',
+		'createWorkspaceAuthority',
 		'createVolatileAuthorityStore',
 		'decideApprovalTokenUse',
-		'agentAdmissionRow',
-		'organizationConfigurationSchema',
+		'workspaceMembershipRow',
+		'workspaceConfigurationSchema',
 	],
 	'@agent-collaboration/tool-host-node': [
 		'startNodeHost',

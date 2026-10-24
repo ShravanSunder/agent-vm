@@ -19,6 +19,7 @@ export const agentTokenClaimsSchema = z.looseObject({
 	azp: z.string().min(1),
 	jti: z.string().min(1),
 	organization_id: z.uuid(),
+	workspace_id: z.uuid(),
 });
 export type AgentTokenClaims = z.infer<typeof agentTokenClaimsSchema>;
 
@@ -26,6 +27,7 @@ export const agentProofSchema = z.strictObject({
 	deployment: z.url(),
 	clientId: z.string().min(1),
 	organizationId: z.uuid(),
+	workspaceId: z.uuid(),
 	audience: z.string().min(1),
 	expiresAt: z.number().int(),
 });
@@ -38,18 +40,21 @@ export type AgentProofRefusal =
 	| 'wrong-audience'
 	| 'expired'
 	| 'not-an-agent'
-	| 'wrong-scope';
+	| 'wrong-scope'
+	| 'wrong-workspace';
 export type AgentProofVerification =
 	| { readonly kind: 'verified'; readonly proof: AgentProof }
 	| { readonly kind: 'refused'; readonly reason: AgentProofRefusal };
 export interface AgentTokenVerifier {
-	readonly verify: (token: string) => Promise<AgentProofVerification>;
+	readonly verify: (
+		token: string,
+		expected: { readonly workspaceId: string; readonly audience: string },
+	) => Promise<AgentProofVerification>;
 }
 
 /** Only this boundary reads raw claims. Membership remains the relying service's check. */
 export function createAgentTokenVerifier(props: {
 	readonly deployment: string;
-	readonly audience: string;
 	readonly jwksUrl: URL;
 	readonly now?: () => number;
 	readonly jwksFetch?: FetchImplementation;
@@ -59,7 +64,10 @@ export function createAgentTokenVerifier(props: {
 		props.jwksFetch === undefined ? {} : { [customFetch]: props.jwksFetch },
 	);
 	return {
-		async verify(token: string): Promise<AgentProofVerification> {
+		async verify(
+			token: string,
+			expected: { readonly workspaceId: string; readonly audience: string },
+		): Promise<AgentProofVerification> {
 			try {
 				if (decodeProtectedHeader(token).typ !== 'at+jwt')
 					return { kind: 'refused', reason: 'wrong-token-type' };
@@ -80,7 +88,7 @@ export function createAgentTokenVerifier(props: {
 				return { kind: 'refused', reason: 'bad-signature' };
 			}
 			if (claims.iss !== props.deployment) return { kind: 'refused', reason: 'wrong-issuer' };
-			if (typeof claims.aud !== 'string' || claims.aud !== props.audience)
+			if (typeof claims.aud !== 'string' || claims.aud !== expected.audience)
 				return { kind: 'refused', reason: 'wrong-audience' };
 			if (
 				typeof claims.exp !== 'number' ||
@@ -91,11 +99,14 @@ export function createAgentTokenVerifier(props: {
 			if (
 				Object.hasOwn(claims, 'sid') ||
 				!z.uuid().safeParse(claims.organization_id).success ||
+				!z.uuid().safeParse(claims.workspace_id).success ||
 				typeof claims.client_id !== 'string' ||
 				claims.sub !== claims.client_id ||
 				claims.azp !== claims.client_id
 			)
 				return { kind: 'refused', reason: 'not-an-agent' };
+			if (claims.workspace_id !== expected.workspaceId)
+				return { kind: 'refused', reason: 'wrong-workspace' };
 			if (
 				typeof claims.scope !== 'string' ||
 				!claims.scope.split(/\s+/u).includes('tool-portal:agent')
@@ -109,6 +120,7 @@ export function createAgentTokenVerifier(props: {
 					deployment: parsed.data.iss,
 					clientId: parsed.data.client_id,
 					organizationId: parsed.data.organization_id,
+					workspaceId: parsed.data.workspace_id,
 					audience: parsed.data.aud,
 					expiresAt: parsed.data.exp,
 				},
