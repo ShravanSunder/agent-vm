@@ -1,5 +1,8 @@
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { createOrganizationAuthority } from '@agent-collaboration/tool-host-core';
+import {
+	createOrganizationAuthority,
+	type AgentRetirement,
+} from '@agent-collaboration/tool-host-core';
 import { DurableObject } from 'cloudflare:workers';
 
 import { workerApprovalUsesBytes } from '#worker-host/worker-limits';
@@ -29,9 +32,21 @@ export class OrganizationAuthorization extends DurableObject {
 		return this.#authority().isAgentListed(agentClientId);
 	}
 
-	/** Narrow management seam; no public management route is exposed in S6. */
+	/** Management effects stay inside the organization's atomic storage authority. */
 	async setAgentAdmission(agentClientId: string, state: 'listed' | 'removed'): Promise<void> {
 		await this.#authority().setAgentAdmission(agentClientId, state);
+	}
+
+	async readAgentRetirement(clientId: string): Promise<AgentRetirement | null> {
+		return this.#authority().readAgentRetirement(clientId);
+	}
+
+	async beginAgentRetirement(clientId: string, requestId: string): Promise<AgentRetirement> {
+		return this.#authority().beginAgentRetirement(clientId, requestId);
+	}
+
+	async completeAgentRetirement(clientId: string): Promise<void> {
+		await this.#authority().completeAgentRetirement(clientId);
 	}
 
 	async consumeApprovalToken(

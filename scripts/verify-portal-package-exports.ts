@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/auth/core',
 	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-host-node',
 	'@agent-collaboration/tool-host-node/catalog-typescript',
@@ -58,6 +59,15 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/auth/core': [
+		'signInConfigurationSchema',
+		'agentRegistrationSchema',
+		'agentRegistrationAllowsToken',
+		'registerAgentClient',
+		'disableAgentClient',
+		'handleSignInRequest',
+		'releaseSignInResponse',
+	],
 	'@agent-collaboration/tool-host-core': [
 		'createHostedMcpProxy',
 		'createOrganizationAuthority',
@@ -107,6 +117,9 @@ const requiredPortalNamedExports = {
 		'approvalReceiptSchema',
 	],
 	'@agent-collaboration/tool-access/contracts': [
+		'createPersonTokenVerifier',
+		'personTokenClaimsSchema',
+		'personProofSchema',
 		'mcpConfigSchema',
 		'secretValueSchema',
 		'configuredCliPolicySchema',
@@ -334,6 +347,7 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/auth/core',
 	'@agent-collaboration/tool-host-core',
 	'@agent-collaboration/tool-engine/standalone-tool-portal',
 	'@agent-collaboration/tool-host-node',
@@ -653,6 +667,18 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertAuthCorePlainNodeExecution, verifyAuthPackageClosure } =
+		await import('./verify-auth-package-closure.ts');
+	await assertAuthCorePlainNodeExecution(
+		(await requiredPackageExportTargetsForSpecifier('@agent-collaboration/auth/core')).importUrl,
+	);
+	if (process.argv.includes('--auth-core-only')) {
+		process.stdout.write(
+			'auth core plain Node import and policy probe: passed; full portal exports and packed closure remain unverified\n',
+		);
+		return;
+	}
+	if (process.argv.includes('--packed-auth')) await verifyAuthPackageClosure();
 	const { assertToolHostNodeSourceIsRestricted, verifyToolHostNodeClosure } =
 		await import('./verify-tool-host-node-closure.ts');
 	await assertToolHostNodeSourceIsRestricted();
