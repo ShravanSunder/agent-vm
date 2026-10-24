@@ -1,6 +1,7 @@
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { z } from 'zod';
 
+import type { WorkspaceMembershipRead } from '#tool-host-core/caller-admission/models/caller-admission';
 import type { WorkspaceAuthorizationPort } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
 import {
 	workspaceMembershipRow,
@@ -15,13 +16,21 @@ import { decideApprovalTokenUse } from '#tool-host-core/workspace-authority/appr
 import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 import { approvalUsesKey } from '#tool-host-core/workspace-authority/models/workspace-authority-state';
 import type { WorkspaceAuthorityStore } from '#tool-host-core/workspace-authority/models/workspace-authority-store';
+import {
+	createWorkspaceRemovalAuthority,
+	type WorkspaceRemovalAuthority,
+} from '#tool-host-core/workspace-authority/removal-notice-store';
 
 export function createWorkspaceAuthority(props: {
 	readonly store: WorkspaceAuthorityStore;
 	readonly clock: Pick<Clock, 'nowMs'>;
 	readonly cap: number;
-}): WorkspaceAuthorizationPort & AgentManagementAuthority {
+}): WorkspaceAuthorizationPort &
+	WorkspaceMembershipRead &
+	AgentManagementAuthority &
+	WorkspaceRemovalAuthority {
 	return {
+		...createWorkspaceRemovalAuthority(props),
 		...createAgentRemovalAuthority(props.store),
 		readMembership: async (agentClientId) =>
 			storedWorkspaceMembership(await props.store.read(`member:${agentClientId}`)),

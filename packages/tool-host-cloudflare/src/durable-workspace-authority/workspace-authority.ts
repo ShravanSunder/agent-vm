@@ -1,3 +1,8 @@
+import type {
+	RemovalNotice,
+	RemovalNoticeAck,
+	RemovalSubject,
+} from '@agent-collaboration/tool-access/contracts';
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { createWorkspaceAuthority, type AgentRemoval } from '@agent-collaboration/tool-host-core';
 import { DurableObject } from 'cloudflare:workers';
@@ -23,6 +28,16 @@ export class WorkspaceAuthority extends DurableObject {
 					),
 			},
 		});
+	}
+
+	async readRemovalMark(subject: RemovalSubject): Promise<number | null> {
+		return this.#authority().readRemovalMark(subject);
+	}
+	async recordRemovalNotice(notice: RemovalNotice): Promise<RemovalNoticeAck> {
+		return this.#authority().recordRemovalNotice(notice);
+	}
+	async pruneRemovalNotices(): Promise<void> {
+		await this.#authority().pruneRemovalNotices();
 	}
 
 	async readMembership(clientId: string): Promise<{ readonly persona: string } | null> {

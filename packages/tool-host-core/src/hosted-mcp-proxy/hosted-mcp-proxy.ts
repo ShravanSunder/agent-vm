@@ -38,13 +38,19 @@ function callerRefusalResponse(
 			error:
 				caller.kind === 'unavailable'
 					? 'admission-unavailable'
-					: caller.reason === 'profile-unassigned'
-						? 'profile-unassigned'
-						: 'unknown-caller',
+					: caller.reason === 'removal-covered'
+						? 'not-permitted'
+						: caller.reason === 'profile-unassigned'
+							? 'profile-unassigned'
+							: 'unknown-caller',
 		},
 		{
 			status:
-				caller.kind === 'unavailable' ? 503 : caller.reason === 'profile-unassigned' ? 403 : 401,
+				caller.kind === 'unavailable'
+					? 503
+					: caller.reason === 'profile-unassigned' || caller.reason === 'removal-covered'
+						? 403
+						: 401,
 		},
 	);
 }
@@ -84,6 +90,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 				toolPortalOrigin: props.toolPortalOrigin,
 				request,
 				verifier: props.verifier,
+				removals: props.workspaces.forWorkspace(selected.data),
 			});
 			if (caller.kind !== 'verified') {
 				log({ event: 'caller-refused', reason: caller.reason });

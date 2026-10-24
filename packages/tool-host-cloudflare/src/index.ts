@@ -1,8 +1,12 @@
 /// <reference types="../worker-configuration.gen.d.ts" preserve="true" />
 
-import { createPersonTokenVerifier } from '@agent-collaboration/tool-access/contracts';
+import {
+	createPersonTokenVerifier,
+	createRemovalNoticeTokenVerifier,
+} from '@agent-collaboration/tool-access/contracts';
 import {
 	createHostedMcpProxy,
+	createRemovalNoticeReceiver,
 	createWorkspaceAgentManagement,
 	hostedAgentVerifier,
 	type AgentClientManagementPort,
@@ -26,10 +30,29 @@ export type WorkerBindings = Readonly<Omit<ToolPortalWorkerEnv, 'SIGN_IN'>> &
 		readonly SIGN_IN?: AgentClientManagementPort;
 	};
 let host: HostedMcpProxy | undefined;
+let removalReceiver: ReturnType<typeof createRemovalNoticeReceiver> | undefined;
 
 export default {
 	async fetch(request: Request, bindings: WorkerBindings): Promise<Response> {
 		try {
+			if (new URL(request.url).pathname === '/internal/v1/removal-notices') {
+				removalReceiver ??= createRemovalNoticeReceiver({
+					verifier: createRemovalNoticeTokenVerifier({
+						issuer: z.url().parse(bindings.SIGN_IN_ISSUER),
+						jwksUrl: new URL(z.url().parse(bindings.SIGN_IN_JWKS_URL)),
+						audience: new URL('/internal/v1/removal-notices', bindings.TOOL_PORTAL_ORIGIN).href,
+						clientId: z.string().min(1).parse(bindings.FLEET_CENTRAL_CLIENT_ID),
+					}),
+					configurations: deployedConfigurationSource(
+						JSON.parse(bindings.WORKSPACE_CONFIGURATIONS),
+					),
+					workspaces: {
+						forWorkspace: (workspaceId) =>
+							bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(workspaceId)),
+					},
+				});
+				return await removalReceiver.handle(request);
+			}
 			if (new URL(request.url).pathname.startsWith('/management/')) {
 				if (bindings.SIGN_IN === undefined)
 					return Response.json({ error: 'management-unavailable' }, { status: 503 });

@@ -7,6 +7,7 @@ it('runId is inert for both loading modes, token organization, sender and caller
 		loading: resolveToolLoading(`https://portal.invalid/mcp?${query}`),
 		caller: await checkHostedCaller({
 			sessionClientId: 'central',
+			removals: { readRemovalMark: async () => null },
 			organizationId: '11111111-1111-4111-8111-111111111111',
 			workspaceId: '11111111-1111-4111-8111-111111111111',
 			toolPortalOrigin: 'https://portal.invalid',

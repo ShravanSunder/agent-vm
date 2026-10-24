@@ -3,7 +3,6 @@ import type { ConsumeApprovalTokenId } from '@agent-collaboration/tool-engine/mc
 import type { UpstreamMcpRuntimeOptions } from '@agent-collaboration/tool-engine/upstream-mcp-connectors';
 
 import type { AnalyticsSink } from '#tool-host-core/call-analytics/models/call-analytics';
-import type { WorkspaceMembershipRead } from '#tool-host-core/caller-admission/models/caller-admission';
 import type {
 	WorkspaceConfigurationSource,
 	SecretSource,
@@ -11,8 +10,9 @@ import type {
 import type { ObservationLog } from '#tool-host-core/hosted-mcp-proxy/models/observation-log';
 import type { HostedProxyLimits } from '#tool-host-core/request-limits/models/hosted-proxy-limits';
 import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
+import type { WorkspaceRemovalRead } from '#tool-host-core/workspace-authority/removal-notice-store';
 
-export interface WorkspaceAuthorizationPort extends WorkspaceMembershipRead {
+export interface WorkspaceAuthorizationPort extends WorkspaceRemovalRead {
 	readonly consumeApprovalToken: ConsumeApprovalTokenId;
 }
 export interface HostedWorkspaces {

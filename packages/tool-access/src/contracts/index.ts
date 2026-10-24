@@ -21,3 +21,4 @@ export * from '#tool-access/contracts/workspace-resource';
 
 export * from '#tool-access/contracts/workspace-token-claims';
 export * from '#tool-access/contracts/removal-notice';
+export * from '#tool-access/contracts/removal-notice-token';

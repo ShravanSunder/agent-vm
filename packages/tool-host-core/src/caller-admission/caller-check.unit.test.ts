@@ -59,7 +59,11 @@ async function token(changes: JWTPayload = {}, forged = false): Promise<string> 
 		.setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: 'test-key' })
 		.sign(forged ? forgedKeys.privateKey : keys.privateKey);
 }
-async function check(bearer: string | undefined): ReturnType<typeof checkHostedCaller> {
+async function check(
+	bearer: string | undefined,
+	removalRevision: number | null = null,
+	machineOnly = false,
+): ReturnType<typeof checkHostedCaller> {
 	return checkHostedCaller({
 		request: new Request(
 			`https://attacker.invalid/workspaces/${workspaceId}/mcp?organizationId=other&agent=other`,
@@ -75,6 +79,10 @@ async function check(bearer: string | undefined): ReturnType<typeof checkHostedC
 		toolPortalOrigin,
 		verifier,
 		sessionClientId: 'central',
+		removals: {
+			readRemovalMark: async (subject) =>
+				machineOnly && subject.kind !== 'machine' ? null : removalRevision,
+		},
 	});
 }
 describe('token-only hosted admission (C1)', () => {
@@ -132,4 +140,24 @@ describe('token-only hosted admission (C1)', () => {
 		expect(admitted[0]).toEqual(admitted[1]);
 		expect(admitted[0]).toMatchObject({ kind: 'verified', principal: botPrincipal });
 	});
+});
+
+it('refuses a grant below either subject removal mark, but accepts equal or newer grants', async () => {
+	const bearer = await token();
+	expect(await check(bearer, 8)).toEqual({ kind: 'refused', reason: 'removal-covered' });
+	expect((await check(bearer, 7)).kind).toBe('verified');
+	expect((await check(bearer, 6)).kind).toBe('verified');
+});
+
+it('matches a machine notice to the session installation even with no principal notice', async () => {
+	expect(await check(await token(), 8, true)).toEqual({
+		kind: 'refused',
+		reason: 'removal-covered',
+	});
+	const bot = await token({
+		sub: 'bot-client',
+		client_id: 'bot-client',
+		principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
+	});
+	expect((await check(bot, 8, true)).kind).toBe('verified');
 });

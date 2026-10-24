@@ -40,3 +40,6 @@ export * from '#tool-host-core/workspace-authority/models/authority-clock';
 export * from '#tool-host-core/workspace-engines/proxy-profile-policy';
 
 export * from '#tool-host-core/agent-management/agent-client-management-port';
+
+export * from '#tool-host-core/workspace-authority/removal-notice-store';
+export * from '#tool-host-core/removal-notices/removal-notice-receiver';

@@ -28,6 +28,7 @@ export type HostedCallerCheck =
 				| 'missing-token'
 				| 'wrong-organization'
 				| 'wrong-session-client'
-				| 'profile-unassigned';
+				| 'profile-unassigned'
+				| 'removal-covered';
 	  }
 	| { readonly kind: 'unavailable'; readonly reason: 'admission-unavailable' };
