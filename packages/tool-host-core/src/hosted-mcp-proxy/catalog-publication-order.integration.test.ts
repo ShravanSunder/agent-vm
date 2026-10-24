@@ -1,15 +1,15 @@
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { organizationConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
+import { workspaceConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import {
 	createHostedMcpProxy,
 	hostedAgentVerifier,
 } from '#tool-host-core/hosted-mcp-proxy/hosted-mcp-proxy';
 import { startControlledHostedUpstream } from '#tool-host-core/hosted-mcp-proxy/test-fixtures/controlled-hosted-upstream-test-fixture';
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
 import { testHostedProxyLimits } from '#tool-host-core/request-limits/test-fixtures/hosted-proxy-limits';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
 it.each([200, 100])(
 	'keeps the first published catalog when delayed discovery started at or before %i',
@@ -23,14 +23,15 @@ it.each([200, 100])(
 		let discoveries = 0;
 		try {
 			const clock = { nowMs: () => nowMs, nowIso: () => new Date(nowMs).toISOString() };
-			const authority = createOrganizationAuthority({
+			const authority = createWorkspaceAuthority({
 				store: createVolatileAuthorityStore(),
 				clock,
 				cap: 512 * 1024,
 			});
-			await authority.setAgentAdmission('sender', 'listed');
-			const configuration = organizationConfigurationSchema.parse({
-				organizationName: 'fixture',
+			await authority.setMembership('sender', 'fixture');
+			const configuration = workspaceConfigurationSchema.parse({
+				organizationId: '11111111-1111-4111-8111-111111111111',
+				workspaceName: 'fixture',
 				approvalKeyBinding: 'KEY',
 				mcp: {
 					schemaVersion: 1,
@@ -44,7 +45,7 @@ it.each([200, 100])(
 				},
 				portal: {
 					schemaVersion: 1,
-					agents: { sender: { profile: 'fixture' } },
+					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
 							namespaces: {
@@ -58,13 +59,17 @@ it.each([200, 100])(
 				},
 			});
 			const proxy = createHostedMcpProxy({
+				toolPortalOrigin: 'https://portal.invalid',
 				verifier: hostedAgentVerifier({
 					deployment: upstream.url,
-					audience: 'https://portal.invalid/mcp',
+
 					jwksUrl: `${upstream.url}/jwks`,
 				}),
-				organizations: { forOrganization: () => authority },
-				configurations: { read: async () => configuration },
+				workspaces: { forWorkspace: () => authority },
+				configurations: {
+					workspaceIdsForOrganization: async () => [],
+					read: async () => configuration,
+				},
 				secrets: { read: () => '12'.repeat(32) },
 				analytics: { write: () => {} },
 				log: () => {},
@@ -101,27 +106,30 @@ it.each([200, 100])(
 			const bearer = await upstream.sign();
 			async function listTools(): Promise<readonly string[]> {
 				const response = await proxy.handle(
-					new Request('https://portal.invalid/mcp?tools=direct', {
-						method: 'POST',
-						headers: {
-							authorization: `Bearer ${bearer}`,
-							'content-type': 'application/json',
-							accept: 'application/json, text/event-stream',
-							'MCP-Protocol-Version': '2026-07-28',
-							'Mcp-Method': 'tools/list',
-						},
-						body: JSON.stringify({
-							jsonrpc: '2.0',
-							id: crypto.randomUUID(),
-							method: 'tools/list',
-							params: {
-								_meta: {
-									'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-									'io.modelcontextprotocol/clientCapabilities': {},
-								},
+					new Request(
+						'https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp?tools=direct',
+						{
+							method: 'POST',
+							headers: {
+								authorization: `Bearer ${bearer}`,
+								'content-type': 'application/json',
+								accept: 'application/json, text/event-stream',
+								'MCP-Protocol-Version': '2026-07-28',
+								'Mcp-Method': 'tools/list',
 							},
-						}),
-					}),
+							body: JSON.stringify({
+								jsonrpc: '2.0',
+								id: crypto.randomUUID(),
+								method: 'tools/list',
+								params: {
+									_meta: {
+										'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+										'io.modelcontextprotocol/clientCapabilities': {},
+									},
+								},
+							}),
+						},
+					),
 				);
 				expect(response.status).toBe(200);
 				const result = z

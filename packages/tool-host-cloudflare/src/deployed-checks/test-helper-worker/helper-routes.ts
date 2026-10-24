@@ -22,11 +22,7 @@ export async function handleHelperRequest(
 			return new Response(null, { status: 401 });
 		if (url.pathname === '/admission' && request.method === 'POST') {
 			const input = admissionInputSchema.parse(await request.json());
-			if (
-				!Object.values(ports.organizations).some(
-					(entry) => entry.organizationId === input.organizationId,
-				)
-			)
+			if (!Object.values(ports.workspaces).some((entry) => entry.workspaceId === input.workspaceId))
 				return new Response(null, { status: 403 });
 			await ports.setAdmission(input);
 			return Response.json({ ok: true });
@@ -44,9 +40,9 @@ export async function handleHelperRequest(
 		return new Response(null, { status: 405 });
 	}
 	const label = url.pathname.match(/^\/mcp\/([a-z0-9-]+)$/u)?.[1];
-	const organization = label === undefined ? undefined : ports.organizations[label];
-	if (organization === undefined || label === undefined) return new Response(null, { status: 404 });
-	if (request.headers.get('authorization') !== organization.credential)
+	const workspace = label === undefined ? undefined : ports.workspaces[label];
+	if (workspace === undefined || label === undefined) return new Response(null, { status: 404 });
+	if (request.headers.get('authorization') !== workspace.credential)
 		return new Response(null, { status: 401 });
 	if (request.method !== 'POST') return new Response(null, { status: 405 });
 	const rpc = rpcInputSchema.parse(await request.json());
@@ -75,9 +71,9 @@ export async function handleHelperRequest(
 			});
 		const observations = ports.observations(input.runId);
 		await observations.begin({
-			organizationLabel: label,
+			workspaceLabel: label,
 			callId: input.callId,
-			credential: organization.credential,
+			credential: workspace.credential,
 			toolName: name,
 		});
 		return controlledResponseStream({ rpcId: rpc.id, input, observations });

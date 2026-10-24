@@ -67,15 +67,15 @@ and connect failures are `failed`; losing a response during `call_tool` remains
 for either outcome. Managed adapters keep their existing certainty and retry
 policy when this optional detail is present.
 
-`createOrganizationToolCatalog` owns shared startup discovery and its request-driven
+`createWorkspaceToolCatalog` owns shared startup discovery and its request-driven
 lifetime. Incomplete discovery keeps healthy providers and retries failed ones on
 the next read. Complete catalogs refresh after the configured lifetime; failed
 refreshes retain the previous complete snapshot with diagnostics. Passing this
-source to `createAgentCatalogViewCache` builds caller views from the organization
+source to `createAgentCatalogViewCache` builds caller views from the workspace
 snapshot without owning another discovery cache. Hosts perform the first read
 before accepting clients and keep protocol-specific refusals at their ingress.
 
-A complete organization snapshot can carry refresh-failure diagnostics. Its
+A complete workspace snapshot can carry refresh-failure diagnostics. Its
 completeness is passed to catalog preparation separately from those diagnostics,
 so both addresses keep serving its tools while the failed namespace is retried.
 Only a snapshot that has never completed refuses direct listing. This deliberately

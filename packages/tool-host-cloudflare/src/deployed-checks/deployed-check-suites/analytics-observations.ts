@@ -1,24 +1,48 @@
-import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
+import { z } from 'zod';
 
-function bytes(text: string): number {
-	return new TextEncoder().encode(text).byteLength;
-}
+import { analyticsText } from '#worker-host/analytics-engine-sink/analytics-engine-sink';
 import {
 	analyticsSqlResponseSchema,
 	type TailRecord,
 } from '#worker-host/deployed-checks/deployed-check-suites/models/deployed-evidence';
 
-export function assertAnalyticsShape(value: unknown, configuration: PrivateDeployFile): void {
+export const expectedWorkspaceRecordsSchema = z
+	.array(
+		z.strictObject({
+			organizationId: z.uuid(),
+			workspaceId: z.uuid(),
+			label: z.string().min(1),
+		}),
+	)
+	.min(1)
+	.refine(
+		(records) => new Set(records.map((record) => record.workspaceId)).size === records.length,
+		'Expected workspace IDs must be unique.',
+	);
+export type ExpectedWorkspaceRecord = z.infer<typeof expectedWorkspaceRecordsSchema>[number];
+
+function bytes(text: string): number {
+	return new TextEncoder().encode(text).byteLength;
+}
+
+export function assertAnalyticsShape(
+	value: unknown,
+	context: {
+		readonly runId: string;
+		readonly workspaces: readonly ExpectedWorkspaceRecord[];
+		readonly agentIds: readonly string[];
+	},
+): void {
 	const response = analyticsSqlResponseSchema.safeParse(value);
-	if (!response.success) throw new Error('Analytics SQL result has no rows of the expected shape.');
+	if (!response.success)
+		throw new Error('Analytics SQL result has no rows of the expected nine-blob shape.');
 	for (const row of response.data.data) {
-		const organization = configuration.organizations.find(
-			(entry) => entry.organizationId === row.index1,
-		);
+		const workspace = context.workspaces.find((entry) => entry.workspaceId === row.index1);
 		if (
-			organization === undefined ||
-			row.blob1 !== `${configuration.runId}:${organization.label}` ||
-			![configuration.agentId, configuration.otherAgentId].includes(row.blob2)
+			workspace === undefined ||
+			row.blob1 !== workspace.organizationId ||
+			row.blob2 !== analyticsText(`${context.runId}:${workspace.label}`) ||
+			!context.agentIds.includes(row.blob3)
 		)
 			throw new Error('Analytics rows do not belong to this deployed check run.');
 		const blobs = [
@@ -30,6 +54,7 @@ export function assertAnalyticsShape(value: unknown, configuration: PrivateDeplo
 			row.blob6,
 			row.blob7,
 			row.blob8,
+			row.blob9,
 		];
 		if (
 			bytes(row.index1) > 96 ||

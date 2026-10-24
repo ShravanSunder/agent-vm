@@ -12,7 +12,7 @@ import {
 } from '@agent-collaboration/tool-engine/capability-dispatch';
 import {
 	createMcpGateway,
-	createOrganizationToolCatalog,
+	createWorkspaceToolCatalog,
 	proxyUpstreamFailureFromError,
 	proxyUpstreamFailureResult,
 	createInMemoryApprovalTokenUse,
@@ -191,15 +191,15 @@ export async function createNodeHostComposition(props: {
 			);
 		},
 	};
-	// One organization catalog is read before a listener can admit any client.
-	const organizationCatalog = createOrganizationToolCatalog({
+	// One workspace catalog is read before a listener can admit any client.
+	const workspaceCatalog = createWorkspaceToolCatalog({
 		namespaces: [...runtimeByNamespace.keys()],
 		runtime,
 		discoveryScope: `startup:${config.authority}`,
 		catalogTtlMs: 60_000,
 		now: Date.now,
 	});
-	await organizationCatalog.read();
+	await workspaceCatalog.read();
 	const sessions = createAgentCatalogViewCache({
 		accessPolicy: {
 			enabledNamespaces: [...runtimeByNamespace.keys()],
@@ -208,7 +208,7 @@ export async function createNodeHostComposition(props: {
 		},
 		upstreamNamespaces: [...runtimeByNamespace.keys()],
 		catalogTtlMs: 60_000,
-		organizationCatalog,
+		workspaceCatalog,
 		runtime,
 	});
 	let closed = false;

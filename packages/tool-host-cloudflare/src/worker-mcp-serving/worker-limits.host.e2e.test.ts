@@ -56,19 +56,25 @@ describe('Worker limits through local workerd', () => {
 		};
 		const before = harness.fixture.calls.length;
 		for (const offset of [-1, 0]) {
-			const allowed = await harness.worker.fetch('/mcp', {
-				method: 'POST',
-				headers,
-				body: body + ' '.repeat(workerRequestBodyBytes + offset - body.length),
-			});
+			const allowed = await harness.worker.fetch(
+				'/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+				{
+					method: 'POST',
+					headers,
+					body: body + ' '.repeat(workerRequestBodyBytes + offset - body.length),
+				},
+			);
 			await rpcResult(allowed);
 			expect(harness.fixture.calls).toHaveLength(before + offset + 2);
 		}
-		const refused = await harness.worker.fetch('/mcp', {
-			method: 'POST',
-			headers,
-			body: body + ' '.repeat(workerRequestBodyBytes + 1 - body.length),
-		});
+		const refused = await harness.worker.fetch(
+			'/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+			{
+				method: 'POST',
+				headers,
+				body: body + ' '.repeat(workerRequestBodyBytes + 1 - body.length),
+			},
+		);
 		expect(refused.status).toBe(413);
 		expect(harness.fixture.calls).toHaveLength(before + 2);
 	});

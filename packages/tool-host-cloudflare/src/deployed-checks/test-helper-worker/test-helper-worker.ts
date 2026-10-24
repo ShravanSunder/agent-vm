@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 
 import { handleHelperRequest } from '#worker-host/deployed-checks/test-helper-worker/helper-routes';
 import {
-	helperOrganizationsSchema,
+	helperWorkspacesSchema,
 	publicJwksSchema,
 	runObservationsSchema,
 	type CallObservation,
@@ -13,12 +13,10 @@ import {
 	emptyObservations,
 	finishObservation,
 } from '#worker-host/deployed-checks/test-helper-worker/observation-counters';
-import type { OrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
 
-interface HelperBindings {
-	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
+interface HelperBindings extends Readonly<Pick<ToolPortalWorkerEnv, 'WORKSPACES'>> {
 	readonly OBSERVATIONS: DurableObjectNamespace<TestObservations>;
-	readonly TEST_ORGANIZATIONS: string;
+	readonly TEST_WORKSPACES: string;
 	readonly TEST_PUBLIC_JWKS: string;
 	readonly ADMISSION_SECRET: string;
 }
@@ -71,12 +69,19 @@ export default {
 			const namespaces = new Map<string, ReturnType<HelperBindings['OBSERVATIONS']['get']>>();
 			return await handleHelperRequest(request, {
 				publicJwks: publicJwksSchema.parse(JSON.parse(bindings.TEST_PUBLIC_JWKS)),
-				organizations: helperOrganizationsSchema.parse(JSON.parse(bindings.TEST_ORGANIZATIONS)),
+				workspaces: helperWorkspacesSchema.parse(JSON.parse(bindings.TEST_WORKSPACES)),
 				admissionSecret: bindings.ADMISSION_SECRET,
-				setAdmission: async (input): Promise<void> =>
-					bindings.ORGANIZATIONS.get(
-						bindings.ORGANIZATIONS.idFromName(input.organizationId),
-					).setAgentAdmission(input.agentId, input.state),
+				setAdmission: async (input): Promise<void> => {
+					const workspace = bindings.WORKSPACES.get(
+						bindings.WORKSPACES.idFromName(input.workspaceId),
+					);
+					if (input.state === 'member') await workspace.setMembership(input.agentId, input.persona);
+					else {
+						const requestId = crypto.randomUUID();
+						await workspace.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
+						await workspace.completeAgentRemoval(input.agentId, requestId, 'unlink');
+					}
+				},
 				observations: (runId) => {
 					const stub =
 						namespaces.get(runId) ??

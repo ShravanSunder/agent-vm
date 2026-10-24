@@ -1,13 +1,14 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 
 import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
 
 export function portalTestConfigurations(configuration: PrivateDeployFile): unknown {
 	return Object.fromEntries(
-		configuration.organizations.map((organization, index) => [
-			organization.organizationId,
-			organizationConfigurationSchema.parse({
-				organizationName: `${configuration.runId}:${organization.label}`,
+		configuration.workspaces.map((workspace, index) => [
+			workspace.workspaceId,
+			workspaceConfigurationSchema.parse({
+				organizationId: workspace.organizationId,
+				workspaceName: `${configuration.runId}:${workspace.label}`,
 				approvalKeyBinding: `TEST_APPROVAL_${String(index)}`,
 				mcp: {
 					schemaVersion: 1,
@@ -17,7 +18,7 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 							namespace: 'same-server',
 							transport: {
 								kind: 'streamable-http',
-								url: `${configuration.helper.origin}/mcp/${organization.label}`,
+								url: `${configuration.helper.origin}/mcp/${workspace.label}`,
 								headers: {
 									authorization: {
 										source: 'environment',
@@ -31,8 +32,8 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 				portal: {
 					schemaVersion: 1,
 					agents: {
-						[configuration.agentId]: { profile: 'one' },
-						[configuration.otherAgentId]: { profile: 'two' },
+						[configuration.agentId]: { credentialVersion: 1 },
+						[configuration.otherAgentId]: { credentialVersion: 1 },
 					},
 					profiles: {
 						one: {
@@ -40,7 +41,7 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 								'same-server': {
 									tools: { allow: '*', deny: ['hidden'] },
 									calls: {
-										withoutApproval: { allow: ['read', `only-${organization.label}`] },
+										withoutApproval: { allow: ['read', `only-${workspace.label}`] },
 										requiresApproval: { allow: ['ask'] },
 									},
 								},

@@ -1,7 +1,7 @@
 import { createServer, type Server as HttpServer } from 'node:http';
 
 import { resolveHostedProxyProfile } from '@agent-collaboration/tool-host-core';
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -15,7 +15,7 @@ import { deriveAgentBearerToken } from 'legacy-mcp-portal/portal-auth/agent-bear
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import { assertLegacyProxyArtifact } from '#worker-host/test-fixtures/legacy-proxy-artifact';
@@ -42,8 +42,8 @@ export async function startLegacyProxyReference(
 ): Promise<{ readonly client: Client; readonly close: () => Promise<void> }> {
 	await assertLegacyProxyArtifact();
 	const configs = z
-		.record(z.string(), organizationConfigurationSchema)
-		.parse(organizationConfigurations(url));
+		.record(z.string(), workspaceConfigurationSchema)
+		.parse(workspaceConfigurations(url));
 	const profile = configs[organizationOne]?.portal.profiles.one;
 	if (profile === undefined) throw new Error('Missing reference profile.');
 	const resolved = resolveHostedProxyProfile(profile);

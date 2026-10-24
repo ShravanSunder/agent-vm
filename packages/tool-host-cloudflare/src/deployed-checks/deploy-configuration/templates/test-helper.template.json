@@ -9,8 +9,8 @@
 	"durable_objects": {
 		"bindings": [
 			{
-				"name": "ORGANIZATIONS",
-				"class_name": "OrganizationAuthorization",
+				"name": "WORKSPACES",
+				"class_name": "WorkspaceAuthority",
 				"script_name": "__PORTAL_A_NAME__"
 			},
 			{ "name": "OBSERVATIONS", "class_name": "TestObservations" }

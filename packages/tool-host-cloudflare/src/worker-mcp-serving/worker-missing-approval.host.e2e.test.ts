@@ -41,7 +41,15 @@ for (const mode of ['direct', 'indirect'] as const)
 			if (host.http === undefined) throw new Error('Missing Node listener.');
 			const directName = z
 				.object({ tools: z.array(z.object({ name: z.string() })) })
-				.parse(await rpcResult(await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' })))
+				.parse(
+					await rpcResult(
+						await harness.rpc(
+							'tools/list',
+							{},
+							{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+						),
+					),
+				)
 				.tools.find((tool) => tool.name.includes('__ask__'))?.name;
 			if (directName === undefined) throw new Error('Missing native tool.');
 			const request =
@@ -56,7 +64,10 @@ for (const mode of ['direct', 'indirect'] as const)
 			const expected = await reference.client.callTool(request);
 			const worker = await rpcResult(
 				await harness.rpc('tools/call', request, {
-					path: mode === 'direct' ? '/mcp?tools=direct' : '/mcp',
+					path:
+						mode === 'direct'
+							? '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct'
+							: '/workspaces/11111111-1111-4111-8111-111111111111/mcp',
 				}),
 			);
 			const nodeResponse = await fetch(

@@ -8,7 +8,8 @@ import {
 
 const call: CallAnalytics = {
 	organizationId: '11111111-1111-4111-8111-111111111111',
-	organizationName: 'org',
+	workspaceId: '22222222-2222-4222-8222-222222222222',
+	workspaceName: 'workspace',
 	agentName: 'agent',
 	mode: 'direct',
 	serverName: 'server',
@@ -42,8 +43,47 @@ describe('safe bounded call analytics', () => {
 		});
 		expect(points).toEqual([
 			{
-				indexes: [call.organizationId],
-				blobs: ['org', 'agent', 'direct', 'server', 'tool', 'ran', 'none', 'no'],
+				indexes: [call.workspaceId],
+				blobs: [
+					call.organizationId,
+					'workspace',
+					'agent',
+					'direct',
+					'server',
+					'tool',
+					'ran',
+					'none',
+					'no',
+				],
+				doubles: [1, 2, 3],
+			},
+		]);
+	});
+	it('caps every free text blob at the sink boundary, including synthetic organization text', () => {
+		const points: unknown[] = [];
+		const text = 'a'.repeat(253) + '𐀀'.repeat(100);
+		createAnalyticsEngineSink({ writeDataPoint: (point) => points.push(point) }).write({
+			...call,
+			organizationId: text,
+			workspaceName: text,
+			agentName: text,
+			serverName: text,
+			toolName: text,
+		});
+		expect(points).toEqual([
+			{
+				indexes: [call.workspaceId],
+				blobs: [
+					text.slice(0, 253),
+					text.slice(0, 253),
+					text.slice(0, 253),
+					'direct',
+					text.slice(0, 253),
+					text.slice(0, 253),
+					'ran',
+					'none',
+					'no',
+				],
 				doubles: [1, 2, 3],
 			},
 		]);

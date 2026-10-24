@@ -13,7 +13,7 @@ export function beginObservation(
 	const prior = snapshot.calls.find((record) => record.callId === call.callId);
 	if (
 		prior !== undefined &&
-		(prior.organizationLabel !== call.organizationLabel ||
+		(prior.workspaceLabel !== call.workspaceLabel ||
 			prior.credential !== call.credential ||
 			prior.toolName !== call.toolName)
 	)

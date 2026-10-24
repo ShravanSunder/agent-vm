@@ -6,12 +6,13 @@ import type {
 	CallAnalytics,
 	AnalyticsSink,
 } from '#tool-host-core/call-analytics/models/call-analytics';
-import type { Clock } from '#tool-host-core/organization-authority/models/authority-clock';
 import { serializedBytes } from '#tool-host-core/request-limits/hosted-call-limits';
+import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 
 export function recordBatchCallAnalytics(props: {
 	readonly organizationId: string;
-	readonly organizationName: string;
+	readonly workspaceId: string;
+	readonly workspaceName: string;
 	readonly agentClientId: string;
 	readonly mode: 'direct' | 'indirect';
 	readonly input: unknown;
@@ -74,7 +75,8 @@ export function recordBatchCallAnalytics(props: {
 			log: props.log,
 			call: {
 				organizationId: props.organizationId,
-				organizationName: props.organizationName,
+				workspaceId: props.workspaceId,
+				workspaceName: props.workspaceName,
 				agentName: props.agentClientId,
 				mode: props.mode,
 				serverName: known ? call.namespace : 'unknown',

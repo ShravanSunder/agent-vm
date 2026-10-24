@@ -8,7 +8,7 @@ import {
 import { z } from 'zod';
 
 import { createAnalyticsEngineSink } from '#worker-host/analytics-engine-sink/analytics-engine-sink';
-import { OrganizationAuthorization as ProductionOrganizationAuthorization } from '#worker-host/durable-organization-authority/organization-authorization';
+import { WorkspaceAuthority as ProductionWorkspaceAuthority } from '#worker-host/durable-workspace-authority/workspace-authority';
 import type { WorkerBindings } from '#worker-host/index';
 import {
 	createObservedNativeClient,
@@ -21,7 +21,7 @@ import {
 import { workerHostedProxyLimits } from '#worker-host/worker-limits';
 import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
 
-export class OrganizationAuthorization extends ProductionOrganizationAuthorization {
+export class WorkspaceAuthority extends ProductionWorkspaceAuthority {
 	private fault: 'none' | 'fail' | 'stall' = 'none';
 	private release: (() => void) | undefined;
 	private recording = Promise.withResolvers<void>();
@@ -51,7 +51,7 @@ export class OrganizationAuthorization extends ProductionOrganizationAuthorizati
 	}
 }
 interface ProofBindings extends WorkerBindings {
-	readonly ORGANIZATIONS: DurableObjectNamespace<OrganizationAuthorization>;
+	readonly WORKSPACES: DurableObjectNamespace<WorkspaceAuthority>;
 	readonly FIXED_CLOCK?: string;
 }
 const controlSchema = z.discriminatedUnion('kind', [
@@ -60,6 +60,7 @@ const controlSchema = z.discriminatedUnion('kind', [
 		organizationId: z.string(),
 		agentId: z.string(),
 		state: z.enum(['listed', 'removed']),
+		persona: z.string().min(1).default('one'),
 	}),
 	z.strictObject({
 		kind: z.literal('fault'),
@@ -95,12 +96,15 @@ export default {
 		if (new URL(request.url).pathname === '/__logs') return Response.json(logs);
 		if (new URL(request.url).pathname === '/__proof') {
 			const input = controlSchema.parse(await request.json());
-			const object = bindings.ORGANIZATIONS.get(
-				bindings.ORGANIZATIONS.idFromName(input.organizationId),
-			);
+			const object = bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(input.organizationId));
 			switch (input.kind) {
 				case 'admission':
-					await object.setAgentAdmission(input.agentId, input.state);
+					if (input.state === 'listed') await object.setMembership(input.agentId, input.persona);
+					else {
+						const requestId = crypto.randomUUID();
+						await object.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
+						await object.completeAgentRemoval(input.agentId, requestId, 'unlink');
+					}
 					break;
 				case 'fault':
 					await object.setProofFault(input.fault);
@@ -115,6 +119,7 @@ export default {
 			return Response.json({ ok: true });
 		}
 		host ??= createHostedMcpProxy({
+			toolPortalOrigin: bindings.TOOL_PORTAL_ORIGIN,
 			createClient: createObservedNativeClient,
 			analytics: createAnalyticsEngineSink({
 				writeDataPoint: (point) => {
@@ -129,14 +134,13 @@ export default {
 			log: (event) => logs.push(event),
 			verifier: hostedAgentVerifier({
 				deployment: bindings.SIGN_IN_ISSUER,
-				audience: bindings.TOOL_PORTAL_AUDIENCE,
 				jwksUrl: bindings.SIGN_IN_JWKS_URL,
 			}),
-			configurations: deployedConfigurationSource(JSON.parse(bindings.ORGANIZATION_CONFIGURATIONS)),
+			configurations: deployedConfigurationSource(JSON.parse(bindings.WORKSPACE_CONFIGURATIONS)),
 			secrets: workerSecretBindings(bindings),
-			organizations: {
-				forOrganization: (organizationId) =>
-					bindings.ORGANIZATIONS.get(bindings.ORGANIZATIONS.idFromName(organizationId)),
+			workspaces: {
+				forWorkspace: (organizationId) =>
+					bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(organizationId)),
 			},
 		});
 		return host.handle(request);

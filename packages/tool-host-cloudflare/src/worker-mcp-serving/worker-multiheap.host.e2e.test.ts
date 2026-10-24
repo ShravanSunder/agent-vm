@@ -5,7 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { expect, it } from 'vitest';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 	portalAudience,
 	signingKeyHex,
@@ -31,8 +31,8 @@ it('independent Worker heaps share real organization storage and admit one appro
 	const bindings = {
 		SIGN_IN_ISSUER: fixture.url,
 		SIGN_IN_JWKS_URL: `${fixture.url}/jwks`,
-		TOOL_PORTAL_AUDIENCE: portalAudience,
-		ORGANIZATION_CONFIGURATIONS: JSON.stringify(organizationConfigurations(fixture.url)),
+		TOOL_PORTAL_ORIGIN: new URL(portalAudience).origin,
+		WORKSPACE_CONFIGURATIONS: JSON.stringify(workspaceConfigurations(fixture.url)),
 		ONE_CREDENTIAL: 'one-secret-canary',
 		TWO_CREDENTIAL: 'two-secret-canary',
 		ONE_APPROVAL_KEY: signingKeyHex,
@@ -47,8 +47,8 @@ it('independent Worker heaps share real organization storage and admit one appro
 				compatibilityDate: '2026-08-15',
 				bindings,
 				durableObjects: {
-					ORGANIZATIONS: {
-						className: 'OrganizationAuthorization',
+					WORKSPACES: {
+						className: 'WorkspaceAuthority',
 						scriptName: 'authority',
 						useSQLite: true,
 					},
@@ -115,7 +115,10 @@ it('independent Worker heaps share real organization storage and admit one appro
 		};
 		const results = await Promise.all(
 			[first, second].map(async (worker) => {
-				const response = await worker.fetch('http://proof/mcp', options);
+				const response = await worker.fetch(
+					'http://proof/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+					options,
+				);
 				expect(response.status).toBe(200);
 				return response.text();
 			}),
@@ -137,12 +140,15 @@ it('independent Worker heaps share real organization storage and admit one appro
 			}),
 		});
 		await removal.body?.cancel();
-		const refused = await first.fetch('http://proof/mcp', options);
+		const refused = await first.fetch(
+			'http://proof/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+			options,
+		);
 		expect(refused.status).toBe(401);
 		await refused.body?.cancel();
 		expect(fixture.calls).toHaveLength(1);
 		process.stdout.write(
-			`${JSON.stringify({ topology: 'three distinct Worker heaps; both copies bind authority/OrganizationAuthorization', identifiers, effects: fixture.calls.length })}\n`,
+			`${JSON.stringify({ topology: 'three distinct Worker heaps; both copies bind authority/WorkspaceAuthority', identifiers, effects: fixture.calls.length })}\n`,
 		);
 	} finally {
 		try {

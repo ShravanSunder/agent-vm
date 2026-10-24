@@ -1,40 +1,43 @@
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { expect, it } from 'vitest';
 
-import { organizationConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
+import { workspaceConfigurationSchema } from '#tool-host-core/hosted-configuration/models/hosted-configuration';
 import {
 	createHostedMcpProxy,
 	hostedAgentVerifier,
 } from '#tool-host-core/hosted-mcp-proxy/hosted-mcp-proxy';
 import { startControlledHostedUpstream } from '#tool-host-core/hosted-mcp-proxy/test-fixtures/controlled-hosted-upstream-test-fixture';
-import { createOrganizationAuthority } from '#tool-host-core/organization-authority/organization-authority';
-import { createVolatileAuthorityStore } from '#tool-host-core/organization-authority/volatile-authority-store';
 import { testHostedProxyLimits } from '#tool-host-core/request-limits/test-fixtures/hosted-proxy-limits';
+import { createVolatileAuthorityStore } from '#tool-host-core/workspace-authority/volatile-authority-store';
+import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/workspace-authority';
 
-it.each(['missing assignment', 'dangling profile'])(
+it.each(['missing membership', 'dangling persona'])(
 	'refuses an admitted caller with %s before any upstream discovery or dispatch',
 	async (mode) => {
 		const upstream = await startControlledHostedUpstream();
 		try {
 			const nowMs = Date.now();
 			const clock = { nowMs: () => nowMs, nowIso: () => new Date(nowMs).toISOString() };
-			const authority = createOrganizationAuthority({
+			const authority = createWorkspaceAuthority({
 				store: createVolatileAuthorityStore(),
 				clock,
 				cap: 512 * 1024,
 			});
-			await authority.setAgentAdmission('sender', 'listed');
+			if (mode === 'dangling persona') await authority.setMembership('sender', 'missing');
 			const proxy = createHostedMcpProxy({
+				toolPortalOrigin: 'https://portal.invalid',
 				verifier: hostedAgentVerifier({
 					deployment: upstream.url,
-					audience: 'https://portal.invalid/mcp',
+
 					jwksUrl: `${upstream.url}/jwks`,
 				}),
-				organizations: { forOrganization: () => authority },
+				workspaces: { forWorkspace: () => authority },
 				configurations: {
+					workspaceIdsForOrganization: async () => [],
 					read: async () =>
-						organizationConfigurationSchema.parse({
-							organizationName: 'fixture',
+						workspaceConfigurationSchema.parse({
+							organizationId: '11111111-1111-4111-8111-111111111111',
+							workspaceName: 'fixture',
 							approvalKeyBinding: 'KEY',
 							mcp: {
 								schemaVersion: 1,
@@ -49,8 +52,7 @@ it.each(['missing assignment', 'dangling profile'])(
 							portal: {
 								schemaVersion: 1,
 								agents: {
-									assigned: { profile: 'fixture' },
-									...(mode === 'missing assignment' ? {} : { sender: { profile: 'missing' } }),
+									assigned: { credentialVersion: 1 },
 								},
 								profiles: {
 									fixture: {
@@ -75,41 +77,48 @@ it.each(['missing assignment', 'dangling profile'])(
 					new StreamableHTTPClientTransport(new URL(server.url)),
 			});
 			const bearer = await upstream.sign();
-			const request = new Request('https://portal.invalid/mcp', {
-				method: 'POST',
-				headers: {
-					authorization: `Bearer ${bearer}`,
-					'content-type': 'application/json',
-					accept: 'application/json, text/event-stream',
-					'MCP-Protocol-Version': '2026-07-28',
-					'Mcp-Method': 'tools/list',
-				},
-				body: JSON.stringify({
-					jsonrpc: '2.0',
-					id: 'profile',
-					method: 'tools/list',
-					params: {
-						_meta: {
-							'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-							'io.modelcontextprotocol/clientCapabilities': {},
-						},
+			const request = new Request(
+				'https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp',
+				{
+					method: 'POST',
+					headers: {
+						authorization: `Bearer ${bearer}`,
+						'content-type': 'application/json',
+						accept: 'application/json, text/event-stream',
+						'MCP-Protocol-Version': '2026-07-28',
+						'Mcp-Method': 'tools/list',
 					},
-				}),
-			});
+					body: JSON.stringify({
+						jsonrpc: '2.0',
+						id: 'profile',
+						method: 'tools/list',
+						params: {
+							_meta: {
+								'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+								'io.modelcontextprotocol/clientCapabilities': {},
+							},
+						},
+					}),
+				},
+			);
 			const assignedRequest = request.clone();
 			const response = await proxy.handle(request);
 			expect(response.status).toBe(401);
-			expect(await response.json()).toEqual({ error: 'profile-unassigned' });
+			expect(await response.json()).toEqual({
+				error: mode === 'dangling persona' ? 'profile-unassigned' : 'unknown-caller',
+			});
 			const unsupportedRequest = await proxy.handle(
-				new Request('https://portal.invalid/mcp', {
+				new Request('https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp', {
 					headers: { authorization: `Bearer ${bearer}` },
 				}),
 			);
 			expect(unsupportedRequest.status).toBe(401);
-			expect(await unsupportedRequest.json()).toEqual({ error: 'profile-unassigned' });
+			expect(await unsupportedRequest.json()).toEqual({
+				error: mode === 'dangling persona' ? 'profile-unassigned' : 'unknown-caller',
+			});
 			expect(upstream.requests).toEqual([]);
 			expect(upstream.effects).toEqual([]);
-			await authority.setAgentAdmission('assigned', 'listed');
+			await authority.setMembership('assigned', 'fixture');
 			assignedRequest.headers.set('authorization', `Bearer ${await upstream.sign('assigned')}`);
 			const assignedResponse = await proxy.handle(assignedRequest);
 			expect(assignedResponse.status).toBe(200);
@@ -128,20 +137,22 @@ it.each(['synchronous', 'asynchronous'])(
 		const upstream = await startControlledHostedUpstream();
 		try {
 			const clock = { nowMs: () => Date.now(), nowIso: () => new Date().toISOString() };
-			const authority = createOrganizationAuthority({
+			const authority = createWorkspaceAuthority({
 				store: createVolatileAuthorityStore(),
 				clock,
 				cap: 512 * 1024,
 			});
-			await authority.setAgentAdmission('sender', 'listed');
+			await authority.setMembership('sender', 'fixture');
 			const proxy = createHostedMcpProxy({
+				toolPortalOrigin: 'https://portal.invalid',
 				verifier: hostedAgentVerifier({
 					deployment: upstream.url,
-					audience: 'https://portal.invalid/mcp',
+
 					jwksUrl: `${upstream.url}/jwks`,
 				}),
-				organizations: { forOrganization: () => authority },
+				workspaces: { forWorkspace: () => authority },
 				configurations: {
+					workspaceIdsForOrganization: async () => [],
 					read: () => {
 						const failure = new Error('controlled-configuration-failure');
 						if (mode === 'synchronous') throw failure;
@@ -163,7 +174,7 @@ it.each(['synchronous', 'asynchronous'])(
 				},
 			});
 			const response = await proxy.handle(
-				new Request('https://portal.invalid/mcp', {
+				new Request('https://portal.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp', {
 					method: 'POST',
 					headers: {
 						authorization: `Bearer ${await upstream.sign()}`,

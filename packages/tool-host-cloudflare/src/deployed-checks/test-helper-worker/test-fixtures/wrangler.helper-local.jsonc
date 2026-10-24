@@ -6,11 +6,15 @@
 	"preview_urls": false,
 	"durable_objects": {
 		"bindings": [
-			{ "name": "ORGANIZATIONS", "class_name": "OrganizationAuthorization" },
+			{ "name": "WORKSPACES", "class_name": "WorkspaceAuthority" },
 			{ "name": "OBSERVATIONS", "class_name": "TestObservations" },
 		],
 	},
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["OrganizationAuthorization", "TestObservations"] },
+		{
+			"tag": "v2",
+			"renamed_classes": [{ "from": "OrganizationAuthorization", "to": "WorkspaceAuthority" }],
+		},
 	],
 }

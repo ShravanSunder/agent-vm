@@ -27,9 +27,10 @@ describe('Worker organization engines and stateless MCP in local workerd', () =>
 	});
 	it('chooses each request case from its address without changing another caller', async () => {
 		const lists = await Promise.all(
-			['/mcp?tools=direct', '/mcp'].map(async (address) =>
-				rpcResult(await harness.rpc('tools/list', {}, { path: address })),
-			),
+			[
+				'/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct',
+				'/workspaces/11111111-1111-4111-8111-111111111111/mcp',
+			].map(async (address) => rpcResult(await harness.rpc('tools/list', {}, { path: address }))),
 		);
 		const names = (result: unknown): string[] =>
 			z
@@ -44,7 +45,15 @@ describe('Worker organization engines and stateless MCP in local workerd', () =>
 			'mcp_portal_call',
 		]);
 		expect(
-			names(await rpcResult(await harness.rpc('tools/list', {}, { path: '/mcp?tools=direct' }))),
+			names(
+				await rpcResult(
+					await harness.rpc(
+						'tools/list',
+						{},
+						{ path: '/workspaces/11111111-1111-4111-8111-111111111111/mcp?tools=direct' },
+					),
+				),
+			),
 		).toEqual(names(lists[0]));
 	});
 	it('runs two sequential requests with request-scoped clients and one cached catalog', async () => {
@@ -61,10 +70,15 @@ describe('Worker organization engines and stateless MCP in local workerd', () =>
 	});
 	it('routes the same names to each token organization and sender policies', async () => {
 		const tokenTwo = await harness.fixture.sign({ organizationId: organizationTwo });
-		await rpcResult(await harness.rpc('tools/call', portalRead('two'), { token: tokenTwo }));
+		await rpcResult(
+			await harness.rpc('tools/call', portalRead('two'), {
+				token: tokenTwo,
+				path: '/workspaces/22222222-2222-4222-8222-222222222222/mcp',
+			}),
+		);
 		await rpcResult(
 			await harness.rpc('tools/call', portalRead('false-labels'), {
-				path: `/mcp?organization_id=${organizationTwo}&agent=agent-two&sessionId=spoof`,
+				path: `/workspaces/11111111-1111-4111-8111-111111111111/mcp?organization_id=${organizationTwo}&agent=agent-two&sessionId=spoof`,
 				headers: {
 					'x-organization-id': organizationTwo,
 					'x-agent-id': 'agent-two',

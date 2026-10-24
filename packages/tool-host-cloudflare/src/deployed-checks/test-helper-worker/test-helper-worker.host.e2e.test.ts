@@ -19,6 +19,8 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 	process.env.WRANGLER_LOG_PATH = path.join(stateDirectory, 'wrangler.log');
 	process.env.WRANGLER_SEND_METRICS = 'false';
 	const organizationId = '11111111-1111-4111-8111-111111111111';
+	const workspaceId = '33333333-3333-4333-8333-333333333333';
+	const siblingId = '44444444-4444-4444-8444-444444444444';
 	try {
 		worker = await unstable_dev(
 			'packages/tool-host-cloudflare/src/deployed-checks/test-helper-worker/test-fixtures/local-helper-entrypoint.ts',
@@ -43,8 +45,9 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 							},
 						],
 					}),
-					TEST_ORGANIZATIONS: JSON.stringify({
-						alpha: { organizationId, credential: 'controlled-test-secret' },
+					TEST_WORKSPACES: JSON.stringify({
+						alpha: { organizationId, workspaceId, credential: 'controlled-test-secret' },
+						beta: { organizationId, workspaceId: siblingId, credential: 'sibling-test-secret' },
 					}),
 					ADMISSION_SECRET: 'separate-admission-secret',
 				},
@@ -80,11 +83,12 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 		expect(
 			await (await fetchHelper('/mcp/alpha', 'POST', 'controlled-test-secret', call)).json(),
 		).toMatchObject({ result: { content: [{ text: 'ok' }] } });
-		const assertAdmission = async (state: 'listed' | 'removed'): Promise<void> => {
+		const assertAdmission = async (state: 'member' | 'removed'): Promise<void> => {
 			expect(
 				(
 					await fetchHelper('/admission', 'POST', 'Bearer separate-admission-secret', {
-						organizationId,
+						workspaceId,
+						...(state === 'member' ? { persona: 'two' } : {}),
 						agentId: 'same-agent',
 						state,
 					})
@@ -92,12 +96,51 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 			).toBe(200);
 			expect(
 				await (
-					await fetchHelper(`/__listed?organizationId=${organizationId}&agentId=same-agent`)
+					await fetchHelper(`/__membership?workspaceId=${workspaceId}&agentId=same-agent`)
 				).json(),
-			).toEqual({ listed: state === 'listed' });
+			).toEqual(state === 'member' ? { persona: 'two' } : null);
 		};
-		await assertAdmission('listed');
+		await assertAdmission('member');
+		expect(
+			(
+				await fetchHelper('/admission', 'POST', 'Bearer separate-admission-secret', {
+					workspaceId: siblingId,
+					agentId: 'same-agent',
+					state: 'member',
+					persona: 'one',
+				})
+			).status,
+		).toBe(200);
+		await Promise.all(
+			(
+				[
+					['wrong', workspaceId, 401],
+					['Bearer separate-admission-secret', '55555555-5555-4555-8555-555555555555', 403],
+				] as const
+			).map(async ([secret, selectedWorkspace, expectedStatus]): Promise<void> => {
+				expect(
+					(
+						await fetchHelper('/admission', 'POST', secret, {
+							workspaceId: selectedWorkspace,
+							agentId: 'same-agent',
+							state: 'removed',
+						})
+					).status,
+				).toBe(expectedStatus);
+			}),
+		);
+		expect(
+			await (
+				await fetchHelper(`/__membership?workspaceId=${workspaceId}&agentId=same-agent`)
+			).json(),
+		).toEqual({ persona: 'two' });
+		expect(
+			await (await fetchHelper(`/__membership?workspaceId=${siblingId}&agentId=same-agent`)).json(),
+		).toEqual({ persona: 'one' });
 		await assertAdmission('removed');
+		expect(
+			await (await fetchHelper(`/__membership?workspaceId=${siblingId}&agentId=same-agent`)).json(),
+		).toEqual({ persona: 'one' });
 		expect((await fetchHelper('/observations?runId=smoke')).status).toBe(401);
 		expect(
 			await (

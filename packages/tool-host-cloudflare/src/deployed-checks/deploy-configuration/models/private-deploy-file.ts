@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { expectedWorkspaceRecordsSchema } from '#worker-host/deployed-checks/deployed-check-suites/analytics-observations';
+
 const workerNameSchema = z.string().regex(/^[a-z0-9-]+$/u);
 const httpsOriginSchema = z
 	.url()
@@ -23,6 +25,9 @@ const privateWorkerSchema = z.strictObject({
 export const privateOrganizationSchema = z.strictObject({
 	label: workerNameSchema,
 	organizationId: z.uuid(),
+});
+export const privateWorkspaceSchema = expectedWorkspaceRecordsSchema.element.extend({
+	label: workerNameSchema,
 	credential: z.string().min(16),
 	approvalKeyHex: z.string().regex(/^[a-f0-9]{64}$/u),
 });
@@ -34,7 +39,6 @@ export const privateDeployFileSchema = z
 		portalB: privateWorkerSchema,
 		helper: privateWorkerSchema,
 		analyticsDataset: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/u),
-		audience: z.string().min(1),
 		agentId: z.string().min(1),
 		otherAgentId: z.string().min(1),
 		signingKeyId: z.string().min(1),
@@ -55,6 +59,7 @@ export const privateDeployFileSchema = z
 			applicationBId: z.string().min(1).optional(),
 		}),
 		organizations: z.tuple([privateOrganizationSchema, privateOrganizationSchema]),
+		workspaces: z.tuple([privateWorkspaceSchema, privateWorkspaceSchema, privateWorkspaceSchema]),
 		evidenceDirectory: z.string().min(1),
 		logFile: z.string().min(1),
 		analyticsSqlFile: z.string().min(1),
@@ -62,8 +67,13 @@ export const privateDeployFileSchema = z
 	.superRefine((value, context) => {
 		if (
 			value.organizations[0].organizationId === value.organizations[1].organizationId ||
-			value.organizations[0].credential === value.organizations[1].credential ||
-			value.organizations[0].approvalKeyHex === value.organizations[1].approvalKeyHex ||
+			value.workspaces[0].organizationId !== value.organizations[0].organizationId ||
+			value.workspaces[1].organizationId !== value.organizations[0].organizationId ||
+			value.workspaces[2].organizationId !== value.organizations[1].organizationId ||
+			new Set(value.workspaces.map((workspace) => workspace.workspaceId)).size !== 3 ||
+			new Set(value.workspaces.map((workspace) => workspace.label)).size !== 3 ||
+			new Set(value.workspaces.map((workspace) => workspace.credential)).size !== 3 ||
+			new Set(value.workspaces.map((workspace) => workspace.approvalKeyHex)).size !== 3 ||
 			value.organizations[0].label === value.organizations[1].label ||
 			value.agentId === value.otherAgentId ||
 			new Set([value.portalA.name, value.portalB.name, value.helper.name]).size !== 3
@@ -75,6 +85,7 @@ export const privateDeployFileSchema = z
 	});
 export type PrivateDeployFile = z.infer<typeof privateDeployFileSchema>;
 export type PrivateOrganization = z.infer<typeof privateOrganizationSchema>;
+export type PrivateWorkspace = z.infer<typeof privateWorkspaceSchema>;
 
 export const renderSelectionSchema = z.strictObject({
 	worker: z.enum(['all', 'a', 'b', 'helper']).default('all'),

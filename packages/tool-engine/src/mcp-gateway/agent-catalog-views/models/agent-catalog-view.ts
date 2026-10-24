@@ -5,8 +5,8 @@ import type {
 import type { Tool } from '@modelcontextprotocol/server';
 
 import type { PortalToolRecord } from '#mcp-gateway/agent-catalog-views/models/catalog-types';
-import type { OrganizationToolCatalog } from '#mcp-gateway/agent-catalog-views/models/organization-tool-catalog';
 import type { PortalDiscoveryFailure } from '#mcp-gateway/agent-catalog-views/models/portal-discovery-failure';
+import type { WorkspaceToolCatalog } from '#mcp-gateway/agent-catalog-views/models/workspace-tool-catalog';
 import type { SearchIndex } from '#mcp-gateway/tool-search/models/search-index';
 import type { ToolGraph, SkillGraphInput } from '#mcp-gateway/tool-search/models/tool-graph';
 
@@ -14,7 +14,7 @@ export interface PortalCatalogSnapshot {
 	readonly agentScopeId: string;
 	readonly discoveryFailures: readonly PortalDiscoveryFailure[];
 	readonly generatedAt: string;
-	readonly organizationCatalogState?: 'complete' | 'incomplete';
+	readonly workspaceCatalogState?: 'complete' | 'incomplete';
 	readonly sourceHash: string;
 	readonly tools: readonly PortalToolRecord[];
 }
@@ -38,7 +38,7 @@ export interface AgentCatalogViewRuntime {
 export interface AgentCatalogViewCacheOptions {
 	readonly accessPolicy: PortalAccessPolicyConfig;
 	readonly catalogTtlMs: number;
-	readonly organizationCatalog?: OrganizationToolCatalog;
+	readonly workspaceCatalog?: WorkspaceToolCatalog;
 	readonly discoveryFailures?: readonly PortalDiscoveryFailure[];
 	readonly now?: () => number;
 	readonly runtime: AgentCatalogViewRuntime;

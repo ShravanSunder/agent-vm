@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
+import { analyticsText } from '#worker-host/analytics-engine-sink/analytics-engine-sink';
 import {
 	renderSelectionSchema,
 	type PrivateDeployFile,
@@ -14,6 +15,7 @@ import {
 	readPrivateDeployFile,
 	requireOutsideGitWorkTree,
 } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
+import { expectedWorkspaceRecordsSchema } from '#worker-host/deployed-checks/deployed-check-suites/analytics-observations';
 
 const templateDirectory = fileURLToPath(new URL('templates/', import.meta.url));
 export function parseRenderSelection(argumentsValue: readonly string[]): RenderSelection {
@@ -37,6 +39,53 @@ export function substituteTemplate(
 		}),
 	);
 }
+
+function quoteAnalyticsSqlLiteral(value: string): string {
+	return "'" + value.replaceAll("'", "''") + "'";
+}
+
+export function analyticsEvidenceQuery(configuration: PrivateDeployFile): string {
+	const ids = configuration.workspaces
+		.map((workspace) => quoteAnalyticsSqlLiteral(workspace.workspaceId))
+		.join(', ');
+	const names = configuration.workspaces
+		.map((workspace) =>
+			quoteAnalyticsSqlLiteral(analyticsText(`${configuration.runId}:${workspace.label}`)),
+		)
+		.join(', ');
+	return `SELECT index1, blob1, blob2, blob3, blob4, blob5, blob6, blob7, blob8, blob9, double1, double2, double3, _sample_interval FROM ${configuration.analyticsDataset} WHERE index1 IN (${ids}) AND blob2 IN (${names}) LIMIT 1000 FORMAT JSON
+`;
+}
+
+async function writeAnalyticsInputs(configuration: PrivateDeployFile): Promise<void> {
+	const directory = await requireOutsideGitWorkTree(path.dirname(configuration.analyticsSqlFile));
+	await mkdir(directory, { recursive: true, mode: 0o700 });
+	if (
+		['expected-workspaces.json', 'row-16-analytics-query.sql'].includes(
+			path.basename(configuration.analyticsSqlFile),
+		)
+	)
+		throw new Error('Analytics response path conflicts with generated evidence inputs.');
+	const expected = expectedWorkspaceRecordsSchema.parse(
+		configuration.workspaces.map(({ organizationId, workspaceId, label }) => ({
+			organizationId,
+			workspaceId,
+			label,
+		})),
+	);
+	const outputs = [
+		['expected-workspaces.json', JSON.stringify(expected, null, 2)],
+		['row-16-analytics-query.sql', analyticsEvidenceQuery(configuration)],
+	] as const;
+	await Promise.all(
+		outputs.map(async ([name, contents]): Promise<void> => {
+			const file = await requireOutsideGitWorkTree(path.join(directory, name));
+			await writeFile(file, contents, { mode: 0o600 });
+			await chmod(file, 0o600);
+		}),
+	);
+}
+
 export async function renderDeployConfiguration(
 	configuration: PrivateDeployFile,
 	outputDirectory: string,
@@ -45,6 +94,7 @@ export async function renderDeployConfiguration(
 	const destination = await requireOutsideGitWorkTree(outputDirectory);
 	await mkdir(destination, { recursive: true, mode: 0o700 });
 	await chmod(destination, 0o700);
+	await writeAnalyticsInputs(configuration);
 	const { ['d']: _privateScalar, ...publicKey } = configuration.privateSigningJwk;
 	const common = {
 		__WORKERS_DEV__: selection.workersDev,
@@ -58,8 +108,8 @@ export async function renderDeployConfiguration(
 		__PORTAL_VARIABLES__: {
 			SIGN_IN_ISSUER: configuration.helper.origin,
 			SIGN_IN_JWKS_URL: `${configuration.helper.origin}/jwks`,
-			TOOL_PORTAL_AUDIENCE: configuration.audience,
-			ORGANIZATION_CONFIGURATIONS: JSON.stringify(portalTestConfigurations(configuration)),
+			TOOL_PORTAL_ORIGIN: configuration.portalA.origin,
+			WORKSPACE_CONFIGURATIONS: JSON.stringify(portalTestConfigurations(configuration)),
 		},
 		__HELPER_VARIABLES__: {
 			TEST_PUBLIC_JWKS: JSON.stringify({
@@ -68,18 +118,22 @@ export async function renderDeployConfiguration(
 		},
 	};
 	const portalSecrets = Object.fromEntries(
-		configuration.organizations.flatMap((organization, index) => [
-			[`TEST_CREDENTIAL_${String(index)}`, organization.credential],
-			[`TEST_APPROVAL_${String(index)}`, organization.approvalKeyHex],
+		configuration.workspaces.flatMap((workspace, index) => [
+			[`TEST_CREDENTIAL_${String(index)}`, workspace.credential],
+			[`TEST_APPROVAL_${String(index)}`, workspace.approvalKeyHex],
 		]),
 	);
 	const helperSecrets = {
 		ADMISSION_SECRET: configuration.admissionSecret,
-		TEST_ORGANIZATIONS: JSON.stringify(
+		TEST_WORKSPACES: JSON.stringify(
 			Object.fromEntries(
-				configuration.organizations.map((organization) => [
-					organization.label,
-					{ organizationId: organization.organizationId, credential: organization.credential },
+				configuration.workspaces.map((workspace) => [
+					workspace.label,
+					{
+						workspaceId: workspace.workspaceId,
+						organizationId: workspace.organizationId,
+						credential: workspace.credential,
+					},
 				]),
 			),
 		),

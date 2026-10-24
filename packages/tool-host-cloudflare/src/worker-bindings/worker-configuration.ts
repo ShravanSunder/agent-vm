@@ -1,19 +1,21 @@
 import {
-	organizationConfigurationSchema,
-	type OrganizationConfigurationSource,
+	workspaceConfigurationSchema,
+	type WorkspaceConfigurationSource,
 	type SecretSource,
 } from '@agent-collaboration/tool-host-core';
 import { z } from 'zod';
 
 /** S6 source: configuration deployed with the Worker. Versioned database configuration is deferred. */
-export function deployedConfigurationSource(
-	configurations: unknown,
-): OrganizationConfigurationSource {
-	const parsed = z.record(z.uuid(), organizationConfigurationSchema).parse(configurations);
+export function deployedConfigurationSource(configurations: unknown): WorkspaceConfigurationSource {
+	const parsed = z.record(z.uuid(), workspaceConfigurationSchema).parse(configurations);
 	return {
-		read: async (organizationId) => {
-			const configuration = parsed[organizationId];
-			if (configuration === undefined) throw new Error('Organization configuration unavailable.');
+		workspaceIdsForOrganization: async (organizationId) =>
+			Object.entries(parsed)
+				.filter(([, configuration]) => configuration.organizationId === organizationId)
+				.map(([workspaceId]) => workspaceId),
+		read: async (workspaceId) => {
+			const configuration = parsed[workspaceId];
+			if (configuration === undefined) throw new Error('Workspace configuration unavailable.');
 			return configuration;
 		},
 	};

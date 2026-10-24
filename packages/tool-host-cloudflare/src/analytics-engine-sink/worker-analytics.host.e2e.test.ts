@@ -1,9 +1,9 @@
-import { organizationConfigurationSchema } from '@agent-collaboration/tool-host-core';
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
-	organizationConfigurations,
+	workspaceConfigurations,
 	organizationOne,
 } from '#worker-host/test-fixtures/controlled-mcp-issuer';
 import {
@@ -14,9 +14,12 @@ import {
 
 const pointSchema = z.object({
 	indexes: z.array(z.string()).length(1),
-	blobs: z.array(z.string()).length(8),
+	blobs: z.array(z.string()).length(9),
 	doubles: z.array(z.number().finite()).length(3),
 });
+const analyticsOrganizationId = '33333333-3333-4333-8333-333333333333';
+const workspaceName = 'a'.repeat(253) + '𐀀'.repeat(600);
+let analyticsToken: string;
 const toolName = '工具'.repeat(100);
 const serverName = '服务器'.repeat(80);
 const canaries = [
@@ -28,8 +31,8 @@ const canaries = [
 let harness: LocalWorkerHarness;
 function configurations(url: string): unknown {
 	const parsed = z
-		.record(z.string(), organizationConfigurationSchema)
-		.parse(organizationConfigurations(url));
+		.record(z.string(), workspaceConfigurationSchema)
+		.parse(workspaceConfigurations(url));
 	const selected = parsed[organizationOne];
 	if (selected === undefined) throw new Error('Missing fixture organization.');
 	const provider = Object.values(selected.mcp.providers)[0];
@@ -38,11 +41,12 @@ function configurations(url: string): unknown {
 		...parsed,
 		[organizationOne]: {
 			...selected,
-			organizationName: '组织'.repeat(600),
+			organizationId: '44444444-4444-4444-8444-444444444444',
+			workspaceName,
 			mcp: { schemaVersion: 1, providers: { fixture: { ...provider, namespace: serverName } } },
 			portal: {
 				schemaVersion: 1,
-				agents: { 'agent-one': { profile: 'one' }, 'agent-two': { profile: 'one' } },
+				agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 				profiles: {
 					one: {
 						namespaces: {
@@ -79,71 +83,119 @@ describe('exact local Worker analytics capture and canary exclusion', () => {
 				}));
 			},
 		});
+		analyticsToken = await harness.fixture.sign({
+			changes: { organization_id: analyticsOrganizationId },
+		});
 	});
 	afterAll(async () => {
 		await harness?.close();
 	});
-	it('writes one safe point for each ran, refused, needs-approval and failed call', async () => {
-		const call = async (name: string): Promise<void> => {
-			await rpcResult(
-				await harness.rpc('tools/call', {
-					name: 'mcp_portal_call',
-					arguments: {
-						calls: [
-							{
-								id: name,
-								namespace: serverName,
-								toolName: name,
-								arguments: { value: 'argument-private-canary' },
+	it.each(['indirect', 'direct'] as const)(
+		'writes one safe point for each ran, refused, needs-approval and failed call in %s mode',
+		async (mode) => {
+			const initialPoints = (await points()).length;
+			harness.fixture.setCall(async () => ({
+				content: [{ type: 'text', text: 'result-private-canary one-secret-canary' }],
+			}));
+			const call = async (name: string): Promise<void> => {
+				const before = (await points()).length;
+				await rpcResult(
+					await harness.rpc(
+						'tools/call',
+						{
+							name: 'mcp_portal_call',
+							arguments: {
+								calls: [
+									{
+										id: name,
+										namespace: serverName,
+										toolName: name,
+										arguments: { value: 'argument-private-canary' },
+									},
+								],
 							},
-						],
-					},
-				}),
+						},
+						{ token: analyticsToken, path: `/workspaces/${organizationOne}/mcp?tools=${mode}` },
+					),
+				);
+				expect(await points()).toHaveLength(before + 1);
+			};
+			await call(toolName);
+			await call('blocked');
+			await call('ask');
+			harness.fixture.setCall(async () => ({
+				isError: true,
+				content: [{ type: 'text', text: 'result-private-canary' }],
+			}));
+			await call(toolName);
+			const captured = (await points()).slice(initialPoints);
+			expect(captured).toHaveLength(4);
+			expect(captured.map((point) => point.blobs)).toEqual(
+				[
+					['工具'.repeat(42) + '工', 'ran', 'none'],
+					['blocked', 'refused', 'authorization'],
+					['ask', 'needs approval', 'approval'],
+					['工具'.repeat(42) + '工', 'failed', 'upstream'],
+				].map(([tool, outcome, failure]) => [
+					analyticsOrganizationId,
+					'a'.repeat(253),
+					'agent-one',
+					mode,
+					'服务器'.repeat(28) + '服',
+					tool,
+					outcome,
+					failure,
+					'no',
+				]),
 			);
-		};
-		await call(toolName);
-		await call('blocked');
-		await call('ask');
-		harness.fixture.setCall(async () => ({
-			isError: true,
-			content: [{ type: 'text', text: 'result-private-canary' }],
-		}));
-		await call(toolName);
-		const captured = await points();
-		expect(captured).toHaveLength(4);
-		expect(captured.map((point) => point.blobs[5])).toEqual([
-			'ran',
-			'refused',
-			'needs approval',
-			'failed',
-		]);
-		for (const point of captured) {
-			expect(point.indexes).toEqual([organizationOne]);
-			for (const text of point.blobs) {
-				const bytes = new TextEncoder().encode(text);
-				expect(bytes.byteLength).toBeLessThanOrEqual(256);
-				expect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toBe(text);
+			for (const point of captured) {
+				expect(point.indexes).toEqual([organizationOne]);
+				expect(point.blobs.slice(0, 4)).toEqual([
+					analyticsOrganizationId,
+					'a'.repeat(253),
+					'agent-one',
+					mode,
+				]);
+				expect(point.blobs[4]).toBe('服务器'.repeat(28) + '服');
+				expect(point.blobs[8]).toBe('no');
+				if (point.blobs[6] !== 'needs approval' && point.blobs[6] !== 'refused')
+					expect(point.blobs[5]).toBe('工具'.repeat(42) + '工');
+				for (const text of point.blobs) {
+					const bytes = new TextEncoder().encode(text);
+					expect(bytes.byteLength).toBeLessThanOrEqual(256);
+					expect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toBe(text);
+				}
+				expect(new TextEncoder().encode(point.blobs.join('')).byteLength).toBeLessThanOrEqual(
+					16 * 1024,
+				);
 			}
-			expect(new TextEncoder().encode(point.blobs.join('')).byteLength).toBeLessThanOrEqual(
-				16 * 1024,
-			);
-		}
-		const logs = await (await harness.worker.fetch('/__logs')).text();
-		for (const canary of [...canaries, harness.token]) {
-			expect(JSON.stringify(captured)).not.toContain(canary);
-			expect(logs).not.toContain(canary);
-		}
-	});
+			const logs = await (await harness.worker.fetch('/__logs')).text();
+			for (const canary of [...canaries, harness.token, analyticsToken]) {
+				expect(JSON.stringify(captured)).not.toContain(canary);
+				expect(logs).not.toContain(canary);
+			}
+		},
+	);
 	it('drops a failing analytics write without changing an allowed result or leaking its error', async () => {
 		harness.fixture.setCall(async () => ({ content: [{ type: 'text', text: 'allowed' }] }));
+		const invoke = async (): Promise<Record<string, unknown>> =>
+			rpcResult(
+				await harness.rpc(
+					'tools/call',
+					{
+						name: 'mcp_portal_call',
+						arguments: { calls: [{ id: 'drop', namespace: serverName, toolName, arguments: {} }] },
+					},
+					{ token: analyticsToken },
+				),
+			);
+		const baseline = await invoke();
 		await harness.worker.fetch('/__fail-analytics?fail');
 		const before = (await points()).length;
-		const response = await rpcResult(
-			await harness.rpc('tools/call', {
-				name: 'mcp_portal_call',
-				arguments: { calls: [{ id: 'drop', namespace: serverName, toolName, arguments: {} }] },
-			}),
-		);
+		const effectsBefore = harness.fixture.calls.length;
+		const response = await invoke();
+		expect(response).toEqual(baseline);
+		expect(harness.fixture.calls).toHaveLength(effectsBefore + 1);
 		expect(JSON.stringify(response)).toContain('allowed');
 		expect(await points()).toHaveLength(before);
 		const logs = await (await harness.worker.fetch('/__logs')).text();

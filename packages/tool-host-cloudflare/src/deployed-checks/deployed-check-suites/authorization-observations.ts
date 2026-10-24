@@ -18,7 +18,7 @@ export function assertOwnCredential(
 ): void {
 	assertCallEffects(observations, callId, 1);
 	const call = observations.calls.find((entry) => entry.callId === callId);
-	if (call?.credential !== credential || call.organizationLabel !== label || call.inFlight !== 0)
+	if (call?.credential !== credential || call.workspaceLabel !== label || call.inFlight !== 0)
 		throw new Error('Call used the wrong organization or credential.');
 }
 export function assertOneApprovalUse(
@@ -41,7 +41,7 @@ export function assertRefusedCall(
 }
 
 /** Require an exact organization tool boundary, including when labels share a prefix. */
-export function assertOrganizationCatalogTools(props: {
+export function assertWorkspaceCatalogTools(props: {
 	readonly names: readonly string[];
 	readonly ownLabel: string;
 	readonly otherLabel: string;

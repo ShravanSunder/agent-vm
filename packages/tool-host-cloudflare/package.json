@@ -1,10 +1,17 @@
 {
 	"name": "@agent-collaboration/tool-host-cloudflare",
 	"version": "0.0.153",
-	"description": "Organization-scoped Tool Portal host for Cloudflare Workers.",
+	"description": "Workspace-scoped Tool Portal host for Cloudflare Workers.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-host-cloudflare"
+	},
 	"files": [
-		"dist"
+		"dist",
+		"worker-configuration.gen.d.ts",
+		"wrangler.example.jsonc"
 	],
 	"type": "module",
 	"imports": {
@@ -21,9 +28,11 @@
 	},
 	"scripts": {
 		"build": "tsdown",
-		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"typecheck": "pnpm types:check && tsc -p tsconfig.json --noEmit",
 		"test": "vitest run --root ../../ --config vitest.config.ts --project unit packages/tool-host-cloudflare/src",
-		"dev": "wrangler dev --local --config wrangler.local.jsonc"
+		"dev": "wrangler dev src/index.ts --local --config wrangler.example.jsonc",
+		"types:generate": "wrangler types worker-configuration.gen.d.ts --config wrangler.example.jsonc --env-interface ToolPortalWorkerEnv --strict-vars=false",
+		"types:check": "wrangler types worker-configuration.gen.d.ts --config wrangler.example.jsonc --env-interface ToolPortalWorkerEnv --strict-vars=false --check"
 	},
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
@@ -36,7 +45,6 @@
 	},
 	"devDependencies": {
 		"@agent-collaboration/tool-host-node": "workspace:*",
-		"@cloudflare/workers-types": "4.20250927.0",
 		"@modelcontextprotocol/sdk": "1.29.0",
 		"esbuild": "0.27.7",
 		"jose": "6.1.0",

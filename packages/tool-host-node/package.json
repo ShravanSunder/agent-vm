@@ -3,6 +3,11 @@
 	"version": "0.0.153",
 	"description": "Node host adapters for Tool Portal.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/tool-host-node"
+	},
 	"bin": {
 		"tool-host-node": "./dist/bin/tool-host-node.js"
 	},
