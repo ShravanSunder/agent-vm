@@ -35,7 +35,7 @@ async function completeOwnerClient(
 		query: { disableCookieCache: true },
 	});
 	const persons = createPersonAdmissionStore({
-		database,
+		database: database.sql,
 		ownerEmail: configuration.ownerEmail,
 		now,
 	});
@@ -48,7 +48,7 @@ async function completeOwnerClient(
 	const actorUserId = current.user.id;
 	const requestId = `owner-cli:${clientId}`;
 	async function record(phase: 'intent' | 'outcome'): Promise<void> {
-		await database
+		await database.sql
 			.prepare(
 				'INSERT OR IGNORE INTO sign_in_audit (id, kind, actor_user_id, request_id, phase, change_kind, target_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 			)
@@ -66,8 +66,8 @@ async function completeOwnerClient(
 	}
 	try {
 		await record('intent');
-		const existing = await database
-			.withSession('first-primary')
+		const existing = await database.sql
+			.primary()
 			.prepare('SELECT clientId FROM oauthClient WHERE clientId = ?')
 			.bind(clientId)
 			.first();
@@ -93,7 +93,7 @@ async function completeOwnerClient(
 			params: { identifier: configuration.managementAudience, client_id: clientId },
 		});
 		await record('outcome');
-		const read = database.withSession('first-primary');
+		const read = database.sql.primary();
 		const client = await read
 			.prepare(
 				'SELECT clientId, tokenEndpointAuthMethod, applicationType, grantTypes, redirectUris, requirePKCE FROM oauthClient WHERE clientId = ?',
@@ -116,8 +116,8 @@ async function completeOwnerClient(
 				JSON.stringify([configuration.ownerCliRedirectUri])
 		)
 			throw new Error('Fixed owner client metadata differs from configuration');
-		const link = await database
-			.withSession('first-primary')
+		const link = await database.sql
+			.primary()
 			.prepare('SELECT resourceId FROM oauthClientResource WHERE clientId = ?')
 			.bind(clientId)
 			.all();
@@ -127,8 +127,8 @@ async function completeOwnerClient(
 				configuration.managementAudience
 		)
 			throw new Error('Owner CLI resource link incomplete');
-		const records = await database
-			.withSession('first-primary')
+		const records = await database.sql
+			.primary()
 			.prepare('SELECT id FROM sign_in_audit WHERE request_id = ? AND actor_user_id = ?')
 			.bind(requestId, current.user.id)
 			.all();

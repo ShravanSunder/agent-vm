@@ -4,6 +4,7 @@ import {
 	workspaceResourceSchema,
 	type WorkspaceResource,
 } from '#auth/sign-in-core/agent-clients/workspace-resource';
+import type { SignInSqlDatabase } from '#auth/sign-in-core/models/sign-in-database';
 
 function parseJsonColumn(value: unknown): unknown {
 	return typeof value === 'string' ? JSON.parse(value) : value;
@@ -16,7 +17,7 @@ const workspaceResourceRowSchema = workspaceResourceSchema.extend({
 });
 
 /** Better Auth owns resource writes; issuance and management read the primary resource row afresh. */
-export function createWorkspaceResourceStore(database: AuthWorkerEnv['DB']): {
+export function createWorkspaceResourceStore(database: SignInSqlDatabase): {
 	readonly read: (identifier: string) => Promise<WorkspaceResource | null>;
 	readonly exists: (identifier: string) => Promise<boolean>;
 } {
@@ -24,7 +25,7 @@ export function createWorkspaceResourceStore(database: AuthWorkerEnv['DB']): {
 		async exists(identifier: string): Promise<boolean> {
 			return (
 				(await database
-					.withSession('first-primary')
+					.primary()
 					.prepare('SELECT identifier FROM oauthResource WHERE identifier = ?')
 					.bind(identifier)
 					.first()) !== null
@@ -32,7 +33,7 @@ export function createWorkspaceResourceStore(database: AuthWorkerEnv['DB']): {
 		},
 		async read(identifier: string): Promise<WorkspaceResource | null> {
 			const row = await database
-				.withSession('first-primary')
+				.primary()
 				.prepare(
 					'SELECT identifier, metadata, allowedScopes, customClaims, disabled FROM oauthResource WHERE identifier = ?',
 				)

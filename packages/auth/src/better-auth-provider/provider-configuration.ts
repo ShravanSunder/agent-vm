@@ -5,6 +5,7 @@ import { betterAuth, type Auth, type BetterAuthOptions } from 'better-auth';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { jwt } from 'better-auth/plugins/jwt';
 
+import type { SignInDatabase } from '#auth/better-auth-provider/provider-database';
 import { createAgentRegistrationStore } from '#auth/d1-persistence/agent-registration-store';
 import { createPersonAdmissionStore } from '#auth/d1-persistence/person-admission-store';
 import { createWorkspaceResourceStore } from '#auth/d1-persistence/workspace-resource-store';
@@ -24,7 +25,7 @@ export interface ProviderRequestState {
 }
 
 export interface SignInProviderProps {
-	readonly database: AuthWorkerEnv['DB'];
+	readonly database: SignInDatabase;
 	readonly configuration: SignInConfiguration;
 	readonly secret: string;
 	readonly google: { readonly clientId: string; readonly clientSecret: string };
@@ -55,12 +56,12 @@ export function createSignInProvider(
 	} = {},
 ): SignInProvider {
 	const persons = createPersonAdmissionStore({
-		database: props.database,
+		database: props.database.sql,
 		ownerEmail: props.configuration.ownerEmail,
 		now: props.now,
 	});
-	const agents = createAgentRegistrationStore(props);
-	const workspaces = createWorkspaceResourceStore(props.database);
+	const agents = createAgentRegistrationStore({ ...props, database: props.database.sql });
+	const workspaces = createWorkspaceResourceStore(props.database.sql);
 	async function ownerPrivilege(
 		userId: string | undefined,
 		sessionId: string | undefined,
@@ -73,7 +74,7 @@ export function createSignInProvider(
 		baseURL: props.configuration.issuer,
 		basePath: '/api/auth',
 		secret: props.secret,
-		database: props.database,
+		database: props.database.provider,
 		logger: { disabled: true },
 		emailAndPassword: { enabled: false },
 		disabledPaths: ['/token'],

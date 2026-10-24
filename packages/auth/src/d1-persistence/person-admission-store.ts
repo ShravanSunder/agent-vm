@@ -1,6 +1,11 @@
 import { sessionSchema, userSchema } from 'better-auth/db';
 import { z } from 'zod';
 
+import type {
+	SignInSqlDatabase,
+	SignInSqlSession,
+} from '#auth/sign-in-core/models/sign-in-database';
+
 const storedUserSchema = userSchema.extend({
 	createdAt: z.coerce.date(),
 	updatedAt: z.coerce.date(),
@@ -18,7 +23,7 @@ export type LiveOwnerSession = {
 
 /** Primary admission reads, E8/owner binding, and conditional cleanup of aborted provider writes. */
 export function createPersonAdmissionStore(props: {
-	readonly database: AuthWorkerEnv['DB'];
+	readonly database: SignInSqlDatabase;
 	readonly ownerEmail: string;
 	readonly now: () => number;
 }): {
@@ -33,8 +38,8 @@ export function createPersonAdmissionStore(props: {
 	readonly deleteSession: (sessionId: string) => Promise<void>;
 	readonly cleanupUnboundPerson: (personId: string) => Promise<void>;
 } {
-	function readPrimary(): ReturnType<AuthWorkerEnv['DB']['withSession']> {
-		return props.database.withSession('first-primary');
+	function readPrimary(): SignInSqlSession {
+		return props.database.primary();
 	}
 	async function personActive(personId: string): Promise<boolean> {
 		const row = await readPrimary()

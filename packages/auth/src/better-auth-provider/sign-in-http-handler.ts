@@ -37,7 +37,7 @@ export function createSignInHttpHandler(
 	return async (request: Request): Promise<Response> => {
 		const state: ProviderRequestState = { createdUserIds: [], issuedSessions: [] };
 		const persons = createPersonAdmissionStore({
-			database: configuration.database,
+			database: configuration.database.sql,
 			ownerEmail: configuration.configuration.ownerEmail,
 			now: configuration.now,
 		});
@@ -77,7 +77,10 @@ export function createSignInHttpHandler(
 			if (url.pathname === '/api/auth/owner/bootstrap')
 				return bootstrapOwnerClient({ request, provider: providerProps });
 			const provider = createSignInProvider({ ...providerProps, authority: { kind: 'public' } });
-			const agents = createAgentRegistrationStore(configuration);
+			const agents = createAgentRegistrationStore({
+				...configuration,
+				database: configuration.database.sql,
+			});
 			const ports: SignInResponseReleasePorts = {
 				issuer: configuration.configuration.issuer,
 				toolPortalOrigin: configuration.configuration.toolPortalOrigin,
@@ -91,7 +94,7 @@ export function createSignInHttpHandler(
 					return accessTokenReleaseClaimsSchema.parse(decodeJwt(token));
 				},
 				readAgent: agents.read,
-				readWorkspaceResource: createWorkspaceResourceStore(configuration.database).read,
+				readWorkspaceResource: createWorkspaceResourceStore(configuration.database.sql).read,
 				isPersonSessionActive: persons.isPersonSessionActive,
 				deleteSession: persons.deleteSession,
 				cleanupUnboundPerson: persons.cleanupUnboundPerson,
@@ -112,7 +115,7 @@ export function createSignInHttpHandler(
 						? 'succeeded'
 						: 'failed';
 				const requestId = crypto.randomUUID();
-				await configuration.database
+				await configuration.database.sql
 					.prepare(
 						'INSERT INTO sign_in_audit (id, kind, actor_user_id, request_id, phase, change_kind, target_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
 					)

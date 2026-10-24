@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { AgentManagementOperation } from '#auth/sign-in-core/agent-clients/agent-registration';
+import type { SignInSqlDatabase } from '#auth/sign-in-core/models/sign-in-database';
 
 export class ManagementOperationConflict extends Error {}
 
@@ -45,7 +46,7 @@ function operationEvent(
 
 /** Reserves one request's exact intent and reads every resource/link audit write back before success. */
 export function createWorkspaceManagementAudit(props: {
-	readonly database: AuthWorkerEnv['DB'];
+	readonly database: SignInSqlDatabase;
 	readonly now: () => number;
 }): {
 	readonly checkOperation: (
@@ -83,7 +84,7 @@ export function createWorkspaceManagementAudit(props: {
 			)
 			.run();
 		const row = await props.database
-			.withSession('first-primary')
+			.primary()
 			.prepare(
 				'SELECT kind, actor_user_id, request_id, phase, change_kind, target_id FROM sign_in_audit WHERE id = ?',
 			)
@@ -111,7 +112,7 @@ export function createWorkspaceManagementAudit(props: {
 			clientId: string,
 		): Promise<void> {
 			const row = await props.database
-				.withSession('first-primary')
+				.primary()
 				.prepare(
 					'SELECT kind, actor_user_id, request_id, phase, change_kind, target_id FROM sign_in_audit WHERE id = ?',
 				)

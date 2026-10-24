@@ -4,6 +4,10 @@ import {
 	agentRegistrationSchema,
 	type AgentRegistration,
 } from '#auth/sign-in-core/agent-clients/agent-registration';
+import type {
+	SignInSqlDatabase,
+	SignInSqlSession,
+} from '#auth/sign-in-core/models/sign-in-database';
 import type { AgentAuditChange } from '#auth/sign-in-core/security-audit/agent-client-audit';
 
 function jsonColumn(value: unknown): unknown {
@@ -23,7 +27,7 @@ const clientRowSchema = z.object({
 
 /** Client rows belong to Better Auth. This adapter reads them and writes only our audit records. */
 export function createAgentRegistrationStore(props: {
-	readonly database: AuthWorkerEnv['DB'];
+	readonly database: SignInSqlDatabase;
 	readonly now: () => number;
 }): {
 	readonly clientExists: (clientId: string) => Promise<boolean>;
@@ -31,8 +35,8 @@ export function createAgentRegistrationStore(props: {
 	readonly record: (change: AgentAuditChange, phase: 'intent' | 'outcome') => Promise<void>;
 	readonly complete: (change: AgentAuditChange) => Promise<boolean>;
 } {
-	function readPrimary(): ReturnType<AuthWorkerEnv['DB']['withSession']> {
-		return props.database.withSession('first-primary');
+	function readPrimary(): SignInSqlSession {
+		return props.database.primary();
 	}
 	async function hasRecord(
 		change: AgentAuditChange,

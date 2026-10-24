@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
 import type { SignInHttpConfiguration } from '#auth/better-auth-provider/sign-in-http-handler';
+import { createD1SignInDatabase } from '#auth/cloudflare-host/d1-sign-in-database';
 import { signInConfigurationSchema } from '#auth/sign-in-core/models/deployment-configuration';
 
 /** Deployment facts come only from the generated Env's protected bindings. */
 export function signInWorkerConfiguration(bindings: AuthWorkerEnv): SignInHttpConfiguration {
 	return {
-		database: bindings.DB,
+		database: createD1SignInDatabase(bindings.DB),
 		configuration: signInConfigurationSchema.parse(JSON.parse(bindings.SIGN_IN_CONFIGURATION)),
 		secret: z.string().min(32).parse(bindings.AUTH_SECRET),
 		google: {

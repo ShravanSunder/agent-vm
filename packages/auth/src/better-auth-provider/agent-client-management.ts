@@ -37,7 +37,7 @@ export async function manageAgentClient(props: {
 	if (!props.provider.configuration.organizationIds.includes(operation.organizationId))
 		return { kind: 'refused', reason: 'foreign-organization' };
 	const persons = createPersonAdmissionStore({
-		database: props.provider.database,
+		database: props.provider.database.sql,
 		ownerEmail: props.provider.configuration.ownerEmail,
 		now: props.provider.now,
 	});
@@ -47,9 +47,15 @@ export async function manageAgentClient(props: {
 		operation.kind === 'registerAndLink'
 			? `agent-${operation.organizationId}-${operation.requestId}`
 			: operation.clientId;
-	const records = createAgentRegistrationStore(props.provider);
-	const resources = createWorkspaceResourceStore(props.provider.database);
-	const audit = createWorkspaceManagementAudit(props.provider);
+	const records = createAgentRegistrationStore({
+		...props.provider,
+		database: props.provider.database.sql,
+	});
+	const resources = createWorkspaceResourceStore(props.provider.database.sql);
+	const audit = createWorkspaceManagementAudit({
+		...props.provider,
+		database: props.provider.database.sql,
+	});
 	try {
 		await audit.checkOperation(operation, props.proof.subject, clientId);
 		const existing = await records.read(clientId);

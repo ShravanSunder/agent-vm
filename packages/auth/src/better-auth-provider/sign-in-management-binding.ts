@@ -74,7 +74,7 @@ export function createSignInManagementBinding(
 		jwksFetch: async (input, init) => publicHandler(new Request(input, init)),
 	});
 	const persons = createPersonAdmissionStore({
-		database: configuration.database,
+		database: configuration.database.sql,
 		ownerEmail: configuration.configuration.ownerEmail,
 		now: configuration.now,
 	});
@@ -122,8 +122,12 @@ export function createSignInManagementBinding(
 			)
 				return false;
 			return (
-				(await createAgentRegistrationStore(configuration).read(clientId))?.metadata
-					.organizationId === organizationId
+				(
+					await createAgentRegistrationStore({
+						...configuration,
+						database: configuration.database.sql,
+					}).read(clientId)
+				)?.metadata.organizationId === organizationId
 			);
 		},
 		async registerAndLink({ token, ...operation }): Promise<RegisterAndLinkResult> {
