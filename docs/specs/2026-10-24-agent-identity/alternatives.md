@@ -313,7 +313,7 @@ flowchart TB
 
 **Recommended: B. Not decided.** Until you decide, only the starter rule in [R8](specification.md#membership-and-collaboration) waits; the rest of the design doesn't depend on it.
 
-Whichever you choose, two things hold. The start names its project explicitly, and its starter is proven (you signed in, or the session the request came from), because today's start request carries no project and believes a declared creator. And a conversation started outside the fleet can't join later just by being resumed: a running conversation keeps the configuration it started with, so it would need its own attach step. You decided (2026-10-24) to leave that out of the first round: the boundary is semi-permeable. Later, a launch hook (a UI now, Agent Studio support later) can register a conversation you start yourself before it starts.
+**Decided by you (2026-10-24):** you sign in once, when you launch and enroll a local Router, and choose there which workspaces it serves; nothing on it needs another sign-in or approval, and a start names its project. Still open: whether a session may start one in another workspace the same Router serves (B says no). A conversation started outside the fleet can't join later just by being resumed: a running conversation keeps the configuration it started with, so it would need its own attach step. You decided (2026-10-24) to leave that out of the first round: the boundary is semi-permeable. A UI at Router launch does the one sign-in and picks the workspaces; Agent Studio can hook it later.
 
 ## 15. Open: is a bot automatically a collaborator of every other workspace? (OD3)
 
