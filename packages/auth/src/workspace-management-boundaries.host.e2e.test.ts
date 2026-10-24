@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { z } from 'zod';
 
 import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
 import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
@@ -149,9 +150,21 @@ it('agent: a named management request ID cannot change operation, client, organi
 			workspaceId: workspaceOne,
 			requestId: registrationRequestId,
 		};
-		const first = await binding.SIGN_IN.registerAndLink(original);
-		expect(first.kind).toBe('registered');
-		if (first.kind !== 'registered') throw new Error('Named initial registration failed');
+		const registration = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceOne,
+			requestId: registrationRequestId,
+		});
+		expect(registration.status).toBe(200);
+		const first = agentCredentialSchema
+			.extend({
+				kind: z.literal('registered'),
+				workspaceId: z.literal(workspaceOne),
+				resource: z.literal(workspaceAudience(workspaceOne)),
+			})
+			.strict()
+			.parse(await registration.json());
 		async function protectedState(): Promise<unknown> {
 			return Promise.all(
 				[
