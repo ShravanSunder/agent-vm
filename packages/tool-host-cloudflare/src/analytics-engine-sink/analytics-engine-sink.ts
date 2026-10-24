@@ -23,9 +23,10 @@ export function createAnalyticsEngineSink(binding: CallAnalyticsBinding): Analyt
 	return {
 		write: (call: CallAnalytics): void => {
 			binding.writeDataPoint({
-				indexes: [call.organizationId],
+				indexes: [call.workspaceId],
 				blobs: [
-					call.organizationName,
+					call.organizationId,
+					call.workspaceName,
 					call.agentName,
 					call.mode,
 					call.serverName,

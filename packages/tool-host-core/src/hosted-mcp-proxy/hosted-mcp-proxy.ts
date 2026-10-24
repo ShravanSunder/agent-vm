@@ -134,8 +134,9 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 						proxyLimits: props.limits,
 						recordCalls: (input, result, startedAt) =>
 							recordBatchCallAnalytics({
-								organizationId: engine.configuration.organizationId,
-								organizationName: engine.configuration.workspaceName,
+								organizationId: caller.organizationId,
+								workspaceId: caller.workspaceId,
+								workspaceName: engine.configuration.workspaceName,
 								agentClientId: caller.agentClientId,
 								mode,
 								input,

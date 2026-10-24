@@ -6,6 +6,7 @@ import { readPrivateDeployFile } from '#worker-host/deployed-checks/deploy-confi
 import {
 	assertAnalyticsShape,
 	assertNoLogCanaries,
+	expectedWorkspaceRecordsSchema,
 } from '#worker-host/deployed-checks/deployed-check-suites/analytics-observations';
 import {
 	readCurrentRunLogs,
@@ -24,9 +25,20 @@ it('row 16 evidence: sampled Analytics rows have the expected shape and current-
 	);
 	if (artifact.runId !== configuration.runId)
 		throw new Error('Canary artifact belongs to a different run.');
+	// W5 supplies this explicit inventory beside the sampled SQL evidence.
+	const workspaces = await readEvidenceJson(
+		path.join(path.dirname(configuration.analyticsSqlFile), 'expected-workspaces.json'),
+		expectedWorkspaceRecordsSchema,
+	).catch(() => {
+		throw new Error('Expected workspace evidence is missing or invalid: expected-workspaces.json.');
+	});
 	assertAnalyticsShape(
 		await readEvidenceJson(configuration.analyticsSqlFile, analyticsSqlResponseSchema),
-		configuration,
+		{
+			runId: configuration.runId,
+			workspaces,
+			agentIds: [configuration.agentId, configuration.otherAgentId],
+		},
 	);
 	const records = await readCurrentRunLogs(
 		configuration,

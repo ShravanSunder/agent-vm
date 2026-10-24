@@ -8,7 +8,8 @@ export type CallFailureKind =
 	| 'invalid-input';
 export interface CallAnalytics {
 	readonly organizationId: string;
-	readonly organizationName: string;
+	readonly workspaceId: string;
+	readonly workspaceName: string;
 	readonly agentName: string;
 	readonly mode: 'direct' | 'indirect';
 	readonly serverName: string;

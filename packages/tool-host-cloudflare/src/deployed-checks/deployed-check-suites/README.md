@@ -11,7 +11,7 @@ suite; it never skips.
 Every suite re-run needs a fresh random `runId` and a fresh `evidenceDirectory`
 in the private deploy file. Keep each run's evidence together. Have the Lead
 render and redeploy the portal configurations for the new run ID: the configured
-organization names also carry that ID for Analytics queries.
+workspace names carry that ID for Analytics queries once W5 supplies the deployment configuration.
 
 Helper counters and generated artifacts belong to one run. The row-15 held-call
 barrier can fail when `row-15-limits` is repeated under the same run ID because
@@ -53,6 +53,24 @@ mise exec node@24.7.0 -- pnpm --filter @agent-collaboration/tool-host-cloudflare
 ```
 
 Stop the tail after the live steps finish and their output has arrived, then run
-the evidence steps. Analytics run membership uses the organization ID, the
-run-labelled organization name and the test agent. A refused call can legitimately
-record an `unknown` server; that field still has its shape and byte bounds.
+the evidence steps. Analytics Engine points use the workspace UUID as index1 and
+nine blobs, in order: organization UUID from the verified token, configured
+workspace name, agent, mode, server, tool, outcome, failure kind, and `no` for
+for-a-person. The three doubles remain duration, request bytes and response bytes.
+Each text field is capped at 256 UTF-8 bytes on a character boundary.
+
+Row 16 reads `expected-workspaces.json` beside the file named by `analyticsSqlFile`.
+It must be mode 0600, outside repositories, and contain a nonempty JSON array of
+closed records `{ organizationId, workspaceId, label }`, with UUIDs for
+both IDs and no duplicate workspace IDs. W5 produces this file from its private
+deployment configuration and supplies SQL selecting index1, blob1 through blob9
+and double1 through double3. That SQL is private input, not tracked source.
+Missing or invalid workspace evidence fails; the reader never infers workspace
+identity from an organization ID. The reader derives each expected workspace name as `${configuration.runId}:${label}`
+from the current run configuration; a stale inventory plus stale SQL cannot supply
+an old run name. W5 renders the deployed workspace names with that same convention.
+Run membership checks the expected workspace, organization, derived current-run
+workspace name and test agent. A refused call can
+legitimately record an `unknown` server; its shape and byte bounds still apply.
+Sampling proves shape and arrival, while exact counts and privacy exclusion use
+the local capturing binding and Worker logs.
