@@ -57,7 +57,7 @@ Fleet central holds every truth about who belongs where and decides every grant.
 | Helper starts | A Lead starts a helper with `conversation create`; the creator defaults to the calling session and the approver to the creator; a creator from another machine's service is refused. | Fleet Lead, 2026-10-24 (anchors pending in its evidence answer) |
 | Machines | Owner-only enrollment. A Router connects with an Access service token plus a Bearer enrollment credential, and the connection is bound to that machine. No key column. | `registry_migrations/0001_machine_enrollments.sql`; `machine_enrollment.rs:400–445`; `central_router.rs:119–275` |
 | Central hosts | One core, with Cloudflare Durable Object and Tokio hosts. Its object addresses are Copy, Registry, Fleet, Connection and Mailbox. | `platform_capabilities.rs:45`; `core_contract.rs:36–42` |
-| Sign-in issuer | Better Auth 1.7.8 with the OAuth provider. Agent clients use client credentials, a token is issued only for a linked workspace resource, and `customAccessTokenClaims` stamps claims. | `packages/auth/src/sign-in-core/response-release/sign-in-response-release.ts:114–146`; `provider-configuration.ts:220–276` |
+| Sign-in issuer | Better Auth 1.7.8 with the OAuth provider. Agent clients use client credentials, a token is issued only for a linked workspace resource, and `customAccessTokenClaims` stamps claims. That hook reads the client ID the app picked from the request, body `client_id` before the Basic header (`sign-in-http-handler.ts:65–75`), while the provider authenticates the Basic client and accepts a bare body `client_id` beside it (`dist/utils-CGIZS-Da.mjs:546–579, 687–737`). The post-mint release re-checks the minted token's own client against the resource, so a mismatched request is refused today. | `packages/auth/src/sign-in-core/response-release/sign-in-response-release.ts:114–146`; `provider-configuration.ts:220–276` |
 | Better Auth minting | Extension grants and companion endpoints mint through `issueTokens`, which takes a client, an optional user, resources and additive `accessTokenClaims`. The subject is always `user.id ?? client.clientId`; reserved claims (`sub`, `aud`, `exp`, `iat`, `jti`, `client_id`, `scope` and others) are stripped from contributed claims; expiry comes from the provider's options. | installed `@better-auth/oauth-provider` 1.7.8: `dist/oauth-C_RnL2nt.d.mts:770–872`; `dist/introspect-H3uoUiuS.mjs:180–267, 1267–1290, 1342–1364` |
 | Tool Portal check | Verify the token offline, then read membership and persona from the workspace's store. Persona is a key into the workspace's tool profiles. | `tool-host-core/src/caller-admission/caller-check.ts:19–38`; `hosted-mcp-proxy.ts:85,119` |
 | Tool profiles | A profile lists, per namespace, which tools are available and which run with or without approval; `resolvedMcpPortalProfileSchema` is the resolved form. | `tool-access/src/authorization/mcp-profile-resolution.ts`; `tool-access/src/contracts/mcp-approval-profile.ts:108` |
@@ -399,6 +399,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | An agent supplying its own sender | the bound actor: runtime |
 | The issuer minting a workspace or collaboration token without a decision | the response-release gate and the fleet-session grant handler: runtime |
 | Any consumer identifying a caller by `sub` | the claims schema exposes `principal`; review rule |
+| The issuer deciding for a client ID the provider did not authenticate | the contributor reads only `input.client`; no raw request parsing for client identity; SO2 negative |
 
 ## How a session gets and uses its token
 
@@ -451,7 +452,7 @@ sequenceDiagram
   BOT->>B: client credentials, resource = W's address (or the collaboration address)
   B->>OA: DecideBotIssuance(client, W) with a service token
   OA-->>B: Grant(bot, persona, g, decided t, expires t+L) or Refuse(reason)
-  Note over B: inside customAccessTokenClaims, before signing
+  Note over B: inside the extension claim contributor, before signing, for the authenticated client
   B->>B: Refuse or timeout: throw, nothing minted. Grant: return principal, marks, expiry
   B-->>BOT: token, or invalid_client / invalid_target
   BOT->>P: tools/call + workspace token
@@ -461,7 +462,7 @@ sequenceDiagram
   CA-->>BOT: delivered, or refused
 ```
 
-**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The decision is made in the existing `customAccessTokenClaims` hook (`provider-configuration.ts:220–261`), which the provider runs after client authentication and before signing (`dist/introspect-H3uoUiuS.mjs:1831–1852`). Today that hook already authorizes the agent client and its resource and throws to refuse. It changes to: ask central once with `DecideBotIssuance` for the authenticated client (`props.tokenClientId`, per request) and the requested resource; throw `invalid_client`, `invalid_target` or `temporarily_unavailable` on a refusal or timeout, so nothing is minted; on a `Grant`, return its claims. The outer response release (`sign-in-request-handler.ts:43–51`) runs after the provider and only checks the minted response, as today. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback**, the same surface the fleet-session grant uses: a bot extension grant calling `issueTokens` with `accessTokenClaims`.
+**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The decision is made in an extension access-token claim contributor, which the provider runs after client authentication and before signing (`dist/introspect-H3uoUiuS.mjs:238–262, 1831–1852`) and which receives the provider's authenticated client object (`OAuthClaimExtensionInput.client`, `dist/oauth-C_RnL2nt.d.mts:964–982`). For a client-credentials request it asks central once with `DecideBotIssuance` for `input.client.clientId` and the provider-validated `input.resources`; it throws `invalid_client`, `invalid_target` or `temporarily_unavailable` on a refusal or timeout, so nothing is minted; on a `Grant` it returns the claims. It never reads a client ID from the raw request. The existing `customAccessTokenClaims` hook keeps only its person branch and returns no claims for client credentials, because its claims merge after the contributor's and could otherwise replace them. The outer response release (`sign-in-request-handler.ts:43–51`) runs after the provider and only checks the minted response: `sub` and `client_id` agree, `aud` is the requested resource, and the workspace claim names that resource's workspace. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback**, the same surface the fleet-session grant uses: a bot extension grant calling `issueTokens` with `accessTokenClaims`.
 
 ## How a removal reaches the Tool Portal
 

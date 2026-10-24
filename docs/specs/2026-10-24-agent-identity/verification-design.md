@@ -59,6 +59,7 @@ Several rows use the same observation. Each is described once here.
 - Each refusal class is observed: not a member, identity not proven, machine not allowed, unavailable, and a decision past its redemption window.
 - A collaboration token is minted for a bot with no membership.
 - On the pinned provider, a bot request runs in this order: client authentication, the decision from central inside the claim hook, claim stamping, signing, then the response release. A refusal or timeout in the hook leaves no token at all. Two concurrent requests from different bots, or for different resources, each get their own grant.
+- With bot A's Basic credentials and a body `client_id` naming bot B (no body secret or assertion), the request is refused or decided for A only; central receives A's client ID and the signed `principal` is A's bot, never B's. The same holds for each supported way a client authenticates (Basic, a body secret, `private_key_jwt`).
 
 **SO3: Tool Portal admission** (existing agent-vm host e2e suites on the production entry, extended, lasting). It covers:
 
