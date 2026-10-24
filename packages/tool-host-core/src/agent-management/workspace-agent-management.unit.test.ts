@@ -42,6 +42,7 @@ async function fixture(): Promise<{
 		strongerLevel: 'fresh-verified-uv' | 'exact-operation-binding' | null;
 		signInCalls: number;
 		mutations: string[];
+		unlinkMemberships: ({ readonly persona: string } | null)[];
 	};
 }> {
 	const keys = await generateKeyPair('EdDSA');
@@ -70,6 +71,7 @@ async function fixture(): Promise<{
 		strongerLevel: 'fresh-verified-uv' | 'exact-operation-binding' | null;
 		signInCalls: number;
 		mutations: string[];
+		unlinkMemberships: ({ readonly persona: string } | null)[];
 	} = {
 		active: true,
 		failDisable: false,
@@ -81,6 +83,7 @@ async function fixture(): Promise<{
 		strongerLevel: null,
 		signInCalls: 0,
 		mutations: [],
+		unlinkMemberships: [],
 	};
 	const signIn: AgentClientManagementPort = {
 		humanCheckStatus: async () => {
@@ -116,7 +119,9 @@ async function fixture(): Promise<{
 		unlink: async ({ clientId, workspaceId }) => {
 			state.signInCalls += 1;
 			state.mutations.push('unlink');
-			expect(await authority(workspaceId).readMembership(clientId)).toBeNull();
+			const observedMembership = await authority(workspaceId).readMembership(clientId);
+			state.unlinkMemberships.push(observedMembership);
+			expect(observedMembership).toBeNull();
 			return state.failUnlink
 				? { kind: 'incomplete', clientId }
 				: { kind: 'unlinked', clientId, workspaceId, resource: resource(workspaceId) };
@@ -303,7 +308,9 @@ describe('workspace agent management', () => {
 		await target.authority(workspaceOne).setMembership('agent-one', 'reader');
 		await target.authority(workspaceTwo).setMembership('agent-one', 'reader');
 		target.state.failUnlink = true;
-		expect((await target.request({ method: 'DELETE', clientId: 'agent-one' })).status).toBe(202);
+		const removal = await target.request({ method: 'DELETE', clientId: 'agent-one' });
+		expect(target.state.unlinkMemberships).toEqual([null]);
+		expect(removal.status).toBe(202);
 		expect(await target.authority(workspaceOne).readMembership('agent-one')).toBeNull();
 		expect(await target.authority(workspaceTwo).readMembership('agent-one')).toEqual({
 			persona: 'reader',
@@ -320,6 +327,7 @@ describe('workspace agent management', () => {
 			operation: 'unlink',
 			requestId,
 		});
+		expect(target.state.unlinkMemberships).toEqual([null, null]);
 		expect(target.state.mutations).toEqual(['unlink', 'unlink']);
 	});
 	it('removes every configured organization membership before disable, never unlinks, and retries', async () => {
