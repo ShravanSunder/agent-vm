@@ -10,6 +10,8 @@ const workspaceOne = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const workspaceTwo = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const audienceOne = `${toolPortalOrigin}/workspaces/${workspaceOne}/mcp`;
 const audienceTwo = `${toolPortalOrigin}/workspaces/${workspaceTwo}/mcp`;
+const principal = { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' } as const;
+const persona = { kind: 'named', name: 'operator' } as const;
 const now = 1_800_000_000;
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let jwks: unknown;
@@ -32,6 +34,10 @@ async function signedWorkspaceToken(changes: JWTPayload = {}): Promise<string> {
 		scope: 'tool-portal:agent',
 		organization_id: organizationId,
 		workspace_id: workspaceOne,
+		principal,
+		persona,
+		grant_revision: 7,
+		grant_expires_at: now + 300,
 		...changes,
 	})
 		.setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: 'workspace-key' })
@@ -69,6 +75,10 @@ describe('per-call workspace agent proof with real JOSE signatures', () => {
 				workspaceId: workspaceOne,
 				audience: audienceOne,
 				expiresAt: now + 60,
+				principal,
+				persona,
+				grantRevision: 7,
+				grantExpiresAt: now + 300,
 			},
 		});
 		expect(await verify(second, expectedTwo)).toEqual({
@@ -80,6 +90,10 @@ describe('per-call workspace agent proof with real JOSE signatures', () => {
 				workspaceId: workspaceTwo,
 				audience: audienceTwo,
 				expiresAt: now + 60,
+				principal,
+				persona,
+				grantRevision: 7,
+				grantExpiresAt: now + 300,
 			},
 		});
 		expect(await verify(first, expectedTwo)).toEqual({ kind: 'refused', reason: 'wrong-audience' });

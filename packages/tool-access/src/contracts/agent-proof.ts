@@ -7,21 +7,12 @@ import {
 } from 'jose';
 import { z } from 'zod';
 
-/** E10 access-token claims; unrelated issuer claims are allowed and ignored. */
-export const agentTokenClaimsSchema = z.looseObject({
-	iss: z.url(),
-	sub: z.string().min(1),
-	aud: z.string().min(1),
-	exp: z.number().int(),
-	iat: z.number().int(),
-	scope: z.string(),
-	client_id: z.string().min(1),
-	azp: z.string().min(1),
-	jti: z.string().min(1),
-	organization_id: z.uuid(),
-	workspace_id: z.uuid(),
-});
-export type AgentTokenClaims = z.infer<typeof agentTokenClaimsSchema>;
+import {
+	personaRefSchema,
+	principalSchema,
+	markSchema,
+	workspaceTokenClaimsSchema,
+} from '#tool-access/contracts/workspace-token-claims';
 
 export const agentProofSchema = z.strictObject({
 	deployment: z.url(),
@@ -30,6 +21,10 @@ export const agentProofSchema = z.strictObject({
 	workspaceId: z.uuid(),
 	audience: z.string().min(1),
 	expiresAt: z.number().int(),
+	principal: principalSchema,
+	persona: personaRefSchema,
+	grantRevision: markSchema,
+	grantExpiresAt: z.number().int(),
 });
 export type AgentProof = z.infer<typeof agentProofSchema>;
 
@@ -52,17 +47,18 @@ export interface AgentTokenVerifier {
 	) => Promise<AgentProofVerification>;
 }
 
-/** Only this boundary reads raw claims. Membership remains the relying service's check. */
+/** Verify signed workspace claims before projecting the caller's identity and grant. */
 export function createAgentTokenVerifier(props: {
 	readonly deployment: string;
 	readonly jwksUrl: URL;
 	readonly now?: () => number;
 	readonly jwksFetch?: FetchImplementation;
 }): AgentTokenVerifier {
-	const keys = createRemoteJWKSet(
-		props.jwksUrl,
-		props.jwksFetch === undefined ? {} : { [customFetch]: props.jwksFetch },
-	);
+	const keys = createRemoteJWKSet(props.jwksUrl, {
+		cacheMaxAge: 300_000,
+		cooldownDuration: 0,
+		...(props.jwksFetch === undefined ? {} : { [customFetch]: props.jwksFetch }),
+	});
 	return {
 		async verify(
 			token: string,
@@ -76,7 +72,7 @@ export function createAgentTokenVerifier(props: {
 			}
 			let claims: Record<string, unknown>;
 			try {
-				// Verify the signature first, then apply E10's ordered claim checks.
+				// Signature verification precedes every claim-based refusal.
 				// jwtVerify's built-in time validation would run before the audience check.
 				const signed = await compactVerify(token, keys, {
 					algorithms: ['RS256', 'ES256', 'EdDSA'],
@@ -93,7 +89,9 @@ export function createAgentTokenVerifier(props: {
 			if (
 				typeof claims.exp !== 'number' ||
 				!Number.isInteger(claims.exp) ||
-				claims.exp <= Math.floor((props.now?.() ?? Date.now()) / 1000)
+				claims.exp + 60 <= Math.floor((props.now?.() ?? Date.now()) / 1000) ||
+				(typeof claims.grant_expires_at === 'number' &&
+					claims.grant_expires_at <= Math.floor((props.now?.() ?? Date.now()) / 1000))
 			)
 				return { kind: 'refused', reason: 'expired' };
 			if (
@@ -101,8 +99,7 @@ export function createAgentTokenVerifier(props: {
 				!z.uuid().safeParse(claims.organization_id).success ||
 				!z.uuid().safeParse(claims.workspace_id).success ||
 				typeof claims.client_id !== 'string' ||
-				claims.sub !== claims.client_id ||
-				claims.azp !== claims.client_id
+				claims.sub !== claims.client_id
 			)
 				return { kind: 'refused', reason: 'not-an-agent' };
 			if (claims.workspace_id !== expected.workspaceId)
@@ -112,7 +109,7 @@ export function createAgentTokenVerifier(props: {
 				!claims.scope.split(/\s+/u).includes('tool-portal:agent')
 			)
 				return { kind: 'refused', reason: 'wrong-scope' };
-			const parsed = agentTokenClaimsSchema.safeParse(claims);
+			const parsed = workspaceTokenClaimsSchema.safeParse(claims);
 			if (!parsed.success) return { kind: 'refused', reason: 'not-an-agent' };
 			return {
 				kind: 'verified',
@@ -123,6 +120,10 @@ export function createAgentTokenVerifier(props: {
 					workspaceId: parsed.data.workspace_id,
 					audience: parsed.data.aud,
 					expiresAt: parsed.data.exp,
+					principal: parsed.data.principal,
+					persona: parsed.data.persona,
+					grantRevision: parsed.data.grant_revision,
+					grantExpiresAt: parsed.data.grant_expires_at,
 				},
 			};
 		},

@@ -18,3 +18,6 @@ export * from '#tool-access/contracts/profile-assignment';
 export * from '#tool-access/contracts/config-schema-identities';
 
 export * from '#tool-access/contracts/workspace-resource';
+
+export * from '#tool-access/contracts/workspace-token-claims';
+export * from '#tool-access/contracts/removal-notice';

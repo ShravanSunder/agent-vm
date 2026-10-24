@@ -12,6 +12,7 @@ export type CheckGateCommandId =
 	| 'package-versions'
 	| 'portal-architecture'
 	| 'portal-contracts'
+	| 'identity-fixtures'
 	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
@@ -122,6 +123,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'portal-exports',
 					label: 'portal package export audit and packed portable closures',
+				},
+				{
+					args: ['exec', 'tsx', 'scripts/generate-identity-fixtures.ts', '--check-clean'],
+					command: 'pnpm',
+					id: 'identity-fixtures',
+					label: 'generated identity fixture freshness',
 				},
 				{
 					args: ['exec', 'tsx', 'scripts/generate-portal-contracts.ts', '--check-clean'],

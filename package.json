@@ -14,6 +14,7 @@
 		"clean": "git clean -fdX packages",
 		"check:package-versions": "bash scripts/check-package-version-sync.sh",
 		"check:zod": "node scripts/check-zod-version.ts",
+		"generate:identity-fixtures": "tsx scripts/generate-identity-fixtures.ts",
 		"generate:portal-contracts": "tsx scripts/generate-portal-contracts.ts",
 		"python:sync": "uv sync --locked --all-packages",
 		"python:fmt": "uv run ruff format python",

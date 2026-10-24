@@ -20,6 +20,10 @@ const verifier: AgentTokenVerifier = {
 				organizationId,
 				workspaceId,
 				audience: expected.audience,
+				principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
+				persona: { kind: 'named', name: 'operator' },
+				grantRevision: 7,
+				grantExpiresAt: 1_800_000_300,
 				expiresAt: 2_000_000_000,
 			},
 		};

@@ -1,10 +1,8 @@
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import {
-	agentTokenClaimsSchema,
-	createAgentTokenVerifier,
-} from '#tool-access/contracts/agent-proof';
+import { createAgentTokenVerifier } from '#tool-access/contracts/agent-proof';
+import { workspaceTokenClaimsSchema } from '#tool-access/contracts/workspace-token-claims';
 
 const deployment = 'https://test-issuer.invalid';
 const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -12,11 +10,12 @@ const audience = `https://tool-portal.invalid/workspaces/${workspaceId}/mcp`;
 const expected = { audience, workspaceId };
 const now = 1_800_000_000;
 const organizationId = '11111111-1111-4111-8111-111111111111';
-// Stand-in for the unbuilt sign-in service: test keys issue the complete E10 shape.
-// These tests establish signature/claim rules, not the real issuer's behavior.
+// Local signing keys exercise signature and claim checks, not issuer behavior.
 let issuerKeys: Awaited<ReturnType<typeof generateKeyPair>>;
 let forgedKeys: Awaited<ReturnType<typeof generateKeyPair>>;
 let jwks: unknown;
+const principal = { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' } as const;
+const persona = { kind: 'named', name: 'operator' } as const;
 const claims = {
 	iss: deployment,
 	sub: 'agent-one',
@@ -29,6 +28,10 @@ const claims = {
 	jti: 'test-token',
 	organization_id: organizationId,
 	workspace_id: workspaceId,
+	principal,
+	persona,
+	grant_revision: 7,
+	grant_expires_at: now + 300,
 };
 beforeAll(async () => {
 	issuerKeys = await generateKeyPair('ES256');
@@ -65,8 +68,8 @@ function verifier(): ReturnType<typeof createAgentTokenVerifier> {
 }
 
 describe('E10 agent proof with real JOSE signatures', () => {
-	it('parses the E10 token and projects only the six proof fields', async () => {
-		expect(agentTokenClaimsSchema.parse(claims)).toEqual(claims);
+	it('projects principal and the fixed grant end instead of losing identity in six fields', async () => {
+		expect(workspaceTokenClaimsSchema.parse(claims)).toEqual(claims);
 		expect(await verifier().verify(await signToken(), expected)).toEqual({
 			kind: 'verified',
 			proof: {
@@ -76,6 +79,10 @@ describe('E10 agent proof with real JOSE signatures', () => {
 				workspaceId,
 				audience,
 				expiresAt: now + 60,
+				principal,
+				persona,
+				grantRevision: 7,
+				grantExpiresAt: now + 300,
 			},
 		});
 	});
@@ -84,7 +91,7 @@ describe('E10 agent proof with real JOSE signatures', () => {
 		{ reason: 'bad-signature', token: { forge: true } },
 		{ reason: 'wrong-issuer', token: { changes: { iss: 'https://other.invalid' } } },
 		{ reason: 'wrong-audience', token: { changes: { aud: 'https://other.invalid/mcp' } } },
-		{ reason: 'expired', token: { changes: { exp: now - 1 } } },
+		{ reason: 'expired', token: { changes: { exp: now - 60 } } },
 		{ reason: 'not-an-agent', token: { changes: { sid: 'person-session' } } },
 		{ reason: 'wrong-scope', token: { changes: { scope: 'tool-portal:person' } } },
 	])('refuses an independently signed bad token: $reason', async ({ reason, token }) => {
@@ -99,14 +106,23 @@ describe('E10 agent proof with real JOSE signatures', () => {
 		{ changes: { organization_id: 'not-a-uuid' }, reason: 'not-an-agent' },
 		{ changes: { sid: null }, reason: 'not-an-agent' },
 		{ changes: { sub: 'other-agent' }, reason: 'not-an-agent' },
-		{ changes: { azp: 'other-agent' }, reason: 'not-an-agent' },
 		{ changes: { scope: 'not-tool-portal:agent-extra' }, reason: 'wrong-scope' },
-		{ changes: { exp: now }, reason: 'expired' },
+		{ changes: { exp: now - 60 }, reason: 'expired' },
+		{ changes: { grant_expires_at: now }, reason: 'expired' },
+		{ changes: { grant_expires_at: now - 1 }, reason: 'expired' },
 	])('refuses malformed/near-match claims $changes', async ({ changes, reason }) => {
 		expect(await verifier().verify(await signToken({ changes }), expected)).toEqual({
 			kind: 'refused',
 			reason,
 		});
+	});
+	it('allows only the JWT expiry leeway while never extending the grant', async () => {
+		expect(
+			(await verifier().verify(await signToken({ changes: { exp: now - 59 } }), expected)).kind,
+		).toBe('verified');
+		expect(
+			await verifier().verify(await signToken({ changes: { grant_expires_at: now } }), expected),
+		).toEqual({ kind: 'refused', reason: 'expired' });
 	});
 	it('accepts the exact scope among other scopes', async () => {
 		expect(
