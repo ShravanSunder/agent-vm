@@ -193,7 +193,6 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	const gatewayBodies: readonly unknown[] = await Promise.all(
 		gatewayResponses.map((response: Response): Promise<unknown> => response.json()),
 	);
-	for (const body of gatewayBodies) expectNoIssuedCredentials(body);
 	// Independent S1 contract: do not filter this inventory through the product's allowlist.
 	const publicProviderPaths = new Set([
 		'/api/auth/sign-in/social',
@@ -291,6 +290,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 	);
 	await requireUnchangedProtectedState();
 	expect(harness.effects).toHaveLength(0);
+	for (const body of gatewayBodies) expectNoIssuedCredentials(body);
 	const ownerRead = await harness.gateway(`${endpoint}/${registeredClientId}`, {
 		headers: { authorization: `Bearer ${owner}` },
 	});
