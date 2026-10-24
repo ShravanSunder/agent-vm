@@ -204,32 +204,36 @@ export async function verifyToolHostNodeClosure(): Promise<void> {
 	});
 	if (pack.code !== 0) throw new Error('tool-host-node pack failed');
 	const dependencyOverrides = await Promise.all(
-		['tool-access', 'tool-engine', 'oauth-broker-contracts', 'agent-portal-sdk'].map(
-			async (name): Promise<readonly [string, string]> => {
-				const location = path.join(scratch, `${name}.tgz`);
-				const dependencyPack = await command({
-					executable: 'pnpm',
-					args: [
-						'--config.ignore-scripts=true',
-						'--dir',
-						path.join(repositoryRoot, 'packages', name),
-						'pack',
-						'--out',
-						location,
-					],
-					cwd: repositoryRoot,
-					label: `pack-${name}`,
-					evidence,
-				});
-				if (dependencyPack.code !== 0) throw new Error(`Dependency pack failed: ${name}`);
-				return [
-					['tool-access', 'tool-engine'].includes(name)
-						? `@agent-collaboration/${name}`
-						: `@agent-vm/${name}`,
-					`file:${location}`,
-				];
-			},
-		),
+		[
+			'tool-access',
+			'tool-engine',
+			'tool-host-core',
+			'oauth-broker-contracts',
+			'agent-portal-sdk',
+		].map(async (name): Promise<readonly [string, string]> => {
+			const location = path.join(scratch, `${name}.tgz`);
+			const dependencyPack = await command({
+				executable: 'pnpm',
+				args: [
+					'--config.ignore-scripts=true',
+					'--dir',
+					path.join(repositoryRoot, 'packages', name),
+					'pack',
+					'--out',
+					location,
+				],
+				cwd: repositoryRoot,
+				label: `pack-${name}`,
+				evidence,
+			});
+			if (dependencyPack.code !== 0) throw new Error(`Dependency pack failed: ${name}`);
+			return [
+				['tool-access', 'tool-engine', 'tool-host-core'].includes(name)
+					? `@agent-collaboration/${name}`
+					: `@agent-vm/${name}`,
+				`file:${location}`,
+			];
+		}),
 	);
 	const overrides: Record<string, string> = Object.fromEntries(dependencyOverrides);
 
