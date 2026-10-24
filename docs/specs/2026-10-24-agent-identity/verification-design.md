@@ -44,7 +44,7 @@ Several rows use the same observation. Each is described once here.
   7. end one session (archive) and remove the other;
   8. revoke the machine, interrupting the fan-out once;
   9. stop Fleet central between a decision and its mint, and before a decision, and attempt a collaboration effect, both a new message and a reply;
-  10. restart the Router while a Codex thread stays loaded and check the same binding still attributes its posts; resume a cold Codex thread and check it is given the same address; restart the Router mid-registration and resend, then form the next token and end requests from the persisted registration (organization, workspace, persona) with no other hint; try to register a recorded conversation for another project, including a project in another organization.
+  10. restart the Router while a Codex thread stays loaded and check, from its next post's recorded actor (not from the resume reply), that the same complete address still attributes it; resume a cold Codex thread and check it is given the same address; restart the Router mid-registration and resend, then form the next token and end requests from the persisted registration (organization, workspace, persona) with no other hint; try to register a recorded conversation for another project, including a project in another organization.
 - **What it reads:**
   - the tool's effect counter at the controlled MCP server;
   - the Portal's refusal classes;
