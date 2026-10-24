@@ -57,8 +57,9 @@ packages/tool-engine/src/
 │   ├── index.ts
 │   ├── capability-dispatcher.ts
 │   ├── dispatch-intent.ts
-│   ├── resource-failure-detail.ts
-│   └── models/dispatch-contracts.ts
+│   └── models/
+│       ├── dispatch-contracts.ts
+│       └── resource-failure-detail.ts   pure schema the contracts use
 ├── standalone-tool-portal/              public entry …/standalone-tool-portal (S3d's files from dispatch/)
 │   ├── index.ts
 │   ├── standalone-tool-portal-core.ts
@@ -163,8 +164,10 @@ managed-tool-engine/
 ├── managed-call-results/
 │   ├── managed-call-projection.ts
 │   └── managed-call-results.ts
+├── models/managed-tool-engine-adapter.ts   the adapter interface (breaks the adapter ↔ call-projection cycle)
 └── test-fixtures/
     ├── composition-profile-test-fixture.ts
+    ├── managed-approval-dispatch-test-fixture.ts
     ├── managed-profile-test-fixture.ts
     └── prepared-policy-test-fixture.ts
 ```
@@ -303,3 +306,25 @@ structure scan of the touched packages shows no rule above broken.
   lines).
 - This pass has no paired Verifier. The Lead verifies each layer from its
   proof.
+- `managed-dispatch-adapter.ts` and `managed-call-projection.ts` imported each
+  other. The `ManagedToolEngineAdapter` interface moves to
+  `managed-tool-engine/models/managed-tool-engine-adapter.ts`.
+- `managed-approval-dispatch.integration.test.ts` (738 lines, one test) keeps
+  its one test. Its shared setup moves unchanged into
+  `test-fixtures/managed-approval-dispatch-test-fixture.ts`.
+- `tsconfig.base.json` holds the `tool-engine` entry paths. The repo's
+  monorepo rules require the owner's permission to edit it, so the
+  `capability-dispatch` and `upstream-mcp-connectors` renames wait for that.
+- tool-host-node's catalog compiler had a synchronous copy (Node crypto) of
+  the engine's asynchronous presentation-name rule. The engine's version is now
+  the only one. The compiler path (`fingerprintCatalogTypescriptInput` and its
+  callers) becomes `async` inside tool-host-node, an unreleased package with no
+  outside caller, while the output bytes stay identical. gateway-runtime still
+  imports the old `mcp-portal` compiler. S4 adapts it when it switches over.
+- A type or schema moves into a job folder's `models/` only when it is a data
+  shape or schema used by more than one file, when it creates an import cycle,
+  or when a `models/` file would otherwise import an implementation. A
+  function's own Props or options interface, or a type used by one file, stays
+  next to that function. The repo's ts-rules say "Colocate type definitions
+  near their usage". tool-host-node's root composition and startup interfaces
+  stay at the package root.

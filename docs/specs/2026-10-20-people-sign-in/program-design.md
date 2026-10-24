@@ -2,10 +2,11 @@
 
 [Requirements](requirements.md) · [Specification](2026-10-20-people-sign-in.md) · [Tool Portal Program Design](../2026-10-14-portable-tool-portal-hosts/program-design.md)
 
-**One small sign-in Worker per deployment runs Better Auth with D1, and issues each relying service its own short-lived, audience-bound token.**
+**One small sign-in Worker per deployment runs Better Auth with D1, keeps each organization's owner and allowlist in that organization's own Durable Object, and issues each relying service its own short-lived, audience-bound token.**
+- A person signs in to one organization. The session records it, and every person token names it.
 - Tool Portal verifies those tokens itself: locally for ordinary calls, and with a live check against the sign-in Worker for an Accept or Deny.
-- A session or token counts as issued only after the Worker's final check, which runs after Better Auth has created it and before the response leaves the Worker. That check is where a removal or sign-out takes effect.
-- The owner manages a private deployment's allowlist through a protected admin surface on the same Worker. Every security change is recorded.
+- A session or token counts as issued only after the Worker's final check, which runs after Better Auth has created it and before the response leaves the Worker. The final check asks the organization's object whether the Person is still admitted there. That is where a removal or sign-out takes effect.
+- Each organization's owner manages its allowlist through a protected admin surface on the same Worker. Every security change is recorded.
 
 ## What exists today
 
@@ -15,7 +16,7 @@ People are identified only by Cloudflare Access, in front of the agent-vm contro
 - The account-policy routes verify again before acting ([oauth-account-policy-routes.ts](../../../packages/agent-vm/src/controller/oauth/oauth-account-policy-routes.ts#L175)).
 - An owner is admitted when the token's issuer equals the configured issuer and its subject is listed in the configured owners for that agent ([google-permission-policy-service.ts](../../../packages/agent-vm/src/controller/oauth/google-permission-policy-service.ts#L145)). Stored account grants carry that owner's issuer and user id.
 
-No sign-in service of our own exists, so the service below has no predecessor. **The controller path stays unchanged** until the owner decides how existing grants move (`SD5`). Nothing here rewrites stored owner bindings.
+The sign-in Worker below is built locally (S1 and the workspace cutover, at `02c23489`; nothing deployed, no real users). It admits by deployment, not by organization: one configured `ownerEmail` owns every configured `organizationIds` entry, the allowlist (`allowed_email`) and owner binding (`deployment_owner`) are D1 tables, and removal is one D1 transaction that also deletes the Person's sessions. This revision replaces that admission storage and adds the organization to sessions and person tokens ([Cutover from deployment-wide admission](#cutover-from-deployment-wide-admission)). **The controller path stays unchanged** until the owner decides how existing grants move (`SD5`). Nothing here rewrites stored owner bindings.
 
 ## The choice
 
@@ -32,6 +33,16 @@ Option A costs one extra call to the sign-in Worker for each Accept or Deny, and
 
 What would reopen the choice: if live checks prove too slow or unreliable, cache the live answer per session for seconds, never per token lifetime. That is a change to the `SD3` bound and needs the owner.
 
+### Where an organization's admission lives
+
+The owner set this (`U9`): each organization's owner and allowlist live in its own Durable Object, and logins and sessions stay in D1. The options it chose between:
+
+| Option | Fits | Costs |
+| --- | --- | --- |
+| **A. One Durable Object per organization (selected by the owner)** | `R19` by construction: one organization's state can't be read or written through another's object. One object serializes every admission change and check for its organization, so a removal has one cutoff | admission and sessions are now in two stores, so removal can't delete sessions in the same transaction (see [Where a removal or sign-out takes effect](#where-a-removal-or-sign-out-takes-effect)); every final check adds one call to the object |
+| B. Better Auth's organization plugin in D1 | Better Auth owns membership | its defaults let any user create an organization and give its `admin` role member changes (`SD1`, `SD9` say owner only); one database holds every organization |
+| C. Our own D1 tables keyed by organization | one store; removal stays one transaction | separation rests on every query carrying the right key; the owner's rule names Durable Objects |
+
 ## Components
 
 ```mermaid
@@ -40,11 +51,15 @@ flowchart TB
   TPV["Tool Portal verifier"]
   subgraph W["Sign-in Worker (new)"]
     RH["Request handler (outermost)"]
-    AL["Allowlist gate"]
+    AL["Admission gate"]
     BA["Better Auth core"]
     OP["OAuth provider"]
     AD["Admin surface"]
     AU["Audit writer"]
+  end
+  subgraph ORGS["One Durable Object per organization"]
+    OA1["Organization admission: O1"]
+    OA2["Organization admission: O2"]
   end
   DB["D1 database"]
   CON -->|code + PKCE| RH
@@ -54,9 +69,11 @@ flowchart TB
   RH -->|forwards| OP
   RH -->|final check on issued session, token, introspection answer| AL
   AL -->|early checks in hooks| BA
+  AL -->|standing, admit sign-in: the session's organization only| OA1
+  AL -->|standing, admit sign-in| OA2
+  AD -->|allowlist change: owner check, change and record in one object transaction| OA1
   BA --> DB
   OP --> DB
-  AD -->|change + audit, one batch| DB
   AU --> DB
 ```
 
@@ -65,10 +82,11 @@ flowchart TB
 | Request handler | the Worker's only HTTP entry. Runs the final check on every response that issues a session, a token or an introspection answer; writes the before-change audit record for changes Better Auth makes itself; refuses the ID-token linking form | `@agent-collaboration/auth`, a Worker app (new) | browsers, the console, relying services | where a removal takes effect, or which changes are audited |
 | Better Auth core | Persons, linked logins, passkeys, sessions (E2–E5) | same Worker (existing library) | people's browsers | a sign-in method or session rule changes |
 | OAuth provider | relying services, clients, issued proofs, introspection (E6, E7) | same Worker (Better Auth `oauthProvider` plugin, existing library) | the console; Tool Portal's verifier | the token or audience contract changes |
-| Allowlist gate | the private-mode admission decision (E8), the Person's derived active state, the owner bootstrap, and the current-person check every other component calls | same Worker (new) | the request handler, Better Auth's hooks, the admin surface | private admission or removal rules change |
-| Admin surface | allowlist, client and relying-service changes; owner-only and owner-active | same Worker (new) | the owner | who may administer changes (`SD1`) |
-| Agent-client route | creating and disabling agent clients (E9) whose metadata names the calling organization, each with its audit record in one D1 batch. Reachable only through a service binding, never the public hostname | same Worker (new; the Lead's proposal with `SD9`) | Tool Portal's agent-management handler | the agent add or remove contract changes |
-| Audit writer | the audit record of every change `R12` lists and of sign-in outcomes | same Worker (new) | the owner | the record contents change |
+| Organization admission object | one organization's truth (E12): its owner binding, its allowlist entries (E8) and which Person each admits, each Person's standing there, and the records of those changes. It decides admission and every allowlist change for its organization, one at a time, with each change and its record in one storage transaction. It never reads D1 and never another organization's object | one Durable Object per organization, in the same Worker (new) | the Admission gate; the Admin surface; the agent-client route's owner check | the organization's admission, ownership or removal rules change |
+| Admission gate | the Worker side of every admission decision: which organization a request belongs to (the sign-in's organization, then the session's), the current-person check that every other component calls, and the D1 claim that guards cleanup of a refused first sign-in. It owns no admission state: it asks that organization's object | same Worker (modified; was the Allowlist gate) | the request handler, Better Auth's hooks, the admin surface | how a request names its organization, or what a check must read, changes |
+| Admin surface | allowlist changes and reads for one organization, and client and relying-service changes; allowed only for that organization's active owner, signed in to it | same Worker (new) | each organization's owner | who may administer changes (`SD1`, decided: owner only) |
+| Agent-client route | creating workspace resources (E6), creating and disabling agent clients (E9), and linking and unlinking a client and a workspace (E11), each only when its metadata names the calling organization and the acting Person is that organization's active owner, signed in to it. Better Auth writes these, so each change gets a before-change audit record naming the acting Person and an outcome record afterwards. Reachable only through a service binding, never the public hostname | same Worker (new) | Tool Portal's agent-management handler | the agent add or remove contract changes |
+| Audit writer | the D1 audit record of every change `R12` lists that isn't an admission change (an organization's admission changes are recorded by its object), and of sign-in outcomes, each naming its organization | same Worker (new) | each organization's owner | the record contents change |
 | Person-proof verifier | the decision "this proof is a current Person for this service" | `tool-host-node` and `tool-host-cloudflare`, implementing Tool Portal's identity-verifier port (new adapter) | Tool Portal `explain`, `propose`, `decide`, `read` | the proof format or freshness rule changes |
 
 The sign-in Worker is built in agent-vm's workspace under the same rules as the Tool Portal packages. It moves to `agent-fleet-tools` with them (F-58, `SD4`).
@@ -77,20 +95,38 @@ Each deployment is its own Worker with its own D1, and they share code and nothi
 
 ## Where each entity lives
 
+What this revision moves or adds (unchanged entities are in the table below):
+
+```mermaid
+flowchart LR
+  E12["E12 Organization"] -->|registration| CFG["Worker configuration: organizations[] (modified)"]
+  E12 -->|admission truth| OA["Organization admission object, one per organization (new)"]
+  E8["E8 Allowlist entry"] -->|owner| OA
+  OWN["organization owner"] -->|owner| OA
+  E5["E5 Session"] -->|"owner: Better Auth core, organizationId set once by the Admission gate"| D1S["D1 session (modified: organizationId)"]
+  E7["E7 Person proof"] -.->|schema home| TAC["tool-access/contracts personTokenClaimsSchema, PersonProof (modified: organization)"]
+  CLM["refused-sign-in claim"] -->|owner: Admission gate| D1C["D1 organization_admission_claim (new)"]
+  AUD["admission records"] -->|owner| OA
+```
+
+
 | E | Semantic owner | Home | Schema/type home | Shape at each boundary | Disposition | Convention |
 | --- | --- | --- | --- | --- | --- | --- |
-| `E1` Deployment | sign-in Worker configuration | `@agent-collaboration/auth` (new) | `deploymentConfigSchema` in the Worker's config module (new) | the `iss` claim in every E7; `mode` and `ownerEmail` in configuration only | persisted (Worker configuration) | Zod schema, `z.infer` type (repo convention) |
-| deployment owner (serves `R14`) | Allowlist gate | D1 `deployment_owner`, at most one row (new) | `deploymentOwnerSchema` (Worker, new) | read by the admin checks | persisted, written once | Zod schema |
-| `E2` Person | Better Auth core; its active state belongs to the Allowlist gate | D1 `user` table (existing library schema). No status column: a Person in a private deployment is active exactly while an allowed E8 is bound to it | Better Auth's user model (existing) | `sub` in every E7: the Better Auth user id, with subject type `public` (never pairwise) | persisted; active state derived | library schema |
+| `E1` Deployment | sign-in Worker configuration | `@agent-collaboration/auth` (existing) | `signInConfigurationSchema` in `sign-in-core/models/deployment-configuration.ts` (modified: `ownerEmail` and `organizationIds` replaced by `organizations`) | the `iss` claim in every E7; `mode` and `organizations` in configuration only | persisted (Worker configuration) | Zod schema, `z.infer` type (repo convention) |
+| `E12` Organization | its registration: sign-in Worker configuration (the operator's); its admission truth: its Organization admission object | the registration in configuration; the admission truth in a Durable Object class in `@agent-collaboration/auth` (new), one instance per organization, addressed by the organization's UUID through the namespace's name lookup | `organizationRegistrationSchema` (configuration, new); the object's storage rows and its interface, below (new) | the `organization_id` claim in every E7 and E10; the organization path segment of management calls; the request's chosen organization at sign-in | registration persisted in configuration; admission truth persisted in the object | Zod schema |
+| organization owner (serves `R14`, `R20`) | Organization admission object | the object's `organization_owner` row, at most one (new) | `organizationOwnerSchema` (new) | read inside the object by every owner check; never leaves it except as a `role` in a standing answer | persisted, written once per configured owner email | Zod schema |
+| `E2` Person | Better Auth core; its standing in each organization belongs to that organization's object | D1 `user` table (existing library schema). No status column: a Person is active in an organization exactly while that organization's object reads them admitted | Better Auth's user model (existing) | `sub` in every E7: the Better Auth user id, with subject type `public` (never pairwise) | persisted; standing derived per organization | library schema |
 | `E3` Linked login | Better Auth core | D1 `account` table (existing library schema). Provider access, refresh and ID tokens are never stored | Better Auth's account model (existing) | not exposed to relying services | persisted | library schema |
 | `E4` Passkey | Better Auth passkey plugin | D1 `passkey` table (existing library schema) | the plugin's model (existing) | not exposed; WebAuthn messages between the browser and the Worker only | persisted | library schema |
-| `E5` Session | Better Auth core | D1 `session` table (existing library schema) | Better Auth's session model (existing) | the browser session cookie on the sign-in origin only; `sid` inside E7 and introspection results | persisted | library schema |
-| `E6` Relying service | OAuth provider | D1 OAuth resource and client rows (existing plugin schema) | the plugin's resource and client models (existing) | the `aud` claim; the resource identifier at authorization | persisted | library schema |
-| `E7` Person proof | OAuth provider | issued JWT access token, not stored (existing plugin issuance) | `personTokenClaimsSchema` (the raw claims) and `PersonProof` (what a relying service keeps after verifying), both in `tool-access/contracts` (new) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, sid, jti }`, EdDSA-signed, verifiable through the Worker's JWKS. Inside a relying service: `PersonProof` only | derived | Zod schema, `z.infer` type |
-| `E8` Allowlist entry | Allowlist gate | D1 `allowed_email` table (new) | `allowlistEntrySchema` in the Worker (new) | the admin surface's add, remove and list operations | persisted | Zod schema, `z.infer` type |
-| `E9` Agent client | OAuth provider for the sign-in identity; its admission to an organization belongs to Tool Portal's organization Durable Object | D1 OAuth client row (existing plugin schema), created only through the server-side create API ([oauthClient/index.ts:49](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/oauthClient/index.ts#L49)): confidential; `grant_types` exactly `["client_credentials"]`; `client_credentials_scopes` exactly `["tool-portal:agent"]`, a server-registered scope that delegates no user (required: the token endpoint refuses a client without them, [token.ts:1746](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1746); [client-credentials.ts:22](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/oauthClient/client-credentials.ts#L22)); metadata `{ kind: "agent", organizationId }`; `resources` exactly `[<Tool Portal Worker's resource identifier>]`, which creates the client's one `oauthClientResource` link ([register.ts:1032](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/register.ts#L1032)). Per-client resource enforcement stays on, its default, so a token for any other resource is refused `invalid_target` ([resources.ts:523](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/resources.ts#L523)). Never listed in `cachedTrustedClients`, so every lookup reads D1 ([utils/index.ts:291](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/utils/index.ts#L291)) | `agentClientRegistrationSchema` (Worker, new) | not exposed; the client id is the agent token's `sub` | persisted | Zod schema |
-| `E10` Agent proof | OAuth provider | issued JWT access token, not stored | `agentTokenClaimsSchema` (the raw claims) and `AgentProof`, both in `tool-access/contracts` (new) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, jti, organization_id }` with `sub` and `azp` equal to `client_id`, `scope` containing `tool-portal:agent`, a single-string `aud`, and **no** `sid`. `organization_id` is copied from the E9 client's metadata by `customAccessTokenClaims`, which Better Auth also runs for `client_credentials`, with no user and the client's metadata ([claims.ts:143](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L143), [token.ts:1234](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1234)); the agent never supplies it. Inside a relying service: `AgentProof { deployment, clientId, organizationId, audience, expiresAt }` only | derived | Zod schema, `z.infer` type |
-| audit record (serves `R12`) | Audit writer | D1 `sign_in_audit` table (new) | `signInAuditRecordSchema` in the Worker (new) | the owner's audit list | persisted, append-only | Zod discriminated union |
+| `E5` Session | Better Auth core; its organization is set once by the Admission gate | D1 `session` table (existing library schema) plus one declared additional field, `organizationId` (`input: false`, required, a new column). `session.create.before` sets it from the sign-in's organization; nothing changes it afterwards | Better Auth's session model with `session.additionalFields` (modified) | the browser session cookie on the sign-in origin only; `sid` inside E7 and introspection results | persisted | library schema |
+| `E6` Relying service | OAuth provider | D1 OAuth resource and client rows (existing plugin schema). **Each Tool Portal workspace is one OAuth resource:** `identifier` is the workspace's MCP address; `metadata` is `{ kind: "workspace", organizationId, workspaceId }`; `allowedScopes` is exactly `["tool-portal:agent"]` (this only narrows scopes; it doesn't tell a person from an agent, so the issuance checks below refuse a person's token for a workspace); `customClaims` is null. The agent-client route creates it the first time an agent is added to that workspace; an identifier that already exists with other metadata is a conflict, and nothing is linked | the plugin's resource and client models (existing); `workspaceResourceMetadataSchema` (Worker, new) | the `aud` claim; the resource identifier at authorization | persisted | library schema; Zod schema for our metadata |
+| `E7` Person proof | OAuth provider; its organization comes from the issuing session | issued JWT access token, not stored (existing plugin issuance) | `personTokenClaimsSchema` (the raw claims) and `PersonProof` (what a relying service keeps after verifying), both in `tool-access/contracts` (modified: `organization_id` added) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, sid, jti, organization_id }`, EdDSA-signed, verifiable through the Worker's JWKS. `organization_id` travels from the session to the token through Better Auth's consent reference (see [How the organization reaches the person's token](#how-the-organization-reaches-the-persons-token)). Inside a relying service: `PersonProof` only | derived | Zod schema, `z.infer` type |
+| `E8` Allowlist entry | Organization admission object | the object's `allowed_email` rows, one per address, inside its organization's object only (new) | `allowlistEntrySchema` (moved into the object's module) | the admin surface's add, remove and list operations for one organization | persisted | Zod schema, `z.infer` type |
+| `E9` Agent client | OAuth provider for the sign-in identity; its membership in each workspace belongs to that workspace's Durable Object in Tool Portal | D1 OAuth client row (existing plugin schema), created only through the server-side create API ([oauthClient/index.ts:49](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/oauthClient/index.ts#L49)): confidential; `grant_types` exactly `["client_credentials"]`; `client_credentials_scopes` exactly `["tool-portal:agent"]`, a server-registered scope that delegates no user (required: the token endpoint refuses a client without them, [token.ts:1746](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1746); [client-credentials.ts:22](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/oauthClient/client-credentials.ts#L22)); metadata `{ kind: "agent", organizationId }`; `resources` exactly `[<the first workspace's resource identifier>]` at creation, which creates its first `oauthClientResource` link ([register.ts:1032](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/register.ts#L1032)); each further workspace is one more link (E11). Per-client resource enforcement stays on, its default, so a token for any other resource is refused `invalid_target` ([resources.ts:523](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/resources.ts#L523)). Never listed in `cachedTrustedClients`, so every lookup reads D1 ([utils/index.ts:291](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/utils/index.ts#L291)) | `agentClientRegistrationSchema` (Worker, new) | not exposed; the client id is the agent token's `sub` | persisted | Zod schema |
+| `E10` Agent proof | OAuth provider | issued JWT access token, not stored | `agentTokenClaimsSchema` (the raw claims) and `AgentProof`, both in `tool-access/contracts` (new) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, jti, organization_id, workspace_id }` with `sub` and `azp` equal to `client_id`, `scope` containing `tool-portal:agent`, a single-string `aud` equal to one workspace's MCP address, and **no** `sid`. `organization_id` is copied from the E9 client's metadata by `customAccessTokenClaims`, which Better Auth also runs for `client_credentials`, with no user and the client's metadata ([claims.ts:143](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L143), [token.ts:1234](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1234)); the agent never supplies it. `workspace_id` comes from the requested workspace resource's metadata: Better Auth 1.7.8 passes the requested `resources` to `customAccessTokenClaims` (`resolveAccessTokenClaims`), and our hook reads that one resource's row fresh from D1 and refuses unless it is a workspace of the client's organization. Inside a relying service: `AgentProof { deployment, clientId, organizationId, workspaceId, audience, expiresAt }` only | derived | Zod schema, `z.infer` type |
+| `E11` Workspace link | OAuth provider | D1 `oauthClientResource` row (existing plugin schema), one per agent client and workspace resource. Written by `adminLinkClientResource` and removed by `adminUnlinkClientResource`, both called only by the agent-client route; per-client resource enforcement refuses a token for an unlinked resource `invalid_target` | the plugin's client-resource model (existing) | not exposed; decides which `aud` an agent may ask for | persisted | library schema |
+| audit record (serves `R12`) | for an admission change (owner bound, entry added, removed or re-added): its Organization admission object, in the same storage transaction as the change. For everything else: the Audit writer | the object's `admission_audit` rows; D1 `sign_in_audit` (new), whose rows name their organization | `admissionAuditRecordSchema` (object, new) and `signInAuditRecordSchema` (Worker, modified: `organizationId` on every record that belongs to one) | the owner's audit list for one organization reads both, filtered to that organization | persisted, append-only | Zod discriminated union |
+| refused-sign-in claim (serves `R3`) | Admission gate | D1 `organization_admission_claim`, one row per Person and organization (new) | `organizationAdmissionClaimSchema` (Worker, new) | never leaves the Worker | persisted | Zod schema |
 
 ```ts
 // The access-token claims Better Auth's OAuth provider issues (v1.7.11, oauth-provider/src/token.ts:255-294).
@@ -106,6 +142,7 @@ export const personTokenClaimsSchema = z.looseObject({
   azp: z.string().min(1),
   sid: z.string().min(1).optional(),                   // E5: present only for a token issued within a person's session
   jti: z.string().min(1),
+  organization_id: z.uuid().optional(),                // E12: the issuing session's organization; the person verifier requires it
 });
 export type PersonTokenClaims = z.infer<typeof personTokenClaimsSchema>;
 
@@ -113,45 +150,125 @@ export type PersonTokenClaims = z.infer<typeof personTokenClaimsSchema>;
 export const personProofSchema = z.strictObject({
   issuer: z.url(), subject: z.string().min(1), audience: z.string().min(1),
   sessionRef: z.string().min(1), clientId: z.string().min(1), expiresAt: z.number().int(),
+  organizationId: z.uuid(),                            // R6, R19: the organization the Person signed in to
 });
 export type PersonProof = z.infer<typeof personProofSchema>;
 
 export type PersonProofVerification =
   | { kind: "verified"; proof: PersonProof; freshness: { kind: "signature" } | { kind: "live"; checkedAt: number } }
-  | { kind: "refused"; reason: "malformed" | "wrong-token-type" | "bad-signature" | "wrong-issuer" | "wrong-audience" | "not-a-person" | "expired" | "inactive" }
+  | { kind: "refused"; reason: "malformed" | "wrong-token-type" | "bad-signature" | "wrong-issuer" | "wrong-audience" | "not-a-person" | "no-organization" | "expired" | "inactive" }
   | { kind: "unavailable"; reason: "keys-unreachable" | "introspection-unreachable" };
 
-export const deploymentConfigSchema = z.strictObject({
-  issuer: z.url(),                              // E1 identity
-  mode: z.enum(["private", "public"]),
-  ownerEmail: z.email(),                        // R14: the owner's provider-verified email, set by the owner at deploy time
+// E12 registration, set by the operator. signInConfigurationSchema (existing) replaces its
+// `ownerEmail` and `organizationIds` with `organizations: z.array(organizationRegistrationSchema).min(1)`,
+// refined so no organizationId appears twice.
+export const organizationRegistrationSchema = z.strictObject({
+  organizationId: z.uuid(),                            // the same UUID as Tool Portal's organization (F-82)
+  ownerEmail: z.email().transform((email) => email.toLowerCase()),  // R14: the owner's provider-verified email
 });
+export type OrganizationRegistration = z.infer<typeof organizationRegistrationSchema>;
 
-export const deploymentOwnerSchema = z.strictObject({
-  userId: z.string().min(1),                    // E2 id of the first Person admitted through ownerEmail
+// Inside one organization's object.
+export const organizationOwnerSchema = z.strictObject({
+  ownerEmail: z.email(),                               // the configured address this binding was made for
+  personId: z.string().min(1),                         // E2 that first signed in to this organization with it
   boundAt: z.number().int(),
 });
 
 export const allowlistEntrySchema = z.strictObject({
-  email: z.email(),                             // stored lower-cased; compared only with provider-verified emails
-  personId: z.string().min(1).nullable(),       // E2 this entry admitted; null until it first admits one
-  addedBy: z.string().min(1),                   // E2 id of the administrator, or "deployment" for the seeded owner entry
+  email: z.email(),                                    // stored lower-cased; compared only with provider-verified emails
+  personId: z.string().min(1).nullable(),              // E2 this entry admitted; null until it first admits one
+  addedBy: z.string().min(1),                          // E2 id of the owner, or "configuration" for the seeded owner entry
   addedAt: z.number().int(),
-  removedAt: z.number().int().nullable(),       // null while allowed (E8 state)
+  removedAt: z.number().int().nullable(),              // null while allowed (E8 state)
+});
+export type AllowlistEntry = z.infer<typeof allowlistEntrySchema>;
+
+// Kept in D1 only to guard the cleanup of a refused first sign-in (R3); never read to decide admission.
+export const organizationAdmissionClaimSchema = z.strictObject({
+  personId: z.string().min(1), organizationId: z.uuid(), claimedAt: z.number().int(),
 });
 
+// Our metadata on a workspace's OAuth resource (E6). Read fresh by customAccessTokenClaims and by the final check.
+export const workspaceResourceMetadataSchema = z.strictObject({
+  kind: z.literal("workspace"),
+  organizationId: z.string().min(1),            // the organization the workspace belongs to (F-82)
+  workspaceId: z.string().min(1),               // signed into the agent's token as workspace_id
+});
+
+// Written by an organization's object in the same storage transaction as the change it records.
+export const admissionAuditRecordSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("owner-bound"), personId: z.string(), email: z.string(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("allowlist-added"), actorPersonId: z.string(), email: z.string(), reactivatedPersonId: z.string().nullable(), requestId: z.string(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("allowlist-removed"), actorPersonId: z.string(), email: z.string(), removedPersonId: z.string().nullable(), requestId: z.string(), at: z.number().int() }),
+]);
+export type AdmissionAuditRecord = z.infer<typeof admissionAuditRecordSchema>;
+
+// Written by the Audit writer in D1. organizationId names the organization a record belongs to.
 const credentialChange = z.enum(["passkey-added", "passkey-removed", "login-linked", "login-unlinked"]);
 const clientChange = z.enum(["registered", "updated", "retired"]);
 export const signInAuditRecordSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("owner-bound"), userId: z.string(), email: z.string(), at: z.number().int() }),
-  z.strictObject({ kind: z.literal("allowlist-added"), actorUserId: z.string(), email: z.string(), reactivatedPersonId: z.string().nullable(), at: z.number().int() }),
-  z.strictObject({ kind: z.literal("allowlist-removed"), actorUserId: z.string(), email: z.string(), removedPersonId: z.string().nullable(), revokedSessions: z.number().int(), at: z.number().int() }),
   z.strictObject({ kind: z.literal("relying-service-changed"), actorUserId: z.string(), resource: z.string(), change: clientChange, phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
-  z.strictObject({ kind: z.literal("client-changed"), actorUserId: z.string(), clientId: z.string(), change: clientChange, phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
-  z.strictObject({ kind: z.literal("credential-changed"), actorUserId: z.string(), change: credentialChange, phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
-  z.strictObject({ kind: z.literal("sign-in"), outcome: z.enum(["succeeded", "not-allowed", "failed"]), method: z.enum(["google", "github", "passkey"]), userId: z.string().nullable(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("client-changed"), organizationId: z.uuid(), actorUserId: z.string(), clientId: z.string(), change: clientChange, phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("client-link-changed"), organizationId: z.uuid(), actorUserId: z.string(), clientId: z.string(), resource: z.string(), change: z.enum(["linked", "unlinked"]), phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("credential-changed"), organizationId: z.uuid(), actorUserId: z.string(), change: credentialChange, phase: z.enum(["intent", "outcome"]), requestId: z.string(), succeeded: z.boolean().nullable(), at: z.number().int() }),
+  z.strictObject({ kind: z.literal("sign-in"), organizationId: z.uuid().nullable(), outcome: z.enum(["succeeded", "not-allowed", "failed"]), method: z.enum(["google", "github", "passkey"]), userId: z.string().nullable(), at: z.number().int() }),
 ]);
 ```
+
+`organizationId` on a `sign-in` record is null only when the request named no registered organization. A credential change carries the organization of the session that made it; the passkey or login itself belongs to the Person in every organization.
+
+### The organization admission object
+
+One Durable Object per organization, reached through the Worker's namespace binding by the organization's UUID. It is the only reader and writer of its organization's owner binding, allowlist and admission records. It processes one call at a time, so each call sees every change committed before it. Every call carries the organization's registration from configuration, because the object never reads configuration: on its first call the object seeds an allowed entry for the configured owner email (`addedBy: "configuration"`) in the same transaction.
+
+```ts
+export type OrganizationStanding =
+  | { readonly kind: "admitted"; readonly role: "owner" | "member" }
+  | { readonly kind: "not-admitted"; readonly reason: "never-admitted" | "removed" | "awaiting-owner" };
+
+export type AllowlistChange =
+  | { readonly kind: "add"; readonly email: string }
+  | { readonly kind: "remove"; readonly email: string };
+
+export type AllowlistChangeResult =
+  | { readonly kind: "changed"; readonly change: "added" | "re-added" | "removed"; readonly affectedPersonId: string | null }
+  | { readonly kind: "no-change" }
+  | { readonly kind: "refused"; readonly reason: "not-owner" | "owner-not-admitted" | "owner-mismatch" };
+
+export type OwnerOnlyRead<T> =
+  | { readonly kind: "read"; readonly value: T }
+  | { readonly kind: "refused"; readonly reason: "not-owner" | "owner-not-admitted" | "owner-mismatch" };
+
+export interface OrganizationAdmission {
+  // A sign-in to this organization. Binds the allowed, unbound entry for this verified email to the
+  // Person (and the owner binding when it's the configured owner's), then answers the Person's standing.
+  admitSignIn(input: { registration: OrganizationRegistration; personId: string; verifiedEmail: string | null; at: number }): Promise<OrganizationStanding>;
+  // The Person's standing now. Writes nothing.
+  standing(input: { registration: OrganizationRegistration; personId: string }): Promise<OrganizationStanding>;
+  // Owner only. The owner check, the change and its record are one storage transaction.
+  changeAllowlist(input: { registration: OrganizationRegistration; actorPersonId: string; requestId: string; change: AllowlistChange; at: number }): Promise<AllowlistChangeResult>;
+  readAllowlist(input: { registration: OrganizationRegistration; actorPersonId: string }): Promise<OwnerOnlyRead<readonly AllowlistEntry[]>>;
+  readAdmissionRecords(input: { registration: OrganizationRegistration; actorPersonId: string }): Promise<OwnerOnlyRead<readonly AdmissionAuditRecord[]>>;
+}
+```
+
+- **Standing.** A Person is `admitted` while at least one of this organization's entries is bound to them and every entry bound to them is allowed; `role` is `owner` when the owner binding names them and its email equals the registration's. Until the owner binding exists, every Person except one signing in with the configured owner's email reads `awaiting-owner`.
+- **Owner mismatch.** If the registration's owner email differs from the one the owner binding was made for, nobody holds the owner role and every owner-only call is refused `owner-mismatch`. Members' standing doesn't change. Changing an owner is outside this design; the operator restores the configured email.
+- **Failure.** A call that can't reach the object, or that the object can't complete, is an error to its caller, which refuses. No caller treats an unanswered call as admitted.
+
+### How the organization reaches the session
+
+A Person signs in to an organization the request names. The Admission gate refuses a request that names none, or one that configuration doesn't register, before Better Auth acts.
+
+- **Google and GitHub.** The organization's sign-in page posts `/sign-in/social` with `additionalData: { organizationId }`. A `hooks.before` on that route validates the value against configuration and records it with `addOAuthServerContext({ signInOrganizationId })`, which Better Auth keeps apart from caller-supplied state (installed `better-auth` 1.7.8 `dist/api/state/oauth.mjs:4–38`). At the callback Better Auth parses the state before it reads the provider's profile (`dist/api/routes/callback.mjs:77`, then `:170–203`), so `user.validateUserInfo` and `databaseHooks.session.create.before` both read the organization with `getOAuthState().serverContext.signInOrganizationId`. A callback without it is refused.
+- **Passkey.** When the passkey routes are exposed (the public route list blocks them today), the verify request carries `organizationId` as a query parameter, validated by a `hooks.before` on `/passkey/verify-authentication`; `session.create.before` reads it from the endpoint context.
+- **Into the session.** `session.create.before` asks that organization's object to `admitSignIn` for a Google or GitHub sign-in (with the provider-verified email; it may bind an allowed entry and the owner) or `standing` for a passkey sign-in (which binds nothing: a passkey starts a session only for a Person already admitted there, `R3`, even if their email is allowed there) and, when admitted, returns `{ data: { organizationId } }`, which Better Auth writes with the row (`dist/db/with-hooks.mjs:17–30`; `input: false` is enforced only on client input, `dist/db/schema.mjs:59–77`). A field declared `input: false` refuses client input but is set by this hook.
+- **Another organization.** Signing in again creates a new session and replaces the cookie; Better Auth leaves the earlier session row until it expires (`dist/cookies/index.mjs:167–180`, `dist/db/internal-adapter.mjs:259–331`). `/oauth2/authorize` reuses the browser's current session, so a token always names the organization of the session the browser holds now. To act in another organization, the Person signs in to it.
+
+### How the organization reaches the person's token
+
+`customAccessTokenClaims` doesn't receive the session (installed `@better-auth/oauth-provider` 1.7.8 `dist/introspect-H3uoUiuS.mjs:253–259`; the code stores `referenceId` at `dist/authorize-C95F-9E1.mjs:5711–5724` and the grant passes it on at `dist/introspect-H3uoUiuS.mjs:2028–2042`), so the organization travels on Better Auth's consent reference. `postLogin.consentReferenceId` receives the session at authorization and returns its `organizationId`; Better Auth stores it as the code's `referenceId`, scopes consent by it, and passes it to `customAccessTokenClaims`, which returns `{ organization_id: referenceId }` for a person's token. The final check reads the `sid` session and refuses unless the token's `organization_id` equals the session's `organizationId`. That comparison is also what stops a resource's custom claims, which merge last, from changing it.
 
 Both token shapes live in `tool-access/contracts`, so every relying service verifies the same way. The verifier judges the raw token before projecting it, in this order:
 1. header `typ` is `at+jwt` (`wrong-token-type`);
@@ -159,9 +276,10 @@ Both token shapes live in `tool-access/contracts`, so every relying service veri
 3. `iss` is the expected deployment (`wrong-issuer`, `R5`, `R6`);
 4. `aud` is a single string equal to this service's own resource identifier; any array is refused (`wrong-audience`, `R6`);
 5. `exp` (`expired`);
-6. `sid` is present (`not-a-person`, `R7`). In the stock flow, tokens issued without a person's session, such as `client_credentials` tokens, carry no `sid` and have `sub` set to the client id ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). No extension grant is installed.
+6. `sid` is present (`not-a-person`, `R7`). In the stock flow, tokens issued without a person's session, such as `client_credentials` tokens, carry no `sid` and have `sub` set to the client id ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). No extension grant is installed;
+7. `organization_id` is present (`no-organization`, `R6`). The projected `PersonProof.organizationId` is what a relying service compares with the organization an action belongs to, and refuses on a mismatch (`R19`). Every relying service here (the console and Tool Portal) serves a private deployment's organizations; a relying service of a public deployment, whose proofs name no organization, waits with `SD2`.
 
-**Agent proof (`R15` to `R17`).** Each agent is a registered client (E9) with only the `client_credentials` grant. Its token has `sub` set to its client id and no `sid` ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). A second verifier in `tool-access/contracts`, beside the person verifier, checks steps 1 to 5 as above, then that `sid` is **absent** (`not-an-agent`) and that the client id is a registered, active agent client. It projects an `AgentProof { deployment, clientId, organizationId, audience, expiresAt }` (a token without `organization_id` is `not-an-agent`), or refuses with one of `wrong-token-type`, `bad-signature`, `wrong-issuer`, `wrong-audience`, `expired`, `not-an-agent` or `wrong-scope` (the token's `scope` must contain `tool-portal:agent`). Whether the agent is still admitted is the relying service's own check: Tool Portal answers `removed-agent` from its organization's record. OAuth scopes never replace Tool Portal's own tool authorization. The person verifier keeps requiring `sid`, so an agent proof is never a person proof (`R7`, `R16`). The agent's host keeps the client credential, never a tool argument. Removing the client stops new tokens at once, and Tool Portal's Worker refuses that agent on its next call, because it checks its organization's record on every call (`R17`). Adding and removing an agent, and who coordinates it, is below ([Adding and removing an agent](#adding-and-removing-an-agent-r17)); who may do it is `SD9`.
+**Agent proof (`R15` to `R18`).** Each agent is a registered client (E9) with only the `client_credentials` grant, linked to each workspace it may get tokens for (E11). It asks for a token with exactly one `resource`: the workspace's MCP address. Its token has `sub` set to its client id and no `sid` ([token.ts:1774](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1774)). A second verifier in `tool-access/contracts`, beside the person verifier, checks steps 1 to 5 as above, where step 4's own resource identifier is the address of the workspace being called. It then checks that `sid` is **absent** (`not-an-agent`) and that `workspace_id` names the workspace that address belongs to (`wrong-workspace`). It projects an `AgentProof { deployment, clientId, organizationId, workspaceId, audience, expiresAt }` (a token without `organization_id` or `workspace_id` is `not-an-agent`), or refuses with one of `wrong-token-type`, `bad-signature`, `wrong-issuer`, `wrong-audience`, `expired`, `not-an-agent`, `wrong-workspace` or `wrong-scope` (the token's `scope` must contain `tool-portal:agent`). Whether the agent is still a member is the workspace's own check: Tool Portal refuses a caller its workspace's object doesn't list (Tool Portal check 14). OAuth scopes never replace Tool Portal's own tool authorization. The person verifier keeps requiring `sid`, so an agent proof is never a person proof (`R7`, `R16`). The agent's host keeps the client credential, never a tool argument. Unlinking one workspace stops new tokens for that workspace at once (`R18`), and disabling the client stops them for every workspace (`R17`). The workspace refuses the agent's next call either way, because it checks membership on every call. Adding an agent to a workspace, removing it from one and retiring it, and who coordinates each, are below ([Adding, removing and retiring an agent](#adding-removing-and-retiring-an-agent-r17-r18)); only the organization's owner may do it (`SD9`, decided).
 
 `freshness.kind: "live"` appears only after a live check, with the time that check read the Person and session (`checkedAt`). Tool Portal's `decide` refuses a `signature` result. The apply that changes state ([Tool Portal Program Design, application](../2026-10-14-portable-tool-portal-hosts/program-design.md#2-chat-led-change-propose-decide-apply)) takes effect only while `checkedAt` is within `SD8`, measured at that commit (`R9`).
 
@@ -169,100 +287,170 @@ Relying services request exactly one `resource` and no `openid` scope. Better Au
 
 ## How a person signs in and a decision is checked
 
-There is no current path to compare: the sign-in Worker is new.
+The current path, built in S1 and the workspace cutover (`packages/auth/src/d1-persistence/person-admission-store.ts` at `02c23489`, its nine admission statements), names no organization: the sign-in page posts only the provider, the early and final checks read D1's `allowed_email` and `deployment_owner`, and one configured owner owns every configured organization. The proposed path adds the organization at the start and asks that organization's object at each check:
 
 ```mermaid
 sequenceDiagram
   participant B as Browser
   participant W as Sign-in Worker
+  participant O as O1's admission object
   participant G as Google
   participant C as Console
   participant T as Tool Portal
-  B->>W: sign in with Google
+  B->>W: sign in to O1 with Google (additionalData organizationId O1)
+  W->>W: O1 registered? keep it as OAuth server context
   W->>G: OAuth with Google
   G-->>W: verified email, account id
-  W->>W: gate, session created, final check
+  W->>O: early: may this verified email sign in? (validateUserInfo)
+  W->>O: admitSignIn: bind or confirm (session.create.before)
+  W->>W: session row written with organizationId O1
+  W->>O: final: standing of this Person
+  W-->>B: session cookie, only when admitted
   C->>W: authorize, code and PKCE, resource = Tool Portal
-  W->>W: token signed, final check
-  W-->>C: token, aud = Tool Portal
+  W->>W: consent reference = session's O1, token signed with organization_id O1
+  W->>O: final: standing, with the session row present and its organization O1
+  W-->>C: token, aud = Tool Portal, organization_id = O1
   C->>T: decide, Bearer token
   T->>W: live check (introspection)
-  W-->>T: active, sub, sid, checkedAt
-  T->>T: manager check, apply within SD8
+  W->>O: final: standing
+  W-->>T: active, sub, sid, organization_id, checkedAt
+  T->>T: the change's organization is O1? manager check, apply within SD8
 ```
 
 The edges that cross a boundary carry:
-- **Browser and Worker:** the sign-in session cookie on the Worker's origin.
+- **Browser and Worker:** the sign-in session cookie on the Worker's origin; at the start of a sign-in, the chosen organization's id.
+- **Worker and an organization's object:** a Durable Object RPC call carrying `OrganizationRegistration` and the Person's id, answering `OrganizationStanding` or an `AllowlistChangeResult` ([The organization admission object](#the-organization-admission-object)). Added edge.
 - **Console and Worker:** an authorization request with S256 PKCE, `resource` set to one relying service, and no `openid` scope.
-- **Worker to console:** an E7 (`personTokenClaimsSchema`), released only after the final check.
+- **Worker to console:** an E7 (`personTokenClaimsSchema`, now with `organization_id`), released only after the final check.
 - **Console to Tool Portal:** `Authorization: Bearer <E7>`.
-- **Tool Portal and Worker:** an introspection request, authenticated as Tool Portal's own confidential client, returning `active`, `sub`, `aud`, `exp`, `sid` and `checkedAt`. `active` is true only when the token is valid, its `sid` session exists unexpired, and its Person is active, all as read by the final check.
+- **Tool Portal and Worker:** an introspection request, authenticated as Tool Portal's own confidential client, returning `active`, `sub`, `aud`, `exp`, `sid`, `organization_id` and `checkedAt`. `active` is true only when the token is valid, its `sid` session exists unexpired with the token's organization, and that organization's object reads the Person admitted, all as read by the final check.
 
 The **intentionally unchanged edge** is the controller's Access-gated browser path ([oauth-https-server.ts](../../../packages/agent-vm/src/controller/oauth/oauth-https-server.ts#L167)). It stays until `SD5`.
 
 ## Where a removal or sign-out takes effect
 
 A read before an effect can't fence that effect: a request can pass the read, pause, and act after a removal. So the decisive check runs **after** the effect, in the request handler, before anything leaves the Worker:
-- A **session** counts as issued when the final check, run after Better Auth inserted it, reads the Person as active. The session-create hook records the new session's id for this request. If the final check reads the Person as removed, the handler deletes that session row, clears the cookie, and answers "not allowed".
-- A **person's token** counts as issued when the final check, run after Better Auth signed it, reads both the Person as active and the token's `sid` session as present. On either failure the handler discards the token and answers `invalid_grant`.
-- An **agent's token** (`client_credentials`) counts as issued when the final check, run after Better Auth signed it, reads the agent client as active in D1. Agent clients are never in the trusted-client cache, so that read is current. If it reads the client as removed, the handler discards the token and answers `invalid_client`.
-- An **introspection answer** of `active` is released only when the final check reads both the Person and the `sid` session. Its `checkedAt` is the time of that read.
+- A **session** counts as issued when the final check, run after Better Auth inserted it, reads the session row with its organization and then asks that organization's object, which reads the Person admitted. The session-create hook records the new session's id for this request. If the object reads the Person not admitted, the handler deletes that session row, clears the cookie, and answers "not allowed".
+- A **person's token** counts as issued when the final check, run after Better Auth signed it, reads the token's `sid` session as present and unexpired, finds the token's `organization_id` equal to that session's organization, asks that organization's object, which reads the Person admitted, and finds its audience isn't a workspace resource (metadata `kind: "workspace"`). On a Person, session or organization failure the handler discards the token and answers `invalid_grant`; for a workspace audience it discards the token and answers `invalid_target` (`R6`: no E7 is issued for a workspace).
+- An **agent's token** (`client_credentials`) counts as issued when the final check, run after Better Auth signed it, reads three things fresh from D1: the agent client is active, the requested workspace resource exists with metadata naming the client's organization, and the client's link to that resource still exists. The signed `organization_id` and `workspace_id` must equal what it read. Agent clients are never in the trusted-client cache, so these reads are current. If the client reads as removed or a claim doesn't match, the handler discards the token and answers `invalid_client`. If the link is gone because an unlink committed first, it discards the token and answers `invalid_target`, the same answer Better Auth gives for an unlinked resource.
+- An **introspection answer** of `active` is released only when the final check reads the `sid` session with the token's organization and that organization's object reads the Person admitted. Its `checkedAt` is the time of the object's read.
 
-The removal batch is one D1 transaction. It marks the E8 removed, deletes the sessions of the Person bound to it, and writes the audit record. A Person is active only while every entry bound to them is allowed, so this ends their active state even if they have other allowed entries. Sign-out deletes one session. D1 orders both against the final check's reads, giving three cases:
-1. **The removal commits before the final check.** The check sees it and refuses.
-2. **It commits after the final check but before the session row exists.** That can't happen, because the final check runs after the insert.
-3. **It commits after the final check.** Issuance finished first. The session row already existed, so the batch deletes it.
+**The cutoff is one transaction in the organization's object.** Removing an entry marks it removed and writes its record in one storage transaction. A Person is admitted only while every entry of that organization bound to them is allowed, so this ends their standing there even if another of its entries still lists them. The object answers one call at a time, so every standing read is either ordered before the removal or sees it. Against the final check's read of the object, that gives three cases:
+1. **The removal commits before the final check's read.** The object answers not admitted, and the check refuses.
+2. **It commits after the effect but before the final check's read.** The same: the read comes after the commit.
+3. **It commits after the final check's read.** Issuance finished first, before the cutoff.
 
-So after a removal commits, no session of that Person exists, and no token or `active` answer is issued for them.
+So after a removal commits, no session, token or `active` answer is released for that Person in that organization.
+
+The riskiest interleaving, a token request held in flight while the owner removes that Person:
+
+```mermaid
+sequenceDiagram
+  participant Own as Owner (admin surface)
+  participant O as O1's admission object
+  participant D as D1
+  participant H as Request handler (token request for Alice in O1)
+  H->>H: Better Auth signs Alice's token (organization_id O1)
+  Note over H: held after signing, before the final check
+  Own->>O: changeAllowlist remove alice (owner check, change and record: one transaction)
+  O-->>Own: changed: removed, affectedPersonId Alice
+  Own->>D: delete Alice's O1 sessions (cleanup, retried if it fails)
+  H->>D: final check: read sid session
+  H->>O: final check: standing of Alice
+  O-->>H: not-admitted: removed
+  H-->>H: discard the token, answer invalid_grant
+```
+
+If the session delete had failed, the final check would still refuse at the object's answer: the object, not the delete, is the cutoff.
+
+**Sessions are cleaned up after the cutoff, not inside it.** They live in D1, which the object's transaction can't include. After the object answers `changed: "removed"` with the affected Person, the Admin surface deletes that Person's D1 sessions in that organization. If that delete fails, or a case-3 session lands just after it, the leftover session still can't act:
+- every request that authenticates with a session (passkey registration, consent, linking, unlinking, admin) first asks the session's organization's object for the Person's standing, and refuses unless they're admitted;
+- every final check reads the object again.
+
+A request that read the standing before the removal is ordered before it, as with any read: whatever it writes is recorded (`R12`) and can't produce a session or token. The delete is retried on the owner's retry. It is cleanup that frees rows, not the cutoff.
+
+Sign-out deletes one session in D1. The final checks read `sid`, so a token or `active` answer for that session after the delete is refused.
 
 What this does not do:
 - It does not recall a token issued before the cutoff. That token works for ordinary calls until it expires (`SD3`), and every live check refuses it.
 - It does not apply a decision instantly. A decision whose live check came before the removal applies only within `SD8` of that check.
+- It does not touch the Person's standing or sessions in any other organization (`R4`, `R19`).
 
-It needs every read to see the D1 primary, so read replication stays off for this database.
+It needs every session read to see the D1 primary, so read replication stays off for this database. A Durable Object's storage is strongly consistent for its own calls.
 
 The early checks in Better Auth's hooks remain. They refuse sooner and write less, but correctness rests on the final check.
 
-### Adding and removing an agent (`R17`)
+### A refused first sign-in leaves nothing behind (`R3`)
 
-An agent has two records with two owners. Its sign-in client (E9) lives in the sign-in service's D1 and decides whether it can get a token. Its admission lives in Tool Portal's organization Durable Object and decides whether a call runs. Every intermediate state between the two writes must refuse calls.
+The entry can be removed after the early check: before Better Auth's two writes, between them, or before the bind. In each case the final check refuses, and the request handler deletes the `account` and `user` rows this request created. Those rows must not be deleted if any organization has bound that Person, but the bindings live in organizations' objects, which D1 can't see. So the Admission gate keeps a claim in D1:
+1. Before asking any organization's object to `admitSignIn` a Person, it inserts an `organization_admission_claim` row for that Person and organization, conditional on the `user` row still existing. If the insert finds no user, it asks no object and the sign-in is refused.
+2. If the object then binds nothing, the gate deletes that claim.
+3. The cleanup deletes the `account` and `user` rows only while no claim names that user, in one D1 batch.
 
-**Who coordinates (the Lead's proposal, settled with `SD9`).** Tool Portal's agent-management handler, the route its admin panel calls. It already knows the organization's owner and managers, so it decides who may add or remove an agent. The dependency runs from the relying service to the sign-in service, never back: the sign-in service never calls Tool Portal. Tool Portal's Worker reaches the sign-in Worker through a Cloudflare service binding, on an agent-client route that isn't on the sign-in Worker's public hostname. That route creates or disables only agent clients whose metadata names the calling organization. It writes the change and its audit record, naming the acting Person, in one D1 batch.
+D1 orders the claim insert against the cleanup:
+- **The cleanup commits first.** A competing sign-in's claim insert finds no user, so no object binds it. That sign-in is refused and can retry fresh.
+- **A claim commits first.** The cleanup deletes nothing. If that organization binds the Person, they're an admitted Person there, and a later removal applies `R4`.
 
-**Adding** writes the sign-in client first, then admission. A client that exists but isn't admitted can get a token, but every call is refused (`removed-agent`).
+So no organization's object ever holds a binding to a deleted user. A claim left behind because its delete failed only blocks the cleanup. The rows stay unbound and inactive, the narrow outcome in the Specification's failure table, and the failure is recorded.
 
-**Removing** writes admission first, then the sign-in client:
-1. **Admission removed.** The organization's object marks the agent removed. From then on the Worker refuses the agent's next call, even with a token that hasn't expired, because it checks that record on every call.
-2. **Client disabled.** One D1 batch disables the E9 client and writes its audit record. From then on, no new token is released: the token endpoint refuses the disabled client, and any request already past that point is caught by the final check above.
-3. **Removal complete.** Only the handler reports this, and only after both writes. Neither service reports the whole removal complete after its own write.
+### Adding, removing and retiring an agent (`R17`, `R18`)
 
-**If step 2 fails after step 1,** the agent still can't call any tool, but it could still get tokens. The object keeps the agent as "admission removed, client not yet disabled", and the panel shows the removal as pending. The handler retries the disable on the owner's retry and on each later request to manage that agent, until the sign-in service reads the client as disabled. Both steps are idempotent. This adds no queue or background job. **If step 1 fails,** nothing has changed and the handler reports the failure.
+An agent's records have two owners. Its sign-in client (E9) and its links to workspaces (E11) live in the sign-in service's D1 and decide which workspaces it can get a token for. Its membership lives in each workspace's Durable Object in Tool Portal and decides whether a call there runs. Every intermediate state between the writes must refuse calls.
 
-**A token request racing a removal:**
-1. The request passes the credential check, pauses, and Better Auth signs after the disable commits. The final check reads the client as disabled and discards the token.
-2. A token signed before the disable is still a valid token, but step 1 already happened, so the Worker refuses its first call.
+**Who coordinates.** Tool Portal's agent-management handler, the route its admin panel calls. Only the organization's owner may add or remove an agent (`SD9`, decided); the handler asks the sign-in service whether the acting Person is that organization's live owner before any write, and the agent-client route checks it again itself. The dependency runs from the relying service to the sign-in service, never back: the sign-in service never calls Tool Portal. Tool Portal's Worker reaches the sign-in Worker through a Cloudflare service binding, on an agent-client route that isn't on the sign-in Worker's public hostname. That route touches only workspace resources and agent clients whose metadata names the calling organization. Each write gets a before-change audit record naming the acting Person; if that record can't be written, nothing changes. Better Auth then makes the change, and the route records the outcome and reads back what it wrote before it reports done.
 
-So after removal completes, the agent gets no new token, and every call it makes is refused. Proof keeps three cases apart (Verification J): an old token refused after step 1, a new token refused after step 2, and the state between the two.
+**How the route acts inside Better Auth.** Better Auth's administration calls (creating a resource, creating or disabling a client, linking and unlinking) each need a Better Auth session and request headers before they run, and pass both to the `resourcePrivileges` or `clientPrivileges` callback (Better Auth 1.7.8 `assertResourcePrivileges` and `assertClientPrivileges`, which refuse when either is missing). Neither the service binding nor an acting-person field supplies them. So for every operation the route:
+1. **Verifies the acting Person.** The binding carries the management-audience person token (E7) that Tool Portal's handler already live-checked, never a user id. The route verifies it with the shared person verifier and reads its `sid` session fresh from D1: the session exists and hasn't expired, its user is the token's `sub`, and its organization equals both the token's `organization_id` and the operation's organization. Then it asks that organization's object for the Person's standing, which must be `admitted` with role `owner`. An agent's token (E10), a token without `sid`, a revoked session, a session or token of another organization, a member, or another organization's owner is refused here, before anything is written. The same check answers the binding's `isLiveOwner` and `ownsAgentClient` reads.
+2. **Installs that session for this request only.** It builds a Better Auth instance owned by this request, whose before-hook sets the session it just read as the request's session, so the library's own `getSessionFromCtx` returns it. This is the management session already approved for S1's client calls. The instance is never shared between requests, and the hook can't be reached from the public hostname.
+3. **Checks the organization itself.** The library checks only that the resource and client exist. The route requires the resource's metadata, the client's metadata and the calling organization to name the same organization, and refuses before writing otherwise.
+4. **Writes the before-change record, calls the operation, then records the outcome and reads back** the resource, client, link and both records, as above.
+
+The privilege callbacks apply the admin rule to that installed session: allowed only when its organization is the one named by the resource's or client's metadata and that organization's object reads its user as the admitted owner. These administration calls issue no session or token, so they don't pass through the request handler's final checks; the route's readback is their check.
+
+**Adding an agent to a workspace** writes the sign-in side first, then membership:
+1. **Workspace resource.** The route makes sure the workspace's resource exists, creating it with `{ kind: "workspace", organizationId, workspaceId }` if it doesn't. An existing identifier with other metadata is a conflict, and the request stops with nothing linked.
+2. **Client and link.** If the agent has no client yet, the route creates it with this workspace as its one link and returns the credential. Otherwise it links the existing client to this workspace and returns no credential. It reports done only after reading back the client, the resource, the link and their records.
+3. **Membership.** The handler writes the agent into the workspace's object. Between steps 2 and 3, the agent can get a token for this workspace, but every call there is refused because it isn't a member yet.
+
+**Removing an agent from one workspace** writes membership first, then the link:
+1. **Membership removed.** The workspace's object marks the agent removed. From then on the workspace refuses its next call, even with a token that hasn't expired, because it checks membership on every call.
+2. **Link removed.** The route writes a before-change record, unlinks the client from that workspace's resource (`adminUnlinkClientResource`), records the outcome and reads back that the link is gone. From then on no new token for that workspace is released: Better Auth refuses a request for an unlinked resource with `invalid_target`, and a request already past that point is caught by the final check above. The client stays enabled, and its other links are untouched.
+3. **Removal complete.** Only the handler reports this, and only after both writes.
+
+**Retiring an agent** removes it from every workspace it belongs to, as above, then disables its client:
+1. **Client disabled.** The route writes a before-change record, disables the E9 client (`adminUpdateOAuthClient` with `disabled`), records the outcome and reads it back. From then on no token is released for any workspace: the token endpoint refuses the disabled client, and any request already past that point is caught by the final check.
+2. **Retirement complete.** Only the handler reports this, after every membership is removed and the client reads as disabled. Neither service reports the whole operation complete after its own write.
+
+**If a later step fails after an earlier one,** the agent still can't call any tool where its membership is removed, but it could still get tokens for that workspace (a failed unlink) or for any linked workspace (a failed disable). The workspace's object keeps the agent as "membership removed, sign-in not yet updated", and the panel shows the operation as pending. The handler retries the sign-in write on the owner's retry and on each later request to manage that agent, until the sign-in service reads the link as gone or the client as disabled. Every step is idempotent. This adds no queue or background job. **If the first step fails,** nothing has changed and the handler reports the failure.
+
+**A token request racing an unlink or a disable.** The unlink and the disable are each one D1 write, and the final check reads the link and the client after the token is signed:
+1. A request passes Better Auth's checks, pauses, and Better Auth signs after the unlink or disable commits. The final check reads the link as gone or the client as disabled and discards the token.
+2. A token signed before the unlink or disable is still a valid token, but membership was removed first, so the workspace refuses its first call.
+
+So after removal from a workspace completes, the agent gets no new token for that workspace and every call it makes there is refused, while its other workspaces keep working. After retirement completes, it gets no token at all. Proof keeps the cases apart (Verification J): an old token refused after membership is removed, a new token refused after the unlink or disable, a new token for another workspace still issued, and the state between the writes.
+
+## Cutover from deployment-wide admission
+
+The built Worker holds no real users' data, and no consumer needs the old shape, so the change is one step with no compatibility phase:
+- **Configuration:** `ownerEmail` and `organizationIds` become `organizations: OrganizationRegistration[]`, and the Worker gains one Durable Object namespace binding for the organization admission class, declared as a new SQLite-backed class in its migrations.
+- **D1:** one migration drops `allowed_email` and `deployment_owner`, adds the `session.organizationId` column and the `organization_admission_claim` table, and adds `organizationId` to `sign_in_audit`.
+- **Person tokens:** they gain `organization_id`, and `PersonProof` gains `organizationId`. The person verifier in `tool-access/contracts` and Tool Portal's management route change in the same step: the route compares the proof's organization with the organization in its path, and the sign-in binding's owner checks read the organization's object. A token issued before the cutover has no `organization_id` and is refused (`no-organization`), which affects only local runs.
+- **Owner bootstrap and the owner CLI** name the organization the owner signs in to.
+
+Rollback is reverting that change; no other store holds admission state.
 
 ## Lifecycles
 
 | Entity | States | Transition and guard | Illegal and how it is handled |
 | --- | --- | --- | --- |
-| deployment owner | unbound → bound | Deploy: a seed migration inserts one E8 for `ownerEmail` with `addedBy: "deployment"`. The first Person whose current-person check binds that entry becomes the owner. The binding batch also does a conditional insert into `deployment_owner` (only when empty) and writes an `owner-bound` audit record | until bound, the gate admits only `ownerEmail`, so no one else can sign in first. A second bind attempt writes nothing. Changing the owner is a configuration change and redeploy by the operator |
-| E8 Allowlist entry | allowed ↔ removed | One row per email. The owner adds or removes through the admin surface; the change and its audit record are one D1 batch. **Binding:** see E2 below | Re-adding a removed email sets that same row's `removedAt` back to null and keeps its `personId`. That reactivates the Person if their other entries are allowed (`reactivatedPersonId` in the audit). Adding an email that is already allowed, or removing one that is missing or already removed, returns `no-change` and writes nothing |
-| E2 Person (private) | active ↔ removed, derived | Active exactly while at least one E8 is bound to it and every E8 bound to it is allowed. Removing any bound entry removes the Person (`R4`); re-adding it reactivates them if the rest are allowed | **Binding happens inside the current-person check, never in a user-creation hook.** Better Auth's default D1 setup writes the user and account rows without a transaction, and `user.create.after` runs only after both. When the Person has no bound entry, the check binds the allowed, unbound entry whose email equals the Person's verified email. It uses one conditional update in a D1 batch: `person_id` null, `removed_at` null, and the `user` row still exists; when that entry is the seeded owner entry, the same batch inserts `deployment_owner` if it is empty, and writes `owner-bound`. If the update binds nothing, because the entry was removed or bound elsewhere in the meantime, the Person is inactive and the request is refused.
-
-`user.validateUserInfo` refuses a sign-in or link whose verified email matches no allowed entry. When it already knows the target Person (a returning sign-in or a link), it binds a matching unbound entry to that Person the same way, and refuses if that entry is bound to someone else. If that link then fails, the entry stays bound to the Person, so removing it still removes them, which is the cautious side.
-
-**A refused first sign-in leaves nothing behind (`R3`).** The entry can be removed after the gate's read: before Better Auth's two writes, between them, or before the bind. In each case the final check refuses. The request handler then deletes the `account` and `user` rows this request created, in one D1 batch, before answering "not allowed". `databaseHooks.user.create.after` only records the new user id for that cleanup; it never binds.
-
-**The delete is conditional, at the delete itself:** each statement applies only while no allowlist entry, allowed or removed, is bound to that user. Creating the rows doesn't give this request lasting ownership of them. D1 orders the cleanup against the binding's conditional update, which requires the user to exist:
-- **The cleanup commits first.** A competing sign-in, for example by the same provider account after a re-add, binds nothing and is refused. It can retry and start fresh.
-- **A binding commits first.** It may come from that competing sign-in, or from this request's own check before the removal won. Then the cleanup deletes nothing. The Person is bound, so it is an admitted Person, and the removal applies `R4`: inactive, with sessions deleted.
-
-If the cleanup itself fails, the rows stay unbound and inactive and the failure is recorded, which is the narrow outcome in the Specification's failure table. A passkey attempt still records its challenge and counter before any check runs |
-| E5 Session | active → signed out \| expired \| revoked | sign-out, expiry, or deletion by removal | A deleted session can't yield a token: the final check reads `sid`. There is no offline grant to outlive it, because `offline_access` is never granted, and a refresh grant needs both that scope and client permission ([token.ts:1145](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1145)) (`R13`) |
+| E12 Organization | registered → (operator removes it) unregistered | the operator adds or removes it in configuration and redeploys | a sign-in naming an unregistered organization is refused before Better Auth acts, and every check of a session belonging to one refuses; its object's data stays and is never read |
+| organization owner | awaiting its owner → owned | Inside the organization's object. Its first call seeds one allowed entry for the configured owner email (`addedBy: "configuration"`). `admitSignIn` for a Person whose verified email is that address binds the entry, writes the owner binding and an `owner-bound` record, in one storage transaction | until owned, `admitSignIn` refuses every other Person (`awaiting-owner`), so no one else can sign in first. A second bind attempt writes nothing. If configuration later names a different owner email, nobody holds the owner role (`owner-mismatch`) until the operator restores it; changing an owner is outside this design |
+| E8 Allowlist entry | allowed ↔ removed | One entry per address in one organization's object. The owner adds or removes through the admin surface; the owner check, the change and its record are one storage transaction in the object. **Binding:** inside `admitSignIn`, below | Re-adding a removed address sets that same entry's `removedAt` back to null and keeps its `personId`. That reactivates the Person if their other entries in that organization are allowed (`reactivatedPersonId` in the record). Adding an address that is already allowed, or removing one that is missing or already removed, returns `no-change` and writes nothing |
+| E2 Person (private), per organization | admitted ↔ not admitted, derived by that organization's object | Admitted exactly while at least one of that organization's entries is bound to them and every entry bound to them there is allowed. Removing any bound entry ends their standing there (`R4`); re-adding it restores it if the rest are allowed. Standing in one organization never reads another's | **Binding happens in `admitSignIn`, called from `session.create.before`, never in a user-creation hook.** Better Auth's default D1 setup writes the user and account rows without a transaction, and `user.create.after` runs only after both. When the Person has no bound entry in that organization, the object binds the allowed, unbound entry whose address equals the Person's verified email, after the Admission gate's claim for that Person and organization is in D1 ([A refused first sign-in leaves nothing behind](#a-refused-first-sign-in-leaves-nothing-behind-r3)). If it binds nothing, because the entry was removed or bound to someone else in the meantime, the Person isn't admitted and the request is refused. `user.validateUserInfo` refuses a sign-in or link whose verified email matches no allowed entry of the sign-in's organization; it reads, and binds nothing. A passkey attempt still records its challenge and counter before any check runs |
+| E5 Session | active → signed out \| expired \| revoked | sign-out, expiry, or deletion after its Person's removal from its organization. Its organization is set at creation and never changes | A session whose Person is no longer admitted in its organization can't act even before it is deleted: every use reads that standing first, and every final check reads it again. A deleted session can't yield a token: the final check reads `sid`. There is no offline grant to outlive it, because `offline_access` is never granted, and a refresh grant needs both that scope and client permission ([token.ts:1145](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1145)) (`R13`) |
 | E7 Person proof | valid → expired | time; it can't be individually revoked | its signature still verifies until expiry, so `decide` always performs the live check |
+| E9 Agent client | active → removed (retired) | the agent-client route disables it, after every membership of the agent is removed | a disabled client gets no token for any workspace; re-adding a retired agent is a new registration |
+| E11 Workspace link | linked → unlinked; linked again when the agent is re-added to that workspace | written by the route when the agent is added to the workspace; removed after its membership there is removed | the route refuses a link to a workspace of another organization (metadata mismatch), and the final check refuses a token if one existed (organization mismatch) |
 
 ## Failure, partial success and races
 
@@ -272,11 +460,18 @@ If the cleanup itself fails, the rows stay unbound and inactive and the failure 
 | D1 unavailable | Worker database error | no sessions, proofs or admin changes; every check that can't read refuses | the Worker recovers when D1 does |
 | Introspection unreachable during `decide` | the verifier's call fails or times out | `unavailable`, and `decide` is refused, never accepted | the console retries; nothing applied |
 | Signing key rotated | the key id is unknown to the verifier | the verifier refetches the key set once, then refuses | the Worker's key set |
-| Removal or sign-out races a sign-in or a token request | the final check after the effect | either refused, with the new session deleted or the new token discarded, or issued before the cutoff, in which case the removal deletes the session (see above) | the request handler |
-| A refused first sign-in's cleanup fails | the handler's delete batch errors | its `user` and `account` rows stay unbound and inactive; the failure is recorded | owner review |
+| Removal or sign-out races a sign-in or a token request | the final check after the effect | either refused, with the new session deleted or the new token discarded, or issued before the cutoff, in which case the session is deleted after the removal and can't act meanwhile (see above) | the request handler |
+| An organization's object can't be reached or doesn't answer | the call errors or times out | that organization's sign-ins, tokens, live checks and administration are refused; other organizations are unaffected | the Worker, on the next request |
+| The removal commits in the object but the D1 session delete fails | the admin surface's delete errors | the change stands; the leftover sessions can't act, because every use and every final check reads the object; the owner is told the cleanup is incomplete | the owner's retry |
+| A refused first sign-in's cleanup fails, or its claim delete fails | the handler's batch errors | its `user` and `account` rows stay unbound and inactive; the failure is recorded | owner review |
+| A sign-in names no organization, or one configuration doesn't register | the Admission gate before Better Auth acts | "not allowed"; nothing written except the `sign-in` record | the person |
+| Configuration names a different owner email than the object bound | the object's owner check | owner-only calls refused `owner-mismatch`; members keep working | the operator restores the configured owner |
 | Removal races an in-flight Accept | `checkedAt` against `SD8` at Tool Portal's apply | An Accept whose live check read after the removal committed is refused. One whose check came first applies only within `SD8` (Lead default 5 s) of that check; past it, Tool Portal checks again. Tool Portal's audit names the decider | Tool Portal's `decide` |
-| Admin batch partly fails | a D1 batch error | the whole batch rolls back: no change without its audit record | the owner retries |
+| An allowlist change partly fails | the object's storage transaction errors | the whole transaction rolls back: no change without its record | the owner retries |
 | A before-change audit record can't be written | the request handler's write fails | the request is refused before Better Auth acts, so the change doesn't happen | the person or owner retries |
+| An agent client is written but its resource link or outcome record is missing | the route's readback | registration reads as incomplete: no credential is returned and no membership is written. Without its resource link the client can't get a token (`invalid_target`). The owner's retry completes it; both writes are idempotent | the agent-management handler |
+| A workspace's resource identifier already exists with another organization's or workspace's metadata | the route's ensure step | conflict: nothing is linked and no membership is written | the owner |
+| Membership in a workspace is removed but the unlink fails | the route's error or readback | removal pending: calls there are refused; token requests for that workspace can still succeed until the retry completes | the agent-management handler, on retry |
 | A change happens but its outcome record can't be written | the request handler's second write fails | The change stands, and its before-change record already names the actor, the change kind and the request id. The record is never missing, only unconfirmed | owner review |
 
 ## Security and other qualities
@@ -289,7 +484,7 @@ flowchart LR
   end
   subgraph signin["Sign-in Worker: issues identity"]
     rh["Request handler: final checks"]
-    gate["Allowlist gate"]
+    gate["Admission gate, asks the organization's object"]
     issue["Token issuance (audience-bound)"]
     adm["Admin surface (owner only)"]
   end
@@ -310,22 +505,25 @@ flowchart LR
   - The JWT plugin is supporting infrastructure, not a sign-in method. Its own generic token endpoint is disabled, as the provider's documentation composes it ([oauth-provider.mdx:39](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/docs/content/docs/plugins/oauth-provider.mdx#L39)).
   - Email and password stay disabled. Better Auth's core email routes still exist and answer with their "disabled" error ([sign-in.ts:514](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/sign-in.ts#L514), [sign-up.ts:186](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/sign-up.ts#L186)); nothing is created through them.
   - No magic-link, OAuth-proxy, generic-OAuth or anonymous plugin is installed.
-  - The package is pinned at 1.7.11 or later.
-- **Current-person check (`R3`, `R4`, `R9`, `R13`):** one Allowlist gate module answers "is this Person active, and is this session present". A check that can't read D1 refuses. The final checks are decisive; the early checks only refuse sooner. All attachment points below are at Better Auth v1.7.11:
+  - `better-auth`, `@better-auth/oauth-provider` and `@better-auth/passkey` are pinned at exactly 1.7.11 (no open-ended range). 1.7.11's optional private-key client self-rotation endpoint stays off.
+  - The passkey plugin prefers user verification but doesn't require it (`requireUserVerification: false`). A passkey proves possession of the registered credential; it is not a biometric or PIN step-up.
+- **Current-person check (`R3`, `R4`, `R9`, `R13`):** the Admission gate answers "is this Person admitted in this session's organization, and is this session present" by reading the session from D1 and asking that organization's object. A check that can't read either refuses. The final checks are decisive; the early checks only refuse sooner. All attachment points below are at Better Auth v1.7.11:
 
   | Point | Kind | Attaches at | The library already | The check adds |
   | --- | --- | --- | --- | --- |
-  | Google or GitHub sign-in, account creation, explicit linking by redirect | early | `user.validateUserInfo` ([init-options.ts:955](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L955)); linking passes the target Person ([link-account.ts:67](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/oauth2/link-account.ts#L67)) | nothing for this rule | allowlist match (`R3`), entry binding, an active Person |
-  | session creation, passkey included | early | `databaseHooks.session.create.before` ([init-options.ts:1510](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L1510)); `session.create.after` records the session id for the final check ([with-hooks.ts:82](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/db/with-hooks.ts#L82)) | nothing for this rule | an active Person |
-  | token signing | early | `oauthProvider.customAccessTokenClaims`, awaited before signing ([claims.ts:143](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L143), [token.ts:1230](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1230)) | re-reads the code's user and session ([token.ts:1636](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1636)) | an active Person |
-  | agent token signing (`client_credentials`) | early | the token endpoint's own credential check ([utils/index.ts:762](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/utils/index.ts#L762)) and `customAccessTokenClaims` | refuses a disabled client | the client is a registered agent client (`kind: "agent"`) and still active, read from D1; no Person or session is read |
-  | any response that sets a session cookie | **final** | the request handler, after Better Auth answers | — | the Person is active; otherwise the session is deleted and the response refused |
-  | a person's token response | **final** | the request handler, after Better Auth answers | — | the Person is active and the `sid` session is present; otherwise the token is discarded and the response is `invalid_grant` |
-  | an agent's token response (`client_credentials`) | **final** | the request handler, after Better Auth answers | — | the agent client still reads active in D1, freshly, never from a cache, **and** the signed token's `organization_id` equals that client's freshly read `metadata.organizationId`; otherwise the token is discarded and the response is `invalid_client`. The equality check is needed because a resource's custom claims merge after `customAccessTokenClaims` and could overwrite it ([claims.ts:152](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L152)). No Person or `sid` is required |
-  | an `active` introspection answer | **final** | the request handler, after Better Auth answers | refuses a missing or expired `sid` session ([introspect.ts:233](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/introspect.ts#L233)) | re-reads the Person and the `sid` session, and records `checkedAt` |
+  | Google or GitHub sign-in, account creation, explicit linking by redirect | early | `user.validateUserInfo` ([init-options.ts:955](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L955)); linking passes the target Person ([link-account.ts:67](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/oauth2/link-account.ts#L67)) | nothing for this rule | the sign-in's organization from the OAuth server context, and that organization's object reads the verified email as allowed (`R3`); it binds nothing |
+  | session creation from a Google or GitHub sign-in | early | `databaseHooks.session.create.before` ([init-options.ts:1510](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L1510)); `session.create.after` records the session id for the final check ([with-hooks.ts:82](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/db/with-hooks.ts#L82)) | nothing for this rule | the D1 claim, then the organization's object binds or confirms (`admitSignIn`); sets the session's `organizationId` |
+  | session creation from a passkey sign-in | early | `databaseHooks.session.create.before` ([init-options.ts:1510](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L1510)); `session.create.after` records the session id for the final check ([with-hooks.ts:82](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/db/with-hooks.ts#L82)) | nothing for this rule | the D1 claim, then the organization's object reads the Person's standing (`standing`), binding nothing; refused unless the Person is already admitted there (`R3`); sets the session's `organizationId` |
+  | token signing | early | `oauthProvider.customAccessTokenClaims`, awaited before signing ([claims.ts:143](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L143), [token.ts:1230](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1230)) | re-reads the code's user and session ([token.ts:1636](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1636)) | the Person is admitted in the organization `referenceId` names, and the requested resource isn't a workspace; returns `organization_id` |
+  | agent token signing (`client_credentials`) | early | the token endpoint's own credential check ([utils/index.ts:762](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/utils/index.ts#L762)) and `customAccessTokenClaims` | refuses a disabled client | the client is a registered agent client (`kind: "agent"`) and still active, read from D1; the one requested resource is a workspace of the client's organization, read from D1; no Person or session is read |
+  | any response that sets a session cookie | **final** | the request handler, after Better Auth answers | — | the session's organization's object reads the Person admitted; otherwise the session is deleted and the response refused |
+  | any request that authenticates with a session (passkey registration, consent, linking, unlinking, admin) | early, and the only check these routes need | the request handler, before forwarding | finds the session | the session's organization's object reads the Person admitted; otherwise refused before Better Auth acts |
+  | a person's token response | **final** | the request handler, after Better Auth answers | — | the `sid` session is present with the token's `organization_id`, that organization's object reads the Person admitted, and the audience isn't a workspace resource; otherwise the token is discarded and the response is `invalid_grant`, or `invalid_target` for a workspace audience |
+  | an agent's token response (`client_credentials`) | **final** | the request handler, after Better Auth answers | — | the agent client still reads active in D1, freshly, never from a cache; its link to the requested workspace resource still exists; **and** the signed token's `organization_id` and `workspace_id` equal the client's and that resource's freshly read metadata; otherwise the token is discarded and the response is `invalid_client`, or `invalid_target` when the link is gone. The equality check is needed because a resource's custom claims merge after `customAccessTokenClaims` and could overwrite it ([claims.ts:152](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L152)). No Person or `sid` is required |
+  | an `active` introspection answer | **final** | the request handler, after Better Auth answers | refuses a missing or expired `sid` session ([introspect.ts:233](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/introspect.ts#L233)) | re-reads the `sid` session and its organization, asks that organization's object, and records `checkedAt` |
 
-  - **Why the request handler.** It is last by construction, while a global after-hook can be overwritten by plugin after-hooks ([dispatch.ts:269](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/dispatch.ts#L269)). It covers only HTTP, so nothing in the Worker calls Better Auth endpoints as raw functions.
-  - **Session-authenticated routes need no check of their own.** That covers passkey registration, consent, explicit linking, unlinking and admin. Once a removal commits, no session of that Person exists. A request already in flight, holding a session read before the removal, is ordered before it; whatever it writes is recorded (`R12`) and can't create a new session.
+  - **Why the request handler.** It is last by construction, while a global after-hook can be overwritten by plugin after-hooks ([dispatch.ts:269](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/dispatch.ts#L269)). It covers only HTTP, so nothing in the Worker calls Better Auth's session- or token-issuing endpoints as raw functions. The agent-client route's administration calls issue neither, and its readback checks them.
+  - **Session-authenticated routes check standing first.** Passkey registration, consent, explicit linking, unlinking and admin act with an existing session, which can outlive its Person's removal until it is cleaned up. The request handler asks the session's organization's object before forwarding, so a leftover session can't act. A request already in flight, holding a standing read before the removal, is ordered before it; whatever it writes is recorded (`R12`) and can't create a new session or token.
   - **The ID-token form of `/link-social` is refused** by the request handler. That branch links without calling `validateUserInfo` ([account.ts:250](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/api/routes/account.ts#L250)). Only the redirect form is offered.
 - **Token profile (`R6`, `R7`, `R15`, `R16`):**
   - Relying services request one resource and no `openid`.
@@ -336,13 +534,13 @@ flowchart LR
   - `accountLinking.enabled` stays true so explicit linking still works ([init-options.ts:1212](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/core/src/types/init-options.ts#L1212)).
   - `accountLinking.allowDifferentEmails` is true. Otherwise a login whose verified email differs from the Person's can't be linked at all ([link-account.ts:105](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/better-auth/src/oauth2/link-account.ts#L105)), for example a GitHub account whose primary email differs. In a private deployment the linked login's own email must also match an allowed entry; it then binds to the same Person, and removing either entry stops that Person.
   - A login whose verified email belongs to an existing Person is refused with a "link it from your account" result.
-- **Admin protection (`R3`, `R14`):**
+- **Admin protection (`R3`, `R14`, `R20`):**
   - Better Auth's resource and client administration APIs let any signed-in session act when no privilege callbacks are set.
-  - So `resourcePrivileges` and `clientPrivileges`, and the admin surface's own routes, allow a caller only when it is the bound deployment owner **and** the gate reads that Person as active (`SD1` default: owner only).
+  - So `resourcePrivileges` and `clientPrivileges`, and the admin surface's own routes, allow a caller only when its session belongs to the organization the change concerns (named by the resource's or client's metadata, or by the admin route) **and** that organization's object reads the caller as its admitted owner (`SD1`, `SD9`: owner only). An allowlist change makes that owner check inside the same object transaction as the change. The agent-client route reaches them with the session it installs for the acting Person ([How the route acts inside Better Auth](#adding-removing-and-retiring-an-agent-r17-r18)), and the same rule applies.
   - Dynamic client registration is off.
 - **Audit (`R12`):**
-  - Changes our code writes go in the same D1 batch as their record: allowlist add and remove, reactivation, owner binding, and client and relying-service changes through the admin surface.
-  - Changes Better Auth writes itself get a record before the change. These are passkey added or removed, and login linked or unlinked; the record holds the actor, change kind and request id, and if it can't be written the request is refused. After the response, the handler writes the outcome.
+  - An organization's admission changes (allowlist add and remove, reactivation and owner binding) and their records are one storage transaction in that organization's object. Every record our code writes in D1 names its organization when it belongs to one.
+  - Changes Better Auth writes itself get a record before the change. These are passkey added or removed, login linked or unlinked, and client and relying-service changes, including agent clients (E9). Better Auth's OAuth provider writes a client and its resource link as separate statements, and its D1 adapter runs no transactions ([register.ts:966](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/oauth-provider/src/register.ts#L966), [dialect.ts:184](https://github.com/better-auth/better-auth/blob/f4260a95cddc0a7640f57c37cf624de019df324f/packages/kysely-adapter/src/dialect.ts#L184)), so those changes can't share a batch with our record. The before-change record holds the actor, change kind and request id; if it can't be written, the request is refused. For a passkey or a linked login, the handler writes the outcome after Better Auth's response. For a client change, the agent-client route writes the outcome and reads back the client, its resource link and both records **before** it reports complete or returns a credential; if any of them is missing, it returns "incomplete" and no credential.
   - Sign-in outcomes are recorded by the request handler.
 - **Privacy:**
   - The Worker stores provider account ids, verified email, display name and passkey public keys.
@@ -358,33 +556,34 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | U1 | R1: only Google, GitHub, passkey · C1 | E1–E4 | Better Auth core | Worker sign-in routes; plugin configuration | library models; Worker configuration | none: configuration | other methods create nothing; core email routes answer "disabled" | deployed private Worker: well-formed attempts through every other method create no user, account or session |
 | U1 | R2: provider first, passkeys after (`SD7`) · C1 | E2–E5 | Better Auth core and passkey plugin | sign-in and passkey registration routes | library models | Person and Session created | a failed passkey assertion creates no session | deployed Worker: sign in with Google, register a passkey, sign back in with it |
-| U2 | R3: allowlist gate · C1 | E1–E3, E8 | Allowlist gate | `user.validateUserInfo` at create, link and sign-in; entry binding | `allowlistEntrySchema` (Worker) | entry bound on first admission | "not allowed", nothing written | deployed Worker with test accounts |
-| U2 | R4: removal stops sign-in and decisions · C1 | E2, E5, E7, E8 | Allowlist gate, request handler, admin surface | admin remove; the final check after session, token and introspection effects | `allowlistEntrySchema`, audit record | E8 removed, Person inactive, sessions deleted, one batch | batch failure rolls back; an in-flight issuance is refused or precedes the cutoff | remove, then attempt passkey sign-in, a token and an Accept; and requests held after their effect, before the final check, while the removal commits |
-| U3 | R5: public deployments separate · C2 | E1, E2, E7 | sign-in Worker configuration | separate Worker and D1 | `deploymentConfigSchema` | none | a cross-deployment token is refused | two deployments; cross-present proofs (pending `SD2`) |
-| U4 | R6: proof valid for one service · C1 | E1, E2, E6, E7 | OAuth provider; person-proof verifier | authorize with one resource and no `openid`; verify `typ`, `iss`, single `aud` | `personTokenClaimsSchema`, `PersonProof` (`tool-access/contracts`) | none: derived | `refused` with wrong-audience, wrong-issuer or wrong-token-type | console and Tool Portal exchange each other's real tokens; array-`aud` tokens from `openid` and from two resources |
+| U2, U9 | R3: a Google or GitHub sign-in admits only the organization's allowed emails; a passkey sign-in starts a session only for a Person already admitted there · C1, C5 | E1–E4, E8, E12 | Admission gate; Organization admission object | the sign-in's organization through `addOAuthServerContext`; `user.validateUserInfo` reads the object; for a provider sign-in `admitSignIn` binds in `session.create.before`, for a passkey sign-in `standing` reads and binds nothing; the D1 claim guards cleanup | `organizationRegistrationSchema`, `allowlistEntrySchema`, `organizationAdmissionClaimSchema`, `OrganizationStanding` | entry bound on first admission in that organization | "not allowed", nothing written; an unregistered or missing organization refused before Better Auth acts | deployed Worker with test accounts in two organizations; held cleanup races |
+| U2, U9 | R4: removal from an organization stops sign-in and decisions there · C1, C5 | E2, E5, E7, E8, E12 | Organization admission object (the cutoff); request handler; admin surface | `changeAllowlist` remove; standing read before every session-authenticated request and in every final check; D1 session cleanup after the cutoff | `AllowlistChangeResult`, `OrganizationStanding`, `admissionAuditRecordSchema` | E8 removed and Person not admitted there in one object transaction; sessions there deleted afterwards | transaction failure rolls back; an in-flight issuance is refused or precedes the cutoff; a failed session delete leaves sessions that can't act | remove, then attempt passkey sign-in, a token, an Accept and each session-authenticated route; requests held after their effect while the removal commits; a failed session delete; the Person's other organization unaffected |
+| U3 | R5: public deployments separate · C2 | E1, E2, E7 | sign-in Worker configuration | separate Worker and D1 | `signInConfigurationSchema` | none | a cross-deployment token is refused | two deployments; cross-present proofs (pending `SD2`) |
+| U4, U9 | R6: proof valid for one service, naming the session's organization · C1 | E1, E2, E6, E7, E12 | OAuth provider; person-proof verifier | authorize with one resource and no `openid`; `postLogin.consentReferenceId` and `customAccessTokenClaims` carry the organization; verify `typ`, `iss`, single `aud`, `organization_id` | `personTokenClaimsSchema`, `PersonProof` (`tool-access/contracts`) | none: derived | `refused` with wrong-audience, wrong-issuer, wrong-token-type or no-organization; the final check refuses an `organization_id` that isn't the session's | console and Tool Portal exchange each other's real tokens; array-`aud` tokens from `openid` and from two resources |
 | U4, U6 | R7: proofs stand for people only · C1, C3 | E6, E7 | OAuth provider; person-proof verifier | person clients: authorization code only; the verifier requires `sid` | Worker client registration; `personTokenClaimsSchema` | none | a token without `sid` is refused as not-a-person | present a token issued without a person's session at Tool Portal |
 | U1, U4 | R8: explicit linking only · C1 | E2, E3 | Better Auth core; request handler | `disableImplicitLinking`; the ID-token linking form refused | library models | link created only by explicit redirect linking | refusal says how to link | second provider with the same email; an ID-token link attempt |
-| U2, U4 | R9: live check for privileged decisions · C1 | E2, E5, E7 | person-proof verifier; request handler; Tool Portal `decide` | introspection answered after the final check; `checkedAt` within `SD8` at the apply | `PersonProofVerification` with `freshness.kind: "live"` | none | `unavailable`, signature-only or stale means refused | revoke a session, then Accept; hold an Accept past `SD8` between its check and apply |
+| U2, U4 | R9: live check for privileged decisions · C1 | E2, E5, E7, E12 | person-proof verifier; request handler; Tool Portal `decide` | introspection answered after the final check, which asks the session's organization's object; `checkedAt` within `SD8` at the apply | `PersonProofVerification` with `freshness.kind: "live"` | none | `unavailable`, signature-only or stale means refused | revoke a session, then Accept; hold an Accept past `SD8` between its check and apply |
 | U6 | R10: machines and VMs never use sign-in · C3 | E1, E7 | sign-in Worker configuration | no machine or VM clients registered | none: absence | none | none: not applicable | machine and VM access with the Worker offline |
-| U5 | R11: owner's Workers and D1, no vendor · the deployment configuration contract | E1 | sign-in Worker configuration | deployment configuration | `deploymentConfigSchema` | none | none: not applicable | inspect the deployment configuration |
-| U7 | R12: every change recorded, no secrets · C1 | E2–E4, E6, E8 | Audit writer; request handler | one batch for our changes; a before-change record for Better Auth's changes | `signInAuditRecordSchema` (Worker) | append-only | no change without a record; an unwritable before-change record refuses the change | drive every change kind in `R12`, read the records, hold an audit-write failure, search for planted secrets |
+| U5 | R11: owner's Workers and D1, no vendor · the deployment configuration contract | E1 | sign-in Worker configuration | deployment configuration, with one Durable Object namespace for organizations | `signInConfigurationSchema` | none | none: not applicable | inspect the deployment configuration |
+| U7, U9 | R12: every change recorded with its organization, no secrets · C1 | E2–E4, E6, E8, E12 | Organization admission object (admission changes); Audit writer; request handler | one object transaction for an admission change and its record; a before-change record for Better Auth's changes | `admissionAuditRecordSchema` (object), `signInAuditRecordSchema` (Worker) | append-only | no change without a record; an unwritable before-change record refuses the change | drive every change kind in `R12`, read the records, hold an audit-write failure, search for planted secrets |
 | U2, U4 | R13: sign-out ends new proofs · C1 | E5, E7 | OAuth provider; request handler | no `offline_access`; the final check reads `sid` | library models | Session signed out | none: not applicable | sign out, then request a token and introspect an earlier one; a token request held after signing while sign-out commits |
-| U2 | R14: the configured owner is the first administrator · C1 setup | E1, E2, E8 | Allowlist gate | seed entry for `ownerEmail`; conditional owner bind | `deploymentConfigSchema`, `deploymentOwnerSchema` | owner bound once | anyone else's first arrival is "not allowed" | fresh deployment: another account first, then the owner |
-| U8 | R15–R17: agents sign in as themselves; agent proof is never person proof; removal stops new proofs and the next call · C4 | E9, E10 | OAuth provider; agent-client route; agent verifier; Tool Portal's agent-management handler and Worker caller check | `client_credentials` only for agent clients; agent verifier requires no `sid` and an active client; the person verifier requires `sid` | `agentTokenClaimsSchema`, `AgentProof` (`tool-access/contracts`) | E9 active or disabled; admission listed or removed; removal pending or complete | `refused` with wrong-audience, not-an-agent, not-a-person, wrong-scope or removed-agent; `invalid_client` at the token endpoint; removal `pending` when the second write fails | V11, observation J: registration readback, forbidden grant, warm removal, between-writes, held races |
+| U2, U9 | R14: each organization's configured owner is its first administrator · C1 setup, C5 | E1, E2, E8, E12 | Organization admission object | seeded entry for the registration's `ownerEmail`; owner binding in `admitSignIn` | `organizationRegistrationSchema`, `organizationOwnerSchema` | awaiting its owner → owned, once per configured email | anyone else's first arrival in that organization is "not allowed" (`awaiting-owner`); a changed configured email gives `owner-mismatch` | freshly registered organization: another account first, then the owner; a second organization still awaiting its owner while the first is owned |
+| U9, U2 | R19: organizations kept apart · C5 | E2, E5, E7, E8, E12 | Organization admission object (one per organization); Admission gate; person-proof verifier; relying services | standing read only from the session's organization's object; `PersonProof.organizationId` compared with the action's organization | `OrganizationStanding`, `PersonProof` | each organization's state in its own object; a session's organization fixed at creation | a proof or session of another organization refused; one organization's object unavailable refuses only that organization | two organizations sharing a Person: remove in one, act in the other; cross-present proofs; one object made unavailable |
+| U9, U2, U8 | R20: only the organization's owner administers it · C4, C5 | E2, E8, E9, E11, E12 | Organization admission object (owner check); admin surface; agent-client route | `changeAllowlist`, `readAllowlist`, `readAdmissionRecords` check the owner in the object; the route checks session organization, token organization and owner standing | `AllowlistChangeResult`, `OwnerOnlyRead` | owner binding read inside each call | `refused` with not-owner, owner-not-admitted or owner-mismatch, nothing changed or listed | a member, the other organization's owner, an agent and a self-removed owner each try every owner action |
+| U8 | R15–R18: agents sign in as themselves, for one workspace at a time; agent proof is never person proof; unlinking one workspace stops its new proofs; retirement stops all; the next call is refused · C4 | E6, E9, E10, E11 | OAuth provider; agent-client route; agent verifier; Tool Portal's agent-management handler and Worker caller check | `client_credentials` only for agent clients, one workspace `resource` per request; agent verifier requires no `sid`, the workspace's own audience and a matching `workspace_id`; the person verifier requires `sid` | `agentTokenClaimsSchema`, `AgentProof`, `workspaceResourceMetadataSchema` | E9 active or disabled; E11 linked or unlinked; membership listed or removed; an operation pending or complete | `refused` with wrong-audience, wrong-workspace, not-an-agent, not-a-person or wrong-scope, or a non-member refused by the workspace; `invalid_target` for an unlinked or foreign workspace and `invalid_client` for a disabled client at the token endpoint; `pending` when a second write fails | V11, V12, observation J: registration and link readback, forbidden grant, two workspaces and another organization's, warm removal from one workspace, retirement, between-writes, held races |
 
 Coverage:
-- R1–R14 are covered by the rows above.
-- E1–E8 are bound in the entity table, with the deployment owner and the audit record as design-only bindings serving `R14` and `R12`.
-- C1–C3 are cited in the rows.
-- V1–V10 go to the Verification Design.
+- R1–R20 are covered by the rows above.
+- E1–E12 are bound in the entity table, with the organization owner, the audit records and the refused-sign-in claim as design-only bindings serving `R14`/`R20`, `R12` and `R3`, and our workspace resource metadata serving `R15`.
+- C1–C5 are cited in the rows.
+- V1–V14 go to the Verification Design.
 
 ## Open items that change this design
 
-- **`SD1`:** who administers the allowlist. The default is the deployment owner only.
 - **`SD2`:** whether the public deployment is built now or after the private one. The Lead proposes private first; until the owner decides, U3 stays in scope.
 - **`SD3`:** the token lifetime bound, which sets how long ordinary use survives a removal. The resource's access-token TTL is set from it.
 - **`SD5`:** moving existing controller grants to new identities. Until decided, the controller keeps Cloudflare Access.
 - **`SD6`:** measured CPU on Workers Free.
 - **`SD7`:** passkey-first registration.
 - **`SD8`:** how old a decision's live check may be at its apply.
-- **`SD9`:** who may register and remove an agent's sign-in. The Lead proposes owner and managers.
+- **Changing an organization's owner** is outside this design: a changed configured email refuses owner-only calls (`owner-mismatch`) until the operator restores it.

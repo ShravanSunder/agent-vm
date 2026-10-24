@@ -13,7 +13,7 @@ agent-vm has two libraries for tools today: `@agent-vm/tool-portal` and `@agent-
 
 This work has two parts:
 1. **Take them apart** into pieces with one job each, and put agent-vm back together on those pieces. **Behaviour stays the same.** No new features.
-2. **Run the MCP proxy on a deployed, secured Cloudflare Worker.** The owner added this on 2026-10-20, and it's the one new thing. It brings organizations, three kinds of tools and analytics with it, described under "What changes".
+2. **Run the MCP proxy on a deployed, secured Cloudflare Worker.** The owner added this on 2026-10-20, and it's the one new thing. It brings organizations and their workspaces, the kinds of tools and analytics with it, described under "What changes".
 
 **Why take them apart:**
 - each piece can be understood, tested and changed on its own;
@@ -50,7 +50,7 @@ This work has two parts:
 
    When agent-vm runs on the new pieces, the old `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` are deleted. Deleting the packages doesn't change any of the three ways in.
 
-2. **The proxy shows tools one of two ways, chosen for each client.** Each organization's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself, which the client's address says (`?tools=direct`):
+2. **The proxy shows tools one of two ways, chosen for each client.** Each workspace's portal connects to its tool servers when it starts. What it shows depends on whether the connecting client loads tool definitions lazily itself, which the client's address says (`?tools=direct`):
    - **The client defers (`client-deferred`), so it gets `direct`:** every tool the agent may use is listed as its own MCP tool, and the search tools are offered as well and work. This was "catalog", which listed only the tools; offering the search tools too is a deliberate change.
    - **The portal defers (`portal-deferred`), so it gets `indirect`:** only the search tools are offered (list, search, describe, call), and the agent reaches every tool through them. This was "compact".
    - **Exactly these two cases.** A client not known to defer gets `portal-deferred`. Either way the agent reaches the same tools, under the same permissions and approvals.
@@ -58,25 +58,26 @@ This work has two parts:
 
 3. **A deployed, secured Cloudflare Worker** serves the MCP proxy's way in, with the same tools, results and approval token as the proxy on a machine.
    - **It refuses every caller it can't identify,** and it tells agents apart. Agents sign in with our own login, Better Auth, not Cloudflare Access.
+   - **Each workspace has its own MCP address on it, and a token is for one workspace** (F-73, F-75). One deployment serves many workspaces.
    - **Sign-in comes into this work.** The sign-in service (`@agent-collaboration/auth`, [people sign-in](../2026-10-20-people-sign-in/requirements.md)) runs Better Auth in its own Worker and gives people and agents tokens for the tool Worker. Its design now adds agents signing in as themselves (its `U8` and `R15` to `R17`), awaiting independent review.
    - **Cloudflare is for machines only.** The Worker reaches registered computers through Cloudflare (Tunnel and Access), like Tailscale.
    - **Its limits fit Workers and Durable Objects,** within the paid Workers plan the owner pays for.
    - **When one Worker or one Durable Object isn't enough,** the work can be split across several (sharding), once measurement shows it's needed.
    - Things a Worker can't run (stdio servers, configured CLIs, Tool VMs) stay on the Node host and agent-vm.
 
-4. **Organizations, for sign-in only.** You belong to an organization to reach anything inside it. It has two roles:
-   - the **owner**, who decides who may sign in and handles auth settings, nothing more;
-   - **members**.
+4. **Organizations contain workspaces** (F-82).
+   - **An organization decides who may sign in.** You belong to an organization to reach anything inside it. It has two roles: the **owner**, who decides who may sign in and handles auth settings, nothing more; and **members**. Each organization has its own Durable Object, which holds who belongs to it and its sign-in settings; the logins themselves are kept by the sign-in service. Being the owner grants no tool access and no access to anyone's personal accounts.
+   - **A workspace is the portal's unit.** Each workspace belongs to exactly one organization and has its own MCP address, members, tools, rules and token scope (F-73, F-75). An agent reaches a workspace's tools only as its member (F-69, F-71). The first deployment has one organization.
+   - **Agents are the members, each under its own identity** (F-77): a bot signs in as itself (the [sign-in service's](../2026-10-20-people-sign-in/requirements.md) agent sign-in); a Router agent is vouched for by its Router session. How the Router vouches isn't designed yet.
 
-   Each organization has its own Durable Object, which holds who belongs to it and its sign-in settings; the logins themselves are kept by the sign-in service. Being the owner grants no tool access and no access to anyone's personal accounts.
-
-5. **Three kinds of tools, by whose credentials they use:**
+5. **Four kinds of tools, by whose credentials they use and what they're for:**
 
    | Kind | What it is | When it can be built |
    | --- | --- | --- |
-   | **Organization tools** | remote MCP servers set up for the organization, called with the organization's credentials. Today's proxy already does this with its configured servers and secret headers. | in this work |
+   | **Workspace tools** | remote MCP servers set up for the workspace, called with the workspace's credentials (F-73). Today's proxy already does this with its configured servers and secret headers. | in this work |
    | **Per-user tools** | a person's own account, such as their Google account, that its owner has consented to a specific agent. It uses today's permission model: the owner's consent, Deny/Ask/Allow for reads and writes, and one-call approvals. An agent always acts with its own access; "on behalf of" is only a label in the log (fleet F-35). | next, after the first version; the design must not block it |
    | **Computer tools** | an MCP server on a registered computer or VM, which the Worker reaches through Cloudflare (Tunnel and Access), like Tailscale. The Worker never runs them. | next, after the first version; the design must not block it |
+   | **Collaboration tools** (owner, 2026-10-22) | the fleet's own agent-collaboration MCP, which facilitates collaboration between agents and people: boards, threads, messages and sessions. It acts as the calling agent itself, so the agent's own identity has to reach the fleet. Neither an organization credential nor a person's account can stand in for it | not yet scoped; the design must not block it. How the agent's identity reaches the fleet is open, and is shared with the fleet's agent-identity question (fleet Q-C11) |
 
 6. **Analytics and observability.**
    - Each call sends one data point to Cloudflare Workers Analytics Engine: who called, which tool, the outcome and the timing. Analytics Engine samples data, which the owner accepted, so it's a view of usage, not a complete history.
@@ -90,7 +91,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - Fleet and Router integration, including fleet-issued agent tokens.
 - Routing calls between machines in the fleet. The Worker reaching a computer's own MCP server is a computer tool, above.
 - A stored record of every call, and recovery of calls after a restart. Today's servers keep no such record.
-- Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.
+- ~~Workspaces and per-workspace allowances. They're a separate layer inside an organization, for later.~~ **Superseded on 2026-10-22:** the workspace is now the portal's unit (see below).
 - A full audit trail of permission and security changes.
 - An agent acting with someone else's accounts. "On behalf of" stays a label in the log (fleet F-30, F-35).
 - A control API for proposing and deciding changes.
@@ -111,7 +112,7 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
 - **Limits:** "make sure caps are reasonable for limits and fit worker/durable objects (i pay for workers)".
 - **Scaling:** "we can have shards if we need it and workers need to split up".
 - **Analytics and observability:** "analytics and metrics for analytics engine". Sampled data is fine. "observability looks like cf has stuff already, we use that".
-- **Three kinds of tools:** "tools that are org specific", "tools that are per user with auth", and "computer tools with vm etc".
+- **Four kinds of tools:** "tools that are org specific", "tools that are per user with auth", and "computer tools with vm etc" (2026-10-20). The fourth, named 2026-10-22: "it was the agent collaboration / fleet mcp", "that facilitated collaboration".
 - **Organizations:** "organizations are isolated for auth only"; "you have owner and org members. that's it. owners can allow people to log in or allow auth related stuff"; "segregated by durable objects".
 - **Secrets:** from Cloudflare's secrets (Worker secrets or Secrets Store) or 1Password service-account tokens.
 - **Agent identity:** "the agent needs to auth as itself or on behalf of someone else".
@@ -132,7 +133,25 @@ Pruned by the owner on 2026-10-20. Several of these **were** asked for at differ
     - **Codex** 0.163.0 speaks it only with its `mcp_2026_07_28` feature turned on, plus a per-server marker for stdio servers ([features](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/features/src/lib.rs#L1541)).
     - **Our Portal SDK clients** (Node and Python) move to the new SDKs.
     - **Clients on MCP SDK v1** can't connect.
-  - **Whether our own connections out to tool servers must also be 2026-07-28** is question 8.
+  - **Our own connections out to tool servers reach each server on whatever MCP version it speaks** (question 8, answered 2026-10-22). Only what we serve to client agents is 2026-07-28 only.
+
+## Owner decisions on 2026-10-22: the workspace is the unit
+
+These replace the 2026-10-20 line that put workspaces "for later". The fleet framework records them as F-69 to F-76; the Lead's local data-map explainer (`docs/wip/2026-10-22-data-map/`, kept out of the repository) shows the data they change.
+
+- **Each workspace has its own MCP** (F-73): "mcp is per workspace". An agent connects to the MCP of each workspace it belongs to. The workspace is the endpoint, not an argument on a call.
+- **Auth is per workspace** (F-75): "auth is per works pace". An agent's token is scoped to one workspace and means nothing at another. This doesn't choose a new token issuer.
+- **An agent has no access of its own** (F-71): "we arent creating any internal bots with its own access, its all vai workspace". In a workspace it belongs to, an agent has that workspace's tools, which its persona may narrow. Per agent we store only who it is, which workspaces it belongs to and its persona.
+- **External agents get only agent-collaboration** (F-72, F-75): "external agents only have access to agent collaboration". Internal or external is decided per workspace by membership (F-69); internal and external agents alike reach resources only through mediation (F-70).
+- **Every agent works through agent-collaboration** (F-74): "man agents go through agent-collaboration".
+- **Agents join workspaces, and the fleet knows each workspace's members, machines and agent-collaboration** (F-76). The portal reads membership from the fleet, and from configuration until the fleet carries it (F-53).
+- **Agents are the members, each under its own identity** (F-77): "no but i have session ids for agents on myk router" / "for bots and hermes they can log into the cloud system and attest themselfs we need a bot login then no?". A Router agent is vouched for by its Router session; a bot signs in once and gets a separate token for the fleet and for each workspace's portal.
+- **No bot or Router agent may use the admin console** (F-78): "both shokdul not be able to ttokuch teh admin console".
+- **The admin console uses an interactive sign-in, like the Cloudflare CLI, checked on every command** (F-79): "the admin concols shoudl allow a auth flow liek cloduflare cli does per command etc". How strong the human check must be is still open.
+- **"Room" names where an agent runs** (F-80): open room (a whole machine), walled-off corner (a read-fenced sandbox), locked room (a VM). Rooms are placement, not membership; which rooms a workspace allows is still open.
+- **An organization contains workspaces** (F-82, 2026-10-23): "organization contaisn workspaces". The organization decides who may sign in; each workspace inside it is the portal's unit (its own MCP endpoint, members, tools, profiles and token scope) and belongs to exactly one organization.
+
+What this changes in the design: today's code calls the portal's unit an *organization* (one Durable Object, one configuration, one admitted-agent list, one MCP endpoint). That unit becomes the workspace; its admitted-agent list is the workspace's membership; and a profile belongs to the workspace instead of being assigned to each agent. An organization contains workspaces (F-82). The Specification and Program Design haven't been revised for this yet.
 
 ## Questions for the owner
 
@@ -144,7 +163,7 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
    - the **auto** mode, with its judge (D-9), once where the judge runs (T-16) is settled;
    - **approved until a time** (temporary grants);
 
-   The admin panel is in the first version (owner, 2026-10-20). The Lead reads the first version as keeping each organization's configuration in its database, as versions, which the panel changes with no redeploy.
+   The admin panel is in the first version (owner, 2026-10-20). The Lead reads the first version as keeping each workspace's configuration in its database, as versions, which the panel changes with no redeploy.
 7. **Does an agent ever act on behalf of a person?** Fleet F-35 says "on behalf of" is only a label, and an agent never uses a requester's accounts. On 2026-10-15 you said approval and control are "per agent, or on behalf of user". The design follows F-35 until you say otherwise.
 
 1. **Answered on 2026-10-20:** agents reach the Worker directly and sign in with Better Auth, not through Cloudflare's MCP Portal or Access (see owner decisions).
@@ -153,11 +172,7 @@ Questions 1, 2 and 5 were answered on 2026-10-20; 3 and 4 stand as assumed.
 4. **Do you want to retire either of today's standalone approval paths?** There are two: the standalone Tool Portal's signed batch approval, and the MCP proxy's signed approval token. Each serves its own way in, so the design keeps both.
 
 5. **Answered on 2026-10-20:** a URL parameter, `?tools=direct` (see owner decisions).
-8. **May the portal still call tool servers that speak only 2025-era MCP?** Your direction covers the MCP we serve. Our connections out to tool servers are a separate choice, because those servers aren't ours.
-   - **The Lead recommends no:** connect only with 2026-07-28. A server that hasn't upgraded is refused when the portal starts, with a clear reason, and none of its tools are offered. It matches "only", and it keeps one protocol to prove.
-   - **It costs:** any configured tool server that still speaks only 2025 MCP stops working until it upgrades.
-   - **The alternative:** let each configured server fall back to 2025 MCP until a set date.
-   - **Waits on this:** the connector part of the SDK move. The MCP routes we serve can move first.
+8. **Answered on 2026-10-22: yes.** In your words: "downstream servers can be whatever, we should connect"; "2026-07-28 only" meant from us to client agents. DeepWiki, which speaks only up to 2025-11-25, is "super important" and must keep working. The Perplexity local server is no longer used, so it's out of scope. This replaces the Lead's earlier "no" recommendation.
 
 **Deploying the Worker** uses the owner's existing Cloudflare CLI login (`wrangler`, already signed in on this machine). Nothing more is needed from the owner for it.
 9. **What should aborting a Portal SDK call over HTTP do?** Today the SDK cancels the work, then keeps the response open for a short grace period to collect the call's final result (`resultGraceAfterAbortMs`). MCP 2026-07-28 over HTTP cancels by closing that request's stream, so both can't happen at once (checked with a real SDK test in S3d).
