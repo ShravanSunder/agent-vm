@@ -13,7 +13,7 @@ export function recordBatchCallAnalytics(props: {
 	readonly organizationId: string;
 	readonly workspaceId: string;
 	readonly workspaceName: string;
-	readonly agentClientId: string;
+	readonly principalKey: string;
 	readonly mode: 'direct' | 'indirect';
 	readonly input: unknown;
 	readonly result: PortalBatchResult;
@@ -77,7 +77,7 @@ export function recordBatchCallAnalytics(props: {
 				organizationId: props.organizationId,
 				workspaceId: props.workspaceId,
 				workspaceName: props.workspaceName,
-				agentName: props.agentClientId,
+				agentName: props.principalKey,
 				mode: props.mode,
 				serverName: known ? call.namespace : 'unknown',
 				toolName: known ? call.toolName : 'unknown',

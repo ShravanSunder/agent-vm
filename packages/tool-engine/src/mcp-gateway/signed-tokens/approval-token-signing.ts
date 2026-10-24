@@ -33,6 +33,7 @@ export async function signAudienceScopedApprovalToken(
 ): Promise<string> {
 	assertApprovalTokenAudience(props.audience);
 	const payload = {
+		// Hosted callers supply their canonical principal key here.
 		agentId: props.agentId,
 		calls: [...props.calls],
 		exp: props.expiresAtMs,

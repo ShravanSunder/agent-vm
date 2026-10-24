@@ -24,6 +24,7 @@ export interface HostedMcpProxy {
 
 export interface HostedMcpProxyPorts {
 	readonly verifier: AgentTokenVerifier;
+	readonly sessionClientId: string;
 	readonly toolPortalOrigin: string;
 	readonly workspaces: HostedWorkspaces;
 	readonly configurations: WorkspaceConfigurationSource;

@@ -59,6 +59,7 @@ it.each([200, 100])(
 				},
 			});
 			const proxy = createHostedMcpProxy({
+				sessionClientId: 'central',
 				toolPortalOrigin: 'https://portal.invalid',
 				verifier: hostedAgentVerifier({
 					deployment: upstream.url,

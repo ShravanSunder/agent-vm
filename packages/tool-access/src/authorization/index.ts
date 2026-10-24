@@ -6,3 +6,4 @@ export * from '#tool-access/authorization/portal-access-policy';
 export * from '#tool-access/authorization/tool-selector-policy';
 
 export * from '#tool-access/authorization/mcp-profile-resolution';
+export * from '#tool-access/authorization/workspace-principal-identity';

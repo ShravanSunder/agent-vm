@@ -1,3 +1,4 @@
+import { workspacePrincipalKey } from '@agent-collaboration/tool-access/authorization';
 import {
 	createAgentTokenVerifier,
 	type AgentTokenVerifier,
@@ -66,26 +67,28 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			const matched = /^\/workspaces\/([^/]+)\/mcp$/u.exec(new URL(request.url).pathname);
 			const selected = z.uuid().safeParse(matched?.[1]);
 			if (!selected.success) return Response.json({ error: 'not-found' }, { status: 404 });
+			let admissionContext: HostedWorkspaceContext;
+			try {
+				admissionContext = await workspaceContext(selected.data);
+			} catch {
+				return callerRefusalResponse({ kind: 'unavailable', reason: 'admission-unavailable' });
+			}
 			const caller = await checkHostedCaller({
+				organizationId: admissionContext.configuration.organizationId,
+				sessionClientId: props.sessionClientId,
 				workspaceId: selected.data,
 				toolPortalOrigin: props.toolPortalOrigin,
 				request,
 				verifier: props.verifier,
-				workspaces: props.workspaces,
 			});
 			if (caller.kind !== 'verified') {
 				log({ event: 'caller-refused', reason: caller.reason });
 				return callerRefusalResponse(caller);
 			}
-			const pendingContext = workspaceContext(caller.workspaceId);
-			// Preserve the existing SDK error path for failed configuration reads;
-			// a readable but unassigned profile is an admission refusal before MCP handling.
-			const admissionContext = await pendingContext.catch(() => undefined);
-			if (admissionContext !== undefined) {
-				if (admissionContext.configuration.portal.profiles[caller.persona] === undefined) {
-					log({ event: 'caller-refused', reason: 'profile-unassigned' });
-					return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
-				}
+			const persona = caller.persona.kind === 'named' ? caller.persona.name : '';
+			if (admissionContext.configuration.portal.profiles[persona] === undefined) {
+				log({ event: 'caller-refused', reason: 'profile-unassigned' });
+				return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
 			}
 			const mode = toolLoadingMode(resolveToolLoading(request.url));
 			const requestId = props.newId();
@@ -96,7 +99,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 			let catalogError: PortalCatalogPreparationError | undefined;
 			const handler = createMcpHandler(
 				async () => {
-					const context = await pendingContext;
+					const context = admissionContext;
 					const engine = await createWorkspaceEngine({
 						workspaceId: caller.workspaceId,
 						configuration: context.configuration,
@@ -115,13 +118,16 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 					)
 						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
-						agentClientId: caller.agentClientId,
-						persona: caller.persona,
+						principal: caller.principal,
+						persona,
 						invoke: limits.invoke,
 						consumeTokenId: async (tokenId, expiresAtMs) =>
 							props.workspaces
 								.forWorkspace(caller.workspaceId)
-								.consumeApprovalToken(`${caller.agentClientId}:${tokenId}`, expiresAtMs),
+								.consumeApprovalToken(
+									`${workspacePrincipalKey(caller.principal)}:${tokenId}`,
+									expiresAtMs,
+								),
 					});
 					closeGateway = requestEngine.close;
 					if (mode === 'direct' && request.headers.get('Mcp-Method') === 'tools/list')
@@ -137,7 +143,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 								organizationId: caller.organizationId,
 								workspaceId: caller.workspaceId,
 								workspaceName: engine.configuration.workspaceName,
-								agentClientId: caller.agentClientId,
+								principalKey: workspacePrincipalKey(caller.principal),
 								mode,
 								input,
 								result,
@@ -188,10 +194,12 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 export function hostedAgentVerifier(props: {
 	readonly deployment: string;
 	readonly jwksUrl: string;
+	readonly now?: () => number;
 }): AgentTokenVerifier {
 	return createAgentTokenVerifier({
 		deployment: props.deployment,
 		jwksUrl: new URL(props.jwksUrl),
+		...(props.now === undefined ? {} : { now: props.now }),
 	});
 }
 

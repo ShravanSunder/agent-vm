@@ -25,6 +25,7 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 		await authority.setMembership('sender', 'fixture');
 		const events: CallAnalytics[] = [];
 		const proxy = createHostedMcpProxy({
+			sessionClientId: 'central',
 			toolPortalOrigin: 'https://portal.invalid',
 			verifier: hostedAgentVerifier({
 				deployment: upstream.url,
@@ -88,7 +89,7 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 					server.requestInit === undefined ? {} : { requestInit: server.requestInit },
 				),
 		});
-		const bearer = await upstream.sign();
+		let bearer = await upstream.sign();
 		async function rpc(
 			method: string,
 			params: Readonly<Record<string, unknown>> = {},
@@ -149,7 +150,7 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 			{ name: 'read', arguments: { value: 'plain-node' }, credential: 'Bearer fixture-credential' },
 		]);
 		const approval = await signApprovalToken({
-			agentId: 'sender',
+			agentId: '["bot","22222222-2222-4222-8222-222222222222"]',
 			key: new Uint8Array(32).fill(0x12),
 			jti: 'one-use',
 			issuedAtMs: nowMs,
@@ -173,7 +174,11 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 		};
 		const first = await rpc('tools/call', ask);
 		expect(JSON.stringify(first)).toContain('effect:ask:approved');
-		expect(await store.read('approval-uses-v1')).toEqual({ 'sender:one-use': nowMs + 60_000 });
+		expect(await store.read('approval-uses-v1')).toEqual({
+			'["bot","22222222-2222-4222-8222-222222222222"]:one-use': nowMs + 60_000,
+		});
+		// The second credential is the same principal and cannot get another use.
+		bearer = await upstream.sign('credential-two');
 		const replay = await rpc('tools/call', ask);
 		expect(JSON.stringify(replay)).toContain('approval_token_invalid');
 		expect(JSON.stringify(replay)).toContain('replayed');
@@ -181,8 +186,66 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 			{ name: 'read', arguments: { value: 'plain-node' }, credential: 'Bearer fixture-credential' },
 			{ name: 'ask', arguments: { value: 'approved' }, credential: 'Bearer fixture-credential' },
 		]);
+		// Two sessions share central's OAuth client, but never share approval authority.
+		const session = {
+			kind: 'fleetHarnessSession',
+			session_ref: {
+				installation: '33333333-3333-4333-8333-333333333333',
+				harness_endpoint: 'codex-local',
+				conversation_id: 'session-one',
+			},
+			machine_environment: { kind: 'physical' },
+			project_id: 'project-one',
+			isolation: { kind: 'host', instance_id: 'launch-one' },
+		};
+		const sessionApproval = await signApprovalToken({
+			agentId:
+				'["fleetHarnessSession","33333333-3333-4333-8333-333333333333","codex-local","session-one"]',
+			key: new Uint8Array(32).fill(0x12),
+			jti: 'session-use',
+			issuedAtMs: nowMs,
+			expiresAtMs: nowMs + 60_000,
+			calls: [
+				{
+					namespace: 'provider',
+					toolName: 'ask',
+					argumentsHash: await hashCallArguments({ value: 'session-approved' }),
+				},
+			],
+		});
+		const sessionCall = {
+			name: 'mcp_portal_call',
+			arguments: {
+				portalApprovalToken: sessionApproval,
+				calls: [
+					{
+						id: 'session',
+						namespace: 'provider',
+						toolName: 'ask',
+						arguments: { value: 'session-approved' },
+					},
+				],
+			},
+		};
+		bearer = await upstream.sign('central', {
+			principal: {
+				...session,
+				session_ref: { ...session.session_ref, conversation_id: 'session-two' },
+			},
+		});
+		expect(JSON.stringify(await rpc('tools/call', sessionCall))).toContain('agent-mismatch');
+		expect(upstream.effects).toHaveLength(2);
+		bearer = await upstream.sign('central', { principal: session });
+		expect(JSON.stringify(await rpc('tools/call', sessionCall))).toContain(
+			'effect:ask:session-approved',
+		);
+		expect(JSON.stringify(await rpc('tools/call', sessionCall))).toContain('replayed');
+		expect(upstream.effects).toHaveLength(3);
 		expect(events.map((event) => [event.toolName, event.outcome])).toEqual([
 			['read', 'ran'],
+			['ask', 'ran'],
+			['ask', 'needs approval'],
+			['ask', 'needs approval'],
 			['ask', 'ran'],
 			['ask', 'needs approval'],
 		]);

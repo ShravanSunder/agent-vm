@@ -1,5 +1,6 @@
 import {
-	createPortalAgentIdentity,
+	createWorkspacePrincipalIdentity,
+	workspacePrincipalKey,
 	portalAgentScopeKey,
 	mcpPortalCallPolicyDecision,
 } from '@agent-collaboration/tool-access/authorization';
@@ -148,7 +149,7 @@ export async function createWorkspaceEngine(props: {
 		configuration,
 		refresh,
 		settledCatalog: () => settledCatalog,
-		gatewayFor: ({ agentClientId, persona, consumeTokenId, invoke }) => {
+		gatewayFor: ({ principal, persona, consumeTokenId, invoke }) => {
 			const profile = configuration.portal.profiles[persona];
 			if (profile === undefined) throw new Error('Agent profile unavailable.');
 			const resolvedProfile = resolveHostedProxyProfile(profile);
@@ -165,11 +166,8 @@ export async function createWorkspaceEngine(props: {
 					hiddenToolsByAgent: {},
 				},
 			});
-			const identity = createPortalAgentIdentity({
-				agentId: agentClientId,
-				agentScopeId: agentClientId,
-				source: 'mcp-proxy-bearer',
-			});
+			const identity = createWorkspacePrincipalIdentity(principal);
+			const principalKey = workspacePrincipalKey(principal);
 			const scope = portalAgentScopeKey(identity);
 			const runtime = createRequestRuntime();
 			const backend: ToolBackend<BackendKind> = {
@@ -205,8 +203,8 @@ export async function createWorkspaceEngine(props: {
 				caller: {
 					identity,
 					authority: props.workspaceId,
-					principal: agentClientId,
-					verifiedContextRef: agentClientId,
+					principal: principalKey,
+					verifiedContextRef: principalKey,
 				},
 				hostBinding: { workspaceLayer: 'not-configured', config: revision },
 				sessions,
