@@ -146,6 +146,18 @@ erDiagram
 | R26 | Every interaction between the fleet, the sign-in service and the Tool Portal MUST use one versioned contract whose meaning does not depend on the host. Each service MUST behave the same on Cloudflare and on a non-Cloudflare host. | all | U16, O5 |
 | R27 | Every request between the fleet, the sign-in service and the Tool Portal (C7) MUST be authenticated as coming from that edge's one expected caller, for that one operation, to the receiving service. A request from another caller, for another operation or another receiving service, with an expired credential, or naming an organization or workspace its caller may not act for, MUST be refused and change nothing. Repeating an accepted request MUST have no further effect beyond what C7 states for that operation. | all | U13, U15, U16 |
 
+### Storage, hosts and tests (the sign-in service)
+
+The Tool Portal's version of these rules is the [Tool Portal remediation](../2026-10-24-tool-portal-remediation/specification.md) design's. These obligations cover the sign-in service.
+
+| ID | Obligation | Entities | Traces to |
+|---|---|---|---|
+| R29 | All of the sign-in service's persistent state MUST be in SQLite reached through Drizzle: D1 through Drizzle on Cloudflare, a `better-sqlite3` file through Drizzle on Node. Better Auth MUST reach it through its Drizzle adapter. Its schema MUST change only through migrations `drizzle-kit` generates and the repository checks in; each database MUST apply them through exactly one mechanism before it serves a request. No Kysely, hand-written SQL string, or `node:sqlite` MAY appear in the sign-in service's code or tests. | E3, E5, E11, E18 | U22 |
+| R30 | Every sign-in rule (the token-kind dispatch, the final checks before a token is released, the person admission request to the fleet, the service request receivers, the audit) MUST live in one runtime-free core. The core MUST reach storage, time, identifiers, cryptography and outbound requests only through capabilities its host supplies, and each capability is required. The Cloudflare host and the Node host MUST each supply them and add no sign-in rule. This realizes R26 for the sign-in service. | E3, E5, E11, E18 | U23, U16 |
+| R31 | Each decision that writes more than one row MUST hold without an interactive transaction, because D1 has none: it MUST be either one conditional statement, or a fixed batch whose later statements stay correct when an earlier conditional statement changes no row. A decision MUST NOT read a row in code and then write on the strength of that read. In particular: cleaning up a refused first sign-in MUST NEVER delete a Person another sign-in has claimed, and a repeated claim for the same Person and organization MUST succeed without error. | E3 | U22, U16 |
+| R32 | Every identifier the sign-in service mints for a record it stores (including Better Auth's model identifiers) MUST be a UUIDv7. Secret material (client secrets, session tokens, PKCE verifiers, signing keys) MUST stay random secret bytes, never a UUID. | E3, E5 | U24 |
+| R33 | No sign-in test MAY read the wall clock or wait on real time to decide an outcome. Time-dependent behaviour, including the expiries Better Auth computes itself, MUST be exercised with a controlled clock, and no production build MAY be changed to make that possible. The sign-in service's tests MUST include Hegel property tests of at least: the token-kind dispatch over every client kind, grant and resource; the claim-and-cleanup ordering of R31; and the token claims' parse round-trip. | E11, E18 | U25 |
+
 ## Observable contracts
 
 ### C1 Workspace token
@@ -284,6 +296,11 @@ Each request is authenticated as R27 states. A credential is accepted only by th
 | V17 | R23 | A session's isolation record, with its instance ID and machine environment, is in its record and its token, and each machine's shared bucket is shown. Nothing is refused for isolation. | It is missing, or isolation blocks a call. | U18 |
 | V18 | R26 | The same obligations pass with each service on Cloudflare and on a non-Cloudflare host. | Behavior differs by host. | U16 |
 | V19 | R27, C7 | Each C7 request from its expected caller, for its operation, to its receiver, is accepted, including with a newly rotated key during its overlap. The wrong caller, operation or receiver, a body naming an organization or workspace the caller may not act for or the receiver doesn't host, a malformed body, an expired credential and a withdrawn or unknown key are each refused with nothing changed. A repeat has only the effect C7 states, including for credential provisioning and disabling and person admission. | A request is accepted from the wrong caller, for another operation or out-of-scope organization, or with a withdrawn key, or a repeat changes more than C7 allows. | U13, U15, U16 |
+| V21 | R29 | The sign-in service runs on D1 and on a `better-sqlite3` file through Drizzle and Better Auth's Drizzle adapter; a database created from the checked-in migrations serves every sign-in, token and receiver case; a scan finds no Kysely, `.prepare(` SQL string or `node:sqlite`. | Raw SQL or Kysely remains, or a database serves before its migrations run. | U22 |
+| V22 | R30 | The same sign-in suite passes on the Cloudflare host and the Node host, and a core run with recording capabilities shows every time, identifier, crypto and outbound use went through them. | A rule lives in one host, or the core reaches a platform global. | U23, U16 |
+| V23 | R31 | Many concurrent first sign-ins and cleanups for the same Person never delete a claimed Person; a repeated claim succeeds; each multi-row decision gives the same result on D1 and on `better-sqlite3`. | A claimed Person is deleted, a repeated claim errors, or a decision holds on one database only. | U22 |
+| V24 | R32 | Every identifier the service stored during the sign-in suite parses as version 7, and no secret is a UUID. | A version-4 identifier, or a UUID used as a secret. | U24 |
+| V25 | R33 | A scan of the sign-in tests finds no wall-clock read or real-time wait; expiries are crossed by moving a controlled clock; the three Hegel families exist and run. | A test depends on real time, or an expiry is only tested by waiting. | U25 |
 | V20 | R28, R7 | Every collaboration effect is checked before it takes effect on each path that produces it: a board write on the holding Router and forwarded to it, a direct message sent or replied, and the fleet's workspace, board, repository, project-directory and decision-record writes. A refused effect leaves nothing stored or delivered. A conversation registered for one project is refused for another; resending its original registration changes nothing; a Router restart mid-registration leaves one registration and no effect before it completes. | An effect is stored or delivered before admission on any path, or one conversation holds two registrations. | U7, U8, U19, U6 |
 
 ## Coverage
@@ -311,6 +328,10 @@ Each request is authenticated as R27 states. A credential is accepted only by th
 | U19 | E7 | P1 | O1 | R3, R28 | C5 | V3, V20 |
 | U20 | E1, E3 | — | — | R5, R10, R13 | C7 | V9, V19; the sign-in design's own proof |
 | U21 | E2, E4, E6, E15, E17 | — | — | R13 | C4 | V9 |
+| U22 | E3, E5, E11, E18 | — | O5 | R29, R31 | — | V21, V23 |
+| U23 | E3, E5, E11, E18 | — | O5 | R30 | C7 | V22 |
+| U24 | E3, E5 | — | — | R32 | — | V24 |
+| U25 | E11, E18 | — | — | R33 | — | V25 |
 
 ## What this replaces
 
@@ -321,7 +342,7 @@ These earlier rules change. Each is superseded only where stated.
 | People sign-in **R10** ("this service MUST NOT issue proofs to machines or VMs") | It still issues no proof that identifies a machine. It does issue workspace tokens for sessions, requested through the fleet. |
 | People sign-in **R15**, **E9**, **E10**, **E11** (an agent client signs in as itself and gets a proof for a linked workspace) | Bots keep this as E4 and E5, with membership from E8. Sessions never sign in (R2). The workspace link E11 is replaced by E8 membership. |
 | People sign-in **R17**, **R18** (removal refuses "on its next call" by a stored-record check) | Removal is pushed (R19–R21), with grant expiry as the backstop. |
-| **D2** location ("per-organization Durable Object in the sign-in service") | The meaning is kept: each organization is isolated and its owner decides who may sign in. Storage follows U15 (the fleet holds organizations) and is bound in Program Design. People sign-in R9, R19 and R20 carry over unchanged to the fleet's admin (R13). |
+| **D2** location ("per-organization Durable Object in the sign-in service") | The meaning is kept: each organization is isolated and its owner decides who may sign in. Storage follows U15 (the fleet holds organizations): the per-organization Durable Object the owner asked for ("did i not alrayd say per organization dcurable object?", 2026-10-24) is the fleet's organization authority object, one per organization, bound in Program Design. The sign-in service keeps people's logins, sessions and credentials in D1. People sign-in R9, R19 and R20 carry over unchanged to the fleet's admin (R13). |
 | **F-75** ("external agents get agent-collaboration only") | A bot may be a member of one workspace when the admin picks it (U5). Every other relationship stays collaboration-only. |
 | The fleet's "context" lookup (a session's workspace from its working directory) | A session's workspace is its project's workspace (R7). The lookup may remain as a convenience; it never decides membership. |
 | Tool Portal workspace unit, #262 (membership store and agent-management route) | Membership comes from the token (R15, R17) and removal notices. The per-workspace store keeps approval replay state and removal notices. Management moves to the fleet admin (R13). |

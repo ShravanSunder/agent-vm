@@ -1,5 +1,7 @@
 # Build the sign-in service
 
+> **Superseded (2026-10-24).** This plan was built from (S1, PR #263) and is a record only. The remaining sign-in work is planned from the revised [agent identity](../../2026-10-24-agent-identity/program-design.md) and [people sign-in](../program-design.md) designs and ordered by the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.md) design. In particular, its promise that a failed agent registration can be retried to obtain a usable credential no longer holds: a lost one-time secret is never recovered, and the credential is retired and provisioned anew through Fleet central.
+
 One `@agent-collaboration/auth` Worker per deployment runs Better Auth on D1. The first delivery registers an agent through the Gateway's owner-only management handler, obtains a real E10, and runs a Gateway tool with it. Sign-in owns the credential; the Gateway owns tool admission. The controller keeps Cloudflare Access.
 
 **Status: accepted by the Lead for S1, with the Decision A ruling below (2026-10-21).** S1 still needs the owner's permission for the new package's tsconfig before it starts. S2–S6 keep their named preconditions (F-56 UI view, the real `decide` target, OAuth test apps and identities). S7 stays gated on the owner's D1–D3.

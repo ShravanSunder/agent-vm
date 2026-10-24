@@ -376,10 +376,14 @@ flowchart LR
   S["Session's Router"] -- "direct message or task" --> A["Fleet central:<br/>admit or refuse"]
   S -- "board write, holds the project" --> A
   S -- "board write, forwarded" --> H["Router holding<br/>the project"] --> A
-  S -- "start a conversation" --> A
+  S -- "board role claim or change" --> A
   S -- "Fleet write" --> A
-  A -- "admit" --> E["Stored, delivered or started"]
+  S -- "start a conversation" --> R["the session's own Router:<br/>named project, own workspace only"]
+  A -- "admit" --> E["Stored or delivered"]
+  R -- "allowed" --> ST["Started; central checks the machine's allowance at registration"]
 ```
+
+Since the owner's simplification (2026-10-24), a conversation start is checked by the Router itself, not by Fleet central; Fleet central admits every other effect, including a board role change.
 
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|

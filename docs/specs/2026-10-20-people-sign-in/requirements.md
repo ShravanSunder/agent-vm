@@ -52,7 +52,7 @@ Priority: `U1`, `U2`, `U4`, `U6`, `U7` and `U9` first (private apps). `U3` (publ
 
 - **In:** people's sign-in for our apps, to an organization in a private deployment, and agents signing in as themselves (`U8`); the proof each relying service receives; removing a person's access to an organization; the record of who may sign in to each organization.
 - **Reused:** Better Auth, self-hosted, pinned at exactly 1.7.11; Cloudflare Workers and D1; Google and GitHub as identity providers; Cloudflare for machine access.
-- **Owner-set limit (`U9`):** each organization's owner and its list of who may sign in live in that organization's own Durable Object in the sign-in Worker. People's logins, passkeys and sessions stay in the deployment's D1.
+- **Owner-set limit (`U9`):** each organization's owner and its list of who may sign in live in that organization's own Durable Object. Since the [agent identity](../2026-10-24-agent-identity/requirements.md) design (U15, 2026-10-24), that object is Fleet central's organization authority, one per organization, which this service asks; it is no longer a class inside the sign-in Worker. People's logins, passkeys and sessions stay in the deployment's D1, reached through Drizzle (identity U22).
 - **Not in:**
   - email and password, magic links, other providers, SSO or SAML;
   - identities for machines or VMs (fleet decision D2 and Tool Portal E12/E13);
