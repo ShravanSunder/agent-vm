@@ -32,7 +32,7 @@
   <ex-step to="requirements--needs" icon="users">Your rule: stream or spill, no cap (U14).</ex-step>
   <ex-step to="specification--known-defects-findings-and-deployed-failures-fixed" icon="book-open">What must hold: R26.</ex-step>
   <ex-step to="program-design--large-requests-r26" icon="path">The evidence, the design, and the first observation to take.</ex-step>
-  <ex-step to="requirements--open-owner-decisions" icon="question">The tradeoff you decide: RD7.</ex-step>
+  <ex-step to="requirements--open-owner-decisions" icon="users">The tradeoff you decide: RD7, platform memory as the bound or a much larger bounded-memory design.</ex-step>
   <ex-step to="verification-design--u14-large-requests-streamed-not-capped" icon="test-tube">How it will be proven.</ex-step>
 </ex-presentation>
 
@@ -50,7 +50,7 @@ The Tool Portal code in PR #262 works, but it was built on choices you never mad
 - **RD4:** whether an end-to-end test may keep a timeout that can only fail a hung process.
 - **RD5:** removing the 26 scripts #262 added to the gates.
 - **RD6:** the Node host's state directory, written by agent-vm's effective-config writer.
-- **RD7:** large requests with no Portal cap, accepting isolate memory as the bound.
+- **RD7:** large requests with no Portal cap. Streaming removes one copy but doesn't bound memory: accept isolate memory as the bound (a huge request can end other calls in that isolate), or commission a bounded-memory design. [The decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd7) draws both.
 
 Each one's recommendation is in [Requirements: open owner decisions](#requirements--open-owner-decisions).
 

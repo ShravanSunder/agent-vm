@@ -53,7 +53,12 @@ flowchart TB
 **R1 — Every rule lives in the core.** (U1)
 The Portal core (E1) implements every Tool Portal rule and decision: caller admission, the workspace boundary, persona narrowing, the `direct` and `indirect` cases, search and describe, dispatch through the one dispatcher, approval checks and one-use, removal fencing, today's limits, result and error projection, secret redaction, and the analytics data point. A host (E2) implements none of them.
 - **Pass:** the same scenario gives the same outcome on the Cloudflare host and the Node host: the same tools listed, the same results, the same refusals with the same codes, the same approval outcomes, and the same analytics data point.
-- **Fail:** any scenario whose outcome differs between hosts, or any rule implemented in a host's own code.
+- **The one allowed difference: host-supplied limit values.** The rule that enforces a limit is the core's; the value is the host's. Today's values stay as the Tool Portal design sets them (checks 8 and 15):
+  - On the Worker: 50 calls per batch, 6 in flight, 4 MiB per upstream response and 16 MiB per reply (`tool-host-cloudflare/src/worker-limits.ts` at `2dfea38e`), and its approval-use cap.
+  - On Node: none of the first four, and its own approval-use cap.
+
+  A scenario that crosses a limit passes when each host gives its own expected answer: a refusal on the Worker and a normal result on Node.
+- **Fail:** any scenario whose outcome differs between hosts other than by a host-supplied limit value; any rule implemented in a host's own code; a Worker limit added to Node, or removed from the Worker.
 - **Unchanged:** the standalone Tool Portal's routes (its `tool_portal_*` MCP tools and its JSON route) and stdio stay on the Node host only, as the Tool Portal design says; they too dispatch through the core.
 
 **R2 — The Node host runs the core.** (U1)
@@ -65,6 +70,7 @@ The Node host composes the same core the Cloudflare host composes, including the
 The core reads time, mints identifiers, performs cryptographic operations (digests, signing, verification, key import), schedules timers, reaches other services and writes logs and analytics only through capabilities (E3) its host supplies. Every capability is required.
 - **Pass:** a core built with a fixed clock, a seeded identifier source and fixed key material produces byte-identical outputs on repeated runs.
 - **Fail:** any core code path that falls back to a platform clock, a platform random source, a platform crypto global, or a platform timer when a capability is missing, such as `props.now ?? Date.now()`.
+- **Rules stay out of capabilities:** a capability performs one platform operation and decides nothing. How long an issuer's key set is trusted (at most 5 minutes, per the identity design) and when it is fetched again is a core rule on the clock capability. **Fail:** a key-set cache or refetch rule inside a capability adapter, running on the adapter's own clock.
 
 ## `storage`: Drizzle on SQLite
 
@@ -75,7 +81,12 @@ The core defines the workspace store's operations in domain terms, with typed in
 
 **R5 — The databases the owner chose, and nothing else.** (U3)
 On Cloudflare the workspace store (E4) is the workspace's Durable Object SQLite, reached through Drizzle's Durable Object driver. On Node it is a `better-sqlite3` database file, reached through Drizzle's `better-sqlite3` driver.
-- **Fail:** any use of the Durable Object key-value API (`get`, `put`, `list`, `delete`, `transaction` on key-value storage), `node:sqlite`, an SQL string written by hand outside generated migrations, or Kysely, in Tool Portal storage.
+- **What "no hand-written SQL" means:** every store statement is built with Drizzle's query builder. Drizzle's `sql` template is allowed only as an expression inside a query-builder call, with its values bound as parameters, for example `max(...)` in an upsert's `set` or an `insert … select` condition. Executing SQL text is forbidden.
+- **Fail:** any use, in Tool Portal storage, of:
+  - the Durable Object key-value API (`get`, `put`, `list`, `delete`, `transaction` on key-value storage);
+  - `node:sqlite` or Kysely;
+  - executing SQL text: `sql.raw(`, `ctx.storage.sql.exec(`, `db.run(sql…)`, `db.all(sql…)`, `db.get(sql…)` or `db.values(sql…)`, or a driver's own `.prepare(` or `.exec(`;
+  - an SQL string outside generated migrations.
 
 **R6 — Generated, checked-in migrations, applied once.** (U3, U4)
 The store's schema changes only through migrations that `drizzle-kit` generates and the repository checks in. Each physical database applies them through exactly one migration mechanism, in order, before it serves its first request. A database at an older schema version upgrades when opened.
@@ -98,12 +109,13 @@ Each of these decisions is atomic on every database the hosts use:
 - **Arming a batch approval:** a reserved batch approval moves to armed, or to proven-not-dispatched, at most once.
 - **Expiry is part of the decision:** the store decides expiry in the same atomic step, against one time that never goes down. An Approval presented at or after its expiry by that time is refused as expired and is never accepted as a first use, reserved or armed. This holds when the request was held between verification and the store, when the verifier's clock is ahead of or behind the store's, and when a host clock later steps back. A pruned record therefore never lets its Approval be used again.
 - **One workspace per database:** a store refuses every decision when its database belongs to another workspace.
-- **Fail:** two first uses of one Approval; a second effect from one Approval after its record was pruned; a removal mark lowered by a late notice; a batch approval armed twice; a decision that holds on one driver and not another; one database serving two workspaces.
+- **A removal reaches the tokens it names:** a removal notice and a token for the same bot, the same session or the same machine are matched by one canonical subject key. A machine's removal covers every session token on that machine.
+- **Fail:** two first uses of one Approval; a second effect from one Approval after its record was pruned; a removal mark lowered by a late notice; a batch approval armed twice; a decision that holds on one driver and not another; one database serving two workspaces; a removal recorded under one encoding of a subject and read under another, so that it never covers the token.
 
-**R9 — No approval comes back to life at the storage change.** (U3, U5)
-When the workspace store moves from the key-value layout to the SQLite layout, no Approval used before the move is accepted again after it.
-- **Pass:** either every unexpired used-approval record is carried into the new store, or every Approval token issued before the move fails verification after it.
-- **Fail:** a token used before the move is accepted after it.
+**R9 — No approval comes back to life at either storage change.** (U3, U5)
+The store changes twice: from the key-value layout to the SQLite layout (this work), and to store version 2 at the identity cutover, which re-keys approval records by principal and deletes the existing ones. At each change, no Approval used before it is accepted again after it, on the Worker or on any Node host.
+- **Pass:** either every unexpired used-approval record is carried into the new store, or every Approval token issued before the change fails verification after it, because the approval keys are rotated on the Worker and on every Node host as part of the change.
+- **Fail:** a token used before either change is accepted after it, on any host.
 
 ## `type-safety`: types that say what is valid
 
@@ -140,7 +152,8 @@ Property tests written with Hegel cover at least:
 - canonical encoding: equal data always gives the same bytes and fingerprint;
 - every store operation's result after any sequence of operations, on both databases;
 - the approval-use state machine, including a restart at any point.
-- **Fail:** any of these covered only by hand-picked examples.
+- **Both databases** means a `better-sqlite3` file and Durable Object SQLite. Hegel runs in Node, so on the Durable Object it drives the store through the object's own methods, one generated step per call.
+- **Fail:** any of these covered only by hand-picked examples; the Durable Object half dropped without an owner decision.
 
 **R16 — Verification scripts are TypeScript.** (U11)
 Every verification, journey and tooling script in this work is TypeScript. The Python Portal SDK's own tests stay Python, because they test product Python.
@@ -181,6 +194,7 @@ The Portal SDK's MCP transport forwards every argument of the message callback, 
 
 **R26 — Large requests are streamed, not capped.** (U14; #33, deployed row 15)
 A request whose body is larger than the Worker's in-memory budget is processed by streaming or spilling, not refused by a size cap of the Portal's own. On Node, a large request body is spilled to a temporary file rather than held in memory.
+- **Which way in:** this covers the MCP proxy way in, `/workspaces/‹id›/mcp` on the Worker and the Node host's MCP proxy listener, where today's 4 MiB request budget sits. The standalone Tool Portal's JSON route keeps its 64 KiB request limit unchanged (Tool Portal Program Design, "Limits today"; check 8). The standalone MCP route keeps today's limits.
 - **Pass:** a call with a body above today's 4 MiB budget and within the platform's own request limit completes with the same result it would have under the budget.
 - **Spill files are temporary, private and never durable:** a Node spill file is readable only by the host's user and is never written where the store or its backups live. It is gone after its request ends, however it ends, and after a restart following a crash. One process never removes another live process's spill file.
 - **The true limit, stated:** the parsed request and its working copies must fit in the memory of the runtime handling it. On a Worker, concurrent requests share that memory. A request that exhausts it ends the other requests running there, from any workspace. This limit stands until the owner decides RD7.
@@ -191,15 +205,15 @@ A request whose body is larger than the Worker's in-memory budget is processed b
 
 | Part | U | E | R | Proof obligation |
 |---|---|---|---|---|
-| `one-core` | U1 | E1 E2 | R1 | V1 the same scenarios on both hosts give the same outcomes |
+| `one-core` | U1 | E1 E2 | R1 | V1 the same scenarios on both hosts give the same outcomes, apart from each host's own limit values |
 | `one-core` | U1 | E1 E2 | R2 | V2 every Node-only behaviour works through the core |
 | `one-core` | U1 U6 | E1 E3 | R3 | V3 fixed capabilities give byte-identical outputs; no fallback path |
 | `storage` | U2 U3 | E1 E2 E4 | R4 | V4 one store implementation on both databases |
-| `storage` | U3 | E4 | R5 | V5 no forbidden storage call in Portal code |
+| `storage` | U3 | E4 | R5 | V5 no forbidden storage call or SQL-text execution in Portal code |
 | `storage` | U3 U4 | E4 E8 | R6 | V6 every earlier version upgrades; nothing served before migration |
 | `storage` | U5 | E4 E5 E6 | R7 | V7 restart and redeploy keep approval uses and marks |
-| `storage` | U3 U5 | E5 E6 | R8 | V8 exactly one first use under contention, on every driver |
-| `storage` | U3 U5 | E5 | R9 | V9 no pre-move approval accepted after the move |
+| `storage` | U3 U5 | E5 E6 | R8 | V8 exactly one first use under contention, on every driver; one subject key per removed identity |
+| `storage` | U3 U5 | E5 | R9 | V9 no approval used before either storage change accepted after it, on any host |
 | `type-safety` | U7 | E5 | R10 | V10 an unhandled variant fails the type-check |
 | `type-safety` | U7 U10 | E1 E11 | R11 | V11 the core type-checks with no runtime types |
 | `type-safety` | U8 | E9 | R12 | V12 every minted identifier is version 7 |

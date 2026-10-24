@@ -64,7 +64,7 @@ Every anchor below is at `2dfea38e`.
 | Who writes the store's queries | The core owns typed operations and the one Drizzle implementation; hosts pass in a database (owner: "feet styel yes", "interface and mappign") | A store interface in the core implemented per host | One query per operation means a fix lands once; per-host queries are the drift the owner rejected | None inside this boundary; it is the owner's decision |
 | The database type the core accepts | `BaseSQLiteDatabase<'sync', unknown, typeof workspaceStoreSchema>`; synchronous transactions | Fleet's generic executor-in-a-transaction port, or a prebuilt statement-plan executor that also fits D1 | Both Portal drivers are synchronous (`durable-sqlite` runs `transactionSync`; `better-sqlite3` is native sync), so real transactions express every decision directly; a plan executor would add an abstraction no Portal obligation needs | The Portal gaining an asynchronous database, such as D1 |
 | Where the store runs on Cloudflare | Inside the workspace's Durable Object; the Worker calls it by RPC | The Worker opening D1 directly | The owner chose a Durable Object with Drizzle; one object per workspace gives isolation by construction and serializes each workspace's decisions | A measured per-workspace throughput limit |
-| Where web-standard adapters live | A small new package used by both hosts | Each host writing its own adapters; or adapters inside the core | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals | Either host needing a different implementation of a capability |
+| Where web-standard adapters live | A small new package used by the two Tool Portal hosts | Each host writing its own adapters; or adapters inside the core; or one package shared with the sign-in service | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals; the sign-in service's capability contract differs (it signs service tokens), so sharing would couple `packages/auth` to the Tool Portal's contracts for no shared rule | Either host needing a different implementation of a capability, or the two services' capability contracts converging |
 | How the storage change cuts over | A hard replacement: a new Durable Object class, the old one deleted, the approval signing keys rotated (the Worker's and the Node hosts' standalone HMAC credentials alike), and each workspace's members re-added through the existing management route before traffic resumes | Reading the old key-value rows into the new tables at first start | Only test deployments hold state (identity Program Design); rotation makes every old token fail verification, which satisfies R9 without keeping key-value code alive; re-adding members keeps the workspace usable, so a refusal after cutover means what it should | A production deployment existing before cutover |
 | Membership during this work | Store version 1 keeps today's membership and removal-intent records as tables; the identity cutover's version 2 drops them | Ship only the identity-target tables, with the identity cutover in the same release | Keeps the Tool Portal deployable after this work without waiting for codex-router | The owner choosing one combined Portal cutover |
 
@@ -74,7 +74,7 @@ Every anchor below is at `2dfea38e`.
 |---|---|---|---|---|---|---|
 | E1 Portal core | the core composition roots `createHostedMcpProxy` and `createStandaloneToolPortalService` | `tool-access`, `tool-engine`, `tool-host-core` (modified) | the packages' public indexes | the host calls one composition root per server kind with `PortalPlatform` and its server configuration | derived | Zod at boundaries; discriminated unions (`AGENTS.md:415–419`) |
 | E2 Host | the host composition (`tool-host-cloudflare` Worker entry and `WorkspaceStoreObject`; `tool-host-node` startup) | `tool-host-cloudflare`, `tool-host-node` (modified) | none: a host defines no shared type | passes `PortalPlatform` and a store access in; receives `HostedMcpProxy.handle(request): Promise<Response>` | derived | — |
-| E3 Platform capability | the capability contracts, each owned at the lowest package that consumes it; `PortalPlatform` aggregates them | clock, identifier and crypto contracts: `tool-access/src/contracts/platform-capabilities.ts` (new); timers and upstream transport: `tool-engine` (timers new, transport existing); `PortalPlatform` with log and analytics: `tool-host-core/src/platform-capabilities` (new) | those three modules | `PortalPlatform`, below | derived | interfaces with branded values |
+| E3 Platform capability | the capability contracts, each owned at the lowest package that consumes it; `PortalPlatform` aggregates them | clock, identifier, crypto and key-set source contracts: `tool-access/src/contracts/platform-capabilities.ts` (new); timers and upstream transport: `tool-engine` (timers new, transport existing); `PortalPlatform` with log and analytics: `tool-host-core/src/platform-capabilities` (new) | those three modules | `PortalPlatform`, below | derived | interfaces with branded values |
 | E4 Workspace store | `WorkspaceStore` (the core's Drizzle implementation) | implementation, schema and migrations: `tool-host-core/src/workspace-store` (new; replaces `workspace-authority`'s key-value store) | the approval-use port its `tool-engine` consumers need: `tool-engine/src/approval-use/models/approval-use-store.ts` (new); the rest of the store's operations and the Drizzle tables: `tool-host-core/src/workspace-store/models/workspace-store.ts`, `workspace-store-schema.ts` | `WorkspaceStore` operations, below; on Cloudflare the same operations cross Durable Object RPC with structured-clone values | persisted | Drizzle `sqlite-core` schema; Zod parse of every row read |
 | E5 Approval-use record | `WorkspaceStore`, through the approval-use port | as E4 | tables `proxy_token_use` and `batch_approval_use`; result unions in `approval-use-store.ts` | `ProxyTokenPresentation`, `BatchReservationResult`, `BatchArmResult`, below | persisted | discriminated union |
 | E6 Removal mark | `WorkspaceStore` | as E4 | tables `removal_mark`, `removal_notice` (store version 2); the notice's wire contract stays `RemovalNotice` in the identity design's Rust home | `RemovalNoticeRecording` result, below | persisted | discriminated union |
@@ -91,14 +91,16 @@ Every anchor below is at `2dfea38e`.
 flowchart LR
   E1["E1 Portal core"] -->|owner| ROOT["createHostedMcpProxy · createStandaloneToolPortalService<br/>tool-host-core (modified)"]
   E3["E3 Platform capability"] -->|owner| PP["PortalPlatform<br/>tool-host-core/platform-capabilities (new)"]
+  E3 -->|member contracts| CC["clock · ids · crypto · key sets<br/>tool-access/contracts/platform-capabilities.ts (new)"]
+  PP -.->|composes| CC
   E4["E4 Workspace store"] -->|owner| WS["WorkspaceStore<br/>tool-host-core/workspace-store (new)"]
   E5["E5 Approval-use record"] -->|owner| WS
   E6["E6 Removal mark"] -->|owner| WS
   E8["E8 Schema version"] -->|home| DK["tool-host-core/drizzle (new)"]
-  E9["E9 Portal identifier"] -->|owner| PP
+  E9["E9 Portal identifier"] -->|owner: PortalIdSource| CC
   E2["E2 Host"] -->|homes| H["tool-host-cloudflare · tool-host-node (modified)"]
   WS -.->|schema home| SCH["workspace-store-schema.ts (new)"]
-  PP -.->|type home| PPT["platform-capabilities.ts (new)"]
+  PP -.->|type home| PPT["tool-host-core/platform-capabilities/models/platform-capabilities.ts (new)"]
 ```
 
 ## Components and who owns what
@@ -110,7 +112,7 @@ flowchart LR
 | **Workspace store** | E4–E6: every approval-use, membership, removal-intent and removal-mark record; their atomic decisions; retention pruning | `tool-host-core/src/workspace-store` (new) | the proxy, the standalone service, the removal receiver | the store's schema or a decision rule changes |
 | **Platform capabilities** | the one list of what a host must supply (`PortalPlatform`), and the value types that cross it | `PortalPlatform` in `tool-host-core/src/platform-capabilities` (new); its member contracts at their lowest consumer, in `tool-access/contracts` and `tool-engine` (see "Where each contract lives") | every core component; both hosts | a capability is added or its contract changes |
 | **Upstream MCP runtime** | client cache, generations, retries, pagination, timeouts and redaction for every upstream server, remote or stdio | `tool-engine/src/upstream-mcp-connectors` (modified: takes `timers`; the Node stdio copy is deleted) | the proxy | an upstream protocol rule changes |
-| **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signatures, `setTimeout` timers | `packages/tool-host-web-platform` (new) | both hosts only | a web API or adapter library changes |
+| **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signature checks, `fetch` for key sets, `setTimeout` timers | `packages/tool-host-web-platform` (new) | the two Tool Portal hosts only. The sign-in service builds its own platform for its own contract (`SignInPlatform` signs service tokens, which `PortalCrypto` does not); the identity design records that decision, so this package has no sign-in consumer and no dependency on `packages/auth` | a web API or adapter library changes |
 | **Cloudflare host** | the Worker's routing, Cloudflare bindings, `WorkspaceStoreObject` (opens Durable Object SQLite, runs the migrator inside `blockConcurrencyWhile`, exposes the store's operations by RPC) | `tool-host-cloudflare` (modified) | Cloudflare | a Cloudflare binding or runtime API changes |
 | **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening each workspace's `tool-portal-<workspaceId>.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Portal SDK's tests | a Node API or a listener changes |
 
@@ -122,7 +124,7 @@ flowchart LR
 - core → `drizzle-orm` and `drizzle-orm/sqlite-core` only.
 
 **Where each contract lives, so no edge points upward:**
-- `tool-access` owns the clock, identifier and crypto contracts, because its proof verifiers consume them.
+- `tool-access` owns the clock, identifier, crypto and key-set source contracts, the issuer key cache, and the removal subject key, because its proof verifiers and contract shapes consume them.
 - `tool-engine` owns the timers contract and the approval-use port, because its upstream runtime, gateway and standalone batch approval consume them.
 - `tool-host-core` owns `PortalPlatform` (adding log and analytics), the rest of the workspace store's operations, the Drizzle schema, the migrations and the one store implementation. That implementation satisfies the approval-use port.
 
@@ -130,8 +132,11 @@ flowchart LR
 
 | Forbidden | Caught by |
 |---|---|
-| core → `node:*`, `cloudflare:*`, a Drizzle driver module (`drizzle-orm/durable-sqlite`, `drizzle-orm/better-sqlite3`, `drizzle-orm/d1`), `better-sqlite3`, `jose`, `uuid` | the approved type-check guard (R11): those modules and their types are not resolvable in the guard configuration |
+| core → `node:*`, `cloudflare:*`, `better-sqlite3`, `jose`, `uuid` | the approved type-check guard (R11): with `types: []` and none of these as a core dependency, they do not resolve |
+| core → any Drizzle driver module (`drizzle-orm/durable-sqlite`, `drizzle-orm/better-sqlite3`, `drizzle-orm/d1`, `drizzle-orm/libsql` and every other `drizzle-orm/*` subpath except `sqlite-core`) | the same guard, by a `paths` allowlist: these subpaths are exports of the allowed `drizzle-orm` package, so they would otherwise resolve. See "The type-check guard" |
 | core → `Date.now`, no-argument `new Date()` or `Date()`, `crypto`, `setTimeout`, `setInterval`, `AbortSignal.timeout`, `performance`, `Math.random` | the guard's library set: these names don't exist in it, so each use is a compile error |
+| host → a rule listed under the hosted proxy or standalone service | the conformance suite: identical outcomes on both hosts, apart from host-supplied limits (V1) |
+| any module other than `WorkspaceStore` writing a store table | the store's tables are not exported; only `WorkspaceStore` operations are |
 
 ### The type-check guard
 
@@ -143,16 +148,20 @@ The guard is one `tsconfig.portable.json` per core package (`tool-access`, `tool
 - **`skipLibCheck: true`.** With it off, the pinned Drizzle and MCP server declarations report 85 errors, because they name Node's `Buffer` in blob columns and `ReadBuffer`. The cost: an unresolved type inside a dependency's declarations behaves as `any`. The core's own code is still fully checked.
 - **A declaration inventory.** `types: []` doesn't stop an explicit `/// <reference types="node" />` or a transitive Workers reference. So the guard run also lists the declaration files the program loaded (`tsc --listFilesOnly`) and fails if any belongs to `@types/node`, `@cloudflare/workers-types` or `workerd`. This is part of the same approved guard, not a separate gate.
 
+- **A `paths` allowlist for Drizzle (F1).** The core may import `drizzle-orm` and `drizzle-orm/sqlite-core` only, but every driver is a subpath export of the same package, and their declarations name nothing the inventory looks for (`durable-sqlite` names only an ambient cursor type; `d1`'s import of `@miniflare/d1` is hidden by `skipLibCheck`). So the guard's tsconfig maps `drizzle-orm/*` to a checked-in sentinel module, `guard/forbidden-drizzle-driver-module.ts`, and maps `drizzle-orm/sqlite-core` back to its real declarations. The sentinel is a `.ts` file whose one line is a compile error naming the rule (`const forbiddenDrizzleDriverModule: never = 'a Drizzle driver module is forbidden in the portable core'`), so any import of another subpath (named, side-effect or type-only) fails with that message. A missing target would not work: TypeScript falls back to `node_modules` when a `paths` substitution does not resolve. **Observed** against the pinned `drizzle-orm` 0.45.2 under the experiment's custom-library guard configuration (`c-drizzle-drivers/experiment-3-driver-subpaths/driver-subpath-probe.log`):
+  - without the mapping, imports of `durable-sqlite`, `better-sqlite3`, `d1` and `libsql`, and a side-effect plus type-only import, all compile (exit 0), which confirms the gap;
+  - with it, each fails (exit 2, the sentinel's TS2322), and the allowed `drizzle-orm` plus `sqlite-core` program still compiles (exit 0).
+
+  The mapping is part of the approved guard's configuration, not a new gate.
+
 What the guard cannot catch: a deliberate cast or `any`, `eval`, and effects inside a dependency at runtime. The conformance and determinism observations cover those behaviourally.
-| host → a rule listed under the hosted proxy or standalone service | the conformance suite: identical outcomes on both hosts (V1) |
-| any module other than `WorkspaceStore` writing a store table | the store's tables are not exported; only `WorkspaceStore` operations are |
 
 ## Platform capabilities: the one list
 
 Every capability is required; no field is optional and no core code supplies a default. Values crossing this boundary are branded so a raw `number` or `string` cannot stand in for them.
 
 ```ts
-// tool-access/src/contracts/platform-capabilities.ts: clock, identifiers, crypto (consumed from tool-access upward)
+// tool-access/src/contracts/platform-capabilities.ts: clock, identifiers, crypto, key-set source (consumed from tool-access upward)
 // tool-engine: PortalTimers and the upstream transport factory
 // tool-host-core/src/platform-capabilities/models/platform-capabilities.ts: PortalPlatform, aggregating them
 export type EpochMilliseconds = number & { readonly __brand: 'EpochMilliseconds' };
@@ -167,10 +176,17 @@ export interface PortalIdSource {
 	readonly nextId: () => Uuid7;
 }
 
+/** One public key from the issuer's published key set, as JSON Web Key fields. */
+export interface PublicJsonWebKey {
+	readonly kid: string;
+	readonly kty: string;
+	readonly alg: string;
+	readonly [field: string]: unknown;
+}
+
 export type SignatureVerification =
 	| { readonly kind: 'verified'; readonly protectedHeader: Readonly<Record<string, unknown>>; readonly payload: unknown }
-	| { readonly kind: 'rejected'; readonly reason: 'malformed' | 'bad-signature' | 'unknown-key' | 'unsupported-algorithm' }
-	| { readonly kind: 'keys-unavailable'; readonly reason: 'fetch-failed' | 'invalid-key-set' };
+	| { readonly kind: 'rejected'; readonly reason: 'malformed' | 'bad-signature' | 'unsupported-algorithm' };
 
 export interface PortalCrypto {
 	readonly sha256: (bytes: Uint8Array) => Promise<Uint8Array>;
@@ -180,11 +196,24 @@ export interface PortalCrypto {
 		readonly data: Uint8Array;
 		readonly signature: Uint8Array;
 	}) => Promise<boolean>;
-	/** Verifies a compact JWS signature only. Claim checks (exp, aud, iss) stay in the core, against PortalClock. */
+	/**
+	 * Verifies a compact JWS signature against the one key the core chose. No fetching, no cache, no clock.
+	 * Claim checks (exp, aud, iss, typ) stay in the core, against PortalClock.
+	 */
 	readonly verifyJwsSignature: (props: {
 		readonly compactJws: string;
-		readonly keySetUrl: string;
+		readonly key: PublicJsonWebKey;
+		readonly allowedAlgorithms: readonly [string, ...string[]];
 	}) => Promise<SignatureVerification>;
+}
+
+export type KeySetFetch =
+	| { readonly kind: 'fetched'; readonly keys: readonly PublicJsonWebKey[] }
+	| { readonly kind: 'unavailable'; readonly reason: 'fetch-failed' | 'invalid-key-set' };
+
+/** Transport only: one GET of the pinned key-set address. Caching and refetching are the core's rule. */
+export interface PortalKeySetSource {
+	readonly fetchKeySet: (props: { readonly keySetUrl: string }) => Promise<KeySetFetch>;
 }
 
 export type TimerOutcome = { readonly kind: 'elapsed' } | { readonly kind: 'aborted' };
@@ -198,6 +227,7 @@ export interface PortalPlatform {
 	readonly clock: PortalClock;
 	readonly ids: PortalIdSource;
 	readonly crypto: PortalCrypto;
+	readonly keySets: PortalKeySetSource;
 	readonly timers: PortalTimers;
 	readonly log: (event: ObservationLog) => void; // existing shape, tool-host-core/hosted-mcp-proxy/models/observation-log.ts
 	readonly analytics: AnalyticsSink; // existing shape, tool-host-core/call-analytics/models/call-analytics.ts
@@ -218,12 +248,20 @@ const outcome = await Promise.race([
 
 In a test, a controlled timer resolves `elapsed` exactly when the controlled clock passes the deadline.
 
+**The issuer key cache is a core rule (F6).** Fetching a key set is transport and checking a signature is crypto, as in the Fleet reference (`fetch_access_keys` and `verify_rs256` are separate capabilities, `platform_capabilities.rs:45–66` at codex-router `3c87252b`). Between them sits a rule the identity design depends on, so it lives in the core, in `tool-access/src/contracts/issuer-key-cache.ts`, beside the proof verifiers that use it:
+- **Cache bound:** a fetched key set is used for at most 5 minutes by `PortalClock` (the identity design's "each receiver's issuer key cache is pinned to at most 5 minutes"), then fetched again on the next verification.
+- **Unknown key:** a token whose `kid` is not in the cached set triggers one refetch; if the `kid` is still absent the token is `rejected` as an unknown key, and no further refetch happens for that set until the bound passes.
+- **Fetch failure:** `unavailable` is never treated as verified. A token checked with no usable set is refused as unauthenticated, and the failure is logged.
+- **What it is:** a cache in memory, per process or isolate, for the issuer's public keys. It is not authority and holds no decision; losing it costs one fetch.
+
+The core reads the token's protected header (pure base64url and JSON), picks the key by `kid` from the cache, and passes that one key to `verifyJwsSignature`. Tests move the controlled clock across the 5-minute bound; nothing waits on real time.
+
 **What moves behind these capabilities:**
 
 | Today | After |
 |---|---|
 | `props.now ?? Date.now()` in agent and person proof verification | `platform.clock.nowMs()`; claim checks stay in `tool-access` |
-| `jose` signature verification inside `tool-access/contracts` | `platform.crypto.verifyJwsSignature`; `jose` moves to the web-platform adapters |
+| `jose` key-set fetching, caching and signature verification inside `tool-access/contracts` | key-set fetching through `platform.keySets.fetchKeySet`; the cache bound and refetch rule in the core's issuer key cache, on `platform.clock`; the signature check through `platform.crypto.verifyJwsSignature` with one chosen key; `jose` moves to the web-platform adapters |
 | `globalThis.crypto.subtle.digest` in seven core files | `platform.crypto.sha256` |
 | HMAC import/sign/verify for approval and bearer tokens | `platform.crypto.hmacSha256Sign` / `hmacSha256Verify` |
 | `props.jti ?? crypto.randomUUID()`, `newId: crypto.randomUUID`, Node `randomUUID()` receipt and correlation ids | `platform.ids.nextId()` (UUIDv7) |
@@ -278,8 +316,17 @@ export type BatchReservationResult =
 
 export type BatchArmResult =
 	| { readonly kind: 'armed' }
-	| { readonly kind: 'not-dispatched'; readonly reason: 'consumed-without-dispatch' | 'expired-before-arming' }
+	| {
+			readonly kind: 'not-dispatched';
+			readonly reason: 'consumed-without-dispatch' | 'expired-before-arming' | 'no-reservation';
+	  }
 	| { readonly kind: 'ambiguous'; readonly reason: 'dispatch-armed' }
+	| StoreFailure;
+
+export type BatchNotDispatchedProof =
+	| { readonly kind: 'proven-not-dispatched' } // the row was reserved, or already proven; it can never be armed now
+	| { readonly kind: 'not-provable'; readonly reason: 'dispatch-armed' } // an armed approval may have taken effect
+	| { readonly kind: 'no-reservation' } // no row for this token and these fields (never reserved, or pruned after expiry)
 	| StoreFailure;
 
 export type MembershipRead =
@@ -301,7 +348,7 @@ export interface WorkspaceStore {
 	}) => Promise<ProxyTokenPresentation>;
 	readonly reserveBatchApproval: (reservation: BatchReservation) => Promise<BatchReservationResult>;
 	readonly armBatchApproval: (reservation: BatchReservation) => Promise<BatchArmResult>;
-	readonly proveBatchNotDispatched: (reservation: BatchReservation) => Promise<boolean | StoreFailure>;
+	readonly proveBatchNotDispatched: (reservation: BatchReservation) => Promise<BatchNotDispatchedProof>;
 	// store version 1 (today's records, removed by the identity cutover):
 	readonly readMembership: (principal: PrincipalKey) => Promise<MembershipRead>;
 	readonly setMembership: (props: SetMembershipProps) => Promise<MembershipWrite>;
@@ -310,15 +357,45 @@ export interface WorkspaceStore {
 	// store version 2 (added by the identity cutover):
 	readonly recordRemovalNotice: (notice: RemovalNoticeInput) => Promise<RemovalNoticeRecording>;
 	readonly readRemovalMark: (props: {
-		readonly subject: PrincipalKey;
+		// every key that can cover this token: a session token passes its session key and its machine key; a bot token its bot key
+		readonly subjects: readonly [RemovalSubjectKey, ...RemovalSubjectKey[]];
 		readonly tokenExpiresAtMs: EpochMilliseconds;
-	}) => Promise<{ readonly kind: 'none' } | { readonly kind: 'mark'; readonly highestRevision: number } | ExpiredPresentation | StoreFailure>;
+	}) => Promise<
+		| { readonly kind: 'none' }
+		| { readonly kind: 'mark'; readonly highestRevision: number } // the highest across all the subjects passed
+		| ExpiredPresentation
+		| StoreFailure
+	>;
 }
 ```
 
+**One key for a removal subject (F4).** A removal notice and the token it must cover describe the same identity in two places, so both are reduced to one key by one function. It lives in `tool-access/src/contracts/removal-subject-key.ts`, beside the `principalSchema` and the notice subject shapes it encodes. That is the lowest package holding both shapes, so the caller check, the removal receiver and the store in `tool-host-core` (and any `tool-engine` consumer) import one definition and no edge points upward.
+
+```ts
+// tool-access/src/contracts/removal-subject-key.ts
+export type RemovalSubjectKey = string & { readonly __brand: 'RemovalSubjectKey' };
+
+export type RemovalSubject =
+	| { readonly kind: 'bot'; readonly botId: Uuid7 }
+	| { readonly kind: 'fleetHarnessSession'; readonly sessionRef: SessionRef } // the token's session shape, also on the notice (identity K2)
+	| { readonly kind: 'machine'; readonly installation: string };
+
+/** Values are taken after contract parsing; UUIDs are lower-case. */
+export function deriveRemovalSubjectKey(subject: RemovalSubject): RemovalSubjectKey;
+// bot:<botId>
+// session:<JSON.stringify([installation, harness_endpoint, conversation_id])>
+// machine:<installation>
+
+/** The keys whose marks can cover a token held by this principal. */
+export function coveringRemovalSubjectKeys(principal: Principal): readonly [RemovalSubjectKey, ...RemovalSubjectKey[]];
+// bot → [bot key]; fleetHarnessSession → [session key, machine key for its installation]
+```
+
+A session's key is the JSON array of its three fields, so field order is fixed and no separator can collide with a value. The notice's `fleetHarnessSession` subject carries the same `{ installation, harness_endpoint, conversation_id }` shape as the token (identity Program Design, removal notice). Fleet central converts its internal session reference before writing the outbox, so the receiver never translates one into the other. A machine notice is keyed `machine:<installation>`, and every session token on that machine passes that key, so the machine mark covers it.
+
 **Security time.** Every operation reads the store's security time first: the larger of `PortalClock.now()` and the value last recorded in `store_meta`, written back in the same transaction. It never goes down, even when a host clock steps back or one host's clock is behind another's. Every expiry decision the store makes (admitting a presentation, arming, reading a removal mark, pruning) compares against this one value. So once a row has been pruned as expired, no presentation of that token can be admitted again: it is already expired by the same measure (security finding SEC-01, observation OBS-01). The front verifier's own expiry check stays; the store's is the one that decides.
 
-`SetMembershipProps`, `MembershipWrite`, `BeginRemovalProps`, `CompleteRemovalProps` and `RemovalIntentResult` keep today's fields and variants from `workspace-authority-state.ts` and `agent-retirement.ts` (`member | removed`; `pending | complete`; `unlink | disable`; `requestId`), now as closed unions. `RemovalNoticeInput` is parsed from the identity design's `RemovalNotice` at the receiver.
+`SetMembershipProps`, `MembershipWrite`, `BeginRemovalProps`, `CompleteRemovalProps` and `RemovalIntentResult` keep today's fields and variants from `workspace-authority-state.ts` and `agent-retirement.ts` (`member | removed`; `pending | complete`; `unlink | disable`; `requestId`), now as closed unions. `RemovalNoticeInput` is parsed from the identity design's `RemovalNotice` at the receiver, and carries `subjectKey: deriveRemovalSubjectKey(notice.subject)`.
 
 **Construction:**
 
@@ -329,11 +406,25 @@ export function createWorkspaceStore(props: {
 	readonly database: WorkspaceStoreDatabase;
 	readonly workspaceId: WorkspaceId; // bound into store_meta on first open; a different value fails closed
 	readonly clock: PortalClock;
-	readonly limits: WorkspaceStoreLimits; // today's caps, as row counts
+	readonly limits: WorkspaceStoreLimits; // host-supplied, today's values; see "The caps"
 }): WorkspaceStore;
+
+export interface WorkspaceStoreLimits {
+	readonly maximumUnexpiredProxyTokenUses: number;
+	readonly maximumUnexpiredBatchApprovalUses: number;
+}
 ```
 
-Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile, { schema })` (`better-sqlite3`) produce a `WorkspaceStoreDatabase` without a cast; the C experiment confirmed the union-mode type and is confirming the `'sync'` type (see "Open evidence").
+**The caps (F11).** Today's caps keep their values, written as unexpired-row counts because the store now holds rows, not a JSON blob:
+
+| Cap | Today (`2dfea38e`) | Now | Host |
+|---|---|---|---|
+| proxy token uses | Worker: 512 KiB of `{ jti: expiresAtMs }` JSON (`worker-limits.ts:16` `workerApprovalUsesBytes`, checked in `approval-token-use-rules.ts`). Node: 4,096 entries (`approval-token-use.ts`, `limit ?? 4096`) | Worker: **9,892** rows. Each entry is `"<36-character UUID>":<13-digit ms>,` = 53 bytes, plus 2 for the braces, so `53n + 1 ≤ 524,288` gives `n ≤ 9,892`, the same bound for the UUID token ids the issuer mints. Node: **4,096** rows | host-supplied, as today |
+| batch approval uses | 4,096 tombstones (`standalone-batch-approval.ts:11` `defaultMaximumConsumedApprovalTokens`) | **4,096** rows | Node (the only host with the standalone service) |
+
+The count is taken inside the same transaction as the insert, after expired rows are pruned (`select count(*) … where expires_at_ms > now` through the query builder), so two concurrent presentations cannot both pass a full cap. A presentation at the cap answers `saturated`, as `replay-cache-full` does today.
+
+Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile, { schema })` (`better-sqlite3`) produce a `WorkspaceStoreDatabase` without a cast. This is settled: the C experiment observed the `'sync'` type on both drivers (`c-drizzle-drivers/experiment-2/report-2.md` §4).
 
 ### The tables (for the owner's approval, RD1)
 
@@ -352,9 +443,9 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 | Change | Detail |
 |---|---|
 | drop `membership`, `membership_removal` | membership and agent management leave the Tool Portal (identity Program Design) |
-| re-key `principal` | from the agent client id to the identity design's canonical `principal`; existing approval-use rows are deleted, which is safe because the cutover rotates approval keys |
-| add `removal_mark` | `subject` text primary key · `highest_revision` integer not null · `received_at_ms` integer not null · `expires_at_ms` integer not null (pruned when `<= now`) |
-| add `removal_notice` | `notice_id` text primary key · `subject` text not null · `removal_revision` integer not null · `received_at_ms` integer not null; index on `received_at_ms` |
+| re-key `principal` | from the agent client id to the identity design's canonical `principal`; existing approval-use rows are deleted. That is safe only because the same cutover rotates the approval keys on the Worker and on every Node host, so every approval token issued before it fails verification (R9; the joint cut's deploy step in the delivery orchestration) |
+| add `removal_mark` | `subject` text primary key (a `RemovalSubjectKey`: `bot:…`, `session:…` or `machine:…`) · `highest_revision` integer not null · `received_at_ms` integer not null · `expires_at_ms` integer not null (pruned when `<= now`) |
+| add `removal_notice` | `notice_id` text primary key · `subject` text not null (a `RemovalSubjectKey`) · `removal_revision` integer not null · `received_at_ms` integer not null; index on `received_at_ms` |
 
 No column has a database default: every timestamp is written from `PortalClock` and every identifier from `PortalIdSource`, so no wall clock enters storage. Rows are parsed with Zod when read; a row that does not parse fails closed as `store-unavailable` with the field named in the log.
 
@@ -366,9 +457,10 @@ Each operation runs as one synchronous Drizzle transaction on the store's databa
 |---|---|---|
 | `presentProxyToken` | if `expiresAtMs <= now` answer `expired` and stop; delete rows with `expires_at_ms <= now`; count the rest and answer `saturated` at the cap; `insert … on conflict do nothing returning token_id` | the insert's returning row decides first use; a concurrent second insert returns nothing; a pruned token is already `expired` by the same `now`, so it cannot be inserted again |
 | `reserveBatchApproval` | if `expiresAtMs <= now` answer `expired` and stop; delete rows with `expires_at_ms <= now`; read the row for `token_id`; if present answer from its `state` (`armed` → `ambiguous`, otherwise `already-consumed`); else check the cap and insert as `reserved` | the read and insert are one transaction, and expiry is admitted against the time that prunes |
-| `armBatchApproval` | if `expiresAtMs <= now`, set the row to `proven-not-dispatched` where it is still `reserved` and answer `not-dispatched` (`expired-before-arming`); else `update … set state = 'armed' where token_id = ? and state = 'reserved' and <reservation fields match> returning token_id`; if no row, read it to answer `ambiguous` or `not-dispatched` | the conditional update moves `reserved` to `armed` at most once, and never after expiry |
-| `recordRemovalNotice` (v2) | insert into `removal_notice` on conflict do nothing; upsert `removal_mark` with `highest_revision = max(existing, new)` and `expires_at_ms = max(existing, received + retention)`; prune notices with `received_at_ms + 61 minutes <= now` | the mark is written with `max`, so a lower or repeated notice cannot lower it or shorten its retention |
-| `readRemovalMark` (v2) | if `tokenExpiresAtMs <= now` answer `expired`; else read the mark | a token old enough for its mark to be pruned is refused as expired by the same `now` |
+| `armBatchApproval` | if `expiresAtMs <= now`, set the row to `proven-not-dispatched` where it is still `reserved` and answer `not-dispatched` (`expired-before-arming`); else `update … set state = 'armed' where token_id = ? and state = 'reserved' and <reservation fields match> returning token_id`; if no row, read it: `armed` → `ambiguous`; `proven-not-dispatched` → `not-dispatched` (`consumed-without-dispatch`); no row for this token and these fields (never reserved, pruned, or different fields) → `not-dispatched` (`no-reservation`) | the conditional update moves `reserved` to `armed` at most once, and never after expiry; nothing is armed that was not reserved with the same fields |
+| `proveBatchNotDispatched` | `update … set state = 'proven-not-dispatched' where token_id = ? and state in ('reserved', 'proven-not-dispatched') and <reservation fields match> returning token_id`; a row → `proven-not-dispatched`; else read it: `armed` → `not-provable` (`dispatch-armed`); none → `no-reservation` | once proven, the row can never be armed, so the proof cannot be overtaken |
+| `recordRemovalNotice` (v2) | insert into `removal_notice` (with `subject` = the notice's `RemovalSubjectKey`) on conflict do nothing; upsert `removal_mark` for that key with `highest_revision = max(existing, new)` and `expires_at_ms = max(existing, received + retention)`; prune notices with `received_at_ms + 61 minutes <= now` | the mark is written with `max`, so a lower or repeated notice cannot lower it or shorten its retention |
+| `readRemovalMark` (v2) | if `tokenExpiresAtMs <= now` answer `expired`; else read the marks for every key passed (`subject in (…)`) and answer the highest `highest_revision`, or `none` | a token old enough for its mark to be pruned is refused as expired by the same `now`; a machine mark and a session mark are compared in one read |
 
 **Opening a store** checks `store_meta` in its first transaction: absent → insert the row with this workspace's identifier and the current clock; present with the same `workspace_id` → continue; present with another → every call answers `store-unavailable` (`workspace-mismatch`). A wrong routing adapter or two Node portals pointed at one file therefore fail closed instead of sharing approval and removal state.
 
@@ -487,7 +579,9 @@ stateDiagram-v2
 | used | the same proxy token presented again | `already-used` |
 | reserved, armed or proven-not-dispatched | the same batch approval presented again | `already-consumed`, or `ambiguous` when armed |
 | armed | `armBatchApproval` again | `ambiguous` |
-| armed | `proveBatchNotDispatched` | `false`: an armed approval may have taken effect |
+| armed | `proveBatchNotDispatched` | `not-provable` (`dispatch-armed`): an armed approval may have taken effect |
+| reserved | `proveBatchNotDispatched` | `proven-not-dispatched`; the row can never be armed afterwards |
+| none (never reserved, or pruned) | `armBatchApproval` or `proveBatchNotDispatched` | `not-dispatched` (`no-reservation`) or `no-reservation`; nothing is written and nothing runs |
 | any | host restart | unchanged: rows are in the database |
 | any | its expiry passes the store's security time | pruned on the next write in that workspace |
 | none (never seen, or pruned) | a presentation whose expiry is at or before security time | `expired`; no row is written and nothing runs |
@@ -507,7 +601,9 @@ stateDiagram-v2
 | A host clock steps back after the store pruned rows | security time never decreases | tokens pruned as expired stay `expired` | the store |
 | A store opened with another workspace's identifier (wrong routing, two Node portals on one file) | `store_meta.workspace_id` | every call answers `store-unavailable` (`workspace-mismatch`) | the host's operator |
 | The Node spill directory is full or unwritable | the body source's write fails | that request gets today's protocol error and runs nothing; the store, in `stateDirectory`, is unaffected | the host's operator |
-| Signature keys cannot be fetched | `verifyJwsSignature` returns `keys-unavailable` | the call is refused as unauthenticated | the host's operator |
+| The issuer's key set cannot be fetched | `keySets.fetchKeySet` returns `unavailable` to the core's issuer key cache | the call is refused as unauthenticated and the failure is logged; a still-valid cached set (inside its 5 minutes) keeps being used | the host's operator |
+| A token names a key not in the cached set | the issuer key cache | one refetch; still absent → refused as an unknown key, with no further refetch for that set until its 5 minutes pass | the store of keys is the issuer's |
+| A removal notice names a subject in a shape the token does not use | the receiver's `deriveRemovalSubjectKey` | cannot happen by construction: the notice carries the token's session shape (identity K2); a notice that fails to parse is refused before any mark is written, so central's outbox resends it | the sender (Fleet central) |
 | A store row fails to parse | Zod at read | `store-unavailable`, field named in the log; never treated as "no record" | the host's operator |
 
 ## The defects and their owners
@@ -558,7 +654,7 @@ stateDiagram-v2
 | Workspace isolation in storage | the host's database choice, checked by the store | one Durable Object per workspace; one file per Node workspace; `store_meta` binds the database to its workspace and refuses another | `workspace-mismatch` | V4 cross-workspace case and a mismatched-open case |
 | Temporary request data (Node) | the Node body source | private per-process spill directory outside `stateDirectory`; exclusive `0600` files; removal on every end and dead-owner cleanup at startup | that request fails; the store is untouched | V26 spill cases |
 | Trusted capabilities | each host | the injected crypto, clock, IDs, database and transport are part of the trusted base; injection gives portability and observability, not containment | a wrong adapter can approve forgeries or reopen expiry | known-answer and tamper vectors through each real adapter (V1) |
-| Cutover safety | the Cloudflare host's deployment | new object class, old class deleted, approval keys rotated | an old token fails signature verification | V9 |
+| Cutover safety | each host's deployment, at both storage changes | this work: new object class, old class deleted, approval keys rotated on the Worker and Node; store version 2: approval rows deleted, keys rotated again on the Worker and every Node host | an old token fails signature verification | V9, O7 at each change |
 | Secrets | the core's redaction (unchanged) | no argument, result or credential is stored | — | existing Tool Portal check 7 |
 | Privacy | `WorkspaceStore` | stores token ids, principals, fingerprints and timestamps only | — | schema review |
 | Reliability | each host | fail closed on store or migration failure | listed above | V6, V7 |
@@ -568,21 +664,21 @@ stateDiagram-v2
 
 | U | R | E | owner | interface | shape and home | state | failure | proof |
 |---|---|---|---|---|---|---|---|---|
-| U1 | R1 every rule in the core: same outcomes on both hosts | E1 E2 | hosted MCP proxy; standalone service | `createHostedMcpProxy`, `createStandaloneToolPortalService` | `PortalPlatform`, `HostedMcpProxy` in `tool-host-core` | none: rules are stateless apart from the store | as each rule today | conformance suite run against the Cloudflare host in workerd and the Node host over HTTP |
+| U1 | R1 every rule in the core: same outcomes on both hosts, apart from host-supplied limit values | E1 E2 | hosted MCP proxy; standalone service | `createHostedMcpProxy`, `createStandaloneToolPortalService`; `HostedProxyLimits` supplied by each host | `PortalPlatform`, `HostedMcpProxy` in `tool-host-core`; the Worker's limit values in `tool-host-cloudflare/src/worker-limits.ts`; none on Node | none: rules are stateless apart from the store | as each rule today | conformance suite run against the Cloudflare host in workerd and the Node host over HTTP, with limit scenarios expecting each host's own answer; deployed row 15 limit checks rerun after A7 and A8 |
 | U1 | R2 the Node host runs the core | E1 E2 | Node host | the same composition roots | as R1 | none: composition only | startup fails closed on store or migration failure | Node host process proof: every Node-only behaviour listed in the Tool Portal design, through the core |
 | U1 U6 | R3 runtime only through capabilities | E1 E3 | platform capabilities | `PortalPlatform` | `platform-capabilities.ts` | none | missing capability is a type error, not a runtime default | fixed-capability determinism run; type-check guard |
 | U2 U3 | R4 typed operations, one mapping | E1 E2 E4 | workspace store | `WorkspaceStore` | `workspace-store.ts`; `workspace-store-schema.ts` | E4 tables | `store-unavailable` variant | the same store suite on Durable Object SQLite and `better-sqlite3` |
-| U3 | R5 only the chosen databases | E4 | Cloudflare host; Node host | Drizzle drivers in hosts only | — | — | — | source scan of Tool Portal packages for forbidden storage APIs |
-| U3 U4 | R6 generated migrations, applied once | E4 E8 | each host's migrator; `drizzle-kit` config in the core | `migrate(...)` per driver | `tool-host-core/drizzle/` | `__drizzle_migrations` | constructor throws / startup fails | upgrade run from every earlier schema version on both databases; request-before-migration probe |
+| U3 | R5 only the chosen databases, through the query builder | E4 | Cloudflare host; Node host | Drizzle drivers in hosts only; the store's statements through the query builder | — | — | — | source scan of Tool Portal packages for forbidden storage APIs and SQL-text execution (`sql.raw(`, `.sql.exec(`, `.run(sql`, `.all(sql`, `.get(sql`, `.values(sql`, `.prepare(`, `.exec(`, `ctx.storage.get/put/list/delete/transaction`, `node:sqlite`, Kysely) |
+| U3 U4 | R6 generated migrations, applied once | E4 E8 | each host's migrator; `drizzle-kit` config in the core | `migrate(...)` per driver | `tool-host-core/drizzle/` | `__drizzle_migrations` | constructor throws / startup fails | upgrade run from every earlier schema version on both databases; structural evidence that no request is served before migration (Durable Object: migrate inside `blockConcurrencyWhile`; Node: listener opens after `migrate`) |
 | U5 | R7 survives restart | E4 E5 E6 | workspace store | all store operations | tables above | durable rows | `store-unavailable` refuses | restart and redeploy runs on both hosts with presentations before and after |
-| U3 U5 | R8 atomic decisions | E5 E6 | workspace store | `presentProxyToken`, `reserveBatchApproval`, `armBatchApproval`, `recordRemovalNotice` | as above | transitions in "Approval-use lifecycle" | the transaction aborts as a whole | contention runs: many copies and connections, exactly one first use, on both databases; Hegel interleavings |
-| U3 U5 | R9 no approval revived at cutover | E5 | Cloudflare host deployment | object class migration and key rotation | `wrangler` tag `v3` | old object deleted | old token fails verification | cutover run on the private test Worker with a token used before it |
+| U3 U5 | R8 atomic decisions | E5 E6 | workspace store | `presentProxyToken`, `reserveBatchApproval`, `armBatchApproval`, `proveBatchNotDispatched`, `recordRemovalNotice`, `readRemovalMark`; `deriveRemovalSubjectKey` | as above | transitions in "Approval-use lifecycle" | the transaction aborts as a whole | contention runs: many copies and connections, exactly one first use, on both databases; Hegel interleavings; subject-key cases (one key per bot, session and machine; a machine mark covers a session token) |
+| U3 U5 | R9 no approval revived at either storage change | E5 | Cloudflare host deployment; each Node host | object class migration and key rotation (this work); store version 2 re-key with key rotation on the Worker and every Node host (the identity cutover) | `wrangler` tag `v3`; store version 2 migration | old object deleted; approval rows deleted at v2 | old token fails verification | cutover run on the private test Worker and a Node host with a token used before it, at each change |
 | U7 | R10 discriminated unions | E5 | every core component | every result type above | each module's `models/` | — | — | type tests: an unhandled variant fails to compile |
 | U7 U10 | R11 core type-checks without runtime types | E1 E11 | the type-check guard | `tsconfig.portable.json` per core package | — | — | a forbidden import fails the type-check | the guard run, plus a deliberately forbidden import that must fail |
 | U8 | R12 UUIDv7 identifiers | E9 | `PortalIdSource` | `nextId(): Uuid7` | `platform-capabilities.ts` | — | a non-v7 value fails `uuid7Schema` | every minted id parsed as v7 in the conformance runs; source scan for `randomUUID` |
 | U9 | R13 no wall clock in tests | E10 | each package's test fixtures | controlled `PortalClock` and `PortalTimers` | test fixtures | — | — | source scan of test files; review of hang guards per RD4 |
 | U9 U1 | R14 clock only through the capability | E3 E10 | hosts' production entries | `PortalPlatform` built from web-platform adapters | — | — | — | production bundle scan for clock substitution and test entries |
-| U15 | R15 Hegel property tests | E5 E6 | the core's test suites | `WorkspaceStore`, the canonical encoder, the approval verifier | test suites | approval-use lifecycle | — | the five Hegel property families on both databases |
+| U15 | R15 Hegel property tests | E5 E6 | the core's test suites | `WorkspaceStore`, the canonical encoder, the approval verifier | test suites | approval-use lifecycle | — | the five Hegel property families, run in Node (Hegel loads native code through FFI): on a `better-sqlite3` file directly, and against Durable Object SQLite by driving `WorkspaceStoreObject`'s own methods through the test runtime's Durable Object stub, one generated step per call |
 | U11 | R16 TypeScript verification | none: a constraint on tooling | each package's tests | — | — | — | — | source scan for Python outside the Python SDK's own tests |
 | U12 | R17 one SDK generation | none: a dependency constraint | package manifests | — | — | — | — | lockfile and import scan |
 | U12 | R18 one version each | none: a dependency constraint | package manifests | — | — | — | — | lockfile scan |
@@ -598,7 +694,11 @@ stateDiagram-v2
 ## Open evidence and unresolved decisions
 
 - **R26 large requests:** the design is above; the deployed 502's cause is decided by one correlated observation before building, and the remaining bound is the owner's choice (RD7).
-- **Settled by experiment:** the guard (above); both drivers satisfy `BaseSQLiteDatabase<'sync', …>` without casts, and one synchronous transaction rolls back identically on both; `uuid@11.1.1` `v7({ msecs, random })` is deterministic with injected time and bytes (the web-platform adapter passes `platform.clock.nowMs()` and 16 bytes from `crypto.getRandomValues`; tests pass seeded bytes).
+- **Settled by experiment:**
+  - the guard, including the custom library that removes no-argument `Date.now()` (TS2339 observed, `report-2.md` §2) and the Drizzle driver-subpath allowlist (`experiment-3-driver-subpaths/driver-subpath-probe.log`);
+  - both drivers satisfy `BaseSQLiteDatabase<'sync', …>` without casts, and one synchronous transaction rolls back identically on both (`report-2.md` §4);
+  - `uuid@11.1.1` `v7({ msecs, random })` is deterministic with injected time and bytes (the web-platform adapter passes `platform.clock.nowMs()` and 16 bytes from `crypto.getRandomValues`; tests pass seeded bytes).
+- **Inferred, not observed:** that Hegel cannot load inside a workerd isolate. It depends on `koffi` native FFI packages (lockfile at `2dfea38e`), so the design runs Hegel in Node and reaches the Durable Object through the test runtime's stub instead of assuming otherwise.
 - **Owner decisions,** all in the [Requirements](requirements.md#open-owner-decisions):
   - RD1: the tables above, and `drizzle-kit` as a development dependency;
   - RD3: the 1.x SDK in one fixture module;

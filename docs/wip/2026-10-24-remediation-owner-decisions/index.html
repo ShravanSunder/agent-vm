@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remediation decisions</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"></ex-nav>
+<ex-document id="content">
+
+<h1>Remediation decisions</h1>
+
+<p>Three decisions decide whether the Tool Portal remediation, the sign-in revision and the cross-repository work can start: what happens to #262, the two schemas, and how large requests are bounded. Each is drawn below with its options, where the reviewers stand, and a recommendation. Smaller decisions follow in one table. Nothing here is built; all three design sets have been through three independent reviews and their corrections.</p>
+
+<ex-callout id="order" title="Decide in this order" tone="question" icon="users">
+<p><strong>1. #262 (OD-R1)</strong> unblocks every slice's base. <strong>2. The two schemas (RD1, OD4)</strong> unblock the Portal store and the sign-in core. <strong>3. Large requests (RD7)</strong> unblocks only the large-request slice; everything else proceeds without it.</p>
+</ex-callout>
+
+<h2 id="od-r1">1. What happens to #262 (OD-R1)</h2>
+
+<p><strong>The decision:</strong> merge #262 now and fix it on master in small slices, keep it open and fix it on its branch, or close it and rebuild.</p>
+
+<p><strong>Why it's open:</strong> #262 works, but it carries the six choices you rejected, and also changes to the check gates you never approved (<code>run-check-gate.ts</code>, <code>vitest.config.ts</code>, 26 added scripts). Your rules settle what the fixed code must look like, not which branch carries the fix.</p>
+
+<ex-mermaid id="od-r1-today" label="Today"><script type="text/plain">
+flowchart LR
+  M["master 38569fca"] --> S["#238–#247 stack"]
+  S --> P262["#262: works, wrong storage, unapproved gates"]
+  P262 --> P263["#263 sign-in issuer"]
+</script></ex-mermaid>
+
+<ex-compare label="What happens to #262" data-width="canvas">
+  <section id="revert-merge" label="Revert gates, then merge (recommended)" icon="git-branch">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>One commit on #262 restores the gates to 38569fca and removes the 26 scripts. Then #262 merges, and the fixes land on master as small stacked PRs. No publish or deploy from master until the Portal cutover (A8).</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>Small reviewable slices; one base for everyone; master never runs gates you didn't approve.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>Master carries the wrong storage and Node host until the store and Node host slices merge. The hold stops it reaching anything deployed.</p></section>
+  </section>
+  <section id="merge-as-is" label="Merge as it is" icon="package">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>Merge #262 now; the clean-build slice (A6) reverts the gates later.</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>One commit sooner.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>Every check on master until A6 runs gates you didn't approve.</p></section>
+  </section>
+  <section id="hold" label="Hold on its branch" icon="lock">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>Fix on the 768-file branch; merge once at the end.</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>Master never carries the wrong code.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>Every slice rebases onto a huge branch; review sees one enormous merge.</p></section>
+  </section>
+</ex-compare>
+
+<p><strong>Where the agents stand:</strong> the Lead recommends reverting the gates first. The Opus second reviewer found the earlier recommendation hid the gate cost (finding O3); this option removes it. No reviewer argued for holding or closing.</p>
+
+<p><strong>If you defer:</strong> no slice can start, because its base is undecided. The design work and reviews continue.</p>
+
+<h2 id="schemas">2. The two schemas (RD1, OD4)</h2>
+
+<p><strong>The decision:</strong> approve the Tool Portal's workspace-store tables and the sign-in service's tables, each with its generated migrations, before any code uses them. You set this gate yourself.</p>
+
+<p><strong>Why it's open:</strong> it is your approval gate. The designs draw every table; nothing is generated or run yet.</p>
+
+<ex-mermaid id="schemas-today" label="Today and proposed homes"><script type="text/plain">
+flowchart LR
+  subgraph Today
+    KV["Portal: deprecated key-value API on a SQLite object, plus in-memory Maps"]
+    RAW["Sign-in: hand-written D1 SQL and Kysely"]
+  end
+  subgraph Proposed
+    WS["Portal WorkspaceStore: Drizzle on DO SQLite / better-sqlite3"]
+    SI["Sign-in store: Drizzle on D1 / better-sqlite3, Better Auth's Drizzle adapter"]
+  end
+  KV --> WS
+  RAW --> SI
+</script></ex-mermaid>
+
+<p><strong>Tool Portal tables (RD1)</strong>, one database per workspace:</p>
+
+<div data-width="canvas">
+
+| Table | Holds | Key point |
+|---|---|---|
+| `store_meta` | which workspace this database belongs to; the store's security time | a database opened for another workspace refuses everything; time never goes backwards, so a used approval can't come back (security finding SEC-01) |
+| `proxy_token_use` | each used proxy approval until it expires | one row per use, so first use is one insert |
+| `batch_approval_use` | each batch approval: reserved, armed, or proven not dispatched | survives restarts, so a restart can't reuse an approval |
+| `membership`, `membership_removal` | today's membership records (version 1 only) | dropped at the identity cutover |
+| `removal_mark`, `removal_notice` | removals received from Fleet (version 2) | keyed by one subject key shared with the token |
+
+</div>
+
+<p>Plus <code>drizzle-kit</code> as a development dependency of <code>tool-host-core</code>, to generate the migrations.</p>
+
+<p><strong>Sign-in tables (OD4):</strong> Better Auth 1.7.11's tables as its CLI generates them for the Drizzle adapter, with every SQL time default removed; <code>session.organizationId</code>; <code>sign_in_audit</code>; <code>organization_admission_claim</code>, one row per sign-in attempt; <code>admitted_person_guard</code>, which stops a refused sign-in from deleting someone Fleet admitted (security finding SEC-02). <code>allowed_email</code> and <code>deployment_owner</code> go, because admission moved to Fleet central.</p>
+
+<p><strong>Options:</strong> approve both as drawn; or approve with changes you name. There is no credible third option inside your rules: a key-value layout and hand-written SQL are what you rejected.</p>
+
+<p><strong>Where the agents stand:</strong> all three reviewers required the gate to be explicit; the Opus reviewer found the sign-in gate had no drawn schema (I2), now drawn. The security reviewer's two High storage findings are fixed in these tables.</p>
+
+<p><strong>Recommendation:</strong> approve both as drawn. Full detail: <a href="../../specs/2026-10-24-tool-portal-remediation/index.html#program-design--the-tables-for-the-owner-s-approval-rd1">Portal tables</a> and <a href="../../specs/2026-10-24-agent-identity/index.html#program-design--the-sign-in-service-storage-core-and-hosts-r29-r33">sign-in tables</a>.</p>
+
+<p><strong>If you defer:</strong> the store slice (A2) and the sign-in core (B1) can't write code. The capability slice (A1) and the defect fixes (A4) still can.</p>
+
+<h2 id="rd7">3. Large requests (RD7)</h2>
+
+<p><strong>The decision:</strong> you said large requests must be streamed or spilled, never capped. Streaming removes one copy of the request, but it does not bound memory. Accept the platform's memory as the bound, or commission a much larger design that bounds memory end to end.</p>
+
+<p><strong>Why it's open:</strong> your rule rules out a cap, but doesn't say what happens when one huge request exhausts a Worker's memory. On a Worker, that memory (128 MB) is shared by every call running in the same isolate, including other workspaces' calls.</p>
+
+<ex-mermaid id="rd7-today" label="Where memory goes"><script type="text/plain">
+flowchart LR
+  B["request body"] -->|streamed: no raw copy| P["parsed request"]
+  P --> V["validation copy"]
+  P --> F["fingerprint copy"]
+  P --> U["forwarded copy"]
+  V --> M["one isolate's 128 MB, shared"]
+  F --> M
+  U --> M
+</script></ex-mermaid>
+
+<ex-compare label="Bounding large requests" data-width="canvas">
+  <section id="accept" label="A: platform memory is the bound (recommended now)" icon="cloud">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>Stream the parse, spill on Node to private temporary files, no Portal cap. The specification states the limit plainly: a request that exhausts an isolate ends the other calls running there.</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>No cap, as you asked; small design; fixes today's 4 MiB refusal.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>One member's huge request can end other workspaces' calls in that isolate. A call that had armed an approval ends "ambiguous" for its client; the records stay correct. One new streaming JSON parser dependency.</p></section>
+  </section>
+  <section id="bounded" label="B: bounded memory end to end" icon="stack">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>Values streamed or spooled through validation, fingerprinting and forwarding, with admission and backpressure across requests; possibly a separate bulk runtime on Workers.</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>No cap and no shared failure.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>A much larger design, written and reviewed separately; the large-request slice waits for it.</p></section>
+  </section>
+  <section id="cap" label="C: a Portal budget" icon="lock">
+    <section data-compare-row="what"><p><strong>What</strong></p><p>Refuse requests above a set size below isolate memory.</p></section>
+    <section data-compare-row="gain"><p><strong>Gain</strong></p><p>No shared failure; simplest.</p></section>
+    <section data-compare-row="cost"><p><strong>Cost</strong></p><p>It's a cap, which you rejected.</p></section>
+  </section>
+</ex-compare>
+
+<p><strong>Where the agents stand:</strong> the security reviewer rates the shared failure High (SEC-03) and asks that it be either accepted explicitly or designed out. The review lead marks it as your decision (F1). The Advisor agrees streaming alone does not bound memory. Nobody recommends a cap.</p>
+
+<p><strong>Recommendation:</strong> A now, with the limit written into the specification, and B as later work if the shared failure ever shows up in practice. First, one correlated observation of today's deployed 502 is taken, because its cause is still unknown.</p>
+
+<p><strong>If you defer:</strong> only the large-request slice (A7) and the Portal cutover (A8) that waits on it are held.</p>
+
+<h2 id="smaller">Smaller decisions</h2>
+
+<div data-width="canvas">
+
+| ID | Decision | Recommendation | Held while open |
+|---|---|---|---|
+| RD3 | May the old MCP SDK stay as a test-only stand-in for 2025-era clients? | Yes, in one test-fixture module only | the clean-build slice (A6) |
+| RD4 | May an end-to-end test keep a timeout that can only fail a hung process? | Yes, as a hang guard that can never make a test pass | the deterministic-tests slice (A5) |
+| RD5 | Remove the 26 scripts and the `e2e-deployed` project #262 added? | Remove; any worth keeping returns as its own approved check | A6 (and the OD-R1 revert) |
+| RD6 | The Node host's state directory and spill directory, written by agent-vm's config writer | Allow `stateDirectory` (persistent) and an optional spill parent on temporary storage, never inside state | the store slice (A2) |
+| OD-R2 | Do the codex-router identity slices handed out before today still stand? | No: they wait for these designs and are re-cut | Fleet identity (F1+) |
+| OD-R3 | How a contract's generated artifact crosses the repositories | The producer commits it; the consumer keeps a pinned copy | the contract slices |
+| OD-R4 | The parked old-package deletion (#255) | Kept parked; the clean-build obligation it touches stays open until you decide | part of A6 |
+| OD1 | Who may start a session in a workspace | You, or a session already a member | Router session start (F4) |
+| OD2 | Default token lifetime | 5 minutes (configurable) | nothing; the Lead uses 5 |
+| OD3 | Is a bot a collaborator of every other workspace? | Only where you allow it | bot collaboration (F6/F7) |
+| SD8 | How fresh a person's session check must be for owner actions | inherited from people sign-in; still yours | the owner guard (F2) |
+
+</div>
+
+<h2 id="cleanup">Old worktrees waiting on permission</h2>
+
+<p>From the earlier lead's work, these are kept because each holds unmerged work: the work-trail files in the <code>docs/tool-portal-design</code> worktree, the uncommitted <code>tool-host-node-s3c</code> work, the S4c2 probe commit, and four lineage-join scratch branches. Removing them is destructive, so it waits for your word. Merged worktrees with nothing unique were already cleaned up.</p>
+
+</ex-document>
+</body>
+</html>
