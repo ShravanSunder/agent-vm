@@ -101,13 +101,13 @@ registerHooks({resolve(specifier,context,nextResolve){
 }
 
 function consumerSource(): string {
-	return `import {createWorkspaceAuthority,createVolatileAuthorityStore,createHostedMcpProxy} from '@agent-collaboration/tool-host-core';
+	return `import {createWorkspaceAuthority,createVolatileAuthorityStore,createHostedMcpProxy,workspaceConfigurationSchema} from '@agent-collaboration/tool-host-core';
 const store=createVolatileAuthorityStore();
 const authority=createWorkspaceAuthority({store,clock:{nowMs:()=>100},cap:1024});
 const results=await Promise.all([authority.consumeApprovalToken('agent:token',200),authority.consumeApprovalToken('agent:token',200)]);
 if(results.filter(result=>result.ok).length!==1)throw new Error('packed authority admitted duplicate use');
 if(JSON.stringify(await store.read('approval-uses-v1'))!=='{"agent:token":200}')throw new Error('packed storage bytes changed');
-const proxy=createHostedMcpProxy({verifier:{verify:async()=>{throw new Error('missing token must not verify');}},toolPortalOrigin:'https://packed.invalid',workspaces:{forWorkspace:()=>authority},configurations:{workspaceIdsForOrganization:async()=>[],read:async()=>{throw new Error('must not load config');}},secrets:{read:()=>{throw new Error('must not read secret');}},analytics:{write:()=>{throw new Error('must not emit');}},log:()=>{},clock:{nowMs:()=>100,nowIso:()=>''},newId:()=> 'packed',limits:{requestBodyBytes:4194304,upstreamResponseBytes:4194304,replyBytes:16777216,batchCalls:50,batchConcurrency:6},createUpstreamMcpTransport:()=>{throw new Error('must not create transport');}});
+const proxy=createHostedMcpProxy({sessionClientId:'packed-central',verifier:{verify:async()=>{throw new Error('missing token must not verify');}},toolPortalOrigin:'https://packed.invalid',workspaces:{forWorkspace:()=>authority},configurations:{workspaceIdsForOrganization:async()=>[],read:async()=>workspaceConfigurationSchema.parse({organizationId:'11111111-1111-4111-8111-111111111111',workspaceName:'packed',approvalKeyBinding:'KEY',mcp:{schemaVersion:1,providers:{}},portal:{schemaVersion:1,sessionDefaultProfile:'packed',profiles:{}}})},secrets:{read:()=>{throw new Error('must not read secret');}},analytics:{write:()=>{throw new Error('must not emit');}},log:()=>{},clock:{nowMs:()=>100,nowIso:()=>''},newId:()=> 'packed',limits:{requestBodyBytes:4194304,upstreamResponseBytes:4194304,replyBytes:16777216,batchCalls:50,batchConcurrency:6},createUpstreamMcpTransport:()=>{throw new Error('must not create transport');}});
 const response=await proxy.handle(new Request('https://packed.invalid/workspaces/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/mcp'));
 if(response.status!==401||await response.text()!=='{"error":"unknown-caller"}')throw new Error('packed hosted caller response changed');
 console.log('packed Node hosted proxy and atomic authority consumers passed');
