@@ -316,7 +316,7 @@ it('agent: every management boundary refuses real E10 and signed management no-s
 		headers: { authorization: `Bearer ${owner}` },
 	});
 	expect(personAtAgentEdge.status).toBe(401);
-	expect(await personAtAgentEdge.json()).toEqual({ error: 'wrong-audience' });
+	expect(await personAtAgentEdge.json()).toEqual({ error: 'unknown-caller' });
 	const noHook = await harness.auth('/__auth-proof/no-hook');
 	expect(noHook.status).toBe(200);
 	expect(await noHook.json()).toEqual({ refused: true });

@@ -1,7 +1,6 @@
 import { expect, it } from 'vitest';
 import { z } from 'zod';
 
-import type { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
 import {
 	startLocalAuthHarness,
 	organizationOne,
@@ -80,18 +79,21 @@ it.each([
 				workspaceId: race === 'resource-workspace' ? workspaceTwo : workspaceOne,
 			});
 			if (race === 'unlink') {
-				const bindings = await harness.miniflare.getBindings<{
-					readonly SIGN_IN: ReturnType<typeof createSignInManagementBinding>;
-				}>('gateway-one');
-				expect(
-					await bindings.SIGN_IN.unlink({
-						token: owner,
-						organizationId: organizationOne,
-						workspaceId: workspaceOne,
-						clientId: registeredClientId,
-						requestId: crypto.randomUUID(),
-					}),
-				).toMatchObject({ kind: 'unlinked' });
+				// Successful RPC stays inside production Workers: Node's first service-RPC proxy blocks its observer callback.
+				const unlinked = await harness.gateway(
+					`/management/workspaces/${workspaceOne}/agents/${registeredClientId}`,
+					{
+						method: 'DELETE',
+						headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+						body: JSON.stringify({ requestId: crypto.randomUUID() }),
+					},
+				);
+				expect(unlinked.status).toBe(200);
+				expect(await unlinked.json()).toEqual({
+					kind: 'removed',
+					clientId: registeredClientId,
+					workspaceId: workspaceOne,
+				});
 				expect(
 					(
 						await harness.database

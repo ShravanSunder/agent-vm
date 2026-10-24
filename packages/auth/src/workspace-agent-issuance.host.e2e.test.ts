@@ -11,6 +11,7 @@ import {
 	workspaceThree,
 	workspaceAudience,
 	organizationOne,
+	organizationTwo,
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
@@ -100,8 +101,14 @@ it('agent: one real issuer client keeps two workspace links, removes only W1, an
 						workspaceId,
 					}),
 					allowedScopes: '["tool-portal:agent"]',
-					customClaims: null,
 				});
+				const customClaimsColumn = z
+					.object({ customClaims: z.string().nullable() })
+					.parse(resource).customClaims;
+				// Better Auth's SQLite adapter JSON-encodes this field, including logical null.
+				const customClaims: unknown =
+					customClaimsColumn === null ? null : JSON.parse(customClaimsColumn);
+				expect(customClaims).toBeNull();
 			}),
 		);
 		const jwks = createRemoteJWKSet(new URL('/api/auth/jwks', harness.issuer));
@@ -338,22 +345,35 @@ it('agent: a real zero-link client can be disabled through the named port withou
 		const binding = await harness.miniflare.getBindings<{
 			readonly SIGN_IN: ReturnType<typeof createSignInManagementBinding>;
 		}>('gateway-one');
-		const registered = await binding.SIGN_IN.registerAndLink({
-			token: owner,
-			organizationId: organizationOne,
+		const registration = await addWorkspaceAgent({
+			harness,
+			owner,
 			workspaceId: workspaceOne,
 			requestId: registrationRequestId,
 		});
-		expect(registered.kind).toBe('registered');
-		if (registered.kind !== 'registered') throw new Error('Named registration did not complete');
-		const unlinked = await binding.SIGN_IN.unlink({
-			token: owner,
-			organizationId: organizationOne,
-			workspaceId: workspaceOne,
+		expect(registration.status).toBe(200);
+		const registered = agentCredentialSchema
+			.extend({
+				kind: z.literal('registered'),
+				workspaceId: z.literal(workspaceOne),
+				resource: z.literal(workspaceAudience(workspaceOne)),
+			})
+			.strict()
+			.parse(await registration.json());
+		const unlinked = await harness.gateway(
+			`/management/workspaces/${workspaceOne}/agents/${registered.clientId}`,
+			{
+				method: 'DELETE',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId: crypto.randomUUID() }),
+			},
+		);
+		expect(unlinked.status).toBe(200);
+		expect(await unlinked.json()).toEqual({
+			kind: 'removed',
 			clientId: registered.clientId,
-			requestId: crypto.randomUUID(),
+			workspaceId: workspaceOne,
 		});
-		expect(unlinked.kind).toBe('unlinked');
 		expect(
 			(
 				await harness.database
@@ -369,13 +389,17 @@ it('agent: a real zero-link client can be disabled through the named port withou
 				clientId: registered.clientId,
 			}),
 		).toBe(true);
-		const disabled = await binding.SIGN_IN.disable({
-			token: owner,
-			organizationId: organizationOne,
-			clientId: registered.clientId,
-			requestId: crypto.randomUUID(),
-		});
-		expect(disabled).toEqual({ kind: 'disabled', clientId: registered.clientId });
+		// The organization route calls real disable without a workspace field, even with no links.
+		const disabled = await harness.gateway(
+			`/management/organizations/${organizationOne}/agents/${registered.clientId}`,
+			{
+				method: 'DELETE',
+				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
+				body: JSON.stringify({ requestId: crypto.randomUUID() }),
+			},
+		);
+		expect(disabled.status).toBe(200);
+		expect(await disabled.json()).toEqual({ kind: 'removed', clientId: registered.clientId });
 		expect(
 			await harness.database
 				.prepare('SELECT COALESCE(disabled, 0) AS disabled FROM oauthClient WHERE clientId = ?')
@@ -492,3 +516,67 @@ it('agent: an authentic legacy Worker audience without workspace identity cannot
 		await harness.close();
 	}
 });
+
+it('agent: a real O2 W3 token dispatches exactly once under W3 credentials and never at W1 or W2', async () => {
+	const harness = await startLocalAuthHarness();
+	try {
+		const owner = await harness.ownerToken();
+		const registered = await addWorkspaceAgent({
+			harness,
+			owner,
+			workspaceId: workspaceThree,
+			requestId: crypto.randomUUID(),
+		});
+		expect(registered.status).toBe(200);
+		const credential = agentCredentialSchema.parse(await registered.json());
+		const token = await workspaceToken({ harness, credential, workspaceId: workspaceThree });
+		const signed = await jwtVerify(
+			token,
+			createRemoteJWKSet(new URL('/api/auth/jwks', harness.issuer)),
+			{
+				issuer: harness.issuer,
+				audience: workspaceAudience(workspaceThree),
+			},
+		);
+		expect(signed.protectedHeader.typ).toBe('at+jwt');
+		expect(signed.payload).toMatchObject({
+			sub: credential.clientId,
+			client_id: credential.clientId,
+			azp: credential.clientId,
+			organization_id: organizationTwo,
+			workspace_id: workspaceThree,
+			aud: workspaceAudience(workspaceThree),
+		});
+		expect(signed.payload).not.toHaveProperty('sid');
+		const beforeAllowed = harness.effects.length;
+		const allowed = await callWorkspaceTool({
+			harness,
+			workspaceId: workspaceThree,
+			token,
+			correlation: 'real-o2-w3-positive',
+		});
+		expect(allowed.status).toBe(200);
+		expect(harness.effects.slice(beforeAllowed)).toEqual([
+			{
+				credential: 'Bearer organization-two-canary',
+				arguments: { correlation: 'real-o2-w3-positive' },
+			},
+		]);
+		const beforeCrossPresentation = [...harness.effects];
+		const refused = await Promise.all(
+			[workspaceOne, workspaceTwo].map(
+				async (workspaceId): Promise<Response> =>
+					callWorkspaceTool({
+						harness,
+						workspaceId,
+						token,
+						correlation: `cross-w3-${workspaceId}`,
+					}),
+			),
+		);
+		expect(refused.map((response) => response.status)).toEqual([401, 401]);
+		expect(harness.effects).toEqual(beforeCrossPresentation);
+	} finally {
+		await harness.close();
+	}
+}, 120_000);

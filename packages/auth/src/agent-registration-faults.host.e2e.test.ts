@@ -109,6 +109,8 @@ it.each(faults)(
 					kind: z.literal('registered'),
 					clientId: z.literal(registeredClientId),
 					clientSecret: z.string().min(1),
+					workspaceId: z.literal(workspaceOne),
+					resource: z.literal(agentAudience),
 				})
 				.parse(await repeated.json());
 			const after = await harness.database
