@@ -74,7 +74,9 @@ Each observation is described once; the rows below say which obligations it deci
   1. Person A, signed in, registers a passkey, signs out and signs back in with it.
   2. Try to register a passkey with no session (`SD7` default).
   3. Try to sign in with a passkey that was deleted.
-- **Read:** the session's user id in D1, compared with Person A's id from journey A.
+  4. Present an assertion for the wrong origin and for the wrong relying-party ID; reuse an expired challenge; replay a used assertion; run two ceremonies at once; use a registration challenge for an authentication.
+  5. Person A, admitted in O1 and holding a passkey, whose verified email is allowed but unbound in O2, signs in to O2 with the passkey.
+- **Read:** the session's user id in D1, compared with Person A's id from journey A; for steps 4 and 5, no session created and, for step 5, nothing bound in O2's organization object (its allowlist entry stays unbound and its record unchanged).
 
 **C. Proofs across services** (`verify-auth` `proof-audience`, needed, lasting). The stand-in client obtains four tokens from Person A's session on `T1`:
 - one for the console's resource;
