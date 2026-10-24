@@ -22,6 +22,7 @@ import type {
 } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
 import { createHostedRequestLimits } from '#tool-host-core/request-limits/hosted-call-limits';
 import type { SettledWorkspaceCatalog } from '#tool-host-core/workspace-engines/models/workspace-engine';
+import { resolveHostedCallerProfiles } from '#tool-host-core/workspace-engines/proxy-profile-policy';
 import { createWorkspaceEngine } from '#tool-host-core/workspace-engines/workspace-engine';
 
 interface HostedWorkspaceContext {
@@ -41,7 +42,10 @@ function callerRefusalResponse(
 						? 'profile-unassigned'
 						: 'unknown-caller',
 		},
-		{ status: caller.kind === 'unavailable' ? 503 : 401 },
+		{
+			status:
+				caller.kind === 'unavailable' ? 503 : caller.reason === 'profile-unassigned' ? 403 : 401,
+		},
 	);
 }
 
@@ -85,8 +89,14 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 				log({ event: 'caller-refused', reason: caller.reason });
 				return callerRefusalResponse(caller);
 			}
-			const persona = caller.persona.kind === 'named' ? caller.persona.name : '';
-			if (admissionContext.configuration.portal.profiles[persona] === undefined) {
+			if (
+				resolveHostedCallerProfiles({
+					principal: caller.principal,
+					persona: caller.persona,
+					sessionDefaultProfile: admissionContext.configuration.portal.sessionDefaultProfile,
+					profiles: admissionContext.configuration.portal.profiles,
+				}) === undefined
+			) {
 				log({ event: 'caller-refused', reason: 'profile-unassigned' });
 				return callerRefusalResponse({ kind: 'refused', reason: 'profile-unassigned' });
 			}
@@ -119,7 +129,7 @@ export function createHostedMcpProxy(props: HostedMcpProxyPorts): HostedMcpProxy
 						context.catalog = settled;
 					const requestEngine = engine.gatewayFor({
 						principal: caller.principal,
-						persona,
+						persona: caller.persona,
 						invoke: limits.invoke,
 						consumeTokenId: async (tokenId, expiresAtMs) =>
 							props.workspaces

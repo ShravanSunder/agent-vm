@@ -42,6 +42,7 @@ function mixedOrganizations(modernUrl: string, legacyUrl: string): unknown {
 					},
 					portal: {
 						schemaVersion: 1,
+						sessionDefaultProfile: 'fixture',
 						agents: {
 							'agent-one': { credentialVersion: 1 },
 							'agent-two': { credentialVersion: 1 },

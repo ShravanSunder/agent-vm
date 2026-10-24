@@ -58,6 +58,7 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 						},
 						portal: {
 							schemaVersion: 1,
+							sessionDefaultProfile: 'fixture',
 							agents: { sender: { credentialVersion: 1 } },
 							profiles: {
 								fixture: {

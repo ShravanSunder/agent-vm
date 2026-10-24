@@ -2,7 +2,6 @@ import {
 	createWorkspacePrincipalIdentity,
 	workspacePrincipalKey,
 	portalAgentScopeKey,
-	mcpPortalCallPolicyDecision,
 } from '@agent-collaboration/tool-access/authorization';
 import {
 	assessAccessInput,
@@ -43,7 +42,7 @@ import type {
 } from '#tool-host-core/workspace-engines/models/workspace-engine';
 import {
 	assessedProxyProfile,
-	resolveHostedProxyProfile,
+	resolveHostedCallerProfiles,
 } from '#tool-host-core/workspace-engines/proxy-profile-policy';
 import { createRequestOperationEntries } from '#tool-host-core/workspace-engines/request-operation-entries';
 
@@ -150,9 +149,15 @@ export async function createWorkspaceEngine(props: {
 		refresh,
 		settledCatalog: () => settledCatalog,
 		gatewayFor: ({ principal, persona, consumeTokenId, invoke }) => {
-			const profile = configuration.portal.profiles[persona];
-			if (profile === undefined) throw new Error('Agent profile unavailable.');
-			const resolvedProfile = resolveHostedProxyProfile(profile);
+			const profiles = resolveHostedCallerProfiles({
+				principal,
+				persona,
+				sessionDefaultProfile: configuration.portal.sessionDefaultProfile,
+				profiles: configuration.portal.profiles,
+			});
+			if (profiles === undefined) throw new Error('Caller profile unavailable.');
+			const profileId =
+				persona.kind === 'named' ? persona.name : configuration.portal.sessionDefaultProfile;
 			const requestSnapshot = snapshot;
 			if (requestSnapshot === undefined) throw new Error('Request catalog was not prepared.');
 			const sessions = createAgentCatalogViewCache({
@@ -228,9 +233,8 @@ export async function createWorkspaceEngine(props: {
 								revision,
 								profileRevision: revision,
 								profile: assessedProxyProfile({
-									profileId: persona,
-									profile,
-									resolved: resolvedProfile,
+									profileId,
+									profiles,
 									capability,
 									tool:
 										descriptor === undefined
@@ -263,12 +267,26 @@ export async function createWorkspaceEngine(props: {
 					const tool = requestSnapshot.toolsByNamespace
 						.get(namespace)
 						?.find((entry) => entry.name === toolName);
+					const assessed = assessedProxyProfile({
+						profileId,
+						profiles,
+						capability: { namespace, tool: toolName },
+						tool:
+							tool === undefined
+								? undefined
+								: portalToolRecordSchema.parse({
+										namespace,
+										toolName,
+										inputSchema: tool.inputSchema,
+										...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+									}),
+					});
+					const policy = assessed.namespaces[namespace];
 					return (
-						mcpPortalCallPolicyDecision(resolvedProfile, {
-							namespace,
-							toolName,
-							...(tool?.annotations === undefined ? {} : { annotations: tool.annotations }),
-						}).kind === 'requires_approval'
+						policy !== undefined &&
+						policy.calls.kind === 'selectors' &&
+						policy.calls.requiresApproval.allow !== '*' &&
+						policy.calls.requiresApproval.allow.includes(toolName)
 					);
 				},
 			};

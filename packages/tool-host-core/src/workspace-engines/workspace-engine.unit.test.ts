@@ -27,6 +27,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 			},
 			portal: {
 				schemaVersion: 1,
+				sessionDefaultProfile: 'fixture',
 				agents: { sender: { credentialVersion: 1 } },
 				profiles: {
 					fixture: {
@@ -57,7 +58,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 	});
 	const first = engine.gatewayFor({
 		principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
-		persona: 'fixture',
+		persona: { kind: 'named', name: 'fixture' },
 		consumeTokenId: async () => ({ ok: true }),
 	});
 	try {
@@ -68,7 +69,7 @@ it('keeps each request gateway on its catalog generation across a later request 
 		await engine.refresh();
 		const second = engine.gatewayFor({
 			principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
-			persona: 'fixture',
+			persona: { kind: 'named', name: 'fixture' },
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {
@@ -115,6 +116,7 @@ it.each([true, false])(
 				},
 				portal: {
 					schemaVersion: 1,
+					sessionDefaultProfile: 'fixture',
 					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
@@ -157,7 +159,7 @@ it.each([true, false])(
 		});
 		const first = engine.gatewayFor({
 			principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
-			persona: 'fixture',
+			persona: { kind: 'named', name: 'fixture' },
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {
@@ -168,7 +170,7 @@ it.each([true, false])(
 			await engine.refresh();
 			const second = engine.gatewayFor({
 				principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
-				persona: 'fixture',
+				persona: { kind: 'named', name: 'fixture' },
 				consumeTokenId: async () => ({ ok: true }),
 			});
 			try {
@@ -263,6 +265,7 @@ it.each(['fresh', 'failed-refresh'] as const)(
 				},
 				portal: {
 					schemaVersion: 1,
+					sessionDefaultProfile: 'fixture',
 					agents: { sender: { credentialVersion: 1 } },
 					profiles: {
 						fixture: {
@@ -299,7 +302,7 @@ it.each(['fresh', 'failed-refresh'] as const)(
 		});
 		const request = engine.gatewayFor({
 			principal: { kind: 'bot', bot_id: '22222222-2222-4222-8222-222222222222' },
-			persona: 'fixture',
+			persona: { kind: 'named', name: 'fixture' },
 			consumeTokenId: async () => ({ ok: true }),
 		});
 		try {

@@ -1,4 +1,4 @@
-import type { Principal } from '@agent-collaboration/tool-access/contracts';
+import type { Principal, PersonaRef } from '@agent-collaboration/tool-access/contracts';
 import type {
 	DispatchInvocation,
 	ResourceResult,
@@ -24,7 +24,7 @@ export interface WorkspaceEngine {
 	readonly refresh: () => Promise<void>;
 	readonly gatewayFor: (props: {
 		readonly principal: Principal;
-		readonly persona: string;
+		readonly persona: PersonaRef;
 		readonly consumeTokenId: ConsumeApprovalTokenId;
 		readonly invoke?: (
 			invocation: DispatchInvocation,

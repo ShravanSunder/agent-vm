@@ -50,6 +50,7 @@ it('refuses an undefined token persona before any upstream discovery or dispatch
 						},
 						portal: {
 							schemaVersion: 1,
+							sessionDefaultProfile: 'fixture',
 							agents: {
 								assigned: { credentialVersion: 1 },
 							},
@@ -102,7 +103,7 @@ it('refuses an undefined token persona before any upstream discovery or dispatch
 		);
 		const assignedRequest = request.clone();
 		const response = await proxy.handle(request);
-		expect(response.status).toBe(401);
+		expect(response.status).toBe(403);
 		expect(await response.json()).toEqual({
 			error: 'profile-unassigned',
 		});
@@ -111,7 +112,7 @@ it('refuses an undefined token persona before any upstream discovery or dispatch
 				headers: { authorization: `Bearer ${bearer}` },
 			}),
 		);
-		expect(unsupportedRequest.status).toBe(401);
+		expect(unsupportedRequest.status).toBe(403);
 		expect(await unsupportedRequest.json()).toEqual({
 			error: 'profile-unassigned',
 		});
