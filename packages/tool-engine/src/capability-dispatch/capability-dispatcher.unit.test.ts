@@ -328,7 +328,7 @@ describe('neutral capability dispatch', () => {
 			expect(subject.invocations).toEqual([]);
 		},
 	);
-	it('refuses untracked protected work but accepts untracked usable work', async () => {
+	it('requires a record for protected work even when the approval port would approve', async () => {
 		const subject = harness();
 		vi.spyOn(subject.operations, 'createOrRead').mockImplementation(async () => ({
 			kind: 'untracked',
@@ -337,11 +337,31 @@ describe('neutral capability dispatch', () => {
 		requireApproval(input);
 		expect((await subject.dispatcher.dispatch(input)).kind).toBe('denied');
 		expect(subject.invocations).toEqual([]);
-		expect(await subject.dispatcher.dispatch(request())).toEqual({
-			kind: 'completed',
-			result: { issue: 42 },
-		});
-		expect(subject.invocations).toHaveLength(1);
+	});
+	it('lets any host leave unprotected calls unrecorded without a reuse guarantee', async () => {
+		// Arrange: a public host explicitly declines recording; its store cannot transition.
+		const subject = harness();
+		const create = vi
+			.spyOn(subject.operations, 'createOrRead')
+			.mockResolvedValue({ kind: 'untracked' });
+		const transition = vi
+			.spyOn(subject.operations, 'transition')
+			.mockRejectedValue(new Error('No record'));
+		const challenge = vi.spyOn(subject.approvals, 'challenge');
+		// Act: the same item is intentional work again, not a retained completion.
+		const results = [
+			await subject.dispatcher.dispatch(request()),
+			await subject.dispatcher.dispatch(request()),
+		];
+		// Assert: both effects run without approval or a nonexistent record transition.
+		expect(results).toEqual([
+			{ kind: 'completed', result: { issue: 42 } },
+			{ kind: 'completed', result: { issue: 42 } },
+		]);
+		expect(subject.invocations).toHaveLength(2);
+		expect(create.mock.calls.map(([input]) => input.requiresApproval)).toEqual([false, false]);
+		expect(transition).not.toHaveBeenCalled();
+		expect(challenge).not.toHaveBeenCalled();
 	});
 	it('retains the original key across reconnect/revision change, reuses completion and conflicts on changed intent', async () => {
 		const subject = harness();
