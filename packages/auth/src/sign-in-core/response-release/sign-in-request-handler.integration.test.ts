@@ -13,7 +13,9 @@ import {
 // C2: real Node HTTP and portable response wiring, with an explicit synthetic provider/storage edge.
 // This does not prove Better Auth, D1, a service binding or Gateway dispatch; C3 owns those claims.
 const issuer = 'https://sign-in.invalid';
-const agentAudience = 'https://portal.invalid/mcp';
+const workspaceId = '33333333-3333-4333-8333-333333333333';
+const agentAudience = `https://portal.invalid/workspaces/${workspaceId}/mcp`;
+const toolPortalOrigin = 'https://portal.invalid';
 const managementAudience = 'https://portal.invalid/management';
 const organizationId = '11111111-1111-4111-8111-111111111111';
 const now = 1_800_000_000;
@@ -35,12 +37,23 @@ const registration = agentRegistrationSchema.parse({
 });
 const ports: SignInResponseReleasePorts = {
 	issuer,
-	agentAudience,
+	toolPortalOrigin,
+	requestedResource: agentAudience,
 	managementAudience,
 	accessTokenSeconds: 300,
 	now: () => now * 1000,
 	inspectSignedToken: (token) => accessTokenReleaseClaimsSchema.parse(decodeJwt(token)),
 	readAgent: async () => ({ ...registration, disabled: !active }),
+	readWorkspaceResource: async (identifier: string) =>
+		identifier === agentAudience
+			? {
+					identifier,
+					metadata: { kind: 'workspace', organizationId, workspaceId },
+					allowedScopes: ['tool-portal:agent'],
+					customClaims: null,
+					disabled: false,
+				}
+			: null,
 	isPersonSessionActive: async () => active,
 	deleteSession: async () => {},
 	cleanupUnboundPerson: async () => {},
@@ -88,6 +101,7 @@ beforeAll(async () => {
 						client_id: 'agent-one',
 						azp: 'agent-one',
 						organization_id: organizationId,
+						workspace_id: workspaceId,
 					})
 						.setProtectedHeader({ typ: 'at+jwt', alg: 'EdDSA' })
 						.sign(keys.privateKey);

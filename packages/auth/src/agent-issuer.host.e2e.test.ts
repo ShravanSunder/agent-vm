@@ -7,7 +7,9 @@ import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-r
 import {
 	startLocalAuthHarness,
 	organizationOne,
+	workspaceOne,
 	organizationTwo,
+	workspaceThree,
 	registrationRequestId,
 	registeredClientId,
 	agentAudience,
@@ -18,16 +20,20 @@ const registrationSchema = z.strictObject({
 	kind: z.literal('registered'),
 	clientId: z.string(),
 	clientSecret: z.string(),
+	workspaceId: z.literal(workspaceOne),
+	resource: z.literal(agentAudience),
 });
 
 function managementPath(clientId?: string): string {
-	return `/management/organizations/${organizationOne}/agents${clientId === undefined ? '' : `/${encodeURIComponent(clientId)}`}`;
+	return clientId === undefined
+		? `/management/workspaces/${workspaceOne}/agents`
+		: `/management/organizations/${organizationOne}/agents/${encodeURIComponent(clientId)}`;
 }
 async function register(owner: string): Promise<z.infer<typeof registrationSchema>> {
 	const response = await harness.gateway(managementPath(), {
 		method: 'POST',
 		headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-		body: JSON.stringify({ requestId: registrationRequestId }),
+		body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 	});
 	expect(response.status).toBe(200);
 	return registrationSchema.parse(await response.json());
@@ -66,7 +72,7 @@ async function accessToken(credentials: {
 }
 async function toolCall(token: string, correlation: string, secondHeap = false): Promise<Response> {
 	return harness.gateway(
-		'/mcp',
+		`/workspaces/${workspaceOne}/mcp`,
 		{
 			method: 'POST',
 			headers: {
@@ -307,7 +313,7 @@ describe('S1 real agent issuer through the Gateway', () => {
 			(
 				await harness.database
 					.prepare(
-						'SELECT phase FROM sign_in_audit WHERE request_id = ? AND change_kind = ? ORDER BY phase',
+						"SELECT phase FROM sign_in_audit WHERE request_id = ? AND kind = 'client-changed' AND change_kind = ? ORDER BY phase",
 					)
 					.bind(registrationRequestId, 'registered')
 					.all()
@@ -329,6 +335,7 @@ describe('S1 real agent issuer through the Gateway', () => {
 				azp: z.literal(registeredClientId),
 				aud: z.literal(agentAudience),
 				organization_id: z.literal(organizationOne),
+				workspace_id: z.literal(workspaceOne),
 				scope: z.literal('tool-portal:agent'),
 				iat: z.number(),
 				exp: z.number(),
@@ -349,10 +356,10 @@ describe('S1 real agent issuer through the Gateway', () => {
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
-		).toMatchObject({ [`agent:${registeredClientId}`]: { state: 'listed' } });
+		).toMatchObject({ [`member:${registeredClientId}`]: { state: 'member', persona: 'operator' } });
 		async function foreignTargetState(): Promise<unknown> {
 			return {
 				client: await harness.database
@@ -366,11 +373,11 @@ describe('S1 real agent issuer through the Gateway', () => {
 						.all()
 				).results,
 				admission: await Promise.all(
-					[organizationOne, organizationTwo].map(
-						async (organizationId: string): Promise<unknown> =>
+					[workspaceOne, workspaceThree].map(
+						async (workspaceId: string): Promise<unknown> =>
 							(
 								await harness.gateway(
-									`/__auth-proof?organization=${organizationId}&client=${registeredClientId}`,
+									`/__auth-proof?workspace=${workspaceId}&client=${registeredClientId}`,
 								)
 							).json(),
 					),
@@ -495,12 +502,12 @@ describe('S1 real agent issuer through the Gateway', () => {
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
 		).toMatchObject({
-			[`agent:${registeredClientId}`]: { state: 'removed' },
-			[`agent-retirement:${registeredClientId}`]: { kind: 'complete' },
+			[`member:${registeredClientId}`]: { state: 'removed', persona: 'operator' },
+			[`member-removal:${registeredClientId}`]: { kind: 'complete' },
 		});
 	});
 });

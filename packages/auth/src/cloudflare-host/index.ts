@@ -5,7 +5,6 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createSignInHttpHandler } from '#auth/better-auth-provider/sign-in-http-handler';
 import { createSignInManagementBinding } from '#auth/better-auth-provider/sign-in-management-binding';
 import { signInWorkerConfiguration } from '#auth/cloudflare-host/worker-configuration';
-import type { AgentClientChangeResult } from '#auth/sign-in-core/agent-clients/agent-registration';
 
 /** Only the named service binding can reach agent management; the public fetch handler exposes no RPC route. */
 export class AgentClientManagement extends WorkerEntrypoint<AuthWorkerEnv> {
@@ -31,11 +30,27 @@ export class AgentClientManagement extends WorkerEntrypoint<AuthWorkerEnv> {
 		);
 	}
 
-	async changeClient(props: {
-		readonly token: string;
-		readonly operation: unknown;
-	}): Promise<AgentClientChangeResult> {
-		return createSignInManagementBinding(signInWorkerConfiguration(this.env)).changeClient(props);
+	async registerAndLink(
+		props: Parameters<ReturnType<typeof createSignInManagementBinding>['registerAndLink']>[0],
+	): ReturnType<ReturnType<typeof createSignInManagementBinding>['registerAndLink']> {
+		return createSignInManagementBinding(signInWorkerConfiguration(this.env)).registerAndLink(
+			props,
+		);
+	}
+	async link(
+		props: Parameters<ReturnType<typeof createSignInManagementBinding>['link']>[0],
+	): ReturnType<ReturnType<typeof createSignInManagementBinding>['link']> {
+		return createSignInManagementBinding(signInWorkerConfiguration(this.env)).link(props);
+	}
+	async unlink(
+		props: Parameters<ReturnType<typeof createSignInManagementBinding>['unlink']>[0],
+	): ReturnType<ReturnType<typeof createSignInManagementBinding>['unlink']> {
+		return createSignInManagementBinding(signInWorkerConfiguration(this.env)).unlink(props);
+	}
+	async disable(
+		props: Parameters<ReturnType<typeof createSignInManagementBinding>['disable']>[0],
+	): ReturnType<ReturnType<typeof createSignInManagementBinding>['disable']> {
+		return createSignInManagementBinding(signInWorkerConfiguration(this.env)).disable(props);
 	}
 }
 

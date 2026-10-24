@@ -5,6 +5,7 @@ import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/clie
 import {
 	startLocalAuthHarness,
 	organizationOne,
+	workspaceOne,
 	registrationRequestId,
 	registeredClientId,
 	agentAudience,
@@ -52,11 +53,11 @@ it.each(faults)(
 		const harness = await startLocalAuthHarness();
 		try {
 			const owner = await harness.ownerToken();
-			const endpoint = `/management/organizations/${organizationOne}/agents`;
+			const endpoint = `/management/workspaces/${workspaceOne}/agents`;
 			const operation = {
 				method: 'POST',
 				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ requestId: registrationRequestId }),
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 			};
 			await harness.database.exec(
 				`CREATE TRIGGER fail_registration BEFORE INSERT ON ${fault.table} WHEN ${fault.condition} BEGIN SELECT RAISE(FAIL, 'controlled-${fault.name}-fault'); END;`,
@@ -96,10 +97,10 @@ it.each(faults)(
 			expect(
 				await (
 					await harness.gateway(
-						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+						`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 					)
 				).json(),
-			).not.toHaveProperty(`agent:${registeredClientId}`);
+			).not.toHaveProperty(`member:${registeredClientId}`);
 			await harness.database.exec('DROP TRIGGER fail_registration');
 			const repeated = await harness.gateway(endpoint, operation);
 			expect(repeated.status).toBe(200);
@@ -142,10 +143,12 @@ it.each(faults)(
 			expect(
 				await (
 					await harness.gateway(
-						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+						`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 					)
 				).json(),
-			).toMatchObject({ [`agent:${registeredClientId}`]: { state: 'listed' } });
+			).toMatchObject({
+				[`member:${registeredClientId}`]: { state: 'member', persona: 'operator' },
+			});
 		} finally {
 			await harness.close();
 		}
@@ -160,10 +163,10 @@ it.each(['intent', 'client', 'outcome'] as const)(
 		try {
 			const owner = await harness.ownerToken();
 			const base = `/management/organizations/${organizationOne}/agents`;
-			const registered = await harness.gateway(base, {
+			const registered = await harness.gateway(`/management/workspaces/${workspaceOne}/agents`, {
 				method: 'POST',
 				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ requestId: registrationRequestId }),
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 			});
 			expect(registered.status).toBe(200);
 			const credentials = z
@@ -224,11 +227,11 @@ it.each(['intent', 'client', 'outcome'] as const)(
 				).results,
 			).toEqual(fault === 'intent' ? [] : [{ phase: 'intent' }]);
 			const partial = await harness.gateway(
-				`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+				`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 			);
 			expect(await partial.json()).toMatchObject({
-				[`agent:${registeredClientId}`]: { state: 'removed' },
-				[`agent-retirement:${registeredClientId}`]: { kind: 'pending', requestId },
+				[`member:${registeredClientId}`]: { state: 'removed', persona: 'operator' },
+				[`member-removal:${registeredClientId}`]: { kind: 'pending', requestId },
 			});
 			const status = await harness.gateway(`${base}/${registeredClientId}`, {
 				headers: { authorization: `Bearer ${owner}` },
@@ -237,7 +240,7 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			const denied = await Promise.all(
 				[false, true].map((secondHeap) =>
 					harness.gateway(
-						'/mcp',
+						`/workspaces/${workspaceOne}/mcp`,
 						{
 							method: 'POST',
 							headers: { authorization: `Bearer ${oldToken}`, 'content-type': 'application/json' },
@@ -249,8 +252,8 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			);
 			expect(denied.map((response) => response.status)).toEqual([401, 401]);
 			expect(await Promise.all(denied.map((response) => response.json()))).toEqual([
-				{ error: 'removed-agent' },
-				{ error: 'removed-agent' },
+				{ error: 'unknown-caller' },
+				{ error: 'unknown-caller' },
 			]);
 			const partialExchange = await exchange();
 			if (fault === 'outcome') await expectBasicClientAuthenticationRefusal(partialExchange);
@@ -288,11 +291,11 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			expect(
 				await (
 					await harness.gateway(
-						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+						`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 					)
 				).json(),
 			).toMatchObject({
-				[`agent-retirement:${registeredClientId}`]: { kind: 'complete', requestId },
+				[`member-removal:${registeredClientId}`]: { kind: 'complete', requestId },
 			});
 			await expectBasicClientAuthenticationRefusal(await exchange());
 			expect(harness.effects).toHaveLength(0);
@@ -309,11 +312,11 @@ it.each(['intent', 'client', 'outcome'] as const)(
 		const harness = await startLocalAuthHarness();
 		try {
 			const owner = await harness.ownerToken();
-			const endpoint = `/management/organizations/${organizationOne}/agents`;
+			const endpoint = `/management/workspaces/${workspaceOne}/agents`;
 			const operation = {
 				method: 'POST',
 				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ requestId: registrationRequestId }),
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 			};
 			const credentialSchema = z.object({
 				clientId: z.literal(registeredClientId),
@@ -397,10 +400,12 @@ it.each(['intent', 'client', 'outcome'] as const)(
 			expect(
 				await (
 					await harness.gateway(
-						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+						`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 					)
 				).json(),
-			).toMatchObject({ [`agent:${registeredClientId}`]: { state: 'listed' } });
+			).toMatchObject({
+				[`member:${registeredClientId}`]: { state: 'member', persona: 'operator' },
+			});
 			expect(harness.effects).toHaveLength(0);
 		} finally {
 			await harness.close();

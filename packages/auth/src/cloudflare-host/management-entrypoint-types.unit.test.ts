@@ -1,3 +1,4 @@
+import type { AgentClientManagementPort } from '@agent-collaboration/tool-host-core';
 import { expectTypeOf, it } from 'vitest';
 
 type ManagementEntrypoint = InstanceType<
@@ -6,6 +7,7 @@ type ManagementEntrypoint = InstanceType<
 
 it('keeps the generated sign-in entrypoint and its RPC results typed', () => {
 	expectTypeOf<ManagementEntrypoint>().not.toBeAny();
+	expectTypeOf<ManagementEntrypoint>().toMatchTypeOf<AgentClientManagementPort>();
 	expectTypeOf<ManagementEntrypoint['isLiveOwner']>().parameters.toEqualTypeOf<
 		[{ readonly token: string; readonly organizationId: string }]
 	>();
@@ -17,5 +19,8 @@ it('keeps the generated sign-in entrypoint and its RPC results typed', () => {
 	expectTypeOf<ManagementEntrypoint['ownsAgentClient']>().returns.toMatchTypeOf<Promise<boolean>>();
 	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['ownsAgentClient']>>>().not.toBeAny();
 	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['humanCheckStatus']>>>().not.toBeAny();
-	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['changeClient']>>>().not.toBeAny();
+	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['registerAndLink']>>>().not.toBeAny();
+	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['link']>>>().not.toBeAny();
+	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['unlink']>>>().not.toBeAny();
+	expectTypeOf<Awaited<ReturnType<ManagementEntrypoint['disable']>>>().not.toBeAny();
 });

@@ -16,14 +16,17 @@ export interface AgentClientProvider {
 	readonly rotate: () => Promise<string>;
 	readonly disable: () => Promise<void>;
 }
-export interface AgentClientChangePorts {
+export interface AgentClientOperationPorts {
 	readonly records: AgentClientRecords;
-	readonly provider: AgentClientProvider;
+	readonly provider: Pick<AgentClientProvider, 'disable'>;
 	readonly clientId: string;
 	readonly organizationId: string;
-	readonly audience: string;
 	readonly actorUserId: string;
 	readonly requestId: string;
+}
+export interface AgentClientChangePorts extends Omit<AgentClientOperationPorts, 'provider'> {
+	readonly provider: AgentClientProvider;
+	readonly audience: string;
 }
 
 /** A partial registration has no releasable secret. An owner retry rotates the lost secret. */
@@ -54,7 +57,7 @@ export async function registerAgentClient(
 			registration.disabled ||
 			!registration.registrationComplete ||
 			registration.metadata.organizationId !== props.organizationId ||
-			registration.resourceIds[0] !== props.audience ||
+			!registration.resourceIds.includes(props.audience) ||
 			!(await props.records.complete(audit))
 		)
 			return { kind: 'incomplete', clientId: props.clientId };
@@ -76,7 +79,7 @@ export async function registerAgentClient(
 
 /** Admission removal is the Gateway's earlier step; this function owns only E9 retirement. */
 export async function disableAgentClient(
-	props: AgentClientChangePorts,
+	props: AgentClientOperationPorts,
 ): Promise<AgentClientChangeResult> {
 	const audit = {
 		requestId: props.requestId,

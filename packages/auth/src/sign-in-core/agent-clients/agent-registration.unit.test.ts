@@ -36,10 +36,49 @@ describe('strict E9 registration and final release policy', () => {
 		{ tokenEndpointAuthMethod: 'none' },
 		{ metadata: { kind: 'person', organizationId } },
 		{ metadata: { kind: 'agent', organizationId, owner: 'forged' } },
-		{ resourceIds: [] },
-		{ resourceIds: [audience, 'https://other.invalid'] },
 	])('rejects an E9 with unauthorized shape: %j', (changes) => {
 		expect(agentRegistrationSchema.safeParse({ ...registration, ...changes }).success).toBe(false);
+	});
+	it.each([
+		{ resourceIds: [] },
+		{ resourceIds: [audience] },
+		{
+			resourceIds: [
+				audience,
+				'https://portal.invalid/workspaces/22222222-2222-4222-8222-222222222222/mcp',
+			],
+		},
+	])(
+		'keeps zero or many workspace links as agent state: %j',
+		({ resourceIds }: { readonly resourceIds: readonly string[] }) => {
+			expect(agentRegistrationSchema.parse({ ...registration, resourceIds }).resourceIds).toEqual(
+				resourceIds,
+			);
+		},
+	);
+	it('accepts a linked workspace beyond the first without widening another audience', () => {
+		const secondAudience =
+			'https://portal.invalid/workspaces/22222222-2222-4222-8222-222222222222/mcp';
+		const multiWorkspace = agentRegistrationSchema.parse({
+			...registration,
+			resourceIds: [audience, secondAudience],
+		});
+		expect(
+			agentRegistrationAllowsToken({
+				registration: multiWorkspace,
+				clientId: registration.clientId,
+				audience: secondAudience,
+				signedOrganizationId: organizationId,
+			}),
+		).toBe(true);
+		expect(
+			agentRegistrationAllowsToken({
+				registration: multiWorkspace,
+				clientId: registration.clientId,
+				audience: 'https://portal.invalid/unlinked',
+				signedOrganizationId: organizationId,
+			}),
+		).toBe(false);
 	});
 	it.each([
 		{ disabled: true, registrationComplete: true },

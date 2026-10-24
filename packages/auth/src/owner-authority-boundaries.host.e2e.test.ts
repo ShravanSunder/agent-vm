@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
 	startLocalAuthHarness,
 	organizationOne,
+	workspaceOne,
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
@@ -14,11 +15,11 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 	try {
 		const owner = await harness.ownerToken();
 		const ownerPerson = z.object({ sub: z.string(), sid: z.string() }).parse(decodeJwt(owner));
-		const endpoint = `/management/organizations/${organizationOne}/agents`;
+		const endpoint = `/management/workspaces/${workspaceOne}/agents`;
 		const legitimate = {
 			method: 'POST',
 			headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-			body: JSON.stringify({ requestId: registrationRequestId }),
+			body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 		};
 		expect((await harness.gateway(endpoint, legitimate)).status).toBe(200);
 		// A test precondition only: S2's allowlist mutation API is outside S1's claim.
@@ -45,9 +46,7 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			grantTypes,
 		}));
 		const admissionBefore = await (
-			await harness.gateway(
-				`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
-			)
+			await harness.gateway(`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`)
 		).json();
 		const forgedHeaders = {
 			authorization: `Bearer ${member}`,
@@ -60,13 +59,13 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 			harness.gateway(endpoint, {
 				method: 'POST',
 				headers: forgedHeaders,
-				body: JSON.stringify({ requestId: crypto.randomUUID() }),
+				body: JSON.stringify({ requestId: crypto.randomUUID(), persona: 'operator' }),
 			}),
 			harness.gateway(`${endpoint}/${registeredClientId}`, { headers: forgedHeaders }),
 			harness.gateway(`${endpoint}/${registeredClientId}`, {
 				method: 'DELETE',
 				headers: forgedHeaders,
-				body: JSON.stringify({ requestId: crypto.randomUUID() }),
+				body: JSON.stringify({ requestId: crypto.randomUUID(), persona: 'operator' }),
 			}),
 		]);
 		expect(responses.map((response) => response.status)).toEqual([403, 403, 403]);
@@ -87,6 +86,19 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 				'/isLiveOwner',
 				'/AgentClientManagement/changeClient',
 				'/api/auth/AgentClientManagement/changeClient',
+				...[
+					'registerAndLink',
+					'link',
+					'unlink',
+					'disable',
+					'isLiveOwner',
+					'ownsAgentClient',
+					'humanCheckStatus',
+				].flatMap((method: string): readonly string[] => [
+					`/${method}`,
+					`/AgentClientManagement/${method}`,
+					`/api/auth/AgentClientManagement/${method}`,
+				]),
 			].map((pathname) =>
 				harness.auth(pathname, {
 					method: 'POST',
@@ -210,7 +222,7 @@ it('agent: real non-owner E7, forged actor input and public binding URLs never a
 		expect(
 			await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json(),
 		).toEqual(admissionBefore);

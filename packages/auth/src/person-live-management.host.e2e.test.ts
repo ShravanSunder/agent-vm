@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 import {
 	startLocalAuthHarness,
-	organizationOne,
+	workspaceOne,
 	registrationRequestId,
 	registeredClientId,
 } from '#auth/test-fixtures/local-auth-harness';
@@ -25,16 +25,16 @@ it.each([
 		try {
 			const owner = await harness.ownerToken();
 			const person = z.object({ sub: z.string(), sid: z.string() }).parse(decodeJwt(owner));
-			const endpoint = `/management/organizations/${organizationOne}/agents`;
+			const endpoint = `/management/workspaces/${workspaceOne}/agents`;
 			const registered = await harness.gateway(endpoint, {
 				method: 'POST',
 				headers: { authorization: `Bearer ${owner}`, 'content-type': 'application/json' },
-				body: JSON.stringify({ requestId: registrationRequestId }),
+				body: JSON.stringify({ requestId: registrationRequestId, persona: 'operator' }),
 			});
 			expect(registered.status).toBe(200);
 			const before = await (
 				await harness.gateway(
-					`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+					`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 				)
 			).json();
 			const command = {
@@ -44,7 +44,7 @@ it.each([
 			};
 			const admitted = await runCachedNativeOwnerCommand(command);
 			expect(admitted.code).toBe(0);
-			expect(admitted.stdout).toBe(`listed: ${registeredClientId}\n`);
+			expect(admitted.stdout).toBe(`member: ${registeredClientId}\n`);
 			switch (change) {
 				case 'revoked-session':
 					await harness.database.prepare('DELETE FROM session WHERE id = ?').bind(person.sid).run();
@@ -87,7 +87,7 @@ it.each([
 			expect(
 				await (
 					await harness.gateway(
-						`/__auth-proof?organization=${organizationOne}&client=${registeredClientId}`,
+						`/__auth-proof?workspace=${workspaceOne}&client=${registeredClientId}`,
 					)
 				).json(),
 			).toEqual(before);

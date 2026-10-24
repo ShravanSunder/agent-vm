@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 import { requirePrivateRuntimePath } from '#auth/native-owner-cli/auth-target';
 import { runAuthProofProcess } from '#auth/test-fixtures/auth-proof-process';
+import { workspaceConfigurations } from '#auth/test-fixtures/local-auth-harness';
 import {
 	prepareProofBundles,
 	proofDigest,
@@ -85,6 +86,12 @@ function authJourneyFiles(journey: 'agent' | 'bootstrap'): readonly string[] {
 					'packages/auth/src/person-live-management.host.e2e.test.ts',
 					'packages/auth/src/owner-authority-boundaries.host.e2e.test.ts',
 					'packages/auth/src/native-code-protocol.host.e2e.test.ts',
+					'packages/auth/src/workspace-agent-issuance.host.e2e.test.ts',
+					'packages/auth/src/workspace-management-boundaries.host.e2e.test.ts',
+					'packages/auth/src/workspace-management-audit-faults.host.e2e.test.ts',
+					'packages/auth/src/workspace-person-boundary.host.e2e.test.ts',
+					'packages/auth/src/workspace-retirement-overlap.host.e2e.test.ts',
+					'packages/auth/src/workspace-owner-cli.host.e2e.test.ts',
 				]
 			: []),
 	];
@@ -357,7 +364,7 @@ export async function runPreparedAuthVerification(
 				configuration: z.object({
 					signIn: z.object({
 						issuer: z.url(),
-						agentAudience: z.literal('https://portal-test.invalid/mcp'),
+						toolPortalOrigin: z.literal('https://portal-test.invalid'),
 						managementAudience: z.literal('https://portal-test.invalid/management'),
 						ownerCliClientId: z.literal('owner-cli-local'),
 						ownerCliRedirectUri: z.literal('http://127.0.0.1/callback'),
@@ -367,9 +374,9 @@ export async function runPreparedAuthVerification(
 					gateway: z.object({
 						SIGN_IN_ISSUER: z.string(),
 						SIGN_IN_JWKS_URL: z.string(),
-						TOOL_PORTAL_AUDIENCE: z.string(),
+						TOOL_PORTAL_ORIGIN: z.string(),
 						MANAGEMENT_AUDIENCE: z.string(),
-						ORGANIZATION_CONFIGURATIONS: z.string(),
+						WORKSPACE_CONFIGURATIONS: z.string(),
 					}),
 				}),
 				client: z.object({
@@ -377,18 +384,40 @@ export async function runPreparedAuthVerification(
 					ownerCliClientId: z.literal('owner-cli-local'),
 					ownerCliRedirectUri: z.literal('http://127.0.0.1/callback'),
 					managementAudience: z.literal('https://portal-test.invalid/management'),
+					workspaceId: z.literal('33333333-3333-4333-8333-333333333333'),
+					organizationId: z.literal('11111111-1111-4111-8111-111111111111'),
 					entry: z.literal('scripts/verify-auth/owner-cli.ts'),
 				}),
 			})
 			.parse(JSON.parse(contents));
 		const config = receipt.configuration;
+		const configuredWorkspaces = z
+			.record(
+				z.uuid(),
+				z.object({
+					organizationId: z.uuid(),
+					workspaceName: z.string(),
+					mcp: z.object({
+						providers: z.object({ fixture: z.object({ transport: z.object({ url: z.url() }) }) }),
+					}),
+				}),
+			)
+			.parse(JSON.parse(config.gateway.WORKSPACE_CONFIGURATIONS));
+		const upstream = Object.values(configuredWorkspaces)[0]?.mcp.providers.fixture.transport.url;
+		if (
+			upstream === undefined ||
+			new URL(upstream).hostname !== '127.0.0.1' ||
+			JSON.stringify(JSON.parse(config.gateway.WORKSPACE_CONFIGURATIONS)) !==
+				JSON.stringify(workspaceConfigurations(upstream))
+		)
+			throw new Error('Actual workspace configuration differs from the frozen fixture');
 		if (
 			JSON.stringify(receipt.identity) !== JSON.stringify(artifacts) ||
 			new URL(config.signIn.issuer).hostname !== '127.0.0.1' ||
 			receipt.client.issuer !== config.signIn.issuer ||
 			config.gateway.SIGN_IN_ISSUER !== config.signIn.issuer ||
 			config.gateway.SIGN_IN_JWKS_URL !== `${config.signIn.issuer}/api/auth/jwks` ||
-			config.gateway.TOOL_PORTAL_AUDIENCE !== config.signIn.agentAudience ||
+			config.gateway.TOOL_PORTAL_ORIGIN !== config.signIn.toolPortalOrigin ||
 			config.gateway.MANAGEMENT_AUDIENCE !== config.signIn.managementAudience
 		)
 			throw new Error('Actual configuration/client/artifacts differ from declared fixture');
