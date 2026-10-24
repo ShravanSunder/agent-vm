@@ -51,12 +51,12 @@ Fleet central holds every truth about who belongs where and decides every grant.
 | Area | Today | Anchor |
 |---|---|---|
 | Fleet identities | An actor is a `SessionRef` (Router installation, harness endpoint, conversation ID) or a human ID. Central's callers are only `Machine` or `Owner`. | `message-board/src/board_identity.rs:204–213`; `collaboration-central-core/src/access_contract.rs:33` |
-| Fleet sender | The collaboration MCP server is stateless. It takes the sender from call arguments, and checks only that the service ID is this Router's. | `collaboration-mcp/src/collaboration_api_router.rs:1–3`; `collaboration-service/.../message_operations.rs:52–61` |
+| Fleet sender | The collaboration MCP server is stateless. It takes the sender from call arguments, and checks only that the service ID is this Router's, then stores it as the session origin. | `crates/collaboration-mcp/src/collaboration_api_router.rs:1–3`; `crates/collaboration-service/src/collaboration_application/message_operations.rs:46–68` |
 | Fleet session context | A session's workspace is looked up: working directory, then git origin, then attached workspaces, then projects. No stored link exists. | `collaboration-service/.../board_hook_operations.rs:169–320` |
 | ACP MCP servers | One provider-wide MCP server list, cloned into each session. | `acp-client-runtime/src/agent_session_client/provider_connection_task.rs:280–286, 451–453` |
-| Helper starts | A Lead starts a helper with `conversation create`; the creator defaults to the calling session and the approver to the creator; a creator from another machine's service is refused. | Fleet Lead, 2026-10-24 (anchors pending in its evidence answer) |
-| Machines | Owner-only enrollment. A Router connects with an Access service token plus a Bearer enrollment credential, and the connection is bound to that machine. No key column. | `registry_migrations/0001_machine_enrollments.sql`; `machine_enrollment.rs:400–445`; `central_router.rs:119–275` |
-| Central hosts | One core, with Cloudflare Durable Object and Tokio hosts. Its object addresses are Copy, Registry, Fleet, Connection and Mailbox. | `platform_capabilities.rs:45`; `core_contract.rs:36–42` |
+| Helper starts | A Lead starts a helper with `conversation create`; the creator defaults to the calling session and the approver to the creator; a creator from another machine's service is refused. Only the same Router is enforced, not workspace membership. | Fleet Lead's evidence answers, 2026-10-24, §4 |
+| Machines | Owner-only enrollment. A Router connects with an Access service token plus a Bearer enrollment credential; central stores only the credential's hash and binds the connection to that machine. No key column. The production Host has no credential wiring today (it passes no board session, `collaboration_lifecycle.rs:125`); Fleet's production enrollment release makes the Host read `<router_root>/fleet/enrollment.json` (0600, owner-only, inside the Router root: endpoint, Access client ID and secret, enrollment credential, peer, receiver, expiry). | `registry_migrations/0001_machine_enrollments.sql:1–12`; `machine_enrollment.rs:32–63, 400–445`; `central_router.rs:119–280`; codex-router `docs/specs/2026-10-24-production-enrollment/production-enrollment.md` (d905b138) |
+| Central hosts | One core, with Cloudflare Durable Object and Tokio hosts. Its object addresses form a closed set: Copy, Registry, Fleet, Connection and Mailbox. An organization authority is a new kind in that set, with routing and storage added on both runtimes. | `platform_capabilities.rs:45`; `core_contract.rs:36–42` |
 | Sign-in issuer | Better Auth 1.7.8 with the OAuth provider. Agent clients use client credentials, a token is issued only for a linked workspace resource, and `customAccessTokenClaims` stamps claims. That hook reads the client ID the app picked from the request, body `client_id` before the Basic header (`sign-in-http-handler.ts:65–75`), while the provider authenticates the Basic client and accepts a bare body `client_id` beside it (`dist/utils-CGIZS-Da.mjs:546–579, 687–737`). The post-mint release re-checks the minted token's own authenticated client (A) against its organization and resource; it does not compare the earlier body hint (B) with A, so under today's claim model a mismatch can't give a token B's identity, though it isn't refused in every case. | `packages/auth/src/sign-in-core/response-release/sign-in-response-release.ts:114–146`; `provider-configuration.ts:220–276` |
 | Better Auth minting | Extension grants and companion endpoints mint through `issueTokens`, which takes a client, an optional user, resources and additive `accessTokenClaims`. The subject is always `user.id ?? client.clientId`; reserved claims (`sub`, `aud`, `exp`, `iat`, `jti`, `client_id`, `scope` and others) are stripped from contributed claims; expiry comes from the provider's options. | installed `@better-auth/oauth-provider` 1.7.8: `dist/oauth-C_RnL2nt.d.mts:770–872`; `dist/introspect-H3uoUiuS.mjs:180–267, 1267–1290, 1342–1364` |
 | Tool Portal check | Verify the token offline, then read membership and persona from the workspace's store. Persona is a key into the workspace's tool profiles. | `tool-host-core/src/caller-admission/caller-check.ts:19–38`; `hosted-mcp-proxy.ts:85,119` |
@@ -263,6 +263,7 @@ pub struct RegisterFleetSession {
     pub starter: Starter,                       // tagged: owner { personId } | memberSession { session } (OD1)
     pub requested_persona: Option<PersonaName>, // None means the session default
     pub isolation: AgentIsolation,
+    pub launch_context: LaunchContext,          // launcher-asserted, recorded for display: working directory, repository, commit, model, launched by
     pub machine_environment: MachineEnvironment,
 }
 #[serde(tag = "result", rename_all = "camelCase")]
@@ -594,8 +595,8 @@ sequenceDiagram
 
 **Session binding** is a bearer capability, not a secret the session proves:
 
-- **Codex:** each app-server thread's tool connection carries the harness-stamped thread ID, which the Router maps to the session.
-- **Claude and Cursor (ACP):** the Router gives each session its own MCP address holding a random 128-bit binding ID. The provider runtime's MCP server list moves from one per provider to one per session (`provider_connection_task.rs:280–286, 451–453`).
+- **Codex:** today's Router source has no per-thread identity on its MCP surface (it is stateless). The design needs each Codex thread routed through its own bound tool connection, as ACP sessions are. Whether the Codex app-server accepts per-thread MCP configuration is not shown by the source; it is the first Router slice's feasibility check, and until it passes, attribution for Codex sessions (U19) stays unverified.
+- **Claude and Cursor (ACP):** each ACP new-session request already carries an MCP server list, so the seam exists. Today the list is computed once per provider connection and cloned into every session and restore (`provider_connection_task.rs:280–287, 451–453, 479–490`). The Router computes it per session instead, giving each its own MCP address holding a random 128-bit binding ID.
 - **Lifecycle:** minted at launch; kept in Router memory and in that session's harness configuration; re-issued (and the configuration rewritten) when a session is resumed after a Router restart; retired when the session ends and never reused; valid only on the installation that minted it.
 - **Limit:** any process of the same machine user that reads another session's configuration holds its binding. That is E14's shared bucket, recorded and shown, not prevented.
 
@@ -671,7 +672,7 @@ flowchart LR
 
 | Asset | Where | Protects | If stolen |
 |---|---|---|---|
-| Enrollment credential | Router, a 0600 file (the owner rejected the Keychain) | Machine vouching | Every session on that machine can be impersonated until you revoke it |
+| Enrollment credential | Router, `<router_root>/fleet/enrollment.json` (0600, owner-only), with the Access service token, per Fleet's production enrollment design (the owner rejected the Keychain) | Machine vouching | Every session on that machine can be impersonated until you revoke it |
 | Central's client key | Central's host secret store | Fleet-session grants and central's service tokens | Tokens for any session and forged notices until rotated. The most valuable key; one key for both uses is accepted because both are central's own authority. |
 | Issuer signing key | Better Auth (existing) | Every token, including service tokens it self-signs | Any token, until rotated |
 | Bot secret or key | The bot's own storage (unknown) | That bot | That bot, until retired (accepted limit, U2) |
@@ -744,5 +745,6 @@ There is no coexistence period. The test deployments are the only consumers, so 
 - **Collaboration needs central:** every collaboration effect waits for central's admission, so collaboration stops while central is unreachable (fail closed, as for tokens).
 - **Better Auth mapping:** session tokens use a fleet-session extension grant; bot tokens use the existing gate and claim hook, with a bot extension grant as the stated fallback. Neither is proven until the plan's first slice runs against the pinned 1.7.8.
 - **Sign-in on a non-Cloudflare host** is new work (U16 covers every service).
+- **Fleet's attestation proposal:** its path B (a machine identity key certifying a short-lived boot key, kept in the Keychain) is not adopted: you ruled out new machine keys (U17), so machines prove themselves only through the existing enrollment. Its extra launch evidence (profile and image digests, the VM launch record) waits with VM sessions; the launch context is recorded as proposed.
 - **agent-vm VM sessions:** the `Vm` kind and its launch record need agent-vm to hand the host Router a launch record over a local channel. In the first round, only Router-launched `Host` and `ProcessSandbox` sessions are registered.
 - **People's organization admission** moves to Fleet central. The D2 sign-in revision (people sign-in, 34d1a0e0) changes location before it is built.
