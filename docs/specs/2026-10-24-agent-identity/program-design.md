@@ -268,7 +268,7 @@ pub struct RegisterFleetSession {
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RegisterFleetSessionResult {
     #[serde(rename_all = "camelCase")]
-    Registered { workspace_id: WorkspaceId, persona: PersonaRef },
+    Registered { organization_id: OrganizationId, workspace_id: WorkspaceId, persona: PersonaRef },
     Refused { reason: SessionRefusal }, // projectUnknown | machineNotAllowed | starterNotAllowed | alreadyEnded
 }
 
@@ -287,7 +287,7 @@ pub struct EndFleetSession { pub organization_id: OrganizationId, pub session: S
 
 The Router may only name sessions on its own installation; central refuses any other.
 
-**Routing and one registration per conversation (R7):** central routes `RegisterFleetSession` from the project to its workspace and that workspace's organization (Fleet object). The Router's session registrar is the one owner of which project a conversation was started for: it records that durably before the first request, registers each conversation once, resends the identical request after an ambiguous reply or a restart, and refuses to register a recorded conversation for another project. The organization authority treats a repeat of the same `SessionRef` and project as `Registered` again, and refuses a different project. Later requests carry the organization and workspace from `Registered`, and the organization authority refuses a session it doesn't hold. A second registration in another organization is excluded by the registrar, inside the same trusted-Router assumption as the binding; organization authorities don't see each other's sessions.
+**Routing and one registration per conversation (R7):** central routes `RegisterFleetSession` from the project to its workspace and that workspace's organization (Fleet object). The Router's session registrar is the one owner of which project a conversation was started for: it records the conversation and its project durably before the first request, and adds the organization, workspace and persona from `Registered` when they arrive; registers each conversation once, resends the identical request after an ambiguous reply or a restart, and refuses to register a recorded conversation for another project. The organization authority treats a repeat of the same `SessionRef` and project as `Registered` again, and refuses a different project. Later requests carry the organization and workspace from `Registered`, and the organization authority refuses a session it doesn't hold. A second registration in another organization is excluded by the registrar, inside the same trusted-Router assumption as the binding; organization authorities don't see each other's sessions.
 
 ### Collaboration admission (Router → Fleet central, R28)
 
@@ -439,7 +439,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | **Organization authority** (new) | E1 (including its owner and sign-in allowlist), E4, E7, E8, E9, E13, E15, E17; the ordered marks; the configured lifetime; the removal and credential outboxes; the audit records; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (decisions) | membership or issuance policy changes |
 | **Session token broker** (new) | Turning a Router's request into a token: decide, then mint through the fleet-session grant | `collaboration-central-core` | Router forwarder | the session grant contract changes |
 | **Admin surface** (modified) | Organization-owner commands and lookups with their guard, and the fleet operator's machine commands under its existing authority (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
-| **Collaboration admission** (modified) | The `AdmitCollaboration` decision at central (bound actor, operation, target, memberships, pairs, bot collaborations), and its enforcement before each effect on the Router: the holding Router's local `project_write`, the forwarded post at the holder, and `message_send` before it stores or delivers | central: a new admission route in `collaboration-central-core`; Router: `board_project_operations.rs`, `board_forwarded_posts.rs`, `message_operations.rs` (modified); `session_request_admission` unchanged (it binds replication writers to peers) | every collaboration effect; bots via their collaboration token | collaboration rules change |
+| **Collaboration admission** (modified) | The `AdmitCollaboration` decision at central (bound actor, operation, target, memberships, pairs, bot collaborations), and its enforcement before each effect on the Router: the holding Router's local `project_write`, the forwarded post at the holder, and `send_draft`, the shared step behind `message_send` and `message_reply`, before it stores or delivers | central: a new admission route in `collaboration-central-core`; Router: `board_project_operations.rs`, `board_forwarded_posts.rs`, `message_operations.rs` `send_draft` (modified); `session_request_admission` unchanged (it binds replication writers to peers) | every collaboration effect; bots via their collaboration token | collaboration rules change |
 | **Registry revocation fan-out** (new, small) | Delivering a machine revocation to every organization authority | Registry object (modified) | organization authorities | revocation flow changes |
 | **Fleet object** (existing) | E2, E16 | existing | organization authority | — |
 | **Session binding** (new, Router) | Which session each collaboration call came from; binding lifecycle | `collaboration-mcp`, `collaboration-service` (modified); `acp-client-runtime` per-session MCP list (modified) | collaboration MCP tools | harness wiring changes |
@@ -567,7 +567,7 @@ sequenceDiagram
   RB->>RB: binding valid, on this installation, S active, bound actor = S
   alt T differs from S
     RB-->>H: refused: sender mismatch, nothing recorded
-  else direct message or task
+  else direct message or task, sent or replied
     RB->>CA: AdmitCollaboration(S, message or task, target)
     CA-->>RB: Admit, or Refuse(reason)
     RB->>RB: store and deliver only on Admit
@@ -590,7 +590,7 @@ sequenceDiagram
 - **Lifecycle:** minted at launch; kept in Router memory and in that session's harness configuration; re-issued (and the configuration rewritten) when a session is resumed after a Router restart; retired when the session ends and never reused; valid only on the installation that minted it.
 - **Limit:** any process of the same machine user that reads another session's configuration holds its binding. That is E14's shared bucket, recorded and shown, not prevented.
 
-**Change from today:** the sender is no longer taken from call arguments (`message_tools.rs:18`). Today the holding Router commits a local write after its own admission (`board_project_operations.rs:41–64`), only non-holder thread posts are forwarded (`board_forwarded_posts.rs`), and direct messages check only that the sender is on this Router (`message_operations.rs:47–107`). Each of these three paths now asks `AdmitCollaboration` before its effect, with the bound actor. A bot's messages enter the same admission through its collaboration token.
+**Change from today:** the sender is no longer taken from call arguments (`message_tools.rs:18`). Today the holding Router commits a local write after its own admission (`board_project_operations.rs:41–64`), only non-holder thread posts are forwarded (`board_forwarded_posts.rs`), and direct messages, both sent (`message_send`, `message_operations.rs:47–107`) and replied (`message_reply` → `reply_to`, 110–191), check only that the sender is on this Router before both reach `send_draft` (208). The holder-local write, the forwarded post at the holder, and `send_draft` now each ask `AdmitCollaboration` before the effect, with the bound actor. A reply is admitted like any message: having been messaged earlier grants no lasting right to reply. A bot's messages enter the same admission through its collaboration token.
 
 ## How a session's persona is narrowed (R9)
 
