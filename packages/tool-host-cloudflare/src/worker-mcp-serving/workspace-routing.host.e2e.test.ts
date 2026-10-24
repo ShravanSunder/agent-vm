@@ -219,6 +219,7 @@ it('refuses a Host-matching hostile audience before effects in an otherwise admi
 					new URL(`/workspaces/${organizationOne}/mcp`, origin),
 					{
 						method: 'POST',
+						signal: AbortSignal.timeout(10_000),
 						headers: {
 							authorization: `Bearer ${token}`,
 							host: 'attacker.invalid',
@@ -241,9 +242,6 @@ it('refuses a Host-matching hostile audience before effects in an otherwise admi
 						);
 						response.once('error', reject);
 					},
-				);
-				request.setTimeout(10_000, () =>
-					request.destroy(new Error('Host-control response timed out')),
 				);
 				request.once('error', reject);
 				request.end(body);
