@@ -1,0 +1,453 @@
+import { spawnSync } from 'node:child_process';
+import {
+	mkdtemp,
+	readFile,
+	readdir,
+	realpath,
+	writeFile,
+	mkdir,
+	rename,
+	unlink,
+} from 'node:fs/promises';
+import { builtinModules } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import {
+	collectToolEngineViolations,
+	isForbiddenToolEngineImport,
+} from './audit-portal-architecture.ts';
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const scriptPath = fileURLToPath(import.meta.url);
+
+function argument(name: string): string | undefined {
+	const index = process.argv.indexOf(name);
+	return index === -1 ? undefined : process.argv[index + 1];
+}
+
+interface CommandResult {
+	readonly code: number;
+	readonly output: string;
+}
+
+async function command(props: {
+	readonly executable: string;
+	readonly args: readonly string[];
+	readonly cwd: string;
+	readonly label: string;
+	readonly evidence: string;
+}): Promise<CommandResult> {
+	const result = spawnSync(props.executable, props.args, {
+		cwd: props.cwd,
+		encoding: 'utf8',
+		maxBuffer: 32 * 1024 * 1024,
+	});
+	const code = result.status ?? 1;
+	const output = `${result.stdout ?? ''}${result.stderr ?? ''}${result.error === undefined ? '' : String(result.error)}\nEXIT_CODE=${code}\n`;
+	await writeFile(
+		path.join(props.evidence, `${props.label}.log`),
+		`COMMAND: ${props.executable} ${props.args.join(' ')}\nCWD: ${props.cwd}\n${output}`,
+	);
+	process.stdout.write(`${props.label}: ${output}`);
+	return { code, output };
+}
+
+async function replaceArtifact(location: string, content: string): Promise<void> {
+	const temporary = `${location}.s2-change`;
+	await writeFile(temporary, content);
+	await rename(temporary, location);
+}
+
+async function declarationViolations(root: string): Promise<readonly string[]> {
+	const entries = await readdir(root, { withFileTypes: true });
+	const results = await Promise.all(
+		entries.map(async (entry): Promise<readonly string[]> => {
+			const location = path.join(root, entry.name);
+			if (entry.isDirectory()) return declarationViolations(location);
+			if (!entry.name.endsWith('.d.ts')) return [];
+			return collectToolEngineViolations({
+				filePath: `packages/tool-engine/src/contracts/${entry.name}`,
+				sourceText: await readFile(location, 'utf8'),
+			});
+		}),
+	);
+	return results.flat();
+}
+
+async function sourceViolations(directory: string): Promise<readonly string[]> {
+	const entries = await readdir(directory, { withFileTypes: true });
+	const results = await Promise.all(
+		entries.map(async (entry): Promise<readonly string[]> => {
+			const location = path.join(directory, entry.name);
+			if (entry.isDirectory()) return sourceViolations(location);
+			if (!entry.name.endsWith('.ts')) return [];
+			return collectToolEngineViolations({
+				filePath: path.relative(repositoryRoot, location),
+				sourceText: await readFile(location, 'utf8'),
+			});
+		}),
+	);
+	return results.flat();
+}
+
+export async function assertToolEngineSourceIsPortable(): Promise<void> {
+	const violations = await sourceViolations(path.join(repositoryRoot, 'packages/tool-engine/src'));
+	if (violations.length > 0) throw new Error(violations.join('\n'));
+}
+
+function loaderSource(): string {
+	return `import { registerHooks } from 'node:module';
+const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
+${isForbiddenToolEngineImport.toString()}
+registerHooks({resolve(specifier, context, nextResolve) {
+ if (isForbiddenToolEngineImport(specifier)) throw new Error('tool-engine forbidden import ' + specifier);
+ const resolved=nextResolve(specifier,context);
+ if (isForbiddenToolEngineImport(resolved.url)) throw new Error('tool-engine forbidden resolved path ' + resolved.url);
+ return resolved;
+}});
+`;
+}
+
+function scannerSource(): string {
+	return `import { readFile, realpath } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
+const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
+${isForbiddenToolEngineImport.toString()}
+const pending=JSON.parse(process.argv[2]); const visited=new Set(); let edges=0;
+while(pending.length) {
+ const location=await realpath(pending.pop()); if(visited.has(location))continue; visited.add(location);
+ if(isForbiddenToolEngineImport(pathToFileURL(location).href))throw new Error('tool-engine forbidden resolved path '+location);
+ const text=await readFile(location,'utf8');
+ if(location.endsWith('.json'))continue;
+ const source=ts.createSourceFile(location,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS); const imports=[];
+ function visit(node) {
+  if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier)imports.push(node.moduleSpecifier.text);
+  if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||(ts.isIdentifier(node.expression)&&node.expression.text==='require'))) {
+   if(node.arguments.length!==1||!ts.isStringLiteral(node.arguments[0]))throw new Error('tool-engine nonliteral import cannot be closed: '+location);
+   imports.push(node.arguments[0].text);
+  }
+  ts.forEachChild(node,visit);
+ }
+ visit(source);
+ for(const specifier of imports) {
+  if(isForbiddenToolEngineImport(specifier))throw new Error('tool-engine forbidden import '+specifier+' from '+location);
+  const resolved=import.meta.resolve(specifier,pathToFileURL(location).href); edges++;
+  if(isForbiddenToolEngineImport(resolved))throw new Error('tool-engine forbidden resolved path '+resolved);
+  if(!resolved.startsWith('file:'))throw new Error('tool-engine non-file dependency '+resolved);
+  pending.push(fileURLToPath(resolved));
+ }
+}
+if(visited.size===0)throw new Error('empty closure');
+console.log('emitted import closure: '+visited.size+' modules, '+edges+' static/lazy edges; no forbidden imports');
+`;
+}
+
+const requiredExports: Readonly<Record<string, readonly string[]>> = {
+	'./capability-dispatch': [
+		'createCapabilityDispatcher',
+		'dispatchInvocationSchema',
+		'operationKeySchema',
+		'operationRecordSchema',
+		'approvalReceiptSchema',
+		'approvalChallengeSchema',
+	],
+};
+function consumerSource(subpaths: readonly string[]): string {
+	return `const required=${JSON.stringify(requiredExports)};
+const contracts=await import('@agent-collaboration/tool-access/contracts');
+const {createAccessAssessor}=await import('@agent-collaboration/tool-access/authorization');
+let count=0;
+for(const subpath of ${JSON.stringify(subpaths)}) {
+ const module=await import('@agent-collaboration/tool-engine'+subpath.slice(1));
+ for(const name of required[subpath]??[])if(!(name in module))throw new Error('missing named export '+name);
+ const key=module.operationKeySchema.parse({authority:'packed',principal:'agent',item:'original'});
+ if(key.item!=='original')throw new Error('operation key changed');
+ const revision={owner:'packed',revision:'v1'};
+ const access=contracts.assessAccessInput.parse({capability:{namespace:'example',tool:'read'},surface:'mcp',call:{arguments:{},account:null,digest:'a'.repeat(64)},facts:{workspace:{kind:'not-configured'},assignment:{profile:{profileId:'packed',namespaces:{example:{backendKind:'mcp_provider',tools:{allow:'*',deny:[]},calls:{kind:'selectors',requiresApproval:{allow:[],deny:[]},withoutApproval:{allow:'*',deny:[]}},operations:{}}}},profileRevision:revision,revision},surface:{eligible:['mcp'],snapshot:revision},accounts:[],upstream:{status:'available',credentialNeed:'none',binding:revision}}});
+ let invokes=0;
+ const backend={backendKind:'mcp_provider',list:async()=>({}),describe:async()=>({}),search:async()=>({}),invoke:async(invocation)=>{invokes++;if(invocation.operationKey.item!=='original')throw new Error('dispatch changed the item');return {kind:'completed',result:'packed-ok'};}};
+ const unavailable=async()=>({kind:'unavailable'});
+ const dispatcher=module.createCapabilityDispatcher({assessAccess:createAccessAssessor({workspaceLayer:'not-configured',config:revision}),operations:{createOrRead:async()=>({kind:'untracked'}),lookup:unavailable,transition:unavailable},approvals:{challenge:unavailable,decision:unavailable,receipt:unavailable},backends:new Map([['mcp_provider',backend]]),now:()=>0});
+ const result=await dispatcher.dispatch({authority:'packed',principal:'agent',item:'original',verifiedContextRef:'packed-context',correlation:{},access});
+ if(result.kind!=='completed'||result.result!=='packed-ok'||invokes!==1)throw new Error('packed dispatch did not reach its backend exactly once');
+ count++;
+}
+if(count===0)throw new Error('empty entrypoint inventory');
+console.log('packed dispatch consumer: '+count+' entrypoints, required exports, schemas, real assessment and dispatch passed');`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function installedCheck(root: string): Promise<void> {
+	const violations = await declarationViolations(path.join(root, 'dist'));
+	if (violations.length > 0) throw new Error(violations.join('\n'));
+	const directory = path.dirname(argument('--consumer') ?? '');
+	const evidence = argument('--evidence-dir');
+	const entries = argument('--entries');
+	if (evidence === undefined || entries === undefined)
+		throw new Error('Missing installed-check arguments');
+	const graph = await command({
+		executable: process.execPath,
+		args: ['--experimental-import-meta-resolve', path.join(directory, 'scanner.mjs'), entries],
+		cwd: directory,
+		label: 'graph',
+		evidence,
+	});
+	const runtime = await command({
+		executable: process.execPath,
+		args: ['--import', path.join(directory, 'loader.mjs'), path.join(directory, 'consumer.mjs')],
+		cwd: directory,
+		label: 'consumer',
+		evidence,
+	});
+	if (graph.code !== 0 || runtime.code !== 0)
+		throw new Error('Packed closure or blocked-loader consumer failed');
+}
+
+export async function verifyToolEngineClosure(): Promise<void> {
+	await assertToolEngineSourceIsPortable();
+	const scratch = await mkdtemp(path.join(tmpdir(), '2026-10-s2-closure-'));
+	const evidence = path.resolve(argument('--evidence-dir') ?? path.join(scratch, 'evidence'));
+	await mkdir(evidence, { recursive: true });
+	process.stdout.write(`packed closure scratch: ${scratch}\nevidence: ${evidence}\n`);
+	const tarball = path.join(scratch, 'tool-engine.tgz');
+	const pack = await command({
+		executable: 'pnpm',
+		args: [
+			'--config.ignore-scripts=true',
+			'--dir',
+			path.join(repositoryRoot, 'packages/tool-engine'),
+			'pack',
+			'--out',
+			tarball,
+		],
+		cwd: repositoryRoot,
+		label: 'pack',
+		evidence,
+	});
+	if (pack.code !== 0) throw new Error('tool-engine pack failed');
+	const dependencyOverrides = await Promise.all(
+		['tool-access', 'oauth-broker-contracts'].map(
+			async (name): Promise<readonly [string, string]> => {
+				const location = path.join(scratch, `${name}.tgz`);
+				const dependencyPack = await command({
+					executable: 'pnpm',
+					args: [
+						'--config.ignore-scripts=true',
+						'--dir',
+						path.join(repositoryRoot, 'packages', name),
+						'pack',
+						'--out',
+						location,
+					],
+					cwd: repositoryRoot,
+					label: `pack-${name}`,
+					evidence,
+				});
+				if (dependencyPack.code !== 0) throw new Error(`Dependency pack failed: ${name}`);
+				return [
+					name === 'tool-access'
+						? '@agent-collaboration/tool-access'
+						: '@agent-vm/oauth-broker-contracts',
+					`file:${location}`,
+				];
+			},
+		),
+	);
+	const overrides: Record<string, string> = Object.fromEntries(dependencyOverrides);
+
+	await writeFile(
+		path.join(scratch, 'package.json'),
+		JSON.stringify({
+			private: true,
+			type: 'module',
+			dependencies: {
+				'@agent-collaboration/tool-engine': `file:${tarball}`,
+				'@agent-collaboration/tool-access': overrides['@agent-collaboration/tool-access'],
+			},
+			pnpm: { overrides },
+		}),
+	);
+	await writeFile(
+		path.join(scratch, 'pnpm-workspace.yaml'),
+		`packages:\n  - '.'\noverrides:\n${Object.entries(overrides)
+			.map(([name, location]) => `  ${JSON.stringify(name)}: ${JSON.stringify(location)}`)
+			.join('\n')}\n`,
+	);
+	const install = await command({
+		executable: 'pnpm',
+		args: ['install', '--ignore-scripts'],
+		cwd: scratch,
+		label: 'install-packed',
+		evidence,
+	});
+	if (install.code !== 0) throw new Error('Packed consumer installation failed');
+	const root = await realpath(path.join(scratch, 'node_modules/@agent-collaboration/tool-engine'));
+	if (root.startsWith(`${repositoryRoot}${path.sep}`))
+		throw new Error('Packed consumer resolved back into workspace');
+	const manifest: unknown = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+	if (!isRecord(manifest) || !isRecord(manifest.exports))
+		throw new Error('Packed package has no exports map');
+	const subpaths = Object.keys(manifest.exports);
+	if (
+		subpaths.length === 0 ||
+		Object.keys(requiredExports).some((entry) => !subpaths.includes(entry))
+	)
+		throw new Error('Required packed entrypoints are absent');
+	const entryPaths = Object.values(manifest.exports).map((entry) => {
+		if (!isRecord(entry) || typeof entry.import !== 'string')
+			throw new Error('Every published subpath needs an import target');
+		return path.resolve(root, entry.import);
+	});
+	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
+	await writeFile(path.join(scratch, 'scanner.mjs'), scannerSource());
+	await writeFile(path.join(scratch, 'consumer.mjs'), consumerSource(subpaths));
+	async function check(label: string): Promise<CommandResult> {
+		const runEvidence = path.join(evidence, label);
+		await mkdir(runEvidence, { recursive: true });
+		return command({
+			executable: process.execPath,
+			args: [
+				'--import',
+				'tsx',
+				scriptPath,
+				'--installed',
+				root,
+				'--consumer',
+				path.join(scratch, 'consumer.mjs'),
+				'--entries',
+				JSON.stringify(entryPaths),
+				'--evidence-dir',
+				runEvidence,
+			],
+			cwd: repositoryRoot,
+			label,
+			evidence,
+		});
+	}
+	const clean = await check('clean');
+	if (clean.code !== 0) throw new Error('Clean packed control failed');
+	if (process.argv.includes('--fixtures')) {
+		const contract = path.join(root, 'dist/capability-dispatch/index.js');
+		const declaration = path.join(root, 'dist/capability-dispatch/index.d.ts');
+		const original = await readFile(contract, 'utf8');
+		const originalDeclaration = await readFile(declaration, 'utf8');
+		const fixtureSources = [
+			{
+				name: 'direct',
+				source: `${original}\nimport 'node:fs';`,
+				reason: 'tool-engine forbidden import node:fs',
+			},
+			{
+				name: 'transitive',
+				source: `${original}\nexport * from './s2-transitive-poison.js';`,
+				reason: 'tool-engine forbidden import node:fs',
+			},
+			{
+				name: 'host',
+				source: `${original}\nimport '@agent-collaboration/tool-host-node';`,
+				reason: 'tool-engine forbidden import @agent-collaboration/tool-host-node',
+			},
+			{
+				name: 'managed-type',
+				source: original,
+				reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
+			},
+			{
+				name: 'transitive-type',
+				source: original,
+				reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
+			},
+			{
+				name: 'agent-vm',
+				source: `${original}\nimport '@agent-vm/agent-vm';`,
+				reason: 'tool-engine forbidden import @agent-vm/agent-vm',
+			},
+			{
+				name: 'gondolin',
+				source: `${original}\nimport '@gondolin/provider';`,
+				reason: 'tool-engine forbidden import @gondolin/provider',
+			},
+			{
+				name: 'controller-test-alias',
+				source: original,
+				declaration:
+					"import type { ControllerApprovalLedger } from '@agent-vm/controller-test-support/approval/controller-approval-ledger.js'; export type AliasPoison = ControllerApprovalLedger;",
+				reason:
+					'tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
+			},
+			{
+				name: 'config-test-alias',
+				source: original,
+				declaration:
+					"import type { createOAuthPolicyCompilerTestInput } from '@agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js'; export type AliasPoison = typeof createOAuthPolicyCompilerTestInput;",
+				reason:
+					'tool-engine forbidden import @agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js',
+			},
+			{
+				name: 'policy-test-alias',
+				source: original,
+				declaration:
+					"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
+				reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
+			},
+		];
+		await writeFile(
+			path.join(root, 'dist/capability-dispatch/s2-transitive-poison.js'),
+			"export async function lazyPoison() { return import('node:fs'); }\n",
+		);
+		await fixtureSources.reduce<Promise<void>>(async (previous, fixture): Promise<void> => {
+			await previous;
+			try {
+				await replaceArtifact(contract, fixture.source);
+				if (fixture.declaration !== undefined)
+					await replaceArtifact(declaration, `${originalDeclaration}\n${fixture.declaration}\n`);
+				if (fixture.name === 'managed-type')
+					await replaceArtifact(
+						declaration,
+						`${originalDeclaration}\nimport type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts';\nexport type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n`,
+					);
+				if (fixture.name === 'transitive-type') {
+					await replaceArtifact(
+						declaration,
+						`${originalDeclaration}\nexport * from './s2-type-poison.js';\n`,
+					);
+					await writeFile(
+						path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'),
+						"import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts'; export type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n",
+					);
+				}
+				const red = await check(`${fixture.name}-red`);
+				if (red.code === 0 || !red.output.includes(fixture.reason))
+					throw new Error(`Fixture ${fixture.name} did not fail for its intended reason`);
+			} finally {
+				await replaceArtifact(contract, original);
+				await replaceArtifact(declaration, originalDeclaration);
+				if (fixture.name === 'transitive-type')
+					await unlink(path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'));
+			}
+			const green = await check(`${fixture.name}-green`);
+			if (green.code !== 0) throw new Error(`Fixture ${fixture.name} restoration failed`);
+		}, Promise.resolve());
+		process.stdout.write(
+			`sensitivity: ${fixtureSources.length} intended rejections, ${fixtureSources.length} restored passes\n`,
+		);
+	}
+	process.stdout.write(`tool-engine packed closure: passed (${subpaths.length} entrypoints)\n`);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+	try {
+		const installed = argument('--installed');
+		if (installed === undefined) await verifyToolEngineClosure();
+		else await installedCheck(installed);
+	} catch (error) {
+		process.stderr.write(`${String(error)}\n`);
+		process.exitCode = 1;
+	}
+}
