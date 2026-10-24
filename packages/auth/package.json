@@ -40,11 +40,11 @@
 	},
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
-		"@better-auth/core": "1.7.8",
-		"@better-auth/kysely-adapter": "1.7.8",
-		"@better-auth/oauth-provider": "1.7.8",
-		"@better-auth/passkey": "1.7.8",
-		"better-auth": "1.7.8",
+		"@better-auth/core": "1.7.11",
+		"@better-auth/kysely-adapter": "1.7.11",
+		"@better-auth/oauth-provider": "1.7.11",
+		"@better-auth/passkey": "1.7.11",
+		"better-auth": "1.7.11",
 		"jose": "6.2.12",
 		"zod": "4.4.3"
 	},

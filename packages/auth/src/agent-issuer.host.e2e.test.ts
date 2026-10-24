@@ -1,7 +1,9 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
+import { createSignInProvider } from '#auth/better-auth-provider/provider-configuration';
+import { signInWorkerConfiguration } from '#auth/cloudflare-host/worker-configuration';
 import { expectBasicClientAuthenticationRefusal } from '#auth/test-fixtures/client-authentication-refusal';
 import { expectNoIssuedCredentials } from '#auth/test-fixtures/credential-free-refusal';
 import {
@@ -16,6 +18,48 @@ import {
 } from '#auth/test-fixtures/local-auth-harness';
 
 let harness: Awaited<ReturnType<typeof startLocalAuthHarness>>;
+
+it('agent: refuses client self-key rotation at the provider and public entry without changing stored credentials', async () => {
+	// Arrange: real provider and D1, with a valid public key body that reaches the rotation gate.
+	const rotationHarness = await startLocalAuthHarness();
+	try {
+		const bindings = await rotationHarness.miniflare.getBindings<AuthWorkerEnv>('sign-in');
+		const provider = createSignInProvider({
+			...signInWorkerConfiguration(bindings),
+			authority: { kind: 'public' },
+			requestState: { createdUserIds: [], issuedSessions: [] },
+		});
+		const { publicKey } = await generateKeyPair('EdDSA');
+		const body = JSON.stringify({
+			client_assertion: 'synthetic-assertion',
+			client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+			jwks: { keys: [{ ...(await exportJWK(publicKey)), kid: 'rotation-test' }] },
+		});
+		const readClients = async (): Promise<readonly Record<string, unknown>[]> =>
+			(await rotationHarness.database.prepare('SELECT * FROM oauthClient ORDER BY clientId').all())
+				.results;
+		const before = await readClients();
+		const pathname = '/api/auth/oauth2/client/rotate-keys';
+		const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body };
+
+		// Act: bypass our public-route fence once to observe the provider's own disabled gate.
+		const providerResponse = await provider.handler(
+			new Request(`${rotationHarness.issuer}${pathname}`, init),
+		);
+		const publicResponse = await rotationHarness.auth(pathname, init);
+
+		// Assert: enabling self-rotation would reach assertion authentication instead of this refusal.
+		expect(providerResponse.status).toBe(403);
+		expect(await providerResponse.json()).toMatchObject({
+			error: 'access_denied',
+			error_description: 'Client key rotation is disabled',
+		});
+		expect(publicResponse.status).toBe(404);
+		expect(await readClients()).toEqual(before);
+	} finally {
+		await rotationHarness.close();
+	}
+});
 const registrationSchema = z.strictObject({
 	kind: z.literal('registered'),
 	clientId: z.string(),

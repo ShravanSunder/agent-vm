@@ -185,6 +185,7 @@ describe('C2 sign-in HTTP composition', () => {
 		'/api/auth/admin/oauth2/create-client',
 		'/api/auth/oauth2/create-client',
 		'/api/auth/oauth2/register',
+		'/api/auth/oauth2/client/rotate-keys',
 		'/api/auth/passkey/register',
 		'/api/auth/get-session',
 		'/api/auth/list-sessions',

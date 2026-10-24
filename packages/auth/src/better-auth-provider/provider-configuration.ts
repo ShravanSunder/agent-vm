@@ -201,6 +201,7 @@ export function createSignInProvider(
 				grantTypes: ['authorization_code', 'client_credentials'],
 				scopes: ['tool-portal:agent', 'tool-portal:management'],
 				allowDynamicClientRegistration: false,
+				allowClientKeyRotation: false,
 				cachedTrustedClients: new Set<string>(),
 				enforcePerClientResources: true,
 				accessTokenExpiresIn: props.configuration.accessTokenSeconds,
