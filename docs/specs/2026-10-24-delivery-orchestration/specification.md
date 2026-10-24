@@ -39,7 +39,9 @@ No slice (E3) starts building until the owner has approved this design and the g
 
 **R2 — One complete order.** (U2)
 Every slice in all three governing designs appears exactly once in the order, with its workstream, repository, dependency points (E5) and gates (E7). Every dependency point points to a slice or contract version earlier in the order, and the dependencies form no cycle.
-- **Fail:** a slice missing from the order; a dependency on a later slice; a cycle.
+- **Complete means delivered:** every slice reaches one terminal delivery barrier through its dependency points, so the order cannot be declared finished while any slice is unmerged.
+- **Readable:** the order is also a page a person can open, with the picture and tables rendered, at desktop and phone width (U2).
+- **Fail:** a slice missing from the order; a dependency on a later slice; a cycle; a slice that can stay unmerged when the order is declared finished; no readable page.
 
 **R3 — The Fleet release first.** (U3)
 No codex-router identity slice is ready before the Fleet release has shipped.

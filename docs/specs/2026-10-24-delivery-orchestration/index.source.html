@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delivery orchestration</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"></ex-nav>
+
+<ex-presentation id="path-first" title="What runs first" description="Which work starts on approval, and what waits on what.">
+  <ex-step to="requirements--needs" icon="users">Your rules: design before build, the Fleet release first (U1, U3).</ex-step>
+  <ex-step to="program-design--the-order-in-one-picture" icon="path">The order in one picture, ending at the DONE barrier.</ex-step>
+  <ex-step to="program-design--workstreams" icon="stack">The workstreams and when each starts.</ex-step>
+  <ex-step to="program-design--slices-and-dependency-points" icon="package">Every slice, the design rows it realizes, and what it waits on.</ex-step>
+  <ex-step to="verification-design--u2-one-complete-order-readable" icon="test-tube">How the order is checked complete: no slice can stay unmerged.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-cut" title="Why the token change can't break calls again" description="How the issuer and the Tool Portal change together, and what happens if a deploy fails.">
+  <ex-step to="requirements--what-went-wrong-without-one" icon="bug">What broke the identity build.</ex-step>
+  <ex-step to="specification--obligations" icon="book-open">R4: contracts go live whole.</ex-step>
+  <ex-step to="program-design--slices-and-dependency-points" icon="lock">Why B4 and P1 meet only at JC1, the deploy hold before it, and how JC1 cuts over: stop, settle, deploy, prove with a cohort, resume; repair forward on failure.</ex-step>
+  <ex-step to="program-design--cross-repository-contracts" icon="plug">The contracts that cross the repositories, each with one home.</ex-step>
+  <ex-step to="verification-design--u4-no-half-shipped-contract" icon="test-tube">How the cut is proven, including a rehearsed failed deploy.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-proof" title="The real joint proof" description="What JP1–JP4 run, on what, and what completes delivery.">
+  <ex-step to="requirements--needs" icon="users">Your rule: prove the real path (U6).</ex-step>
+  <ex-step to="program-design--joint-proofs-the-real-path" icon="path">The four joint proofs.</ex-step>
+  <ex-step to="verification-design--u6-the-real-joint-path" icon="test-tube">How each is observed on the private stack.</ex-step>
+</ex-presentation>
+
+<ex-document id="content">
+
+<h1>Delivery orchestration</h1>
+
+The order of work across agent-vm and codex-router for the Tool Portal remediation, the sign-in revision and agent identity. agent-vm's remediation and sign-in work start as soon as you approve the designs; codex-router ships its release first, then its identity work. The two sides meet at one joint cut, JC1, where every changed cross-repository contract goes live together after its joint proofs pass. Delivery is complete only at DONE, after bot messaging, both central hosts and the sign-in Node host are also proven. It is a design; nothing in it is built or observed yet.
+
+<ex-callout id="waiting" title="Decisions that wait on you" tone="question" icon="users">
+
+- **OD-R1:** what happens to #262 and #263. Recommended: revert #262's gate changes on its branch, merge it, and fix on master, holding publishes and deploys until A8. [See the options](#program-design--what-happens-to-262-and-263).
+- **OD-R2:** whether the codex-router identity slices handed to the Fleet Lead before today's redesign still stand. Recommended: they wait for this design's approval and are re-cut from it; the Fleet release is untouched.
+- **OD-R3:** how a contract's generated artifact crosses the repositories. [See the options](#program-design--cross-repository-contracts).
+- **OD-R4:** the parked work this touches (#255). [See it](#program-design--parked-work-this-touches).
+
+</ex-callout>
+
+<h2 id="where">Where each answer lives</h2>
+
+- **What you asked for, in your words, and what's still open:** [Requirements](#requirements)
+- **The nouns, and what the order must satisfy:** [Specification](#specification)
+- **The order, slices, contracts, cut and proofs:** [Program Design](#program-design)
+- **How each need will be proven:** [Verification Design](#verification-design)
+
+The designs this orders: [Tool Portal remediation](../2026-10-24-tool-portal-remediation/index.html), [agent identity](../2026-10-24-agent-identity/index.html) and [people sign-in](../2026-10-20-people-sign-in/requirements.html). To be walked through, press **W** or use the path button.
+
+<h2 id="documents">The documents</h2>
+
+<ex-tabs id="design-set" label="Design documents" data-width="canvas">
+  <section id="tab-requirements" label="Requirements" icon="users">
+    <p>What went wrong without an orchestration design, who is affected, nine needs in your words, the goal boundary, and the open decisions.</p>
+    <ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
+  </section>
+  <section id="tab-specification" label="Specification" icon="book-open">
+    <p>The entities (workstream, slice, dependency point, contract, joint cut, joint proof, gate) and obligations R1–R9. Failure cases covered: a slice missing or left unmerged, a dependency on later work, a half-shipped contract, a hand-written copy of a shape, and a gate with two owners.</p>
+    <ex-markdown id="specification" label="Specification" src="./specification.md"></ex-markdown>
+  </section>
+  <section id="tab-program-design" label="Program Design" icon="stack">
+    <p>The order in one picture, workstreams, every slice with its design rows, the contracts K1–K7, the joint cut JC1 with its deploy hold and failure handling (a failed deploy part-way, a failed proof), the joint proofs, gate owners, #262 and #263, and parked work.</p>
+    <ex-markdown id="program-design" label="Program Design" src="./program-design.md"></ex-markdown>
+  </section>
+  <section id="tab-verification-design" label="Verification Design" icon="test-tube">
+    <p>One line per need, a row per need naming the wrong order or cut it must catch, and the journeys still to build. Planned, not observed.</p>
+    <ex-markdown id="verification-design" label="Verification Design" src="./verification-design.md"></ex-markdown>
+  </section>
+</ex-tabs>
+
+</ex-document>
+</body>
+</html>

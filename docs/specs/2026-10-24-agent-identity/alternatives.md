@@ -341,14 +341,15 @@ flowchart TB
 
 ## 16. How do the services prove who's calling each other?
 
-Fleet central, the sign-in service and the Tool Portal call each other for four things: deciding a bot's grant, minting a session's token, delivering a removal notice, and confirming a person's session for an admin action.
+Fleet central, the sign-in service and the Tool Portal call each other for: deciding a bot's grant, admitting a person or reading their standing, minting a session's token, delivering a removal notice, managing bot credentials and workspace resources, and confirming a person's session for an admin action. Service tokens carry every one of these except two, which use client authentication instead: minting a session's token (the fleet-session grant) and confirming a person's session (introspection with central's `private_key_jwt`). No service token is minted for confirmation.
 
 ```mermaid
 flowchart LR
   C["Fleet central"] -- "service token: Portal, notices" --> P["Tool Portal"]
   S["Sign-in service"] -- "service token: central, decisions" --> C
   C -- "client key: fleet-session grant" --> S
-  C -- "service token: sign-in, confirmation" --> S
+  C -- "service token: sign-in, credentials and resources" --> S
+  C -- "client authentication: confirmation (introspection)" --> S
 ```
 
 | Option | Gains | Costs | Verdict |
