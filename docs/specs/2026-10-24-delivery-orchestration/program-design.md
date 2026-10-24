@@ -11,6 +11,7 @@ flowchart LR
     A1["A1 platform capabilities<br/>UUIDv7 · clock · crypto · timers"] --> A2["A2 workspace store v1<br/>Drizzle · DO · Node file"]
     A2 --> A3["A3 Node host on the core"]
     A4["A4 defects R20–R23, R25"]
+    A4 --> A8
     A3 --> A5["A5 deterministic tests<br/>Hegel · conformance · journeys"]
     A3 --> A6["A6 clean build<br/>deps · gates · guard"]
     A3 --> A7["A7 large requests (#33)"]
@@ -74,7 +75,7 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | A5 deterministic tests | agent-vm | remediation R13, R14, R15; the `verify-tool-portal` journeys | A3 | as A2 |
 | A6 clean build | agent-vm | remediation R16, R18, R19; R17 in part (see "Parked work this touches") | A3 | as A1 |
 | A7 large requests | agent-vm | remediation R26 | A3; the #33 evidence | as A2, plus the deployed check |
-| A8 Portal cutover | agent-vm | remediation R9 | A5, A6, A7 | deployed cutover check (temporary) on the private Worker |
+| A8 Portal cutover | agent-vm | remediation R9, and the complete remediation going live | A4, A5, A6, A7 | deployed cutover check (temporary) on the private Worker and a Node host |
 | B1 sign-in core and storage | agent-vm | sign-in storage and runtime separation (revised sign-in and identity designs) | design approval; the sign-in schema decision | as A2 |
 | B2 sign-in Node host | agent-vm | identity U16 for sign-in | B1 | as A2 |
 | B3 design-thread fixes | agent-vm | the nine still-open #237 threads (revised designs) | B1 | as A1 |
@@ -95,6 +96,15 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 **Why A runs ahead of P.** Store version 1 keeps today's membership records, so the remediated Tool Portal is deployable on its own (A8) without waiting for codex-router. P1 then moves the store to version 2 and switches the caller check to identity tokens. The cost is one extra migration, and the benefit is that A never blocks on F.
 
 **Why B4 and P1 meet only at JC1.** B4 changes the token claims and P1 changes the check that reads them. Either one alone, deployed, breaks issuer-to-Portal calls; that is exactly what broke the identity build. So both merge behind JC1: they land on master, and the private test stack keeps running the previous issuer and Portal builds until JC1 deploys both together.
+
+**How JC1 cuts over.** The private test stack's only callers are the test Router's sessions and the test bot, so a hard cutover is a short, owned interruption, not a compatibility layer. The Tool Portal Lead owns it:
+1. **Stop admission.** Stop the test Router's sessions and the test bot, the stack's only callers.
+2. **Drain.** Confirm nothing is in flight: the Tool Portal Worker's and the sign-in Worker's logs (`wrangler tail`) show no request for one minute, read from their own log timestamps.
+3. **Deploy in order.** Deploy Fleet central, then the sign-in Worker, then the Tool Portal Worker and Node host. Read back each component's deployed build identity. Central first is safe, because its new routes are unused by the old callers.
+4. **Prove.** Run JP1–JP4 against exactly those builds.
+5. **Resume.** Restart the Router's sessions and the bot only after JP1–JP4 pass.
+
+**If a deploy fails part-way, or any JP fails,** every component is redeployed at its previous build before any caller restarts. Because no caller is running, nothing observes the mixed state.
 
 ## Cross-repository contracts
 

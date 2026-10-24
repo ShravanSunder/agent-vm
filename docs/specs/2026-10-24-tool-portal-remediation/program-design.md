@@ -65,7 +65,7 @@ Every anchor below is at `2dfea38e`.
 | The database type the core accepts | `BaseSQLiteDatabase<'sync', unknown, typeof workspaceStoreSchema>`; synchronous transactions | Fleet's generic executor-in-a-transaction port, or a prebuilt statement-plan executor that also fits D1 | Both Portal drivers are synchronous (`durable-sqlite` runs `transactionSync`; `better-sqlite3` is native sync), so real transactions express every decision directly; a plan executor would add an abstraction no Portal obligation needs | The Portal gaining an asynchronous database, such as D1 |
 | Where the store runs on Cloudflare | Inside the workspace's Durable Object; the Worker calls it by RPC | The Worker opening D1 directly | The owner chose a Durable Object with Drizzle; one object per workspace gives isolation by construction and serializes each workspace's decisions | A measured per-workspace throughput limit |
 | Where web-standard adapters live | A small new package used by both hosts | Each host writing its own adapters; or adapters inside the core | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals | Either host needing a different implementation of a capability |
-| How the storage change cuts over | A hard replacement: a new Durable Object class, the old one deleted, and the approval signing keys rotated | Reading the old key-value rows into the new tables at first start | Only test deployments hold state (identity Program Design); rotation makes every old token fail verification, which satisfies R9 without keeping key-value code alive | A production deployment existing before cutover |
+| How the storage change cuts over | A hard replacement: a new Durable Object class, the old one deleted, the approval signing keys rotated (the Worker's and the Node hosts' standalone HMAC credentials alike), and each workspace's members re-added through the existing management route before traffic resumes | Reading the old key-value rows into the new tables at first start | Only test deployments hold state (identity Program Design); rotation makes every old token fail verification, which satisfies R9 without keeping key-value code alive; re-adding members keeps the workspace usable, so a refusal after cutover means what it should | A production deployment existing before cutover |
 | Membership during this work | Store version 1 keeps today's membership and removal-intent records as tables; the identity cutover's version 2 drops them | Ship only the identity-target tables, with the identity cutover in the same release | Keeps the Tool Portal deployable after this work without waiting for codex-router | The owner choosing one combined Portal cutover |
 
 ## Where each thing lives
@@ -74,9 +74,9 @@ Every anchor below is at `2dfea38e`.
 |---|---|---|---|---|---|---|
 | E1 Portal core | the core composition roots `createHostedMcpProxy` and `createStandaloneToolPortalService` | `tool-access`, `tool-engine`, `tool-host-core` (modified) | the packages' public indexes | the host calls one composition root per server kind with `PortalPlatform` and its server configuration | derived | Zod at boundaries; discriminated unions (`AGENTS.md:415–419`) |
 | E2 Host | the host composition (`tool-host-cloudflare` Worker entry and `WorkspaceStoreObject`; `tool-host-node` startup) | `tool-host-cloudflare`, `tool-host-node` (modified) | none: a host defines no shared type | passes `PortalPlatform` and a store access in; receives `HostedMcpProxy.handle(request): Promise<Response>` | derived | — |
-| E3 Platform capability | `PortalPlatform` | `tool-host-core/src/platform-capabilities` (new) | `tool-host-core/src/platform-capabilities/models/platform-capabilities.ts` (new) | `PortalPlatform`, below | derived | interfaces with branded values |
-| E4 Workspace store | `WorkspaceStore` (the core's Drizzle implementation) | `tool-host-core/src/workspace-store` (new; replaces `workspace-authority`'s key-value store) | `workspace-store/models/workspace-store.ts` (operations and results); `workspace-store/workspace-store-schema.ts` (Drizzle tables) | `WorkspaceStore` operations, below; on Cloudflare the same operations cross Durable Object RPC with structured-clone values | persisted | Drizzle `sqlite-core` schema; Zod parse of every row read |
-| E5 Approval-use record | `WorkspaceStore` | as E4 | tables `proxy_token_use` and `batch_approval_use`; domain type `ApprovalUse` | `ApprovalPresentation` result, below | persisted | discriminated union |
+| E3 Platform capability | the capability contracts, each owned at the lowest package that consumes it; `PortalPlatform` aggregates them | clock, identifier and crypto contracts: `tool-access/src/contracts/platform-capabilities.ts` (new); timers and upstream transport: `tool-engine` (timers new, transport existing); `PortalPlatform` with log and analytics: `tool-host-core/src/platform-capabilities` (new) | those three modules | `PortalPlatform`, below | derived | interfaces with branded values |
+| E4 Workspace store | `WorkspaceStore` (the core's Drizzle implementation) | implementation, schema and migrations: `tool-host-core/src/workspace-store` (new; replaces `workspace-authority`'s key-value store) | the approval-use port its `tool-engine` consumers need: `tool-engine/src/approval-use/models/approval-use-store.ts` (new); the rest of the store's operations and the Drizzle tables: `tool-host-core/src/workspace-store/models/workspace-store.ts`, `workspace-store-schema.ts` | `WorkspaceStore` operations, below; on Cloudflare the same operations cross Durable Object RPC with structured-clone values | persisted | Drizzle `sqlite-core` schema; Zod parse of every row read |
+| E5 Approval-use record | `WorkspaceStore`, through the approval-use port | as E4 | tables `proxy_token_use` and `batch_approval_use`; result unions in `approval-use-store.ts` | `ProxyTokenPresentation`, `BatchReservationResult`, `BatchArmResult`, below | persisted | discriminated union |
 | E6 Removal mark | `WorkspaceStore` | as E4 | tables `removal_mark`, `removal_notice` (store version 2); the notice's wire contract stays `RemovalNotice` in the identity design's Rust home | `RemovalNoticeRecording` result, below | persisted | discriminated union |
 | E8 Schema version | `drizzle-kit` output, applied by each host's migrator | `tool-host-core/drizzle/` (new, checked in, published in the package files) | the migration journal `drizzle/meta/_journal.json` | SQL files for `better-sqlite3`; the generated `migrations.js` bundle for the Durable Object | persisted | drizzle-kit 0.31.10 (the version paired with drizzle-orm 0.45.2) |
 | E9 Portal identifier | `PortalIdSource` | `tool-host-core/src/platform-capabilities` | `Uuid7` branded string, parsed by `uuid7Schema` | every minted id, as a canonical lower-case UUID string | derived | branded type with a Zod refinement on version 7 |
@@ -108,13 +108,23 @@ flowchart LR
 | **Hosted MCP proxy** | every rule on the MCP proxy way in: caller check, workspace boundary, persona narrowing, `direct`/`indirect`, search/describe, dispatch, approval checks, limits, projection, redaction, the analytics data point | `tool-host-core/src/hosted-mcp-proxy` (modified) | both hosts | an MCP proxy rule changes |
 | **Standalone Tool Portal service** | the standalone Tool Portal's operations and its signed batch approval: challenge, verification, reservation, arming, canonical batch fingerprint | `tool-engine/src/standalone-tool-portal` (modified: absorbs `standalone-batch-approval`, `standalone-batch-dispatch` decisions and `standalone-dispatch-identity` from `tool-host-node`) | the Node host's standalone routes | a standalone rule changes |
 | **Workspace store** | E4–E6: every approval-use, membership, removal-intent and removal-mark record; their atomic decisions; retention pruning | `tool-host-core/src/workspace-store` (new) | the proxy, the standalone service, the removal receiver | the store's schema or a decision rule changes |
-| **Platform capabilities** | the one list of what a host must supply, and the value types that cross it | `tool-host-core/src/platform-capabilities` (new) | every core component; both hosts | a capability is added or its contract changes |
+| **Platform capabilities** | the one list of what a host must supply (`PortalPlatform`), and the value types that cross it | `PortalPlatform` in `tool-host-core/src/platform-capabilities` (new); its member contracts at their lowest consumer, in `tool-access/contracts` and `tool-engine` (see "Where each contract lives") | every core component; both hosts | a capability is added or its contract changes |
 | **Upstream MCP runtime** | client cache, generations, retries, pagination, timeouts and redaction for every upstream server, remote or stdio | `tool-engine/src/upstream-mcp-connectors` (modified: takes `timers`; the Node stdio copy is deleted) | the proxy | an upstream protocol rule changes |
 | **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signatures, `setTimeout` timers | `packages/tool-host-web-platform` (new) | both hosts only | a web API or adapter library changes |
 | **Cloudflare host** | the Worker's routing, Cloudflare bindings, `WorkspaceStoreObject` (opens Durable Object SQLite, runs the migrator inside `blockConcurrencyWhile`, exposes the store's operations by RPC) | `tool-host-cloudflare` (modified) | Cloudflare | a Cloudflare binding or runtime API changes |
 | **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening `tool-portal-store.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Portal SDK's tests | a Node API or a listener changes |
 
-**Allowed dependency edges:** hosts → core; hosts → web-platform adapters; web-platform adapters → `tool-host-core` (types only); core packages → each other in the existing order (`tool-access` ← `tool-engine` ← `tool-host-core`); core → `drizzle-orm` and `drizzle-orm/sqlite-core` only.
+**Allowed dependency edges:**
+- hosts → core;
+- hosts → web-platform adapters;
+- web-platform adapters → the capability contracts (types only);
+- core packages → each other only downward, in the existing order (`tool-host-core` → `tool-engine` → `tool-access`);
+- core → `drizzle-orm` and `drizzle-orm/sqlite-core` only.
+
+**Where each contract lives, so no edge points upward:**
+- `tool-access` owns the clock, identifier and crypto contracts, because its proof verifiers consume them.
+- `tool-engine` owns the timers contract and the approval-use port, because its upstream runtime, gateway and standalone batch approval consume them.
+- `tool-host-core` owns `PortalPlatform` (adding log and analytics), the rest of the workspace store's operations, the Drizzle schema, the migrations and the one store implementation. That implementation satisfies the approval-use port.
 
 **Forbidden edges, and what catches them:**
 
@@ -142,7 +152,9 @@ What the guard cannot catch: a deliberate cast or `any`, `eval`, and effects ins
 Every capability is required; no field is optional and no core code supplies a default. Values crossing this boundary are branded so a raw `number` or `string` cannot stand in for them.
 
 ```ts
-// tool-host-core/src/platform-capabilities/models/platform-capabilities.ts
+// tool-access/src/contracts/platform-capabilities.ts: clock, identifiers, crypto (consumed from tool-access upward)
+// tool-engine: PortalTimers and the upstream transport factory
+// tool-host-core/src/platform-capabilities/models/platform-capabilities.ts: PortalPlatform, aggregating them
 export type EpochMilliseconds = number & { readonly __brand: 'EpochMilliseconds' };
 export type Uuid7 = string & { readonly __brand: 'Uuid7' };
 
@@ -224,10 +236,11 @@ Secrets stay random secret material: signing keys and token entropy are not iden
 
 ### Operations and results
 
-The core owns this interface and its only implementation. Every result is a closed union; a storage failure is its own variant, never a business outcome.
+The core owns this interface and its only implementation. Every result is a closed union; a storage failure is its own variant, never a business outcome. The approval operations (`presentProxyToken`, `reserveBatchApproval`, `armBatchApproval`, `proveBatchNotDispatched`) and their result types form the approval-use port in `tool-engine`, because the gateway and the standalone batch approval consume them there. `WorkspaceStore` in `tool-host-core` extends that port with the membership and removal operations.
 
 ```ts
-// tool-host-core/src/workspace-store/models/workspace-store.ts
+// tool-engine/src/approval-use/models/approval-use-store.ts holds the approval part below;
+// tool-host-core/src/workspace-store/models/workspace-store.ts extends it with the rest
 export type PrincipalKey = string & { readonly __brand: 'PrincipalKey' };
 export type ApprovalTokenId = string & { readonly __brand: 'ApprovalTokenId' };
 

@@ -63,7 +63,7 @@ How each need in the [Requirements](requirements.md) will be shown to hold, at t
 | **Reference** | The joint cut's build list (issuer, Tool Portal Worker, Fleet central, Router) |
 | **Target and journey** | The private test stack. Part of the JP journey below (`needed:` `verify-tool-portal` › `joint-cut`, which reads each deployed component's version endpoint or deployment record). |
 | **Lifetime** | temporary (it runs at the cut) |
-| **Passes when** | Immediately before the cut, every component reports its previous build and a call through the stack succeeds. Immediately after, every component reports its cut build and JP1 passes. At no time does one component report a cut build while another reports a previous one with traffic flowing between them. **Wrong cut that fails:** the issuer deployed alone first, so the old Portal refuses its tokens. |
+| **Passes when** | Before the cut, every component reports its previous build, and a call through the stack succeeds. The callers are then stopped, and the Workers' logs show no request for a full minute before the first deploy. After the deploys, every component reports its cut build, JP1–JP4 pass, and only then do callers restart: their first request comes after the last JP. At no time does a request reach a component while another runs a different contract version. **Wrong cut that fails:** the issuer deployed alone with callers running, so the old Portal refuses its tokens; or callers restarted before the JPs ran. |
 | **Reuses** | none |
 | **Unverified** | customer deployments |
 

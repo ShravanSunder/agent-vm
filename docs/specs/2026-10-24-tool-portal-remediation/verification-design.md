@@ -65,7 +65,15 @@ The stateful model test that exists today (`tool-host-core/src/workspace-authori
 
 **O6 — The type-check guard** (no journey.) The core packages' guard configuration is run; then a deliberately forbidden import and an unhandled variant are introduced in a throwaway branch of the check and must each fail it.
 
-**O7 — Storage cutover on the private test Worker** (needed journey `verify-tool-portal` › `cutover`, temporary: it runs once, at the cutover.) Before deploying the remediation, use an approval on the old Worker and keep the token. Deploy the remediation with the new object class and rotated approval keys. Present the kept token.
+**O7 — Storage cutover on the private test Worker and a Node host** (needed journey `verify-tool-portal` › `cutover`, temporary: it runs once, at the cutover.)
+1. **Before the cutover:** use an approval on the old Worker, and a batch approval on the old Node host, and keep both tokens.
+2. **Deploy:** the new object class with rotated approval keys; the Node host with rotated standalone HMAC credentials.
+3. **Re-add members:** re-add each workspace's members through the management route.
+4. **Then, three checks:**
+   - **positive control:** a member gets a fresh approval, and its call succeeds exactly once;
+   - **old Worker token:** presented again, it fails at approval verification (signature), not at membership;
+   - **old Node batch token:** presented again, it fails the same way.
+   The upstream server records zero effects for both old tokens.
 
 ## Rows
 
@@ -127,7 +135,7 @@ The stateful model test that exists today (`tool-host-core/src/workspace-authori
 | **Reference** | R7's three after-restart answers; R8's "exactly one first use"; R9's pass condition |
 | **Target and journey** | Node process, workerd and the private test Worker; O2 (`needed:` `restart`), O3 (`needed:` `contention`), O7 (`needed:` `cutover`) |
 | **Lifetime** | `restart` and `contention` lasting; `cutover` temporary |
-| **Passes when** | **O2:** after the restart, the used proxy token is `already-used`, the armed batch approval is `ambiguous` and the reserved one is `already-consumed`, and nothing is dispatched. **O3:** exactly one `first-use` across all copies and processes. **O7:** the kept token fails verification. **Wrong builds that fail:** today's Node host (its batch-approval records are a `Map` and its generation comes from configuration, so after restart the token is accepted again); a store that checks then inserts in two transactions (two first uses under O3); a cutover that keeps the old keys. |
+| **Passes when** | **O2:** after the restart, the used proxy token is `already-used`, the armed batch approval is `ambiguous` and the reserved one is `already-consumed`, and nothing is dispatched. **O3:** exactly one `first-use` across all copies and processes. **O7:** the fresh approval's call succeeds once; both kept tokens fail at approval verification with zero upstream effects. **Wrong builds that fail:** today's Node host (its batch-approval records are a `Map` and its generation comes from configuration, so after restart the token is accepted again); a store that checks then inserts in two transactions (two first uses under O3); a cutover that keeps the old keys (the kept token passes verification); a cutover that forgets to re-add members (the positive control fails, so an old-token refusal can't be mistaken for success). |
 | **Reuses** | none counted. The existing deployed row 13 check (cross-copy one-use, `tool-host-cloudflare/src/deployed-checks/deployed-check-suites/`) is the starting point for O3 on the Worker; it counts only once re-pointed at the remediated Worker and read again. |
 | **Unverified** | power loss mid-write; removal-mark durability until store version 2 |
 
