@@ -23,6 +23,7 @@ Each section gives the question, a picture with one row per option, then a table
 | 15 | Is a bot automatically a collaborator of every other workspace? | **Open: OD3** | waits on you |
 | 16 | How do the services prove who's calling each other? | Short-lived service tokens, one per receiver and operation | the Lead |
 | 17 | How does a token say which session it is for? | A separate principal claim; Better Auth keeps its own subject | the Lead |
+| 18 | Where is a collaboration message or board write checked? | At Fleet central, before the effect, on every path | the Lead |
 
 ## 1. Who is the identity when your agent acts?
 
@@ -250,7 +251,7 @@ flowchart TB
 |---|---|---|---|
 | At Fleet central, when the session starts | A too-wide persona is refused at start. | Fleet central would need a copy of every workspace's tool profiles, a second owner. | Turned down by the Lead |
 | At the Tool Portal, refusing a wider persona on its first call (first draft) | Tool profiles keep one owner. | "Wider" between two profiles was never defined, and a default changed later wasn't handled. | Turned down by the Lead after review |
-| At the Tool Portal, on each call: the session gets what both its default and its persona allow | Widening is impossible by construction. Tool profiles keep one owner. A changed default applies from the next call. | A wider persona is quietly clipped to the default rather than refused. | **Chosen** by the Lead ([R9](specification.md#membership-and-collaboration)). Reopen if you want the refusal at start. |
+| At the Tool Portal, on each call: the session gets what both its default and its persona allow | Widening is impossible by construction. Tool profiles keep one owner. A changed default applies from the first call served by the deployment that carries it. | A wider persona is quietly clipped to the default rather than refused. | **Chosen** by the Lead ([R9](specification.md#membership-and-collaboration)). Reopen if you want the refusal at start. |
 
 ## 11. How are organizations kept apart?
 
@@ -363,4 +364,22 @@ Better Auth 1.7.8 sets a token's subject itself: always the signed-in user, or e
 | Make the subject the session | Standard field. | Not possible in 1.7.8 without patching the provider. | Not possible |
 | Create a user record per session | The subject becomes the session. | Fake "people" for every conversation, mixed into sign-in records. | Turned down by the Lead |
 | Keep Better Auth's subject, add a principal claim naming the bot or the whole session | Uses the provider as documented. The Tool Portal also checks that only Fleet central's client issued session tokens. | Every consumer reads the principal, never the subject. | **Chosen** by the Lead ([Program Design](program-design.md#workspace-and-collaboration-token-claims)) |
+
+## 18. Where is a collaboration message or board write checked?
+
+A session's message or board write can take three paths today: committed on the Router that holds the project, forwarded to that Router from another, or sent as a direct message. Each must respect membership, workspace pairs and bot collaborations.
+
+```mermaid
+flowchart LR
+  S["Session's Router"] -- "direct message or task" --> A["Fleet central:<br/>admit or refuse"]
+  S -- "board write, holds the project" --> A
+  S -- "board write, forwarded" --> H["Router holding<br/>the project"] --> A
+  A -- "admit" --> E["Stored or delivered"]
+```
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| Check only on the forwarded path (first draft) | One new check. | The holding Router's own writes and direct messages skip it. | Turned down by the Lead after review |
+| Each Router keeps a copy of memberships and pairs and checks locally | No round trip; works while Fleet central is down. | A copy to keep correct, which you called "fishy" for tokens. | Turned down by the Lead |
+| Fleet central admits each effect before it happens, on every path | One owner of the rule; nothing stored or delivered on a refusal. A pair admits messages and tasks only. | One round trip per collaboration effect; collaboration stops while Fleet central is down (fail closed, as for tokens). | **Chosen** by the Lead ([R28](specification.md#membership-and-collaboration)) |
 

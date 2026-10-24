@@ -46,8 +46,10 @@ The set is one concern, so it has no capability through-lines. The task paths be
 1. [Requirements: needs U7, U8, U19](requirements.md#needs)
 2. [Specification: membership and collaboration](specification.md#membership-and-collaboration)
 3. [Specification: C5 collaboration attribution and messaging](specification.md#c5-collaboration-attribution-and-messaging)
-4. [Program Design: how a collaboration call is attributed](program-design.md#how-a-collaboration-call-is-attributed)
-5. [Verification Design: coverage rows](verification-design.md#coverage-rows)
+4. [Program Design: collaboration admission](program-design.md#collaboration-admission-router--fleet-central-r28)
+5. [Program Design: how a collaboration call is attributed](program-design.md#how-a-collaboration-call-is-attributed)
+6. [Alternatives: where collaboration is checked](alternatives.md#18-where-is-a-collaboration-message-or-board-write-checked)
+7. [Verification Design: coverage rows](verification-design.md#coverage-rows)
 
 ## Reading path: Fleet central is down
 

@@ -251,7 +251,7 @@ pub enum CollaborationDecision {
 
 `Unavailable` is not a decision: a transport failure or timeout, which every caller treats as a refusal (R25).
 
-**Redemption window:** the issuer mints from a `Grant` only while its own clock reads `≤ decided_at + 60 s`, and stamps `grant_expires_at` exactly as decided. A repeat inside the window mints an equivalent token that ends at the same moment; nothing can mint later. Clock difference only changes how long the window stays open in real time (up to 120 s); it never moves `grant_expires_at`.
+**Redemption window:** the issuer mints from a `Grant` only while its own clock reads `≤ decided_at + 60 s`, and stamps `grant_expires_at` exactly as decided. A repeat inside the window mints an equivalent token that ends at the same moment; nothing can mint later. At exactly 60 s it may still mint. Under the clock model the window lasts between 0 and 120 s of real time; clock difference never moves `grant_expires_at`. During a Fleet central outage no new decision is made, but a `Grant` already handed to the issuer may still mint inside its window.
 
 ### Requests over the enrolled connection (Router → Fleet central)
 
@@ -273,7 +273,7 @@ pub enum RegisterFleetSessionResult {
 }
 
 #[serde(rename_all = "camelCase")]
-pub struct IssueSessionToken { pub session: SessionRef }
+pub struct IssueSessionToken { pub organization_id: OrganizationId, pub workspace_id: WorkspaceId, pub session: SessionRef } // from Registered
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum IssueSessionTokenResult {
     #[serde(rename_all = "camelCase")]
@@ -282,10 +282,35 @@ pub enum IssueSessionTokenResult {
 }
 
 #[serde(rename_all = "camelCase")]
-pub struct EndFleetSession { pub session: SessionRef, pub cause: SessionEndCause } // archived | deleted
+pub struct EndFleetSession { pub organization_id: OrganizationId, pub session: SessionRef, pub cause: SessionEndCause } // archived | deleted
 ```
 
 The Router may only name sessions on its own installation; central refuses any other.
+
+**Routing and one registration per conversation (R7):** central routes `RegisterFleetSession` from the project to its workspace and that workspace's organization (Fleet object). The Router's session registrar is the one owner of which project a conversation was started for: it records that durably before the first request, registers each conversation once, resends the identical request after an ambiguous reply or a restart, and refuses to register a recorded conversation for another project. The organization authority treats a repeat of the same `SessionRef` and project as `Registered` again, and refuses a different project. Later requests carry the organization and workspace from `Registered`, and the organization authority refuses a session it doesn't hold. A second registration in another organization is excluded by the registrar, inside the same trusted-Router assumption as the binding; organization authorities don't see each other's sessions.
+
+### Collaboration admission (Router → Fleet central, R28)
+
+```rust
+#[serde(rename_all = "camelCase")]
+pub struct AdmitCollaboration {
+    pub organization_id: OrganizationId, // the actor's organization
+    pub actor: CollaborationActor,       // tagged: fleetHarnessSession { session } (bound by the Router) | bot { botId } (from its collaboration token)
+    pub operation: CollaborationOperation,
+}
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CollaborationOperation {
+    DirectMessage { to: CollaborationTarget },   // a session or bot that is a member of the target workspace
+    Task { to: CollaborationTarget },
+    BoardWrite { workspace_id: WorkspaceId, project_id: ProjectId, write: BoardWriteKind }, // threadCreate | threadPost | projectChange
+    RoleChange { workspace_id: WorkspaceId, project_id: ProjectId },
+    StartWork { workspace_id: WorkspaceId, project_id: ProjectId },
+}
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum CollaborationAdmission { Admit, Refuse { reason: CollaborationRefusal } } // notMember | noPair | noCollaboration | forbidden
+```
+
+Rules: a member of the target's workspace may do what its board role allows; a workspace pair or a bot collaboration admits only `DirectMessage` and `Task` to members. An admission is good for the one effect that asked for it and is never cached. Unreachable central refuses.
 
 ### Removal notice (Fleet central → Tool Portal)
 
@@ -312,19 +337,42 @@ The Portal keeps, per workspace and subject, the **highest** `removal_revision` 
 #[serde(tag = "resource", rename_all = "camelCase")]
 pub enum DecideBotIssuance {
     #[serde(rename_all = "camelCase")]
-    Workspace { client_id: ClientId, workspace_id: WorkspaceId }, // → IssuanceDecision
+    Workspace { organization_id: OrganizationId, client_id: ClientId, workspace_id: WorkspaceId }, // → IssuanceDecision
     #[serde(rename_all = "camelCase")]
-    Collaboration { client_id: ClientId },                       // → CollaborationDecision
+    Collaboration { organization_id: OrganizationId, client_id: ClientId },                       // → CollaborationDecision
 }
+#[serde(rename_all = "camelCase")]
+pub struct DecidePersonAdmission { pub organization_id: OrganizationId, pub person_id: PersonId, pub verified_email: String }
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum PersonAdmission { Admitted { owner: bool }, Refused { reason: PersonRefusal } } // notAllowed | removed
 ```
+
+The organization ID always comes from the authenticated client's registration (its metadata `{ botId, organizationId }`, written only through central's admin path), never from the request. The organization authority refuses a client that isn't registered to one of its bots. `DecidePersonAdmission` carries the people sign-in design's admission rules (its R2–R4) to their new home; sign-in asks it at each sign-in and each person token issuance in an organization.
+
+### Credential management (Fleet central → sign-in service)
+
+```rust
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionBotCredential { pub organization_id: OrganizationId, pub bot_id: BotId, pub client_id: ClientId, pub method: CredentialMethod } // clientSecret | privateKeyJwt { jwks }
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum ProvisionedBotCredential { Provisioned { client_id: ClientId, secret_once: Option<String> }, AlreadyProvisioned { client_id: ClientId } }
+#[serde(rename_all = "camelCase")]
+pub struct DisableBotCredential { pub organization_id: OrganizationId, pub client_id: ClientId }
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum DisabledBotCredential { Disabled, AlreadyDisabled }
+```
+
+These reuse the issuer's existing registration and disable implementation (`sign-in-management-binding.ts`, today behind a person management proof) behind the new service-token edge. A secret is returned once to central, which hands it to the admin in the command's reply and never stores it.
 
 ### Admin commands and lookups (person → Fleet central)
 
-Every organization command and lookup names its organization and is refused unless the owner guard below passes. The two fleet commands, `EnrollMachine` and `RevokeMachine`, act across organizations and stay with the fleet operator's existing authority (below). Results are `Applied { removal: Option<RemovalStatus> }` or `Refused { reason: NotOwner | NotFound | Conflict }`; a refused command reveals nothing.
+Every organization command and lookup names its organization and is refused unless the owner guard below passes. The two fleet commands, `EnrollMachine` and `RevokeMachine`, act across organizations and stay with the fleet operator's existing authority (below). Results are `Applied { removal: Option<RemovalStatus> }` or `Refused { reason: NotOwner | NotFound | Conflict | RecordUnwritable }`; a refused command reveals nothing. **Audit (people sign-in R12):** every applied command writes its record (who, what changed, the organization, when) in the same organization-authority transaction as the change; if the record can't be written, the transaction fails and nothing changes. Changes that stay at the sign-in service (linked logins, passkeys) keep that design's own records.
 
 | Command | Request fields | Removal it writes |
 |---|---|---|
+| `CreateOrganization`, `SetOrganizationOwner` (fleet operator) | organizationId, owner's verified email | — |
 | `CreateWorkspace` | organizationId, name | — |
+| `AllowSignIn`, `RemoveSignIn` (the organization's allowlist) | organizationId, verified email | — (people sign-in R4 applies) |
 | `RegisterBot`, `RetireBot` | organizationId, botId | `botRetired` per member workspace |
 | `AddBotCredential`, `RetireBotCredential` | organizationId, botId, clientId | `credentialRetired` (subject: the bot) |
 | `SetBotMembership`, `RemoveBotMembership` | organizationId, botId, workspaceId, persona | `personaChanged` / `membershipEnded` |
@@ -338,7 +386,7 @@ Every organization command and lookup names its organization and is refused unle
 | `SetTokenLifetime` | organizationId, seconds (60..=3600) | — |
 | Lookups: `IdentityLookup`, `WorkspaceLookup`, `MachineLookup`, `RemovalStatus` | organizationId plus the subject | — |
 
-**Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). The guard refuses everyone else before any read or write.
+**Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). SD8 is still that design's open decision (the Lead's 5-second proposal); this set inherits whatever it becomes. The guard refuses everyone else before any read or write.
 
 **Fleet operator authority:** enrolling and revoking machines is fleet-wide, so no organization's owner may do it. It stays with Fleet central's existing operator caller (`AccessCaller::Owner`, `access_contract.rs:31–36`), which this set does not change. An organization's owner withdraws its own allowances instead (`WithdrawMachineAllowance`). In your own deployment you hold both authorities; they stay separate so that a customer's organization owner never becomes a fleet operator.
 
@@ -350,8 +398,24 @@ Every organization command and lookup names its organization and is refused unle
 | Sign-in → Fleet central: decide for a bot | a service token the sign-in service signs with its published signing key: `aud` = central's decision address, `scope` = `issuance-decisions`, lifetime ≤ 60 s | issuer and key from the pinned published key set; audience; scope; expiry | decides again with a new mark |
 | Fleet central → Tool Portal: deliver a notice | a service token from the issuer by client credentials with central's `private_key_jwt`: `aud` = the Portal's notice address, `scope` = `removal-notices` | issuer key; audience; scope; `client_id` is central's pinned client; the notice's organization and workspace are hosted here | no further effect (notice ID) |
 | Fleet central → sign-in: confirm a person's session | a service token as in the previous row, `aud` = the sign-in service's confirmation address, `scope` = `session-confirmation` | as above | confirms again |
+| Fleet central → sign-in: provision or disable a bot credential | a service token as above, `aud` = the sign-in service's credential address, `scope` = `credential-management` | as above; the client belongs to the named organization and bot | same client ID → same credential, no new secret; disable → `AlreadyDisabled` |
+| Sign-in → Fleet central: decide a person's admission | a service token the sign-in service self-signs, `aud` = central's admission address, `scope` = `person-admission`, lifetime ≤ 60 s | as for bot decisions | decides again |
 
 Service tokens from the issuer get a 5-minute lifetime from the issuer's resource policy for those audiences, and every receiver also refuses one whose `exp − iat` exceeds that. All edges run over TLS, including Cloudflare service bindings, which carry the same tokens. Bodies are not signed: a receiver checks that each body is well-formed and within the caller's scope (its organization and workspace exist here and the caller may act for them), not that the body is the one the caller first wrote. **Trust configuration** is pinned at deploy: each receiver's issuer URL, published-key URL and the client ID expected per operation. **Rotation:** central publishes its client key set at a fixed address the issuer reads; it adds a new key, waits one refresh, then signs with it. The issuer rotates its signing keys the existing way; receivers refetch the key set once on an unknown key ID.
+
+## How the issuer tells token kinds apart
+
+Every issuance runs one closed dispatch on the **authenticated** client's registered kind (metadata written only through central's admin path or deploy configuration), the grant type, and the resource's class. Anything not in the table is refused before minting.
+
+| Client kind | Grant | Resource | Pre-mint decision | Claims | Release checks |
+|---|---|---|---|---|---|
+| bot credential | client credentials | a workspace address | `DecideBotIssuance::Workspace` in the extension claim contributor | principal (bot), organization, workspace, named persona, marks, `grant_expires_at` | `sub` = `client_id`; `aud` = the resource; workspace claim = the resource's workspace; principal is a bot |
+| bot credential | client credentials | Fleet's collaboration address | `DecideBotIssuance::Collaboration` in the same contributor | principal (bot), organization, marks, `grant_expires_at`; no workspace | `aud` = the collaboration address; no workspace claim; principal is a bot |
+| Fleet's pinned client | fleet-session extension grant | a workspace address | the `Grant` in the request, inside its window | principal (session), organization, workspace, persona reference, marks, `grant_expires_at` | client is the pinned one; `aud` = the resource; principal is a session |
+| Fleet's pinned client | client credentials | a configured service audience (notices, confirmation, credential management) | none: the audience fixes the one operation | scope only; no principal | client is the pinned one; `aud` is a configured service audience; scope matches; lifetime ≤ 5 min |
+| person (sign-in app) | authorization code (existing) | the management or admin audience | `DecidePersonAdmission` | as in the people sign-in design | as there |
+
+**Refused combinations** include a bot asking for a service audience, Fleet's client asking client credentials for a workspace or collaboration address, any other client using the fleet-session grant, and a person asking for a workspace address. Resource-policy `customClaims` on these resources carry none of the claim names above.
 
 ## Removal across owners (R19–R21)
 
@@ -360,7 +424,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | Reason | Owner and commit | Fence: no new grant from | Notices | The admin sees done when |
 |---|---|---|---|---|
 | membership ended, persona changed, bot retired, allowance withdrawn, session removed, session ended | organization authority, one transaction: the change, its own next mark, one outbox row per affected workspace | that transaction (decisions read the same state) | outbox → Portal, resent with capped backoff | every row acknowledged |
-| credential retired | organization authority, one transaction: the credential marked retiring, its mark, outbox rows for the bot's member workspace, and an outbox step "disable client at the issuer" | that transaction: decisions refuse that client | outbox → Portal; outbox → issuer (disable the client) | Portal rows acknowledged and the issuer confirms |
+| credential retired | organization authority, one transaction: the credential marked retiring, its mark, its audit record, outbox rows for the bot's member workspace, and an outbox step `DisableBotCredential` | that transaction: decisions refuse that client | outbox → Portal; outbox → issuer (`DisableBotCredential`, retried until `Disabled` or `AlreadyDisabled`) | Portal rows acknowledged and the issuer's result recorded |
 | machine revoked | Registry, existing revocation: new connections refused at commit, open sessions end when the revocation reaches them (FL-12); plus a new Registry fan-out step per organization authority | each organization authority, when it records the revocation: that transaction withdraws the machine's allowances and takes mark r_m, so no later grant for the machine is decided there. A grant decided after the Registry commit but before that record took a smaller mark, so the machine notice covers it. The Registry commit additionally stops new enrolled connections. | that same transaction writes a machine notice (removal mark r_m) per affected workspace | every organization has recorded it and every notice is acknowledged |
 | a tool profile or the session default changes at the Portal | Portal configuration | not needed: tokens carry the persona name or the default reference, and the Portal resolves both at each call | none | immediately |
 
@@ -372,23 +436,23 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 
 | Component | Owns | Home | Consumers | Changes when |
 |---|---|---|---|---|
-| **Organization authority** (new) | E1, E4, E7, E8, E9, E13, E15, E17; the ordered marks; the configured lifetime; the removal outbox; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (decisions) | membership or issuance policy changes |
+| **Organization authority** (new) | E1 (including its owner and sign-in allowlist), E4, E7, E8, E9, E13, E15, E17; the ordered marks; the configured lifetime; the removal and credential outboxes; the audit records; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (decisions) | membership or issuance policy changes |
 | **Session token broker** (new) | Turning a Router's request into a token: decide, then mint through the fleet-session grant | `collaboration-central-core` | Router forwarder | the session grant contract changes |
 | **Admin surface** (modified) | Organization-owner commands and lookups with their guard, and the fleet operator's machine commands under its existing authority (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
-| **Collaboration admission** (modified) | Who may post or message where: bound actor, workspace pairs, bot collaborations, collaboration tokens | `project_admission`, `session_request_admission` (modified); a new bot collaboration route | Router (forwarded writes), bots | collaboration rules change |
+| **Collaboration admission** (modified) | The `AdmitCollaboration` decision at central (bound actor, operation, target, memberships, pairs, bot collaborations), and its enforcement before each effect on the Router: the holding Router's local `project_write`, the forwarded post at the holder, and `message_send` before it stores or delivers | central: a new admission route in `collaboration-central-core`; Router: `board_project_operations.rs`, `board_forwarded_posts.rs`, `message_operations.rs` (modified); `session_request_admission` unchanged (it binds replication writers to peers) | every collaboration effect; bots via their collaboration token | collaboration rules change |
 | **Registry revocation fan-out** (new, small) | Delivering a machine revocation to every organization authority | Registry object (modified) | organization authorities | revocation flow changes |
 | **Fleet object** (existing) | E2, E16 | existing | organization authority | — |
 | **Session binding** (new, Router) | Which session each collaboration call came from; binding lifecycle | `collaboration-mcp`, `collaboration-service` (modified); `acp-client-runtime` per-session MCP list (modified) | collaboration MCP tools | harness wiring changes |
-| **Session registrar** (new, Router) | Registering each launched or attached session; reporting its end | `collaboration-service` (new module `fleet_session_registrar`) | session binding, forwarder | launch facts change |
+| **Session registrar** (new, Router) | Registering each launched or attached session exactly once and recording which project it was started for; reporting its end | `collaboration-service` (new module `fleet_session_registrar`) | session binding, forwarder | launch facts change |
 | **Tool Portal forwarder** (new, Router) | Getting, caching in memory and attaching each session's token; refetching before `grant_expires_at` and once on a 401 | `codex-router-host` (new module `portal_session_forwarder`) | the harness's Tool Portal MCP entry | token or Portal contract changes |
-| **Token issuer** (existing, modified) | Bot credentials (E5); the bot gate and claim stamping; the fleet-session grant; service tokens; person confirmation | `packages/auth` | bots, Fleet central, Tool Portal (published keys) | claims or grants change |
+| **Token issuer** (existing, modified) | Bot credentials (E5) and their provisioning and disabling for central; the token-kind dispatch; bot claim stamping; the fleet-session grant; service tokens; person session confirmation; asking central for person admission | `packages/auth` | bots, Fleet central, Tool Portal (published keys) | claims or grants change |
 | **Caller check** (existing, modified) | Admit or refuse a call: token, marks, persona narrowing | `tool-host-core/src/caller-admission`; narrowing in `tool-access/src/authorization` | hosted MCP proxy | admission rules change |
 | **Workspace store** (existing, modified) | Approval single-use counts (unchanged, keyed by `principal`) and received removal marks (new) | `tool-host-core/src/workspace-authority`; Cloudflare `WorkspaceAuthority` Durable Object; Node store | caller check, removal receiver, approval use | store shape changes |
 | **Removal receiver** (new, Portal) | Accepting only central's notices (service token); recording durably; acknowledging | `tool-host-core` (new route `/internal/v1/removal-notices`) | Fleet central | notice contract changes |
 
 **Removed:** the Tool Portal's agent-management route and retirement (`workspace-agent-management.ts`, `workspace-agent-retirement.ts`, `agent-retirement.ts`) and its membership records; the sign-in service's workspace links.
 
-**Allowed edges:** Router → Fleet central over the enrolled connection; the four service-request edges above; bots → issuer, Tool Portal and collaboration admission; people → admin surface; the Tool Portal and Fleet central → the issuer's published keys (cached).
+**Allowed edges:** Router → Fleet central over the enrolled connection (registration, tokens, collaboration admission); the service-request edges above; bots → issuer, Tool Portal and collaboration admission; people → admin surface; the Tool Portal and Fleet central → the issuer's published keys (cached).
 
 **Forbidden edges, and how they're enforced:**
 
@@ -399,6 +463,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | An agent supplying its own sender | the bound actor: runtime |
 | The issuer minting a workspace or collaboration token without a decision | the response-release gate and the fleet-session grant handler: runtime |
 | Any consumer identifying a caller by `sub` | the claims schema exposes `principal`; review rule |
+| A collaboration effect stored or delivered before `AdmitCollaboration` returns `Admit` | each of the three Router paths calls admission before its commit; SO1 negatives on each path |
 | The issuer deciding for a client ID the provider did not authenticate | the contributor reads only `input.client`; no raw request parsing for client identity; SO2 negative |
 
 ## How a session gets and uses its token
@@ -497,14 +562,24 @@ sequenceDiagram
   participant H as Harness session S
   participant RB as Router session binding
   participant CA as Collaboration admission (central)
-  H->>RB: board post on S's binding (declares sender T)
+  participant HR as Router holding the project
+  H->>RB: board write, direct message or task on S's binding (declares sender T)
   RB->>RB: binding valid, on this installation, S active, bound actor = S
   alt T differs from S
     RB-->>H: refused: sender mismatch, nothing recorded
-  else T is S or absent
-    RB->>CA: forwarded write, actor S, over the enrolled connection
-    CA->>CA: target in S's workspace, or an active pair allows it
-    CA-->>RB: accepted or refused (no pair)
+  else direct message or task
+    RB->>CA: AdmitCollaboration(S, message or task, target)
+    CA-->>RB: Admit, or Refuse(reason)
+    RB->>RB: store and deliver only on Admit
+  else board write, this Router holds the project
+    RB->>CA: AdmitCollaboration(S, board write, project)
+    CA-->>RB: Admit, or Refuse(reason)
+    RB->>RB: local admission and commit only on Admit
+  else board write, another Router holds the project
+    RB->>HR: forwarded write, actor S
+    HR->>CA: AdmitCollaboration(S, board write, project)
+    CA-->>HR: Admit, or Refuse(reason)
+    HR-->>RB: committed, or refused with nothing stored
   end
 ```
 
@@ -515,11 +590,11 @@ sequenceDiagram
 - **Lifecycle:** minted at launch; kept in Router memory and in that session's harness configuration; re-issued (and the configuration rewritten) when a session is resumed after a Router restart; retired when the session ends and never reused; valid only on the installation that minted it.
 - **Limit:** any process of the same machine user that reads another session's configuration holds its binding. That is E14's shared bucket, recorded and shown, not prevented.
 
-**Change from today:** the sender is no longer taken from call arguments (`message_tools.rs:18`); added the binding, the mismatch refusal and the pair check; central records the forwarded actor as the bound session.
+**Change from today:** the sender is no longer taken from call arguments (`message_tools.rs:18`). Today the holding Router commits a local write after its own admission (`board_project_operations.rs:41–64`), only non-holder thread posts are forwarded (`board_forwarded_posts.rs`), and direct messages check only that the sender is on this Router (`message_operations.rs:47–107`). Each of these three paths now asks `AdmitCollaboration` before its effect, with the bound actor. A bot's messages enter the same admission through its collaboration token.
 
 ## How a session's persona is narrowed (R9)
 
-The token carries `persona` as `sessionDefault` or `named`. At each call the Portal resolves the workspace's current `portal.sessionDefaultProfile`, and, for `named`, that profile too. It runs the existing access assessment once per profile and takes the stricter result: the tool is available only if both make it available, and runs without approval only if both allow that. An undefined named profile makes nothing available. Bots carry `named` personas set by the admin and are assessed against that one profile.
+The token carries `persona` as `sessionDefault` or `named`. At each call the Portal resolves the workspace's `portal.sessionDefaultProfile` from the configuration its deployment carries, and, for `named`, that profile too. **When a change takes effect:** workspace configuration is part of the deployment (`deployedConfigurationSource`, `worker-configuration.ts:9–16`), and the hosted proxy caches it per workspace for the life of the process (`hosted-mcp-proxy.ts:53–62`). A changed profile or default therefore applies from the first call served by the deployment that carries it; calls still served by the previous deployment use the previous configuration until it stops serving. No per-call configuration read is added. It runs the existing access assessment once per profile and takes the stricter result: the tool is available only if both make it available, and runs without approval only if both allow that. An undefined named profile makes nothing available. Bots carry `named` personas set by the admin and are assessed against that one profile.
 
 ## State
 
@@ -602,7 +677,7 @@ The Router is trusted for every session on its machine. Sessions on one machine 
 |---|---|
 | Privacy | Tokens carry the machine environment, project and isolation only for sessions, and nothing secret. Notices carry IDs, marks and reasons only. |
 | Reliability | Fail closed on issuance. Outboxes with acknowledgment and backoff. Durable marks at the Portal before acknowledging. |
-| Performance | Per call, the Portal verifies the signature, reads one stored mark, and assesses up to two profiles. Issuance happens once per lifetime per identity and workspace, each with one durable mark write. |
+| Performance | Per collaboration effect, one admission round trip to central. Per call, the Portal verifies the signature, reads one stored mark, and assesses up to two profiles. Issuance happens once per lifetime per identity and workspace, each with one durable mark write. |
 | Observability | Lookups show pending removals, shared buckets, and identities with their workspaces. Each refusal logs a bounded reason class. |
 | Platform | One contract, any host. Central runs on a Durable Object per organization or on Tokio with SQLite per organization. The Portal runs on Cloudflare or Node. The sign-in service runs on Cloudflare and gains a Node host entry (new work, below). |
 | Isolation (first round) | Recorded and shown. Never enforced. |
@@ -623,18 +698,19 @@ There is no coexistence period. The test deployments are the only consumers, so 
 | U3, U17 | R2: a session only as vouched by its machine | E6, E7 | broker | `IssueSessionToken` over the enrolled connection | `identity_contract.rs` | session active | revoked machine → `IdentityNotProven` | Fleet integration: enrolled vs revoked |
 | U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
 | U2 | R4: bot only with an active credential | E4, E5 | issuer + organization authority | client credentials; `DecideBotIssuance` | Better Auth client + `botId`; `BotRecord` | credential active/retiring/retired | retired → `invalid_client` | sign-in integration; two-credential bot |
-| U20 | R5: people sign-in as designed | E1, E3 | issuer | the people sign-in design | existing | as there | as there | that design's proof |
+| U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `DecidePersonAdmission`; the people sign-in design's interfaces | as named; audit in the organization authority | as there | admission unavailable → refuse | that design's proof re-run through central; SO7 |
 | U5 | R6: a bot in at most one workspace | E4, E8 | organization authority | `SetBotMembership` | `Membership` | active/removed | second → refused | central unit + admin API |
-| U6 | R7: session in its project's workspace | E7, E8, E16 | organization authority | `RegisterFleetSession` | as named | session active | unknown project refused | Router + central with a real session |
+| U6 | R7: session in its project's workspace, registered once | E7, E8, E16 | session registrar; organization authority | `RegisterFleetSession` | as named | session active | other project → refused; repeat → same result | Router + central with a real session; restart and resend |
 | U6 | R8: no allowance → start refused (OD1 gap) | E6, E7, E15 | organization authority | `RegisterFleetSession` | `SessionRefusal::MachineNotAllowed` | — | refused | central integration; **gap: OD1 starter rule** |
-| U11 | R9: effective persona = both allow | E8, E10 | caller check | two assessments, stricter wins | `personaRefSchema`; `portal.sessionDefaultProfile` | none | undefined → nothing | Portal unit + host e2e |
+| U11 | R9: effective persona = both allow; changes apply with the deployment that carries them | E8, E10 | caller check | two assessments, stricter wins | `personaRefSchema`; `portal.sessionDefaultProfile` | none | undefined → nothing | Portal unit + host e2e across a configuration deployment |
 | U20, U21 | R10: person membership admin-managed | E3, E8 | admin surface | `SetPersonMembership` | `Membership` | active/removed | non-owner refused | admin API through the guard |
-| U7, U2 | R11: bot collaborator messages with a collaboration token (OD3 gap) | E9, E18 | collaboration admission; issuer | collaboration resource; `CollaborationDecision` | `collaborationTokenClaimsSchema` | collaboration active/withdrawn | tool, start, role refused; wrong audience refused | central + Portal; **gap: OD3 admission rule** |
-| U8, U7 | R12: messaging needs a pair | E17 | collaboration admission | pair check | `WorkspacePair` | active/withdrawn | no pair → refused | Router + central |
-| U21, U20 | R13: only the current owner administers; fleet commands only by the fleet operator | E2, E4, E6, E8, E9, E15, E17 | admin surface | owner guard + person confirmation | person token; confirmation request | none | anyone else refused, nothing revealed | admin API: owner, member, other owner, removed owner, stale session, bot, session; an organization owner attempting `RevokeMachine` |
+| U7, U2 | R11: bot collaborator messages with a collaboration token (OD3 gap) | E9, E18 | collaboration admission; issuer | collaboration resource; `CollaborationDecision`; `AdmitCollaboration` | `collaborationTokenClaimsSchema` | collaboration active/withdrawn | tool, board write, start, role refused; wrong audience refused | central + Portal; **gap: OD3 admission rule** |
+| U8, U7 | R12: messages and tasks need a pair | E17 | collaboration admission | `AdmitCollaboration` | `WorkspacePair` | active/withdrawn | no pair → refused | Router + central on each path |
+| U7, U8, U19, U15 | R28: every collaboration effect admitted before it happens, on every path | E7, E9, E17 | collaboration admission (central decision, Router enforcement) | `AdmitCollaboration` | `CollaborationOperation` | none: per effect | refuse → nothing stored or delivered; central unreachable → refuse | holding, forwarded and direct-message paths |
+| U21, U20 | R13: only the current owner administers, with an audit record; fleet-wide commands only by the fleet operator | E1, E2, E4, E6, E8, E9, E15, E17 | admin surface | owner guard + person confirmation; operator check | person token; confirmation request; audit record | none | anyone else refused, nothing revealed; unwritable record → nothing changes | admin API: owner, member, other owner, removed owner, stale session, bot, session; an organization owner attempting `RevokeMachine` or `CreateOrganization`; an unwritable record |
 | U9 | R14: lookups answer | E2–E18 | organization authority | lookups | lookup results | none: read | — | admin API |
 | U10 | R15: tokens only to active members; claims | E8, E11 | issuer + organization authority | `IssuanceDecision::Grant`; claims | claims schema | — | refuse → no token | contract + sign-in integration |
-| U12 | R16: grant expiry fixed at decision; redemption window; ≤ 60 min | E11, E18 | organization authority; issuer | `grant_expires_at`; 60 s window | `TokenLifetimeSeconds`; `UnixSeconds` | organization setting | late mint → nothing | unit + delayed-mint integration |
+| U12 | R16: grant expiry fixed at decision; redemption window on the issuer's clock; ≤ 60 min | E11, E18 | organization authority; issuer | `grant_expires_at`; 60 s window | `TokenLifetimeSeconds`; `UnixSeconds` | organization setting | past the window → nothing | unit + mint timing with pinned and offset clocks |
 | U10, U12 | R17: Portal admission, no fleet call | E10, E11, E12 | caller check | `checkHostedCaller` (modified) | claims; stored marks | none | each C1 refusal before tools run | Portal host e2e (production entry) |
 | U14, U15 | R18: consult once; ended session refused | E8, E11, E15 | organization authority | `IssuanceDecision` | `identity_contract.rs` | marks | unavailable → refuse | central + sign-in integration |
 | U13 | R19: every removal kind; cut off at the organization's record; pending shown | E8, E12, E15 | organization authority; Registry fan-out | outboxes | `RemovalNotice` | removal states | interrupted fan-out resumes | interruption cases per owner; a grant held across the Registry commit |
@@ -643,17 +719,20 @@ There is no coexistence period. The test deployments are the only consumers, so 
 | U13, U15 | R22: notices only from central | E12 | removal receiver | service token check | pinned trust | none | forged → refused | Portal host e2e with forged notices |
 | U18 | R23: isolation recorded and shown | E7, E13, E14 | organization authority | registration; lookup | `AgentIsolation`, `MachineEnvironment` | recorded | — | central + token claims round trip |
 | U17 | R24: no new machine keys | E6 | Router | enrolled connection only | none | none | — | structural review |
-| U14 | R25: fail closed; no late mint | E11, E18 | issuer; broker | timeout → refuse; window | — | — | fail closed | central stopped between decision and mint |
+| U14 | R25: no new decision while central is out; an in-flight grant completes only inside its window | E11, E18 | issuer; broker | timeout → refuse; window | — | — | fail closed | central stopped before a decision and between a decision and its mint |
 | U16 | R26: one contract, any host | all | each host adapter | `/v1/` HTTP + JSON | generated JSON Schema; Zod derived | — | — | the same suites on Cloudflare and Tokio/Node |
-| U13, U15, U16 | R27: service requests authenticated per edge and operation | all | each receiver | service tokens; `private_key_jwt` | pinned trust configuration | — | wrong caller/operation/receiver refused | per-edge negative cases |
+| U13, U15, U16 | R27: service requests authenticated per edge and operation, including credential management and person admission | all | each receiver; the issuer's dispatch | service tokens; `private_key_jwt` | pinned trust configuration | — | wrong caller/operation/receiver refused | per-edge negative cases; every dispatch row and refused combination |
 
-**Coverage:** R1–R27 each have a row; **R8** waits on **OD1** and **R11**'s admission rule on **OD3**. E1–E18 are each bound above. Supersessions are as listed in the Specification.
+**Coverage:** R1–R28 each have a row; **R8** waits on **OD1** and **R11**'s admission rule on **OD3**. E1–E18 are each bound above. Supersessions are as listed in the Specification.
 
 ## Deviations and unresolved decisions
 
 - **OD1:** who may start a session for W (the starter check in `RegisterFleetSession`). Today any session on the same Router can start one with no workspace check (Fleet Lead); the recommended rule adds membership of W.
 - **OD3:** whether a bot collaboration needs the admin's allowance. The design holds `BotCollaboration` records the admin sets (the recommendation). If the owner chooses "automatic", collaboration admission derives a collaboration for every workspace in the bot's organization except its member workspace, and the record becomes a withdrawal.
-- **Persona narrowing clips rather than refuses** a wider named persona; it never widens. Refusal at start would need profile copies at central.
+- **Persona narrowing clips rather than refuses** a wider named persona; it never widens. Refusal at start would need profile copies at central. A configuration change applies with the deployment that carries it, not mid-deployment.
+- **SD8** (people sign-in): the freshness bound for the owner guard is still that design's open decision; this set inherits it and doesn't ask it again.
+- **One registration per conversation** is enforced by the Router's registrar, inside the trusted-Router assumption; organization authorities don't share session records.
+- **Collaboration needs central:** every collaboration effect waits for central's admission, so collaboration stops while central is unreachable (fail closed, as for tokens).
 - **Better Auth mapping:** session tokens use a fleet-session extension grant; bot tokens use the existing gate and claim hook, with a bot extension grant as the stated fallback. Neither is proven until the plan's first slice runs against the pinned 1.7.8.
 - **Sign-in on a non-Cloudflare host** is new work (U16 covers every service).
 - **agent-vm VM sessions:** the `Vm` kind and its launch record need agent-vm to hand the host Router a launch record over a local channel. In the first round, only Router-launched `Host` and `ProcessSandbox` sessions are registered.

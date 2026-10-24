@@ -10,7 +10,7 @@
 <body>
 <ex-nav for="content"></ex-nav>
 
-<ex-presentation id="path-options" title="Every option, one at a time" description="Seventeen questions, each with the options we weighed. Fifteen are settled; two wait on you.">
+<ex-presentation id="path-options" title="Every option, one at a time" description="Eighteen questions, each with the options we weighed. Sixteen are settled; two wait on you.">
   <ex-step to="alternatives--1-who-is-the-identity-when-your-agent-acts" icon="robot">**Who acts for you?** A registered name, a session you approve, or the session itself.</ex-step>
   <ex-step to="alternatives--2-which-workspace-does-a-session-belong-to" icon="folder">**Where does a session belong?** By folder, by machine, or by project.</ex-step>
   <ex-step to="alternatives--3-who-holds-the-truth-and-who-mints-tokens" icon="database">**Who holds the truth, who mints?** Y, Z, X and X′ side by side.</ex-step>
@@ -28,6 +28,7 @@
   <ex-step to="alternatives--15-open-is-a-bot-automatically-a-collaborator-of-every-other-workspace-od3" icon="robot">**Open: are bots collaborators everywhere?** Two readings of "rest collaborator".</ex-step>
   <ex-step to="alternatives--16-how-do-the-services-prove-who-s-calling-each-other" icon="lock">**How services prove who's calling.** Why a token per receiver and operation.</ex-step>
   <ex-step to="alternatives--17-how-does-a-token-say-which-session-it-is-for" icon="key">**How a token names its session.** What Better Auth lets us set, and what we add.</ex-step>
+  <ex-step to="alternatives--18-where-is-a-collaboration-message-or-board-write-checked" icon="chat-circle">**Where collaboration is checked.** One path, a local copy, or Fleet central on every path.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-tool-call" title="A session calls a tool" description="From your need to the token, the call, and how it will be proven.">
@@ -58,7 +59,8 @@
 <ex-presentation id="path-messaging" title="A session messages another workspace" description="Attribution to the real sender, and the workspace pair check.">
   <ex-step to="requirements--needs" icon="users">The needs: no false senders, collaborators only message, pairs you allow.</ex-step>
   <ex-step to="specification--c5-collaboration-attribution-and-messaging" icon="chat-circle">What must hold for every collaboration call.</ex-step>
-  <ex-step to="program-design--how-a-collaboration-call-is-attributed" icon="path">How the Router binds each call to its session.</ex-step>
+  <ex-step to="program-design--how-a-collaboration-call-is-attributed" icon="path">How the Router binds each call to its session, and where each message or board write is admitted.</ex-step>
+  <ex-step to="alternatives--18-where-is-a-collaboration-message-or-board-write-checked" icon="chat-circle">Why every path asks Fleet central first.</ex-step>
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven with real Codex, Claude and Cursor sessions.</ex-step>
 </ex-presentation>
 
@@ -143,7 +145,7 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
     <ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
   </section>
   <section id="tab-specification" label="Specification" icon="book-open">
-    <p>The entities and their map, obligations R1–R26, five contracts, and the failure cases: Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</p>
+    <p>The entities and their map, obligations R1–R28, seven contracts, and the failure cases: Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</p>
     <ex-markdown id="specification" label="Specification" src="./specification.md"></ex-markdown>
   </section>
   <section id="tab-program-design" label="Program Design" icon="stack">
@@ -151,11 +153,11 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
     <ex-markdown id="program-design" label="Program Design" src="./program-design.md"></ex-markdown>
   </section>
   <section id="tab-verification-design" label="Verification Design" icon="test-tube">
-    <p>One line per need, five shared observations, coverage rows naming the wrong build each must catch, and the journeys still to build. Planned, not observed.</p>
+    <p>One line per need, seven shared observations, coverage rows naming the wrong build each must catch, and the journeys still to build. Planned, not observed.</p>
     <ex-markdown id="verification-design" label="Verification Design" src="./verification-design.md"></ex-markdown>
   </section>
   <section id="tab-alternatives" label="Alternatives" icon="git-branch">
-    <p>Seventeen questions, each with its options and what each gains and costs. Two are still open.</p>
+    <p>Eighteen questions, each with its options and what each gains and costs. Two are still open.</p>
     <ex-markdown id="alternatives" label="Alternatives" src="./alternatives.md"></ex-markdown>
   </section>
 </ex-tabs>
