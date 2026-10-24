@@ -26,6 +26,12 @@
 		"skipLibCheck": true,
 		"types": ["node"],
 		"paths": {
+			"@agent-collaboration/tool-access/contracts": [
+				"./packages/tool-access/src/contracts/index.ts"
+			],
+			"@agent-collaboration/tool-access/authorization": [
+				"./packages/tool-access/src/authorization/index.ts"
+			],
 			"@agent-vm/agent-portal-sdk": ["./packages/agent-portal-sdk/src/index.ts"],
 			"@agent-vm/agent-portal-sdk/generated-tools": [
 				"./packages/agent-portal-sdk/src/generated-tools/index.ts"

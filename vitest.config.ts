@@ -36,6 +36,12 @@ loadDotEnvLocal();
 export default defineConfig({
 	resolve: {
 		alias: {
+			'@agent-collaboration/tool-access/contracts': repoPath(
+				'packages/tool-access/src/contracts/index.ts',
+			),
+			'@agent-collaboration/tool-access/authorization': repoPath(
+				'packages/tool-access/src/authorization/index.ts',
+			),
 			'@agent-vm/agent-portal-sdk/generated-tools': repoPath(
 				'packages/agent-portal-sdk/src/generated-tools/index.ts',
 			),
