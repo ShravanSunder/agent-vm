@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/tool-access/contracts',
+	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-portal-sdk/adapter-boundary',
 	'@agent-vm/agent-portal-sdk/approval-surface',
@@ -49,6 +51,22 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/tool-access/contracts': [
+		'hostAccessBinding',
+		'assessAccessInput',
+		'accessFacts',
+		'accessProfileProjection',
+		'accessAssessment',
+		'assessAccessResult',
+		'inputRevisions',
+	],
+	'@agent-collaboration/tool-access/authorization': [
+		'createAccessAssessor',
+		'resolvePortalAccessPolicy',
+		'mcpPortalCallPolicyDecision',
+		'validateCliAllowanceInvocation',
+		'resolveCompiledGoogleCommand',
+	],
 	'@agent-vm/agent-portal-sdk': [
 		'CapabilityReferenceSchema',
 		'JsonObjectSchema',
@@ -251,6 +269,8 @@ const requiredPortalNamedExports = {
 } as const;
 
 const requiredPortalNamedExportSpecifiers = [
+	'@agent-collaboration/tool-access/contracts',
+	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
 	'@agent-vm/agent-portal-sdk/adapter-boundary',
 	'@agent-vm/agent-portal-sdk/approval-surface',
@@ -330,7 +350,7 @@ function packageNameAndSubpathForSpecifier(specifier: string): {
 	readonly packageName: string;
 	readonly subpath: string;
 } {
-	const match = /^@agent-vm\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
+	const match = /^@(?:agent-vm|agent-collaboration)\/([^/]+)(?:\/(.+))?$/u.exec(specifier);
 	if (match?.[1] === undefined) {
 		throw new Error(`Portal export ${specifier} is not an @agent-vm package specifier`);
 	}
@@ -557,6 +577,10 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	if (process.argv.includes('--packed-access')) {
+		const { verifyToolAccessClosure } = await import('./verify-tool-access-closure.ts');
+		await verifyToolAccessClosure();
+	}
 	await Promise.all(
 		requiredPortalPackageExports.map((specifier) => assertRequiredExportResolves(specifier)),
 	);

@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -21,6 +22,7 @@ const portalPackageNames = new Set([
 	'gateway-control-contracts',
 	'mcp-portal',
 	'tool-portal',
+	'tool-access',
 ]);
 
 const controlContractPackageNames = new Set([
@@ -851,6 +853,7 @@ export function collectPortalArchitectureViolations(
 	props: CollectPortalArchitectureViolationsProps,
 ): readonly string[] {
 	const violations = [
+		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
 		...props.files.flatMap(collectDependencyViolations),
 		...props.files.flatMap(collectAgentPortalSdkGatewayRuntimeImportViolations),
@@ -868,6 +871,85 @@ export function collectPortalArchitectureViolations(
 		...props.files.flatMap(collectManagedFrameworkChildTopologyViolations),
 	];
 	return sortedStrings(violations);
+}
+
+const portableBuiltinNames = new Set(builtinModules.map((name) => name.replace(/^node:/u, '')));
+
+export function isForbiddenToolAccessImport(specifier: string): boolean {
+	return (
+		specifier.startsWith('node:') ||
+		portableBuiltinNames.has(specifier) ||
+		/(?:^|\/)(?:agent-vm|managed-vm|gondolin(?:-vm-adapter)?|tool-engine|tool-host-[^/]+|tool-portal|mcp-portal|gateway-runtime)(?:\/|$)/u.test(
+			specifier,
+		) ||
+		specifier.startsWith('@gondolin/')
+	);
+}
+
+export function collectToolAccessViolations(file: PortalArchitectureSourceFile): readonly string[] {
+	const filePath = normalizedFilePath(file.filePath);
+	if (!filePath.startsWith('packages/tool-access/src/') || isTestSourceFile(filePath)) return [];
+	const violations: string[] = [];
+	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
+	const executionFields = new Set([
+		'target',
+		'executionTarget',
+		'targetKind',
+		'image',
+		'imageId',
+		'credential',
+		'credentials',
+		'executor',
+		'executablePath',
+		'workingDirectory',
+		'mandatoryArgvPrefix',
+	]);
+	function visit(node: ts.Node): void {
+		if (
+			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+			node.moduleSpecifier !== undefined &&
+			ts.isStringLiteral(node.moduleSpecifier) &&
+			isForbiddenToolAccessImport(node.moduleSpecifier.text)
+		) {
+			violations.push(`${filePath}: tool-access forbidden import ${node.moduleSpecifier.text}`);
+		}
+		if (
+			ts.isImportTypeNode(node) &&
+			ts.isLiteralTypeNode(node.argument) &&
+			ts.isStringLiteral(node.argument.literal) &&
+			isForbiddenToolAccessImport(node.argument.literal.text)
+		) {
+			violations.push(
+				`${filePath}: tool-access forbidden type import ${node.argument.literal.text}`,
+			);
+		}
+		if (
+			ts.isCallExpression(node) &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === 'require'))
+		) {
+			const argument = node.arguments[0];
+			if (
+				argument !== undefined &&
+				ts.isStringLiteral(argument) &&
+				isForbiddenToolAccessImport(argument.text)
+			)
+				violations.push(`${filePath}: tool-access forbidden import ${argument.text}`);
+		}
+		if (
+			filePath.includes('/contracts/') &&
+			(ts.isPropertyAssignment(node) || ts.isPropertySignature(node)) &&
+			(ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+			executionFields.has(node.name.text)
+		) {
+			violations.push(
+				`${filePath}: tool-access execution-bearing contract field ${node.name.text}`,
+			);
+		}
+		ts.forEachChild(node, visit);
+	}
+	visit(source);
+	return violations;
 }
 
 async function collectFilesUnderDirectory(directoryPath: string): Promise<readonly string[]> {

@@ -111,10 +111,10 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					label: 'portal architecture audit',
 				},
 				{
-					args: ['run', 'test:portal-exports'],
+					args: ['exec', 'tsx', 'scripts/verify-portal-package-exports.ts', '--packed-access'],
 					command: 'pnpm',
 					id: 'portal-exports',
-					label: 'portal package export audit',
+					label: 'portal package export audit and packed tool-access closure',
 				},
 				{
 					args: ['exec', 'tsx', 'scripts/generate-portal-contracts.ts', '--check-clean'],
