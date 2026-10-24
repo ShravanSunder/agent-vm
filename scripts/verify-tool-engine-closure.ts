@@ -113,6 +113,7 @@ registerHooks({resolve(specifier, context, nextResolve) {
 function scannerSource(): string {
 	return `import { readFile, realpath } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {createRequire} from 'node:module';
 import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
 const portableBuiltinNames = new Set(${JSON.stringify(builtinModules.map((name) => name.replace(/^node:/u, '')))});
 ${isForbiddenToolEngineImport.toString()}
@@ -120,21 +121,22 @@ const pending=JSON.parse(process.argv[2]); const visited=new Set(); let edges=0;
 while(pending.length) {
  const location=await realpath(pending.pop()); if(visited.has(location))continue; visited.add(location);
  if(isForbiddenToolEngineImport(pathToFileURL(location).href))throw new Error('tool-engine forbidden resolved path '+location);
+ if(location.startsWith(${JSON.stringify(repositoryRoot)}+'/'))throw new Error('tool-engine workspace fallback '+location);
  const text=await readFile(location,'utf8');
  if(location.endsWith('.json'))continue;
  const source=ts.createSourceFile(location,text,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS); const imports=[];
  function visit(node) {
-  if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier)imports.push(node.moduleSpecifier.text);
+  if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier)imports.push({specifier:node.moduleSpecifier.text,kind:"import"});
   if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||(ts.isIdentifier(node.expression)&&node.expression.text==='require'))) {
    if(node.arguments.length!==1||!ts.isStringLiteral(node.arguments[0]))throw new Error('tool-engine nonliteral import cannot be closed: '+location);
-   imports.push(node.arguments[0].text);
+   imports.push({specifier:node.arguments[0].text,kind:node.expression.kind===ts.SyntaxKind.ImportKeyword?"import":"require"});
   }
   ts.forEachChild(node,visit);
  }
  visit(source);
- for(const specifier of imports) {
+ for(const {specifier,kind} of imports) {
   if(isForbiddenToolEngineImport(specifier))throw new Error('tool-engine forbidden import '+specifier+' from '+location);
-  const resolved=import.meta.resolve(specifier,pathToFileURL(location).href); edges++;
+  const resolved=kind==='require'?pathToFileURL(createRequire(location).resolve(specifier)).href:import.meta.resolve(specifier,pathToFileURL(location).href); edges++;
   if(isForbiddenToolEngineImport(resolved))throw new Error('tool-engine forbidden resolved path '+resolved);
   if(!resolved.startsWith('file:'))throw new Error('tool-engine non-file dependency '+resolved);
   pending.push(fileURLToPath(resolved));
@@ -145,7 +147,50 @@ console.log('emitted import closure: '+visited.size+' modules, '+edges+' static/
 `;
 }
 
+function declarationScannerSource(): string {
+	return `import {readFile,realpath} from 'node:fs/promises';
+import {builtinModules} from 'node:module';
+import {pathToFileURL} from 'node:url';
+import ts from ${JSON.stringify(import.meta.resolve('typescript'))};
+const portableBuiltinNames=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
+${isForbiddenToolEngineImport.toString()}
+const pending=JSON.parse(process.argv[2]); const visited=new Set();let edges=0;
+while(pending.length){
+ const location=await realpath(pending.pop());if(visited.has(location))continue;visited.add(location);
+ if(location.startsWith(${JSON.stringify(repositoryRoot)}+'/'))throw new Error('tool-engine declaration workspace fallback '+location);
+ const source=ts.createSourceFile(location,await readFile(location,'utf8'),ts.ScriptTarget.Latest,true); const imports=[];
+ for(const reference of source.typeReferenceDirectives)if(reference.fileName==='node')throw new Error('tool-engine forbidden declaration node types from '+location);
+ function visit(node){
+ if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier&&ts.isStringLiteral(node.moduleSpecifier))imports.push(node.moduleSpecifier.text);
+ if(ts.isImportTypeNode(node)&&ts.isLiteralTypeNode(node.argument)&&ts.isStringLiteral(node.argument.literal))imports.push(node.argument.literal.text);
+ if(ts.isImportEqualsDeclaration(node)&&ts.isExternalModuleReference(node.moduleReference)&&node.moduleReference.expression&&ts.isStringLiteral(node.moduleReference.expression))imports.push(node.moduleReference.expression.text);
+ if(ts.isIdentifier(node)&&node.text.startsWith('GatewayRuntime'))throw new Error('tool-engine managed type '+node.text);
+ ts.forEachChild(node,visit);
+ }visit(source);
+ for(const specifier of imports){
+ if(isForbiddenToolEngineImport(specifier))throw new Error('tool-engine forbidden import '+specifier+' from '+location);
+ const resolved=ts.resolveModuleName(specifier,location,{module:ts.ModuleKind.NodeNext,moduleResolution:ts.ModuleResolutionKind.NodeNext},ts.sys,undefined,undefined,ts.ModuleKind.ESNext).resolvedModule;
+ if(!resolved)throw new Error('tool-engine unresolved declaration '+specifier+' from '+location);
+ if(isForbiddenToolEngineImport(pathToFileURL(resolved.resolvedFileName).href))throw new Error('tool-engine forbidden resolved declaration '+resolved.resolvedFileName);
+ pending.push(resolved.resolvedFileName);edges++;
+ }
+}
+if(visited.size===0)throw new Error('empty declaration closure');console.log('declaration import closure: '+visited.size+' modules, '+edges+' type edges');
+`;
+}
+
 const requiredExports: Readonly<Record<string, readonly string[]>> = {
+	'./mcp-gateway': [
+		'createMcpGateway',
+		'encodeToolRef',
+		'decodeToolRef',
+		'createAgentCatalogViewCache',
+	],
+	'./upstream-mcp-connectors': [
+		'createUpstreamMcpClientRuntime',
+		'redactUpstreamResponse',
+		'UpstreamMcpError',
+	],
 	'./capability-dispatch': [
 		'createCapabilityDispatcher',
 		'dispatchInvocationSchema',
@@ -163,6 +208,7 @@ let count=0;
 for(const subpath of ${JSON.stringify(subpaths)}) {
  const module=await import('@agent-collaboration/tool-engine'+subpath.slice(1));
  for(const name of required[subpath]??[])if(!(name in module))throw new Error('missing named export '+name);
+ if(subpath==='./capability-dispatch') {
  const key=module.operationKeySchema.parse({authority:'packed',principal:'agent',item:'original'});
  if(key.item!=='original')throw new Error('operation key changed');
  const revision={owner:'packed',revision:'v1'};
@@ -173,10 +219,18 @@ for(const subpath of ${JSON.stringify(subpaths)}) {
  const dispatcher=module.createCapabilityDispatcher({assessAccess:createAccessAssessor({workspaceLayer:'not-configured',config:revision}),operations:{createOrRead:async()=>({kind:'untracked'}),lookup:unavailable,transition:unavailable},approvals:{challenge:unavailable,decision:unavailable,receipt:unavailable},backends:new Map([['mcp_provider',backend]]),now:()=>0});
  const result=await dispatcher.dispatch({authority:'packed',principal:'agent',item:'original',verifiedContextRef:'packed-context',correlation:{},access});
  if(result.kind!=='completed'||result.result!=='packed-ok'||invokes!==1)throw new Error('packed dispatch did not reach its backend exactly once');
+ } else if(subpath==='./mcp-gateway') {
+ if(module.encodeToolRef({namespace:'雪',toolName:'café:read'})!=='mcp:6Zuq:Y2Fmw6k6cmVhZA')throw new Error('packed reference bytes changed');
+ const identity=module.decodeToolRef('mcp:YWxwaGE:cmVhZA');if(identity.namespace!=='alpha'||identity.toolName!=='read')throw new Error('packed reference decode changed');
+ } else if(subpath==='./upstream-mcp-connectors') {
+ const redacted=module.redactUpstreamResponse({nested:{token:'secret'}});if(redacted.nested.token!=='[REDACTED]')throw new Error('packed redaction failed');
+ const runtime=module.createUpstreamMcpClientRuntime({servers:[],createUpstreamMcpTransport:()=>{throw new Error('no configured transport');}});
+ await runtime.closeAgentScope('packed');
+ } else throw new Error('No entrypoint-specific probe for '+subpath);
  count++;
 }
 if(count===0)throw new Error('empty entrypoint inventory');
-console.log('packed dispatch consumer: '+count+' entrypoints, required exports, schemas, real assessment and dispatch passed');`;
+console.log('packed entrypoint consumers: '+count+' entrypoints, required exports, schemas, real assessment and dispatch passed');`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -198,6 +252,22 @@ async function installedCheck(root: string): Promise<void> {
 		label: 'graph',
 		evidence,
 	});
+	const parsedEntries: unknown = JSON.parse(entries);
+	if (
+		!Array.isArray(parsedEntries) ||
+		!parsedEntries.every((entry): entry is string => typeof entry === 'string')
+	)
+		throw new Error('Invalid installed entry list');
+	const declarations = await command({
+		executable: process.execPath,
+		args: [
+			path.join(directory, 'declaration-scanner.mjs'),
+			JSON.stringify(parsedEntries.map((entry) => entry.replace(/\.js$/u, '.d.ts'))),
+		],
+		cwd: directory,
+		label: 'declarations',
+		evidence,
+	});
 	const runtime = await command({
 		executable: process.execPath,
 		args: ['--import', path.join(directory, 'loader.mjs'), path.join(directory, 'consumer.mjs')],
@@ -205,7 +275,7 @@ async function installedCheck(root: string): Promise<void> {
 		label: 'consumer',
 		evidence,
 	});
-	if (graph.code !== 0 || runtime.code !== 0)
+	if (graph.code !== 0 || declarations.code !== 0 || runtime.code !== 0)
 		throw new Error('Packed closure or blocked-loader consumer failed');
 }
 
@@ -306,6 +376,7 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	});
 	await writeFile(path.join(scratch, 'loader.mjs'), loaderSource());
 	await writeFile(path.join(scratch, 'scanner.mjs'), scannerSource());
+	await writeFile(path.join(scratch, 'declaration-scanner.mjs'), declarationScannerSource());
 	await writeFile(path.join(scratch, 'consumer.mjs'), consumerSource(subpaths));
 	async function check(label: string): Promise<CommandResult> {
 		const runEvidence = path.join(evidence, label);
@@ -333,110 +404,135 @@ export async function verifyToolEngineClosure(): Promise<void> {
 	const clean = await check('clean');
 	if (clean.code !== 0) throw new Error('Clean packed control failed');
 	if (process.argv.includes('--fixtures')) {
-		const contract = path.join(root, 'dist/capability-dispatch/index.js');
-		const declaration = path.join(root, 'dist/capability-dispatch/index.d.ts');
-		const original = await readFile(contract, 'utf8');
-		const originalDeclaration = await readFile(declaration, 'utf8');
-		const fixtureSources = [
-			{
-				name: 'direct',
-				source: `${original}\nimport 'node:fs';`,
-				reason: 'tool-engine forbidden import node:fs',
-			},
-			{
-				name: 'transitive',
-				source: `${original}\nexport * from './s2-transitive-poison.js';`,
-				reason: 'tool-engine forbidden import node:fs',
-			},
-			{
-				name: 'host',
-				source: `${original}\nimport '@agent-collaboration/tool-host-node';`,
-				reason: 'tool-engine forbidden import @agent-collaboration/tool-host-node',
-			},
-			{
-				name: 'managed-type',
-				source: original,
-				reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
-			},
-			{
-				name: 'transitive-type',
-				source: original,
-				reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
-			},
-			{
-				name: 'agent-vm',
-				source: `${original}\nimport '@agent-vm/agent-vm';`,
-				reason: 'tool-engine forbidden import @agent-vm/agent-vm',
-			},
-			{
-				name: 'gondolin',
-				source: `${original}\nimport '@gondolin/provider';`,
-				reason: 'tool-engine forbidden import @gondolin/provider',
-			},
-			{
-				name: 'controller-test-alias',
-				source: original,
-				declaration:
-					"import type { ControllerApprovalLedger } from '@agent-vm/controller-test-support/approval/controller-approval-ledger.js'; export type AliasPoison = ControllerApprovalLedger;",
-				reason:
-					'tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
-			},
-			{
-				name: 'config-test-alias',
-				source: original,
-				declaration:
-					"import type { createOAuthPolicyCompilerTestInput } from '@agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js'; export type AliasPoison = typeof createOAuthPolicyCompilerTestInput;",
-				reason:
-					'tool-engine forbidden import @agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js',
-			},
-			{
-				name: 'policy-test-alias',
-				source: original,
-				declaration:
-					"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
-				reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
-			},
-		];
-		await writeFile(
-			path.join(root, 'dist/capability-dispatch/s2-transitive-poison.js'),
-			"export async function lazyPoison() { return import('node:fs'); }\n",
-		);
-		await fixtureSources.reduce<Promise<void>>(async (previous, fixture): Promise<void> => {
+		await subpaths.reduce<Promise<void>>(async (previous, subpath): Promise<void> => {
 			await previous;
-			try {
-				await replaceArtifact(contract, fixture.source);
-				if (fixture.declaration !== undefined)
-					await replaceArtifact(declaration, `${originalDeclaration}\n${fixture.declaration}\n`);
-				if (fixture.name === 'managed-type')
-					await replaceArtifact(
-						declaration,
-						`${originalDeclaration}\nimport type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts';\nexport type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n`,
-					);
-				if (fixture.name === 'transitive-type') {
-					await replaceArtifact(
-						declaration,
-						`${originalDeclaration}\nexport * from './s2-type-poison.js';\n`,
-					);
-					await writeFile(
-						path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'),
-						"import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts'; export type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n",
-					);
+			const entryDirectory = path.join(root, 'dist', subpath.slice(2));
+			const fixturePrefix = subpath.slice(2) + '-';
+			const contract = path.join(entryDirectory, 'index.js');
+			const declaration = path.join(entryDirectory, 'index.d.ts');
+			const original = await readFile(contract, 'utf8');
+			const originalDeclaration = await readFile(declaration, 'utf8');
+			const fixtureSources = [
+				{
+					name: 'lazy',
+					source: original + "\nexport async function sdkLazyPoison(){return import('node:fs');}\n",
+					reason: 'tool-engine forbidden import node:fs',
+				},
+				{
+					name: 're-export',
+					source: original + "\nexport * from 'node:fs';\n",
+					reason: 'tool-engine forbidden import node:fs',
+				},
+				{
+					name: 'compiler',
+					source: original + "\nimport 'typescript';\n",
+					reason: 'tool-engine forbidden import typescript',
+				},
+				{
+					name: 'sdk-http',
+					source: original + "\nimport '@modelcontextprotocol/sdk/client/streamableHttp.js';\n",
+					reason: 'tool-engine forbidden import node:crypto',
+				},
+				{
+					name: 'direct',
+					source: `${original}\nimport 'node:fs';`,
+					reason: 'tool-engine forbidden import node:fs',
+				},
+				{
+					name: 'transitive',
+					source: `${original}\nexport * from './s2-transitive-poison.js';`,
+					reason: 'tool-engine forbidden import node:fs',
+				},
+				{
+					name: 'host',
+					source: `${original}\nimport '@agent-collaboration/tool-host-node';`,
+					reason: 'tool-engine forbidden import @agent-collaboration/tool-host-node',
+				},
+				{
+					name: 'managed-type',
+					source: original,
+					reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
+				},
+				{
+					name: 'transitive-type',
+					source: original,
+					reason: 'tool-engine managed type GatewayRuntimeTrustedInvocationContext',
+				},
+				{
+					name: 'agent-vm',
+					source: `${original}\nimport '@agent-vm/agent-vm';`,
+					reason: 'tool-engine forbidden import @agent-vm/agent-vm',
+				},
+				{
+					name: 'gondolin',
+					source: `${original}\nimport '@gondolin/provider';`,
+					reason: 'tool-engine forbidden import @gondolin/provider',
+				},
+				{
+					name: 'controller-test-alias',
+					source: original,
+					declaration:
+						"import type { ControllerApprovalLedger } from '@agent-vm/controller-test-support/approval/controller-approval-ledger.js'; export type AliasPoison = ControllerApprovalLedger;",
+					reason:
+						'tool-engine forbidden import @agent-vm/controller-test-support/approval/controller-approval-ledger.js',
+				},
+				{
+					name: 'config-test-alias',
+					source: original,
+					declaration:
+						"import type { createOAuthPolicyCompilerTestInput } from '@agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js'; export type AliasPoison = typeof createOAuthPolicyCompilerTestInput;",
+					reason:
+						'tool-engine forbidden import @agent-vm/config-contracts-test-support/oauth-policy-compiler-test-fixture.js',
+				},
+				{
+					name: 'policy-test-alias',
+					source: original,
+					declaration:
+						"import type { callPolicyDecision } from '@agent-vm/tool-portal/policy-comparison'; export type AliasPoison = typeof callPolicyDecision;",
+					reason: 'tool-engine forbidden import @agent-vm/tool-portal/policy-comparison',
+				},
+			];
+			await writeFile(
+				path.join(entryDirectory, 's2-transitive-poison.js'),
+				"export async function lazyPoison() { return import('node:fs'); }\n",
+			);
+			await fixtureSources.reduce<Promise<void>>(async (prior, fixture): Promise<void> => {
+				await prior;
+				try {
+					await replaceArtifact(contract, fixture.source);
+					if (fixture.declaration !== undefined)
+						await replaceArtifact(declaration, `${originalDeclaration}\n${fixture.declaration}\n`);
+					if (fixture.name === 'managed-type')
+						await replaceArtifact(
+							declaration,
+							`${originalDeclaration}\nimport type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts';\nexport type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n`,
+						);
+					if (fixture.name === 'transitive-type') {
+						await replaceArtifact(
+							declaration,
+							`${originalDeclaration}\nexport * from './s2-type-poison.js';\n`,
+						);
+						await writeFile(
+							path.join(entryDirectory, 's2-type-poison.d.ts'),
+							"import type { GatewayRuntimeTrustedInvocationContext } from '@agent-vm/gateway-control-contracts'; export type ManagedPoison = GatewayRuntimeTrustedInvocationContext;\n",
+						);
+					}
+					const red = await check(`${fixturePrefix}${fixture.name}-red`);
+					if (red.code === 0 || !red.output.includes(fixture.reason))
+						throw new Error(`Fixture ${fixture.name} did not fail for its intended reason`);
+				} finally {
+					await replaceArtifact(contract, original);
+					await replaceArtifact(declaration, originalDeclaration);
+					if (fixture.name === 'transitive-type')
+						await unlink(path.join(entryDirectory, 's2-type-poison.d.ts'));
 				}
-				const red = await check(`${fixture.name}-red`);
-				if (red.code === 0 || !red.output.includes(fixture.reason))
-					throw new Error(`Fixture ${fixture.name} did not fail for its intended reason`);
-			} finally {
-				await replaceArtifact(contract, original);
-				await replaceArtifact(declaration, originalDeclaration);
-				if (fixture.name === 'transitive-type')
-					await unlink(path.join(root, 'dist/capability-dispatch/s2-type-poison.d.ts'));
-			}
-			const green = await check(`${fixture.name}-green`);
-			if (green.code !== 0) throw new Error(`Fixture ${fixture.name} restoration failed`);
+				const green = await check(`${fixturePrefix}${fixture.name}-green`);
+				if (green.code !== 0) throw new Error(`Fixture ${fixture.name} restoration failed`);
+			}, Promise.resolve());
+			process.stdout.write(
+				`sensitivity: ${fixtureSources.length} intended rejections, ${fixtureSources.length} restored passes\n`,
+			);
 		}, Promise.resolve());
-		process.stdout.write(
-			`sensitivity: ${fixtureSources.length} intended rejections, ${fixtureSources.length} restored passes\n`,
-		);
 	}
 	process.stdout.write(`tool-engine packed closure: passed (${subpaths.length} entrypoints)\n`);
 }
