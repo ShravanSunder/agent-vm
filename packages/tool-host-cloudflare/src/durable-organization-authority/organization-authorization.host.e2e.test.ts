@@ -19,6 +19,8 @@ describe('organization authorization in local workerd', () => {
 	beforeAll(async () => {
 		guard = startWorkerdSocketGuard();
 		stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-object-'));
+		// Isolate Wrangler service discovery from other tests and local dev sessions.
+		process.env.WRANGLER_REGISTRY_PATH = path.join(stateDirectory, 'registry');
 		process.env.WRANGLER_LOG_PATH = path.join(stateDirectory, 'wrangler.log');
 		process.env.WRANGLER_SEND_METRICS = 'false';
 		worker = await unstable_dev(

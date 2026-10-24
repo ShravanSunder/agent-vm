@@ -47,6 +47,8 @@ export async function startLocalWorkerHarness(
 	const fixture = await startControlledMcpIssuer();
 	options.setup?.(fixture);
 	const stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-s6-worker-'));
+	// Isolate Wrangler service discovery from other tests and local dev sessions.
+	process.env.WRANGLER_REGISTRY_PATH = path.join(stateDirectory, 'registry');
 	process.env.WRANGLER_LOG_PATH = path.join(stateDirectory, 'wrangler.log');
 	process.env.WRANGLER_SEND_METRICS = 'false';
 	const worker = await unstable_dev(
@@ -70,7 +72,8 @@ export async function startLocalWorkerHarness(
 				ONE_APPROVAL_KEY: signingKeyHex,
 				TWO_APPROVAL_KEY: organizationTwoSigningKeyHex,
 			},
-			experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
+			// Keep Wrangler's normal service proxy for the example SIGN_IN binding.
+			experimental: { disableExperimentalWarning: true },
 		},
 	);
 	const fetchLocalWorker = worker.fetch;

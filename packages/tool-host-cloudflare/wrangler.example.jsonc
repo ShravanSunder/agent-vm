@@ -3,7 +3,15 @@
 	"name": "tool-portal-local",
 	"main": "dist/index.js",
 	"compatibility_date": "2025-09-24",
+	"services": [
+		{
+			"binding": "SIGN_IN",
+			"service": "agent-sign-in-example",
+			"entrypoint": "AgentClientManagement",
+		},
+	],
 	"vars": {
+		"MANAGEMENT_AUDIENCE": "replace-with-management-audience",
 		"ORGANIZATION_CONFIGURATIONS": "{}",
 		"SIGN_IN_ISSUER": "https://sign-in.example.invalid",
 		"SIGN_IN_JWKS_URL": "https://sign-in.example.invalid/jwks",

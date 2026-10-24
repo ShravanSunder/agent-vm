@@ -29,6 +29,8 @@ export * from '#tool-host-core/request-limits/models/hosted-request-limits';
 export * from '#tool-host-core/call-analytics/models/call-analytics';
 export * from '#tool-host-core/call-analytics/call-analytics';
 export * from '#tool-host-core/organization-authority/organization-authority';
+export * from '#tool-host-core/organization-authority/agent-retirement';
+export * from '#tool-host-core/agent-management/organization-agent-management';
 export * from '#tool-host-core/organization-authority/agent-admission-rules';
 export * from '#tool-host-core/organization-authority/approval-token-use-rules';
 export * from '#tool-host-core/organization-authority/volatile-authority-store';

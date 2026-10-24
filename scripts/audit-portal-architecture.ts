@@ -21,6 +21,7 @@ export interface CollectPortalArchitectureViolationsProps {
 }
 
 const portalPackageNames = new Set([
+	'auth',
 	'agent-portal-sdk',
 	'control-protocol-contracts',
 	'controller-execution-contracts',
@@ -894,6 +895,7 @@ export function collectPortalArchitectureViolations(
 		...props.files.flatMap(collectToolAccessViolations),
 		...props.files.flatMap(collectToolEngineViolations),
 		...props.files.flatMap(collectToolHostCoreViolations),
+		...props.files.flatMap(collectAuthCoreViolations),
 		...props.files.flatMap(collectToolHostNodeViolations),
 		...props.files.flatMap(collectProductionTestAliasViolations),
 		...props.files.flatMap((file) => collectStructureViolations(normalizedFilePath(file.filePath))),
@@ -919,6 +921,7 @@ const portableBuiltinNames = new Set(builtinModules.map((name) => name.replace(/
 
 export function isForbiddenToolAccessImport(specifier: string): boolean {
 	return (
+		specifier.startsWith('@agent-collaboration/auth') ||
 		specifier.startsWith('node:') ||
 		specifier.startsWith('cloudflare:') ||
 		portableBuiltinNames.has(specifier) ||
@@ -1119,17 +1122,20 @@ const workerGlobalNames = new Set([
 	'CacheStorage',
 	'caches',
 	'Cloudflare',
+	'AuthWorkerEnv',
+	'__BaseEnv_AuthWorkerEnv',
 	'EmailMessage',
 	'ForwardableEmailMessage',
 ]);
 
 function collectPortableEngineViolations(
 	file: PortalArchitectureSourceFile,
-	packageName: 'tool-engine' | 'tool-host-core',
+	packageName: 'tool-engine' | 'tool-host-core' | 'auth',
 	forbiddenImport: (specifier: string) => boolean,
+	sourceDirectory: string = `packages/${packageName}/src/`,
 ): readonly string[] {
 	const filePath = normalizedFilePath(file.filePath);
-	if (!filePath.startsWith(`packages/${packageName}/src/`) || isTestSourceFile(filePath)) return [];
+	if (!filePath.startsWith(sourceDirectory) || isTestSourceFile(filePath)) return [];
 	const violations: string[] = [];
 
 	const source = ts.createSourceFile(filePath, file.sourceText, ts.ScriptTarget.Latest, true);
@@ -1142,12 +1148,8 @@ function collectPortableEngineViolations(
 		)
 			violations.push(`${filePath}: tool-host-core must inject SDK client transports`);
 
-		if (
-			packageName === 'tool-host-core' &&
-			ts.isIdentifier(node) &&
-			workerGlobalNames.has(node.text)
-		)
-			violations.push(`${filePath}: tool-host-core Workers global ${node.text}`);
+		if (packageName !== 'tool-engine' && ts.isIdentifier(node) && workerGlobalNames.has(node.text))
+			violations.push(`${filePath}: ${packageName} Workers global ${node.text}`);
 		if (
 			(ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
 			node.moduleSpecifier !== undefined &&
@@ -1187,10 +1189,10 @@ function collectPortableEngineViolations(
 		}
 		ts.forEachChild(node, visit);
 	}
-	if (packageName === 'tool-host-core') {
+	if (packageName !== 'tool-engine') {
 		for (const reference of source.typeReferenceDirectives) {
 			if (reference.fileName === '@cloudflare/workers-types')
-				violations.push(`${filePath}: tool-host-core forbidden types ${reference.fileName}`);
+				violations.push(`${filePath}: ${packageName} forbidden types ${reference.fileName}`);
 		}
 	}
 	visit(source);
@@ -1204,6 +1206,27 @@ export function collectToolHostCoreViolations(
 	file: PortalArchitectureSourceFile,
 ): readonly string[] {
 	return collectPortableEngineViolations(file, 'tool-host-core', isForbiddenToolHostCoreImport);
+}
+
+export function isForbiddenAuthCoreImport(specifier: string): boolean {
+	return (
+		isForbiddenToolHostCoreImport(specifier) ||
+		/^(?:better-auth|@better-auth\/)/u.test(specifier) ||
+		/(?:#auth\/|\/auth\/(?:src|dist)\/)(?:better-auth-provider|d1-persistence|cloudflare-host)(?:\/|$)/u.test(
+			specifier,
+		) ||
+		specifier.includes('worker-configuration.gen') ||
+		specifier === '@agent-collaboration/auth/cloudflare'
+	);
+}
+
+export function collectAuthCoreViolations(file: PortalArchitectureSourceFile): readonly string[] {
+	return collectPortableEngineViolations(
+		file,
+		'auth',
+		isForbiddenAuthCoreImport,
+		'packages/auth/src/sign-in-core/',
+	);
 }
 
 async function collectFilesUnderDirectory(directoryPath: string): Promise<readonly string[]> {
