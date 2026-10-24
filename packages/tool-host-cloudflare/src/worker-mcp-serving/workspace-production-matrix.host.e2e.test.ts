@@ -17,6 +17,13 @@ const siblingWorkspace = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const portalOrigin = 'https://portal-test.invalid';
 const audience = (workspaceId: string): string => `${portalOrigin}/workspaces/${workspaceId}/mcp`;
 
+const portalReadCall = (value: string): Readonly<Record<string, unknown>> => ({
+	name: 'mcp_portal_call',
+	arguments: {
+		calls: [{ id: value, namespace: 'same-server', toolName: 'read', arguments: { value } }],
+	},
+});
+
 it.each(['direct', 'indirect'] as const)(
 	'production %s workspace routing keeps persona, labels and warm removal local',
 	async (mode) => {
@@ -175,12 +182,7 @@ it.each(['direct', 'indirect'] as const)(
 					},
 				);
 			}
-			const read = (value: string): Readonly<Record<string, unknown>> => ({
-				name: 'mcp_portal_call',
-				arguments: {
-					calls: [{ id: value, namespace: 'same-server', toolName: 'read', arguments: { value } }],
-				},
-			});
+
 			async function succeeds({
 				workspaceId,
 				bearer,
@@ -197,7 +199,7 @@ it.each(['direct', 'indirect'] as const)(
 					workspaceId: workspaceId,
 					bearer: bearer,
 					method: 'tools/call',
-					params: read(value),
+					params: portalReadCall(value),
 					labels: labels,
 				});
 				expect(response.status).toBe(200);
@@ -302,43 +304,43 @@ it.each(['direct', 'indirect'] as const)(
 					workspaceId: siblingWorkspace,
 					bearer: tokens.first,
 					method: 'tools/call',
-					params: read('cross-sibling'),
+					params: portalReadCall('cross-sibling'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: tokens.foreign,
 					method: 'tools/call',
-					params: read('cross-foreign'),
+					params: portalReadCall('cross-foreign'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: await token(organizationOne, 'nonmember'),
 					method: 'tools/call',
-					params: read('nonmember'),
+					params: portalReadCall('nonmember'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: 'invalid-signature',
 					method: 'tools/call',
-					params: read('invalid'),
+					params: portalReadCall('invalid'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: await fixture.sign({ forge: true }),
 					method: 'tools/call',
-					params: read('forged-signature'),
+					params: portalReadCall('forged-signature'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: null,
 					method: 'tools/call',
-					params: read('missing-token'),
+					params: portalReadCall('missing-token'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
 					bearer: await fixture.sign({ changes: { exp: Math.floor(Date.now() / 1000) - 3600 } }),
 					method: 'tools/call',
-					params: read('expired-token'),
+					params: portalReadCall('expired-token'),
 				}),
 				rpc({
 					workspaceId: organizationOne,
@@ -346,7 +348,7 @@ it.each(['direct', 'indirect'] as const)(
 						changes: { aud: 'https://portal-test.invalid/mcp', workspace_id: undefined },
 					}),
 					method: 'tools/call',
-					params: read('legacy-token'),
+					params: portalReadCall('legacy-token'),
 				}),
 			]);
 			expect(responses.map((response) => response.status)).toEqual([
@@ -406,7 +408,7 @@ it.each(['direct', 'indirect'] as const)(
 				workspaceId: organizationOne,
 				bearer: tokens.first,
 				method: 'tools/call',
-				params: read('persona-denied'),
+				params: portalReadCall('persona-denied'),
 			});
 			expect(denied.status).toBe(200);
 			expect(await denied.json()).toMatchObject({ result: { isError: true } });
@@ -430,7 +432,7 @@ it.each(['direct', 'indirect'] as const)(
 				workspaceId: organizationOne,
 				bearer: tokens.first,
 				method: 'tools/call',
-				params: read('warm-removed'),
+				params: portalReadCall('warm-removed'),
 			});
 			expect(removed.status).toBe(401);
 			await removed.body?.cancel();
