@@ -1,28 +1,26 @@
+/// <reference types="node" />
 import { spawn } from 'node:child_process';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { isReleasePackageName, listReleasePackages } from './release-package-selection.ts';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stableSemanticVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 
 type JsonRecord = Record<string, unknown>;
 
-interface ReleasePackageManifestSource {
-	readonly manifestPath: string;
-	readonly sourceText: string;
+function isJsonRecord(value: unknown): value is JsonRecord {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function parseJsonRecord(sourceText: string): JsonRecord {
 	const parsedValue: unknown = JSON.parse(sourceText);
-	if (typeof parsedValue !== 'object' || parsedValue === null || Array.isArray(parsedValue)) {
+	if (!isJsonRecord(parsedValue)) {
 		throw new Error('Expected a JSON object.');
 	}
 	return parsedValue;
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 export function parseReleaseVersion(candidateVersion: string): string {
@@ -36,8 +34,8 @@ export function parseReleaseVersion(candidateVersion: string): string {
 
 export function renderNpmPackageVersion(sourceText: string, releaseVersion: string): string {
 	const manifest = parseJsonRecord(sourceText);
-	if (typeof manifest.name !== 'string' || !manifest.name.startsWith('@agent-vm/')) {
-		throw new Error('Release package manifest must declare an @agent-vm/* package name.');
+	if (!isReleasePackageName(manifest.name)) {
+		throw new Error('Release package manifest must declare a release-scope package name.');
 	}
 	manifest.version = releaseVersion;
 	return `${JSON.stringify(manifest, null, '\t')}\n`;
@@ -93,45 +91,15 @@ export async function updateReleaseFiles(
 	targetRepositoryRoot: string,
 	releaseVersion: string,
 ): Promise<void> {
-	const packageDirectories = (
-		await readdir(path.join(targetRepositoryRoot, 'packages'), {
-			withFileTypes: true,
-		})
-	)
-		.filter((directoryEntry) => directoryEntry.isDirectory())
-		.map((directoryEntry) => directoryEntry.name);
-	const packageManifestSources = (
-		await Promise.all(
-			packageDirectories.map(
-				async (packageDirectory): Promise<ReleasePackageManifestSource | undefined> => {
-					const manifestPath = path.join(
-						targetRepositoryRoot,
-						'packages',
-						packageDirectory,
-						'package.json',
-					);
-					let sourceText: string;
-					try {
-						sourceText = await readFile(manifestPath, 'utf8');
-					} catch (error: unknown) {
-						if (isMissingFileError(error)) return undefined;
-						throw error;
-					}
-					const manifest = parseJsonRecord(sourceText);
-					if (
-						typeof manifest.name !== 'string' ||
-						!manifest.name.startsWith('@agent-vm/') ||
-						manifest.private === true
-					) {
-						return undefined;
-					}
-					return { manifestPath, sourceText };
-				},
-			),
-		)
-	).filter(
-		(packageManifestSource): packageManifestSource is ReleasePackageManifestSource =>
-			packageManifestSource !== undefined,
+	const releasePackages = await listReleasePackages(targetRepositoryRoot);
+	const packageManifestSources = await Promise.all(
+		releasePackages.map(async ({ manifestPath }) => {
+			const absoluteManifestPath = path.join(targetRepositoryRoot, manifestPath);
+			return {
+				manifestPath: absoluteManifestPath,
+				sourceText: await readFile(absoluteManifestPath, 'utf8'),
+			};
+		}),
 	);
 	await Promise.all(
 		packageManifestSources.map(async ({ manifestPath, sourceText }) => {

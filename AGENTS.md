@@ -269,7 +269,7 @@ they do not prove the live feature.
   `set -a; source .env.local; set +a; AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh`.
   The script defaults to that same item, reads the token through 1Password,
   writes it only to a temporary npm user config, builds the workspace once, and
-  runs `pnpm -r publish` with package lifecycle scripts disabled so per-package
+  publishes the selected packages with lifecycle scripts disabled so per-package
   `prepack` cannot rebuild the full workspace repeatedly.
   Do this before trying browser `npm login` or assuming npm auth is blocked.
   If 1Password times out, verify the same item with
@@ -342,7 +342,13 @@ the Hermes Gateway and Tool VM overlay artifacts. Then run beta's normal
 
 ## Release Process
 
-Keep every published `@agent-vm/*` package version in sync for normal releases.
+The trusted release and version-sync guard select every non-private package in
+`packages/` whose name starts with `@agent-vm/` or `@agent-collaboration/`.
+Keep all selected package versions in sync for normal releases. Before publishing
+any npm or Python artifact, the release validates every selected package's
+`repository.url` as `git+https://github.com/ShravanSunder/agent-vm.git` and
+`repository.directory` as its own `packages/<folder>` path. Missing or incorrect
+metadata fails the release with the package name, before any publication.
 Create the release PR with `pnpm release:version -- <version>` so all npm and
 Python manifests, the Hermes adapter SDK pin, `pnpm-lock.yaml`, and `uv.lock`
 move together. `pnpm check` and both publishing paths fail when package versions
@@ -362,8 +368,12 @@ Trusted publishing is external registry state. Every npm package must trust the
 `release.yml` workflow, configured with
 `npm trust github <package> --file release.yml --repo ShravanSunder/agent-vm --allow-publish --yes`.
 Both PyPI projects must name the same owner, repository, and workflow. Configure
-those relationships before the first OIDC release. `scripts/publish-local.sh`
-remains the break-glass publisher and retains the release-specific 1Password
+those relationships before the first OIDC release. A new npm package must first
+exist on the registry before its trusted publisher can be configured. Bootstrap
+names with an explicitly tagged prerelease placeholder, then configure trust
+using npm 11.15.0 or later under a supported Node version. Keep placeholder
+versions outside the synchronized real release version and off the `latest` tag.
+`scripts/publish-local.sh` remains the break-glass publisher and retains the release-specific 1Password
 path described above.
 
 Managed image release pins are a separate release train from npm package
