@@ -4,6 +4,18 @@ The owner approved deploying the Worker if it's private, and asked that no
 deploy setting or personal detail reach the public repo (2026-10-21). This plan
 covers the deployed half of verification rows 13–16.
 
+> **Superseded in part by the workspace unit (2026-10-24).** The diagram and the
+> "two portal copies", "admitting test agents" and "two test organizations"
+> bullets below describe the pre-workspace model: shared organization objects,
+> `OrganizationAuthorization` and `setAgentAdmission`, with no management route.
+> Since the workspace cutover, each workspace has its own Durable Object
+> (`WORKSPACES` / `WorkspaceAuthority`, with the v2 `renamed_classes` migration),
+> the Worker serves `/workspaces/<uuid>/mcp` and owner management routes, and the
+> deployed cycle uses three test workspaces (O1/W1, O1/W2, O2/W3), each with its
+> own credential, and the helper's admission route writing membership with
+> persona. The workspace-unit plan's slice W5 governs cycle 6 and later. The
+> privacy rules, Access setup and steps in this plan still apply.
+
 ## What gets deployed
 
 ```text
