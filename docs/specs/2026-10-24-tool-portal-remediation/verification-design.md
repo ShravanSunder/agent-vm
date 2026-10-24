@@ -27,7 +27,7 @@ Heavy runs go to sunclaw. No VM is involved. Every time-dependent case moves a c
 | **U11** TypeScript verification | A scan finds no Python driving or asserting Portal behaviour outside the Python SDK's own tests. | — |
 | **U12** One SDK generation; one version each | The lockfile and imports are scanned: one MCP SDK generation in product code; one esbuild, jose and vitest; no alpha Miniflare. | RD3 decides whether one test fixture may keep the old SDK |
 | **U13** Known defects fixed | Each of the six findings gets a test that fails on `2dfea38e` and passes on the delivered commit. | — |
-| **U14** Large requests streamed, not capped | **Gap:** waits for the #33 evidence and the completed design (Program Design R26). | The whole row, until then |
+| **U14** Large requests streamed, not capped | A call with a 12 MiB argument completes on the private Worker and on Node with the same result as a small one; on Node the spill file is private, outside durable state, and gone after every kind of ending, including a crash and restart. | Concurrent large requests sharing one Worker isolate: the shared-failure limit R26 states, pending RD7 |
 | **U15** Hegel property tests | Five Hegel property families run against the real store implementation on both databases and against the canonical encoder and approval verifier. | Interleavings Hegel does not generate across separate OS processes (covered by the contention observation instead) |
 
 ## Shared observations
@@ -286,7 +286,7 @@ The stateful model test that exists today (`tool-host-core/src/workspace-authori
 | U11 | R16 | Python scan | O5 | Python files · none | no Python Portal verification | — |
 | U12 | R17 R18 | lockfile and import scan | O5 | lockfile · none | one generation; one version each; no alpha | RD3 |
 | U13 | R20–R25 | each defect's focused case | focused tests, O4 family 5 | owning modules · none | each fails before, passes after | — |
-| U14 | R26 | gap | gap | gap (`large-request` needed) | gap | whole row |
+| U14 | R26 | the U14 row: 3, 5 and 12 MiB calls; spill cases | raw responses, `wrangler tail` outcomes, spill directory listings | private Worker and Node host · `large-request` (needed, lasting) | normal result; no Portal 413 or 502; spill file private, outside `stateDirectory`, removed on every end | same-isolate concurrency (RD7) |
 | U15 | R15 | Hegel families on both databases | O4 | core suite · none | five families vs pure models; mutants caught | separate processes |
 
 ## Journeys this needs
@@ -299,4 +299,4 @@ The project has no `verify-tool-portal` skill yet; only `verify-auth` exists. Th
 | `restart` | lasting | Node process stop/start on one `stateDirectory`; workerd restart with persisted storage; private Worker redeploy | answers after restart; store rows through the test host's inspection operation |
 | `contention` | lasting | concurrent presentations across Worker copies, Node processes and workerd requests | count of `first-use` answers |
 | `cutover` | temporary | an approval used on the old Worker, then the remediation deployed | the kept token's answer |
-| `large-request` | lasting | gap until the design is complete | gap |
+| `large-request` | lasting | the MCP proxy entry on the private Worker and the Node host, at 3, 5 and 12 MiB, with abort, malformed tail, killed-process restart and a full spill directory on Node | raw response (status, headers, body, CF-Ray), `wrangler tail` invocation outcome, spill directory and `stateDirectory` listings |

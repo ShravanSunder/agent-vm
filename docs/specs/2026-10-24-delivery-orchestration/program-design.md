@@ -47,6 +47,12 @@ flowchart LR
   F4 --> JC1
   F5 --> JC1
   F6 --> JC1
+  JC1 --> DONE["DONE delivery complete<br/>SO1 bot messaging · SO4 · sign-in on Node"]
+  A8 --> DONE
+  B2 --> DONE
+  F7 --> DONE
+  F8 --> DONE
+  F9 --> DONE
 ```
 
 **The shape:** agent-vm's Tool Portal remediation (A) and the sign-in revision (B) need nothing from codex-router, so they run as soon as the designs are approved. codex-router ships its release (F0) first, then its identity work (F1–F9). The two sides meet at one identity joint cut (JC1), where every changed cross-repository contract goes live together after its joint proofs pass.
@@ -92,19 +98,20 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | F8 SO1 TypeScript journey | codex-router | the fleet identity journey, in TypeScript, replacing any Python | F4 | codex-router gates |
 | F9 SO4 conformance | codex-router | central's identity scenarios on both central hosts | F3 | codex-router gates |
 | JC1 identity joint cut | both | every K going live together | B4, P1, F3, F4, F5, F6 merged; JP1–JP4 passing | JP1–JP4 |
+| DONE delivery complete | both | every governed outcome delivered, not only the cut: identity U7 (bot messaging), U16 (both hosts, including the sign-in Node host), remediation U1–U15 | A8, JC1, B2, F7, F8, F9 merged and deployed on the private stack | identity SO1 (native sessions and bot messaging), SO4 on both central hosts, and the sign-in suite on the Node host, all against the deployed cut builds; a slice not merged keeps DONE open |
 
 **Why A runs ahead of P.** Store version 1 keeps today's membership records, so the remediated Tool Portal is deployable on its own (A8) without waiting for codex-router. P1 then moves the store to version 2 and switches the caller check to identity tokens. The cost is one extra migration, and the benefit is that A never blocks on F.
 
 **Why B4 and P1 meet only at JC1.** B4 changes the token claims and P1 changes the check that reads them. Either one alone, deployed, breaks issuer-to-Portal calls; that is exactly what broke the identity build. So both merge behind JC1: they land on master, and the private test stack keeps running the previous issuer and Portal builds until JC1 deploys both together.
 
-**How JC1 cuts over.** The private test stack's only callers are the test Router's sessions and the test bot, so a hard cutover is a short, owned interruption, not a compatibility layer. The Tool Portal Lead owns it:
-1. **Stop admission.** Stop the test Router's sessions and the test bot, the stack's only callers.
-2. **Drain.** Confirm nothing is in flight: the Tool Portal Worker's and the sign-in Worker's logs (`wrangler tail`) show no request for one minute, read from their own log timestamps.
-3. **Deploy in order.** Deploy Fleet central, then the sign-in Worker, then the Tool Portal Worker and Node host. Read back each component's deployed build identity. Central first is safe, because its new routes are unused by the old callers.
-4. **Prove.** Run JP1–JP4 against exactly those builds.
-5. **Resume.** Restart the Router's sessions and the bot only after JP1–JP4 pass.
+**How JC1 cuts over.** The private test stack's only callers are the test Router's sessions and the test bot, so a hard cutover is a short, owned interruption, not a compatibility layer. The Tool Portal Lead owns it and records each step's evidence:
+1. **Stop admission.** Stop the test Router's sessions and the test bot, the stack's only callers. Evidence: the Router reports no active session, and the bot's process has exited. The stop time is recorded from the Router's own clock.
+2. **Settle.** Confirm every request admitted before the stop has finished, not merely that logs went quiet. `wrangler tail` on the Tool Portal and sign-in Workers, started before step 1, must show a recorded outcome for every invocation that began before the stop time. The Node host is stopped through its listener's close, which returns only after its open requests end. Any armed approval left by an interrupted call stays `ambiguous` in the store, which is the designed outcome, not a reason to wait.
+3. **Deploy in order.** Deploy Fleet central, then the sign-in Worker, then the Tool Portal Worker and Node host. Read back each component's deployed build identity. Central first is safe, because its new routes are unused by the old callers. The Tool Portal deploy runs store version 2: membership tables dropped, approval rows re-keyed, Worker and Node approval keys rotated.
+4. **Prove, with a proof cohort only.** JP1–JP4 run with a named proof cohort: one test Router session and one test bot, started by the operator for the proofs, while the ordinary sessions and bot stay stopped. The cohort's requests are the first the new builds serve, and they are the proofs' subjects. They are not a resumption.
+5. **Resume.** Start the ordinary sessions and the bot only after every component's build identity reads back as the cut's build, and JP1–JP4 have passed against exactly those builds.
 
-**If a deploy fails part-way, or any JP fails,** every component is redeployed at its previous build before any caller restarts. Because no caller is running, nothing observes the mixed state.
+**If a deploy fails part-way, or any JP fails: admission stays stopped, and the stack is repaired forward.** The previous Tool Portal and issuer builds are not redeployed. Store version 2 has already dropped their tables and re-keyed approval state, and their approval and signing keys are retired, so an old build could not run correctly against the store it would find. Redeploying old code must also never reactivate old keys against a replay store that no longer holds their uses. The fix is a corrected build of the failed component, then steps 3–5 again. Only the proof cohort runs while the stack is mixed, and it is stopped again before any repair. No ordinary caller observes the mixed state. The cost is that the private stack stays down until the fix lands; no rollback mechanism is built to avoid that.
 
 ## Cross-repository contracts
 

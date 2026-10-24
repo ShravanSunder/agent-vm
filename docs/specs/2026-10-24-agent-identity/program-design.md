@@ -807,7 +807,7 @@ The Tool Portal's version of this is the [Tool Portal remediation](../2026-10-24
 flowchart TB
   subgraph CORE["sign-in core (runtime-free): packages/auth/src/sign-in-core"]
     RULES["dispatch · final checks · receivers · admission requests · audit"]
-    STORE["SignInStore: typed operations + the one Drizzle mapping<br/>schema: Better Auth tables + sign_in_audit + organization_admission_claim"]
+    STORE["SignInStore: typed operations + the one Drizzle mapping<br/>schema: Better Auth tables + sign_in_audit + organization_admission_claim + admitted_person_guard"]
     CAPS["SignInPlatform: clock · UUIDv7 ids · crypto · central client · atomic runner · log"]
     RULES --> STORE
     RULES --> CAPS
@@ -839,6 +839,115 @@ flowchart TB
 | Capabilities | `SignInPlatform { clock, ids, crypto, centralClient, runAtomically, log }`, every one required. `crypto` signs the service tokens the sign-in service self-signs for central (C7). `centralClient` sends `DecideBotIssuance` and `PersonAdmissionRequest` and returns closed results, including `unavailable`. |
 | Hosts | **Cloudflare:** the Worker builds the D1 database, the platform from the shared web-platform adapters (as the Tool Portal does), and a `fetch`-based central client. **Node (new):** an HTTP listener, a `better-sqlite3` file under the host's state directory, and the same adapters. Neither host holds a sign-in rule. |
 | Test hooks | `beforeFinalCheck` and `observeManagement` are removed from production code. Tests hold a flow at an injected capability instead, such as a central client stand-in that waits on the test's signal, in the test host. |
+
+**The typed contracts (R29–R31).** The core owns these; hosts only supply the database and the platform. Every result is a closed union, and a driver error never escapes as a throw.
+
+```ts
+// sign-in-core/storage/models/sign-in-store.ts
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
+import type { BatchItem, BatchResponse } from 'drizzle-orm/batch';
+
+export type SignInDatabase = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof signInSchema>;
+
+// A fixed group of Drizzle statements built only by the store. No statement depends on code reading an earlier result.
+export type AtomicStatementGroup = readonly [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+
+export type AtomicRunOutcome<TGroup extends AtomicStatementGroup> =
+	| { readonly kind: 'committed'; readonly results: BatchResponse<TGroup> }
+	| { readonly kind: 'failed'; readonly reason: 'database-error' }; // nothing in the group took effect
+
+// Supplied by the host: D1 → db.batch(group); Node → one better-sqlite3 transaction with behavior 'immediate'
+// running each statement in order. The host executes and reports; it never inspects or reorders a statement.
+export type AtomicRunner = <TGroup extends AtomicStatementGroup>(group: TGroup) => Promise<AtomicRunOutcome<TGroup>>;
+
+export type SignInStoreFailure = {
+	readonly kind: 'store-unavailable';
+	readonly reason: 'database-error' | 'migration-incomplete' | 'row-unparseable';
+};
+
+export type AdmissionClaim =
+	| { readonly kind: 'claimed'; readonly attemptId: Uuid7 }
+	| { readonly kind: 'no-such-person' } // the insert returned no row: the user does not exist
+	| SignInStoreFailure;
+
+export type ClaimSettlement =
+	| { readonly kind: 'admitted' } // write the admitted guard, then release this attempt's claim
+	| { readonly kind: 'refused' }; // release this attempt's claim only
+
+export type ClaimSettled = { readonly kind: 'settled' } | { readonly kind: 'already-settled' } | SignInStoreFailure;
+
+export type RefusedSignInCleanup =
+	| { readonly kind: 'removed' } // the account and user rows were deleted
+	| { readonly kind: 'kept'; readonly reason: 'pending-claim-or-admitted' } // zero rows: correct, not an error
+	| SignInStoreFailure;
+
+export type BotCredentialProvision =
+	| { readonly kind: 'provisioned'; readonly clientId: BotClientId; readonly secret: OneTimeSecret } // returned once, never stored in clear
+	| { readonly kind: 'already-provisioned' } // no secret: a lost reply is recovered by retire and provision anew
+	| SignInStoreFailure;
+
+export type BotCredentialDisable =
+	| { readonly kind: 'disabled' }
+	| { readonly kind: 'already-disabled' }
+	| { readonly kind: 'not-found' }
+	| SignInStoreFailure;
+
+export type WorkspaceResourceWrite =
+	| { readonly kind: 'created' }
+	| { readonly kind: 'updated' }
+	| { readonly kind: 'unchanged' }
+	| SignInStoreFailure;
+
+export interface SignInStore {
+	readonly claimForAdmission: (props: { readonly personId: PersonId; readonly organizationId: OrganizationId }) => Promise<AdmissionClaim>;
+	readonly settleClaim: (props: { readonly attemptId: Uuid7; readonly personId: PersonId; readonly organizationId: OrganizationId; readonly settlement: ClaimSettlement }) => Promise<ClaimSettled>;
+	readonly listUnsettledClaims: (props: { readonly personId: PersonId; readonly organizationId: OrganizationId }) => Promise<readonly { readonly attemptId: Uuid7; readonly claimedAt: EpochMilliseconds }[] | SignInStoreFailure>;
+	readonly cleanUpRefusedSignIn: (props: { readonly personId: PersonId }) => Promise<RefusedSignInCleanup>;
+	readonly provisionBotCredential: (props: ProvisionBotCredentialProps) => Promise<BotCredentialProvision>;
+	readonly disableBotCredential: (props: { readonly clientId: BotClientId; readonly organizationId: OrganizationId }) => Promise<BotCredentialDisable>;
+	readonly setWorkspaceResource: (props: SetWorkspaceResourceProps) => Promise<WorkspaceResourceWrite>;
+	readonly recordAuditIntent: (intent: SignInAuditIntent) => Promise<{ readonly kind: 'recorded' } | { readonly kind: 'already-recorded' } | SignInStoreFailure>;
+	readonly recordAuditOutcome: (outcome: SignInAuditOutcome) => Promise<{ readonly kind: 'recorded' } | SignInStoreFailure>;
+}
+
+export function createSignInStore(props: {
+	readonly database: SignInDatabase;
+	readonly platform: Pick<SignInPlatform, 'clock' | 'ids' | 'crypto' | 'runAtomically' | 'log'>;
+}): SignInStore;
+```
+
+```ts
+// sign-in-core/contracts/sign-in-platform.ts
+export type CentralUnknown = { readonly kind: 'unknown'; readonly reason: 'unavailable' | 'timeout' | 'malformed-reply' };
+
+export type AdmitSignInAnswer =
+	| { readonly kind: 'admitted' }
+	| { readonly kind: 'not-admitted' }
+	| { readonly kind: 'awaiting-owner' }
+	| CentralUnknown; // never treated as a refusal: the claim stays (R31)
+
+export type StandingAnswer =
+	| { readonly kind: 'admitted'; readonly checkedAt: EpochMilliseconds }
+	| { readonly kind: 'not-admitted'; readonly checkedAt: EpochMilliseconds }
+	| CentralUnknown;
+
+export interface CentralClient {
+	readonly decideBotIssuance: (request: DecideBotIssuance) => Promise<BotIssuanceDecision | CentralUnknown>;
+	readonly admitSignIn: (request: AdmitSignInRequest) => Promise<AdmitSignInAnswer>;
+	readonly readStanding: (request: StandingRequest) => Promise<StandingAnswer>;
+}
+
+export interface SignInPlatform {
+	readonly clock: SignInClock; // now(): EpochMilliseconds
+	readonly ids: SignInIdSource; // nextId(): Uuid7
+	readonly crypto: SignInCrypto; // signServiceToken, randomSecret, hashClientSecret (the provider's stored-secret format)
+	readonly centralClient: CentralClient;
+	readonly runAtomically: AtomicRunner;
+	readonly log: SignInLog;
+}
+```
+
+`PersonId`, `OrganizationId`, `BotClientId`, `OneTimeSecret` and `Uuid7` are branded strings; `EpochMilliseconds` is the branded number shared with the Tool Portal's capability contract. Rows are parsed with Zod when read, and a row that does not parse is `store-unavailable` (`row-unparseable`), never "no row". The C experiment's awaited sync-or-async store and its batch on D1 and immediate transaction on `better-sqlite3` are the evidence that both hosts can supply `SignInDatabase` and `AtomicRunner` without a cast (`c-drizzle-drivers/report.md`); the product port above is this design's, not the experiment's.
 
 **The decisions that write more than one row (R31):**
 
