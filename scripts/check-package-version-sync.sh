@@ -22,23 +22,13 @@ PACKAGE_ROWS_PATH="$WORKDIR/package-rows.tsv"
 PACKAGE_VERSIONS_PATH="$WORKDIR/package-versions.txt"
 PYTHON_PACKAGE_ROWS_PATH="$WORKDIR/python-package-rows.tsv"
 
-find packages -mindepth 2 -maxdepth 2 -name package.json -print0 |
-	xargs -0 jq -r '
-			select((.name | startswith("@agent-vm/")) and .private != true) |
-			[.version, .name, input_filename] | @tsv
-		' |
-	sort -k2,2 > "$PACKAGE_ROWS_PATH"
-
-if [[ ! -s "$PACKAGE_ROWS_PATH" ]]; then
-	echo "[publish] error: no @agent-vm packages found under packages/" >&2
-	exit 1
-fi
+node scripts/release-package-selection.ts versions | sort -k2,2 > "$PACKAGE_ROWS_PATH"
 
 cut -f1 "$PACKAGE_ROWS_PATH" | sort -u > "$PACKAGE_VERSIONS_PATH"
 PACKAGE_VERSION_COUNT="$(wc -l < "$PACKAGE_VERSIONS_PATH" | tr -d '[:space:]')"
 
 if [[ "$PACKAGE_VERSION_COUNT" -ne 1 ]]; then
-	echo "[publish] error: @agent-vm package versions are not in sync" >&2
+	echo "[publish] error: npm release package versions are not in sync" >&2
 	while IFS= read -r package_row; do
 		IFS=$'\t' read -r package_version package_name package_file_path <<< "$package_row"
 		echo "[publish]   ${package_name}@${package_version} (${package_file_path})" >&2

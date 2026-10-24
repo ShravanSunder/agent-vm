@@ -46,7 +46,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
 	exit 1
 fi
 
-for required_command in curl jq uv; do
+for required_command in curl jq node uv; do
 	if ! command -v "$required_command" >/dev/null 2>&1; then
 		echo "[publish] error: required command is unavailable: $required_command" >&2
 		exit 1
@@ -60,6 +60,14 @@ cleanup() {
 	rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
+
+# Validate the complete release set before resolving credentials or publishing.
+NPM_PACKAGE_ROWS_PATH="$WORKDIR/npm-package-rows.tsv"
+node scripts/release-package-selection.ts artifacts > "$NPM_PACKAGE_ROWS_PATH"
+NPM_PACKAGE_FILTERS=()
+while IFS=$'\t' read -r package_name tarball_name; do
+	NPM_PACKAGE_FILTERS+=(--filter "$package_name")
+done < "$NPM_PACKAGE_ROWS_PATH"
 
 echo "[publish] resolving release credentials before long-running preflight"
 NPM_TOKEN="${AGENT_VM_NPM_TOKEN-}"
@@ -135,25 +143,13 @@ verify_published_release() {
 	local release_version
 	release_version="$(node -p 'require("./packages/agent-vm/package.json").version')"
 	local verification_failed="false"
-	local package_name
-	while IFS= read -r package_name; do
+	local package_name tarball_name
+	while IFS=$'\t' read -r package_name tarball_name; do
 		if [[ "$(npm view "$package_name@$release_version" version 2>/dev/null || true)" != "$release_version" ]]; then
 			echo "[publish] waiting for $package_name@$release_version on npm"
 			verification_failed="true"
 		fi
-	done < <(
-		node - <<'NODE'
-const fs = require('node:fs');
-for (const directoryName of fs.readdirSync('packages')) {
-	const manifestPath = `packages/${directoryName}/package.json`;
-	if (!fs.existsSync(manifestPath)) continue;
-	const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-	if (manifest.name?.startsWith('@agent-vm/') && manifest.private !== true) {
-		console.log(manifest.name);
-	}
-}
-NODE
-	)
+	done < "$NPM_PACKAGE_ROWS_PATH"
 
 	local python_package
 	for python_package in agent-vm-agent-portal-sdk agent-vm-hermes-adapter; do
@@ -169,7 +165,7 @@ NODE
 	[[ "$verification_failed" == "false" ]]
 }
 
-echo "[publish] checking @agent-vm package version sync"
+echo "[publish] checking release package version sync"
 bash scripts/check-package-version-sync.sh
 
 echo "[publish] verifying managed GHCR base image tags"
@@ -185,7 +181,7 @@ echo "[publish] preflighting Python artifacts"
 scripts/publish-python-local.sh --dry-run
 
 echo "[publish] preflighting npm artifacts"
-pnpm -r publish --access=public --no-git-checks --config.ignore-scripts=true --dry-run
+pnpm "${NPM_PACKAGE_FILTERS[@]}" -r publish --access=public --no-git-checks --config.ignore-scripts=true --dry-run
 
 if [[ "$DRY_RUN" == "true" ]]; then
 	echo "[publish] dry-run complete"
@@ -197,7 +193,7 @@ AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh
 unset PYPI_TOKEN
 
 echo "[publish] publishing npm artifacts"
-pnpm -r publish --access=public --no-git-checks --config.ignore-scripts=true
+pnpm "${NPM_PACKAGE_FILTERS[@]}" -r publish --access=public --no-git-checks --config.ignore-scripts=true
 
 echo "[publish] verifying complete npm and PyPI release"
 for verification_attempt in {1..12}; do
