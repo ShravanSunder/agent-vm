@@ -4,11 +4,14 @@ Return the selected journey, the complete compared target tuple, observations fo
 
 ## Establish the frozen target
 
-Work from the repository root. On a fresh clone, install the frozen dependencies before invoking the TypeScript runner:
+Work from the repository root. On a fresh clone, install and build the frozen workspace before invoking the TypeScript runner:
 
 ```bash
 mise exec node@24.7.0 -- pnpm install --frozen-lockfile
+mise exec node@24.7.0 -- pnpm build
 ```
+
+The runner imports the harness and its workspace dependencies before its own preparation build can execute, so their built exports must already exist.
 
 Read `scripts/verify-auth/verify-auth.ts`, `packages/auth/src/test-fixtures/auth-verification-cli.ts`, `packages/auth/src/test-fixtures/local-auth-harness.ts` and the selected permanent host tests before running. The runner's target declaration is an owned mode0600 JSON file outside every Git checkout, with these existing fields:
 
@@ -42,6 +45,14 @@ mise exec node@24.7.0 -- pnpm exec tsx scripts/verify-auth/verify-auth.ts agent 
 
 For a chosen evidence root, set `TMPDIR` to an existing absolute, user-owned mode0700 directory outside Git before running either command. The runner creates its `2026-10-verify-auth-*` evidence child there, and the harness uses the same `tmpdir()` for runtime SQLite and native CLI targets. Retain the actual paths the runner prints; an output-directory flag is not provided.
 
+For complete S1 proof, run the separate process lifecycle gate before the journeys in the same admitted host/slot, after setting the private `TMPDIR` above:
+
+```bash
+mise exec node@24.7.0 -- pnpm exec vitest run --project e2e-host packages/auth/src/auth-proof-process.host.e2e.test.ts --reporter=default --reporter=json --outputFile="$TMPDIR/process-vitest.json"
+```
+
+This selects exactly the two offered `process:` cases: grandchild cleanup after blocked-parent termination and after normal-parent termination. Require 2 passed, 0 failed and no selected skips; retain the report, terminal exit and the test's emitted `observed.json`/`cleanup.json` receipt paths. Neither `bootstrap` nor `agent` selects these cases. When only a journey is assigned, report the lifecycle cases as unselected rather than claiming this separate gate ran.
+
 Set `AUTH_VERIFY_TARGET_FILE` to the private declaration established above; run only the chosen journey. Select Node24.7.0 explicitly for every invocation: the runner refuses other versions, and the checkout's mise configuration does not pin Node. `--help` describes the interface; keep the explicit Node selector above even if its usage example omits it. The runner starts permanent host tests and retains a private Vitest report. Interface/help success does not establish journey operability. Inspect actual output and assertions rather than assuming a documented command has passed.
 
 The harness applies canonical migrations as one ordered real D1 batch, starts the issuer and production Gateway/DO, and supplies a controlled external Google code/S256/ID-token protocol. Better Auth itself creates the person, session, cookie, OAuth client and JWT/JWKS. The upstream records independently which workspace's credential caused each effect. The Tool Portal-owned proof wrapper delegates ordinary traffic to production `index.ts` and only adds read-only workspace membership/removal maps. Auth bundles its repository path string; Auth must not import Cloudflare source into its TypeScript program. The storage reader does not preseed membership.
@@ -72,11 +83,17 @@ Read `agent-issuer.host.e2e.test.ts`, `agent-registration-faults.host.e2e.test.t
 9. Exercise all seven J checks: held post-signing unlink (`invalid_target`), held disable (`invalid_client`), old token after membership removal before unlink (call refused), resource custom-claim organization override (`invalid_client`), workspace override (`invalid_client`), forced cross-org E11 link (early `invalid_target`, no signing), and resource organization changed after correct signing (`invalid_client`). Actual signed tokens must be withheld by the final fresh client/resource/link fence.
 10. Link/scope the real public Person code client to a workspace in test composition. Its genuine code exchange must still refuse workspace proof as `invalid_target`. Use the issuer's authentic keys to sign the legacy Worker-wide audience without `workspace_id` only as a negative control; it must enter no workspace. Positive agent/link/unlink/retirement journeys always use actual issuer APIs.
 
-These steps implement workspace-unit r3 amendment 2 and the canonical Step 0 ruling, including Later rulings 3, 5, 6 and 7, in the design worktree's `tmp/plan-workflows/`. E6/E10/E11 and J are defined in the adopted people-sign-in design at `a2e0116c`. Read the governing sources when deciding an expected result; missing sources are a prerequisite gap. D2's organization-specific sign-in DO owner/allowlist is owner-decided; implementation is deferred beyond W-cut. Configured organization facts remain a stand-in, not a proof of that storage integration.
+The joint W-cut scope combines real sign-in client/resource/link management and workspace-bound issuance with production Gateway admission, membership removal and organization retirement. E6/E10/E11 and J are defined in `docs/specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.md` and `program-design.md` in that directory at pinned revision `a2e0116c`. The workspace expectations for this recipe are:
+
+- An organization with no configured workspace is refused before any sign-in call. Tool Portal's `packages/tool-host-core/src/agent-management/workspace-agent-management.unit.test.ts` checks this boundary; the Auth `agent` journey's zero-link disable case checks the distinct allowed named-RPC operation. Do not infer the Portal boundary from that Auth case.
+- Retirement supersedes a pending unlink in the touched workspace without restoring membership, and a stale retry of the old remove reads retired completion. `packages/auth/src/workspace-retirement-overlap.host.e2e.test.ts` supplies the agent journey's real provider/D1/workspace readbacks; Portal's management test above owns exact sign-in call-count assertions.
+- The proof-only Gateway entry is Tool Portal-owned at `packages/tool-host-cloudflare/src/test-fixtures/workspace-gateway-proof-entrypoint.ts`. Auth bundles its repository path string in `packages/auth/src/test-fixtures/proof-bundle-artifacts.ts`, with no TypeScript import into Cloudflare source; ordinary requests still delegate to production `index.ts`.
+
+Read those repository sources when locating the assertions and their owners. D2's organization-specific sign-in DO owner/allowlist is owner-decided; implementation is deferred beyond W-cut. Configured organization facts remain a stand-in, not a proof of that storage integration.
 
 Later ruling 7 permits controlled-issuer positives in Tool Portal's own production-entry host matrix, including persona narrowing, label-spoof single effects and warm removal with W2 still running. Those cases do not replace real-issuer admission: O1/W1, O1/W2 and O2/W3 must each show exactly one effect under their own workspace credential and crossed refusals with zero added effects.
 
-The agent runner selects all offered `agent:` cases from retained S1 files plus `workspace-agent-issuance`, `workspace-management-boundaries`, `workspace-management-audit-faults`, `workspace-person-boundary`, `workspace-retirement-overlap` and `workspace-owner-cli` host files. Compare exact names/files against offered inventory. Preserve an explicit old-to-new map for all 28 accepted S1 cases (process 2, bootstrap 3, agent 23); do not replace an old positive path with a refusal or infer preservation from a count. Process lifecycle cases remain their separate gate before journeys.
+The agent runner selects all offered `agent:` cases from retained S1 files plus `workspace-agent-issuance`, `workspace-management-boundaries`, `workspace-management-audit-faults`, `workspace-person-boundary`, `workspace-retirement-overlap` and `workspace-owner-cli` host files. Compare exact names/files against offered inventory. Preserve an explicit old-to-new map for all 28 accepted S1 cases (process 2, bootstrap 3, agent 23); do not replace an old positive path with a refusal or infer preservation from a count. Process lifecycle cases use the separate two-case command above; neither journey covers them.
 
 Predeclare the two additional Auth wrong builds: skip only the final link fence and derive workspace identity from a discriminating wrong source. Retain each exact selected runtime assertion red, restored same-case green, source/module restoration and bounded cleanup. The historical three S1 controls below remain separate evidence; new setup/compile/timeout failures are not sensitivity reds.
 
