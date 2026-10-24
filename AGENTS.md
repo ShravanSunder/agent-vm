@@ -269,7 +269,7 @@ they do not prove the live feature.
   `set -a; source .env.local; set +a; AGENT_VM_NPM_TOKEN_OP_REF='op://agent-vm/npm-token-agent-vm-publish/credential' scripts/publish-local.sh`.
   The script defaults to that same item, reads the token through 1Password,
   writes it only to a temporary npm user config, builds the workspace once, and
-  runs `pnpm -r publish` with package lifecycle scripts disabled so per-package
+  publishes the selected packages with lifecycle scripts disabled so per-package
   `prepack` cannot rebuild the full workspace repeatedly.
   Do this before trying browser `npm login` or assuming npm auth is blocked.
   If 1Password times out, verify the same item with
