@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const requiredPortalPackageExports = [
+	'@agent-collaboration/tool-engine/capability-dispatch',
 	'@agent-collaboration/tool-access/contracts',
 	'@agent-collaboration/tool-access/authorization',
 	'@agent-vm/agent-portal-sdk',
@@ -51,6 +52,13 @@ const requiredPortalPackageExports = [
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const requiredPortalNamedExports = {
+	'@agent-collaboration/tool-engine/capability-dispatch': [
+		'createCapabilityDispatcher',
+		'dispatchInvocationSchema',
+		'operationKeySchema',
+		'operationRecordSchema',
+		'approvalReceiptSchema',
+	],
 	'@agent-collaboration/tool-access/contracts': [
 		'hostAccessBinding',
 		'assessAccessInput',
@@ -577,6 +585,12 @@ async function assertDeferredExportIsAbsent(specifier: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+	const { assertToolEngineSourceIsPortable, verifyToolEngineClosure } =
+		await import('./verify-tool-engine-closure.ts');
+	await assertToolEngineSourceIsPortable();
+	if (process.argv.includes('--packed-engine')) {
+		await verifyToolEngineClosure();
+	}
 	if (process.argv.includes('--packed-access')) {
 		const { verifyToolAccessClosure } = await import('./verify-tool-access-closure.ts');
 		await verifyToolAccessClosure();
