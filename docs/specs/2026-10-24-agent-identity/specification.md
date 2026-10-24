@@ -224,7 +224,8 @@ Issued only to a registered bot presenting an active credential, after consultin
 | Fleet → sign-in service | Confirm that a person's session is current, for an admin action (people sign-in R9). The person's standing in the organization is the fleet's own truth and is checked there. | Confirms again. Nothing changes. |
 | Fleet → sign-in service | Provision a bot credential for a registered bot (client ID, the bot and its organization; a secret returned once, or a public key) | The same client ID returns the same credential and no new secret. |
 | Fleet → sign-in service | Disable a bot credential | Disabled, or already disabled. Nothing else changes. |
-| Sign-in service → fleet | Decide whether a person may sign in to, or hold a session in, an organization, and whether they are its owner (people sign-in R2–R4, moved) | Decides again from current truth. Nothing changes. |
+| Sign-in service → fleet | Admit a Google or GitHub sign-in to an organization: may bind the allowed, unbound entry for the provider-verified email (and the owner binding), with its record (people sign-in `admitSignIn`, moved) | A repeat adds no binding. |
+| Sign-in service → fleet | Read a person's standing in an organization, for a passkey sign-in, a person token or a session confirmation (people sign-in `standing`, moved) | Reads again. Writes nothing. |
 
 Each request is authenticated as R27 states. A credential is accepted only by the receiving service it names and only for the operation it names. A credential is a bearer credential protected in transit: whoever holds an unexpired one can make that one kind of request within its scope, so each receiver also checks that the request's body is well-formed and within that scope.
 

@@ -342,12 +342,21 @@ pub enum DecideBotIssuance {
     Collaboration { organization_id: OrganizationId, client_id: ClientId },                       // → CollaborationDecision
 }
 #[serde(rename_all = "camelCase")]
-pub struct DecidePersonAdmission { pub organization_id: OrganizationId, pub person_id: PersonId, pub verified_email: String }
+#[serde(tag = "operation", rename_all = "camelCase")]
+pub enum PersonAdmissionRequest {
+    // A Google or GitHub sign-in only. May bind the allowed, unbound entry for this provider-verified
+    // email (and the owner binding when it is the owner's) with its audit record, in one transaction.
+    #[serde(rename_all = "camelCase")]
+    AdmitSignIn { organization_id: OrganizationId, person_id: PersonId, verified_email: Option<String> },
+    // A passkey sign-in, a person token issuance or a session confirmation. Writes nothing.
+    #[serde(rename_all = "camelCase")]
+    Standing { organization_id: OrganizationId, person_id: PersonId },
+}
 #[serde(tag = "result", rename_all = "camelCase")]
-pub enum PersonAdmission { Admitted { owner: bool }, Refused { reason: PersonRefusal } } // notAllowed | removed
+pub enum OrganizationStanding { Admitted { role: StandingRole }, AwaitingOwner, NotAdmitted } // role: member | owner
 ```
 
-The organization ID always comes from the authenticated client's registration (its metadata `{ botId, organizationId }`, written only through central's admin path), never from the request. The organization authority refuses a client that isn't registered to one of its bots. `DecidePersonAdmission` carries the people sign-in design's admission rules (its R2–R4) to their new home; sign-in asks it at each sign-in and each person token issuance in an organization.
+The organization ID always comes from the authenticated client's registration (its metadata `{ botId, organizationId }`, written only through central's admin path), never from the request. The organization authority refuses a client that isn't registered to one of its bots. The two person operations carry the people sign-in design's `admitSignIn` and `standing` (its Program Design, "The organization admission object") to their new home unchanged in meaning. Sign-in sends `AdmitSignIn` only for a Google or GitHub sign-in, with the provider-verified email; the binding and its audit record are one organization-authority transaction, a failed record leaves no binding, and a repeat adds none. Everything else sends `Standing`: a passkey sign-in (which starts a session only for a person already admitted there, people sign-in R3, even if their email is allowed there), each person token issuance, and each session confirmation.
 
 ### Credential management (Fleet central → sign-in service)
 
@@ -399,7 +408,7 @@ Every organization command and lookup names its organization and is refused unle
 | Fleet central → Tool Portal: deliver a notice | a service token from the issuer by client credentials with central's `private_key_jwt`: `aud` = the Portal's notice address, `scope` = `removal-notices` | issuer key; audience; scope; `client_id` is central's pinned client; the notice's organization and workspace are hosted here | no further effect (notice ID) |
 | Fleet central → sign-in: confirm a person's session | a service token as in the previous row, `aud` = the sign-in service's confirmation address, `scope` = `session-confirmation` | as above | confirms again |
 | Fleet central → sign-in: provision or disable a bot credential | a service token as above, `aud` = the sign-in service's credential address, `scope` = `credential-management` | as above; the client belongs to the named organization and bot | same client ID → same credential, no new secret; disable → `AlreadyDisabled` |
-| Sign-in → Fleet central: decide a person's admission | a service token the sign-in service self-signs, `aud` = central's admission address, `scope` = `person-admission`, lifetime ≤ 60 s | as for bot decisions | decides again |
+| Sign-in → Fleet central: admit a provider sign-in, or read a person's standing | a service token the sign-in service self-signs, `aud` = central's admission address, `scope` = `person-admission`, lifetime ≤ 60 s | as for bot decisions; `AdmitSignIn` only with a provider-verified email | `AdmitSignIn`: a repeat adds no binding; `Standing`: writes nothing |
 
 Service tokens from the issuer get a 5-minute lifetime from the issuer's resource policy for those audiences, and every receiver also refuses one whose `exp − iat` exceeds that. All edges run over TLS, including Cloudflare service bindings, which carry the same tokens. Bodies are not signed: a receiver checks that each body is well-formed and within the caller's scope (its organization and workspace exist here and the caller may act for them), not that the body is the one the caller first wrote. **Trust configuration** is pinned at deploy: each receiver's issuer URL, published-key URL and the client ID expected per operation. **Rotation:** central publishes its client key set at a fixed address the issuer reads; it adds a new key, waits one refresh, then signs with it. The issuer rotates its signing keys the existing way; receivers refetch the key set once on an unknown key ID.
 
@@ -413,7 +422,7 @@ Every issuance runs one closed dispatch on the **authenticated** client's regist
 | bot credential | client credentials | Fleet's collaboration address | `DecideBotIssuance::Collaboration` in the same contributor | principal (bot), organization, marks, `grant_expires_at`; no workspace | `aud` = the collaboration address; no workspace claim; principal is a bot |
 | Fleet's pinned client | fleet-session extension grant | a workspace address | the `Grant` in the request, inside its window | principal (session), organization, workspace, persona reference, marks, `grant_expires_at` | client is the pinned one; `aud` = the resource; principal is a session |
 | Fleet's pinned client | client credentials | a configured service audience (notices, confirmation, credential management) | none: the audience fixes the one operation | scope only; no principal | client is the pinned one; `aud` is a configured service audience; scope matches; lifetime ≤ 5 min |
-| person (sign-in app) | authorization code (existing) | the management or admin audience | `DecidePersonAdmission` | as in the people sign-in design | as there |
+| person (sign-in app) | authorization code (existing) | the management or admin audience | `AdmitSignIn` for a provider sign-in, `Standing` for a passkey sign-in and each token | as in the people sign-in design | as there |
 
 **Refused combinations** include a bot asking for a service audience, Fleet's client asking client credentials for a workspace or collaboration address, any other client using the fleet-session grant, and a person asking for a workspace address. Resource-policy `customClaims` on these resources carry none of the claim names above.
 
@@ -426,7 +435,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | membership ended, persona changed, bot retired, allowance withdrawn, session removed, session ended | organization authority, one transaction: the change, its own next mark, one outbox row per affected workspace | that transaction (decisions read the same state) | outbox → Portal, resent with capped backoff | every row acknowledged |
 | credential retired | organization authority, one transaction: the credential marked retiring, its mark, its audit record, outbox rows for the bot's member workspace, and an outbox step `DisableBotCredential` | that transaction: decisions refuse that client | outbox → Portal; outbox → issuer (`DisableBotCredential`, retried until `Disabled` or `AlreadyDisabled`) | Portal rows acknowledged and the issuer's result recorded |
 | machine revoked | Registry, existing revocation: new connections refused at commit, open sessions end when the revocation reaches them (FL-12); plus a new Registry fan-out step per organization authority | each organization authority, when it records the revocation: that transaction withdraws the machine's allowances and takes mark r_m, so no later grant for the machine is decided there. A grant decided after the Registry commit but before that record took a smaller mark, so the machine notice covers it. The Registry commit additionally stops new enrolled connections. | that same transaction writes a machine notice (removal mark r_m) per affected workspace | every organization has recorded it and every notice is acknowledged |
-| a tool profile or the session default changes at the Portal | Portal configuration | not needed: tokens carry the persona name or the default reference, and the Portal resolves both at each call | none | immediately |
+| a tool profile or the session default changes at the Portal | Portal configuration | not needed: tokens carry the persona name or the default reference, and the Portal resolves both at each call | none | from the first call served by the deployment that carries the change (persona section) |
 
 **The cut-off for each removal is a transaction in the organization authority that decides grants.** Every grant and every removal there takes its own mark in one serialized order, so "decided before the removal" is exactly "smaller mark", and the notice covers it. No unlocked read of another owner's state is the fence.
 
@@ -527,7 +536,7 @@ sequenceDiagram
   CA-->>BOT: delivered, or refused
 ```
 
-**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The decision is made in an extension access-token claim contributor, which the provider runs after client authentication and before signing (`dist/introspect-H3uoUiuS.mjs:238–262, 1831–1852`) and which receives the provider's authenticated client object (`OAuthClaimExtensionInput.client`, `dist/oauth-C_RnL2nt.d.mts:964–982`). For a client-credentials request it asks central once with `DecideBotIssuance` for `input.client.clientId` and the provider-validated `input.resources`; it throws `invalid_client`, `invalid_target` or `temporarily_unavailable` on a refusal or timeout, so nothing is minted; on a `Grant` it returns the claims. It never reads a client ID from the raw request. The existing `customAccessTokenClaims` hook keeps only its person branch and returns no claims for client credentials, because its claims merge after the contributor's and could otherwise replace them. The outer response release (`sign-in-request-handler.ts:43–51`) runs after the provider and only checks the minted response: `sub` and `client_id` agree, `aud` is the requested resource, and the workspace claim names that resource's workspace. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback**, the same surface the fleet-session grant uses: a bot extension grant calling `issueTokens` with `accessTokenClaims`.
+**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The decision is made in an extension access-token claim contributor, which the provider runs after client authentication and before signing (`dist/introspect-H3uoUiuS.mjs:238–262, 1831–1852`) and which receives the provider's authenticated client object (`OAuthClaimExtensionInput.client`, `dist/oauth-C_RnL2nt.d.mts:964–982`). For a bot's client-credentials request (the first two rows of the dispatch table) it asks central once with `DecideBotIssuance` for `input.client.clientId` and the provider-validated `input.resources`; it throws `invalid_client`, `invalid_target` or `temporarily_unavailable` on a refusal or timeout, so nothing is minted; on a `Grant` it returns the claims. It never reads a client ID from the raw request. The existing `customAccessTokenClaims` hook keeps only its person branch and returns no claims for client credentials, because its claims merge after the contributor's and could otherwise replace them. The outer response release (`sign-in-request-handler.ts:43–51`) runs after the provider and only checks the minted response, as the dispatch table's release column states for each row (no workspace claim for a collaboration token). The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback**, the same surface the fleet-session grant uses: a bot extension grant calling `issueTokens` with `accessTokenClaims`.
 
 ## How a removal reaches the Tool Portal
 
@@ -623,14 +632,14 @@ Any return from removed or ended to active is refused: a new conversation is a n
 | Situation | Detected by | Handling | Owner |
 |---|---|---|---|
 | Fleet central unreachable for issuance | timeout on the decision or token request | Refuse (C2 unavailable). The forwarder retries on the next call; existing tokens run to `grant_expires_at`. | broker; issuer |
-| A grant's mint is delayed or repeated | `decided_at` vs. now | Nothing mints after 60 s; a repeat inside it ends at the same moment | issuer |
+| A grant's mint is delayed or repeated | the issuer's clock vs. `decided_at` | Nothing mints once the issuer's clock is more than 60 s past `decided_at` (equal still mints; 0–120 s of real time under the clock model); a repeat inside it ends at the same moment | issuer |
 | Tool Portal unreachable for a notice | no acknowledgment | Resend with capped backoff; show pending; grant expiry is the backstop | organization authority |
 | Notices arrive out of order | lower mark than stored | Keep the higher; acknowledge | removal receiver |
 | Duplicate notice | same notice ID | `AlreadyRecorded`, no effect | removal receiver |
 | Portal restart | — | Marks and notice IDs are persisted before acknowledging | workspace store |
 | A grant racing a removal | marks | g < r covered; a decision after the removal takes a larger mark | organization authority |
 | Machine revoked; fan-out interrupted | Registry outbox | New connections already refused at the Registry commit; grants decided before an organization records the revocation are covered by its machine notice; fan-out resumes; pending until every organization records | Registry; organization authorities |
-| Clocks differ by up to D | — | A token may be refused up to D early; the forwarder refetches before `grant_expires_at`; retention covers D | caller check; forwarder |
+| Clocks differ by up to D | — | A token may be refused up to D before `grant_expires_at` (Portal clock ahead) or accepted up to D after it in real time (Portal clock behind); the forwarder refetches before `grant_expires_at`; retention covers D | caller check; forwarder |
 | Credential retired; issuer step fails | outbox | Decisions already refuse that client; the disable step retries; pending until confirmed | organization authority |
 | A session's token expires mid-call | — | The call admitted at its start completes; the next needs a fresh token | caller check |
 | Two starts for one conversation | same `SessionRef` | The second returns the existing registration, or `alreadyEnded` | organization authority |
@@ -698,7 +707,7 @@ There is no coexistence period. The test deployments are the only consumers, so 
 | U3, U17 | R2: a session only as vouched by its machine | E6, E7 | broker | `IssueSessionToken` over the enrolled connection | `identity_contract.rs` | session active | revoked machine → `IdentityNotProven` | Fleet integration: enrolled vs revoked |
 | U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
 | U2 | R4: bot only with an active credential | E4, E5 | issuer + organization authority | client credentials; `DecideBotIssuance` | Better Auth client + `botId`; `BotRecord` | credential active/retiring/retired | retired → `invalid_client` | sign-in integration; two-credential bot |
-| U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `DecidePersonAdmission`; the people sign-in design's interfaces | as named; audit in the organization authority | as there | admission unavailable → refuse | that design's proof re-run through central; SO7 |
+| U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `AdmitSignIn` (provider sign-in only) and `Standing` (passkey, token, confirmation); the people sign-in design's interfaces | `PersonAdmissionRequest`; audit in the organization authority | entry and owner bindings | admission unavailable → refuse; unwritable record → no binding | that design's proof re-run through central; SO7 |
 | U5 | R6: a bot in at most one workspace | E4, E8 | organization authority | `SetBotMembership` | `Membership` | active/removed | second → refused | central unit + admin API |
 | U6 | R7: session in its project's workspace, registered once | E7, E8, E16 | session registrar; organization authority | `RegisterFleetSession` | as named | session active | other project → refused; repeat → same result | Router + central with a real session; restart and resend |
 | U6 | R8: no allowance → start refused (OD1 gap) | E6, E7, E15 | organization authority | `RegisterFleetSession` | `SessionRefusal::MachineNotAllowed` | — | refused | central integration; **gap: OD1 starter rule** |
