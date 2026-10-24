@@ -52,9 +52,9 @@ it('row 16 evidence: sampled Analytics rows have the expected shape and current-
 		artifact.token,
 		configuration.admissionSecret,
 		configuration.access.clientSecret,
-		...configuration.organizations.flatMap((organization) => [
-			organization.credential,
-			organization.approvalKeyHex,
+		...configuration.workspaces.flatMap((workspace) => [
+			workspace.credential,
+			workspace.approvalKeyHex,
 		]),
 	]);
 	// Sampling proves shape and arrival only. Exact counts and exclusion from analytics remain the local capture's job.

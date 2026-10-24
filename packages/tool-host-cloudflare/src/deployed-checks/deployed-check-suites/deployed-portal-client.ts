@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 import type {
 	PrivateDeployFile,
-	PrivateOrganization,
+	PrivateWorkspace,
 } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
 import {
 	runObservationsSchema,
@@ -18,7 +18,7 @@ import {
 export interface PortalRequestOptions {
 	readonly token?: string;
 	readonly copy?: 'a' | 'b';
-	readonly organization?: PrivateOrganization;
+	readonly workspace?: PrivateWorkspace;
 	readonly agentId?: string;
 	readonly changes?: JWTPayload;
 	readonly forged?: boolean;
@@ -61,16 +61,16 @@ export async function agentToken(
 		sub: agentId,
 		aud: workspaceResourceIdentifier({
 			toolPortalOrigin: configuration.portalA.origin,
-			workspaceId: (options.organization ?? configuration.organizations[0]).organizationId,
+			workspaceId: (options.workspace ?? configuration.workspaces[0]).workspaceId,
 		}),
-		workspace_id: (options.organization ?? configuration.organizations[0]).organizationId,
+		workspace_id: (options.workspace ?? configuration.workspaces[0]).workspaceId,
 		iat: now,
 		exp: now + 3600,
 		scope: 'tool-portal:agent',
 		client_id: agentId,
 		azp: agentId,
 		jti: crypto.randomUUID(),
-		organization_id: (options.organization ?? configuration.organizations[0]).organizationId,
+		organization_id: (options.workspace ?? configuration.workspaces[0]).organizationId,
 		...options.changes,
 	})
 		.setProtectedHeader({ alg: 'ES256', kid: configuration.signingKeyId, typ: 'at+jwt' })
@@ -88,7 +88,7 @@ export async function portalRpc(
 }> {
 	const origin = options.copy === 'b' ? configuration.portalB.origin : configuration.portalA.origin;
 	const url = new URL(
-		`/workspaces/${(options.organization ?? configuration.organizations[0]).organizationId}/mcp`,
+		`/workspaces/${(options.workspace ?? configuration.workspaces[0]).workspaceId}/mcp`,
 		origin,
 	);
 	url.search = options.query ?? '';
@@ -177,38 +177,50 @@ export async function observations(configuration: PrivateDeployFile): Promise<Ru
 }
 export async function setAdmission(
 	configuration: PrivateDeployFile,
-	organization: PrivateOrganization,
-	state: 'listed' | 'removed',
-	agentId = configuration.agentId,
+	operation: { readonly workspace: PrivateWorkspace; readonly agentId?: string } & (
+		| { readonly state: 'member'; readonly persona: string }
+		| { readonly state: 'removed' }
+	),
 ): Promise<void> {
 	await (
 		await helperRequest(configuration, '/admission', 'POST', {
-			organizationId: organization.organizationId,
-			agentId,
-			state,
+			workspaceId: operation.workspace.workspaceId,
+			agentId: operation.agentId ?? configuration.agentId,
+			state: operation.state,
+			...(operation.state === 'member' ? { persona: operation.persona } : {}),
 		})
 	).body?.cancel();
 }
 export async function admitTestAgents(configuration: PrivateDeployFile): Promise<void> {
 	await Promise.all(
-		configuration.organizations.flatMap((organization) =>
+		configuration.workspaces.flatMap((workspace) =>
 			[configuration.agentId, configuration.otherAgentId].map(
 				async (agentId): Promise<void> =>
-					setAdmission(configuration, organization, 'listed', agentId),
+					setAdmission(configuration, {
+						workspace,
+						state: 'member',
+						agentId,
+						persona: agentId === configuration.agentId ? 'one' : 'two',
+					}),
 			),
 		),
 	);
 }
 export async function approvedCall(
 	configuration: PrivateDeployFile,
-	callId: string,
-	organization = configuration.organizations[0],
-	expiresAtMs = Date.now() + 6 * 60 * 60 * 1000,
+	options: {
+		readonly callId: string;
+		readonly workspace?: PrivateWorkspace;
+		readonly expiresAtMs?: number;
+	},
 ): Promise<Record<string, unknown>> {
+	const { callId } = options;
+	const workspace = options.workspace ?? configuration.workspaces[0];
+	const expiresAtMs = options.expiresAtMs ?? Date.now() + 6 * 60 * 60 * 1000;
 	const params = portalCall(configuration, callId, 'ask');
 	const approval = await signApprovalToken({
 		agentId: configuration.agentId,
-		key: Uint8Array.from(Buffer.from(organization.approvalKeyHex, 'hex')),
+		key: Uint8Array.from(Buffer.from(workspace.approvalKeyHex, 'hex')),
 		jti: crypto.randomUUID(),
 		issuedAtMs: Date.now(),
 		expiresAtMs,

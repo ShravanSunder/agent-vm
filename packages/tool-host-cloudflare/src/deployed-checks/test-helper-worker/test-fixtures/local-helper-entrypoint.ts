@@ -9,13 +9,11 @@ export default {
 		bindings: Parameters<typeof helperWorker.fetch>[1],
 	): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname === '/__listed') {
+		if (url.pathname === '/__membership') {
 			const stub = bindings.WORKSPACES.get(
-				bindings.WORKSPACES.idFromName(url.searchParams.get('organizationId') ?? ''),
+				bindings.WORKSPACES.idFromName(url.searchParams.get('workspaceId') ?? ''),
 			);
-			return Response.json({
-				listed: (await stub.readMembership(url.searchParams.get('agentId') ?? '')) !== null,
-			});
+			return Response.json(await stub.readMembership(url.searchParams.get('agentId') ?? ''));
 		}
 		return helperWorker.fetch(request, bindings);
 	},

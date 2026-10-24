@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { workspaceConfigurationSchema } from '@agent-collaboration/tool-host-core';
 import { expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { privateDeployFixture } from '#worker-host/deployed-checks/deploy-configuration/test-fixtures/private-deploy-fixture';
+import { expectedWorkspaceRecordsSchema } from '#worker-host/deployed-checks/deployed-check-suites/analytics-observations';
 
 const executeFile = promisify(execFile);
 
@@ -21,6 +24,7 @@ it('renders accepted trailing-slash helper origins through the real CLI and pass
 			JSON.stringify({
 				...fixture,
 				helper: { ...fixture.helper, origin: 'https://helper.invalid/' },
+				analyticsSqlFile: path.join(directory, 'sql-evidence', 'response.json'),
 			}),
 			{ mode: 0o600 },
 		);
@@ -46,6 +50,57 @@ it('renders accepted trailing-slash helper origins through the real CLI and pass
 				SIGN_IN_JWKS_URL: 'https://helper.invalid/jwks',
 			},
 		});
+		const parsedPortal = z
+			.object({
+				vars: z.object({ WORKSPACE_CONFIGURATIONS: z.string(), TOOL_PORTAL_ORIGIN: z.string() }),
+			})
+			.parse(portal);
+		const workspaces = z
+			.record(z.string(), workspaceConfigurationSchema)
+			.parse(JSON.parse(parsedPortal.vars.WORKSPACE_CONFIGURATIONS));
+		expect(Object.keys(workspaces)).toEqual(
+			fixture.workspaces.map((workspace) => workspace.workspaceId),
+		);
+		for (const workspace of fixture.workspaces)
+			expect(workspaces[workspace.workspaceId]).toMatchObject({
+				organizationId: workspace.organizationId,
+				workspaceName: `${fixture.runId}:${workspace.label}`,
+			});
+		const secrets = JSON.parse(await readFile(path.join(output, 'portal-a.secrets.json'), 'utf8'));
+		expect(Object.values(secrets)).toEqual(
+			fixture.workspaces.flatMap((workspace) => [workspace.credential, workspace.approvalKeyHex]),
+		);
+		const portalB = z
+			.object({ vars: z.object({ TOOL_PORTAL_ORIGIN: z.string() }) })
+			.parse(JSON.parse(await readFile(path.join(output, 'portal-b.json'), 'utf8')));
+		expect(parsedPortal.vars.TOOL_PORTAL_ORIGIN).toBe(fixture.portalA.origin);
+		expect(portalB.vars.TOOL_PORTAL_ORIGIN).toBe(fixture.portalA.origin);
+		const expected = expectedWorkspaceRecordsSchema.parse(
+			JSON.parse(
+				await readFile(path.join(directory, 'sql-evidence', 'expected-workspaces.json'), 'utf8'),
+			),
+		);
+		expect(expected).toEqual(
+			fixture.workspaces.map(({ organizationId, workspaceId, label }) => ({
+				organizationId,
+				workspaceId,
+				label,
+			})),
+		);
+		const query = await readFile(
+			path.join(directory, 'sql-evidence', 'row-16-analytics-query.sql'),
+			'utf8',
+		);
+		expect(query).toContain('blob9');
+		expect(query).toContain(fixture.workspaces[1].workspaceId);
+		expect(query).toContain(`${fixture.runId}:beta`);
+		await Promise.all(
+			['expected-workspaces.json', 'row-16-analytics-query.sql'].map(
+				async (name): Promise<void> => {
+					expect((await stat(path.join(directory, 'sql-evidence', name))).mode & 0o777).toBe(0o600);
+				},
+			),
+		);
 		const rendered = JSON.stringify(portal);
 		expect(rendered).toContain('https://helper.invalid/mcp/alpha');
 		expect(rendered).not.toContain('https://helper.invalid//');

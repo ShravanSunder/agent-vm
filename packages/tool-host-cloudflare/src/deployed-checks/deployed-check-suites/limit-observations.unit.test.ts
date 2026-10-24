@@ -22,7 +22,7 @@ function observedCalls(callIds: readonly string[]): RunObservations {
 		peakCalls: 6,
 		calls: callIds.map((callId) => ({
 			callId,
-			organizationLabel: 'alpha',
+			workspaceLabel: 'alpha',
 			toolName: 'read',
 			credential: 'own',
 			effects: 1,

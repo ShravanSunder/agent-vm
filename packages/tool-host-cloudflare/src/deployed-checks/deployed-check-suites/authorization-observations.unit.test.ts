@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	assertCallEffects,
-	assertOrganizationCatalogTools,
+	assertWorkspaceCatalogTools,
 	assertOneApprovalUse,
 	assertOwnCredential,
 	assertRefusedCall,
@@ -18,7 +18,7 @@ function observation(effects = 1, credential = 'own-credential'): RunObservation
 		calls: [
 			{
 				callId: 'one',
-				organizationLabel: 'alpha',
+				workspaceLabel: 'alpha',
 				toolName: 'read',
 				credential,
 				effects,
@@ -66,7 +66,7 @@ describe('organization catalog label boundaries', () => {
 		['my-alpha', 'alpha'],
 	])('accepts own %s when the other label is %s', (ownLabel, otherLabel) => {
 		expect(() =>
-			assertOrganizationCatalogTools({
+			assertWorkspaceCatalogTools({
 				names: [`same-server__only-${ownLabel}__hash`],
 				ownLabel,
 				otherLabel,
@@ -75,14 +75,14 @@ describe('organization catalog label boundaries', () => {
 	});
 	it('rejects an exact foreign organization tool and a missing own tool', () => {
 		expect(() =>
-			assertOrganizationCatalogTools({
+			assertWorkspaceCatalogTools({
 				names: ['same-server__only-alpha-long__hash', 'same-server__only-alpha__hash'],
 				ownLabel: 'alpha-long',
 				otherLabel: 'alpha',
 			}),
 		).toThrow();
 		expect(() =>
-			assertOrganizationCatalogTools({
+			assertWorkspaceCatalogTools({
 				names: ['same-server__read__hash'],
 				ownLabel: 'alpha-long',
 				otherLabel: 'alpha',

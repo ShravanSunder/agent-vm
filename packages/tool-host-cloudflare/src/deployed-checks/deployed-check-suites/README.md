@@ -11,7 +11,7 @@ suite; it never skips.
 Every suite re-run needs a fresh random `runId` and a fresh `evidenceDirectory`
 in the private deploy file. Keep each run's evidence together. Have the Lead
 render and redeploy the portal configurations for the new run ID: the configured
-workspace names carry that ID for Analytics queries once W5 supplies the deployment configuration.
+workspace names carry that ID as `${runId}:${label}` for Analytics queries. Both copies use portal A’s configured logical origin; B’s transport host deliberately differs, and a Host header never selects the audience.
 
 Helper counters and generated artifacts belong to one run. The row-15 held-call
 barrier can fail when `row-15-limits` is repeated under the same run ID because
@@ -62,15 +62,37 @@ Each text field is capped at 256 UTF-8 bytes on a character boundary.
 Row 16 reads `expected-workspaces.json` beside the file named by `analyticsSqlFile`.
 It must be mode 0600, outside repositories, and contain a nonempty JSON array of
 closed records `{ organizationId, workspaceId, label }`, with UUIDs for
-both IDs and no duplicate workspace IDs. W5 produces this file from its private
-deployment configuration and supplies SQL selecting index1, blob1 through blob9
-and double1 through double3. That SQL is private input, not tracked source.
+both IDs and no duplicate workspace IDs. The renderer writes this inventory and
+`row-16-analytics-query.sql` beside `analyticsSqlFile`, even when that directory
+differs from render output. `analyticsSqlFile` names the JSON response, not the
+SQL query. The generated query selects index1, blob1 through blob9, double1
+through double3 and sample interval, filtered by the current workspace IDs and
+run-labelled names, with JSON output. Concrete SQL and deployment inputs stay
+private, outside Git.
 Missing or invalid workspace evidence fails; the reader never infers workspace
 identity from an organization ID. The reader derives each expected workspace name as `${configuration.runId}:${label}`
 from the current run configuration; a stale inventory plus stale SQL cannot supply
-an old run name. W5 renders the deployed workspace names with that same convention.
+an old run name. The renderer uses that same convention for every configured workspace.
 Run membership checks the expected workspace, organization, derived current-run
 workspace name and test agent. A refused call can
 legitimately record an `unknown` server; its shape and byte bounds still apply.
 Sampling proves shape and arrival, while exact counts and privacy exclusion use
 the local capturing binding and Worker logs.
+
+## Workspace deployment boundary
+
+The private model has three explicit workspaces: two in the first organization,
+one in the second, each with its own workspace UUID, upstream credential and
+approval key. Organization records contain only sign-in IDs and labels. Legacy
+organization-as-workspace data is rejected. Portal A retains the v1 migration
+plus v2 rename to WorkspaceAuthority; B and the helper bind A’s WORKSPACES
+namespace. The templates never delete a class.
+
+`row-14-workspaces.deployed.e2e.test.ts` is a precursor using a controlled issuer
+and secret-gated helper admission as stand-ins for deployed sign-in and owner
+management. The helper writes workspace membership with the requested persona.
+It does not exercise the production management route. Real-issued deployed row14
+remains a separate gate. Row13 records B’s transport origin with the same
+A-origin workspace audience and tests the shared approval-use guard before and
+after redeployment. Rendering/dry-run/local workerd proof does not show that a
+migration ran on populated deployed objects; the Lead checks that at deployment.

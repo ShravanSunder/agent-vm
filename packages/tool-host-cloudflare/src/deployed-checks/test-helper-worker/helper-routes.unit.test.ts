@@ -13,6 +13,7 @@ import {
 } from '#worker-host/deployed-checks/test-helper-worker/observation-counters';
 
 const organizationId = '11111111-1111-4111-8111-111111111111';
+const workspaceId = '33333333-3333-4333-8333-333333333333';
 const credential = 'controlled-test-credential';
 const publicJwks = {
 	keys: [
@@ -34,7 +35,7 @@ function fixture(): { readonly ports: HelperRoutePorts; readonly admissions: unk
 		admissions,
 		ports: {
 			publicJwks,
-			organizations: { alpha: { organizationId, credential } },
+			workspaces: { alpha: { organizationId, workspaceId, credential } },
 			admissionSecret: 'admission-test-secret',
 			setAdmission: async (input): Promise<void> => {
 				admissions.push(input);
@@ -123,15 +124,16 @@ describe('controlled helper routes and counters', () => {
 			expect((await ports.observations('unit-run').snapshot()).calls).toEqual([]);
 		},
 	);
-	it('admits and removes only configured test organizations', async () => {
+	it('admits and removes only configured test workspaces', async () => {
 		const { ports, admissions } = fixture();
 		await Promise.all(
-			['listed', 'removed'].map(async (state): Promise<void> => {
+			['member', 'removed'].map(async (state): Promise<void> => {
 				expect(
 					(
 						await handleHelperRequest(
 							request('/admission', 'Bearer admission-test-secret', {
-								organizationId,
+								workspaceId,
+								...(state === 'member' ? { persona: 'two' } : {}),
 								agentId: 'same-agent',
 								state,
 							}),
@@ -146,9 +148,10 @@ describe('controlled helper routes and counters', () => {
 			(
 				await handleHelperRequest(
 					request('/admission', 'Bearer admission-test-secret', {
-						organizationId: '22222222-2222-4222-8222-222222222222',
+						workspaceId: '22222222-2222-4222-8222-222222222222',
 						agentId: 'same-agent',
-						state: 'listed',
+						state: 'member',
+						persona: 'two',
 					}),
 					ports,
 				)
@@ -179,7 +182,7 @@ describe('controlled helper routes and counters', () => {
 		await repeatCall();
 		expect((await ports.observations('unit-run').snapshot()).calls).toEqual([
 			{
-				organizationLabel: 'alpha',
+				workspaceLabel: 'alpha',
 				callId: 'one',
 				credential,
 				toolName: 'read',
@@ -194,7 +197,7 @@ describe('controlled helper routes and counters', () => {
 		expect((await ports.observations('unit-run').snapshot()).calls).toEqual([]);
 	});
 	it('tracks overlap and refuses identity reuse or an unmatched completion', () => {
-		const call = { organizationLabel: 'alpha', credential, toolName: 'read', callId: 'one' };
+		const call = { workspaceLabel: 'alpha', credential, toolName: 'read', callId: 'one' };
 		const entered = beginObservation(beginObservation(emptyObservations('unit-run'), call), {
 			...call,
 			callId: 'two',

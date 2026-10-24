@@ -4,11 +4,12 @@ import { z } from 'zod';
 import { readPrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import {
 	assertOwnCredential,
-	assertOrganizationCatalogTools,
+	assertWorkspaceCatalogTools,
 	assertRefusedCall,
 } from '#worker-host/deployed-checks/deployed-check-suites/authorization-observations';
 import {
 	admitTestAgents,
+	agentToken,
 	approvedCall,
 	observations,
 	portalCall,
@@ -18,36 +19,36 @@ import {
 	type PortalRequestOptions,
 } from '#worker-host/deployed-checks/deployed-check-suites/deployed-portal-client';
 
-it('row 14: token organization and sender own the tools and credential, including refused controls', async () => {
+it('row 14 PRECURSOR: controlled issuer and helper admission stand in for deployed sign-in and management; workspace and sender own tools and credentials', async () => {
 	const configuration = await readPrivateDeployFile();
 	await admitTestAgents(configuration);
-	const [alpha, beta] = configuration.organizations;
+	const [alpha, beta, gamma] = configuration.workspaces;
 	await Promise.all(
-		configuration.organizations.map(async (organization): Promise<void> => {
-			const callId = `control-${organization.label}-${crypto.randomUUID()}`;
+		configuration.workspaces.map(async (workspace): Promise<void> => {
+			const callId = `control-${workspace.label}-${crypto.randomUUID()}`;
 			const result = await requireRpcResult(
 				await portalRpc(configuration, 'tools/call', portalCall(configuration, callId), {
-					organization,
+					workspace,
 				}),
 			);
 			if (result.isError === true) throw new Error('Allowed control failed.');
 			assertOwnCredential(
 				await observations(configuration),
 				callId,
-				organization.credential,
-				organization.label,
+				workspace.credential,
+				workspace.label,
 			);
 			const listed = await requireRpcResult(
-				await portalRpc(configuration, 'tools/list', {}, { organization, query: 'tools=direct' }),
+				await portalRpc(configuration, 'tools/list', {}, { workspace, query: 'tools=direct' }),
 			);
 			const names = z
 				.object({ tools: z.array(z.object({ name: z.string() })) })
 				.parse(listed)
 				.tools.map((tool) => tool.name);
-			assertOrganizationCatalogTools({
+			assertWorkspaceCatalogTools({
 				names,
-				ownLabel: organization.label,
-				otherLabel: organization === alpha ? beta.label : alpha.label,
+				ownLabel: workspace.label,
+				otherLabel: workspace === alpha ? beta.label : alpha.label,
 			});
 		}),
 	);
@@ -61,7 +62,11 @@ it('row 14: token organization and sender own the tools and credential, includin
 		);
 		assertRefusedCall(await observations(configuration), callId, response);
 	};
+	const alphaToken = await agentToken(configuration, { workspace: alpha });
 	await Promise.all([
+		refuse({ workspace: beta, token: alphaToken }),
+		refuse({ workspace: gamma, token: alphaToken }),
+		refuse({ changes: { aud: configuration.portalA.origin, workspace_id: undefined } }),
 		refuse({ noToken: true }),
 		refuse({ forged: true }),
 		refuse({ changes: { exp: 1 } }),
@@ -73,16 +78,16 @@ it('row 14: token organization and sender own the tools and credential, includin
 	const foreign = await portalRpc(
 		configuration,
 		'tools/call',
-		await approvedCall(configuration, crossKeyId, alpha),
-		{ organization: beta },
+		await approvedCall(configuration, { callId: crossKeyId, workspace: alpha }),
+		{ workspace: beta },
 	);
 	assertRefusedCall(await observations(configuration), crossKeyId, foreign);
 	const own = await requireRpcResult(
 		await portalRpc(
 			configuration,
 			'tools/call',
-			await approvedCall(configuration, crossKeyId, beta),
-			{ organization: beta },
+			await approvedCall(configuration, { callId: crossKeyId, workspace: beta }),
+			{ workspace: beta },
 		),
 	);
 	if (own.isError === true) throw new Error('Own approval-key control failed.');
@@ -100,10 +105,23 @@ it('row 14: token organization and sender own the tools and credential, includin
 	);
 	if (spoof.isError === true) throw new Error('False labels changed allowed sender behavior.');
 	assertOwnCredential(await observations(configuration), spoofId, alpha.credential, alpha.label);
-	await setAdmission(configuration, alpha, 'removed');
+	await setAdmission(configuration, { workspace: alpha, state: 'removed' });
 	try {
-		await refuse({});
+		await refuse({ token: alphaToken });
+		const siblingCallId = `sibling-after-removal-${crypto.randomUUID()}`;
+		const sibling = await requireRpcResult(
+			await portalRpc(configuration, 'tools/call', portalCall(configuration, siblingCallId), {
+				workspace: beta,
+			}),
+		);
+		if (sibling.isError === true) throw new Error('Removing W1 stopped sibling W2.');
+		assertOwnCredential(
+			await observations(configuration),
+			siblingCallId,
+			beta.credential,
+			beta.label,
+		);
 	} finally {
-		await setAdmission(configuration, alpha, 'listed');
+		await setAdmission(configuration, { workspace: alpha, state: 'member', persona: 'one' });
 	}
 });

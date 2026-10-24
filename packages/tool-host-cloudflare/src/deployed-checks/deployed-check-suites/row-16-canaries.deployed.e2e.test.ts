@@ -34,8 +34,8 @@ it('row 16: send argument, result, credential and token canaries before collecti
 	assertOwnCredential(
 		await observations(configuration),
 		callId,
-		configuration.organizations[0].credential,
-		configuration.organizations[0].label,
+		configuration.workspaces[0].credential,
+		configuration.workspaces[0].label,
 	);
 	await writeRunArtifact(configuration, 'row-16-canaries.json', {
 		runId: configuration.runId,
