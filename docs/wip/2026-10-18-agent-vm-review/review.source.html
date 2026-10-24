@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Agent VM: current system and UI review</title>
+		<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css" />
+		<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+		<style>
+			.screenshot-annotation {
+				position: relative;
+			}
+			.screenshot-annotation > img {
+				display: block;
+				width: 100%;
+			}
+			.screenshot-annotation > svg {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+			}
+		</style>
+	</head>
+	<body>
+		<ex-nav for="content">
+			<nav slot="pages" aria-label="Pages">
+				<a href="review.html">Agent VM review</a>
+				<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html"
+					>Proposed tool system</a
+				>
+			</nav>
+		</ex-nav>
+		<ex-document id="content">
+			<ex-markdown id="survey" label="Current system survey" src="./review.md"></ex-markdown>
+			<section id="react-evidence">
+				<h2>Corrected React prototype: current captures</h2>
+				<p>
+					Official shadcn composition with Bridge theme. Advisor consistency recheck: 7/7 from
+					captures and source. Example data only; production authorization and audit remain unbuilt.
+				</p>
+				<ex-gallery
+					id="react-current-captures"
+					label="Corrected React workspace review"
+					selected="v2-tools-desktop"
+					><figure
+						id="v2-tools-desktop"
+						data-screen="Tools"
+						data-viewport="Wide"
+						data-state="Saved state"
+					>
+						<img src="assets/react-v2/tools-desktop.jpg" alt="Tools: Saved state, Wide" />
+						<figcaption>
+							Aligned resource tables, consistent account status and per-bucket save controls.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-remove-access-dialog"
+						data-screen="Tools"
+						data-viewport="Wide"
+						data-state="Removal confirmation"
+					>
+						<img
+							src="assets/react-v2/remove-access-dialog.jpg"
+							alt="Tools: Removal confirmation, Wide"
+						/>
+						<figcaption>
+							The AlertDialog names both affected agents and Search the web. Keep access and Discard
+							left saved state unchanged.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agents-desktop"
+						data-screen="Agents"
+						data-viewport="Wide"
+						data-state="Registered agents"
+					>
+						<img src="assets/react-v2/agents-desktop.jpg" alt="Agents: Registered agents, Wide" />
+						<figcaption>Named agents, harness metadata and neutral tool counts.</figcaption>
+					</figure>
+					<figure
+						id="v2-register-sheet"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Choose tools"
+					>
+						<img
+							src="assets/react-v2/register-sheet.jpg"
+							alt="Agent registration: Choose tools, Wide"
+						/>
+						<figcaption>Only workspace-allowed resources appear in grouped selections.</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-field-error"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Blank name"
+					>
+						<img
+							src="assets/react-v2/agent-field-error.jpg"
+							alt="Agent registration: Blank name, Wide"
+						/>
+						<figcaption>A blank input displays a field error and receives focus.</figcaption>
+					</figure>
+					<figure
+						id="v2-agents-mobile"
+						data-screen="Agents"
+						data-viewport="Phone 430 × 900"
+						data-state="Registered agents"
+					>
+						<img
+							src="assets/react-v2/agents-mobile.jpg"
+							alt="Agents: Registered agents, Phone 430 × 900"
+						/>
+						<figcaption>The table and register action fit the inspected viewport.</figcaption>
+					</figure>
+					<figure
+						id="v2-register-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Choose tools"
+					>
+						<img
+							src="assets/react-v2/register-mobile.jpg"
+							alt="Agent registration: Choose tools, Phone 430 × 900"
+						/>
+						<figcaption>The stock Sheet keeps form controls and footer reachable.</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-field-error-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Blank name"
+					>
+						<img
+							src="assets/react-v2/agent-field-error-mobile.jpg"
+							alt="Agent registration: Blank name, Phone 430 × 900"
+						/>
+						<figcaption>
+							Keyboard submission displays the error and focuses the name field. Full phone save
+							remains unobserved.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-saved-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Saved"
+					>
+						<img
+							src="assets/react-v2/agent-saved-mobile.jpg"
+							alt="Agent registration saved on a 430 by 900 phone viewport"
+						/>
+						<figcaption>
+							Mobile helper is registered with no resource tools; the Sheet closes and the success
+							toast appears.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-reloaded-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Reloaded"
+					>
+						<img
+							src="assets/react-v2/agent-reloaded-mobile.jpg"
+							alt="Saved mobile agent retained after a phone-page reload"
+						/>
+						<figcaption>
+							The same fixture process returns Mobile helper with an empty resource-tool subset
+							after reload. This is not restart durability.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-sidebar-mobile"
+						data-screen="Navigation"
+						data-viewport="Phone 430 × 900"
+						data-state="Open Sidebar"
+					>
+						<img
+							src="assets/react-v2/sidebar-mobile.jpg"
+							alt="Navigation: Open Sidebar, Phone 430 × 900"
+						/>
+						<figcaption>
+							The registry mobile Sheet shows the active section; Escape closes it.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-accounts-desktop"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Cancelled"
+					>
+						<img src="assets/react-v2/accounts-desktop.jpg" alt="Accounts: Cancelled, Wide" />
+						<figcaption>Account status uses the same Badge mapping as Tools.</figcaption>
+					</figure>
+					<figure
+						id="v2-account-confirmation"
+						data-screen="Account confirmation"
+						data-viewport="Wide"
+						data-state="Pending"
+					>
+						<img
+							src="assets/react-v2/account-confirmation.jpg"
+							alt="Account confirmation: Pending, Wide"
+						/>
+						<figcaption>
+							Google granted is labelled and separated from the account name input.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-cancel-connection-dialog"
+						data-screen="Account confirmation"
+						data-viewport="Wide"
+						data-state="Cancellation confirmation"
+					>
+						<img
+							src="assets/react-v2/cancel-connection-dialog.jpg"
+							alt="Account confirmation: Cancellation confirmation, Wide"
+						/>
+						<figcaption>
+							Cancellation names the account and consequence; empty alias validation does not block
+							it.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-account-cancelled"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Terminal cancellation"
+					>
+						<img
+							src="assets/react-v2/account-cancelled.jpg"
+							alt="Accounts: Terminal cancellation, Wide"
+						/>
+						<figcaption>
+							The Sheet closes, the status becomes Cancelled and a toast confirms the fixture
+							result.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-audit-desktop"
+						data-screen="Audit log"
+						data-viewport="Wide"
+						data-state="Example events"
+					>
+						<img src="assets/react-v2/audit-desktop.jpg" alt="Audit log: Example events, Wide" />
+						<figcaption>
+							Human resource labels and changed values; cancellation details are not repeated.
+						</figcaption>
+					</figure></ex-gallery
+				>
+			</section>
+			<section id="react-baseline">
+				<h2>Rejected first React iteration: baseline</h2>
+				<p>
+					The owner rejected this iteration. These captures preserve prior fixture observations
+					only; the corrected composition is shown above.
+				</p>
+				<ex-gallery
+					id="react-captures"
+					label="React workspace review"
+					selected="react-workspace-tools"
+					><figure
+						id="react-workspace-tools"
+						data-screen="Workspace tools"
+						data-viewport="Wide"
+						data-state="Initial"
+					>
+						<img src="assets/react/workspace-tools.jpg" alt="Workspace tools: Initial, wide view" />
+						<figcaption>
+							Workspace availability with explicit resource source and approval descriptions.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agent-validation"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Invalid name"
+					>
+						<img
+							src="assets/react/agent-validation.jpg"
+							alt="Agent registration: Invalid name, wide view"
+						/>
+						<figcaption>Blank name: inline error and focus on the agent-name field.</figcaption>
+					</figure>
+					<figure
+						id="react-agent-registered"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Registered"
+					>
+						<img
+							src="assets/react/agent-registered.jpg"
+							alt="Agent registration: Registered, wide view"
+						/>
+						<figcaption>
+							A named Hermes agent with a selected subset; unavailable workspace tools are disabled.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agent-server-error"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Duplicate name"
+					>
+						<img
+							src="assets/react/agent-server-error.jpg"
+							alt="Agent registration: Duplicate name, wide view"
+						/>
+						<figcaption>Server rejection shown without discarding the entered values.</figcaption>
+					</figure>
+					<figure
+						id="react-account-confirmation"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Pending"
+					>
+						<img
+							src="assets/react/account-confirmation.jpg"
+							alt="Account connection: Pending, wide view"
+						/>
+						<figcaption>
+							Account alias confirmation, with team resource and consent meaning separated.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-account-cancel"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Cancelled"
+					>
+						<img
+							src="assets/react/account-cancel.jpg"
+							alt="Account connection: Cancelled, wide view"
+						/>
+						<figcaption>
+							Cancel with an empty alias reaches a terminal result without a stale field error.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-account-connected"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Confirmed"
+					>
+						<img
+							src="assets/react/account-connected.jpg"
+							alt="Account connection: Confirmed, wide view"
+						/>
+						<figcaption>A fresh fixture confirms the example team account.</figcaption>
+					</figure>
+					<figure
+						id="react-service-unavailable"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Save unavailable"
+					>
+						<img
+							src="assets/react/service-unavailable.jpg"
+							alt="Agent registration: Save unavailable, wide view"
+						/>
+						<figcaption>
+							A failed save preserves the typed draft and shows the server failure.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-audit-log"
+						data-screen="Audit"
+						data-viewport="Wide"
+						data-state="Example events"
+					>
+						<img src="assets/react/audit-log.jpg" alt="Audit: Example events, wide view" />
+						<figcaption>
+							Before/after changes read back from the same fixture process. No durable audit-service
+							proof.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agents-narrow"
+						data-screen="Agent registration"
+						data-viewport="Narrow"
+						data-state="Agent list"
+					>
+						<img
+							src="assets/react/agents-narrow.jpg"
+							alt="Agent registration: Agent list, narrow view"
+						/>
+						<figcaption>Navigation and list fit the inspected narrow width.</figcaption>
+					</figure>
+					<figure
+						id="react-agent-form-narrow"
+						data-screen="Agent registration"
+						data-viewport="Narrow"
+						data-state="Form"
+					>
+						<img
+							src="assets/react/agent-form-narrow.jpg"
+							alt="Agent registration: Form, narrow view"
+						/>
+						<figcaption>
+							Registration controls and action remain reachable at narrow width.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-workspace-narrow"
+						data-screen="Workspace tools"
+						data-viewport="Narrow"
+						data-state="Resources"
+					>
+						<img
+							src="assets/react/workspace-narrow.jpg"
+							alt="Workspace tools: Resources, narrow view"
+						/>
+						<figcaption>The resource rows stack without horizontal page overflow.</figcaption>
+					</figure></ex-gallery
+				>
+			</section>
+			<section id="ui-evidence">
+				<h2>Current UI: annotated observations</h2>
+				<p>
+					These annotations are review markup over unchanged screenshots. The shared image inspector
+					opens the original capture.
+				</p>
+				<figure id="cancel-annotation">
+					<div class="screenshot-annotation">
+						<img
+							src="assets/cancel-empty-alias.jpg"
+							alt="Account confirmation after Cancel was blocked by an empty required account name"
+						/>
+						<svg viewBox="0 0 1417 1039" aria-hidden="true">
+							<defs>
+								<marker
+									id="cancel-arrow"
+									markerWidth="10"
+									markerHeight="10"
+									refX="8"
+									refY="3"
+									orient="auto"
+								>
+									<path
+										d="M0,0 L8,3 L0,6"
+										fill="none"
+										stroke="var(--accent)"
+										stroke-width="1.5"
+									></path>
+								</marker>
+							</defs>
+							<rect
+								x="286"
+								y="355"
+								width="591"
+								height="57"
+								rx="8"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<path
+								d="M1060 267 L980 267 L700 417"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+								marker-end="url(#cancel-arrow)"
+							></path>
+							<circle
+								cx="1075"
+								cy="267"
+								r="23"
+								fill="var(--bg)"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></circle>
+							<text x="1075" y="275" text-anchor="middle" fill="var(--accent)" font-size="24">
+								A
+							</text>
+						</svg>
+					</div>
+					<figcaption>
+						<strong>A — Cancel is blocked.</strong> Emptying the account name causes native form
+						validation to prevent the cancel request. Zero POSTs were recorded; a nonempty-name
+						control produced one cancel POST. UI1 describes the proposed repair.
+					</figcaption>
+				</figure>
+				<figure id="consent-annotation">
+					<div class="screenshot-annotation">
+						<img
+							src="assets/consent-desktop.jpg"
+							alt="Consent page showing the Workspace application Off while a retained Calendar selection is highlighted"
+						/>
+						<svg viewBox="0 0 1275 1461" aria-hidden="true">
+							<rect
+								x="309"
+								y="913"
+								width="800"
+								height="49"
+								rx="7"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<rect
+								x="309"
+								y="1181"
+								width="800"
+								height="51"
+								rx="7"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<path
+								d="M1170 945 L1135 945 L1135 1206 L1110 1206"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></path>
+							<circle
+								cx="1186"
+								cy="945"
+								r="23"
+								fill="var(--bg)"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></circle>
+							<text x="1186" y="953" text-anchor="middle" fill="var(--accent)" font-size="24">
+								B
+							</text>
+						</svg>
+					</div>
+					<figcaption>
+						<strong>B — Retained choices look active while Off.</strong> The summary and submitted
+						mode correctly exclude the application. The visual treatment does not distinguish its
+						retained Custom choices from active selections. UI2 proposes that distinction.
+					</figcaption>
+				</figure>
+			</section>
+			<section>
+				<h2>Captured pages</h2>
+				<ex-gallery
+					id="ui-captures"
+					label="Current Agent VM OAuth pages"
+					selected="accounts-desktop"
+				>
+					<figure
+						id="accounts-desktop"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Fixture"
+					>
+						<img
+							src="assets/accounts-desktop.jpg"
+							alt="Current accounts page with two fixture agents"
+						/>
+						<figcaption>
+							Existing owner index: account connections are selected per agent. This is not persona
+							registration.
+						</figcaption>
+					</figure>
+					<figure
+						id="consent-desktop"
+						data-screen="Consent"
+						data-viewport="Wide"
+						data-state="Initial selections"
+					>
+						<img src="assets/consent-desktop.jpg" alt="Current Google consent form at wide width" />
+						<figcaption>
+							One application Recommended, another Off. Original capture used by annotation B.
+						</figcaption>
+					</figure>
+					<figure
+						id="consent-narrow"
+						data-screen="Consent"
+						data-viewport="Narrow"
+						data-state="Initial selections"
+					>
+						<img
+							src="assets/consent-narrow.jpg"
+							alt="Current consent form in the inspected narrow viewport"
+						/>
+						<figcaption>
+							Narrow view: the page fits the observed width, while the form remains tall and draft
+							choices remain visually prominent.
+						</figcaption>
+					</figure>
+					<figure
+						id="cancel-empty-alias"
+						data-screen="Confirmation"
+						data-viewport="Wide"
+						data-state="Cancel blocked"
+					>
+						<img
+							src="assets/cancel-empty-alias.jpg"
+							alt="Native validation blocks the Cancel button"
+						/>
+						<figcaption>
+							Original capture used by annotation A. This is a browser-reproduced cancellation
+							defect.
+						</figcaption>
+					</figure>
+					<figure
+						id="policy-desktop"
+						data-screen="Account policy"
+						data-viewport="Wide"
+						data-state="Editing"
+					>
+						<img
+							src="assets/policy-desktop.jpg"
+							alt="Account policy editor showing defaults, overrides and current limits"
+						/>
+						<figcaption>
+							Defaults, overrides and effective policy are different values; future cleanup must
+							preserve all three.
+						</figcaption>
+					</figure>
+					<figure
+						id="policy-preview-desktop"
+						data-screen="Account policy"
+						data-viewport="Wide"
+						data-state="Preview"
+					>
+						<img
+							src="assets/policy-preview-desktop.jpg"
+							alt="Read-only account policy preview with confirmation action"
+						/>
+						<figcaption>
+							No editable controls or draft-revision action. The real editor's preview/revision
+							lifecycle remains a source finding, not a live-server proof.
+						</figcaption>
+					</figure>
+				</ex-gallery>
+			</section>
+		</ex-document>
+	</body>
+</html>
