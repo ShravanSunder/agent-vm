@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Agent VM: current system and UI review</title>
+		<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css" />
+		<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+		<style>
+			.screenshot-annotation {
+				position: relative;
+			}
+			.screenshot-annotation > img {
+				display: block;
+				width: 100%;
+			}
+			.screenshot-annotation > svg {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+			}
+		</style>
+	</head>
+	<body>
+		<ex-nav for="content">
+			<nav slot="pages" aria-label="Pages">
+				<a href="review.html">Agent VM review</a>
+				<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html"
+					>Proposed tool system</a
+				>
+			</nav>
+		</ex-nav>
+		<ex-document id="content">
+			<ex-markdown id="survey" label="Current system survey"
+				><script type="application/json" data-ex-markdown-source="">
+					{
+						"text": "# Agent VM: what you can review now\n\n**Start with the corrected React review prototype.** The owner selected React, Base UI, current shadcn components, `cn` and `@shadcn/lint`, using AgentStudio Bridge's theme. The prototype makes workspace tools, named agents, team-account confirmation and audit presentation concrete. Production registration, distributed identity and authorization remain design work.\n\n| Open | What it lets you review | Evidence boundary |\n| --- | --- | --- |\n| [React workspace prototype](http://127.0.0.1:61691/) | Workspace availability, agent tool selection, account confirmation, validation, failed saves and audit presentation | New review-only React UI with a fixture backend. No real identity, credentials, provider consent, grants or tool execution. |\n| [Current React screenshots](review.html#react-evidence) | Corrected tables, forms, dialogs and phone Sidebar | Captured from the actual prototype. Advisor consistency recheck passed 7/7 from captures and source; this is not production or accessibility acceptance. [Source and reproduction](react-prototype/README.md). |\n| [Current UI preview](http://127.0.0.1:62901/) | Accounts, Google consent, account confirmation, policy editing/preview and status pages | Real current renderers and browser asset with fixture data. No live account, authenticated session, policy store or execution backend. |\n| [System walkthrough](../../specs/2026-10-14-portable-tool-portal-hosts/index.html#system-model) | Why routing, identity, credentials and approvals need separate owners; proposed package changes | Proposed design, with unresolved choices labelled. |\n| [Fleet Framework draft](../../specs/2026-10-18-fleet-framework/2026-10-18-fleet-framework.md) | Shared vocabulary, owner decisions and product ownership | Parent overview and questions exist; shared Requirements and Specification still follow. |\n| [Annotated UI captures](review.html#ui-evidence) | The two clearest current interaction/presentation problems | Browser observations of fixture pages, with original screenshots retained. |\n\nThe survey source is this design worktree at `8535fdd4`. Local `master` is `33914cbe` (Gondolin 0.13 qualification); the relevant config, Tool Portal, MCP, OAuth UI/broker, Gateway Runtime, OAuth controller and approval directories have no source delta between those revisions. This is local-source comparison, not a deployment/version claim.\n\n## The selected UI direction\n\nThe first React iteration was rejected by the owner. This revision replaces its page composition with the official Base UI shadcn `base-mira` Sidebar, Card, Table, Sheet, Switch, RadioGroup, AlertDialog, Item, Badge, Tooltip and Sonner components, alongside the form controls. The footer slogan, decorative shields, repeated architecture descriptions and link-blue metadata are removed. Product text names a resource, choice, constraint or outcome; the architecture belongs in these documents.\n\nThe frontend uses React and the official Base UI shadcn `base-mira` controls. Bridge provides its dark palette, semantic tokens, system typography and compact density. The native app, RPC, viewer providers and global viewer clipping are not copied.\n\n| Concern | Where it belongs |\n| --- | --- |\n| Control appearance, focus, disabled and invalid states | Official shadcn components over Base UI, themed through semantic tokens |\n| Page layout, draft state and field feedback | React feature components |\n| Class joining and Tailwind conflict resolution | Official [`cn`](https://github.com/shadcn-ui/cn) package |\n| Design-system constraints | Official [`@shadcn/lint`](https://github.com/shadcn-ui/lint) plugin in Oxlint |\n| Input validation | Shared input schemas in the review fixture; independent server validation remains required in production |\n| Identity, membership, grants, credentials and approval decisions | Their protected backend owners; a browser component cannot authorize them |\n\n**The earlier recommendation to retain Hono JSX is superseded.** Hono may remain an HTTP host; its JSX renderer is not the selected frontend. A product cutover will replace the rendered pages and small browser enhancement with the React frontend, while preserving the existing authenticated route, Origin, CSRF, revision and final-admission obligations. Program Design proposes a browser-only `@agent-vm/tool-control-ui` home; production command contracts and integration still need completion and review. This review prototype does not make that cutover.\n\nThe inspected fixture uses `React 19.3.1`, `@base-ui/react 1.9.0`, `shadcn 4.22.0`, `cn 0.5.0`, `@shadcn/lint 0.2.1`, `Oxlint 1.88.0` and `Tailwind 4.3.3`. At the research cutoff, npm listed `shadcn 4.22.1`; the resolver selected `4.22.0` under its release-age policy. A newly published PostCSS dependency failed that policy, so the fixture pins compatible `postcss 8.5.30`. The release-age protection stays enabled and dependency build scripts stay denied. These are fixture pins, not a product dependency update.\n\n## What exists today\n\nThe managed path currently has these owners:\n\n```text\nHermes / SDK client\n  → Gateway Runtime composes Tool Portal\n      → MCP provider backend\n      → controller execution backend\n      → Tool VM runner backend\n\nHost controller\n  → managed approval ledger and final admission\n  → OAuth broker, protected credential use and runtime containment\n  → VM/lease orchestration\n\nHuman browser\n  → authenticated controller OAuth routes\n      → server-rendered account/consent/policy pages\n      → broker or policy editor owns the actual change\n```\n\nThe browser does not own tool permissions or approval records. Its current script only updates the permission-selection summary. The controller routes enforce browser identity, request binding, CSRF, revisions and service readiness. The fixture preview substitutes the controller/backend side, so it demonstrates presentation and native form behaviour only.\n\n| Existing package/home | Its current job | Inspect |\n| --- | --- | --- |\n| `config-contracts` | Complete agent profiles, tool/backend bindings, call policy and provider configuration schemas | [Tool Portal profiles](../../../packages/config-contracts/src/tool-portal-config.ts#L307) |\n| `tool-portal` | Plan and dispatch a capability through one of three backend ports | [Dispatch](../../../packages/tool-portal/src/tool-portal-service.ts#L611) |\n| `mcp-portal` | Upstream MCP runtime, MCP projection/listener and standalone admission | [Package surfaces](../../../packages/mcp-portal/package.json#L16) |\n| `gateway-runtime` | Compose the managed Tool Portal, provider clients and private controller connection | [Production composition](../../../packages/gateway-runtime/src/production/gateway-runtime-production-service.ts#L541) |\n| `agent-vm` | CLI, controller, managed approval ledger, runtime and execution ownership | [Controller composition](../../../packages/agent-vm/src/controller/controller-runtime.ts#L684) |\n| `oauth-broker` | Account grants/catalog, provider policy and controlled credential use | [Runtime credential policy](../../../packages/oauth-broker/src/google/google-runtime-credential-policy.ts#L28) |\n| `oauth-approval-ui` | Google consent, account connection/policy and waiting pages | [Public renderers](../../../packages/oauth-approval-ui/src/server/index.ts) |\n| `secret-management` | Environment/1Password secret-reference and resolution boundary | [Contracts](../../../packages/secret-management/src/contracts.ts#L6) |\n| SDK and control-contract packages | Wire shapes, client calls, artifacts and private control contracts | [SDK exports](../../../packages/agent-portal-sdk/src/index.ts), [control exports](../../../packages/gateway-control-contracts/src/index.ts#L57) |\n\nThe proposed shared `tool-access`, `credential-broker`, renamed `mcp-gateway`, `mcp-connectors`, `tool-host-node`, `tool-host-cloudflare` and `tool-control-ui` homes are **not implemented packages**. Their responsibilities are proposed in [Program Design](../../specs/2026-10-14-portable-tool-portal-hosts/program-design.md#the-packages-and-why-each-exists).\n\n## Registration: the useful starting point\n\nToday's authoring is spread across three concerns:\n\n| Configuration | What the operator supplies |\n| --- | --- |\n| `system.json` | Zones, agent declarations and Tool VM resource-profile selection |\n| `tool-portal.config.jsonc` | Agent-to-profile assignment, complete tool policy and explicit backend binding |\n| `mcp.config.jsonc` | Downstream MCP provider connections |\n\nThe inspected schema uses `agents.\u003cagentId>.profile` and `profiles.\u003cprofile>.namespaces`; each namespace names `mcp_provider`, `controller_execution` or `tool_vm_runner`. The [effective-config builder](../../../packages/agent-vm/src/gateway/mcp-portal-effective-config.ts#L401) projects the managed policy into provider inputs. Tool VM resource profiles are separately selected in [system configuration](../../../packages/agent-vm/src/config/system-config.ts#L766).\n\n**What needs building:** an easy registration path that binds an agent/persona's selected tools to its workspace allowance and produces a complete effective assignment. The new prototype demonstrates the screen; current product schemas still have no workspace/persona registration field. The shared entity, membership and verified revision contracts remain prerequisites for production.\n\nThe [Fleet Framework owner decisions](../../specs/2026-10-18-fleet-framework/2026-10-18-fleet-framework.md#owner-decisions-in-this-design-verbatim) now provide these constraints:\n\n- F-23/F-24: register an agent in a harness; workspace availability bounds its agent/persona selections. Resource categories are separate from execution backend kinds. The owner has not identified the fourth category, so the prototype shows only the three named ones.\n- F-27/F-29/F-35: managers are per workspace and may grant its agents use of connected **team accounts**. They cannot give a shared agent a person's personal account. This prospectively widens today's owner-and-allowed-agent admission for team accounts; it is not implemented by this UI. How an account is classified remains open.\n- F-28/F-30/F-35: record security and permission changes; attribute actions to the agent, with requester attribution when known. “On behalf of” is a log label: the agent uses its own access, never the requester's accounts. Audit ownership/storage/retention and requester pass-through remain open.\n- F-32: a multi-workspace bot discovers the union of tools, but each call names a workspace and must fit that workspace's allowance for the agent. Other memberships do not widen that call. This catches mistakes and attributes use; it does not isolate mutually distrusting workspaces from a bot that can deliberately select either. Credential/header/connection carriage and verification are still design work.\n\nThe prototype illustrates one workspace's administration. It does not implement union discovery, verified call context, per-workspace credentials, agent attestation or collaboration defaults.\n\nExecution placement stays separate. F-10/F-11 permit a workspace-registered external bot to use MCP while running in a VM we do not control. Registration does not require hosting that agent's loop or turning its VM into an Agent VM-managed machine.\n\nF-34 treats each host or VM as its own boundary; identity must not be inferred from physical hardware. F-36 narrows this framework work to Tool Portal, MCP gateway/portal and related access components. This survey is not a redesign of the entire VM controller.\n\n## Three different permission experiences\n\n| Experience | What the person decides | Current position |\n| --- | --- | --- |\n| Google consent | Which provider scopes an account grants | Existing browser pages and broker |\n| Account tool policy | Whether permitted account operations are denied, ask each time or allowed | Existing account-policy editor |\n| Exact action approval | Whether one particular protected operation may dispatch | Managed controller authority exists; generic Router/IDE presentation and distributed continuation remain design work |\n\nThe name `oauth-approval-ui` makes these easy to conflate. The current pages explicitly distinguish consent from per-call policy. Preserve that distinction when making presentation components reusable.\n\n## Current Hono JSX baseline: findings to preserve in the React cutover\n\nThe current product implementation is server-rendered Hono JSX plus native forms and a **24-line browser entry**. These are baseline findings, not the selected frontend architecture. The new React fixture addresses account cancellation and field/error feedback; the full provider-consent and policy-editor migration is still unbuilt.\n\n### UI1 — Cancel depends on an unrelated required field\n\n**Browser reproduced.** On account confirmation, clearing the account name and pressing Cancel displays “Please fill out this field.” No POST reaches the fixture listener. With a nonempty name, Cancel produces one POST to the cancel endpoint.\n\nThe [required alias](../../../packages/oauth-approval-ui/src/server/oauth-approval-renderer.tsx#L350) and [Cancel submit button](../../../packages/oauth-approval-ui/src/server/oauth-approval-renderer.tsx#L367) share a form. Cancel has no validation bypass. The smallest repair is a cancellation control that submits without validating the alias, while retaining server-side identity, Origin and CSRF checks. Confirm must still require a valid name.\n\n### UI2 — Off looks as though permissions are selected\n\n**Browser observed; usability judgment.** The Workspace application is Off while Read Calendar is rendered as a blue checked choice. Its summary correctly excludes the application, and switching Off preserves Custom edits. That is intentional selection retention, but active access and retained draft choices look alike.\n\nShow retained Custom selections as inactive until Custom is selected, or disclose that section only when relevant. Preserve edits when modes change. The [renderer](../../../packages/oauth-approval-ui/src/server/oauth-approval-renderer.tsx#L112) and [CSS](../../../packages/oauth-approval-ui/src/styles/oauth.css#L112) need one consistent presentation model; `.permission-options` defines a grid but is not used by the inspected JSX.\n\n### UI3 — Policy preview has no draft-revision path\n\n**Source-backed; full browser/server recovery unverified.** The rendered preview removes editable controls and offers Confirm, but no Edit choices action. The [editor](../../../packages/agent-vm/src/controller/oauth/google-account-policy-editor.ts#L271) has already rotated CSRF and moved to `preview`; resubmitting the old edit page cannot revise that context.\n\nA usable revision path must preserve the draft and current authority checks. This needs an explicit editor transition and route, not a browser-only Back button. Existing identity/revision/maximum checks remain required.\n\n### UI4 — Presentation and asset loading share a module\n\n**Source observed.** The approval renderer is 593 lines and owns the filesystem asset loader, render validation, page selection, several page components and document shell. The policy renderer is 391 lines; document/head/stylesheet markup repeats in all three renderer files.\n\nThe selected separation is:\n\n```text\nReact frontend\n  shared shadcn components + Bridge theme\n  workspace-tools / agent-registration\n  account-consent / account-policy / account-status\n\nProtected host routes\n  browser authentication + request/CSRF binding\n  parsed commands + revision checks\n  calls into policy, credential and approval owners\n\nBackend authorities\n  identity and membership / tool policy / credentials / approvals / audit\n```\n\nThese are responsibilities. Program Design proposes the browser package `@agent-vm/tool-control-ui`; this does not settle its public HTTP contracts. The React bundle can be static assets; Node-only file loading belongs with a host adapter. Portable permission and credential contracts must remain independent of the browser and of a particular host runtime. The separate portable-portal design still owns that split.\n\n### UI5 — Existing tests miss the browser boundary\n\nThe inspected renderer tests check strings, escaping and native-control markup. Controller HTTP tests parse forms with [a regex helper](../../../packages/agent-vm/src/controller/oauth/oauth-access-http.integration.test.ts#L80) and submit requests directly. Those checks do not execute browser constraint validation, focus, CSS or change events.\n\nKeep those tests. Add a small real-browser journey for Cancel, Off/Recommended/Custom, retained edits, disabled groups, error focus, preview revision and narrow layouts when implementing the cleanup. These new journeys have not been built here.\n\n## Suggested review order\n\n1. Open the React prototype: Workspace tools → Agents → Accounts → Audit log.\n2. Inspect its desktop/narrow and error-state captures below.\n3. Compare the current UI baseline to identify the consent/policy behaviours that the replacement must retain or repair.\n4. Review workspace authority against F-23–F-32, then inspect package boundaries in the system walkthrough.\n\nThe next production design needs an explicit React cutover, verified workspace/agent commands, and the migration/proof plan for consent and policy editing. Avoid shipping a second Hono presentation path beside it. Account policy transitions, registration authority and durable audit remain backend work; fixture success does not settle them.\n\n## Proof and limits\n\n### Corrected React review prototype\n\n| Check | Observed result | Limit |\n| --- | --- | --- |\n| `pnpm --dir /private/tmp/2026-10-agent-vm-react-workspace run typecheck` | Exit 0 | Scratch frontend and fixture types only. |\n| `pnpm --dir /private/tmp/2026-10-agent-vm-react-workspace run lint` | Exit 0; 35 TS/TSX files, 102 active rules, zero diagnostics. The earlier wrong-Button control failed with three intended shadcn errors. | Generated components use the documented implementation overrides. Sonner's `toaster` is the sole named structural-class allowance. |\n| `pnpm --dir /private/tmp/2026-10-agent-vm-react-workspace run format:check` | Exit 0; 39 matched files | Formatter proof only. |\n| `pnpm --dir /private/tmp/2026-10-agent-vm-react-workspace run build` | Exit 0; JavaScript and Tailwind assets built | No product build or deployed host. |\n| Retained source | 46 non-README files byte-identical to the active prototype | No dependencies or generated bundles copied into the checkout. |\n| Advisor's seven-point UI bar | 7/7 from corrected captures and source; original placeholder finding withdrawn | Advice based on captures/source, not an independent browser run or full design acceptance. |\n\nThe current captures were refreshed after restoring Bridge's shared border/focus reset. The same theme supplies a visible active navigation token and quieter border token; no component-specific paint or override stylesheet was added. Table columns share the same widths across resource buckets. Tools and Accounts use one `AccountStatusBadge`; cancelled, pending and connected remain distinct.\n\n**Actual browser observations:**\n\n- Desktop and `430 × 900` phone: blank agent name shows `Enter a name.` and focuses the name input. The phone registration Sheet and footer fit the inspected viewport. Escape closes it. A separate actual `430 × 900` run registered Mobile helper with no resource tools, closed the Sheet, showed the success toast and retained that row after reload. Fixture readback confirmed its empty resource-tool subset; this proves same-process save/reload only. The phone Sidebar opens as the registry Sheet, with the active item visible, and closes with Escape. The viewport override was reset afterwards.\n- Pending account: the Sheet labels Google’s grants; empty-name Confirm shows a field error. Cancel still opens an AlertDialog naming the account and consequence. Confirming cancellation closes the Sheet, shows `Cancelled` and emits the cancellation toast.\n- Removing an assigned tool opens an AlertDialog naming the affected agents and tool. This final observation used Keep access and Discard, leaving the main fixture’s saved state unchanged.\n- Hash navigation between Tools, Agents, Accounts and Audit updates the corresponding page. Mouse/CDP controls were unreliable in this browser session; accessibility expansion and keyboard Return/Space/Escape provided the observed interactions.\n- Earlier runs of these React view components saved a workspace change, narrowed the affected agent, registered a named Hermes agent with no resource tools and read back the corresponding example events. The final corrections changed tokens, composition and labels, not backend authority.\n\nThe unchanged fixture backend's earlier negative controls rejected blank names, outside-workspace tools, stale revisions and unavailable writes with `400`, `403`, `409` and `503`, with no state change. The earlier failed-save observation retained the typed draft. Those observations are fixture evidence; they do not establish the protected production route.\n\n**Unverified:** screen-reader/keyboard coverage beyond the named actions, held pending/loading states, the new full provider-consent/policy-editor frontend, protected identity/membership commands, real account grants, durable audit, approvals and deployed authorization. No automated product suite ran. Same-process readback and the fixture JSONL journal do not prove restart durability.\n\nAdvisor optional notes remain: align the account Sheet's Item inset with its title, explain non-connected account availability in a Tooltip, and use a neutral cancellation toast. They do not change the shared authority design.\n\nThe earlier React screenshots remain below as an explicitly rejected baseline. Their v1 visual claims are not current UI acceptance.\n\n### Existing UI baseline\n\nThe fixture uses 22 byte-identical non-test source copies from the UI/contracts packages and the repository's exact Hono, Zod, esbuild, Tailwind and TSX pins. Its request log contains one positive-control cancel POST after zero requests for the invalid-field case. Permission summary changes from one group/one application to three groups/two applications, then back to one when Workspace is Off; the blocked write control remains disabled. The narrow consent page has no page-width overflow in the inspected viewport.\n\nNo product files, credentials, provider grants, controller state or VMs changed. No product test suite or deployed authorization path was run. The standalone preview replaces authenticated routes and all state/effect services; it is **presentation evidence, not approval or security integration proof**. The system walkthrough also retains its recorded active-tour/outline duplicate-control limitation.\n",
+						"reference": "./review.md"
+					}
+				</script></ex-markdown
+			>
+			<section id="react-evidence">
+				<h2>Corrected React prototype: current captures</h2>
+				<p>
+					Official shadcn composition with Bridge theme. Advisor consistency recheck: 7/7 from
+					captures and source. Example data only; production authorization and audit remain unbuilt.
+				</p>
+				<ex-gallery
+					id="react-current-captures"
+					label="Corrected React workspace review"
+					selected="v2-tools-desktop"
+					><figure
+						id="v2-tools-desktop"
+						data-screen="Tools"
+						data-viewport="Wide"
+						data-state="Saved state"
+					>
+						<img src="assets/react-v2/tools-desktop.jpg" alt="Tools: Saved state, Wide" />
+						<figcaption>
+							Aligned resource tables, consistent account status and per-bucket save controls.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-remove-access-dialog"
+						data-screen="Tools"
+						data-viewport="Wide"
+						data-state="Removal confirmation"
+					>
+						<img
+							src="assets/react-v2/remove-access-dialog.jpg"
+							alt="Tools: Removal confirmation, Wide"
+						/>
+						<figcaption>
+							The AlertDialog names both affected agents and Search the web. Keep access and Discard
+							left saved state unchanged.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agents-desktop"
+						data-screen="Agents"
+						data-viewport="Wide"
+						data-state="Registered agents"
+					>
+						<img src="assets/react-v2/agents-desktop.jpg" alt="Agents: Registered agents, Wide" />
+						<figcaption>Named agents, harness metadata and neutral tool counts.</figcaption>
+					</figure>
+					<figure
+						id="v2-register-sheet"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Choose tools"
+					>
+						<img
+							src="assets/react-v2/register-sheet.jpg"
+							alt="Agent registration: Choose tools, Wide"
+						/>
+						<figcaption>Only workspace-allowed resources appear in grouped selections.</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-field-error"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Blank name"
+					>
+						<img
+							src="assets/react-v2/agent-field-error.jpg"
+							alt="Agent registration: Blank name, Wide"
+						/>
+						<figcaption>A blank input displays a field error and receives focus.</figcaption>
+					</figure>
+					<figure
+						id="v2-agents-mobile"
+						data-screen="Agents"
+						data-viewport="Phone 430 × 900"
+						data-state="Registered agents"
+					>
+						<img
+							src="assets/react-v2/agents-mobile.jpg"
+							alt="Agents: Registered agents, Phone 430 × 900"
+						/>
+						<figcaption>The table and register action fit the inspected viewport.</figcaption>
+					</figure>
+					<figure
+						id="v2-register-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Choose tools"
+					>
+						<img
+							src="assets/react-v2/register-mobile.jpg"
+							alt="Agent registration: Choose tools, Phone 430 × 900"
+						/>
+						<figcaption>The stock Sheet keeps form controls and footer reachable.</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-field-error-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Blank name"
+					>
+						<img
+							src="assets/react-v2/agent-field-error-mobile.jpg"
+							alt="Agent registration: Blank name, Phone 430 × 900"
+						/>
+						<figcaption>
+							Keyboard submission displays the error and focuses the name field. Full phone save
+							remains unobserved.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-saved-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Saved"
+					>
+						<img
+							src="assets/react-v2/agent-saved-mobile.jpg"
+							alt="Agent registration saved on a 430 by 900 phone viewport"
+						/>
+						<figcaption>
+							Mobile helper is registered with no resource tools; the Sheet closes and the success
+							toast appears.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-agent-reloaded-mobile"
+						data-screen="Agent registration"
+						data-viewport="Phone 430 × 900"
+						data-state="Reloaded"
+					>
+						<img
+							src="assets/react-v2/agent-reloaded-mobile.jpg"
+							alt="Saved mobile agent retained after a phone-page reload"
+						/>
+						<figcaption>
+							The same fixture process returns Mobile helper with an empty resource-tool subset
+							after reload. This is not restart durability.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-sidebar-mobile"
+						data-screen="Navigation"
+						data-viewport="Phone 430 × 900"
+						data-state="Open Sidebar"
+					>
+						<img
+							src="assets/react-v2/sidebar-mobile.jpg"
+							alt="Navigation: Open Sidebar, Phone 430 × 900"
+						/>
+						<figcaption>
+							The registry mobile Sheet shows the active section; Escape closes it.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-accounts-desktop"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Cancelled"
+					>
+						<img src="assets/react-v2/accounts-desktop.jpg" alt="Accounts: Cancelled, Wide" />
+						<figcaption>Account status uses the same Badge mapping as Tools.</figcaption>
+					</figure>
+					<figure
+						id="v2-account-confirmation"
+						data-screen="Account confirmation"
+						data-viewport="Wide"
+						data-state="Pending"
+					>
+						<img
+							src="assets/react-v2/account-confirmation.jpg"
+							alt="Account confirmation: Pending, Wide"
+						/>
+						<figcaption>
+							Google granted is labelled and separated from the account name input.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-cancel-connection-dialog"
+						data-screen="Account confirmation"
+						data-viewport="Wide"
+						data-state="Cancellation confirmation"
+					>
+						<img
+							src="assets/react-v2/cancel-connection-dialog.jpg"
+							alt="Account confirmation: Cancellation confirmation, Wide"
+						/>
+						<figcaption>
+							Cancellation names the account and consequence; empty alias validation does not block
+							it.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-account-cancelled"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Terminal cancellation"
+					>
+						<img
+							src="assets/react-v2/account-cancelled.jpg"
+							alt="Accounts: Terminal cancellation, Wide"
+						/>
+						<figcaption>
+							The Sheet closes, the status becomes Cancelled and a toast confirms the fixture
+							result.
+						</figcaption>
+					</figure>
+					<figure
+						id="v2-audit-desktop"
+						data-screen="Audit log"
+						data-viewport="Wide"
+						data-state="Example events"
+					>
+						<img src="assets/react-v2/audit-desktop.jpg" alt="Audit log: Example events, Wide" />
+						<figcaption>
+							Human resource labels and changed values; cancellation details are not repeated.
+						</figcaption>
+					</figure></ex-gallery
+				>
+			</section>
+			<section id="react-baseline">
+				<h2>Rejected first React iteration: baseline</h2>
+				<p>
+					The owner rejected this iteration. These captures preserve prior fixture observations
+					only; the corrected composition is shown above.
+				</p>
+				<ex-gallery
+					id="react-captures"
+					label="React workspace review"
+					selected="react-workspace-tools"
+					><figure
+						id="react-workspace-tools"
+						data-screen="Workspace tools"
+						data-viewport="Wide"
+						data-state="Initial"
+					>
+						<img src="assets/react/workspace-tools.jpg" alt="Workspace tools: Initial, wide view" />
+						<figcaption>
+							Workspace availability with explicit resource source and approval descriptions.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agent-validation"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Invalid name"
+					>
+						<img
+							src="assets/react/agent-validation.jpg"
+							alt="Agent registration: Invalid name, wide view"
+						/>
+						<figcaption>Blank name: inline error and focus on the agent-name field.</figcaption>
+					</figure>
+					<figure
+						id="react-agent-registered"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Registered"
+					>
+						<img
+							src="assets/react/agent-registered.jpg"
+							alt="Agent registration: Registered, wide view"
+						/>
+						<figcaption>
+							A named Hermes agent with a selected subset; unavailable workspace tools are disabled.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agent-server-error"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Duplicate name"
+					>
+						<img
+							src="assets/react/agent-server-error.jpg"
+							alt="Agent registration: Duplicate name, wide view"
+						/>
+						<figcaption>Server rejection shown without discarding the entered values.</figcaption>
+					</figure>
+					<figure
+						id="react-account-confirmation"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Pending"
+					>
+						<img
+							src="assets/react/account-confirmation.jpg"
+							alt="Account connection: Pending, wide view"
+						/>
+						<figcaption>
+							Account alias confirmation, with team resource and consent meaning separated.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-account-cancel"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Cancelled"
+					>
+						<img
+							src="assets/react/account-cancel.jpg"
+							alt="Account connection: Cancelled, wide view"
+						/>
+						<figcaption>
+							Cancel with an empty alias reaches a terminal result without a stale field error.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-account-connected"
+						data-screen="Account connection"
+						data-viewport="Wide"
+						data-state="Confirmed"
+					>
+						<img
+							src="assets/react/account-connected.jpg"
+							alt="Account connection: Confirmed, wide view"
+						/>
+						<figcaption>A fresh fixture confirms the example team account.</figcaption>
+					</figure>
+					<figure
+						id="react-service-unavailable"
+						data-screen="Agent registration"
+						data-viewport="Wide"
+						data-state="Save unavailable"
+					>
+						<img
+							src="assets/react/service-unavailable.jpg"
+							alt="Agent registration: Save unavailable, wide view"
+						/>
+						<figcaption>
+							A failed save preserves the typed draft and shows the server failure.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-audit-log"
+						data-screen="Audit"
+						data-viewport="Wide"
+						data-state="Example events"
+					>
+						<img src="assets/react/audit-log.jpg" alt="Audit: Example events, wide view" />
+						<figcaption>
+							Before/after changes read back from the same fixture process. No durable audit-service
+							proof.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-agents-narrow"
+						data-screen="Agent registration"
+						data-viewport="Narrow"
+						data-state="Agent list"
+					>
+						<img
+							src="assets/react/agents-narrow.jpg"
+							alt="Agent registration: Agent list, narrow view"
+						/>
+						<figcaption>Navigation and list fit the inspected narrow width.</figcaption>
+					</figure>
+					<figure
+						id="react-agent-form-narrow"
+						data-screen="Agent registration"
+						data-viewport="Narrow"
+						data-state="Form"
+					>
+						<img
+							src="assets/react/agent-form-narrow.jpg"
+							alt="Agent registration: Form, narrow view"
+						/>
+						<figcaption>
+							Registration controls and action remain reachable at narrow width.
+						</figcaption>
+					</figure>
+					<figure
+						id="react-workspace-narrow"
+						data-screen="Workspace tools"
+						data-viewport="Narrow"
+						data-state="Resources"
+					>
+						<img
+							src="assets/react/workspace-narrow.jpg"
+							alt="Workspace tools: Resources, narrow view"
+						/>
+						<figcaption>The resource rows stack without horizontal page overflow.</figcaption>
+					</figure></ex-gallery
+				>
+			</section>
+			<section id="ui-evidence">
+				<h2>Current UI: annotated observations</h2>
+				<p>
+					These annotations are review markup over unchanged screenshots. The shared image inspector
+					opens the original capture.
+				</p>
+				<figure id="cancel-annotation">
+					<div class="screenshot-annotation">
+						<img
+							src="assets/cancel-empty-alias.jpg"
+							alt="Account confirmation after Cancel was blocked by an empty required account name"
+						/>
+						<svg viewBox="0 0 1417 1039" aria-hidden="true">
+							<defs>
+								<marker
+									id="cancel-arrow"
+									markerWidth="10"
+									markerHeight="10"
+									refX="8"
+									refY="3"
+									orient="auto"
+								>
+									<path
+										d="M0,0 L8,3 L0,6"
+										fill="none"
+										stroke="var(--accent)"
+										stroke-width="1.5"
+									></path>
+								</marker>
+							</defs>
+							<rect
+								x="286"
+								y="355"
+								width="591"
+								height="57"
+								rx="8"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<path
+								d="M1060 267 L980 267 L700 417"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+								marker-end="url(#cancel-arrow)"
+							></path>
+							<circle
+								cx="1075"
+								cy="267"
+								r="23"
+								fill="var(--bg)"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></circle>
+							<text x="1075" y="275" text-anchor="middle" fill="var(--accent)" font-size="24">
+								A
+							</text>
+						</svg>
+					</div>
+					<figcaption>
+						<strong>A — Cancel is blocked.</strong> Emptying the account name causes native form
+						validation to prevent the cancel request. Zero POSTs were recorded; a nonempty-name
+						control produced one cancel POST. UI1 describes the proposed repair.
+					</figcaption>
+				</figure>
+				<figure id="consent-annotation">
+					<div class="screenshot-annotation">
+						<img
+							src="assets/consent-desktop.jpg"
+							alt="Consent page showing the Workspace application Off while a retained Calendar selection is highlighted"
+						/>
+						<svg viewBox="0 0 1275 1461" aria-hidden="true">
+							<rect
+								x="309"
+								y="913"
+								width="800"
+								height="49"
+								rx="7"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<rect
+								x="309"
+								y="1181"
+								width="800"
+								height="51"
+								rx="7"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></rect>
+							<path
+								d="M1170 945 L1135 945 L1135 1206 L1110 1206"
+								fill="none"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></path>
+							<circle
+								cx="1186"
+								cy="945"
+								r="23"
+								fill="var(--bg)"
+								stroke="var(--accent)"
+								stroke-width="3"
+							></circle>
+							<text x="1186" y="953" text-anchor="middle" fill="var(--accent)" font-size="24">
+								B
+							</text>
+						</svg>
+					</div>
+					<figcaption>
+						<strong>B — Retained choices look active while Off.</strong> The summary and submitted
+						mode correctly exclude the application. The visual treatment does not distinguish its
+						retained Custom choices from active selections. UI2 proposes that distinction.
+					</figcaption>
+				</figure>
+			</section>
+			<section>
+				<h2>Captured pages</h2>
+				<ex-gallery
+					id="ui-captures"
+					label="Current Agent VM OAuth pages"
+					selected="accounts-desktop"
+				>
+					<figure
+						id="accounts-desktop"
+						data-screen="Accounts"
+						data-viewport="Wide"
+						data-state="Fixture"
+					>
+						<img
+							src="assets/accounts-desktop.jpg"
+							alt="Current accounts page with two fixture agents"
+						/>
+						<figcaption>
+							Existing owner index: account connections are selected per agent. This is not persona
+							registration.
+						</figcaption>
+					</figure>
+					<figure
+						id="consent-desktop"
+						data-screen="Consent"
+						data-viewport="Wide"
+						data-state="Initial selections"
+					>
+						<img src="assets/consent-desktop.jpg" alt="Current Google consent form at wide width" />
+						<figcaption>
+							One application Recommended, another Off. Original capture used by annotation B.
+						</figcaption>
+					</figure>
+					<figure
+						id="consent-narrow"
+						data-screen="Consent"
+						data-viewport="Narrow"
+						data-state="Initial selections"
+					>
+						<img
+							src="assets/consent-narrow.jpg"
+							alt="Current consent form in the inspected narrow viewport"
+						/>
+						<figcaption>
+							Narrow view: the page fits the observed width, while the form remains tall and draft
+							choices remain visually prominent.
+						</figcaption>
+					</figure>
+					<figure
+						id="cancel-empty-alias"
+						data-screen="Confirmation"
+						data-viewport="Wide"
+						data-state="Cancel blocked"
+					>
+						<img
+							src="assets/cancel-empty-alias.jpg"
+							alt="Native validation blocks the Cancel button"
+						/>
+						<figcaption>
+							Original capture used by annotation A. This is a browser-reproduced cancellation
+							defect.
+						</figcaption>
+					</figure>
+					<figure
+						id="policy-desktop"
+						data-screen="Account policy"
+						data-viewport="Wide"
+						data-state="Editing"
+					>
+						<img
+							src="assets/policy-desktop.jpg"
+							alt="Account policy editor showing defaults, overrides and current limits"
+						/>
+						<figcaption>
+							Defaults, overrides and effective policy are different values; future cleanup must
+							preserve all three.
+						</figcaption>
+					</figure>
+					<figure
+						id="policy-preview-desktop"
+						data-screen="Account policy"
+						data-viewport="Wide"
+						data-state="Preview"
+					>
+						<img
+							src="assets/policy-preview-desktop.jpg"
+							alt="Read-only account policy preview with confirmation action"
+						/>
+						<figcaption>
+							No editable controls or draft-revision action. The real editor's preview/revision
+							lifecycle remains a source finding, not a live-server proof.
+						</figcaption>
+					</figure>
+				</ex-gallery>
+			</section>
+		</ex-document>
+	</body>
+</html>

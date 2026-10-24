@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Identity end to end</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content">
+<nav slot="pages" aria-label="Pages">
+<a href="fleet-model.html">Who can do what</a>
+<a href="identity.html">Identity end to end</a>
+<a href="journeys.html">Journeys</a>
+</nav>
+</ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Identity end to end</h1>
+
+<ex-callout tone="tldr" title="Identity in four rules">
+1. **Everything that calls proves who it is with its own credential.** A name, a session ID, a board post's author or a field inside a tool call never counts as proof.
+2. **Identity is not permission.** One registry in the fleet backbone says *who* you are. Each product decides *what* you may do: agent-collaboration for boards and messages, agent-vm for tools and accounts, AgentStudio for terminals and files.
+3. **Agents are authenticated; personas carry the access.** Each running agent has its own short-lived credential and stays the caller. Its persona's profile sets what it may do, narrowed for that agent and still subject to the resource owner's current grant and audience checks.
+4. **Each hop proves something different.** Cloudflare proves *a configured service client is calling*. The agent's credential proves *which agent*. The gateway's delegation proves *for whom it acts*. Your device's signed answer proves *an authorized device answered*; the tool's owner still checks that you may approve.
+</ex-callout>
+
+<ex-callout tone="note" title="How to read this page">
+It pulls together the identity decisions from today's conversation, the three Advisors' board threads and the 🦁 Lead's spec. Marks: ✅ **decided** by you (D-number) · 🟡 **proposed**, push back here · ❓ **open**. [Section 7](#today) shows what the code does **today**; everything else is the target. The access rules (workspaces, personas, sharing) are on the [Who can do what](fleet-model.html) page.
+</ex-callout>
+
+<h2 id="cast">1. Who has an identity, and who enrolls it</h2>
+
+Arrows show who brings each identity into the fleet. Nothing joins without one of these arrows.
+
+<ex-mermaid id="cast-map">
+<script type="text/plain">
+flowchart TB
+  You["You (admin): Access sign-in"]
+  Reg["Fleet backbone: identity registry"]
+  Wife["Your wife: her own sign-in"]
+  Dev["Your devices: Mac app, iPhone app"]
+  Mach["Machine or VM: home-mac, household VM"]
+  Svc["Services on it: Router, AgentStudio Host, computer MCP"]
+  Cloud["Cloud services: MCP gateway, credential broker"]
+  Pers["Persona: codex-worker (no credential)"]
+  Launch["Launcher on a machine"]
+  Agent["Agents: codex-worker 01b, 01c"]
+  Ext["External agents: Grok, Muse"]
+  You -->|signs in| Reg
+  You -->|invites| Wife
+  You -->|enrolls| Dev
+  You -->|approves the join| Mach
+  Mach -->|registers| Svc
+  You -->|registers| Cloud
+  You -->|defines| Pers
+  Svc --> Launch
+  Launch -->|enrolls automatically, under the persona| Agent
+  Pers -.->|access comes from| Agent
+  You -->|registers by hand| Ext
+</script>
+</ex-mermaid>
+
+| Who | Example | Proves itself with | Enrolled by | Status |
+|---|---|---|---|---|
+| **You (admin)** | you | sign-in through the configured Access identity provider | — | 🟡 · ❓ one admin for everyone (call A) |
+| **Person** | your wife | her own sign-in | you invite; she signs in | 🟡 |
+| **Device** | your iPhone app | a device key enrolled to you | you, once per device | 🟡 · ❓ a device key proves the device, not that you just tapped |
+| **Machine** | `home-mac`, household VM | a valid Access assertion for its configured service client, mapped to its enrollment, plus central's machine credential check. Not proof of physical presence or of an uncloned unit | you approve a join request, once | 🟡 · ❓ clones |
+| **Service** | Router installation, AgentStudio Host, computer MCP, cloud MCP gateway | its own service credential, registered under its machine (cloud services stand alone) | the machine's launcher, or you | 🟡 |
+| **Persona** | `codex-worker` | **nothing**: a registry entry, never a caller | the workspace's owners, once per kind | ✅ D-7 · 🟡 one owning workspace |
+| **Agent** | `codex-worker#01b` | its own short-lived credential from the backbone | the launcher, automatically | ✅ D-6 · 🟡 the credential |
+| **External agent** | Grok, Muse | depends on the platform | you, by hand | ✅ D-11 · ❓ per-platform proof |
+
+Two details that matter:
+- **The iPhone app is two identities:** your device (to answer approvals) and an AgentStudio Gateway (to attach to Hosts). The pairing credential never answers an approval, and the device key never pairs a Gateway. ✅ D-4 for the Gateway · 🟡 the split.
+- **A session or conversation is not a registry principal and not proof.** In the Router a SessionRef stays an actor identity. A new conversation needs no new login, token or agent principal. 🟡
+
+<h2 id="registry">2. Who you are versus what you may do</h2>
+
+The registry answers one question: *who is this, and are they still allowed in the fleet?* It holds **no permissions**. Each product looks up the registry's IDs and applies its own rules.
+
+<ex-mermaid id="registry-map">
+<script type="text/plain">
+flowchart LR
+  Reg["Registry (backbone): who is this, is it revoked?"]
+  Collab["agent-collaboration: which boards, which agents to message"]
+  VM["agent-vm: which tools and accounts, which approval mode"]
+  AS["AgentStudio: which terminals, files and Hosts"]
+  Reg -->|IDs only| Collab
+  Reg -->|IDs only| VM
+  Reg -->|IDs only| AS
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="why-split" title="Why keep them apart" tone="planned" icon="shield-check" tag="🟡 Proposed">
+If the registry also held permissions, one compromised or buggy registry would grant everything everywhere. Kept apart, each product still applies its own ceiling. And changing what an agent may do never means re-enrolling it.
+</ex-card>
+<ex-card id="never-proof" title="Never accepted as proof" tone="risk" icon="lock" tag="🟡 Proposed">
+- a session ID or conversation ID
+- the author name on a board post
+- an agent name inside an MCP tool call
+- the `X-Forwarded-User-Agent` header
+- Cloudflare's managed MCP Portal identity for unattended agents: it calls upstream with one shared admin credential
+</ex-card>
+</ex-grid>
+
+<h2 id="enroll">3. How each one gets its identity</h2>
+
+<ex-tabs>
+<section label="You sign in" icon="user">
+
+🟡 Proposed. Matches how central admin routes work today.
+
+<ex-mermaid id="flow-admin">
+<script type="text/plain">
+sequenceDiagram
+  participant Y as You
+  participant CF as Cloudflare Access
+  participant B as Fleet backbone
+  Y->>CF: sign in through the configured identity provider
+  CF->>B: request with a signed Access assertion (your email)
+  B->>B: email matches the configured owner, so admin
+  B-->>Y: admin pages: enroll machines, define personas, register agents
+</script>
+</ex-mermaid>
+
+Your Access sign-in administers the fleet. It is **never** handed to an agent.
+
+</section>
+<section label="Add a machine" icon="cpu">
+
+🟡 Proposed (enrollment sign-in, one of the five interaction kinds ✅ D-8).
+
+<ex-mermaid id="flow-machine">
+<script type="text/plain">
+sequenceDiagram
+  participant M as New machine or VM
+  participant B as Fleet backbone
+  participant P as Your phone
+  M->>M: generate its own machine credential
+  M->>B: request to join, sends only the credential hash, shows a short code
+  B-->>P: enrollment sign-in: approve household VM?
+  P->>B: approve (signed by your device)
+  B->>B: record machine, its Access service client, the hash, its workspace
+  B-->>M: peer ID and expiry (never a secret)
+  M->>B: register its services (Router, Host, computer MCP)
+</script>
+</ex-mermaid>
+
+This follows the current one-core central design: the machine keeps its secret and central stores only a hash. The Access client ID identifies the service client; it is not its secret. The machine is assigned to **one workspace** at this step (✅ D-15). A cloned copy of an enrolled VM must not be able to act as it (❓ no design yet).
+
+</section>
+<section label="Launch an agent" icon="robot">
+
+✅ D-6 (never by hand) · 🟡 the flow · ❓ who may authorize the launcher
+
+<ex-mermaid id="flow-agent">
+<script type="text/plain">
+sequenceDiagram
+  participant L as Launcher (AgentStudio Host or Router host)
+  participant B as Fleet backbone
+  participant A as New agent
+  L->>B: enroll an agent under persona codex-worker (proves the launcher)
+  B->>B: launcher allowed for this persona? same workspace? under its count and time limits?
+  B-->>L: agent ID 01b + short-lived credential
+  L->>A: start the harness with that credential
+  A->>B: renew before expiry (stops when the agent stops)
+</script>
+</ex-mermaid>
+
+Your consent to a persona never silently widens when the persona changes. A grant you gave one agent never carries over to another agent because they share a persona; a persona-wide grant needs its own explicit OK.
+
+</section>
+<section label="External agent" icon="globe">
+
+✅ D-11 · ❓ how each platform proves it is that agent
+
+<ex-mermaid id="flow-external">
+<script type="text/plain">
+sequenceDiagram
+  participant Y as You
+  participant B as Fleet backbone
+  participant E as Muse or Grok (their platform)
+  Y->>B: register external agent muse, persona muse in household
+  B-->>Y: a credential for that platform (token, or an OAuth connector)
+  Y->>E: configure it on the platform
+  E->>B: calls boards or tools with that credential
+</script>
+</ex-mermaid>
+
+Until a platform can prove which call is which, it gets only tools that need no approval. Its posts are data, never instructions.
+
+</section>
+<section label="Your devices" icon="key">
+
+🟡 Proposed.
+
+<ex-mermaid id="flow-device">
+<script type="text/plain">
+sequenceDiagram
+  participant D as Your new iPhone app
+  participant B as Fleet backbone
+  participant M as Your Mac app (already enrolled)
+  D->>B: enroll this device for you, shows a code
+  B-->>M: approve new device?
+  M->>B: approve
+  B-->>D: device key registered to you
+</script>
+</ex-mermaid>
+
+</section>
+</ex-tabs>
+
+<h2 id="one-call">4. One tool call, every hop</h2>
+
+`codex-worker#01b`, on your Mac, asks to run a tool on the Mac through the cloud gateway.
+
+<ex-mermaid id="call-hops">
+<script type="text/plain">
+sequenceDiagram
+  participant A as Agent codex-worker 01b
+  participant CF as Cloudflare Access
+  participant G as Cloud MCP gateway
+  participant R as Registry
+  participant M as Mac (computer MCP)
+  A->>CF: call + machine service token + agent credential
+  CF->>G: admitted + signed assertion naming the service token
+  G->>G: verify assertion, map the service client to its enrollment
+  G->>R: agent credential valid and current?
+  R-->>G: agent 01b, persona codex-worker, workspace shravan
+  G->>G: persona's profile: tool allowed? which mode?
+  G->>M: gateway's own identity + delegation for agent 01b, this exact call
+  M->>M: verify gateway, verify delegation, apply the Mac's own ceiling
+  M-->>G: result, or pending approval
+  G-->>A: same result
+</script>
+</ex-mermaid>
+
+| Hop | What it proves | Proven by | Status |
+|---|---|---|---|
+| Cloudflare Access | a valid assertion for a configured service client | Cloudflare service token (no paid user seat), mapped to its enrollment | 🟡 |
+| Agent credential | *which* agent, and so which persona and workspace | the agent's short-lived backbone credential | 🟡 · ❓ how it rides through Cloudflare next to the service token (D2) |
+| Gateway policy | what this agent may do | the persona's permission profile in agent-vm | 🟡 |
+| Gateway → Mac | the gateway is acting for agent 01b, for this call only | gateway's service identity + bounded delegation | 🟡 · ❓ how far the Mac trusts the gateway's word (D2) |
+| Mac | the final yes or no | its own ceiling, plus approval if needed | 🟡 |
+
+If the gateway's signing key were stolen, it could claim to act for any agent, but only within each Mac's own ceiling. An agent-bound grant issued by the backbone instead would narrow that, at the cost of an extra exchange. ❓ D2 chooses.
+
+<h2 id="approval-proof">5. How your "approve" is proven</h2>
+
+🟡 Proposed. The inbox only carries and shows the request. Who records the decision is still open (agent-vm D3); the tool re-checks it and uses it once.
+
+<ex-mermaid id="approval-hops">
+<script type="text/plain">
+sequenceDiagram
+  participant T as Tool (resource)
+  participant I as Inbox (carries and shows)
+  participant D as Decision owner (D3, open)
+  participant P as Your iPhone app
+  participant Y as You
+  T->>I: approval request for operation K (exact call, who asked, expiry)
+  I-->>P: push: something needs you (no content)
+  P->>I: fetch, as your enrolled device
+  I-->>P: the request details
+  Y->>P: tap Approve
+  P->>I: answer signed by your device
+  I->>D: deliver the answer
+  D->>D: device authorized? you are an eligible approver? record the decision
+  D->>T: decision for K
+  T->>T: right operation? still current? then use it once
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="presenter" title="Showing is not deciding" tone="planned" icon="chat-circle" tag="🟡 Proposed">
+The IDE, Hermes or a web page may *show* the request. Only an answer authenticated as you, from your device or your signed-in session, can decide. A presenter claiming "the owner clicked approve" is refused.
+</ex-card>
+<ex-card id="gesture" title="A device key isn't a fresh tap" tone="question" icon="key" tag="❓ open">
+The device key proves the answer came from your phone, not that *you* just tapped it. For critical actions you may want Face ID on each answer. Not designed yet.
+</ex-card>
+</ex-grid>
+
+<h2 id="lifecycle">6. Stable agent, changing credentials</h2>
+
+An agent keeps one ID. Its credentials come and go. Revoking at each level stops exactly that level.
+
+<ex-mermaid id="lifecycle-map">
+<script type="text/plain">
+flowchart LR
+  P["Persona codex-worker"] --> A1["Agent 01b (stable ID)"]
+  P --> A2["Agent 01c"]
+  A1 --> C1["Credential 1 (rotated out)"]
+  A1 --> C2["Credential 2 (current)"]
+  A1 --> C3["Credential 3 (second deployment)"]
+</script>
+</ex-mermaid>
+
+| You revoke | Stops | Keeps | Status |
+|---|---|---|---|
+| one credential | that credential only | the agent, its other credentials, its history | 🟡 |
+| one agent | all of its credentials | its history, for audit | 🟡 |
+| a persona | every agent of that kind | their history | 🟡 |
+| a machine | its services, and new agents from its launcher | history; the effect on agents already running there is ❓ | 🟡 · ❓ |
+| — (rotation) | nothing | same agent, new credential; an approval still waiting may need asking again | 🟡 |
+| — (new conversation) | nothing | same agent; no new login, no new token | 🟡 |
+| — (network reconnect) | nothing | same identity; a new authenticated connection | 🟡 |
+| — (permission change) | approvals waiting under the old rules | same agent; a new assignment revision | 🟡 |
+| — (agent moved, authorized) | nothing | same agent; updated environment binding, inside its boundary | 🟡 |
+| a machine is disabled | new admissions that need it | its identity and history | 🟡 |
+
+IDs never depend on token values, key fingerprints, IP addresses or socket IDs. Presence is separate: *registered and offline* is a known identity with an unavailable target; *disabled and connected* is a live connection with access denied. 🟡
+
+How quickly every checkpoint sees a revocation is ❓ (freshness is checked at Cloudflare, at the gateway, at the Mac and before the first effect; the maximum delays aren't chosen).
+
+<h2 id="today">7. Today versus the target</h2>
+
+What the code does **now**, by product. Everything above is target design.
+
+| Product | Today, in code | Target |
+|---|---|---|
+| **agent-collaboration (Router)** | Board actors and session IDs are *declared*, not proven. An approval answer is checked against a *supplied* identity (`interaction_history_store.rs:548-562`). Central admin routes admit only the Cloudflare Access owner email, and machines may open a session (`access_rules.rs:149-155`, `feat-central-one-core` branch, not merged). No agent credentials. | Fleet backbone holds the registry, issues agent credentials, and authenticates your answers |
+| **agent-vm** | Standalone Tool Portal admits a fixed configured list of bearer credentials. MCP portal admits a bearer per request and filters tools per agent ID. Google account access is granted per account owner and a list of agent IDs (`allowedAgentIds`). Browser OAuth sign-in and Hermes approvals already use your Cloudflare Access identity (#231). | Verify backbone agent credentials; profiles per persona; one approval flow per action |
+| **AgentStudio daemon** | In design: Gateways pair with Hosts; your apps answer pane asks. I haven't checked its code. | Host is a launcher; your devices answer approvals as you |
+| **Cloudflare** | Access verifies you and service tokens. Its managed MCP Portal sends unattended calls upstream with one shared admin credential, so it can't tell agents apart. | Access in front of our gateway for agents; managed Portal at most for humans |
+
+<h2 id="open">8. What is still open</h2>
+
+<ex-grid cols="2">
+<ex-card id="open-d2" title="How the agent credential gets through Cloudflare" tone="question" icon="cloud" tag="❓ D2">
+Two candidates: send the machine's service token plus the agent's credential, or run a local proxy that attaches the agent's identity so the agent never sees it. Neither has been tried.
+</ex-card>
+<ex-card id="open-launcher" title="Who may authorize a launcher" tone="question" icon="robot" tag="❓">
+Which launcher may enroll which persona, how many agents and for how long, and what your consent covers when a persona changes.
+</ex-card>
+<ex-card id="open-revoke" title="How fast revocation lands" tone="question" icon="clock" tag="❓">
+The maximum delay at each checkpoint isn't chosen. If a checkpoint can't confirm freshness, new actions stop.
+</ex-card>
+<ex-card id="open-clone" title="Cloned VMs" tone="question" icon="hard-drives" tag="❓">
+A copied VM image must not be able to act as the original machine or its agents. No design yet.
+</ex-card>
+<ex-card id="open-external" title="External platforms" tone="question" icon="globe" tag="❓">
+How Grok or Muse prove *which* agent is calling, and whether they can tie a retry to the same call. Until then they get no approval-gated tools.
+</ex-card>
+<ex-card id="open-admin" title="One admin for everyone" tone="risk" icon="key" tag="❓ call A">
+In one fleet, you as admin, and the backbone, could forge any identity. Fine for a household that trusts you. Not fine if someone needs privacy from the admin; then each person needs their own fleet.
+</ex-card>
+</ex-grid>
+
+<ex-presentation id="walk-identity" title="Identity end to end" description="Who has an identity, how each gets it, what every hop proves, and what is still open.">
+<ex-step to="cast">Start with who has an identity and who brings each one in.</ex-step>
+<ex-step to="registry">See why the registry knows who, but never what.</ex-step>
+<ex-step to="enroll">See how a machine, an agent and an external agent each join.</ex-step>
+<ex-step to="call-hops">Follow one call and what each hop proves.</ex-step>
+<ex-step to="approval-hops">See how your approval is proven.</ex-step>
+<ex-step to="lifecycle">See what revoking each level stops.</ex-step>
+<ex-step to="today">Compare with what the code does today.</ex-step>
+<ex-step to="open">End with what is still open.</ex-step>
+</ex-presentation>
+
+</ex-document>
+</body>
+</html>

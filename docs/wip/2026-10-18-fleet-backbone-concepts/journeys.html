@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet journeys</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content">
+<nav slot="pages" aria-label="Pages">
+<a href="fleet-model.html">Who can do what</a>
+<a href="identity.html">Identity end to end</a>
+<a href="journeys.html">Journeys</a>
+</nav>
+</ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Fleet journeys</h1>
+
+<ex-callout tone="tldr" title="Ten situations, end to end">
+Each journey follows one real situation through the design: who acts, what each component checks, the outcome, and what isn't built yet. Pick one from the **Walkthroughs** menu, or scroll. The written source is `journeys.md`; the rules are in `concepts.md`.
+</ex-callout>
+
+<ex-callout tone="note" title="Cast and marks">
+**You** (admin; owner of workspace `shravan`; member of `household`) · **your wife** (owner of `wife`; member of `household`) · `shravan`: your Gmail and GitHub, your Mac, personas `codex-worker`, `mail-assistant`, `chief-of-staff` · `household`: family calendar, household board, household VM, personas `household-agent`, `muse`.
+
+Marks: ✅ decided by you · 🟡 proposed · ❓ open (call letter or T-number in `decisions-and-open-questions.md`).
+</ex-callout>
+
+<h2 id="j1">J1. Add the household VM to the fleet</h2>
+
+<ex-mermaid id="j1-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant V as Household VM
+  participant B as Backbone
+  participant P as Your iPhone
+  V->>V: generate its own machine credential
+  V->>B: request to join (sends only the hash), shows a code
+  B-->>P: enrollment sign-in: join household VM to household?
+  P->>B: approve (as your enrolled device)
+  B->>B: record machine, Access service client, hash, boundary household
+  B-->>V: peer ID and expiry, never a secret
+  V->>B: register Router, Host, computer MCP under it
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j1-out" title="Outcome" tone="done" icon="cpu" tag="✅ D-15 · 🟡 flow">
+The VM belongs to `household` only. Its files, logins and caches are household's. Household agents run here and nowhere else.
+</ex-card>
+<ex-card id="j1-gap" title="Not built yet" tone="question" icon="bug" tag="❓ call E · T-7 · T-10">
+Who creates and runs the VM (call E). Clone fencing (T-7). Central-issued machine credentials would be a new proposal (T-10).
+</ex-card>
+</ex-grid>
+
+<h2 id="j2">J2. Start coding agents on your Mac</h2>
+
+<ex-mermaid id="j2-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant H as Your Mac's Host (launcher)
+  participant B as Backbone
+  participant A as Agent codex-worker 01a
+  participant G as Cloud MCP gateway
+  participant K as Credential broker
+  H->>B: enroll an agent under persona codex-worker (proves the launcher)
+  B->>B: launcher allowed? persona in shravan? Mac in shravan? limits?
+  B-->>H: agent ID 01a + short-lived credential
+  H->>A: start the harness with that credential
+  A->>G: read Gmail (service token + agent credential)
+  G->>G: agent valid, persona slice says Gmail read = approved
+  G->>K: use your Gmail credential
+  K-->>G: messages (credential never leaves the broker)
+  G-->>A: result
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j2-out" title="Outcome" tone="done" icon="robot" tag="✅ D-6 · 🟡">
+Ten agents enroll with no per-agent action from you. Reading Gmail runs without a prompt.
+</ex-card>
+<ex-card id="j2-gap" title="Not built yet" tone="question" icon="bug" tag="❓ T-1 · T-5">
+Agent credentials in the backbone; launcher authorization (T-5); carrying the agent credential through Cloudflare (T-1). Today agent-vm grants accounts per agent ID (`allowedAgentIds`), not per persona.
+</ex-card>
+</ex-grid>
+
+<h2 id="j3">J3. An agent sends email and you approve on your phone</h2>
+
+<ex-mermaid id="j3-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant A as mail-assistant 04a
+  participant R as Resource (Gmail tool)
+  participant I as Inbox (carries and shows)
+  participant P as Your iPhone
+  participant D as Decision owner (D3)
+  A->>R: gmail.send, operation K
+  R->>R: send = requires approval, approver = you, record K pending
+  R->>I: approval request (exact email, who asked, expiry)
+  I-->>P: push (no content)
+  P->>I: fetch as your device, you tap Approve, answer signed
+  I->>D: deliver the answer
+  D->>R: decision for K
+  A->>R: continue K
+  R->>R: re-check decision, policy, requesting issuance, use once
+  R-->>A: sent, once
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j3-out" title="Outcome" tone="done" icon="envelope" tag="✅ D-8, D-9 · 🟡">
+One email. A retry of K never sends twice; a second, intentional identical email needs a new K. If you don't answer by the deadline, the agent hears "not approved: timed out" and continues without sending.
+</ex-card>
+<ex-card id="j3-gap" title="Not built yet" tone="question" icon="bug" tag="❓ T-3 · T-9">
+The D3 protocol (T-3). Authenticated answers in agent-collaboration, which today compares a supplied identity. A fresh-gesture option such as Face ID (T-9).
+</ex-card>
+</ex-grid>
+
+<h2 id="j4">J4. Grok as your chief of staff</h2>
+
+Assumes Grok is xAI-hosted, so it is an external agent (❓ call K). If it runs in your own harness, it enrolls like J2.
+
+<ex-mermaid id="j4-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant X as Grok (xAI platform)
+  participant C as agent-collaboration
+  participant W as codex-worker 01b
+  participant P as Your iPhone
+  X->>C: ask codex-worker to take this task
+  C->>C: may chief-of-staff request take-task from codex-worker? yes, with approval
+  C-->>P: approve this request?
+  P->>C: approve
+  C->>W: task from chief-of-staff (provenance shown)
+  W->>W: works with its OWN slice, never Grok's
+  W->>C: posts results to your board (allowed audience)
+  X->>C: reads the board
+</script>
+</ex-mermaid>
+
+| Profile | Capabilities | Status |
+|---|---|---|
+| Collaboration | read and post on your boards; message your coding agents; request "status" and "summarize"; "take this task" and "start agents" need your approval | 🟡 call F |
+| Tools | calendar and Gmail read approved; Gmail send requires approval; GitHub blocked | 🟡 |
+
+<ex-grid cols="2">
+<ex-card id="j4-out" title="Outcome" tone="done" icon="users" tag="✅ D-11 · 🟡">
+Grok coordinates, reads your calendar and email, and asks your agents for listed actions. It never uses their GitHub access, never reaches the household or your wife's workspace, and never acts as you. "Chief of staff" is its purpose; it grants nothing.
+</ex-card>
+<ex-card id="j4-gap" title="Not built yet" tone="question" icon="bug" tag="❓ call K · T-8">
+Per-call correlation on xAI's platform, so approval-gated tools are unavailable to Grok at first (T-8). Authenticated callers and per-persona board grants in agent-collaboration.
+</ex-card>
+</ex-grid>
+
+<h2 id="j5">J5. Muse on the household board, talk only</h2>
+
+<ex-mermaid id="j5-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant M as Muse (Meta platform)
+  participant C as agent-collaboration (household board)
+  participant H as household-agent
+  participant T as MCP portal
+  M->>C: post: add dinner Friday
+  C->>C: Muse may post here? yes
+  H->>C: reads the post
+  H->>H: may Muse request add-event? no, so do nothing
+  M--xT: no portal credential, cannot connect
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j5-out" title="Outcome" tone="done" icon="chat-circle" tag="✅ D-11 · 🟡">
+Muse talks and reads; it can't make anything happen and sees nothing outside the household board. To let it ask for events, grant exactly "request add-calendar-event from household-agent" (call F). Everything on that board is visible to Meta.
+</ex-card>
+<ex-card id="j5-gap" title="Not built yet" tone="question" icon="bug" tag="❓ call C · T-8">
+Who of you registers it (call C). Muse's platform authentication (T-8). Per-persona board grants in agent-collaboration.
+</ex-card>
+</ex-grid>
+
+<h2 id="j6">J6. The household agent uses your shared calendar</h2>
+
+<ex-mermaid id="j6-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant Y as You
+  participant S as Share (your calendar into household)
+  participant H as household-agent (household VM)
+  participant G as Cloud MCP gateway
+  participant K as Your credential broker
+  Y->>S: share calendar, recipients household-agent, ceiling read
+  H->>G: read your calendar
+  G->>G: persona household-agent, workspace household, slice and share allow read
+  G->>K: use YOUR credential within the ceiling
+  K-->>G: events (credential stays in your broker)
+  G-->>H: events
+  H->>H: writes the plan to the family calendar (household's own resource)
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j6-out" title="Outcome" tone="done" icon="clock" tag="🟡 call G">
+Read-only use of your calendar, run on household compute, under your approval policy. What the agent read can appear on the household board, where your wife sees it; sharing into the household means agreeing to that.
+</ex-card>
+<ex-card id="j6-gap" title="Revoking and gaps" tone="question" icon="bug" tag="❓ T-6">
+Revoking the share stops future reads at the next check; it doesn't recall what was read. Not built: shares; Router workspaces as a privacy boundary.
+</ex-card>
+</ex-grid>
+
+<h2 id="j7">J7. A Mac tool through the cloud, and a lost reply</h2>
+
+<ex-mermaid id="j7-flow">
+<script type="text/plain">
+sequenceDiagram
+  participant A as codex-worker 01b
+  participant G as Cloud MCP gateway
+  participant M as Your Mac (computer MCP)
+  A->>G: call Mac tool, operation K
+  G->>G: verify, then record outer (gateway, 01b, K), target Mac, inner key (Mac, 01b, K)
+  G->>M: gateway identity + delegation for 01b + approval floor
+  M->>M: verify, take the stricter mode, at most one approval
+  M->>M: create inner (Mac, 01b, K), run the tool
+  M--xG: reply lost
+  G->>M: look up (Mac, 01b, K)
+  M-->>G: finished, here is the result
+  G-->>A: same result, the tool ran once
+</script>
+</ex-mermaid>
+
+<ex-grid cols="2">
+<ex-card id="j7-out" title="Outcome" tone="done" icon="cloud" tag="🟡 P16 · ❓ call I">
+One effect, and the agent sees the same result. Recovery never runs the tool; a late original reply can't undo a finished result.
+</ex-card>
+<ex-card id="j7-gap" title="Not built yet" tone="question" icon="bug" tag="❓ T-15">
+The whole cloud → Mac path. Approval composition is call I. Direct Mac access during a cloud outage (D1) is unselected (T-15).
+</ex-card>
+</ex-grid>
+
+<h2 id="j8">J8. Requests that must be refused</h2>
+
+| Situation | Outcome | Rule |
+|---|---|---|
+| You ask `household-agent` to summarize *your* email | refused; use your own agent | ✅ D-17 |
+| Your wife's agent posts a request your `codex-worker` can read | read, not acted on for her | ✅ D-17 |
+| `codex-worker` tries to read your wife's Gmail | refused: not in `shravan`, not shared | 🟡 |
+| A test agent that may only message asks `mail-assistant` to email files outside | refused: no request grant; outside audience | 🟡 call F |
+| `codex-worker` tries to send email itself | refused: send isn't in its slice | 🟡 |
+| `household-agent` tries to run on your laptop | not allowed | ✅ D-15 |
+| `codex-worker` posts a summary of your private email on the household board | needs your explicit OK | 🟡 |
+| A presenter claims "the owner approved" | refused | 🟡 |
+| A copied VM image tries to act as the household VM | must be refused | ❓ T-7 |
+
+<h2 id="j9">J9. Revoking things</h2>
+
+| You revoke | Stops | Keeps | Status |
+|---|---|---|---|
+| your lost iPhone | its answers from then on | your other devices | 🟡 |
+| agent `codex-worker#01b` | all its credentials | its history | 🟡 |
+| persona `codex-worker` | every agent of that kind | history | 🟡 |
+| the calendar share | future reads by household agents | what was already read | 🟡 |
+| the household VM | its services; new agents from its launcher | history; running agents ❓ | 🟡 · ❓ |
+
+How quickly each checkpoint sees a revocation is open (T-6).
+
+<h2 id="j10">J10. A Host offline for five hours</h2>
+
+<ex-mermaid id="j10-flow">
+<script type="text/plain">
+stateDiagram-v2
+  [*] --> Held: lease granted
+  Held --> Held: renew every 15 min
+  Held --> Paused: expired (laptop asleep)
+  Paused --> Held: renewed on the same epoch
+  Paused --> Lost: another installation took over
+  Lost --> [*]
+</script>
+</ex-mermaid>
+
+<ex-card id="j10-out" title="Outcome" tone="decision" icon="clock" tag="✅ D-5 cadence · 🟡 FL-9 pause">
+While paused, the Host's lease-gated writes, wakes and schedules stop; reads continue. There is no queueing of writes and no bypass. "its fallacy to think they can work with llm if they are not lonline". Which AgentStudio capabilities are lease-gated is T-13.
+</ex-card>
+
+<ex-presentation id="walk-all" title="All journeys" description="One stop per journey, from adding a VM to a lease expiring.">
+<ex-step to="j1">Add the household VM: one boundary, your approval.</ex-step>
+<ex-step to="j2">Start coding agents: the launcher enrolls them.</ex-step>
+<ex-step to="j3">Approve an email once on your phone.</ex-step>
+<ex-step to="j4">Grok as chief of staff: asks, never borrows access.</ex-step>
+<ex-step to="j5">Muse: talk only, no tools.</ex-step>
+<ex-step to="j6">Share your calendar into the household.</ex-step>
+<ex-step to="j7">A lost reply never runs the tool twice.</ex-step>
+<ex-step to="j8">Requests that must be refused.</ex-step>
+<ex-step to="j9">What revoking each thing stops.</ex-step>
+<ex-step to="j10">A lease expires while the laptop sleeps.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="walk-approvals" title="Approvals journeys" description="How an action that needs you gets approved, once, and how cloud calls stay single.">
+<ex-step to="j3-flow">One approval on your phone, used once.</ex-step>
+<ex-step to="j4-flow">An agent asking another needs its own grant.</ex-step>
+<ex-step to="j7-flow">Cloud to Mac: one prompt, one effect.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="walk-household" title="Household journeys" description="The household VM, Muse on the board, and your shared calendar.">
+<ex-step to="j1-flow">The household VM joins as household's only machine.</ex-step>
+<ex-step to="j5-flow">Muse talks but can't act.</ex-step>
+<ex-step to="j6-flow">Your calendar, shared read-only.</ex-step>
+</ex-presentation>
+
+</ex-document>
+</body>
+</html>

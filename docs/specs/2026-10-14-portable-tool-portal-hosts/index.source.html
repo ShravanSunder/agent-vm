@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tool Portal: take it apart and put it back together</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-document id="content">
+
+<h1 id="top">Tool Portal: take it apart and put it back together</h1>
+
+<ex-callout tone="tldr" title="The design in five lines">
+
+- **Today's `@agent-vm/tool-portal` and `@agent-vm/mcp-portal` become pieces with one job each:** `tool-access` (the rules), `tool-engine` (shows tools and routes every call through one dispatcher), `tool-host-node` (runs it on a machine) and `tool-host-cloudflare` (runs the MCP proxy on a Worker). agent-vm plugs in through its own adapter.
+- **Behaviour stays the same.** The three ways in (agent-vm's private connection, the standalone Tool Portal and the MCP proxy) keep their tools, results, approvals and limits.
+- **The first version adds a deployed Cloudflare Worker** for team tools. Agents sign in with our own login (Better Auth, in its own sign-in Worker). An organization contains workspaces, and each workspace has its own MCP address, members and tools. Each call sends one data point to Analytics Engine.
+- **MCP 2026-07-28 only, stateless** (owner, 2026-10-21): every MCP route uses the SDK v2 handler and refuses 2025-era clients. agent-vm's private connection isn't MCP and doesn't change.
+- **Each client picks how tools are shown by its address:** `?tools=direct` gives the full list, for clients that search it themselves; the plain address gives only the search tools.
+- **Next:** per-user tools under today's permission model, computers reached through Cloudflare like Tailscale, and the chat-led change flow in the separate control UI. Code mode later, not blocked.
+</ex-callout>
+
+<ex-callout tone="question" title="Decided on 2026-10-20 to 2026-10-23">
+
+1. **Agents connect straight to our Worker and sign in with Better Auth,** not through Cloudflare's MCP Portal or Access. Cloudflare is only for reaching registered computers, like Tailscale.
+2. **Better Auth issues logins and agent tokens,** from its own sign-in Worker.
+3. **A URL parameter** (`?tools=direct`) picks how tools are shown.
+
+4. **MCP 2026-07-28 only, stateless** (2026-10-21), for what we serve. Our connections out to tool servers use whatever MCP version each server speaks (question 8, 2026-10-22).
+5. **An organization contains workspaces** (2026-10-23). The workspace is the portal's unit: its own MCP address, members, tools and token scope. Agents are its members under their own identity, and no agent uses the admin console (fleet F-73 to F-82).
+
+Still assumed unless you say otherwise: no saved history of tool calls, and both of today's approval methods are kept. Deploying uses your existing Cloudflare CLI login.
+</ex-callout>
+
+<ex-tabs data-width="reading">
+<section label="Requirements" icon="book-open">
+<ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
+</section>
+<section label="Specification" icon="shield-check">
+<ex-markdown id="specification" label="Specification" src="./2026-10-14-portable-tool-portal-hosts.md"></ex-markdown>
+</section>
+<section label="Program Design" icon="stack">
+<ex-markdown id="program-design" label="Program Design" src="./program-design.md"></ex-markdown>
+</section>
+<section label="Verification" icon="test-tube">
+<ex-markdown id="verification-design" label="Verification Design" src="./verification-design.md"></ex-markdown>
+</section>
+</ex-tabs>
+
+</ex-document>
+</body>
+</html>
