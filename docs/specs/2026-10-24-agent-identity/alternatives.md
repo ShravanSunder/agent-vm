@@ -208,9 +208,9 @@ flowchart TB
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
 | A new key file per machine | Standard signed assertions. | A new secret on every machine to create, store and rotate. | Turned down by you ("no bespoke private keys in machine") |
-| macOS Keychain | Storage the OS protects. | It doesn't work for this, and it is Mac-only. | Turned down by you |
+| macOS Keychain as the machine's identity | Storage the OS protects. | It doesn't work for this, and it is Mac-only. | Turned down by you |
 | Platform identity, for example Fly OIDC | No secret on the machine: the platform vouches. | Only for cloud VMs on such platforms. | Later, when cloud VMs arrive |
-| The existing enrolled connection | No new secret. Revoking the machine's enrollment revokes its vouching. | Vouching needs Fleet central reachable. The enrollment credential, a file only your user can read, is the machine's one secret: whoever steals it can act as every session on that machine until you revoke it. | **Chosen** by you ([U17](requirements.md#needs)) |
+| The existing enrolled connection | No new secret. Revoking the machine's enrollment revokes its vouching. | Vouching needs Fleet central reachable. The enrollment credential is the machine's one secret: whoever steals it can act as every session on that machine until you revoke it. It is kept in the Router's existing encrypted secret store, its data key in the Keychain (your decision 1201: no plaintext secrets in production); that encrypts an existing secret and adds no new key. | **Chosen** by you ([U17](requirements.md#needs)) |
 
 ## 8. How does a session's token reach the Tool Portal?
 
@@ -313,6 +313,8 @@ flowchart TB
 
 **Recommended: B. Not decided.** Until you decide, only the starter rule in [R8](specification.md#membership-and-collaboration) waits; the rest of the design doesn't depend on it.
 
+Whichever you choose, two things hold. The start names its project explicitly, and its starter is proven (you signed in, or the session the request came from), because today's start request carries no project and believes a declared creator. And a conversation started outside the fleet can't join later just by being resumed: a running conversation keeps the configuration it started with, so it would need its own attach step. The recommendation leaves that out of the first round.
+
 ## 15. Open: is a bot automatically a collaborator of every other workspace? (OD3)
 
 You said a bot is a member of at most one workspace, and "rest collaborator". That can mean two things.
@@ -367,19 +369,22 @@ Better Auth (1.7.8, unchanged in 1.7.11) sets a token's subject itself: always t
 
 ## 18. Where is a collaboration message or board write checked?
 
-A session's message or board write can take three paths today: committed on the Router that holds the project, forwarded to that Router from another, or sent as a direct message. Each must respect membership, workspace pairs and bot collaborations.
+A session's effect can take several paths today: a board write committed on the Router that holds the project or forwarded to it from another, a direct message, a conversation start, and the fleet's own writes (boards, repositories, project directory, decision records). The first draft named only the first three; the Fleet check found the start and the Fleet writes going around them. Each must respect membership, workspace pairs and bot collaborations.
 
 ```mermaid
 flowchart LR
   S["Session's Router"] -- "direct message or task" --> A["Fleet central:<br/>admit or refuse"]
   S -- "board write, holds the project" --> A
   S -- "board write, forwarded" --> H["Router holding<br/>the project"] --> A
-  A -- "admit" --> E["Stored or delivered"]
+  S -- "start a conversation" --> A
+  S -- "Fleet write" --> A
+  A -- "admit" --> E["Stored, delivered or started"]
 ```
 
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
 | Check only on the forwarded path (first draft) | One new check. | The holding Router's own writes and direct messages skip it. | Turned down by the Lead after review |
+| Check only the three message and board paths (second draft) | Three checks. | Conversation starts and Fleet writes skip them. | Turned down after the Fleet check |
 | Each Router keeps a copy of memberships and pairs and checks locally | No round trip; works while Fleet central is down. | A copy to keep correct, which you called "fishy" for tokens. | Turned down by the Lead |
 | Fleet central admits each effect before it happens, on every path | One owner of the rule; nothing stored or delivered on a refusal. A pair admits messages and tasks only. | One round trip per collaboration effect; collaboration stops while Fleet central is down (fail closed, as for tokens). | **Chosen** by the Lead ([R28](specification.md#membership-and-collaboration)) |
 
