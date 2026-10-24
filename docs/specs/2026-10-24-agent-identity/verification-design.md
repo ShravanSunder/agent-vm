@@ -52,7 +52,7 @@ Several rows use the same observation. Each is described once here.
   - central's lookups, including `RemovalStatus`;
   - board records, stored writes and delivered tasks (none after a refusal).
 
-**SO2: sign-in issuance journey** (existing `verify-auth` agent journey, to update, lasting). Its target is the local T3 sign-in Worker on real workerd, D1 and Better Auth 1.7.8. Changes:
+**SO2: sign-in issuance journey** (existing `verify-auth` agent journey, to update, lasting). Its target is the local T3 sign-in Worker on real workerd, D1 and the locked Better Auth 1.7.11 (observations made at 1.7.8 count only for 1.7.8). Changes:
 
 - Bot client credentials take their decision from a real local Fleet central.
 - A bot with two credentials gets the same `principal` through either.

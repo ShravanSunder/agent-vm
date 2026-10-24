@@ -357,11 +357,11 @@ flowchart LR
 
 ## 17. How does a token say which session it is for?
 
-Better Auth 1.7.8 sets a token's subject itself: always the signed-in user, or else the client that asked. Every session token is asked for by Fleet central, so the subject would be Fleet central for all of them.
+Better Auth (1.7.8, unchanged in 1.7.11) sets a token's subject itself: always the signed-in user, or else the client that asked. Every session token is asked for by Fleet central, so the subject would be Fleet central for all of them.
 
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
-| Make the subject the session | Standard field. | Not possible in 1.7.8 without patching the provider. | Not possible |
+| Make the subject the session | Standard field. | Not possible in 1.7.8 or 1.7.11 without patching the provider. | Not possible |
 | Create a user record per session | The subject becomes the session. | Fake "people" for every conversation, mixed into sign-in records. | Turned down by the Lead |
 | Keep Better Auth's subject, add a principal claim naming the bot or the whole session | Uses the provider as documented. The Tool Portal also checks that only Fleet central's client issued session tokens. | Every consumer reads the principal, never the subject. | **Chosen** by the Lead ([Program Design](program-design.md#workspace-and-collaboration-token-claims)) |
 
