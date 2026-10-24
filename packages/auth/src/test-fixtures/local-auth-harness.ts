@@ -97,7 +97,7 @@ export async function startLocalAuthHarness(): Promise<{
 	readonly cookie: () => string;
 	readonly managementHolds: ManagementProofControls;
 	readonly ownerToken: () => Promise<string>;
-	readonly personToken: (email: string) => Promise<string>;
+	readonly personToken: (email: string, verified?: boolean) => Promise<string>;
 	readonly auth: (pathname: string, init?: RequestInit) => Promise<Response>;
 	readonly gateway: (
 		pathname: string,
@@ -391,7 +391,7 @@ export async function startLocalAuthHarness(): Promise<{
 		});
 	}
 	await recordTarget(false);
-	async function personToken(email: string): Promise<string> {
+	async function personToken(email: string, verified = true): Promise<string> {
 		process.stderr.write('[auth-harness] owner login started\n');
 		const token = await loginThroughNativeOwnerCli({
 			target,
@@ -409,7 +409,7 @@ export async function startLocalAuthHarness(): Promise<{
 				if (!signin.ok) throw new Error('Real provider sign-in initiation refused');
 				process.stderr.write('[auth-harness] provider sign-in initiated\n');
 				const providerUrl = z.object({ url: z.url() }).parse(await signin.json()).url;
-				const callback = google.authorize(new URL(providerUrl), email);
+				const callback = google.authorize(new URL(providerUrl), email, verified);
 				const admitted = await auth(callback.toString(), {
 					headers: { 'sec-fetch-mode': 'navigate', accept: 'text/html' },
 				});
