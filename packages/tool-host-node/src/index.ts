@@ -33,3 +33,4 @@ export * from '#node-host/stdio-upstream-servers/node-provider-runtime';
 export * from '#node-host/host-configuration/mcp-proxy-config';
 
 export * from '#node-host/host-configuration/standalone-portal-config';
+export * from '#node-host/workspace-authority/node-workspace-authority-store';

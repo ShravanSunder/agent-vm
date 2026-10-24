@@ -764,6 +764,9 @@ importers:
       '@agent-collaboration/tool-engine':
         specifier: workspace:*
         version: link:../tool-engine
+      '@agent-collaboration/tool-host-core':
+        specifier: workspace:*
+        version: link:../tool-host-core
       '@agent-vm/agent-portal-sdk':
         specifier: workspace:*
         version: link:../agent-portal-sdk

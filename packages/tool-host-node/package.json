@@ -42,6 +42,7 @@
 	"dependencies": {
 		"@agent-collaboration/tool-access": "workspace:*",
 		"@agent-collaboration/tool-engine": "workspace:*",
+		"@agent-collaboration/tool-host-core": "workspace:*",
 		"@agent-vm/agent-portal-sdk": "workspace:*",
 		"@logtape/logtape": "2.3.0",
 		"@logtape/otel": "2.3.0",
