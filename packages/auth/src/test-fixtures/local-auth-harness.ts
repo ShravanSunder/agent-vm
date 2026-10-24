@@ -73,6 +73,7 @@ export function workspaceConfigurations(upstream: string): unknown {
 			},
 			portal: {
 				schemaVersion: 1,
+				sessionDefaultProfile: 'operator',
 				agents: { [registeredClientId]: {} },
 				profiles: {
 					operator: {
@@ -265,6 +266,7 @@ export async function startLocalAuthHarness(): Promise<{
 	const gatewayBindings = {
 		SIGN_IN_ISSUER: issuer,
 		SIGN_IN_JWKS_URL: `${issuer}/api/auth/jwks`,
+		FLEET_CENTRAL_CLIENT_ID: 'central',
 		TOOL_PORTAL_ORIGIN: toolPortalOrigin,
 		MANAGEMENT_AUDIENCE: managementAudience,
 		WORKSPACE_CONFIGURATIONS: JSON.stringify(workspaceConfigurations(upstream.url)),
