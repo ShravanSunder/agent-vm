@@ -72,7 +72,18 @@ function expectNoIssuedCredentials(value: unknown): void {
 	if (!object.success) return;
 	for (const [key, child] of Object.entries(object.data)) {
 		expect(
-			['access_token', 'refresh_token', 'id_token', 'client_id', 'client_secret'].includes(key),
+			[
+				'access_token',
+				'accessToken',
+				'refresh_token',
+				'refreshToken',
+				'id_token',
+				'idToken',
+				'client_id',
+				'client_secret',
+				'clientId',
+				'clientSecret',
+			].includes(key),
 		).toBe(false);
 		expectNoIssuedCredentials(child);
 	}
