@@ -71,6 +71,16 @@ export async function agentToken(
 		azp: agentId,
 		jti: crypto.randomUUID(),
 		organization_id: (options.workspace ?? configuration.workspaces[0]).organizationId,
+		principal: {
+			kind: 'bot',
+			bot_id:
+				agentId === configuration.agentId
+					? '66666666-6666-4666-8666-666666666666'
+					: '77777777-7777-4777-8777-777777777777',
+		},
+		persona: { kind: 'named', name: agentId === configuration.agentId ? 'one' : 'two' },
+		grant_revision: 7,
+		grant_expires_at: now + 300,
 		...options.changes,
 	})
 		.setProtectedHeader({ alg: 'ES256', kid: configuration.signingKeyId, typ: 'at+jwt' })
@@ -175,37 +185,6 @@ export async function observations(configuration: PrivateDeployFile): Promise<Ru
 		throw new Error('Observations are from a different run.');
 	return snapshot;
 }
-export async function setAdmission(
-	configuration: PrivateDeployFile,
-	operation: { readonly workspace: PrivateWorkspace; readonly agentId?: string } & (
-		| { readonly state: 'member'; readonly persona: string }
-		| { readonly state: 'removed' }
-	),
-): Promise<void> {
-	await (
-		await helperRequest(configuration, '/admission', 'POST', {
-			workspaceId: operation.workspace.workspaceId,
-			agentId: operation.agentId ?? configuration.agentId,
-			state: operation.state,
-			...(operation.state === 'member' ? { persona: operation.persona } : {}),
-		})
-	).body?.cancel();
-}
-export async function admitTestAgents(configuration: PrivateDeployFile): Promise<void> {
-	await Promise.all(
-		configuration.workspaces.flatMap((workspace) =>
-			[configuration.agentId, configuration.otherAgentId].map(
-				async (agentId): Promise<void> =>
-					setAdmission(configuration, {
-						workspace,
-						state: 'member',
-						agentId,
-						persona: agentId === configuration.agentId ? 'one' : 'two',
-					}),
-			),
-		),
-	);
-}
 export async function approvedCall(
 	configuration: PrivateDeployFile,
 	options: {
@@ -219,7 +198,7 @@ export async function approvedCall(
 	const expiresAtMs = options.expiresAtMs ?? Date.now() + 6 * 60 * 60 * 1000;
 	const params = portalCall(configuration, callId, 'ask');
 	const approval = await signApprovalToken({
-		agentId: configuration.agentId,
+		agentId: '["bot","66666666-6666-4666-8666-666666666666"]',
 		key: Uint8Array.from(Buffer.from(workspace.approvalKeyHex, 'hex')),
 		jti: crypto.randomUUID(),
 		issuedAtMs: Date.now(),

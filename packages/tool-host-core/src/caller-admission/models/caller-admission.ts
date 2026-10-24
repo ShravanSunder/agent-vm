@@ -4,12 +4,6 @@ import type {
 	PersonaRef,
 } from '@agent-collaboration/tool-access/contracts';
 
-export interface WorkspaceMembershipRead {
-	readonly readMembership: (agentClientId: string) => Promise<{ readonly persona: string } | null>;
-}
-export interface WorkspaceDirectory {
-	readonly forWorkspace: (workspaceId: string) => WorkspaceMembershipRead;
-}
 export type HostedCaller = {
 	readonly kind: 'verified';
 	readonly organizationId: string;

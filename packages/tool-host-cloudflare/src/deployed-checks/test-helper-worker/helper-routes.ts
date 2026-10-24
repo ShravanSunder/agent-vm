@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { controlledResponseStream } from '#worker-host/deployed-checks/test-helper-worker/controlled-response-stream';
 import {
-	admissionInputSchema,
 	controlledCallSchema,
 	publicJwksSchema,
 	rpcInputSchema,
@@ -17,16 +16,9 @@ export async function handleHelperRequest(
 	const url = new URL(request.url);
 	if (url.pathname === '/jwks' && request.method === 'GET')
 		return Response.json(publicJwksSchema.parse(ports.publicJwks));
-	if (url.pathname === '/admission' || url.pathname === '/observations') {
+	if (url.pathname === '/observations') {
 		if (request.headers.get('authorization') !== `Bearer ${ports.admissionSecret}`)
 			return new Response(null, { status: 401 });
-		if (url.pathname === '/admission' && request.method === 'POST') {
-			const input = admissionInputSchema.parse(await request.json());
-			if (!Object.values(ports.workspaces).some((entry) => entry.workspaceId === input.workspaceId))
-				return new Response(null, { status: 403 });
-			await ports.setAdmission(input);
-			return Response.json({ ok: true });
-		}
 		if (url.pathname === '/observations') {
 			const runId = z.string().min(1).max(100).parse(url.searchParams.get('runId'));
 			const observations = ports.observations(runId);

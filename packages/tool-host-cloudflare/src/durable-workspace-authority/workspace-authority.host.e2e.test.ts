@@ -43,23 +43,6 @@ describe('organization authorization in local workerd', () => {
 		}
 		if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
 	});
-	it('reads current admission and keeps identical agent IDs apart by organization', async () => {
-		const sameAgent = { agentId: 'same-agent' };
-		expect(await control({ kind: 'listed', organizationId: 'one', ...sameAgent })).toEqual({
-			listed: false,
-		});
-		await control({ kind: 'admission', organizationId: 'one', ...sameAgent, state: 'listed' });
-		expect(await control({ kind: 'listed', organizationId: 'one', ...sameAgent })).toEqual({
-			listed: true,
-		});
-		expect(await control({ kind: 'listed', organizationId: 'two', ...sameAgent })).toEqual({
-			listed: false,
-		});
-		await control({ kind: 'admission', organizationId: 'one', ...sameAgent, state: 'removed' });
-		expect(await control({ kind: 'listed', organizationId: 'one', ...sameAgent })).toEqual({
-			listed: false,
-		});
-	});
 	it('atomically records one first-use answer under concurrent requests', async () => {
 		const input = {
 			kind: 'consume',

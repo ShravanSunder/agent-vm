@@ -10,7 +10,6 @@ import {
 } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import { assertOneApprovalUse } from '#worker-host/deployed-checks/deployed-check-suites/authorization-observations';
 import {
-	admitTestAgents,
 	agentToken,
 	approvedCall,
 	observations,
@@ -21,7 +20,6 @@ import { writeRunArtifact } from '#worker-host/deployed-checks/deployed-check-su
 
 it('row 13: one approval sent concurrently to copies a and b has exactly one effect', async () => {
 	const configuration = await readPrivateDeployFile();
-	await admitTestAgents(configuration);
 	const callId = `approval-${crypto.randomUUID()}`;
 	const params = await approvedCall(configuration, { callId });
 	const directory = await requireOutsideGitWorkTree(configuration.evidenceDirectory);

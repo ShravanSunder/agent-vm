@@ -3,7 +3,6 @@ import { it } from 'vitest';
 import { readPrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import { assertOwnCredential } from '#worker-host/deployed-checks/deployed-check-suites/authorization-observations';
 import {
-	admitTestAgents,
 	agentToken,
 	observations,
 	portalCall,
@@ -13,7 +12,6 @@ import { writeRunArtifact } from '#worker-host/deployed-checks/deployed-check-su
 
 it('row 16: send argument, result, credential and token canaries before collecting deployed evidence', async () => {
 	const configuration = await readPrivateDeployFile();
-	await admitTestAgents(configuration);
 	const callId = `canary-${crypto.randomUUID()}`;
 	const argumentCanary = `argument-${crypto.randomUUID()}`;
 	const resultCanary = `result-${crypto.randomUUID()}`;

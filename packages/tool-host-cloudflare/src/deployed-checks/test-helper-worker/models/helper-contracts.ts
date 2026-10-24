@@ -23,19 +23,6 @@ export const publicJwksSchema = z.strictObject({
 		)
 		.min(1),
 });
-export const admissionInputSchema = z.discriminatedUnion('state', [
-	z.strictObject({
-		workspaceId: z.uuid(),
-		agentId: z.string().min(1),
-		state: z.literal('member'),
-		persona: z.string().min(1),
-	}),
-	z.strictObject({
-		workspaceId: z.uuid(),
-		agentId: z.string().min(1),
-		state: z.literal('removed'),
-	}),
-]);
 export const controlledCallSchema = z.object({
 	runId: z.string().min(1).max(100),
 	callId: z.string().min(1).max(100),
@@ -87,6 +74,5 @@ export interface HelperRoutePorts {
 	readonly publicJwks: unknown;
 	readonly workspaces: z.infer<typeof helperWorkspacesSchema>;
 	readonly admissionSecret: string;
-	readonly setAdmission: (input: z.infer<typeof admissionInputSchema>) => Promise<void>;
 	readonly observations: (runId: string) => ObservationPort;
 }

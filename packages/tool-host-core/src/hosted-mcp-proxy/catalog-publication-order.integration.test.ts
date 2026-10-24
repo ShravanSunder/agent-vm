@@ -28,7 +28,6 @@ it.each([200, 100])(
 				clock,
 				cap: 512 * 1024,
 			});
-			await authority.setMembership('sender', 'fixture');
 			const configuration = workspaceConfigurationSchema.parse({
 				organizationId: '11111111-1111-4111-8111-111111111111',
 				workspaceName: 'fixture',

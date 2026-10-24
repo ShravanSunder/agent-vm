@@ -167,22 +167,6 @@ it('refuses a Host-matching hostile audience before effects in an otherwise admi
 				],
 			}),
 		);
-		const writer = await runtime.getWorker('seed');
-		const control = { organizationId: organizationOne, agentId: 'agent-one' };
-		const seeded = await writer.fetch('https://seed.invalid', {
-			method: 'POST',
-			body: JSON.stringify({ ...control, kind: 'admission', state: 'listed', persona: 'one' }),
-		});
-		expect(seeded.status).toBe(200);
-		await seeded.body?.cancel();
-		expect(
-			await (
-				await writer.fetch('https://seed.invalid', {
-					method: 'POST',
-					body: JSON.stringify({ ...control, kind: 'listed' }),
-				})
-			).json(),
-		).toEqual({ listed: true });
 		const token = await issuer.sign({
 			changes: {
 				aud: `https://attacker.invalid/workspaces/${organizationOne}/mcp`,

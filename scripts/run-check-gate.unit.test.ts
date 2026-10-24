@@ -59,6 +59,7 @@ describe('check gate plan', () => {
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'identity-cutover',
 			'identity-fixtures',
 			'portal-contracts',
 			'managed-vm-boundaries',
@@ -115,13 +116,14 @@ describe('check gate runner', () => {
 
 		expect(summary.ok).toBe(true);
 		expect(startedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(startedCommandIds.slice(1, 15)).toEqual([
+		expect(startedCommandIds.slice(1, 16)).toEqual([
 			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'identity-cutover',
 			'identity-fixtures',
 			'portal-contracts',
 			'managed-vm-boundaries',
@@ -132,13 +134,14 @@ describe('check gate runner', () => {
 			'format',
 		]);
 		expect(completedCommandIds.slice(0, 1)).toEqual(['build']);
-		expect(completedCommandIds.slice(1, 15)).toEqual([
+		expect(completedCommandIds.slice(1, 16)).toEqual([
 			'cli-architecture',
 			'package-versions',
 			'zod-version',
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'identity-cutover',
 			'identity-fixtures',
 			'portal-contracts',
 			'managed-vm-boundaries',
@@ -176,6 +179,7 @@ describe('check gate runner', () => {
 			'test-taxonomy',
 			'portal-architecture',
 			'portal-exports',
+			'identity-cutover',
 			'identity-fixtures',
 			'portal-contracts',
 			'managed-vm-boundaries',

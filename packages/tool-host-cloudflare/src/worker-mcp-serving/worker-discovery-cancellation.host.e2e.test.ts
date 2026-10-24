@@ -7,7 +7,6 @@ import { z } from 'zod';
 
 import {
 	workspaceConfigurations,
-	organizationOne,
 	portalAudience,
 	signingKeyHex,
 	organizationTwoSigningKeyHex,
@@ -78,17 +77,6 @@ it.each(['cold', 'expired'] as const)(
 				}),
 			);
 			const origin = await runtime.unsafeGetDirectURL('discovery-cancellation');
-			const control = await fetch(new URL('/__proof', origin), {
-				method: 'POST',
-				body: JSON.stringify({
-					kind: 'admission',
-					organizationId: organizationOne,
-					agentId: 'agent-one',
-					state: 'listed',
-				}),
-			});
-			expect(control.status).toBe(200);
-			await control.body?.cancel();
 			const token = await fixture.sign();
 			const headers = {
 				authorization: `Bearer ${token}`,

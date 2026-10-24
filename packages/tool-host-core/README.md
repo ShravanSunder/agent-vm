@@ -1,17 +1,20 @@
 # Hosted MCP proxy core
 
 `@agent-collaboration/tool-host-core` composes the hosted MCP proxy with injected
-workspace membership and replay authority, configuration, secrets, analytics, clock, IDs, limits,
+workspace removal marks and approval replay authority, configuration, secrets, analytics, clock, IDs, limits,
 logging and upstream transport creation. `createHostedMcpProxy(ports).handle`
 accepts web `Request` objects and returns web `Response` objects.
 
 The path `/workspaces/<workspace-id>/mcp` selects the workspace. The verifier checks
-that workspace’s configured audience and signed workspace claim on each call. Its
-Durable Object supplies membership and persona without a membership cache. Invalid
-tokens and nonmembers return the same HTTP 401 `unknown-caller` envelope. A member
-whose persona names no configured profile returns HTTP 401 `profile-unassigned`
-before upstream discovery or dispatch.
-There is no default profile. Each request also keeps one catalog generation for
+its configured audience and organization, signed principal and persona, the grant
+expiry without leeway and JWT expiry with at most 60 seconds. Session principals
+require the pinned central client. The caller check reads only removal marks and
+never calls Fleet. Invalid tokens return HTTP 401 `unknown-caller`; covered grants
+and undefined personas are not permitted (HTTP 403) before upstream dispatch.
+Sessions use the intersection of the deployment's current session default and
+any named persona. Bots use their named profile.
+
+Each request also keeps one catalog generation for
 its views, access checks and analytics. Across requests the proxy caches only
 settled configuration and the last successful catalog snapshot with its discovery-start
 time. Each request owns its engine, discovery runtime and pending work; concurrent
@@ -19,7 +22,7 @@ cold or expired requests discover independently. Failed discovery publishes no
 new cache entry and may serve the previous complete snapshot. A cancelled request
 cannot make the next request await its pending engine or refresh.
 
-Workspace authority runs the same admission and approval-use rules over an
+Workspace authority runs removal and approval-use rules over an
 `WorkspaceAuthorityStore`. Its atomic callback reads the clock, reads the row,
 checks replay, prunes expired uses, checks the byte cap and awaits the write.
 Success is returned after that callback commits. `createVolatileAuthorityStore`
@@ -57,9 +60,8 @@ native listing, effects, approval first use, stored bytes and replay refusal.
 It does not establish the real sign-in service, Durable Object persistence or
 deployed analytics.
 
-Agent management uses a separate write port. `createWorkspaceAgentManagement`
-registers and links before writing membership, removes membership before unlinking,
-and removes every configured organization membership before global disable. Failed
-second writes stay pending in the affected workspace objects and retry under a live
-owner command. Retirement supersedes a pending unlink without calling it. No MCP
-module can reach this write port; the architecture audit traces its import closure.
+`createRemovalNoticeReceiver` verifies the service token and hosted organization
+and workspace before calling `recordRemovalNotice`. The workspace authority commits
+both the highest subject mark and the notice ID before returning `recorded` or
+`alreadyRecorded`, and prunes them after 61 minutes on the Portal clock.
+Fleet owns membership and management.

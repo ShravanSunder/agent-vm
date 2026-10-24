@@ -14,7 +14,7 @@ import {
 	finishObservation,
 } from '#worker-host/deployed-checks/test-helper-worker/observation-counters';
 
-interface HelperBindings extends Readonly<Pick<ToolPortalWorkerEnv, 'WORKSPACES'>> {
+interface HelperBindings {
 	readonly OBSERVATIONS: DurableObjectNamespace<TestObservations>;
 	readonly TEST_WORKSPACES: string;
 	readonly TEST_PUBLIC_JWKS: string;
@@ -71,17 +71,6 @@ export default {
 				publicJwks: publicJwksSchema.parse(JSON.parse(bindings.TEST_PUBLIC_JWKS)),
 				workspaces: helperWorkspacesSchema.parse(JSON.parse(bindings.TEST_WORKSPACES)),
 				admissionSecret: bindings.ADMISSION_SECRET,
-				setAdmission: async (input): Promise<void> => {
-					const workspace = bindings.WORKSPACES.get(
-						bindings.WORKSPACES.idFromName(input.workspaceId),
-					);
-					if (input.state === 'member') await workspace.setMembership(input.agentId, input.persona);
-					else {
-						const requestId = crypto.randomUUID();
-						await workspace.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
-						await workspace.completeAgentRemoval(input.agentId, requestId, 'unlink');
-					}
-				},
 				observations: (runId) => {
 					const stub =
 						namespaces.get(runId) ??

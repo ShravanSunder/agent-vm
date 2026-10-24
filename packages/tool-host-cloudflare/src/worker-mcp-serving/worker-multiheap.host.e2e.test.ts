@@ -59,19 +59,9 @@ it('independent Worker heaps share real organization storage and admit one appro
 	try {
 		const first = await runtime.getWorker('copy-one');
 		const second = await runtime.getWorker('copy-two');
-		const admission = await first.fetch('http://proof/__proof', {
-			method: 'POST',
-			body: JSON.stringify({
-				kind: 'admission',
-				organizationId: organizationOne,
-				agentId: 'agent-one',
-				state: 'listed',
-			}),
-		});
-		await admission.body?.cancel();
 		const bearer = await fixture.sign();
 		const approval = await signApprovalToken({
-			agentId: 'agent-one',
+			agentId: '["bot","66666666-6666-4666-8666-666666666666"]',
 			key: new Uint8Array(32).fill(0x12),
 			jti: 'cross-heap-token',
 			issuedAtMs: Date.now(),
@@ -135,7 +125,7 @@ it('independent Worker heaps share real organization storage and admit one appro
 			body: JSON.stringify({
 				kind: 'admission',
 				organizationId: organizationOne,
-				agentId: 'agent-one',
+				agentId: '["bot","66666666-6666-4666-8666-666666666666"]',
 				state: 'removed',
 			}),
 		});

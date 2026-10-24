@@ -7,13 +7,9 @@ import { createWorkspaceAuthority } from '#tool-host-core/workspace-authority/wo
 const clock = { nowMs: () => 100 };
 
 describe('organization authority over an atomic volatile store in plain Node', () => {
-	it('commits first use and admission through the same exported authority used by the adapter', async () => {
+	it('commits first use through the same exported authority used by the adapter', async () => {
 		const store = createVolatileAuthorityStore();
 		const authority = createWorkspaceAuthority({ store, clock, cap: 1024 });
-		expect((await authority.readMembership('sender')) !== null).toBe(false);
-		await authority.setMembership('sender', 'fixture');
-		expect(await store.read('member:sender')).toEqual({ state: 'member', persona: 'fixture' });
-		expect((await authority.readMembership('sender')) !== null).toBe(true);
 		expect(await authority.consumeApprovalToken('sender:token', 200)).toEqual({ ok: true });
 		expect(await store.read('approval-uses-v1')).toEqual({ 'sender:token': 200 });
 		expect(await authority.consumeApprovalToken('sender:token', 300)).toEqual({

@@ -118,7 +118,6 @@ it('refuses an undefined token persona before any upstream discovery or dispatch
 		});
 		expect(upstream.requests).toEqual([]);
 		expect(upstream.effects).toEqual([]);
-		await authority.setMembership('assigned', 'fixture');
 		assignedRequest.headers.set('authorization', `Bearer ${await upstream.sign('assigned')}`);
 		const assignedResponse = await proxy.handle(assignedRequest);
 		expect(assignedResponse.status).toBe(200);
@@ -141,7 +140,6 @@ it.each(['synchronous', 'asynchronous'])(
 				clock,
 				cap: 512 * 1024,
 			});
-			await authority.setMembership('sender', 'fixture');
 			const proxy = createHostedMcpProxy({
 				sessionClientId: 'central',
 				toolPortalOrigin: 'https://portal.invalid',

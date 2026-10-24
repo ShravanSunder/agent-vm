@@ -13,7 +13,7 @@ import {
 let harness: LocalWorkerHarness;
 async function approvedAsk(value: string): Promise<Readonly<Record<string, unknown>>> {
 	const approval = await signApprovalToken({
-		agentId: 'agent-one',
+		agentId: '["bot","66666666-6666-4666-8666-666666666666"]',
 		key: new Uint8Array(32).fill(0x12),
 		jti: crypto.randomUUID(),
 		issuedAtMs: Date.now(),
@@ -70,7 +70,7 @@ describe('Worker awaits its organization approval authority in local workerd', (
 			if (nativeName === undefined) throw new Error('Missing independently listed approval tool.');
 			const value = `${mode}-${carrier}-organization-key`;
 			const claims = {
-				agentId: 'agent-one',
+				agentId: '["bot","66666666-6666-4666-8666-666666666666"]',
 				jti: crypto.randomUUID(),
 				issuedAtMs: Date.now(),
 				expiresAtMs: Date.now() + 60_000,

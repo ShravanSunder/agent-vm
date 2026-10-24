@@ -7,8 +7,6 @@ import { z } from 'zod';
 
 import {
 	workspaceConfigurations,
-	organizationOne,
-	organizationTwo,
 	portalAudience,
 	signingKeyHex,
 	organizationTwoSigningKeyHex,
@@ -73,7 +71,6 @@ export async function startLocalWorkerHarness(
 				ONE_APPROVAL_KEY: signingKeyHex,
 				TWO_APPROVAL_KEY: organizationTwoSigningKeyHex,
 			},
-			// Keep Wrangler's normal service proxy for the example SIGN_IN binding.
 			experimental: { disableExperimentalWarning: true },
 		},
 	);
@@ -96,21 +93,10 @@ export async function startLocalWorkerHarness(
 			throw new Error(`Proof control failed: ${String(response.status)}`);
 		await response.body?.cancel();
 	}
-	await Promise.all(
-		[organizationOne, organizationTwo].flatMap((organizationId) =>
-			['agent-one', 'agent-two'].map(async (agentId) =>
-				control({
-					kind: 'admission',
-					organizationId,
-					agentId,
-					state: 'listed',
-					persona: options.persona ?? (agentId === 'agent-one' ? 'one' : 'two'),
-				}),
-			),
-		),
-	);
 
-	const token = await fixture.sign();
+	const token = await fixture.sign({
+		changes: { persona: { kind: 'named', name: options.persona ?? 'one' } },
+	});
 	return {
 		worker,
 		fixture,

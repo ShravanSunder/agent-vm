@@ -224,6 +224,16 @@ export async function startControlledMcpIssuer(): Promise<ControlledMcpIssuer> {
 				azp: agentId,
 				jti: crypto.randomUUID(),
 				organization_id: input.organizationId ?? organizationOne,
+				principal: {
+					kind: 'bot',
+					bot_id:
+						agentId === 'agent-two'
+							? '77777777-7777-4777-8777-777777777777'
+							: '66666666-6666-4666-8666-666666666666',
+				},
+				persona: { kind: 'named', name: agentId === 'agent-two' ? 'two' : 'one' },
+				grant_revision: 7,
+				grant_expires_at: now + 300,
 				...input.changes,
 			})
 				.setProtectedHeader({ alg: 'ES256', kid: 'test-issuer', typ: 'at+jwt' })
@@ -273,7 +283,7 @@ export function workspaceConfigurations(url: string): unknown {
 		},
 		portal: {
 			schemaVersion: 1,
-			sessionDefaultProfile: 'fixture',
+			sessionDefaultProfile: 'one',
 			agents: { 'agent-one': { credentialVersion: 1 }, 'agent-two': { credentialVersion: 1 } },
 			profiles: {
 				one: {

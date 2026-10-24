@@ -1,17 +1,7 @@
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import { z } from 'zod';
 
-import type { WorkspaceMembershipRead } from '#tool-host-core/caller-admission/models/caller-admission';
 import type { WorkspaceAuthorizationPort } from '#tool-host-core/hosted-mcp-proxy/models/hosted-mcp-proxy-ports';
-import {
-	workspaceMembershipRow,
-	storedWorkspaceMembership,
-} from '#tool-host-core/workspace-authority/agent-admission-rules';
-import {
-	createAgentRemovalAuthority,
-	agentRemovalSchema,
-	type AgentManagementAuthority,
-} from '#tool-host-core/workspace-authority/agent-retirement';
 import { decideApprovalTokenUse } from '#tool-host-core/workspace-authority/approval-token-use-rules';
 import type { Clock } from '#tool-host-core/workspace-authority/models/authority-clock';
 import { approvalUsesKey } from '#tool-host-core/workspace-authority/models/workspace-authority-state';
@@ -25,27 +15,9 @@ export function createWorkspaceAuthority(props: {
 	readonly store: WorkspaceAuthorityStore;
 	readonly clock: Pick<Clock, 'nowMs'>;
 	readonly cap: number;
-}): WorkspaceAuthorizationPort &
-	WorkspaceMembershipRead &
-	AgentManagementAuthority &
-	WorkspaceRemovalAuthority {
+}): WorkspaceAuthorizationPort & WorkspaceRemovalAuthority {
 	return {
 		...createWorkspaceRemovalAuthority(props),
-		...createAgentRemovalAuthority(props.store),
-		readMembership: async (agentClientId) =>
-			storedWorkspaceMembership(await props.store.read(`member:${agentClientId}`)),
-		setMembership: async (agentClientId, persona) => {
-			const row = workspaceMembershipRow({ agentClientId, persona, state: 'member' });
-			await props.store.transaction(async (storage) => {
-				const stored = await storage.read(`member-removal:${agentClientId}`);
-				if (stored !== undefined) {
-					const removal = agentRemovalSchema.parse(stored);
-					if (removal.kind === 'pending' || removal.operation === 'disable')
-						throw new Error('Agent removal prevents admission');
-				}
-				await storage.write(row.key, row.value);
-			});
-		},
 		consumeApprovalToken: async (tokenId, expiresAtMs): Promise<ConsumeApprovalTokenResult> => {
 			z.string().min(1).parse(tokenId);
 			z.number().finite().parse(expiresAtMs);

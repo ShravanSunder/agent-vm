@@ -107,6 +107,7 @@ export async function renderDeployConfiguration(
 		__ANALYTICS_DATASET__: configuration.analyticsDataset,
 		__PORTAL_VARIABLES__: {
 			SIGN_IN_ISSUER: configuration.helper.origin,
+			FLEET_CENTRAL_CLIENT_ID: 'controlled-central',
 			SIGN_IN_JWKS_URL: `${configuration.helper.origin}/jwks`,
 			TOOL_PORTAL_ORIGIN: configuration.portalA.origin,
 			WORKSPACE_CONFIGURATIONS: JSON.stringify(portalTestConfigurations(configuration)),

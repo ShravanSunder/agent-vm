@@ -13,6 +13,7 @@ export type CheckGateCommandId =
 	| 'portal-architecture'
 	| 'portal-contracts'
 	| 'identity-fixtures'
+	| 'identity-cutover'
 	| 'portal-exports'
 	| 'zod-version'
 	| 'test-taxonomy'
@@ -123,6 +124,12 @@ export function createCheckGatePlan(): readonly CheckGatePhase[] {
 					command: 'pnpm',
 					id: 'portal-exports',
 					label: 'portal package export audit and packed portable closures',
+				},
+				{
+					args: ['exec', 'tsx', 'scripts/audit-portal-identity-cutover.ts'],
+					command: 'pnpm',
+					id: 'identity-cutover',
+					label: 'Portal membership and management cutover',
 				},
 				{
 					args: ['exec', 'tsx', 'scripts/generate-identity-fixtures.ts', '--check-clean'],

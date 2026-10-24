@@ -4,12 +4,12 @@ import type {
 	RemovalSubject,
 } from '@agent-collaboration/tool-access/contracts';
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
-import { createWorkspaceAuthority, type AgentRemoval } from '@agent-collaboration/tool-host-core';
+import { createWorkspaceAuthority } from '@agent-collaboration/tool-host-core';
 import { DurableObject } from 'cloudflare:workers';
 
 import { workerApprovalUsesBytes } from '#worker-host/worker-limits';
 
-/** Workspace membership and replay authority. No tool calls, streams or credentials live here. */
+/** Workspace removal marks and replay authority. No tool calls, streams or credentials live here. */
 export class WorkspaceAuthority extends DurableObject {
 	#authority(): ReturnType<typeof createWorkspaceAuthority> {
 		return createWorkspaceAuthority({
@@ -38,30 +38,6 @@ export class WorkspaceAuthority extends DurableObject {
 	}
 	async pruneRemovalNotices(): Promise<void> {
 		await this.#authority().pruneRemovalNotices();
-	}
-
-	async readMembership(clientId: string): Promise<{ readonly persona: string } | null> {
-		return this.#authority().readMembership(clientId);
-	}
-	async setMembership(clientId: string, persona: string): Promise<void> {
-		await this.#authority().setMembership(clientId, persona);
-	}
-	async readAgentRemoval(clientId: string): Promise<AgentRemoval | null> {
-		return this.#authority().readAgentRemoval(clientId);
-	}
-	async beginAgentRemoval(
-		clientId: string,
-		requestId: string,
-		intent: Parameters<ReturnType<typeof createWorkspaceAuthority>['beginAgentRemoval']>[2],
-	): Promise<AgentRemoval> {
-		return this.#authority().beginAgentRemoval(clientId, requestId, intent);
-	}
-	async completeAgentRemoval(
-		clientId: string,
-		requestId: string,
-		operation: AgentRemoval['operation'],
-	): Promise<void> {
-		await this.#authority().completeAgentRemoval(clientId, requestId, operation);
 	}
 
 	async consumeApprovalToken(

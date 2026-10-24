@@ -12,7 +12,7 @@ import {
 import { waitForProtocolRetryInterval } from '#worker-host/test-fixtures/protocol-observation-interval';
 import { startWorkerdSocketGuard } from '#worker-host/test-fixtures/workerd-socket-guard';
 
-it('boots only the helper once and proves keys, MCP secrets, admission and durable observations', async () => {
+it('boots only the helper once and proves keys, MCP secrets and durable observations', async () => {
 	const guard = startWorkerdSocketGuard();
 	const stateDirectory = await mkdtemp(path.join(tmpdir(), '2026-10-helper-smoke-'));
 	let worker: Unstable_DevWorker | undefined;
@@ -83,64 +83,6 @@ it('boots only the helper once and proves keys, MCP secrets, admission and durab
 		expect(
 			await (await fetchHelper('/mcp/alpha', 'POST', 'controlled-test-secret', call)).json(),
 		).toMatchObject({ result: { content: [{ text: 'ok' }] } });
-		const assertAdmission = async (state: 'member' | 'removed'): Promise<void> => {
-			expect(
-				(
-					await fetchHelper('/admission', 'POST', 'Bearer separate-admission-secret', {
-						workspaceId,
-						...(state === 'member' ? { persona: 'two' } : {}),
-						agentId: 'same-agent',
-						state,
-					})
-				).status,
-			).toBe(200);
-			expect(
-				await (
-					await fetchHelper(`/__membership?workspaceId=${workspaceId}&agentId=same-agent`)
-				).json(),
-			).toEqual(state === 'member' ? { persona: 'two' } : null);
-		};
-		await assertAdmission('member');
-		expect(
-			(
-				await fetchHelper('/admission', 'POST', 'Bearer separate-admission-secret', {
-					workspaceId: siblingId,
-					agentId: 'same-agent',
-					state: 'member',
-					persona: 'one',
-				})
-			).status,
-		).toBe(200);
-		await Promise.all(
-			(
-				[
-					['wrong', workspaceId, 401],
-					['Bearer separate-admission-secret', '55555555-5555-4555-8555-555555555555', 403],
-				] as const
-			).map(async ([secret, selectedWorkspace, expectedStatus]): Promise<void> => {
-				expect(
-					(
-						await fetchHelper('/admission', 'POST', secret, {
-							workspaceId: selectedWorkspace,
-							agentId: 'same-agent',
-							state: 'removed',
-						})
-					).status,
-				).toBe(expectedStatus);
-			}),
-		);
-		expect(
-			await (
-				await fetchHelper(`/__membership?workspaceId=${workspaceId}&agentId=same-agent`)
-			).json(),
-		).toEqual({ persona: 'two' });
-		expect(
-			await (await fetchHelper(`/__membership?workspaceId=${siblingId}&agentId=same-agent`)).json(),
-		).toEqual({ persona: 'one' });
-		await assertAdmission('removed');
-		expect(
-			await (await fetchHelper(`/__membership?workspaceId=${siblingId}&agentId=same-agent`)).json(),
-		).toEqual({ persona: 'one' });
 		expect((await fetchHelper('/observations?runId=smoke')).status).toBe(401);
 		expect(
 			await (

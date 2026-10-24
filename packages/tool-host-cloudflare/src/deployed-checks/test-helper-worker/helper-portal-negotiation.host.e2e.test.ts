@@ -123,18 +123,6 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 		const portal = await runtime.getWorker(configuration.portalA.name);
 		const portalB = await runtime.getWorker(configuration.portalB.name);
 		const workspace = configuration.workspaces[0];
-		const admission = await helper.fetch('https://helper.invalid/admission', {
-			method: 'POST',
-			headers: { authorization: `Bearer ${configuration.admissionSecret}` },
-			body: JSON.stringify({
-				workspaceId: workspace.workspaceId,
-				persona: 'one',
-				agentId: configuration.agentId,
-				state: 'member',
-			}),
-		});
-		expect(admission.status).toBe(200);
-		await admission.body?.cancel();
 		const probe = await helper.fetch('https://helper.invalid/mcp/alpha', {
 			method: 'POST',
 			headers: { authorization: workspace.credential },
@@ -302,28 +290,6 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 			);
 			return { status: invocationResponse.status, body: await invocationResponse.json(), token };
 		};
-		const helperAdmission = async (
-			operation: { readonly workspace: typeof workspace; readonly agentId?: string } & (
-				| { readonly state: 'member'; readonly persona: string }
-				| { readonly state: 'removed' }
-			),
-		): Promise<void> => {
-			const selected = operation.workspace;
-			const state = operation.state;
-			const agentId = operation.agentId ?? configuration.agentId;
-			const admissionResponse = await helper.fetch('https://helper.invalid/admission', {
-				method: 'POST',
-				headers: { authorization: `Bearer ${configuration.admissionSecret}` },
-				body: JSON.stringify({
-					workspaceId: selected.workspaceId,
-					agentId,
-					state,
-					...(operation.state === 'member' ? { persona: operation.persona } : {}),
-				}),
-			});
-			expect(admissionResponse.status).toBe(200);
-			await admissionResponse.body?.cancel();
-		};
 		const readObservations = async (): Promise<z.infer<typeof runObservationsSchema>> =>
 			runObservationsSchema.parse(
 				await (
@@ -333,11 +299,6 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 				).json(),
 			);
 		const remaining = configuration.workspaces.slice(1);
-		await Promise.all(
-			remaining.map(async (selected) =>
-				helperAdmission({ workspace: selected, state: 'member', persona: 'one' }),
-			),
-		);
 		const controls = await Promise.all(
 			remaining.map(async (selected, index) => {
 				const workspaceResult = await invokeWorkspace(selected, {
@@ -364,9 +325,33 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 				effects: 1,
 				inFlight: 0,
 			});
-		await helperAdmission({ workspace, state: 'removed' });
+		const noticeTime = Math.floor(Date.now() / 1000);
+		const serviceToken = await agentToken(configuration, {
+			changes: {
+				sub: 'controlled-central',
+				client_id: 'controlled-central',
+				aud: new URL('/internal/v1/removal-notices', configuration.portalA.origin).href,
+				scope: 'removal-notices',
+				iat: noticeTime,
+				exp: noticeTime + 300,
+			},
+		});
+		const recorded = await portal.fetch('https://portal.invalid/internal/v1/removal-notices', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${serviceToken}` },
+			body: JSON.stringify({
+				noticeId: '019a1335-20c0-7000-8000-000000000001',
+				organizationId: workspace.organizationId,
+				workspaceId: workspace.workspaceId,
+				subject: { kind: 'bot', botId: '66666666-6666-4666-8666-666666666666' },
+				removalRevision: 8,
+				reason: 'membershipEnded',
+			}),
+		});
+		expect(recorded.status).toBe(200);
+		await recorded.body?.cancel();
 		expect((await invokeWorkspace(workspace, { callId: 'removed-w1', copy: 'a' })).status).toBe(
-			401,
+			403,
 		);
 		const sibling = await invokeWorkspace(configuration.workspaces[1], {
 			callId: 'retained-w2',
@@ -374,12 +359,6 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 		});
 		expect(sibling.status).toBe(200);
 		assertAllowedResult(sibling.body, 'retained-w2');
-		await helperAdmission({
-			workspace,
-			state: 'member',
-			agentId: configuration.otherAgentId,
-			persona: 'two',
-		});
 		const narrowed = await invokeWorkspace(workspace, {
 			callId: 'persona-read-refused',
 			copy: 'a',
@@ -412,7 +391,7 @@ it('negotiates with the actual deployed helper before an allowed portal call and
 			inFlight: 0,
 		});
 		process.stdout.write(
-			`${JSON.stringify({ workspaceDeploymentPrecursor: { controlledIssuer: true, helperAdmissionStandIn: true, controls, observations: final } })}\n`,
+			`${JSON.stringify({ workspaceDeploymentPrecursor: { controlledIssuer: true, tokenOnlyAdmission: true, controls, observations: final } })}\n`,
 		);
 	} finally {
 		try {

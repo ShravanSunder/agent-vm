@@ -19,10 +19,8 @@ interface AuthorityScenario {
 	authority: ReturnType<typeof createWorkspaceAuthority>;
 	readonly issued: hegel.stateful.Pool<IssuedToken>;
 	readonly replayModel: Map<string, number>;
-	readonly admissionModel: Set<string>;
 }
 
-const agentIds = ['agent-a', 'agent-b', 'é-agent'];
 const writeFailure = new Error('controlled authority write failure');
 
 function createAuthorityScenario(tc: hegel.TestCase): AuthorityScenario {
@@ -55,7 +53,6 @@ function createAuthorityScenario(tc: hegel.TestCase): AuthorityScenario {
 		authority: createWorkspaceAuthority({ store, clock: { nowMs: () => clock.nowMs }, cap }),
 		issued: new hegel.stateful.Pool<IssuedToken>(tc),
 		replayModel: new Map(),
-		admissionModel: new Set(),
 	};
 }
 
@@ -107,36 +104,6 @@ async function consumeToken(scenario: AuthorityScenario, token: IssuedToken): Pr
 	for (const [tokenId, expiry] of proposed) scenario.replayModel.set(tokenId, expiry);
 }
 
-async function removeMembership(scenario: AuthorityScenario, agentId: string): Promise<void> {
-	const requestId = 'b015079b-19b6-4aa2-9b82-1298efcb2f79';
-	await scenario.authority.beginAgentRemoval(agentId, requestId, { operation: 'unlink' });
-	await scenario.authority.completeAgentRemoval(agentId, requestId, 'unlink');
-}
-
-async function setAdmission(
-	scenario: AuthorityScenario,
-	agentId: string,
-	admission: 'listed' | 'removed',
-): Promise<void> {
-	if (scenario.writes.failNext) {
-		await expect(
-			admission === 'listed'
-				? scenario.authority.setMembership(agentId, 'fixture')
-				: removeMembership(scenario, agentId),
-		).rejects.toBe(writeFailure);
-	} else {
-		await (admission === 'listed'
-			? scenario.authority.setMembership(agentId, 'fixture')
-			: removeMembership(scenario, agentId));
-		if (admission === 'listed') scenario.admissionModel.add(agentId);
-		else scenario.admissionModel.delete(agentId);
-	}
-	// Check immediately, including when the model was already removed or a write rolled back.
-	expect((await scenario.authority.readMembership(agentId)) !== null).toBe(
-		scenario.admissionModel.has(agentId),
-	);
-}
-
 const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 	rules: {
 		issueToken: (tc, scenario) => {
@@ -173,18 +140,6 @@ const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 		failNextWrite: (_tc, scenario) => {
 			scenario.writes.failNext = true;
 		},
-		listAgent: async (tc, scenario) => {
-			await setAdmission(scenario, tc.draw(generators.sampledFrom(agentIds)), 'listed');
-		},
-		removeAgent: async (tc, scenario) => {
-			await setAdmission(scenario, tc.draw(generators.sampledFrom(agentIds)), 'removed');
-		},
-		checkAdmission: async (tc, scenario) => {
-			const agentId = tc.draw(generators.sampledFrom(agentIds));
-			expect((await scenario.authority.readMembership(agentId)) !== null).toBe(
-				scenario.admissionModel.has(agentId),
-			);
-		},
 	},
 	invariants: {
 		committedReplayRecordsMatchModel: {
@@ -195,23 +150,10 @@ const authorityMachine: hegel.stateful.StateMachine<AuthorityScenario> = {
 				);
 			},
 		},
-		admissionMatchesModel: {
-			alwaysCheck: true,
-			check: async (_tc, scenario) => {
-				const listedAgents = await Promise.all(
-					agentIds.map(
-						async (agentId) => (await scenario.authority.readMembership(agentId)) !== null,
-					),
-				);
-				expect(listedAgents).toEqual(
-					agentIds.map((agentId) => scenario.admissionModel.has(agentId)),
-				);
-			},
-		},
 	},
 };
 
-it('models first use, capacity, write rollback, reopening and agent removal across generated sequences', async () => {
+it('models first use, capacity, write rollback, and reopening across generated sequences', async () => {
 	await hegel.testAsync(
 		async (tc) => {
 			await hegel.stateful.runAsync(tc, authorityMachine, createAuthorityScenario(tc));

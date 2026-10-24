@@ -22,7 +22,6 @@ it('authenticates a real Node MCP request, invokes the controlled HTTP upstream,
 		const clock = { nowMs: () => nowMs, nowIso: () => new Date(nowMs).toISOString() };
 		const store = createVolatileAuthorityStore();
 		const authority = createWorkspaceAuthority({ store, clock, cap: 512 * 1024 });
-		await authority.setMembership('sender', 'fixture');
 		const events: CallAnalytics[] = [];
 		const proxy = createHostedMcpProxy({
 			sessionClientId: 'central',

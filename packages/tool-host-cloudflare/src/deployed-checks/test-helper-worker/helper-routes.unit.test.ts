@@ -37,9 +37,6 @@ function fixture(): { readonly ports: HelperRoutePorts; readonly admissions: unk
 			publicJwks,
 			workspaces: { alpha: { organizationId, workspaceId, credential } },
 			admissionSecret: 'admission-test-secret',
-			setAdmission: async (input): Promise<void> => {
-				admissions.push(input);
-			},
 			observations: () => ({
 				begin: async (call): Promise<void> => {
 					snapshot = beginObservation(snapshot, call);
@@ -110,7 +107,7 @@ describe('controlled helper routes and counters', () => {
 			publicJwksSchema.parse({ keys: [{ ...publicJwks.keys[0], d: 'private' }] }),
 		).toThrow();
 	});
-	it.each(['/admission', '/observations?runId=unit-run', '/mcp/alpha'])(
+	it.each(['/observations?runId=unit-run', '/mcp/alpha'])(
 		'refuses an absent or wrong credential on %s without effects',
 		async (path) => {
 			const { ports, admissions } = fixture();
@@ -124,40 +121,6 @@ describe('controlled helper routes and counters', () => {
 			expect((await ports.observations('unit-run').snapshot()).calls).toEqual([]);
 		},
 	);
-	it('admits and removes only configured test workspaces', async () => {
-		const { ports, admissions } = fixture();
-		await Promise.all(
-			['member', 'removed'].map(async (state): Promise<void> => {
-				expect(
-					(
-						await handleHelperRequest(
-							request('/admission', 'Bearer admission-test-secret', {
-								workspaceId,
-								...(state === 'member' ? { persona: 'two' } : {}),
-								agentId: 'same-agent',
-								state,
-							}),
-							ports,
-						)
-					).status,
-				).toBe(200);
-			}),
-		);
-		expect(admissions).toHaveLength(2);
-		expect(
-			(
-				await handleHelperRequest(
-					request('/admission', 'Bearer admission-test-secret', {
-						workspaceId: '22222222-2222-4222-8222-222222222222',
-						agentId: 'same-agent',
-						state: 'member',
-						persona: 'two',
-					}),
-					ports,
-				)
-			).status,
-		).toBe(403);
-	});
 	it('counts every real effect and credential, serves exact response size and resets a run', async () => {
 		const { ports } = fixture();
 		const repeatCall = async (): Promise<void> => {

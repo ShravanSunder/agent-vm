@@ -1,15 +1,10 @@
 /// <reference types="../worker-configuration.gen.d.ts" preserve="true" />
 
-import {
-	createPersonTokenVerifier,
-	createRemovalNoticeTokenVerifier,
-} from '@agent-collaboration/tool-access/contracts';
+import { createRemovalNoticeTokenVerifier } from '@agent-collaboration/tool-access/contracts';
 import {
 	createHostedMcpProxy,
 	createRemovalNoticeReceiver,
-	createWorkspaceAgentManagement,
 	hostedAgentVerifier,
-	type AgentClientManagementPort,
 	type HostedMcpProxy,
 } from '@agent-collaboration/tool-host-core';
 import { z } from 'zod';
@@ -25,10 +20,7 @@ import { workerHostedProxyLimits } from '#worker-host/worker-limits';
 import { createWorkerUpstreamTransport } from '#worker-host/worker-upstream-transports';
 
 export { WorkspaceAuthority };
-export type WorkerBindings = Readonly<Omit<ToolPortalWorkerEnv, 'SIGN_IN'>> &
-	Readonly<Record<string, unknown>> & {
-		readonly SIGN_IN?: AgentClientManagementPort;
-	};
+export type WorkerBindings = Readonly<ToolPortalWorkerEnv> & Readonly<Record<string, unknown>>;
 let host: HostedMcpProxy | undefined;
 let removalReceiver: ReturnType<typeof createRemovalNoticeReceiver> | undefined;
 
@@ -52,26 +44,6 @@ export default {
 					},
 				});
 				return await removalReceiver.handle(request);
-			}
-			if (new URL(request.url).pathname.startsWith('/management/')) {
-				if (bindings.SIGN_IN === undefined)
-					return Response.json({ error: 'management-unavailable' }, { status: 503 });
-				return await createWorkspaceAgentManagement({
-					verifier: createPersonTokenVerifier({
-						deployment: z.url().parse(bindings.SIGN_IN_ISSUER),
-						audience: z.string().min(1).parse(bindings.MANAGEMENT_AUDIENCE),
-						jwksUrl: new URL(z.url().parse(bindings.SIGN_IN_JWKS_URL)),
-					}),
-					signIn: bindings.SIGN_IN,
-					toolPortalOrigin: bindings.TOOL_PORTAL_ORIGIN,
-					configurations: deployedConfigurationSource(
-						JSON.parse(bindings.WORKSPACE_CONFIGURATIONS),
-					),
-					workspaces: {
-						forWorkspace: (workspaceId) =>
-							bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(workspaceId)),
-					},
-				}).handle(request);
 			}
 			const workspace = /^\/workspaces\/([^/]+)\/mcp$/u.exec(new URL(request.url).pathname);
 			if (!z.uuid().safeParse(workspace?.[1]).success)

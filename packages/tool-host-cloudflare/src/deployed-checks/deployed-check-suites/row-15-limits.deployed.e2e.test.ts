@@ -4,7 +4,6 @@ import { z } from 'zod';
 import type { PrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/models/private-deploy-file';
 import { readPrivateDeployFile } from '#worker-host/deployed-checks/deploy-configuration/private-file-access';
 import {
-	admitTestAgents,
 	helperRequest,
 	observations,
 	portalCall,
@@ -64,7 +63,6 @@ async function release(configuration: PrivateDeployFile): Promise<void> {
 
 it('row 15: exact body, batch, upstream and six-in-flight limits on a deployed Worker', async () => {
 	const configuration = await readPrivateDeployFile();
-	await admitTestAgents(configuration);
 	const ids = ['body-under', 'body-at', 'body-over'].map(
 		(label) => `${label}-${crypto.randomUUID()}`,
 	);
@@ -121,7 +119,6 @@ it('row 15: exact body, batch, upstream and six-in-flight limits on a deployed W
 it('row 15: hold three large batches together; isolate proof follows in the evidence step', async () => {
 	const baseConfiguration = await readPrivateDeployFile();
 	const configuration = { ...baseConfiguration, runId: `${baseConfiguration.runId}-overlap` };
-	await admitTestAgents(configuration);
 	const batches = Array.from({ length: 3 }, (_, index) =>
 		batch(configuration, `overlap-${String(index)}`, 8, {
 			hold: true,

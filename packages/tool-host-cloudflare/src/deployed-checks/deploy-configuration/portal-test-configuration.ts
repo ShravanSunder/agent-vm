@@ -31,7 +31,7 @@ export function portalTestConfigurations(configuration: PrivateDeployFile): unkn
 				},
 				portal: {
 					schemaVersion: 1,
-					sessionDefaultProfile: 'fixture',
+					sessionDefaultProfile: 'one',
 					agents: {
 						[configuration.agentId]: { credentialVersion: 1 },
 						[configuration.otherAgentId]: { credentialVersion: 1 },

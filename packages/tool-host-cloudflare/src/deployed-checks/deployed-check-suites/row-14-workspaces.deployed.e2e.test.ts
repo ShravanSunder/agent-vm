@@ -8,20 +8,17 @@ import {
 	assertRefusedCall,
 } from '#worker-host/deployed-checks/deployed-check-suites/authorization-observations';
 import {
-	admitTestAgents,
 	agentToken,
 	approvedCall,
 	observations,
 	portalCall,
 	portalRpc,
 	requireRpcResult,
-	setAdmission,
 	type PortalRequestOptions,
 } from '#worker-host/deployed-checks/deployed-check-suites/deployed-portal-client';
 
 it('row 14 PRECURSOR: controlled issuer and helper admission stand in for deployed sign-in and management; workspace and sender own tools and credentials', async () => {
 	const configuration = await readPrivateDeployFile();
-	await admitTestAgents(configuration);
 	const [alpha, beta, gamma] = configuration.workspaces;
 	await Promise.all(
 		configuration.workspaces.map(async (workspace): Promise<void> => {
@@ -105,23 +102,4 @@ it('row 14 PRECURSOR: controlled issuer and helper admission stand in for deploy
 	);
 	if (spoof.isError === true) throw new Error('False labels changed allowed sender behavior.');
 	assertOwnCredential(await observations(configuration), spoofId, alpha.credential, alpha.label);
-	await setAdmission(configuration, { workspace: alpha, state: 'removed' });
-	try {
-		await refuse({ token: alphaToken });
-		const siblingCallId = `sibling-after-removal-${crypto.randomUUID()}`;
-		const sibling = await requireRpcResult(
-			await portalRpc(configuration, 'tools/call', portalCall(configuration, siblingCallId), {
-				workspace: beta,
-			}),
-		);
-		if (sibling.isError === true) throw new Error('Removing W1 stopped sibling W2.');
-		assertOwnCredential(
-			await observations(configuration),
-			siblingCallId,
-			beta.credential,
-			beta.label,
-		);
-	} finally {
-		await setAdmission(configuration, { workspace: alpha, state: 'member', persona: 'one' });
-	}
 });

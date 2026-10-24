@@ -1,3 +1,4 @@
+import { removalNoticeSchema } from '@agent-collaboration/tool-access/contracts';
 import type { ConsumeApprovalTokenResult } from '@agent-collaboration/tool-engine/mcp-gateway';
 import type { ObservationLog } from '@agent-collaboration/tool-host-core';
 import {
@@ -55,13 +56,7 @@ interface ProofBindings extends WorkerBindings {
 	readonly FIXED_CLOCK?: string;
 }
 const controlSchema = z.discriminatedUnion('kind', [
-	z.strictObject({
-		kind: z.literal('admission'),
-		organizationId: z.string(),
-		agentId: z.string(),
-		state: z.enum(['listed', 'removed']),
-		persona: z.string().min(1).default('one'),
-	}),
+	z.strictObject({ kind: z.literal('removal'), notice: removalNoticeSchema }),
 	z.strictObject({
 		kind: z.literal('fault'),
 		organizationId: z.string(),
@@ -96,15 +91,14 @@ export default {
 		if (new URL(request.url).pathname === '/__logs') return Response.json(logs);
 		if (new URL(request.url).pathname === '/__proof') {
 			const input = controlSchema.parse(await request.json());
-			const object = bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(input.organizationId));
+			const object = bindings.WORKSPACES.get(
+				bindings.WORKSPACES.idFromName(
+					input.kind === 'removal' ? input.notice.workspaceId : input.organizationId,
+				),
+			);
 			switch (input.kind) {
-				case 'admission':
-					if (input.state === 'listed') await object.setMembership(input.agentId, input.persona);
-					else {
-						const requestId = crypto.randomUUID();
-						await object.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
-						await object.completeAgentRemoval(input.agentId, requestId, 'unlink');
-					}
+				case 'removal':
+					await object.recordRemovalNotice(input.notice);
 					break;
 				case 'fault':
 					await object.setProofFault(input.fault);

@@ -1,44 +1,49 @@
+import {
+	removalNoticeSchema,
+	removalSubjectSchema,
+} from '@agent-collaboration/tool-access/contracts';
 import { z } from 'zod';
 
 import { WorkspaceAuthority } from '#worker-host/durable-workspace-authority/workspace-authority';
-
 export { WorkspaceAuthority };
 type ObjectProofBindings = Readonly<Pick<ToolPortalWorkerEnv, 'WORKSPACES'>>;
 const controlSchema = z.discriminatedUnion('kind', [
-	z.strictObject({
-		kind: z.literal('admission'),
-		organizationId: z.string(),
-		agentId: z.string(),
-		state: z.enum(['listed', 'removed']),
-		persona: z.string().min(1).default('one'),
-	}),
-	z.strictObject({ kind: z.literal('listed'), organizationId: z.string(), agentId: z.string() }),
 	z.strictObject({
 		kind: z.literal('consume'),
 		organizationId: z.string(),
 		tokenId: z.string(),
 		expiresAtMs: z.number(),
 	}),
+	z.strictObject({ kind: z.literal('notice'), notice: removalNoticeSchema }),
+	z.strictObject({
+		kind: z.literal('mark'),
+		workspaceId: z.string(),
+		subject: removalSubjectSchema,
+	}),
 ]);
-// Test-only composition. Production exports no admission/replay HTTP endpoints.
+// Test-only DO controls, separate from the production fetch entry.
 export default {
 	async fetch(request: Request, bindings: ObjectProofBindings): Promise<Response> {
 		const input = controlSchema.parse(await request.json());
-		const object = bindings.WORKSPACES.get(bindings.WORKSPACES.idFromName(input.organizationId));
 		switch (input.kind) {
-			case 'admission':
-				if (input.state === 'listed') await object.setMembership(input.agentId, input.persona);
-				else {
-					const requestId = crypto.randomUUID();
-					await object.beginAgentRemoval(input.agentId, requestId, { operation: 'unlink' });
-					await object.completeAgentRemoval(input.agentId, requestId, 'unlink');
-				}
-				return Response.json({ ok: true });
-			case 'listed':
-				return Response.json({ listed: (await object.readMembership(input.agentId)) !== null });
 			case 'consume':
-				return Response.json(await object.consumeApprovalToken(input.tokenId, input.expiresAtMs));
+				return Response.json(
+					await bindings.WORKSPACES.get(
+						bindings.WORKSPACES.idFromName(input.organizationId),
+					).consumeApprovalToken(input.tokenId, input.expiresAtMs),
+				);
+			case 'notice':
+				return Response.json(
+					await bindings.WORKSPACES.get(
+						bindings.WORKSPACES.idFromName(input.notice.workspaceId),
+					).recordRemovalNotice(input.notice),
+				);
+			case 'mark':
+				return Response.json(
+					await bindings.WORKSPACES.get(
+						bindings.WORKSPACES.idFromName(input.workspaceId),
+					).readRemovalMark(input.subject),
+				);
 		}
-		throw new Error('Unsupported proof control');
 	},
 };
