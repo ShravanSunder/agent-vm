@@ -107,7 +107,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Sign-out branch:** Person B signs out. Then request a new token with B's old cookie, and introspect B's earlier token.
 - **Owner branch:** the owner removes their own entry. Their next admin call is refused (`owner-not-admitted`).
 - **Cleanup-failure branch** (on `T3`): the D1 session delete after a removal is made to fail. Each kept cookie's attempt above is still refused, because every use reads O1's object; the owner sees the cleanup reported incomplete, and a retry deletes the rows.
-- **Two-entry branch:** Person C has two allowlisted addresses, both bound to them: C signed in with Google on one and linked GitHub on the other. The owner removes one address. C's passkey sign-in, a new token and an Accept are all refused. Re-adding that address restores C.
+- **Linked-address branch:** Person C signed in with Google on one allowlisted address, then linked a GitHub login whose verified email is a second allowlisted address. Linking never binds (Program Design), so only the first entry is bound to C. The owner removes the first address. C's passkey sign-in, a new token and an Accept are all refused, even though the linked address is still allowed. Re-adding the first address restores C. A build where linking binds the second entry fails (C stays admitted).
 
 **E. Held interleavings** (automated integration on `T3`, no journey). The test's composition can hold a request at a named step while a removal commits in the organization's object, or a sign-out commits in D1, on another request. Each case is a separate run, in O1:
 1. A passkey sign-in held after its session insert, before the final check. **Expect:** refused; no session row for A.
@@ -123,7 +123,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 11. Case 9(b) with the cleanup batch made to fail. **Expect:** the `user` and `account` rows remain, unbound. The failure is recorded, and a later sign-in with that login is refused while its entry stays removed.
 12. Case 9(c): the first sign-in's check binds the entry, then the removal commits before the final check. **Expect:** refused. The `user`, `account` and binding remain as a removed Person, with no session. Re-adding the address reactivates that same Person id.
 13. Request A, signing in to O1, is refused at its final check and held before its cleanup batch. Request B signs in to O2 with the same provider account (allowed there) and is admitted: its claim commits, O2's object binds it. Then A's cleanup runs. **Expect:** B's Person id, `account` row, claim, O2 binding and session all survive; A's cleanup deletes nothing; A ends "not allowed".
-13a. The same organization (SEC-02): request A for O1 creates the Person and its claim. A's `AdmitSignIn` refusal is held at the central client stand-in. The owner allows the entry, and request B for the same Person and O1 is admitted. Then A's refusal is released and A runs its claim release and cleanup. This is repeated with B's answer made unknown (stand-in times out), and with a restart before A resumes. **Expect:** the Person, their `account`, the `admitted_person_guard` row and O1's binding all survive. A releases only its own claim. With B unknown, B's claim stays until a later sign-in settles it through `Standing`. **Wrong builds that fail:** a claim keyed by Person and organization that A deletes (A's cleanup then deletes the admitted Person); a build that releases B's claim on an unknown answer.
+13a. The same organization (SEC-02): request A for O1 creates the Person and its claim. A's `AdmitSignIn` refusal is held at the central client stand-in. The owner allows the entry, and request B for the same Person and O1 is admitted. Then A's refusal is released and A runs its claim release and cleanup. This is repeated with B's answer made unknown (stand-in times out), and with a restart before A resumes. **Expect:** the Person, their `account`, the `admitted_person_guard` row and O1's binding all survive. A releases only its own claim. With B unknown, B's claim stays, including after a later `Standing` read answers not admitted. **Wrong builds that fail:** a claim keyed by Person and organization that A deletes (A's cleanup then deletes the admitted Person); a build that releases B's claim on an unknown answer, or later on a `Standing` read.
 14. The reverse order: A's cleanup commits first, then B's claim insert runs against the deleted user. **Expect:** the claim insert finds no user, O2's object is never asked to bind, B is refused with no binding anywhere pointing at a missing user, and B's retry creates a fresh Person.
 15. O1's object made unreachable for one request (in the test composition): a sign-in to O1, a token for an O1 session, an introspection of an O1 token and an O1 admin call. **Expect:** each refused, never accepted; the same requests in O2 succeed.
 16. A Person token request for an O1 session where the test composition makes the token's `organization_id` name O2 (a resource custom claim, and separately a forged consent reference). **Expect:** the final check refuses (`invalid_grant`); no token naming O2 is released.
@@ -191,7 +191,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - ask for a W1 token from Person A's session, including with a person code client the test composition configures for W1 and `tool-portal:agent`: refused by the closed token-kind dispatch, with no token in the response.
 - **Disable and resource off:** central's `DisableBotCredential` (its own audience), then a new W1 token request: `invalid_client`. Separately, `SetWorkspaceResource { enabled: false }` for W1, then a new W1 token request from a member bot: refused, with no token. An already-issued token's refusal at the Portal after removal is identity SO3's, through removal marks.
 - **Held races and conflicting claims** (on `T3`, with the hold seam from E):
-  1. a W1 token request held **after Better Auth has signed the token**, immediately before the handler's final check. Central's removal of the bot from W1 is decided while it is held, then it is released. **Expect:** refused, and no token in the response.
+  1. a W1 token request held **after Better Auth has signed the token**, immediately before the handler's final check. Central's removal of the bot from W1 is decided while it is held, then it is released. **Expect:** the token may be released, because central decided once before signing and the final check reads no live membership (agent identity, "How a bot gets its tokens"). Its `grant_revision` is below the removal's, so once the removal notice is recorded, a call with it at W1 is refused (agent identity SO3). A build whose Portal accepts it after the notice fails.
   2. the same hold, with the credential's disable committing instead. **Expect:** `invalid_client`, no token.
   3. a resource custom claim on `T3` that sets `organization_id` to O2 on W1's resource, then a W1 token request by O1's bot. **Expect:** `invalid_client`; no token naming O2 is released.
   4. a resource custom claim on `T3` that sets `workspace_id` to W2 on W1's resource, then a W1 token request. **Expect:** `invalid_client`.
@@ -202,7 +202,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - a client listed in the trusted cache fails the readback;
 - a build that still writes per-client resource links, or issues from them, fails the readback and the W2 request (no link to stop it, so only central's decision may);
 - a provision that returns a secret on repeat fails the repeat;
-- a build with only the early checks fails held cases 1 and 2;
+- a build with only the early checks fails held case 2; a Portal that ignores the removal mark fails held case 1;
 - a final check that skips the signed-claim comparisons fails held cases 3 and 4, and one that skips the resource-organization comparison fails held case 5;
 - a person guard that relies on `allowedScopes` alone fails the configured person code client case.
 
@@ -408,7 +408,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - per-client resource links still written or used for issuance (readback, the W2 request);
   - an agent client in the trusted-client cache (readback);
   - a repeat provision that returns a secret;
-  - a final check deleted, leaving only the early checks (held cases 1 and 2);
+  - a final check deleted, leaving only the early checks (held case 2), or a Portal that accepts a pre-removal token after the notice (held case 1);
   - a final check that skips the signed-claim comparisons (held cases 3 and 4) or the resource-organization comparison (held case 5);
   - a person guard that relies on `allowedScopes` alone.
 - **Reuses:** none yet.

@@ -888,8 +888,12 @@ export type RefusedSignInCleanup =
 	| { readonly kind: 'kept'; readonly reason: 'pending-claim-or-admitted' } // zero rows: correct, not an error
 	| SignInStoreFailure;
 
+export type ProvisionedCredential =
+	| { readonly kind: 'client-secret'; readonly secret: OneTimeSecret } // returned once, never stored in clear
+	| { readonly kind: 'private-key-jwt' }; // the bot's public keys are registered; there is no secret to return
+
 export type BotCredentialProvision =
-	| { readonly kind: 'provisioned'; readonly clientId: BotClientId; readonly secret: OneTimeSecret } // returned once, never stored in clear
+	| { readonly kind: 'provisioned'; readonly clientId: BotClientId; readonly credential: ProvisionedCredential }
 	| { readonly kind: 'already-provisioned' } // no secret: a lost reply is recovered by retire and provision anew
 	| SignInStoreFailure;
 
@@ -908,7 +912,6 @@ export type WorkspaceResourceWrite =
 export interface SignInStore {
 	readonly claimForAdmission: (props: { readonly personId: PersonId; readonly organizationId: OrganizationId }) => Promise<AdmissionClaim>;
 	readonly settleClaim: (props: { readonly attemptId: Uuid7; readonly personId: PersonId; readonly organizationId: OrganizationId; readonly settlement: ClaimSettlement }) => Promise<ClaimSettled>;
-	readonly listUnsettledClaims: (props: { readonly personId: PersonId; readonly organizationId: OrganizationId }) => Promise<readonly { readonly attemptId: Uuid7; readonly claimedAt: EpochMilliseconds }[] | SignInStoreFailure>;
 	readonly cleanUpRefusedSignIn: (props: { readonly personId: PersonId }) => Promise<RefusedSignInCleanup>;
 	readonly provisionBotCredential: (props: ProvisionBotCredentialProps) => Promise<BotCredentialProvision>;
 	readonly disableBotCredential: (props: { readonly clientId: BotClientId; readonly organizationId: OrganizationId }) => Promise<BotCredentialDisable>;
@@ -963,7 +966,7 @@ export interface SignInPlatform {
 | Claim a Person for an organization before asking central (every sign-in that asks `AdmitSignIn`) | `insert into organization_admission_claim (attempt_id, person_id, organization_id, claimed_at_ms) select ?, ?, ?, ? where exists (select 1 from user where id = ?) returning attempt_id`, with a fresh `attempt_id` from `platform.ids` | Each attempt adds its own row, so a returning or concurrent sign-in never conflicts and never errors (fixes #237 thread r4366161295). The only way to get no row back is that the user does not exist; then central is not asked and the sign-in is refused. |
 | Central answers `Admitted` | `insert into admitted_person_guard (person_id, organization_id, admitted_at_ms) values (?, ?, ?) on conflict do nothing`, then `delete from organization_admission_claim where attempt_id = ?` | The guard is written before this attempt's claim goes, in one unit, so the Person is never unprotected. |
 | Central gives a definite refusal (`NotAdmitted`, `AwaitingOwner`) | `delete from organization_admission_claim where attempt_id = ?` | Releases only this attempt's claim. Another attempt's claim, or a guard, still protects the Person. |
-| Central's answer is unknown (`unavailable`, timeout, lost reply) | nothing is released | An ambiguous answer is never treated as a refusal. The claim stays and blocks cleanup. The next sign-in for that Person and organization asks central `Standing` and settles it: admitted means the `Admitted` row above, otherwise the release row, for the stale claim's `attempt_id`. |
+| Central's answer is unknown (`unavailable`, timeout, lost reply) | nothing is released | An ambiguous answer is never treated as a refusal. The claim stays and blocks cleanup, and nothing later releases it: a later `Standing` read cannot fence the original `AdmitSignIn`, which may still arrive and bind after that read. Only a definite answer to that same attempt changes it. If the Person was never admitted, their rows stay unbound and inactive, the narrow outcome in the people sign-in failure table. |
 | Clean up a refused first sign-in | `delete from account where user_id = ? and not exists (select 1 from organization_admission_claim where person_id = ?) and not exists (select 1 from admitted_person_guard where person_id = ?)`, then `delete from user where id = ? and not exists (…same two…)` | If any attempt still holds a claim, or central admitted the Person anywhere, both deletes change zero rows. Zero rows is correct, not an error. |
 | Audit intent, then outcome | intent: `insert … on conflict do nothing returning id`; outcome: a separate insert after the effect | Two events by design; a missing outcome is visible as a pending intent. |
 | Provision a bot credential | `insert into oauthClient … on conflict (client_id) do nothing returning client_id`, in the provider's stored-secret format | A repeat returns no row, which answers `AlreadyProvisioned` with no secret. A lost reply is recovered by retiring and provisioning anew, never by re-reading a secret (fixes #237 thread r4343749199, together with the people sign-in design's change). |
