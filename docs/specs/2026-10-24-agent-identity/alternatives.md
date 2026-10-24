@@ -352,7 +352,7 @@ flowchart LR
 |---|---|---|---|
 | "A signed client assertion on every request" (first draft) | Sounded uniform. | That kind of assertion only authenticates a client at the token endpoint; it says nothing about which request or operation it is for. | Turned down by the Lead after review |
 | Sign each request body | Proof survives outside the encrypted connection. | A second signing scheme to build and rotate, for no threat this design has. | Not chosen. Reopen if requests must stay verifiable after leaving TLS. |
-| Short-lived service tokens from the issuer, each for one receiving service and one operation, over TLS | Reuses the issuer, its keys and client authentication. A token for one receiver or operation is refused everywhere else. | Each receiver pins the issuer, the expected client and the operation. | **Chosen** by the Lead ([R27](specification.md#hosts-outages-and-service-requests)) |
+| Short-lived service tokens from the issuer, each for one receiving service and one operation, over TLS | Reuses the issuer, its keys and client authentication. A token for one receiver or operation is refused everywhere else. | Each receiver pins the issuer, the expected client and the operation. A stolen token can make that one kind of request, within its scope, until it expires a few minutes later; bodies aren't signed, so receivers check what a body says, not who first wrote it. | **Chosen** by the Lead ([R27](specification.md#hosts-outages-and-service-requests)) |
 
 ## 17. How does a token say which session it is for?
 

@@ -148,7 +148,7 @@ flowchart LR
 - **Versions:** every route is under `/v1/`. A breaking change is a new path prefix; contract types carry no version field.
 - **Casing:** JWT claims are `snake_case`; HTTP JSON bodies are `camelCase` (the Fleet's serde convention). Rust types say `rename_all` on structs and enums alike.
 - **Numbers:** marks (grant and removal) are integers in `0..=2^53−1`, encoded as JSON numbers; the Rust newtype refuses larger values. Times are Unix seconds.
-- **Clock difference:** every receiver allows at most 60 seconds.
+- **Clock model:** any two service clocks differ by at most D = 60 seconds. No receiver adds leeway to `grant_expires_at`; checks of `exp`, `iat` and service-token lifetimes allow D. Retention (below) is computed from D, so a clock difference can refuse a token early but never let a covered one pass after its notice is dropped.
 
 ### Workspace and collaboration token claims
 
@@ -208,7 +208,7 @@ export const collaborationTokenClaimsSchema = z.object({
 export type WorkspaceTokenClaims = z.infer<typeof workspaceTokenClaimsSchema>;
 ```
 
-**Portal acceptance (C1), in order:** signature against the issuer's published keys; `aud` is W's address; `workspace_id` is W and `organization_id` is W's configured organization; `now < min(exp, grant_expires_at) + 60 s`; for a session principal, `client_id` is Fleet central's pinned session-issuing client and nothing else; no removal mark covers it (below); then the persona check.
+**Portal acceptance (C1), in order:** signature against the issuer's published keys; `aud` is W's address; `workspace_id` is W and `organization_id` is W's configured organization; `now < grant_expires_at` with no leeway, and `now < exp + 60 s`; for a session principal, `client_id` is Fleet central's pinned session-issuing client and nothing else; no removal mark covers it (below); then the persona check.
 
 ### Grant decisions
 
@@ -251,7 +251,7 @@ pub enum CollaborationDecision {
 
 `Unavailable` is not a decision: a transport failure or timeout, which every caller treats as a refusal (R25).
 
-**Redemption window:** the issuer mints from a `Grant` only while `now ≤ decided_at + 60 s`, and stamps `grant_expires_at` exactly as decided. A repeat inside the window mints an equivalent token that ends at the same moment; nothing can mint later.
+**Redemption window:** the issuer mints from a `Grant` only while its own clock reads `≤ decided_at + 60 s`, and stamps `grant_expires_at` exactly as decided. A repeat inside the window mints an equivalent token that ends at the same moment; nothing can mint later. Clock difference only changes how long the window stays open in real time (up to 120 s); it never moves `grant_expires_at`.
 
 ### Requests over the enrolled connection (Router → Fleet central)
 
@@ -320,7 +320,7 @@ pub enum DecideBotIssuance {
 
 ### Admin commands and lookups (person → Fleet central)
 
-Every command and lookup names its organization and is refused unless the guard below passes. Results are `Applied { removal: Option<RemovalStatus> }` or `Refused { reason: NotOwner | NotFound | Conflict }`; a refused command reveals nothing.
+Every organization command and lookup names its organization and is refused unless the owner guard below passes. The two fleet commands, `EnrollMachine` and `RevokeMachine`, act across organizations and stay with the fleet operator's existing authority (below). Results are `Applied { removal: Option<RemovalStatus> }` or `Refused { reason: NotOwner | NotFound | Conflict }`; a refused command reveals nothing.
 
 | Command | Request fields | Removal it writes |
 |---|---|---|
@@ -331,13 +331,16 @@ Every command and lookup names its organization and is refused unless the guard 
 | `SetBotCollaboration`, `WithdrawBotCollaboration` | organizationId, botId, workspaceId | — (collaboration is checked live at central) |
 | `SetPersonMembership`, `RemovePersonMembership` | organizationId, personId, workspaceId, persona | `personaChanged` / `membershipEnded` |
 | `AllowMachine`, `WithdrawMachineAllowance` | organizationId, installation, workspaceId | `allowanceWithdrawn` |
-| `RevokeMachine` (existing, extended) | installation | `machineRevoked` per affected workspace (fan-out below) |
+| `EnrollMachine` (existing, fleet operator) | as today | — |
+| `RevokeMachine` (existing, fleet operator, extended) | installation | `machineRevoked` per affected workspace (fan-out below) |
 | `AllowWorkspacePair`, `WithdrawWorkspacePair` | organizationId, fromWorkspaceId, toWorkspaceId | — |
 | `RemoveSession` | organizationId, session | `sessionRemoved` |
 | `SetTokenLifetime` | organizationId, seconds (60..=3600) | — |
 | Lookups: `IdentityLookup`, `WorkspaceLookup`, `MachineLookup`, `RemovalStatus` | organizationId plus the subject | — |
 
 **Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). The guard refuses everyone else before any read or write.
+
+**Fleet operator authority:** enrolling and revoking machines is fleet-wide, so no organization's owner may do it. It stays with Fleet central's existing operator caller (`AccessCaller::Owner`, `access_contract.rs:31–36`), which this set does not change. An organization's owner withdraws its own allowances instead (`WithdrawMachineAllowance`). In your own deployment you hold both authorities; they stay separate so that a customer's organization owner never becomes a fleet operator.
 
 ## Service requests (R27, C7)
 
@@ -348,7 +351,7 @@ Every command and lookup names its organization and is refused unless the guard 
 | Fleet central → Tool Portal: deliver a notice | a service token from the issuer by client credentials with central's `private_key_jwt`: `aud` = the Portal's notice address, `scope` = `removal-notices` | issuer key; audience; scope; `client_id` is central's pinned client; the notice's organization and workspace are hosted here | no further effect (notice ID) |
 | Fleet central → sign-in: confirm a person's session | a service token as in the previous row, `aud` = the sign-in service's confirmation address, `scope` = `session-confirmation` | as above | confirms again |
 
-All edges run over TLS, including Cloudflare service bindings, which carry the same tokens. **Trust configuration** is pinned at deploy: each receiver's issuer URL, published-key URL and the client ID expected per operation. **Rotation:** central publishes its client key set at a fixed address the issuer reads; it adds a new key, waits one refresh, then signs with it. The issuer rotates its signing keys the existing way; receivers refetch the key set once on an unknown key ID.
+Service tokens from the issuer get a 5-minute lifetime from the issuer's resource policy for those audiences, and every receiver also refuses one whose `exp − iat` exceeds that. All edges run over TLS, including Cloudflare service bindings, which carry the same tokens. Bodies are not signed: a receiver checks that each body is well-formed and within the caller's scope (its organization and workspace exist here and the caller may act for them), not that the body is the one the caller first wrote. **Trust configuration** is pinned at deploy: each receiver's issuer URL, published-key URL and the client ID expected per operation. **Rotation:** central publishes its client key set at a fixed address the issuer reads; it adds a new key, waits one refresh, then signs with it. The issuer rotates its signing keys the existing way; receivers refetch the key set once on an unknown key ID.
 
 ## Removal across owners (R19–R21)
 
@@ -358,8 +361,10 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 |---|---|---|---|---|
 | membership ended, persona changed, bot retired, allowance withdrawn, session removed, session ended | organization authority, one transaction: the change, its own next mark, one outbox row per affected workspace | that transaction (decisions read the same state) | outbox → Portal, resent with capped backoff | every row acknowledged |
 | credential retired | organization authority, one transaction: the credential marked retiring, its mark, outbox rows for the bot's member workspace, and an outbox step "disable client at the issuer" | that transaction: decisions refuse that client | outbox → Portal; outbox → issuer (disable the client) | Portal rows acknowledged and the issuer confirms |
-| machine revoked | Registry, existing revocation: new connections refused at commit, open sessions end when the revocation reaches them (FL-12); plus a new Registry fan-out step per organization authority | the Registry commit: the broker checks enrollment on every decision | each organization authority, on receipt, withdraws that machine's allowances in one transaction with one mark and writes a machine notice per affected workspace | every organization has recorded it and every notice is acknowledged |
+| machine revoked | Registry, existing revocation: new connections refused at commit, open sessions end when the revocation reaches them (FL-12); plus a new Registry fan-out step per organization authority | each organization authority, when it records the revocation: that transaction withdraws the machine's allowances and takes mark r_m, so no later grant for the machine is decided there. A grant decided after the Registry commit but before that record took a smaller mark, so the machine notice covers it. The Registry commit additionally stops new enrolled connections. | that same transaction writes a machine notice (removal mark r_m) per affected workspace | every organization has recorded it and every notice is acknowledged |
 | a tool profile or the session default changes at the Portal | Portal configuration | not needed: tokens carry the persona name or the default reference, and the Portal resolves both at each call | none | immediately |
+
+**The cut-off for each removal is a transaction in the organization authority that decides grants.** Every grant and every removal there takes its own mark in one serialized order, so "decided before the removal" is exactly "smaller mark", and the notice covers it. No unlocked read of another owner's state is the fence.
 
 **Discovery:** an organization authority knows its own memberships, allowances and sessions; the Registry fan-out visits every organization authority of the fleet. **Restart:** every step is an idempotent outbox row; a host restart resumes from the outbox. A removal shows `pending` in `RemovalStatus` until its last step completes; nothing reports done early.
 
@@ -369,7 +374,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 |---|---|---|---|---|
 | **Organization authority** (new) | E1, E4, E7, E8, E9, E13, E15, E17; the ordered marks; the configured lifetime; the removal outbox; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, the sign-in service (decisions) | membership or issuance policy changes |
 | **Session token broker** (new) | Turning a Router's request into a token: decide, then mint through the fleet-session grant | `collaboration-central-core` | Router forwarder | the session grant contract changes |
-| **Admin surface** (modified) | Owner-only commands and lookups, and their guard (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
+| **Admin surface** (modified) | Organization-owner commands and lookups with their guard, and the fleet operator's machine commands under its existing authority (R13, R14) | `central_router.rs` admin routes (modified) | the owner's CLI and console | admin commands change |
 | **Collaboration admission** (modified) | Who may post or message where: bound actor, workspace pairs, bot collaborations, collaboration tokens | `project_admission`, `session_request_admission` (modified); a new bot collaboration route | Router (forwarded writes), bots | collaboration rules change |
 | **Registry revocation fan-out** (new, small) | Delivering a machine revocation to every organization authority | Registry object (modified) | organization authorities | revocation flow changes |
 | **Fleet object** (existing) | E2, E16 | existing | organization authority | — |
@@ -390,7 +395,7 @@ No transaction spans the Registry, Better Auth and organization objects. Each re
 | Forbidden edge | Enforced by |
 |---|---|
 | Tool Portal → Fleet central on a tool call (R17) | the caller check has no Fleet client: a dependency rule, checked by lint and review |
-| Anyone but the organization's current owner → the admin surface | the owner guard: runtime |
+| Anyone but the organization's current owner → organization commands; anyone but the fleet operator → `EnrollMachine`, `RevokeMachine` | the owner guard and the existing operator check: runtime |
 | An agent supplying its own sender | the bound actor: runtime |
 | The issuer minting a workspace or collaboration token without a decision | the response-release gate and the fleet-session grant handler: runtime |
 | Any consumer identifying a caller by `sub` | the claims schema exposes `principal`; review rule |
@@ -446,7 +451,8 @@ sequenceDiagram
   BOT->>B: client credentials, resource = W's address (or the collaboration address)
   B->>OA: DecideBotIssuance(client, W) with a service token
   OA-->>B: Grant(bot, persona, g, decided t, expires t+L) or Refuse(reason)
-  B->>B: gate keeps the Grant for this request, claim hook stamps principal, marks, expiry
+  Note over B: inside customAccessTokenClaims, before signing
+  B->>B: Refuse or timeout: throw, nothing minted. Grant: return principal, marks, expiry
   B-->>BOT: token, or invalid_client / invalid_target
   BOT->>P: tools/call + workspace token
   P-->>BOT: result, or refused
@@ -455,7 +461,7 @@ sequenceDiagram
   CA-->>BOT: delivered, or refused
 ```
 
-**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The existing response-release gate (`sign-in-response-release.ts:114–146`) asks central once and keeps the `Grant` in request-scoped state; the existing `customAccessTokenClaims` hook (`provider-configuration.ts:220`) stamps the claims from it. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback** if the request-scoped handoff can't be made reliable: a bot extension grant that calls `issueTokens` with `accessTokenClaims`, the same surface the fleet-session grant uses. The plan's first slice proves which.
+**Mapping onto 1.7.8:** bots keep the standard client-credentials grant. The decision is made in the existing `customAccessTokenClaims` hook (`provider-configuration.ts:220–261`), which the provider runs after client authentication and before signing (`dist/introspect-H3uoUiuS.mjs:1831–1852`). Today that hook already authorizes the agent client and its resource and throws to refuse. It changes to: ask central once with `DecideBotIssuance` for the authenticated client (`props.tokenClientId`, per request) and the requested resource; throw `invalid_client`, `invalid_target` or `temporarily_unavailable` on a refusal or timeout, so nothing is minted; on a `Grant`, return its claims. The outer response release (`sign-in-request-handler.ts:43–51`) runs after the provider and only checks the minted response, as today. The issuer's own `exp` is the 60-minute maximum; `grant_expires_at` carries the real end. **Fallback**, the same surface the fleet-session grant uses: a bot extension grant calling `issueTokens` with `accessTokenClaims`.
 
 ## How a removal reaches the Tool Portal
 
@@ -480,7 +486,7 @@ sequenceDiagram
 
 **Why ordered marks:** every grant decision and every removal takes the next value of one per-organization counter inside the organization authority's serialized write. A token whose grant took g is covered by a removal r exactly when g < r. A grant decided before the removal is covered however late it was minted; a grant decided after it (the next value, r + 1 or later) is accepted, including right after a persona change. The Specification's grant mark is `grant_revision`, and its removal mark is `removal_revision`.
 
-**Retention:** a covered grant was decided before r, so its `grant_expires_at` is at most 60 minutes after the removal. The Portal keeps each mark and notice ID for 61 minutes after receipt.
+**Retention:** a covered grant was decided before the removal, so its `grant_expires_at` is at most 60 minutes after the removal on Fleet central's clock. The notice is received no earlier than the removal, which on the Portal's clock is at most D = 60 s before it. With no leeway on `grant_expires_at`, every covered token stops passing within 60 minutes + D of receipt on the Portal's clock. The Portal keeps each mark and notice ID for 61 minutes after receipt by its own clock; a later jump of that clock moves acceptance and cleanup together.
 
 ## How a collaboration call is attributed
 
@@ -547,7 +553,8 @@ Any return from removed or ended to active is refused: a new conversation is a n
 | Duplicate notice | same notice ID | `AlreadyRecorded`, no effect | removal receiver |
 | Portal restart | — | Marks and notice IDs are persisted before acknowledging | workspace store |
 | A grant racing a removal | marks | g < r covered; a decision after the removal takes a larger mark | organization authority |
-| Machine revoked; fan-out interrupted | Registry outbox | Issuance already fenced by the Registry commit; fan-out resumes; pending until every organization records | Registry; organization authorities |
+| Machine revoked; fan-out interrupted | Registry outbox | New connections already refused at the Registry commit; grants decided before an organization records the revocation are covered by its machine notice; fan-out resumes; pending until every organization records | Registry; organization authorities |
+| Clocks differ by up to D | — | A token may be refused up to D early; the forwarder refetches before `grant_expires_at`; retention covers D | caller check; forwarder |
 | Credential retired; issuer step fails | outbox | Decisions already refuse that client; the disable step retries; pending until confirmed | organization authority |
 | A session's token expires mid-call | — | The call admitted at its start completes; the next needs a fresh token | caller check |
 | Two starts for one conversation | same `SessionRef` | The second returns the existing registration, or `alreadyEnded` | organization authority |
@@ -584,6 +591,7 @@ flowchart LR
 | Issuer signing key | Better Auth (existing) | Every token, including service tokens it self-signs | Any token, until rotated |
 | Bot secret or key | The bot's own storage (unknown) | That bot | That bot, until retired (accepted limit, U2) |
 | Session binding | Router memory and that session's harness configuration | Attribution | Another process of the same user can act as that session: the shared-bucket limit (E14) |
+| A service token | In flight between services; lifetime at most 5 minutes (60 s for the issuer's decision token), checked by each receiver | One edge and one operation | Its holder can make that one kind of request, within its scope, until it expires. TLS protects it in transit; bodies are not signed, so the receiver checks each body's meaning (organization, workspace, shape), not its origin. |
 
 The Router is trusted for every session on its machine. Sessions on one machine are not separated from each other unless their isolation kind does it (R23).
 
@@ -622,13 +630,13 @@ There is no coexistence period. The test deployments are the only consumers, so 
 | U20, U21 | R10: person membership admin-managed | E3, E8 | admin surface | `SetPersonMembership` | `Membership` | active/removed | non-owner refused | admin API through the guard |
 | U7, U2 | R11: bot collaborator messages with a collaboration token (OD3 gap) | E9, E18 | collaboration admission; issuer | collaboration resource; `CollaborationDecision` | `collaborationTokenClaimsSchema` | collaboration active/withdrawn | tool, start, role refused; wrong audience refused | central + Portal; **gap: OD3 admission rule** |
 | U8, U7 | R12: messaging needs a pair | E17 | collaboration admission | pair check | `WorkspacePair` | active/withdrawn | no pair → refused | Router + central |
-| U21, U20 | R13: only the current owner administers | E2, E4, E6, E8, E9, E15, E17 | admin surface | owner guard + person confirmation | person token; confirmation request | none | anyone else refused, nothing revealed | admin API: owner, member, other owner, removed owner, stale session, bot, session |
+| U21, U20 | R13: only the current owner administers; fleet commands only by the fleet operator | E2, E4, E6, E8, E9, E15, E17 | admin surface | owner guard + person confirmation | person token; confirmation request | none | anyone else refused, nothing revealed | admin API: owner, member, other owner, removed owner, stale session, bot, session; an organization owner attempting `RevokeMachine` |
 | U9 | R14: lookups answer | E2–E18 | organization authority | lookups | lookup results | none: read | — | admin API |
 | U10 | R15: tokens only to active members; claims | E8, E11 | issuer + organization authority | `IssuanceDecision::Grant`; claims | claims schema | — | refuse → no token | contract + sign-in integration |
 | U12 | R16: grant expiry fixed at decision; redemption window; ≤ 60 min | E11, E18 | organization authority; issuer | `grant_expires_at`; 60 s window | `TokenLifetimeSeconds`; `UnixSeconds` | organization setting | late mint → nothing | unit + delayed-mint integration |
 | U10, U12 | R17: Portal admission, no fleet call | E10, E11, E12 | caller check | `checkHostedCaller` (modified) | claims; stored marks | none | each C1 refusal before tools run | Portal host e2e (production entry) |
 | U14, U15 | R18: consult once; ended session refused | E8, E11, E15 | organization authority | `IssuanceDecision` | `identity_contract.rs` | marks | unavailable → refuse | central + sign-in integration |
-| U13 | R19: every removal kind; fenced; pending shown | E8, E12, E15 | organization authority; Registry fan-out | outboxes | `RemovalNotice` | removal states | interrupted fan-out resumes | interruption cases per owner |
+| U13 | R19: every removal kind; cut off at the organization's record; pending shown | E8, E12, E15 | organization authority; Registry fan-out | outboxes | `RemovalNotice` | removal states | interrupted fan-out resumes | interruption cases per owner; a grant held across the Registry commit |
 | U13 | R20: ordered marks; strict cover; no lowering | E11, E12 | organization authority; caller check | `removal_revision` vs `grant_revision` | both shapes | marks | — | property test + e2e |
 | U13 | R21: resend; durable before ack; retention | E12 | organization authority; workspace store | outbox; persisted marks | `RemovalNotice` | notice states | restart → still applied | Portal down and restarted; retention boundary |
 | U13, U15 | R22: notices only from central | E12 | removal receiver | service token check | pinned trust | none | forged → refused | Portal host e2e with forged notices |
