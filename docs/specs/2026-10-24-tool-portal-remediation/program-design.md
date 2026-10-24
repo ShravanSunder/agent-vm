@@ -359,6 +359,8 @@ export interface WorkspaceStore {
 	readonly readRemovalMark: (props: {
 		// every key that can cover this token: a session token passes its session key and its machine key; a bot token its bot key
 		readonly subjects: readonly [RemovalSubjectKey, ...RemovalSubjectKey[]];
+		// the token's effective usable deadline, never raw `exp`: min(grant_expires_at, exp + 60 s), in ms,
+		// with no leeway on grant expiry (identity C1 acceptance); the caller check computes it once
 		readonly tokenExpiresAtMs: EpochMilliseconds;
 	}) => Promise<
 		| { readonly kind: 'none' }
@@ -392,6 +394,8 @@ export function coveringRemovalSubjectKeys(principal: Principal): readonly [Remo
 ```
 
 A session's key is the JSON array of its three fields, so field order is fixed and no separator can collide with a value. The notice's `fleetHarnessSession` subject carries the same `{ installation, harness_endpoint, conversation_id }` shape as the token (identity Program Design, removal notice). Fleet central converts its internal session reference before writing the outbox, so the receiver never translates one into the other. A machine notice is keyed `machine:<installation>`, and every session token on that machine passes that key, so the machine mark covers it.
+
+The `tokenExpiresAtMs` a caller passes is the token's effective usable deadline, `min(grant_expires_at, exp + 60 s)`, never raw `exp`. Retention of a mark is computed from the same deadline, so the store prunes and refuses against one consistent value (security observation OBS-01).
 
 **Security time.** Every operation reads the store's security time first: the larger of `PortalClock.now()` and the value last recorded in `store_meta`, written back in the same transaction. It never goes down, even when a host clock steps back or one host's clock is behind another's. Every expiry decision the store makes (admitting a presentation, arming, reading a removal mark, pruning) compares against this one value. So once a row has been pruned as expired, no presentation of that token can be admitted again: it is already expired by the same measure (security finding SEC-01, observation OBS-01). The front verifier's own expiry check stays; the store's is the one that decides.
 
@@ -606,7 +610,7 @@ stateDiagram-v2
 | A replay passes the front verifier just before expiry and reaches the store after it, or the verifier's clock is behind the store's | the store's expiry check against security time | `expired`; no row is recreated and nothing runs | the store |
 | A host clock steps back after the store pruned rows | security time never decreases | tokens pruned as expired stay `expired` | the store |
 | A store opened with another workspace's identifier (wrong routing, two Node portals on one file) | `store_meta.workspace_id` | every call answers `store-unavailable` (`workspace-mismatch`) | the host's operator |
-| The Node spill directory is full or unwritable | the body source's write fails | that request gets today's protocol error and runs nothing; the store, in `stateDirectory`, is unaffected | the host's operator |
+| The Node spill directory is full or unwritable | the body source's write fails | that request gets today's protocol error and runs nothing. With spilling enabled, the spill parent's exhaustion boundary is independent of the store (RD6), so store decisions keep working | the host's operator |
 | The issuer's key set cannot be fetched | `keySets.fetchKeySet` returns `unavailable` to the core's issuer key cache | the call is refused as unauthenticated and the failure is logged; a still-valid cached set (inside its 5 minutes) keeps being used | the host's operator |
 | A token names a key not in the cached set | the issuer key cache | one refetch; still absent → refused as an unknown key, with no further refetch for that set until its 5 minutes pass | the store of keys is the issuer's |
 | A removal notice names a subject in a shape the token does not use | the receiver's `deriveRemovalSubjectKey` | cannot happen by construction: the notice carries the token's session shape (identity K2); a notice that fails to parse is refused before any mark is written, so central's outbox resends it | the sender (Fleet central) |
@@ -634,9 +638,10 @@ stateDiagram-v2
 2. **The host supplies where the bytes go while they are read.**
    - **Cloudflare:** the stream goes straight into the incremental parser; there is no disk to spill to.
    - **Node:** a body larger than a small in-memory threshold is first written to a temporary file, then parsed from that file as a stream. Spill files are temporary data, never durable state, and have one owner, the Node host's body source:
-     - **Where:** a spill directory the Node host creates at startup, separate from `stateDirectory` so spill files are never in backups of durable state and cannot fill the store's location. By default it is a per-process directory `tool-portal-spill-<process UUIDv7>` under the operating system's temporary directory; RD6 lets agent-vm's effective-config writer name the parent instead.
-     - **How:** the directory is created with mode `0700` and holds an owner file with the process id. Each body file is created exclusively (`wx`) with mode `0600`.
-     - **Cleanup:** a file is removed on completion, parser failure, error or abort. At startup, the host removes sibling spill directories whose owner process is no longer running, and never one whose owner is alive.
+     - **Where:** a per-process directory `tool-portal-spill-<process UUIDv7>` under a spill parent, never under `stateDirectory`, so spill files are never in backups of durable state. The parent is the one RD6 lets agent-vm's effective-config writer name, else the operating system's temporary directory.
+     - **Capacity (RD6, recommended option):** spilling is enabled only when the spill parent's exhaustion cannot exhaust the store: it is on a different filesystem from `stateDirectory` (the host compares their device identifiers at startup), or the deployment declares an enforced quota or reservation that protects the store. When neither holds, the host logs that spilling is off and streams large bodies into the parser in memory, as the Worker does. There is still no Portal cap. The alternative RD6 option keeps a same-filesystem default and withdraws the promise that spill exhaustion leaves the store unaffected.
+     - **How:** the directory is created with mode `0700` and holds an owner file recording the process id and that process's start time as the operating system reports it. Each body file is created exclusively (`wx`) with mode `0600`.
+     - **Cleanup:** a file is removed on completion, parser failure, error or abort. At startup, the host removes a sibling spill directory unless a live process has *both* its recorded id and its recorded start time. So a reused process id never keeps a dead process's files, and another live writer's files are never removed.
      - **No new promise:** R7's "no argument, result or credential is stored" holds, because a spill file lives only while its request does and never enters the store or its backups.
 3. **No Portal size refusal.** The Portal adds no byte cap of its own. What remains is the platform's: Cloudflare's account request ceiling answers above it with its own 413, and the parsed message, plus any whole-value copies validation, canonical fingerprinting and upstream serialization make of it, must fit in the isolate's memory, which concurrent requests share.
 4. **First, decide the 502.** Before building, one correlated deployed observation is taken on the private test Worker: the raw response with status, headers, body and CF-Ray, plus the Worker invocation outcome from `wrangler tail`, for a request just over 4 MiB. If it shows the 502 comes from outside the Worker, step 1 does not fix it, and the cause becomes its own finding.
