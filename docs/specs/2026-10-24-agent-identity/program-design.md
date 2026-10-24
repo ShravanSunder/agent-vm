@@ -802,7 +802,7 @@ There is no coexistence period. The test deployments are the only consumers, so 
 
 ## Deviations and unresolved decisions
 
-- **OD1:** who may start a session for W (the starter check in `RegisterFleetSession`). Today any session on the same Router can start one with no workspace check, and the start carries no project (Fleet Lead; Fleet check). Whatever is chosen, the start names its project and its starter is proven; the recommended rule adds membership of W. Conversations started outside the fleet don't join in the first round.
+- **OD1:** who may start a session for W (the starter check in `RegisterFleetSession`). Today any session on the same Router can start one with no workspace check, and the start carries no project (Fleet Lead; Fleet check). Whatever is chosen, the start names its project and its starter is proven; the recommended rule adds membership of W. Conversations started outside the fleet don't join in the first round (decided by you, 2026-10-24).
 - **Codex is bound through the app-server only.** The app-server-to-ACP bridge for outside clients gets no binding work (the Fleet check's first Codex ACP finding was withdrawn after your correction).
 - **Records live with each state owner.** An organization's audit view shows Fleet- and Registry-owned records through a projection that can show pending.
 - **OD3:** whether a bot collaboration needs the admin's allowance. The design holds `BotCollaboration` records the admin sets (the recommendation). If the owner chooses "automatic", collaboration admission derives a collaboration for every workspace in the bot's organization except its member workspace, and the record becomes a withdrawal.
