@@ -96,7 +96,9 @@ Each of these decisions is atomic on every database the hosts use:
 - **First use of an Approval:** when any number of requests present the same Approval at once, across Worker copies or Node connections, exactly one is accepted as first use, and every other is refused as used.
 - **Recording a removal:** after any set of Removal notices arrives in any order, the removal mark equals the highest received; a lower or repeated notice never lowers it.
 - **Arming a batch approval:** a reserved batch approval moves to armed, or to proven-not-dispatched, at most once.
-- **Fail:** two first uses of one Approval; a removal mark lowered by a late notice; a batch approval armed twice; a decision that holds on one driver and not another.
+- **Expiry is part of the decision:** the store decides expiry in the same atomic step, against one time that never goes down. An Approval presented at or after its expiry by that time is refused as expired and is never accepted as a first use, reserved or armed. This holds when the request was held between verification and the store, when the verifier's clock is ahead of or behind the store's, and when a host clock later steps back. A pruned record therefore never lets its Approval be used again.
+- **One workspace per database:** a store refuses every decision when its database belongs to another workspace.
+- **Fail:** two first uses of one Approval; a second effect from one Approval after its record was pruned; a removal mark lowered by a late notice; a batch approval armed twice; a decision that holds on one driver and not another; one database serving two workspaces.
 
 **R9 — No approval comes back to life at the storage change.** (U3, U5)
 When the workspace store moves from the key-value layout to the SQLite layout, no Approval used before the move is accepted again after it.
@@ -180,7 +182,9 @@ The Portal SDK's MCP transport forwards every argument of the message callback, 
 **R26 — Large requests are streamed, not capped.** (U14; #33, deployed row 15)
 A request whose body is larger than the Worker's in-memory budget is processed by streaming or spilling, not refused by a size cap of the Portal's own. On Node, a large request body is spilled to a temporary file rather than held in memory.
 - **Pass:** a call with a body above today's 4 MiB budget and within the platform's own request limit completes with the same result it would have under the budget.
-- **Fail:** a Portal-imposed size refusal; a 502 for a request within the platform's limit.
+- **Spill files are temporary, private and never durable:** a Node spill file is readable only by the host's user and is never written where the store or its backups live. It is gone after its request ends, however it ends, and after a restart following a crash. One process never removes another live process's spill file.
+- **The true limit, stated:** the parsed request and its working copies must fit in the memory of the runtime handling it. On a Worker, concurrent requests share that memory. A request that exhausts it ends the other requests running there, from any workspace. This limit stands until the owner decides RD7.
+- **Fail:** a Portal-imposed size refusal; a 502 for a request within the platform's limit; caller data or an approval token left in a spill file after its request, in the store's location or in its backups.
 - **Undefined here:** what Cloudflare itself does above its own request limit; the Portal cannot change that.
 
 ## Coverage

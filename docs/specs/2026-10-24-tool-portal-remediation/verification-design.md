@@ -50,12 +50,20 @@ A fixed scenario script drives the MCP proxy way in on both hosts with the same 
 - through two Node processes sharing one `stateDirectory`;
 - through many concurrent requests in workerd.
 
-It counts the `first-use` answers. It also replays removal notices in a shuffled order with repeats once store version 2 exists.
+It counts the `first-use` answers and the upstream effects the fake upstream server records. It also replays removal notices in a shuffled order with repeats once store version 2 exists.
+
+Expiry cases (SEC-01, OBS-01), with controlled clocks on both hosts:
+- **Held past expiry:** an approval that has already had its one effect is replayed by two requests. Both are held after the front verifier and released after expiry by the store's clock. This is done for the proxy token and for batch reserve and arm.
+- **Clock offsets:** the verifier's clock is ahead of the store's, then behind it.
+- **Step back:** the store's clock steps forward past expiry, the row is pruned, the clock steps back, and the approval is presented again, also across a restart.
+- **Mismatched open:** a store database opened with another workspace's identifier.
+
+Passes when there are **zero additional upstream effects** in every case: each late presentation answers `expired`, and the mismatched open answers `workspace-mismatch`. **Wrong builds that fail:** one that prunes before checking the presentation's expiry (a second `first-use` and a second effect after the held release); one that uses the raw clock instead of the stored security time (step-back resurrects the token); one that ignores `store_meta` (a second workspace reads the first's rows).
 
 **O4 — Hegel store properties** (no journey: decided by property tests in the core's suite, run on both databases.)
 The stateful model test that exists today (`tool-host-core/src/workspace-authority/workspace-authority.stateful.unit.test.ts` at `2dfea38e`) runs against the in-memory volatile store. It is re-pointed at the Drizzle store on a `better-sqlite3` file and on Durable Object SQLite in workerd, with the controlled clock. Families:
 
-1. Proxy token one-use under arbitrary presentation orders and expiries.
+1. Proxy token one-use under arbitrary presentation orders, expiries, holds between verification and the store, and clock steps forward and back: the model counts effects, and an Approval never has more than one.
 2. The batch approval lifecycle with a restart inserted at any step.
 3. Removal marks under arbitrary orders and repeats (store version 2).
 4. Store results matching a pure model after any operation sequence.
@@ -147,9 +155,9 @@ The stateful model test that exists today (`tool-host-core/src/workspace-authori
 | **Proven by** | The core runs with fake crypto, clock and identifier capabilities that record every call; every crypto operation goes through them, and two runs give the same bytes. |
 | **Reference** | R3's pass and fail conditions; the `PortalPlatform` contract |
 | **Target and journey** | The core's suite with recording capabilities, plus O6 for the static half; journey: none |
-| **Passes when** | Every digest, HMAC and signature check in the O1 scenarios appears in the recording, and two runs produce byte-identical tokens, fingerprints and responses. **Wrong build that fails:** a core function that calls `globalThis.crypto.subtle` directly; its digest never appears in the recording. **Allowed build that passes:** web-platform adapters using a different crypto library. |
+| **Passes when** | Every digest, HMAC and signature check in the O1 scenarios appears in the recording, and two runs produce byte-identical tokens, fingerprints and responses. The injected adapters are trusted components, so each real adapter is also run, on both hosts, against fixed known-answer and tamper vectors:<br>• SHA-256 and HMAC-SHA-256 known answers;<br>• an HMAC with one byte changed is refused;<br>• JWS vectors with a valid signature, a changed signature, a disallowed algorithm and a key not in the pinned key set;<br>• a key fetch that fails, which must answer `keys-unavailable`, never verified.<br>**Wrong builds that fail:** a core function that calls `globalThis.crypto.subtle` directly, whose digest never appears in the recording; an adapter that returns verified on a tampered signature or on a key-fetch failure. **Allowed build that passes:** web-platform adapters using a different crypto library. |
 | **Reuses** | none |
-| **Unverified** | the real adapters' own correctness, which O1 covers end to end |
+| **Unverified** | a malicious host, which controls execution and can bypass the core; no in-core check can contain it (the trusted-base limit in Program Design, "Security and the other qualities") |
 
 ### U7 — Type safety, discriminated unions, the type-check guard
 
@@ -245,9 +253,9 @@ The stateful model test that exists today (`tool-host-core/src/workspace-authori
 | **Reference** | R26's pass condition; the call's result at a size under 4 MiB, taken as the expected result for the same tool and arguments structure |
 | **Target and journey** | Private test Worker and the Node host process, delivered commit. `needed:` `verify-tool-portal` › `large-request`: drives one call at 3 MiB, 5 MiB and 12 MiB through the MCP proxy entry; keeps each raw response (status, headers, body, CF-Ray) and the `wrangler tail` invocation outcome; on Node, lists the spill directory during and after the call. |
 | **Lifetime** | lasting |
-| **Passes when** | All three calls return the tool's normal result. No response is a Portal size refusal or a 502. The Node spill file exists during the 12 MiB call and is gone after it, including when the client aborts mid-upload. **Wrong builds that fail:** today's handler path, which answers 413 at 4 MiB; a Node build that buffers in memory and leaves no spill file. **Allowed build that passes:** a different streaming parser. Before building, the same journey takes the one correlated observation of today's 502 (Program Design, "Large requests", step 4). |
+| **Passes when** | All three calls return the tool's normal result. No response is a Portal size refusal or a 502. On Node, these spill checks hold (SEC-04):<br>• The spill file exists during the 12 MiB call, in the spill directory and not under `stateDirectory`. It has mode `0600` in a `0700` directory.<br>• The file is gone after the call, after a client abort mid-upload, and after a malformed tail. A malformed tail also produces no upstream effect.<br>• After a host killed mid-upload restarts, the dead process's spill directory is removed. A second live process's spill directory is not removed.<br>• A planted approval token and argument value from the request appear nowhere under `stateDirectory` afterwards.<br>• A full spill directory fails only that request, and a store decision made at the same time still succeeds.<br>**Wrong builds that fail:** today's handler path, which answers 413 at 4 MiB; a Node build that buffers in memory and leaves no spill file; one that spills under `stateDirectory`; one with no startup cleanup, which leaves the killed process's file behind. **Allowed build that passes:** a different streaming parser. Before building, the same journey takes the one correlated observation of today's 502 (Program Design, "Large requests", step 4). |
 | **Reuses** | none: today's `row-15-limits` check asserts a 413, which R26 replaces, and keeps no response details |
-| **Unverified** | requests near the account ceiling (100 MB) and near isolate memory; concurrent large requests sharing one isolate (the risk RD7 accepts) |
+| **Unverified** | requests near the account ceiling (100 MB) and near isolate memory. Concurrent large requests from two workspaces in one isolate, and many-field or deep objects, are not proven safe: under RD7 option A they are the accepted shared-failure limit R26 states. Under option B they become a required observation in the same isolate, with memory, invocation outcomes and effect counts kept. Three calls that land in different isolates prove nothing about this. |
 
 ### U15 — Hegel property tests
 

@@ -117,7 +117,7 @@ flowchart LR
   OWN["organization owner"] -->|owner| OA
   E5["E5 Session"] -->|"owner: Better Auth core, organizationId set once by the Admission gate"| D1S["D1 session (modified: organizationId)"]
   E7["E7 Person proof"] -.->|schema home| TAC["tool-access/contracts personTokenClaimsSchema, PersonProof (modified: organization)"]
-  CLM["refused-sign-in claim"] -->|owner: Admission gate| D1C["D1 organization_admission_claim (new)"]
+  CLM["refused-sign-in claim and admitted guard"] -->|owner: Admission gate| D1C["D1 organization_admission_claim, admitted_person_guard (new)"]
   AUD["admission records"] -->|owner| OA
 ```
 
@@ -138,7 +138,8 @@ flowchart LR
 | `E10` Agent proof | OAuth provider | issued JWT access token, not stored | `agentTokenClaimsSchema` (the raw claims) and `AgentProof`, both in `tool-access/contracts` (new) | on the wire: header `typ: at+jwt`; claims `{ iss, sub, aud, exp, iat, scope, client_id, azp, jti, organization_id, workspace_id }` with `sub` and `azp` equal to `client_id`, `scope` containing `tool-portal:agent`, a single-string `aud` equal to one workspace's MCP address, and **no** `sid`. `organization_id` is copied from the E9 client's metadata by `customAccessTokenClaims`, which Better Auth also runs for `client_credentials`, with no user and the client's metadata ([claims.ts:143](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/claims.ts#L143), [token.ts:1234](https://github.com/better-auth/better-auth/blob/52ab801cc6550104199bcf70a3f83005e15eb804/packages/oauth-provider/src/token.ts#L1234)); the agent never supplies it. `workspace_id` comes from the requested workspace resource's metadata: Better Auth 1.7.8 passes the requested `resources` to `customAccessTokenClaims` (`resolveAccessTokenClaims`), and our hook reads that one resource's row fresh from D1 and refuses unless it is a workspace of the client's organization. Inside a relying service: `AgentProof { deployment, clientId, organizationId, workspaceId, audience, expiresAt }` only | derived | Zod schema, `z.infer` type |
 | `E11` Workspace link | OAuth provider | D1 `oauthClientResource` row (existing plugin schema), one per agent client and workspace resource. Written by `adminLinkClientResource` and removed by `adminUnlinkClientResource`, both called only by the agent-client route; per-client resource enforcement refuses a token for an unlinked resource `invalid_target` | the plugin's client-resource model (existing) | not exposed; decides which `aud` an agent may ask for | persisted | library schema |
 | audit record (serves `R12`) | for an admission change (owner bound, entry added, removed or re-added): its Organization admission object, in the same storage transaction as the change. For everything else: the Audit writer | the object's `admission_audit` rows; D1 `sign_in_audit` (new), whose rows name their organization | `admissionAuditRecordSchema` (object, new) and `signInAuditRecordSchema` (Worker, modified: `organizationId` on every record that belongs to one) | the owner's audit list for one organization reads both, filtered to that organization | persisted, append-only | Zod discriminated union |
-| refused-sign-in claim (serves `R3`) | Admission gate | D1 `organization_admission_claim`, one row per Person and organization (new) | `organizationAdmissionClaimSchema` (Worker, new) | never leaves the Worker | persisted | Zod schema |
+| refused-sign-in claim (serves `R3`) | Admission gate | D1 `organization_admission_claim`, one row per sign-in attempt (new) | `organizationAdmissionClaimSchema` (Worker, new) | never leaves the Worker | persisted | Zod schema |
+| admitted guard (serves `R3`) | Admission gate | D1 `admitted_person_guard`, one row per Person and organization central admitted (new) | `admittedPersonGuardSchema` (Worker, new) | never leaves the Worker; never read to decide admission | persisted | Zod schema |
 
 ```ts
 // The access-token claims Better Auth's OAuth provider issues (v1.7.11, oauth-provider/src/token.ts:255-294).
@@ -198,7 +199,12 @@ export type AllowlistEntry = z.infer<typeof allowlistEntrySchema>;
 
 // Kept in D1 only to guard the cleanup of a refused first sign-in (R3); never read to decide admission.
 export const organizationAdmissionClaimSchema = z.strictObject({
-  personId: z.string().min(1), organizationId: z.uuid(), claimedAt: z.number().int(),
+  attemptId: z.uuid(), personId: z.string().min(1), organizationId: z.uuid(), claimedAt: z.number().int(),
+});
+
+// Written in the same batch that releases an admitted attempt's claim; the cleanup never deletes a Person it names.
+export const admittedPersonGuardSchema = z.strictObject({
+  personId: z.string().min(1), organizationId: z.uuid(), admittedAt: z.number().int(),
 });
 
 // Our metadata on a workspace's OAuth resource (E6). Read fresh by customAccessTokenClaims and by the final check.
@@ -395,13 +401,16 @@ The early checks in Better Auth's hooks remain. They refuse sooner and write les
 ### A refused first sign-in leaves nothing behind (`R3`)
 
 The entry can be removed after the early check: before Better Auth's two writes, between them, or before the bind. In each case the final check refuses, and the request handler deletes the `account` and `user` rows this request created. Those rows must not be deleted if any organization has bound that Person, but the bindings live in Fleet central's organization authorities, which D1 can't see. So the Admission gate keeps a claim in D1:
-1. Before asking central to `AdmitSignIn` a Person, it inserts an `organization_admission_claim` row for that Person and organization, conditional on the `user` row still existing, and doing nothing if that claim already exists (`insert … select … where exists (user) on conflict do nothing returning`). A returning Person's claim from an earlier sign-in therefore never blocks or errors their sign-in. If the insert returns no row and no claim for that pair exists, no user exists: it asks central nothing and the sign-in is refused.
-2. If central then binds nothing (`NotAdmitted` or `AwaitingOwner`) and the claim was created by this request, the gate deletes that claim.
-3. The cleanup deletes the `account` and `user` rows only while no claim names that user, as two conditional deletes in one D1 batch; a delete that matches no row is a correct outcome, not an error.
+1. Before asking central to `AdmitSignIn` a Person, it inserts this attempt's own `organization_admission_claim` row: a fresh attempt ID with that Person and organization, conditional on the `user` row still existing (`insert … select … where exists (user) returning`). Every attempt has its own row, so a returning or concurrent sign-in never conflicts or errors. If the insert returns no row, no user exists: it asks central nothing and the sign-in is refused.
+2. If central admits the Person, one batch writes an `admitted_person_guard` row for that Person and organization and then deletes this attempt's claim. The Person is protected at every point.
+3. If central definitely binds nothing (`NotAdmitted` or `AwaitingOwner`), the gate deletes only this attempt's claim, by its attempt ID. If central's answer is unknown (unavailable, timed out, reply lost), nothing is released. The next sign-in for that pair asks central `Standing` and settles the stale claim either way.
+4. The cleanup deletes the `account` and `user` rows only while no claim and no admitted guard names that user, as two conditional deletes in one D1 batch; a delete that matches no row is a correct outcome, not an error.
+
+The agent identity Program Design, "The decisions that write more than one row", has the exact statements (security finding SEC-02: a refused attempt must never release the claim a concurrent admitted attempt relied on).
 
 D1 orders the claim insert against the cleanup:
 - **The cleanup commits first.** A competing sign-in's claim insert finds no user, so no object binds it. That sign-in is refused and can retry fresh.
-- **A claim commits first.** The cleanup deletes nothing. If that organization binds the Person, they're an admitted Person there, and a later removal applies `R4`.
+- **A claim commits first.** The cleanup deletes nothing. If that organization binds the Person, the guard row is written before the claim goes, they're an admitted Person there, and a later removal applies `R4`. A refused attempt that resumes later releases only its own claim, so the guard and any other attempt's claim keep the Person.
 
 So no organization's object ever holds a binding to a deleted user. A claim left behind because its delete failed only blocks the cleanup. The rows stay unbound and inactive, the narrow outcome in the Specification's failure table, and the failure is recorded.
 
@@ -445,7 +454,7 @@ So after removal from a workspace completes, the agent gets no new token for tha
 
 The built Worker holds no real users' data, and no consumer needs the old shape, so the change is one step with no compatibility phase:
 - **Configuration:** `ownerEmail` and `organizationIds` become `organizations: OrganizationRegistration[]`, and the Worker gains one Durable Object namespace binding for the organization admission class, declared as a new SQLite-backed class in its migrations.
-- **D1:** one migration drops `allowed_email` and `deployment_owner`, adds the `session.organizationId` column and the `organization_admission_claim` table, and adds `organizationId` to `sign_in_audit`.
+- **D1:** one migration drops `allowed_email` and `deployment_owner`, adds the `session.organizationId` column and the `organization_admission_claim` and `admitted_person_guard` tables, and adds `organizationId` to `sign_in_audit`.
 - **Person tokens:** they gain `organization_id`, and `PersonProof` gains `organizationId`. The person verifier in `tool-access/contracts` and Tool Portal's management route change in the same step: the route compares the proof's organization with the organization in its path, and the sign-in binding's owner checks read the organization's object. A token issued before the cutover has no `organization_id` and is refused (`no-organization`), which affects only local runs.
 - **Owner bootstrap and the owner CLI** name the organization the owner signs in to.
 

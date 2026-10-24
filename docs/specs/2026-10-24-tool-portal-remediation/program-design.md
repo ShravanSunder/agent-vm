@@ -26,7 +26,7 @@ flowchart TB
   end
   subgraph NODE["Node host"]
     LISTEN["HTTP + stdio listeners<br/>config files · stdio upstreams · catalog compiler"]
-    FILE["tool-portal-store.sqlite<br/>Drizzle better-sqlite3 + migrator"]
+    FILE["tool-portal-‹workspace›.sqlite<br/>Drizzle better-sqlite3 + migrator"]
   end
   WORKER -->|"injects capabilities"| PROXY
   WORKER -->|"store calls by RPC"| DO
@@ -112,7 +112,7 @@ flowchart LR
 | **Upstream MCP runtime** | client cache, generations, retries, pagination, timeouts and redaction for every upstream server, remote or stdio | `tool-engine/src/upstream-mcp-connectors` (modified: takes `timers`; the Node stdio copy is deleted) | the proxy | an upstream protocol rule changes |
 | **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signatures, `setTimeout` timers | `packages/tool-host-web-platform` (new) | both hosts only | a web API or adapter library changes |
 | **Cloudflare host** | the Worker's routing, Cloudflare bindings, `WorkspaceStoreObject` (opens Durable Object SQLite, runs the migrator inside `blockConcurrencyWhile`, exposes the store's operations by RPC) | `tool-host-cloudflare` (modified) | Cloudflare | a Cloudflare binding or runtime API changes |
-| **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening `tool-portal-store.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Portal SDK's tests | a Node API or a listener changes |
+| **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening each workspace's `tool-portal-<workspaceId>.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Portal SDK's tests | a Node API or a listener changes |
 
 **Allowed dependency edges:**
 - hosts → core;
@@ -244,11 +244,18 @@ The core owns this interface and its only implementation. Every result is a clos
 export type PrincipalKey = string & { readonly __brand: 'PrincipalKey' };
 export type ApprovalTokenId = string & { readonly __brand: 'ApprovalTokenId' };
 
-export type StoreFailure = { readonly kind: 'store-unavailable'; readonly reason: 'database-error' | 'migration-incomplete' };
+export type StoreFailure = {
+	readonly kind: 'store-unavailable';
+	readonly reason: 'database-error' | 'migration-incomplete' | 'workspace-mismatch';
+};
+
+// The presented token's expiry is at or before the store's security time. Never dispatchable.
+export type ExpiredPresentation = { readonly kind: 'expired' };
 
 export type ProxyTokenPresentation =
 	| { readonly kind: 'first-use' }
 	| { readonly kind: 'already-used' }
+	| ExpiredPresentation
 	| { readonly kind: 'saturated' }
 	| StoreFailure;
 
@@ -265,12 +272,13 @@ export type BatchReservationResult =
 	| { readonly kind: 'reserved'; readonly reservation: BatchReservation }
 	| { readonly kind: 'already-consumed' }
 	| { readonly kind: 'ambiguous'; readonly reason: 'dispatch-armed' }
+	| ExpiredPresentation
 	| { readonly kind: 'saturated' }
 	| StoreFailure;
 
 export type BatchArmResult =
 	| { readonly kind: 'armed' }
-	| { readonly kind: 'not-dispatched'; readonly reason: 'consumed-without-dispatch' }
+	| { readonly kind: 'not-dispatched'; readonly reason: 'consumed-without-dispatch' | 'expired-before-arming' }
 	| { readonly kind: 'ambiguous'; readonly reason: 'dispatch-armed' }
 	| StoreFailure;
 
@@ -301,9 +309,14 @@ export interface WorkspaceStore {
 	readonly completeRemoval: (props: CompleteRemovalProps) => Promise<RemovalIntentResult>;
 	// store version 2 (added by the identity cutover):
 	readonly recordRemovalNotice: (notice: RemovalNoticeInput) => Promise<RemovalNoticeRecording>;
-	readonly readRemovalMark: (subject: PrincipalKey) => Promise<{ readonly kind: 'none' } | { readonly kind: 'mark'; readonly highestRevision: number } | StoreFailure>;
+	readonly readRemovalMark: (props: {
+		readonly subject: PrincipalKey;
+		readonly tokenExpiresAtMs: EpochMilliseconds;
+	}) => Promise<{ readonly kind: 'none' } | { readonly kind: 'mark'; readonly highestRevision: number } | ExpiredPresentation | StoreFailure>;
 }
 ```
+
+**Security time.** Every operation reads the store's security time first: the larger of `PortalClock.now()` and the value last recorded in `store_meta`, written back in the same transaction. It never goes down, even when a host clock steps back or one host's clock is behind another's. Every expiry decision the store makes (admitting a presentation, arming, reading a removal mark, pruning) compares against this one value. So once a row has been pruned as expired, no presentation of that token can be admitted again: it is already expired by the same measure (security finding SEC-01, observation OBS-01). The front verifier's own expiry check stays; the store's is the one that decides.
 
 `SetMembershipProps`, `MembershipWrite`, `BeginRemovalProps`, `CompleteRemovalProps` and `RemovalIntentResult` keep today's fields and variants from `workspace-authority-state.ts` and `agent-retirement.ts` (`member | removed`; `pending | complete`; `unlink | disable`; `requestId`), now as closed unions. `RemovalNoticeInput` is parsed from the identity design's `RemovalNotice` at the receiver.
 
@@ -314,6 +327,7 @@ export type WorkspaceStoreDatabase = BaseSQLiteDatabase<'sync', unknown, typeof 
 
 export function createWorkspaceStore(props: {
 	readonly database: WorkspaceStoreDatabase;
+	readonly workspaceId: WorkspaceId; // bound into store_meta on first open; a different value fails closed
 	readonly clock: PortalClock;
 	readonly limits: WorkspaceStoreLimits; // today's caps, as row counts
 }): WorkspaceStore;
@@ -327,6 +341,7 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 
 | Table | Columns | Keys and checks | Holds |
 |---|---|---|---|
+| `store_meta` | `id` integer primary key · `workspace_id` text not null · `security_time_ms` integer not null | `id` check `= 1` (one row) | which workspace this database belongs to, and the store's security time |
 | `proxy_token_use` | `token_id` text not null · `principal` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null | primary key (`token_id`, `principal`); index on `expires_at_ms` | E5 for the MCP proxy approval token |
 | `batch_approval_use` | `token_id` text primary key · `principal` text not null · `state` text not null · `batch_fingerprint` text not null · `operation_ids` text not null (JSON array of UUIDv7) · `service_generation` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null | `state` check in (`reserved`, `armed`, `proven-not-dispatched`); index on `expires_at_ms` | E5 for the standalone batch approval |
 | `membership` | `principal` text primary key · `state` text not null · `persona` text null | `state` check in (`member`, `removed`); `persona` not null when `state = 'member'` | Tool Portal E4 Membership, as today |
@@ -338,21 +353,24 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 |---|---|
 | drop `membership`, `membership_removal` | membership and agent management leave the Tool Portal (identity Program Design) |
 | re-key `principal` | from the agent client id to the identity design's canonical `principal`; existing approval-use rows are deleted, which is safe because the cutover rotates approval keys |
-| add `removal_mark` | `subject` text primary key · `highest_revision` integer not null · `received_at_ms` integer not null |
+| add `removal_mark` | `subject` text primary key · `highest_revision` integer not null · `received_at_ms` integer not null · `expires_at_ms` integer not null (pruned when `<= now`) |
 | add `removal_notice` | `notice_id` text primary key · `subject` text not null · `removal_revision` integer not null · `received_at_ms` integer not null; index on `received_at_ms` |
 
 No column has a database default: every timestamp is written from `PortalClock` and every identifier from `PortalIdSource`, so no wall clock enters storage. Rows are parsed with Zod when read; a row that does not parse fails closed as `store-unavailable` with the field named in the log.
 
 ### How each decision stays atomic
 
-Each operation runs as one synchronous Drizzle transaction on the store's database. Inside it, queries use `.get()`, `.all()` and `.run()`; nothing inside awaits.
+Each operation runs as one synchronous Drizzle transaction on the store's database. Inside it, queries use `.get()`, `.all()` and `.run()`; nothing inside awaits. Every operation starts the same way: read `store_meta`, compute security time `now = max(clock.now(), security_time_ms)`, and write `now` back.
 
-| Operation | Inside one transaction | Why it holds |
+| Operation | Inside one transaction, after reading security time `now` | Why it holds |
 |---|---|---|
-| `presentProxyToken` | delete expired `proxy_token_use` rows; count unexpired rows and answer `saturated` at the cap; `insert … on conflict do nothing returning token_id` | the insert's returning row decides first use; a concurrent second insert returns nothing |
-| `reserveBatchApproval` | delete expired rows; read the row for `token_id`; if present answer from its `state` (`armed` → `ambiguous`, otherwise `already-consumed`); else check the cap and insert as `reserved` | the read and insert are one transaction |
-| `armBatchApproval` | `update … set state = 'armed' where token_id = ? and state = 'reserved' and <reservation fields match> returning token_id`; if no row, read it to answer `ambiguous` or `not-dispatched` | the conditional update moves `reserved` to `armed` at most once |
-| `recordRemovalNotice` (v2) | insert into `removal_notice` on conflict do nothing; upsert `removal_mark` with `highest_revision = max(existing, new)`; prune notices older than 61 minutes by `PortalClock` | the mark is written with `max`, so a lower or repeated notice cannot lower it |
+| `presentProxyToken` | if `expiresAtMs <= now` answer `expired` and stop; delete rows with `expires_at_ms <= now`; count the rest and answer `saturated` at the cap; `insert … on conflict do nothing returning token_id` | the insert's returning row decides first use; a concurrent second insert returns nothing; a pruned token is already `expired` by the same `now`, so it cannot be inserted again |
+| `reserveBatchApproval` | if `expiresAtMs <= now` answer `expired` and stop; delete rows with `expires_at_ms <= now`; read the row for `token_id`; if present answer from its `state` (`armed` → `ambiguous`, otherwise `already-consumed`); else check the cap and insert as `reserved` | the read and insert are one transaction, and expiry is admitted against the time that prunes |
+| `armBatchApproval` | if `expiresAtMs <= now`, set the row to `proven-not-dispatched` where it is still `reserved` and answer `not-dispatched` (`expired-before-arming`); else `update … set state = 'armed' where token_id = ? and state = 'reserved' and <reservation fields match> returning token_id`; if no row, read it to answer `ambiguous` or `not-dispatched` | the conditional update moves `reserved` to `armed` at most once, and never after expiry |
+| `recordRemovalNotice` (v2) | insert into `removal_notice` on conflict do nothing; upsert `removal_mark` with `highest_revision = max(existing, new)` and `expires_at_ms = max(existing, received + retention)`; prune notices with `received_at_ms + 61 minutes <= now` | the mark is written with `max`, so a lower or repeated notice cannot lower it or shorten its retention |
+| `readRemovalMark` (v2) | if `tokenExpiresAtMs <= now` answer `expired`; else read the mark | a token old enough for its mark to be pruned is refused as expired by the same `now` |
+
+**Opening a store** checks `store_meta` in its first transaction: absent → insert the row with this workspace's identifier and the current clock; present with the same `workspace_id` → continue; present with another → every call answers `store-unavailable` (`workspace-mismatch`). A wrong routing adapter or two Node portals pointed at one file therefore fail closed instead of sharing approval and removal state.
 
 **Why this is atomic on each host:**
 
@@ -363,7 +381,7 @@ Each operation runs as one synchronous Drizzle transaction on the store's databa
 
 | | Cloudflare | Node |
 |---|---|---|
-| Database | `WorkspaceStoreObject`, a new Durable Object class, one per workspace (`idFromName(workspaceId)`), SQLite-backed | `<stateDirectory>/tool-portal-store.sqlite`, one per configured portal |
+| Database | `WorkspaceStoreObject`, a new Durable Object class, one per workspace (`idFromName(workspaceId)`), SQLite-backed | `<stateDirectory>/tool-portal-<workspaceId>.sqlite`, one per configured workspace, bound by `store_meta` |
 | Opened by | the object's constructor: `drizzle(ctx.storage, { schema: workspaceStoreSchema })` | Node startup: `new Database(path)` with the pragmas above, then `drizzle(file, { schema })` |
 | Migrations | `migrate(db, migrations)` from `drizzle-orm/durable-sqlite/migrator`, inside `ctx.blockConcurrencyWhile`, using the core's generated `migrations.js` | `migrate(db, { migrationsFolder })` from `drizzle-orm/better-sqlite3/migrator`, before the listener starts, using the core's published `drizzle/` folder |
 | History | `__drizzle_migrations` inside the object's SQLite; the only mechanism for that database | `__drizzle_migrations` in the file; the only mechanism for that database |
@@ -414,7 +432,7 @@ sequenceDiagram
 
 ### An MCP proxy call on Node
 
-Today the Node host builds its own gateway (`node-host-composition.ts:51–295`). After the change it calls the same `createHostedMcpProxy` with its own `PortalPlatform` and a `WorkspaceStore` opened on `tool-portal-store.sqlite`. The sequence is the one above, with the RPC hop replaced by an in-process call.
+Today the Node host builds its own gateway (`node-host-composition.ts:51–295`). After the change it calls the same `createHostedMcpProxy` with its own `PortalPlatform` and a `WorkspaceStore` opened on that workspace's `tool-portal-<workspaceId>.sqlite`. The sequence is the one above, with the RPC hop replaced by an in-process call.
 
 | Edge | Status |
 |---|---|
@@ -471,7 +489,9 @@ stateDiagram-v2
 | armed | `armBatchApproval` again | `ambiguous` |
 | armed | `proveBatchNotDispatched` | `false`: an armed approval may have taken effect |
 | any | host restart | unchanged: rows are in the database |
-| any | its expiry passes | pruned on the next write in that workspace |
+| any | its expiry passes the store's security time | pruned on the next write in that workspace |
+| none (never seen, or pruned) | a presentation whose expiry is at or before security time | `expired`; no row is written and nothing runs |
+| reserved | `armBatchApproval` after expiry | `proven-not-dispatched`; answers `not-dispatched` (`expired-before-arming`) |
 
 ## When things fail
 
@@ -483,6 +503,10 @@ stateDiagram-v2
 | Two Worker copies present the same token at once | both reach the one workspace object, which runs one call at a time | exactly one `first-use` | the store |
 | Two Node processes share one store file | `behavior: 'immediate'` transactions | the second waits for the write lock, then sees the first's row | the store |
 | A removal notice arrives late with a lower revision (v2) | `max` in the upsert | the mark keeps the higher revision; the receiver acknowledges `already-recorded` or `recorded` | the store |
+| A replay passes the front verifier just before expiry and reaches the store after it, or the verifier's clock is behind the store's | the store's expiry check against security time | `expired`; no row is recreated and nothing runs | the store |
+| A host clock steps back after the store pruned rows | security time never decreases | tokens pruned as expired stay `expired` | the store |
+| A store opened with another workspace's identifier (wrong routing, two Node portals on one file) | `store_meta.workspace_id` | every call answers `store-unavailable` (`workspace-mismatch`) | the host's operator |
+| The Node spill directory is full or unwritable | the body source's write fails | that request gets today's protocol error and runs nothing; the store, in `stateDirectory`, is unaffected | the host's operator |
 | Signature keys cannot be fetched | `verifyJwsSignature` returns `keys-unavailable` | the call is refused as unauthenticated | the host's operator |
 | A store row fails to parse | Zod at read | `store-unavailable`, field named in the log; never treated as "no record" | the host's operator |
 
@@ -507,11 +531,15 @@ stateDiagram-v2
 1. **The core owns body reading.** A `request-body` module reads the request body as a stream and parses it incrementally into the JSON-RPC message, with no clone and no retained raw text. The hosted proxy then calls the SDK handler with `parsedBody`, so the SDK's 4 MiB cap and clone are no longer on the path. Malformed JSON keeps today's protocol error and runs nothing.
 2. **The host supplies where the bytes go while they are read.**
    - **Cloudflare:** the stream goes straight into the incremental parser; there is no disk to spill to.
-   - **Node:** a body larger than a small in-memory threshold is first written to a temporary file under `stateDirectory`, then parsed from that file as a stream. The file is removed on completion, error or abort.
-3. **No Portal size refusal.** The Portal adds no byte cap of its own. What remains is the platform's: Cloudflare's account request ceiling answers above it with its own 413, and the parsed message must fit in the isolate's memory.
+   - **Node:** a body larger than a small in-memory threshold is first written to a temporary file, then parsed from that file as a stream. Spill files are temporary data, never durable state, and have one owner, the Node host's body source:
+     - **Where:** a spill directory the Node host creates at startup, separate from `stateDirectory` so spill files are never in backups of durable state and cannot fill the store's location. By default it is a per-process directory `tool-portal-spill-<process UUIDv7>` under the operating system's temporary directory; RD6 lets agent-vm's effective-config writer name the parent instead.
+     - **How:** the directory is created with mode `0700` and holds an owner file with the process id. Each body file is created exclusively (`wx`) with mode `0600`.
+     - **Cleanup:** a file is removed on completion, parser failure, error or abort. At startup, the host removes sibling spill directories whose owner process is no longer running, and never one whose owner is alive.
+     - **No new promise:** R7's "no argument, result or credential is stored" holds, because a spill file lives only while its request does and never enters the store or its backups.
+3. **No Portal size refusal.** The Portal adds no byte cap of its own. What remains is the platform's: Cloudflare's account request ceiling answers above it with its own 413, and the parsed message, plus any whole-value copies validation, canonical fingerprinting and upstream serialization make of it, must fit in the isolate's memory, which concurrent requests share.
 4. **First, decide the 502.** Before building, one correlated deployed observation is taken on the private test Worker: the raw response with status, headers, body and CF-Ray, plus the Worker invocation outcome from `wrangler tail`, for a request just over 4 MiB. If it shows the 502 comes from outside the Worker, step 1 does not fix it, and the cause becomes its own finding.
 
-**The owner's tradeoff (RD7).** With no Portal cap, one request whose parsed form approaches the isolate's memory can end the other calls running in that isolate at the time. Incremental parsing also needs a streaming JSON parser, which is a new dependency. The options are in the Requirements, RD7.
+**The owner's tradeoff (RD7).** Streaming removes the raw-text copy and the clone. It does not bound memory. The parsed request is still one whole object, and validation, canonical fingerprinting and upstream serialization each hold another whole-value form of it. The six-call limit is per batch; nothing limits the total across concurrent requests. So with no Portal cap, one authenticated member's very large request, or several moderate ones at once, can exhaust an isolate. That ends every other call running there, including calls from other workspaces. A call that had already armed an approval then ends `ambiguous` for its client. The durable one-use records stay correct (security finding SEC-03). Avoiding this without a cap would need a bounded-memory path end to end: streamed or spooled values through validation, fingerprinting and dispatch, plus admission and backpressure across requests. On Workers that may mean a separate bulk runtime. That is a much larger design. Incremental parsing also needs a streaming JSON parser, which is a new dependency. The options are in the Requirements, RD7. Until the owner decides, R26's promise carries this limit in its own words.
 
 ## Clean build and gates
 
@@ -526,8 +554,10 @@ stateDiagram-v2
 
 | Quality | Owner | Mechanism | Fails how | Observed at |
 |---|---|---|---|---|
-| One-use approvals | `WorkspaceStore` | transactional first-use insert; durable rows | refuse when the use cannot be recorded | concurrent-presentation and restart seams (V7, V8) |
-| Workspace isolation in storage | the host's database choice | one Durable Object per workspace; one file per Node portal; no table carries another workspace's rows | — | V4 cross-workspace case |
+| One-use approvals | `WorkspaceStore` | transactional first-use insert; expiry admitted against the store's nondecreasing security time; durable rows | refuse when the use cannot be recorded; `expired` at or after expiry | concurrent-presentation, held-past-expiry, clock-offset and restart seams (V7, V8) |
+| Workspace isolation in storage | the host's database choice, checked by the store | one Durable Object per workspace; one file per Node workspace; `store_meta` binds the database to its workspace and refuses another | `workspace-mismatch` | V4 cross-workspace case and a mismatched-open case |
+| Temporary request data (Node) | the Node body source | private per-process spill directory outside `stateDirectory`; exclusive `0600` files; removal on every end and dead-owner cleanup at startup | that request fails; the store is untouched | V26 spill cases |
+| Trusted capabilities | each host | the injected crypto, clock, IDs, database and transport are part of the trusted base; injection gives portability and observability, not containment | a wrong adapter can approve forgeries or reopen expiry | known-answer and tamper vectors through each real adapter (V1) |
 | Cutover safety | the Cloudflare host's deployment | new object class, old class deleted, approval keys rotated | an old token fails signature verification | V9 |
 | Secrets | the core's redaction (unchanged) | no argument, result or credential is stored | — | existing Tool Portal check 7 |
 | Privacy | `WorkspaceStore` | stores token ids, principals, fingerprints and timestamps only | — | schema review |
