@@ -224,7 +224,7 @@ it.each(['fresh', 'failed-refresh'] as const)(
 	'reuses only settled catalog data for %s',
 	async (state) => {
 		const cached = {
-			fetchedAt: 100,
+			discoveryStartedAt: 100,
 			snapshot: {
 				kind: 'complete' as const,
 				toolsByNamespace: new Map([

@@ -120,11 +120,15 @@ export async function createOrganizationEngine(props: {
 	let settledCatalog = props.cachedCatalog;
 	let snapshot = settledCatalog?.snapshot;
 	async function refresh(): Promise<void> {
-		if (settledCatalog !== undefined && props.clock.nowMs() < settledCatalog.fetchedAt + 60_000)
+		if (
+			settledCatalog !== undefined &&
+			props.clock.nowMs() < settledCatalog.discoveryStartedAt + 60_000
+		)
 			return;
+		const discoveryStartedAt = props.clock.nowMs();
 		const candidate = await organizationCatalog.read();
 		if (candidate.discoveryFailures.length === 0) {
-			settledCatalog = { snapshot: candidate, fetchedAt: props.clock.nowMs() };
+			settledCatalog = { snapshot: candidate, discoveryStartedAt };
 			snapshot = candidate;
 		} else {
 			// A failed refresh may serve the previous complete generation, but publishes no new cache entry.

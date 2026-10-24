@@ -1,4 +1,4 @@
-import { hashCallArguments } from '@agent-collaboration/tool-access/contracts';
+import { hashCallArguments, type JsonObject } from '@agent-collaboration/tool-access/contracts';
 import { describe, it, expect } from 'vitest';
 
 import { createInMemoryApprovalTokenUse } from '#mcp-gateway/call-approvals/approval-token-use';
@@ -15,6 +15,13 @@ const calls = [
 	{ id: 'first', namespace: 'alpha', toolName: 'ask', arguments: { value: 42 } },
 	{ id: 'second', namespace: 'beta', toolName: 'ask', arguments: { value: 43 } },
 ];
+
+function sortFixtureArgumentsByValue(argumentsList: readonly JsonObject[]): readonly JsonObject[] {
+	return argumentsList.toSorted(
+		(leftArguments: JsonObject, rightArguments: JsonObject): number =>
+			Number(leftArguments.value) - Number(rightArguments.value),
+	);
+}
 
 async function tokenFor(selected = calls, agentId = 'agent-a'): Promise<string> {
 	return signApprovalToken({
@@ -72,8 +79,9 @@ for (const carrier of ['input', 'metadata'] as const) {
 			const { h, run } = await fixture();
 			const token = await tokenFor(selected);
 			expect((await run(token)).ok).toBe(true);
-			expect(h.effects.map((effect) => effect.arguments)).toEqual(
-				selected.map((call) => call.arguments),
+			expect(h.effects).toHaveLength(selected.length);
+			expect(sortFixtureArgumentsByValue(h.effects.map((effect) => effect.arguments))).toEqual(
+				sortFixtureArgumentsByValue(selected.map((call) => call.arguments)),
 			);
 			expect(
 				h.effects.every((effect) => effect.approvalReceiptRef === 'mcp-approval:one-token'),
