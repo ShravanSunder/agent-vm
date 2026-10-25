@@ -9,11 +9,13 @@
 </head>
 <body>
 <ex-nav for="content"></ex-nav>
-<ex-document id="content" document-id="tool-portal-remediation-decisions" revision="2026-10-25.1">
+<ex-document id="content" document-id="tool-portal-remediation-decisions" revision="2026-10-25.2">
 
 <h1>Remediation decisions</h1>
 
 <p id="intro" data-comment-label="What this page is">These decisions decide whether the Tool Portal remediation, the sign-in revision and the cross-repository work can start. Pick an answer for each, comment on anything (press <strong>C</strong>, or select a passage), then use <strong>Copy</strong> or <strong>Export</strong> in the Comments panel and paste the result back to me. Nothing is sent automatically. All three design sets have been through three independent reviews; no reviewer has a correction left open.</p>
+
+<p id="where-state-lives" data-comment-label="Where state lives">Not sure what lives in D1 and what lives in a Durable Object? The identity page has a diagram and a walkthrough, <a href="../../specs/2026-10-24-agent-identity/index.html#sign-in-storage">What lives where</a>, ending with one more question for you: where the per-organization Durable Object lives (D2).</p>
 
 <ex-callout id="order" title="Decide in this order" tone="question" icon="users">
 <p><strong>1. #262 with its added scripts</strong> unblocks every slice's base. <strong>2. The two schemas</strong> unblock the Portal store and the sign-in core. <strong>3. Large requests</strong> and <strong>4. where Node spills</strong> unblock only the large-request work; everything else proceeds without them.</p>

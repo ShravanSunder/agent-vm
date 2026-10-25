@@ -76,6 +76,41 @@
   <ex-step to="alternatives--13-what-about-sessions-sharing-a-machine" icon="cpu">The isolation kinds.</ex-step>
 </ex-presentation>
 
+<ex-presentation id="path-what-lives-where" title="What lives where" description="When it's D1 and when it's a Durable Object, for sign-in, organizations and workspaces.">
+  <ex-step to="requirements--needs" icon="users"><script type="text/markdown">
+**The rule: one owner per truth (U15)**
+
+Fleet central holds organizations, workspaces and membership. The sign-in service only proves who someone is and mints tokens. The Tool Portal only enforces.
+  </script></ex-step>
+  <ex-step to="storage-homes" icon="database"><script type="text/markdown">
+**Three owners, three homes**
+
+- **D1** is only the sign-in service's own records.
+- Each **organization** is a Durable Object inside Fleet central.
+- Each **workspace** the Portal enforces is a Durable Object in the Tool Portal.
+  </script></ex-step>
+  <ex-step to="storage-homes--D1" icon="key"><script type="text/markdown">
+**D1: the sign-in service**
+
+Accounts, sessions, passkeys, OAuth clients and tokens, bot credentials, the audit, and the per-attempt sign-in claims. One database, through Drizzle; a `better-sqlite3` file on Node.
+  </script></ex-step>
+  <ex-step to="program-design--the-sign-in-service-storage-core-and-hosts-r29-r33" icon="database">The design section: the typed store, the two hosts, and the tables for your approval (OD4).</ex-step>
+  <ex-step to="storage-homes--OrgDO" icon="users"><script type="text/markdown">
+**A Durable Object per organization, in Fleet central**
+
+Who may sign in, the owner, membership, bots, workspace pairs, removals. The sign-in service asks it "admit this person?" and "is this person still in?". On Fleet's Tokio host, it's its own SQLite database.
+  </script></ex-step>
+  <ex-step to="program-design--the-choices-and-why" icon="git-branch">Why one authority per organization, and why in Fleet: the "Organization isolation (D2)" row.</ex-step>
+  <ex-step to="specification--what-this-replaces" icon="book-open">Where the 10-20 D2 wording ("in the sign-in service") changed location, and the meaning it keeps.</ex-step>
+  <ex-step to="storage-homes--WsDO" icon="shield-check"><script type="text/markdown">
+**A Durable Object per workspace, in the Tool Portal**
+
+Used approvals and the removal marks Fleet sends. It never holds membership: the token carries that.
+  </script></ex-step>
+  <ex-step to="../2026-10-24-tool-portal-remediation/index.html#program-design--where-the-database-lives-and-how-it-is-migrated" icon="database">The Portal's store: one Durable Object per workspace on Cloudflare, one file per workspace on Node.</ex-step>
+  <ex-step to="d2-location-choice" icon="users">Your answer: is Fleet central the right home for the per-organization object?</ex-step>
+</ex-presentation>
+
 <ex-presentation id="path-sign-in-storage" title="Sign-in on Drizzle and SQLite" description="What the sign-in service stores, where, and how its multi-row decisions stay safe without transactions.">
   <ex-step to="requirements--needs" icon="users">Your rules: Drizzle and SQLite everywhere, injected, UUIDv7 only, controlled clocks (U22–U25).</ex-step>
   <ex-step to="specification--storage-hosts-and-tests-the-sign-in-service" icon="book-open">What must hold: R29–R33, including the schema gate (OD4).</ex-step>
@@ -83,7 +118,7 @@
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven on D1 and on a better-sqlite3 file, including the held-refusal race.</ex-step>
 </ex-presentation>
 
-<ex-document id="content" document-id="agent-identity-design" revision="2026-10-25.1">
+<ex-document id="content" document-id="agent-identity-design" revision="2026-10-25.2">
 
 <h1>Agent identity and workspace access</h1>
 
@@ -143,14 +178,44 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
 - **How they're proven:** [coverage rows](#verification-design--coverage-rows).
 - **Options weighed:** [machine proof](#alternatives--7-how-does-a-machine-prove-it-is-yours), [sessions sharing a machine](#alternatives--13-what-about-sessions-sharing-a-machine).
 
-<h2 id="sign-in-storage">Sign-in storage: what lives where</h2>
+<h2 id="sign-in-storage">What lives where: D1 and Durable Objects</h2>
 
-The sign-in service keeps people's accounts, sessions, OAuth clients and tokens, its audit, and two small admission tables, all in SQLite through Drizzle: D1 on Cloudflare, a `better-sqlite3` file on the new Node host. Who may sign in to an organization is not stored here; Fleet central's per-organization authority owns that. The Tool Portal's approval uses and removal marks live in its own workspace store ([Tool Portal remediation](../2026-10-24-tool-portal-remediation/index.html)).
+<p id="storage-rule" data-comment-label="The storage rule">Three owners, three storage homes. The sign-in service keeps only its own records in D1. Everything per organization lives in Fleet central, as one Durable Object per organization. Everything per workspace that the Tool Portal enforces lives in one Durable Object per workspace. On Node and on Fleet's Tokio host, each home is a SQLite file instead. To be walked through it, press <strong>W</strong> and choose <em>What lives where</em>.</p>
 
-- **Needs:** U22–U25 in [Requirements](#requirements--needs).
-- **Rules:** [storage, hosts and tests](#specification--storage-hosts-and-tests-the-sign-in-service).
-- **Who enforces them:** [the sign-in service: storage, core and hosts](#program-design--the-sign-in-service-storage-core-and-hosts-r29-r33).
-- **How they're proven:** [coverage rows](#verification-design--coverage-rows).
+<ex-mermaid id="storage-homes" label="Where each kind of state lives" data-width="canvas"><script type="text/plain">
+flowchart LR
+  subgraph SignIn["Sign-in service (proves who you are, mints tokens)"]
+    D1["D1: accounts, sessions, passkeys, OAuth clients and tokens, bot credentials, audit, sign-in claims"]
+  end
+  subgraph Fleet["Fleet central (holds the truth)"]
+    OrgDO["Durable Object per organization: allowlist, owner, membership, bots, pairs, removals"]
+  end
+  subgraph Portal["Tool Portal (enforces)"]
+    WsDO["Durable Object per workspace: used approvals, removal marks received"]
+  end
+  D1 -- "asks: admit this person? standing?" --> OrgDO
+  OrgDO -- "removal notices" --> WsDO
+  D1 -- "tokens carry the decision" --> WsDO
+</script></ex-mermaid>
+
+<ex-choice id="d2-location-choice" title="Where should the per-organization Durable Object live (D2)?">
+  <ex-option id="d2-in-fleet-central" title="**In Fleet central** (the design today)">
+    <template slot="summary">
+Fleet central already holds organizations, workspaces and membership (U15), so the per-organization object is its organization authority. The sign-in service keeps no Durable Object and asks Fleet for every admission decision.
+
+- Gains: one owner for who belongs to an organization; no second copy to keep in step.
+- Costs: sign-in depends on Fleet central answering; when it can't, sign-ins are refused, never guessed.
+    </template>
+  </ex-option>
+  <ex-option id="d2-in-sign-in" title="In the sign-in service">
+    <template slot="summary">
+The 10-20 D2 wording: the sign-in service hosts one Durable Object per organization for admission.
+
+- Gains: sign-in decides admission without calling Fleet.
+- Costs: organization truth splits between the sign-in service and Fleet central, against U15; the identity design would need rework.
+    </template>
+  </ex-option>
+</ex-choice>
 
 <h2 id="documents">The documents</h2>
 
