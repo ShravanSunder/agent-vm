@@ -8,7 +8,18 @@
 <script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
 </head>
 <body>
-<ex-nav for="content"></ex-nav>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="index.html">Agent identity and workspace access</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in: Requirements</a>
+<a href="../2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">People sign-in: Specification</a>
+<a href="../2026-10-20-people-sign-in/program-design.html">People sign-in: Program Design</a>
+<a href="../2026-10-20-people-sign-in/verification-design.html">People sign-in: Verification Design</a>
+<a href="../2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
+<a href="../2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
+</nav></ex-nav>
 
 <ex-presentation id="path-options" title="Every option, one at a time" description="Eighteen questions, each with the options we weighed. Sixteen are settled; two wait on you.">
   <ex-step to="alternatives--1-who-is-the-identity-when-your-agent-acts" icon="robot">**Who acts for you?** A registered name, a session you approve, or the session itself.</ex-step>
