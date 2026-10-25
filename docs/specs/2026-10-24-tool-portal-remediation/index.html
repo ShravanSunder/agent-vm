@@ -34,7 +34,7 @@
   <ex-step to="verification-design--u14-large-requests-streamed-not-capped" icon="test-tube">How it will be proven.</ex-step>
 </ex-presentation>
 
-<ex-document id="content" document-id="tool-portal-remediation-design" revision="2026-10-25.1">
+<ex-document id="content" document-id="tool-portal-remediation-design" revision="2026-10-25.2">
 
 <h1>Tool Portal remediation</h1>
 
@@ -42,15 +42,14 @@ The Tool Portal code in PR #262 works, but it was built on choices you never mad
 
 <ex-callout id="waiting" title="Seven decisions wait on you" tone="question" icon="users">
 
-- **RD1:** the store's tables and migrations, and `drizzle-kit` as a development dependency. [See the tables](#program-design--the-tables-for-the-owner-s-approval-rd1).
-- **RD2:** merge #262 now and fix on master, or hold it. Owned by the [delivery orchestration](../2026-10-24-delivery-orchestration/index.html).
-- **RD3:** whether the old MCP SDK may stay in one test fixture only.
-- **RD4:** whether an end-to-end test may keep a timeout that can only fail a hung process.
-- **RD5:** removing the 26 scripts #262 added to the gates.
-- **RD6:** the Node host's state directory, written by agent-vm's effective-config writer.
-- **RD7:** large requests with no Portal cap. Streaming removes one copy but doesn't bound memory: accept isolate memory as the bound (a huge request can end other calls in that isolate), or commission a bounded-memory design. [The decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd7) draws both.
+Answer them all on the [decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html), so one Copy or Export carries every answer:
 
-Each one's recommendation is in [Requirements: open owner decisions](#requirements--open-owner-decisions).
+- **RD1:** the store's tables and migrations, and `drizzle-kit`. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd1-choice) · [the tables](#program-design--the-tables-for-the-owner-s-approval-rd1).
+- **RD2 and RD5:** what happens to #262, and its 26 added scripts. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r1-choice) (decided together as OD-R1).
+- **RD3:** the old MCP SDK in one test fixture only. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd3-choice).
+- **RD4:** an end-to-end hang guard. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd4-choice).
+- **RD6:** where the Node host spills large requests. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd6-choice).
+- **RD7:** how large requests are bounded. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd7-choice).
 
 </ex-callout>
 

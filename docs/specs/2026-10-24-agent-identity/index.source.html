@@ -110,7 +110,7 @@ Who may sign in, the owner, membership, bots, workspace pairs, removals. The sig
 Used approvals and the removal marks Fleet sends. It never holds membership: the token carries that.
   </script></ex-step>
   <ex-step to="../2026-10-24-tool-portal-remediation/index.html#program-design--where-the-database-lives-and-how-it-is-migrated" icon="database">The Portal's store: one Durable Object per workspace on Cloudflare, one file per workspace on Node.</ex-step>
-  <ex-step to="d2-location-choice" icon="users">Your answer: is Fleet central the right home for the per-organization object?</ex-step>
+  <ex-step to="../../wip/2026-10-24-remediation-owner-decisions/index.html#d2-location-choice" icon="users">Your answer, on the decision page: is Fleet central the right home for the per-organization object?</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-sign-in-storage" title="Sign-in on Drizzle and SQLite" description="What the sign-in service stores, where, and how its multi-row decisions stay safe without transactions.">
@@ -120,7 +120,7 @@ Used approvals and the removal marks Fleet sends. It never holds membership: the
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven on D1 and on a better-sqlite3 file, including the held-refusal race.</ex-step>
 </ex-presentation>
 
-<ex-document id="content" document-id="agent-identity-design" revision="2026-10-25.2">
+<ex-document id="content" document-id="agent-identity-design" revision="2026-10-25.3">
 
 <h1>Agent identity and workspace access</h1>
 
@@ -136,14 +136,15 @@ Who acts in the fleet and the Tool Portal, how each one proves who it is, which 
 
 To be walked through any of these, press **W** or use the path button. The paths are: every option one at a time, a session calls a tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
 
-<ex-callout id="waiting" title="Four questions wait on you" tone="question" icon="users">
+<ex-callout id="waiting" title="Five questions wait on you" tone="question" icon="users">
 
-- **OD1:** who may start a session in a workspace. [See the options drawn](#alternatives--14-open-who-may-start-a-session-in-a-workspace-od1).
-- **OD3:** is a bot automatically a collaborator of every other workspace? [See the options drawn](#alternatives--15-open-is-a-bot-automatically-a-collaborator-of-every-other-workspace-od3).
-- **OD2:** the default token lifetime. [See the options](#alternatives--5-how-long-does-a-token-live).
-- **OD4:** the sign-in service's tables and migrations, approved before any code uses them. [See the tables](#program-design--the-sign-in-service-storage-core-and-hosts-r29-r33).
+Answer them all on the [decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html), so one Copy or Export carries every answer:
 
-The recommendations, and what each one holds up, are in [Requirements: open owner decisions](#requirements--open-owner-decisions).
+- **OD1:** who may start a session in a workspace. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od1-choice) · [options drawn](#alternatives--14-open-who-may-start-a-session-in-a-workspace-od1).
+- **OD2:** the default token lifetime. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od2-choice) · [options](#alternatives--5-how-long-does-a-token-live).
+- **OD3:** is a bot a collaborator of every other workspace? [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od3-choice) · [options drawn](#alternatives--15-open-is-a-bot-automatically-a-collaborator-of-every-other-workspace-od3).
+- **OD4:** the sign-in tables and migrations. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od4-choice) · [the tables](#program-design--the-sign-in-service-storage-core-and-hosts-r29-r33).
+- **D2:** where the per-organization Durable Object lives. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#d2-location-choice) · [what lives where](#sign-in-storage).
 
 </ex-callout>
 
@@ -200,24 +201,7 @@ flowchart LR
   D1 -- "tokens carry the decision" --> WsDO
 </script></ex-mermaid>
 
-<ex-choice id="d2-location-choice" title="Where should the per-organization Durable Object live (D2)?">
-  <ex-option id="d2-in-fleet-central" title="**In Fleet central** (the design today)">
-    <template slot="summary">
-Fleet central already holds organizations, workspaces and membership (U15), so the per-organization object is its organization authority. The sign-in service keeps no Durable Object and asks Fleet for every admission decision.
-
-- Gains: one owner for who belongs to an organization; no second copy to keep in step.
-- Costs: sign-in depends on Fleet central answering; when it can't, sign-ins are refused, never guessed.
-    </template>
-  </ex-option>
-  <ex-option id="d2-in-sign-in" title="In the sign-in service">
-    <template slot="summary">
-The 10-20 D2 wording: the sign-in service hosts one Durable Object per organization for admission.
-
-- Gains: sign-in decides admission without calling Fleet.
-- Costs: organization truth splits between the sign-in service and Fleet central, against U15; the identity design would need rework.
-    </template>
-  </ex-option>
-</ex-choice>
+<p id="d2-answer-pointer" data-comment-label="Where to answer D2">Where the per-organization Durable Object should live is a question for you: <a href="../../wip/2026-10-24-remediation-owner-decisions/index.html#d2-location-choice">answer it on the decision page</a>.</p>
 
 <h2 id="documents">The documents</h2>
 

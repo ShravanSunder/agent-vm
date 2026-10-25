@@ -9,7 +9,7 @@
 </head>
 <body>
 <ex-nav for="content"></ex-nav>
-<ex-document id="content" document-id="tool-portal-remediation-decisions" revision="2026-10-25.2">
+<ex-document id="content" document-id="tool-portal-remediation-decisions" revision="2026-10-25.3">
 
 <h1>Remediation decisions</h1>
 
@@ -18,7 +18,7 @@
 <p id="where-state-lives" data-comment-label="Where state lives">Not sure what lives in D1 and what lives in a Durable Object? The identity page has a diagram and a walkthrough, <a href="../../specs/2026-10-24-agent-identity/index.html#sign-in-storage">What lives where</a>, ending with one more question for you: where the per-organization Durable Object lives (D2).</p>
 
 <ex-callout id="order" title="Decide in this order" tone="question" icon="users">
-<p><strong>1. #262 with its added scripts</strong> unblocks every slice's base. <strong>2. The two schemas</strong> unblock the Portal store and the sign-in core. <strong>3. Large requests</strong> and <strong>4. where Node spills</strong> unblock only the large-request work; everything else proceeds without them.</p>
+<p><strong>1. #262 with its added scripts</strong> unblocks every slice's base. <strong>2. The two schemas</strong> unblock the Portal store and the sign-in core. <strong>3. Large requests</strong> and <strong>4. where Node spills</strong> unblock only the large-request work. <strong>5. Where the per-organization Durable Object lives</strong> confirms the identity design's storage; Fleet identity work waits on it.</p>
 </ex-callout>
 
 <h2 id="od-r1">1. What happens to #262 (OD-R1, with RD5)</h2>
@@ -211,7 +211,33 @@ Spill to the system temporary directory even when it shares the store's disk.
   <ex-option id="od3-everywhere" title="Everywhere in its organization"><template slot="summary">Wider reach by default.</template></ex-option>
 </ex-choice>
 
-<p id="sd8" data-comment-label="SD8 session freshness"><strong>SD8</strong>, how fresh a person's session check must be for owner actions, is inherited from the people sign-in design and still yours; comment here with a value if you have one.</p>
+<ex-choice id="sd8-choice" title="SD8: how old may the check that a person is still active be when an owner action takes effect?" view="table">
+  <ex-option id="sd8-five-seconds" title="**5 seconds** (Lead proposal)"><template slot="summary">Inherited from the people sign-in design. Holds the owner guard (F2).</template></ex-option>
+  <ex-option id="sd8-other-value" title="Another value"><template slot="summary">Comment the value on this option.</template></ex-option>
+</ex-choice>
+
+<h2 id="d2">5. Where the per-organization Durable Object lives (D2)</h2>
+
+<p id="d2-why" data-comment-label="Why D2 location is open">On 10-20 you decided "a per-organization Durable Object in the sign-in service". The identity design kept the meaning (each organization isolated, its owner decides who signs in) but placed the object in Fleet central, because Fleet holds organizations and membership (U15). I read your 10-24 line "did i not alrayd say per organization dcurable object?" as Fleet's object. The <a href="../../specs/2026-10-24-agent-identity/index.html#sign-in-storage">What lives where</a> diagram and walkthrough on the identity page show the three storage homes.</p>
+
+<ex-choice id="d2-location-choice" title="Where should the per-organization Durable Object live?">
+  <ex-option id="d2-in-fleet-central" title="**In Fleet central** (the design today)">
+    <template slot="summary">
+Fleet central already holds organizations, workspaces and membership, so the per-organization object is its organization authority. The sign-in service keeps no Durable Object, only D1, and asks Fleet for every admission decision.
+
+- Gains: one owner for who belongs to an organization; no second copy to keep in step.
+- Costs: sign-in depends on Fleet central answering; when it can't, sign-ins are refused, never guessed.
+    </template>
+  </ex-option>
+  <ex-option id="d2-in-sign-in" title="In the sign-in service">
+    <template slot="summary">
+The 10-20 wording: the sign-in service hosts one Durable Object per organization for admission.
+
+- Gains: sign-in decides admission without calling Fleet.
+- Costs: organization truth splits between the sign-in service and Fleet central, against U15; the identity design needs rework.
+    </template>
+  </ex-option>
+</ex-choice>
 
 <h2 id="choices-made">Design choices made during the review corrections</h2>
 
