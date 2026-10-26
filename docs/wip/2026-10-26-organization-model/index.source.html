@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.5">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.7">
 
 <h1>Organization model</h1>
 
@@ -73,9 +73,9 @@
 <table>
   <thead><tr><th>Who</th><th>Step 1: added to the organization</th><th>Step 2: in a workspace</th></tr></thead>
   <tbody>
-    <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces.</td></tr>
+    <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces. Gets work done by talking to bots; never logs in a Router.</td></tr>
     <tr><td>Bot</td><td>Added by the admin to exactly one organization. It proves itself with its own credential.</td><td>Member or collaborator of chosen workspaces in that organization.</td></tr>
-    <tr><td>Fleet machine (an enrolled Router)</td><td>Enrolled in exactly one organization; the Router is logged in.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
+    <tr><td>Fleet machine (an enrolled Router)</td><td>Logged in (enrolled) by you, the owner, into exactly one organization.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
     <tr><td>Fleet harness session</td><td>Never added. The Fleet machine it runs on vouches for it.</td><td>Member of its project's workspace, automatically.</td></tr>
   </tbody>
 </table>
@@ -85,8 +85,8 @@
 <table>
   <thead><tr><th></th><th>Member</th><th>Collaborator</th></tr></thead>
   <tbody>
-    <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Bots and sessions: yes, within their persona. People: through the sessions they start, never with a tool token of their own</td><td>No. It never gets a token for that workspace</td></tr>
-    <tr><td>Starts work (a session) in the workspace</td><td>The identity design recommends: you, or a session that is already a member. Whether any person member, such as Sam, may start sessions is open (question 1 below)</td><td>Never</td></tr>
+    <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Bots and sessions: yes, within their persona. People: never with a tool token of their own; they ask a bot, and you work through sessions on your Routers</td><td>No. It never gets a token for that workspace</td></tr>
+    <tr><td>Starts work (a session) in the workspace</td><td>Whoever can operate a Router you logged in, for workspaces that Router may serve; the system sees only the Router. A session may start helpers in its own workspace</td><td>Never</td></tr>
     <tr><td>Sends messages and tasks to the workspace's members</td><td>Yes</td><td>Yes, through agent-collaboration</td></tr>
   </tbody>
 </table>
@@ -106,7 +106,7 @@
 <table>
   <thead><tr><th>#</th><th>What happens</th><th>Result</th><th>Why</th></tr></thead>
   <tbody>
-    <tr><td>1</td><td>Sam, a person, asks for a token to call Product's GitHub tool directly.</td><td>Refused</td><td>People never hold workspace tool tokens; only bots and sessions do. Product's tools are used by sessions started for Product's projects (examples 5 and 6).</td></tr>
+    <tr><td>1</td><td>Sam, a person, asks for a token to call Product's GitHub tool directly.</td><td>Refused</td><td>People never hold workspace tool tokens; only bots and sessions do. Sam gets this done by asking a bot (example 11).</td></tr>
     <tr><td>2</td><td>Hermes calls a Product tool.</td><td>Allowed, within Hermes's persona</td><td>Hermes is a member of Product.</td></tr>
     <tr><td>3</td><td>Hermes sends Review bot (a Docs member) a task.</td><td>Delivered; Review bot may reply</td><td>Hermes is a collaborator of Docs, so it and Docs's members may message each other. No workspace pair is involved.</td></tr>
     <tr><td>4</td><td>Hermes calls a Docs tool.</td><td>Refused</td><td>A collaborator never gets a token for that workspace, so the Tool Portal has nothing to admit.</td></tr>
@@ -115,7 +115,9 @@
     <tr><td>7</td><td>Someone starts a session for tool-portal on Build VM Router.</td><td>Refused</td><td>Build VM Router is allowed to serve Docs, not Product.</td></tr>
     <tr><td>8</td><td>Your agent in Personal messages Sam in Acme.</td><td>Refused</td><td>Nothing crosses organizations, not even messages.</td></tr>
     <tr><td>9</td><td>A bot nobody added to Acme asks to talk to Product.</td><td>Refused</td><td>It must be added to Acme first; only then can it be a member or collaborator.</td></tr>
-    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td><strong>Proposed:</strong> Sam's Product and Docs memberships end</td><td>Your two-step model implies that leaving the organization ends its workspace roles; the identity design does not have this cascade yet. Sam holds no tool token, so no Tool Portal needs telling about Sam personally. Two things are open (questions 4 and 5 below): whether sessions Sam started keep running, and whether Sam's roles come back if Sam is added again.</td></tr>
+    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td><strong>Proposed:</strong> Sam's Product and Docs memberships end</td><td>Your two-step model implies that leaving the organization ends its workspace roles; the identity design does not have this cascade yet. Sam holds no tool token and starts no sessions, so no Tool Portal needs telling about Sam. Whether Sam's roles come back if Sam is added again is question 3 below.</td></tr>
+    <tr><td>11</td><td>Sam messages Hermes in Hermes's own chat channel: "open a pull request for the Product docs fix".</td><td>Hermes does it with Product's tools</td><td>Sam is a person member and talks to a bot that has access. Hermes is a Product member; its tool call is recorded as Hermes, on behalf of Sam where the channel identifies Sam (Fleet framework F-30).</td></tr>
+    <tr><td>12</td><td>Sam tries to log a Router on their own laptop into Acme.</td><td>Refused</td><td>Only you log Routers in (your decision). A member logging one in, with someone authorizing it, is a later option.</td></tr>
   </tbody>
 </table>
 </div>
@@ -197,6 +199,24 @@ sequenceDiagram
   </ul>
 </ex-callout>
 
+<h2 id="router-identity">How a Router's identity and enrollment are kept</h2>
+
+<p>The thing enrolled is one Router installation, not a computer: nothing is derived from hardware (Fleet framework F-34). Its identity <em>is</em> its enrollment.</p>
+
+<table>
+  <thead><tr><th>Step</th><th>What happens</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Log in</td><td>You run the Router's enroll command with your owner token. The Router makes a random enrollment credential of its own.</td><td>In source (Router <code>f465808f</code>)</td></tr>
+    <tr><td>Fleet central records it</td><td>One enrollment row: the Router's installation ID, a label, the Access client ID, <strong>only a hash</strong> of the credential, its state (enrolled, revoked) and an expiry.</td><td>In source</td></tr>
+    <tr><td>The Router keeps the secret</td><td>The credential and the Access secret go in the Router's encrypted secret store, its key in the macOS Keychain; plain text only in debug builds (Fleet decision 1201).</td><td>In source, with decision 1201</td></tr>
+    <tr><td>Every connection</td><td>The Router presents the credential; Fleet central hashes it, finds the enrollment, and binds the connection to it. Sessions on that Router are vouched for through this connection.</td><td>In source</td></tr>
+    <tr><td>Revoke or expire</td><td>A revoked or expired enrollment is refused at connect, and vouches for nothing.</td><td>In source</td></tr>
+    <tr><td>Organization and "logged in by"</td><td>The enrollment also records its one organization and who logged it in.</td><td><strong>Proposed</strong> (your rule: one Router, one organization)</td></tr>
+  </tbody>
+</table>
+
+<p>What this means: reinstalling the Router makes a new enrollment, and the old one should be revoked. Whoever holds that Router's secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
+
 <h2 id="rooms">Where work runs: rooms</h2>
 
 <p>Everything above says who belongs where. A <strong>room</strong> says where an agent physically runs, and so which files it can reach. Rooms are not membership: being in a room grants no workspace, and being a member puts you in no room.</p>
@@ -214,35 +234,27 @@ sequenceDiagram
 
 <h2 id="decisions">Still to decide</h2>
 
-<p>Eight choices, most consequential first. Pick one per question, add comments, and copy or export your answers from the Comments panel. Every recommendation is mine; none is decided until you pick it.</p>
+<ex-callout title="Decided: only you log Routers in" tone="decision" icon="key">
+  <p>Your decision: "we can add managers later but it can be a concept, right now its just owner"; earlier: people members "use existing channels or bots to communicate"; "a bot is an existing channel. talk to bots who have access".</p>
+  <ul>
+    <li><strong>Who logs a Router into an organization:</strong> only you, the owner. That login is the one person check; today it is your operator token. Afterwards the Router acts with its own credential.</li>
+    <li><strong>Who starts sessions:</strong> anyone or anything that can operate a Router you logged in, for the workspaces that Router may serve. The system cannot tell who; it only knows which Router. So you control starting by which machines you log Routers in on (machines only you use), what each Router may serve, and revoking a Router when needed. People members never log in Routers.</li>
+    <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts, recorded as the bot on behalf of that person (Fleet framework F-30).</li>
+    <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided.</li>
+    <li><strong>Not enforced either way:</strong> who is physically using one of your Routers.</li>
+  </ul>
+</ex-callout>
 
-<ex-choice id="session-starters" title="1. Who may start a session in a workspace?">
-  <ex-option id="starters-owner-and-sessions" title="**You, and sessions already in the workspace** (the identity design's recommendation)">
-    <template slot="summary">
-Sam is a member of Product but cannot start a Codex session for tool-portal. You can, and a Product session can start a helper.
+<p>Six choices remain, most consequential first. Pick one per question, add comments, and copy or export your answers from the Comments panel. Every recommendation is mine; none is decided until you pick it.</p>
 
-- Gain: one person controls where agents run; nothing changes from the identity design.
-- Cost: other people in the organization depend on you to start their agents.
-    </template>
-  </ex-option>
-  <ex-option id="starters-person-members" title="**Also any person member, on a Router allowed for that workspace** (recommended)">
-    <template slot="summary">
-Sam, a Product member, starts a Codex session for tool-portal on a Router enrolled in Acme and allowed to serve Product.
-
-- Gain: "join workspaces as members" means people can do the work themselves.
-- Cost: the admin decides which Routers serve which workspaces, and each person who starts work needs a Router they can use; Fleet central must check the starter is a member.
-    </template>
-  </ex-option>
-</ex-choice>
-
-<ex-choice id="room-organization" title="2. Does &quot;one organization&quot; also cover the room a Router runs in?">
+<ex-choice id="room-organization" title="1. Does &quot;one organization&quot; also cover the room a Router runs in?">
   <ex-option id="room-one-organization" title="**Yes: different organizations never share an open room** (recommended)">
     <template slot="summary">
 Laptop Router (Acme) and a Personal Router may not both run directly on your Mac. Personal runs in a VM or on another machine, as Home VM Router does in the example.
 
 - Gain: fits "i dont want cross organization any sharing", which includes files.
 - Cost: you run a VM or a second machine for each extra organization; personal and work agents cannot both run bare on one laptop.
-- How strongly this is held is question 3.
+- How strongly this is held is question 2.
     </template>
   </ex-option>
   <ex-option id="room-router-only" title="**No: only each Router belongs to one organization**">
@@ -255,7 +267,7 @@ An Acme Router and a Personal Router may both run directly on your Mac.
   </ex-option>
 </ex-choice>
 
-<ex-choice id="room-assurance" title="3. If yes to 2: how strongly is it held in the first round?">
+<ex-choice id="room-assurance" title="2. If yes to 1: how strongly is it held in the first round?">
   <ex-option id="assurance-declared" title="**Declared and shown** (recommended for the first round)">
     <template slot="summary">
 Each session declares its room kind when it starts (the identity design's isolation record). The rule is shown, not proven: nothing attests where a Router runs, and nothing is refused because of it.
@@ -274,26 +286,7 @@ A session is refused unless its room has been shown to keep organizations apart 
   </ex-option>
 </ex-choice>
 
-<ex-choice id="removal-running-sessions" title="4. When someone leaves the organization, do sessions they started keep running?">
-  <ex-option id="sessions-keep-running" title="**Keep running** (recommended)">
-    <template slot="summary">
-Sam is removed from Acme. A tool-portal session Sam started stays a Product member, because a session's right to work comes from its own membership and its Router, not from Sam.
-
-- Gain: matches the identity design; removing a person never breaks running work by surprise.
-- Cost: the admin must end Sam's sessions separately if they should stop.
-    </template>
-  </ex-option>
-  <ex-option id="sessions-end" title="**End them too**">
-    <template slot="summary">
-Removing Sam also ends the sessions Sam started directly in Acme; each workspace's Tool Portal is told about those sessions. Helpers that those sessions started are sessions of their own, started by a session, not by Sam; whether they end too needs its own rule.
-
-- Gain: one action stops the sessions a person started directly.
-- Cost: work stops mid-task; Fleet central must treat "who started it" as a live link, not just a launch note. Ending helpers too would also need the chain of who started whom.
-    </template>
-  </ex-option>
-</ex-choice>
-
-<ex-choice id="readmission" title="5. If someone is added back to the organization, do their old workspace roles return?">
+<ex-choice id="readmission" title="3. If someone is added back to the organization, do their old workspace roles return?">
   <ex-option id="readmission-grant-again" title="**No: grant them again** (recommended)">
     <template slot="summary">
 Sam is removed, then added to Acme again a month later. Sam is in no workspace until the admin adds Sam again.
@@ -312,7 +305,7 @@ Sam's Product and Docs roles come back as they were.
   </ex-option>
 </ex-choice>
 
-<ex-choice id="bot-membership" title="6. Keep your earlier rule that a bot is a member of at most one workspace, or reopen it?">
+<ex-choice id="bot-membership" title="4. Keep your earlier rule that a bot is a member of at most one workspace, or reopen it?">
   <ex-option id="bot-member-one" title="**Keep: a member of one workspace, a collaborator elsewhere** (recommended)">
     <template slot="summary">
 Your decision of 2026-10-24: "a bot shoudl only be member in one workspace. rest collaborator." The example assumes it: Hermes is a member of Product and a collaborator of Docs.
@@ -331,7 +324,7 @@ Hermes could be a member of both Product and Docs and use both workspaces' tools
   </ex-option>
 </ex-choice>
 
-<ex-choice id="collaborator-allowed" title="7. Who makes someone a collaborator of a workspace?">
+<ex-choice id="collaborator-allowed" title="5. Who makes someone a collaborator of a workspace?">
   <ex-option id="collaborator-admin-picks" title="**The admin, per workspace** (recommended)">
     <template slot="summary">
 Being added to Acme lets a bot talk to no workspace until the admin makes it a member or a collaborator there. Review bot reaches Product only because the admin made it Product's collaborator.
@@ -350,7 +343,7 @@ Anyone added to Acme may message members of every Acme workspace.
   </ex-option>
 </ex-choice>
 
-<ex-choice id="portal-deployment" title="8. One Tool Portal deployment per organization? (you picked yes earlier; please re-confirm)">
+<ex-choice id="portal-deployment" title="6. One Tool Portal deployment per organization? (you picked yes earlier; please re-confirm)">
   <ex-option id="portal-per-organization" title="**Yes: one deployment per organization** (your earlier pick)">
     <template slot="summary">
 Acme's workspaces and Personal's workspaces are served by separate Tool Portal deployments.
