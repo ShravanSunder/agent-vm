@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Organization hierarchy</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
+<a href="index.html">Organization hierarchy</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../../specs/2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../../specs/2026-10-24-agent-identity/index.html">Agent identity and workspace access</a>
+<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in: Requirements</a>
+<a href="../../specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">People sign-in: Specification</a>
+<a href="../../specs/2026-10-20-people-sign-in/program-design.html">People sign-in: Program Design</a>
+<a href="../../specs/2026-10-20-people-sign-in/verification-design.html">People sign-in: Verification Design</a>
+<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
+<a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
+</nav></ex-nav>
+
+<ex-presentation id="path-hierarchy" title="The hierarchy, top to bottom" description="Deployment to project, where each thing runs and is stored, one example, and what is still open.">
+  <ex-step to="hierarchy" icon="stack">The containment tree: deployment, organization registry, organization, workspace, board, project.</ex-step>
+  <ex-step to="hierarchy-picture" icon="users">The same tree as a picture, with people outside every organization.</ex-step>
+  <ex-step to="placement" icon="cpu">Where a session runs: isolation unit, Fleet machine, session, room. A separate view.</ex-step>
+  <ex-step to="storage" icon="database">Which database holds each level, and which storage choices are still open.</ex-step>
+  <ex-step to="example" icon="path">One example end to end: a person, a Fleet machine, a session, a tool call.</ex-step>
+  <ex-step to="decisions" icon="shield-check">What your six decisions change, and what does not follow from them.</ex-step>
+  <ex-step to="open-questions" icon="key">What's still open: one meaning to confirm, two choices.</ex-step>
+</ex-presentation>
+
+<ex-document id="content" document-id="organization-hierarchy-decision" revision="2026-10-26.1">
+
+<h1>Organization hierarchy</h1>
+
+<p id="answer" data-comment-label="The short answer">Everything sits in one containment tree: <strong>deployment → organization registry → organization (its fleet) → workspace → board → project</strong>. A person is the only thing above the organizations: one account in the deployment, admitted to any number of organizations. Every Fleet machine, bot, Fleet harness session, workspace and project belongs to exactly one organization, and nothing is shared or sent across organizations. Where a session <em>runs</em> (its host or VM and its room) is a separate view from what it <em>belongs to</em>.</p>
+
+<ex-callout id="ask" title="Your decisions, and three questions still open" tone="question" icon="users">
+
+**Decided 2026-10-26:**
+
+1. One shared Fleet central, with one fleet per organization.
+2. A Fleet machine sees only the workspaces it is allowed in, plus the ID and name of workspaces paired with them.
+3. A Fleet machine belongs to exactly one organization, enforced when it is enrolled.
+4. Communication happens only between workspaces of one organization.
+5. Nothing is shared or sent across organizations.
+6. A person can join any number of organizations; bots and Fleet harness sessions can't.
+
+**Still open:** [whether a host or VM is limited to one organization too, and two storage and deployment choices](#open-questions). Pick an answer for each, comment on anything (press **C**, or select a passage), then use **Copy** or **Export** in the Comments panel and paste it back. Nothing is sent automatically.
+
+</ex-callout>
+
+<p id="scope-note" data-comment-label="What this page is">Design discussion, not a reviewed design. The terms are the agreed ones from the <a href="../../specs/2026-10-24-agent-identity/index.html">agent identity design</a>, the Fleet framework and the <a href="../../specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">people sign-in design</a>; nothing new is named here (see <a href="#vocabulary">every term</a>). Code facts are pinned to codex-router <code>f465808f</code>. An independent Advisor checked the model this page is built from.</p>
+
+<h2 id="hierarchy">The hierarchy</h2>
+
+<p id="hierarchy-intro" data-comment-label="How to read the tree">Each level contains the levels under it. The text in brackets says which database holds it. A reference to a person, bot or Fleet machine under a workspace points at the one record above; it is not a copy.</p>
+
+<ex-tree id="hierarchy-tree" title="Deployment, top to bottom" icon="stack"><script type="text/markdown">
+- Deployment
+  - Organization registry [Fleet central Registry]: which organizations exist, and which Fleet machine enrollment belongs to which organization
+    - Organization O1, with its fleet [Fleet central]
+      - Owner and allowlist entries: who may sign in to O1; each entry can bind one person
+      - Fleet machines enrolled in O1 (each one Router installation)
+        - Machine allowances: which O1 workspaces each machine may serve and see
+      - Bots registered in O1
+        - Bot credentials [sign-in service]
+      - Workspace pairs: from one O1 workspace to another, messages only
+      - Workspaces
+        - Workspace W1
+          - Memberships: a person, a bot or a Fleet harness session, each with a persona
+          - Personas [Tool Portal workspace configuration]
+          - Bot collaborations: messages with W1's members, no tools
+          - MCP address, approval use and received removals [W1's Tool Portal store]
+          - ADRs, repository attachments, W1's records
+          - Boards
+            - Board B1
+              - Projects
+                - Project P1 [directory record in O1's fleet; project database at its holder, central Copy]
+                  - Fleet harness sessions started for P1, each a member of W1 for its whole life
+                    - Isolation record (room): where the session runs, asserted at launch
+        - Workspace W2
+    - Organization O2: the same shape, with no links to O1
+  - Sign-in service [deployment-wide D1]
+    - Persons: one account each, linked logins and passkeys
+    - Person sign-in sessions, each for one organization
+    - OAuth clients, including bot credentials
+  - Tool Portal deployment [how many is an open question]
+    - One MCP address and store per workspace
+</script></ex-tree>
+
+<h3 id="hierarchy-picture">The same tree as a picture</h3>
+
+<p id="picture-intro" data-comment-label="How to read the picture">Boxes inside boxes are containment. Dashed arrows are references that cross the tree: a person into an organization's allowlist and a workspace's memberships, a Fleet machine's allowance to a workspace, and a workspace pair.</p>
+
+<ex-mermaid id="hierarchy-diagram" label="Containment, with references dashed" data-width="canvas"><script type="text/plain">
+flowchart TB
+  subgraph DEP["Deployment"]
+    subgraph SIGN["Sign-in service: deployment-wide"]
+      PER["Person<br/>one account"]
+    end
+    REG["Organization registry<br/>which organizations exist,<br/>which enrollment belongs to which"]
+    subgraph O1["Organization O1: its fleet"]
+      ADM["Owner and allowlist entries"]
+      FM["Fleet machine M<br/>enrolled in O1"]
+      BOT["Bot<br/>registered in O1"]
+      subgraph W1["Workspace W1"]
+        MEM["Memberships and personas"]
+        subgraph B1["Board B1"]
+          P1["Project P1<br/>and its Fleet harness sessions"]
+        end
+      end
+      W2["Workspace W2"]
+    end
+    subgraph O2["Organization O2: same shape, no links to O1"]
+      W3["Workspace W3"]
+    end
+  end
+  REG --> O1
+  REG --> O2
+  PER -.->|"allowlist entry"| ADM
+  PER -.->|"membership"| MEM
+  BOT -.->|"membership, at most one workspace"| MEM
+  FM -.->|"machine allowance"| W1
+  W1 -.->|"workspace pair: messages, sees only ID and name"| W2
+</script></ex-mermaid>
+
+<h2 id="placement">Where a session runs: a separate view</h2>
+
+<p id="placement-intro" data-comment-label="Placement is not membership">The tree says what a session <em>belongs to</em>. Placement says where it <em>runs</em>. They are different questions, and neither is derived from the other: a session's workspace comes from its project, never from its machine, folder or room.</p>
+
+<ex-mermaid id="placement-diagram" label="Placement: isolation unit to room"><script type="text/plain">
+flowchart LR
+  IU["Isolation unit<br/>one host OS or VM"] --> RI["Router installation<br/>enrolled as Fleet machine M"]
+  RI --> SES["Fleet harness session<br/>started for project P1"]
+  SES --> ROOM["Isolation record (room)<br/>asserted at launch, not proven"]
+</script></ex-mermaid>
+
+- **Isolation unit (F-34):** each host or VM is its own boundary; a host and two VMs are three. Nothing is derived from hardware.
+- **Fleet machine (E6):** one Router installation that was enrolled. The Router is the program; the Fleet machine is its enrollment.
+- **Isolation record, the "room" (E13):** what launched the session says where it runs (`Host`, `ProcessSandbox`, `Container` or `Vm`). It is recorded, never proven, and in the first round nothing is refused because of it (R23). Each machine's **shared bucket** (E14) shows which workspaces have had `Host` sessions on it.
+
+<ex-callout id="owner-scope-reading" title="Settled, and one meaning to confirm" tone="question" icon="cpu">
+
+**Settled:** a Fleet machine's enrollment belongs to exactly one organization (today), and inside it the machine serves several workspaces through machine allowances (U6; you turned down one machine per workspace). Its host or VM is recorded separately and not proven.
+
+**Not settled:** whether the host or VM a Fleet machine runs on is also limited to one organization. D-15 (held by F-34) says a machine we run serves exactly one boundary, but which scope that boundary is ("owner scope", still a proposed name in Q-B13) was never fixed as the organization, and nothing makes one enrollment equal one host or VM. This is [the first open question](#placement-choice), not one of your six decisions.
+
+</ex-callout>
+
+<h2 id="storage">Where each level is stored</h2>
+
+<p id="storage-intro" data-comment-label="Storage is an overlay">The tree is logical. This table puts the databases on it. Nesting does not mean one database holds everything: a project's posts stay in its project database, not in the organization's metadata.</p>
+
+| What | Where it lives | Not decided here |
+|---|---|---|
+| Which organizations exist; each Fleet machine enrollment and the one organization it belongs to | Organization registry (Fleet central's Registry), reusing today's enrollment record | whether more enrollment details move into the organization; there is still one writable binding |
+| The organization's workspaces, boards, project directory, ADRs, records and feed | the organization's fleet in Fleet central, no longer the one fleet-wide Fleet object | [one organization database, or two objects](#open-questions) |
+| Owner and allowlist, bots, Fleet harness session registrations, memberships, machine allowances, workspace pairs, bot collaborations, grant and removal order | the organization's admission records in Fleet central | same database as the row above, or a separate object |
+| A project's threads, posts, roles and grants | its project database at the machine holding it, with central's Copy | nothing moves into the organization's metadata |
+| Connection and mailbox for each enrolled Router installation | Fleet central's existing Connection and Mailbox, limited to the enrollment's organization | they carry traffic; they are not sessions or memberships |
+| Persons, logins, passkeys, person sign-in sessions, bot credentials | the sign-in service's D1 (or SQLite on Node) | a person's account is shared; no organization's authority is |
+| Personas, approval use, received removals | each workspace's configuration and Tool Portal store | [one Portal deployment or one per organization](#open-questions) |
+
+<h2 id="example">One example, end to end</h2>
+
+1. **Alice is one person** with one sign-in account. O1's owner adds her email to O1's allowlist, and O2's owner adds it to O2's. She signs in to each separately, and each sign-in session is for one organization.
+2. **O1's owner enrolls Fleet machine M in O1.** The enrollment belongs to O1 from then on, until it is revoked or expires. That an owner's login does this is decided; how the login works is proposed. Today, `codex-router fleet enroll` uses the operator's token, not a browser.
+3. **The owner creates workspace W1, board B1 in it, and project P1 on B1**, and gives M a machine allowance for W1. M can now see W1's records, and no other workspace's.
+4. **A Fleet harness session starts on M for project P1.** M registers it with O1's fleet. P1 is in W1, M is enrolled in O1 with an allowance for W1, so the session becomes a member of W1 with the session default persona, for its whole life. Until it is registered, the session's binding admits nothing.
+5. **The session calls a tool** (sequence below). The Tool Portal accepts the token only for W1 and O1, only if the persona allows the tool, and only if no removal covers it.
+6. **W1 has a workspace pair to W2.** W1's members can message W2's members, and M sees W2's ID and name only, never W2's boards, projects or tools. Anything aimed at O2 is refused.
+7. **The owner removes the session's membership.** O1's fleet orders the removal and sends a notice to the Tool Portal. Once the Portal has stored the notice, every older token for that session in W1 is refused. While the notice is still on its way, the token's grant expiry is the backstop.
+
+<ex-mermaid id="example-sequence" label="Steps 4 and 5: a Fleet harness session registers and calls a tool"><script type="text/plain">
+sequenceDiagram
+  participant H as Fleet harness session
+  participant M as Fleet machine M, enrolled in O1
+  participant F as O1's fleet
+  participant S as Sign-in service
+  participant T as Tool Portal, W1's MCP address
+  M->>F: register this session for project P1
+  Note over F: P1 is on board B1 in W1, and M has an allowance for W1
+  F-->>M: registered: O1, W1, session default persona
+  H->>M: tool call
+  M->>F: token for this session
+  Note over F: session active, M enrolled and allowed, take the grant mark
+  F->>S: fleet-session grant: this session, W1, O1
+  S-->>F: workspace token, at most 60 minutes
+  F-->>M: token
+  M->>T: tool call, with the token attached
+  Note over T: W1 and O1 match, persona allows the tool, no removal covers it
+  T-->>M: result
+  M-->>H: result
+</script></ex-mermaid>
+
+<h2 id="decisions">What your six decisions change</h2>
+
+| Decision | What changes | What does not follow |
+|---|---|---|
+| One shared Fleet central, one fleet per organization | Workspace, board, project directory, names, records and feed are scoped to their organization; each workspace's parent is its organization; names are unique per organization | how many databases implement an organization; moving project databases |
+| A Fleet machine sees only its allowed workspaces | reads, snapshots, lookups, request records and directory search return only allowed workspaces, checked at central before anything is sent; a pair shows only the other workspace's ID and name | one feed per workspace as a requirement; sending everything and filtering on the machine |
+| A Fleet machine belongs to one organization, enforced at enrollment | E6's enrollment binds to exactly one organization; later calls use that binding, never an organization named by an agent; its allowances are in that organization | a new kind of identity; hardware identity; a wipe or transfer procedure |
+| Communication only inside one organization | workspace pairs (E17) and bot collaborations (E9) only join participants of one organization; pairs keep their direction | pairs becoming two-way; tools or board writes for collaborators |
+| Nothing shared or sent across organizations | refuse cross-organization records, project access, messages and tasks, mailbox and forwarded effects, and Tool Portal access, on existing transport and replication paths as well as new ones | a proof of physical isolation; separating the shared sign-in account |
+| A person in any number of organizations; agents in one | one person, with a separate allowlist entry, sign-in session and memberships in each organization; a bot and a Fleet harness session stay in one organization, and a bot is a member of at most one workspace | a person's O1 sign-in or owner rights counting in O2 |
+
+<p id="e6-change" data-comment-label="The one definition to revise">The one definition to revise is <strong>E6 Fleet machine</strong>: keep "one Router installation the owner enrolled", and add that its enrollment belongs to exactly one organization, with its allowances and the sessions it vouches for in that organization. E7 keeps its full session reference and its project → workspace rule.</p>
+
+<h2 id="today">What the code does today</h2>
+
+<p id="today-intro" data-comment-label="Pinned code facts">Facts at codex-router <code>f465808f</code>. They show the gap the decisions close; they are not the design.</p>
+
+| Fact | Source |
+|---|---|
+| One fleet-wide Fleet object; object kinds are `Copy(DatabaseId)`, `Registry`, `Fleet`, `Connection(ServiceId)`, `Mailbox(ServiceId)` | `collaboration-central-core/src/core_contract.rs:36-42` |
+| Workspace names are unique across the whole fleet; boards belong to a workspace, projects to a board; no organization column | `core_migrations/0003_fleet_records.sql:1-36` |
+| The fleet feed is paged by position and the snapshot by cursor, with no workspace or organization scope, so the API can expose every workspace's records to any enrolled installation | `sql/fleet/read_fleet_feed_page.sql`, `board-sync-protocol/src/board_payloads.rs:74-75`, `session_scope/fleet_reads.rs:26-36` |
+| The workspace-creation rule checks the ID and name; there is no organization-owner check on that path | `fleet-admission/src/fleet_metadata_rules.rs:17-40` |
+| An enrollment records the installation, its peer, label, Access client ID and enrollment credential hash, with no hardware identity | `registry_migrations/0001_machine_enrollments.sql:1-12` |
+| Enrolling today uses the operator's token, not a browser sign-in | `codex-router-cli/src/fleet_command/enrollment_prepare.rs` |
+
+<p id="identity-gap" data-comment-label="The design gap">The identity design already says every workspace belongs to one organization (E2) and already refuses creating a workspace outside the owner's command (R28). Its gap: the Program Design leaves the workspace records in the fleet-wide Fleet object, so nothing stores or enforces which organization a workspace belongs to. Your decisions fix that.</p>
+
+<h2 id="vocabulary">Every term, with its source</h2>
+
+<details id="vocabulary-table">
+<summary>The established terms this page uses (identity design E-numbers unless noted)</summary>
+
+| Term | Meaning | Source |
+|---|---|---|
+| Deployment | one sign-in instance; different deployments don't accept each other's people | people sign-in E1 |
+| Organization registry | the Registry's list of organizations; routes to each organization's fleet | identity Program Design |
+| Organization (E1) | contains workspaces; owns who may sign in, and its owner | identity E1, people sign-in E12 |
+| Workspace (E2) | belongs to exactly one organization; contains boards and projects, memberships and personas; one MCP address | identity E2 |
+| Board | belongs to one workspace; contains project directory entries | codex-router today |
+| Project (E16) | in one workspace, through its board; sessions start for it | identity E16 |
+| Person (E3) | one account in a deployment; may be admitted to many organizations | identity E3, people sign-in E2 |
+| Allowlist entry | one email an organization's owner approved for that organization; may bind one person; not a membership | people sign-in E8 |
+| Bot (E4) | registered in one organization; a member of at most one workspace | identity E4 |
+| Bot credential (E5) | one of a bot's credentials, verified by the sign-in service | identity E5 |
+| Fleet machine (E6) | one Router installation the owner enrolled; not a computer | identity E6 |
+| Router | the program; enrolling one installation makes it a Fleet machine | identity E6 |
+| Machine allowance (E15) | each allowance lets one Fleet machine serve one workspace; a machine can hold several, all in its organization; not a membership | identity E15, U6 |
+| Fleet harness session (E7) | installation, harness and conversation; runs on one Fleet machine; started for one project; one membership, in that project's workspace | identity E7 |
+| Membership (E8) | a person, bot or session in one workspace, with a persona | identity E8 |
+| Persona (E10) | which tools and approval rules; defined in the workspace's configuration | identity E10 |
+| Bot collaboration (E9) | a bot messages a workspace's members; no tools | identity E9 |
+| Workspace pair (E17) | messages from one workspace to another in the same organization | identity E17 |
+| Isolation record, the room (E13) | where a session runs, asserted at launch | identity E13 |
+| Isolation unit | one host OS or VM (F-34); "owner scope" is the other sense of boundary (Q-B13) | Fleet framework F-34, Q-B13 |
+| Shared bucket (E14) | workspaces with `Host` sessions on one Fleet machine; shown, not enforced | identity E14 |
+
+</details>
+
+<h2 id="open-questions">Still open: one meaning to confirm, two choices</h2>
+
+<p id="open-why" data-comment-label="What waits on these">The first confirms what your rule covers. The other two change only where things are stored or run, not what they mean. The identity design's revision waits on all three; the Tool Portal remediation waits on none of them.</p>
+
+<ex-choice id="placement-choice" title="Is a host or VM we run limited to one organization, or only the Fleet machine's enrollment?">
+  <ex-option id="host-limited-to-organization" title="**The host or VM too: one organization per host or VM we run** (recommended)">
+    <template slot="summary">
+Every Fleet machine on one host or VM must be enrolled in the same organization. It is recorded from the isolation record and shown, not proven: nothing attests which host or VM an enrollment runs on.
+
+- Gains: matches "nothing shared across organizations" at the place sessions actually run; no session of O1 shares a host's files or processes with a session of O2.
+- Costs: two organizations on one computer need separate VMs; the rule can be broken by someone who controls the host, and the system only shows it.
+    </template>
+  </ex-option>
+  <ex-option id="enrollment-only" title="Only the enrollment: one organization per Fleet machine">
+    <template slot="summary">
+Each enrollment belongs to one organization, but two enrollments in different organizations may run on the same host or VM, as the first round already allows for workspaces.
+
+- Gains: current deployment flexibility; one computer can serve two organizations without VMs.
+- Costs: sessions of two organizations can share a host's files and processes; this stays a visible, accepted exposure rather than a rule.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="organization-store-choice" title="Inside one organization: are its workspace records and its admission records one database, or two objects?">
+  <ex-option id="one-organization-database" title="**One database, two code modules** (recommended)">
+    <template slot="summary">
+The organization's workspace, board and project-directory records share one database with its allowlist, bots, session registrations, memberships, machine allowances and pairs. Project databases, Connection, Mailbox, the sign-in service and the Tool Portal stay where they are.
+
+- Gains: creating a workspace, archiving it and ending its memberships commit together; checking a Fleet machine's allowance happens in the same read as serving that workspace's records; no handoff between the two halves.
+- Costs: one object's writes carry both kinds of change; the shipped Fleet object code moves into it. Calls to the sign-in service and the Tool Portal still cross services.
+    </template>
+  </ex-option>
+  <ex-option id="two-organization-objects" title="Two objects for each organization">
+    <template slot="summary">
+The organization's workspace records and its admission records are separate objects with the same organization key.
+
+- Gains: the shipped Fleet object code changes less, and each object has one job.
+- Costs: creating and archiving a workspace hand off between the two objects; serving a workspace's records needs the allowances from the other object, copied or asked for on each read.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="portal-deployment-choice" title="Can one Tool Portal deployment serve several organizations?">
+  <ex-option id="one-portal-deployment" title="**Yes: one deployment, one store per workspace** (recommended)">
+    <template slot="summary">
+As designed: each workspace has its own MCP address and store, and a token is accepted only when its organization matches the workspace's.
+
+- Gains: one deployment to run. Data access is separated by one store per workspace together with the token's workspace and organization checks.
+- Costs: the running code that does those checks is shared, so a bug there could reach another organization's workspace (the identity verification rows cover the check). And a Worker isolate's memory is shared by concurrent calls from every workspace it serves: one very large request can end other calls, which could then belong to another organization. That availability risk is recorded under [RD7](../2026-10-24-remediation-owner-decisions/index.html#rd7-choice); this page doesn't accept it.
+    </template>
+  </ex-option>
+  <ex-option id="portal-per-organization" title="No: one Tool Portal deployment per organization">
+    <template slot="summary">
+Each organization gets its own Tool Portal Worker or Node host.
+
+- Gains: separate running deployments for each organization.
+- Costs: a deployment per organization to run and upgrade; each organization's MCP addresses on its own origin. The source code and the underlying platform are still shared.
+    </template>
+  </ex-option>
+</ex-choice>
+
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>
