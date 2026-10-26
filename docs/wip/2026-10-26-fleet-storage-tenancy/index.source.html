@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet central storage</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
+<a href="index.html">Fleet central storage decision</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../../specs/2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../../specs/2026-10-24-agent-identity/index.html">Agent identity and workspace access</a>
+<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in: Requirements</a>
+<a href="../../specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">People sign-in: Specification</a>
+<a href="../../specs/2026-10-20-people-sign-in/program-design.html">People sign-in: Program Design</a>
+<a href="../../specs/2026-10-20-people-sign-in/verification-design.html">People sign-in: Verification Design</a>
+<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
+<a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
+</nav></ex-nav>
+
+<ex-presentation id="path-storage" title="From today's setup to the decision" description="What Fleet central stores today, what the identity design adds, where it breaks, and the three ways to fix it.">
+  <ex-step to="current-setup" icon="database">Every database across Fleet central, sign-in and the Tool Portal, and how many of each there are.</ex-step>
+  <ex-step to="fleet-objects" icon="stack">Fleet central's five object kinds and what each one holds, from the code.</ex-step>
+  <ex-step to="workspace-creation" icon="folder">How a workspace is created today: any machine, two checks.</ex-step>
+  <ex-step to="feed-today" icon="plug">What every machine reads today: the whole fleet.</ex-step>
+  <ex-step to="identity-adds" icon="users">What the identity design adds: organizations, around identity only.</ex-step>
+  <ex-step to="gaps" icon="shield-check">The gaps, fact by fact.</ex-step>
+  <ex-step to="tenancy-choice" icon="lock">The decision: three options, each drawn.</ex-step>
+  <ex-step to="after-decision" icon="path">What comes after, once this is settled.</ex-step>
+</ex-presentation>
+
+<ex-document id="content" document-id="fleet-storage-tenancy-decision" revision="2026-10-26.1">
+
+<h1>Fleet central storage</h1>
+
+<p id="answer" data-comment-label="The short answer">The identity design separates organizations for <strong>identity</strong> only: memberships, bots, sessions and allowances get one database per organization. Everything else that describes a workspace (its record, name, boards, projects, ADRs and the request log) stays in <strong>one fleet-wide database, and every machine reads all of it</strong>. Before any schema is approved, one decision has to be made: is Fleet central shared by several organizations, and if so, is their collaboration data separated too?</p>
+
+<ex-callout id="ask" title="The decision on this page" tone="question" icon="users">
+
+**Is Fleet central shared by several organizations, and where does each organization's workspace data live?** Proposed: shared, with **one Fleet object per organization** (Option 3). Pick an answer below, comment on anything (press **C**, or select a passage), then use **Copy** or **Export** in the Comments panel and paste it back. Nothing is sent automatically. Nothing in the design documents changes until you decide.
+
+</ex-callout>
+
+<p id="scope-note" data-comment-label="What this page is and isn't">This is design discussion, not a reviewed design. The "today" facts come from codex-router <code>integration-0.1.102</code> at <code>f465808f</code> and were checked in the code (see <a href="#evidence">Evidence</a>). The identity design facts come from the <a href="../../specs/2026-10-24-agent-identity/index.html">agent identity design</a>.</p>
+
+<h2 id="current-setup">The current setup: every database</h2>
+
+There are three systems. Each database is SQLite: a Durable Object or D1 on Cloudflare, and a SQLite file on the Node or Tokio host. Solid boxes exist in code today. Dashed boxes are added by the identity and remediation designs.
+
+<ex-mermaid id="all-databases" label="Every database today, plus the designs' additions" data-width="canvas"><script type="text/plain">
+flowchart TB
+  subgraph FC["Fleet central: one deployment"]
+    FO["Fleet object: ONE for the fleet<br/>workspaces, boards, projects,<br/>ADRs, repositories, request log, feed"]
+    CP["Copy: one per project<br/>central's replica of the project database"]
+    RG["Registry: ONE<br/>enrolled machines, leases"]
+    CN["Connection: one per Router"]
+    MB["Mailbox: one per Router"]
+    OA["Organization authority: one per organization<br/>members, bots, sessions, allowances,<br/>removal outbox"]:::added
+    RO["Registry addition:<br/>list of organizations"]:::added
+  end
+  subgraph SI["Sign-in service"]
+    D1["D1: ONE for the deployment<br/>people, logins, sessions, OAuth clients,<br/>sign-in audit, admission claims"]
+  end
+  subgraph TP["Tool Portal"]
+    WS["Workspace store: one per workspace<br/>approval use, removal marks and notices"]:::added
+  end
+  RA["Router on machine A"] -->|"machine session"| FC
+  RB["Router on machine B"] -->|"machine session"| FC
+  classDef added stroke-dasharray: 5 5
+</script></ex-mermaid>
+
+<h3 id="how-many">How many of each</h3>
+
+| Database | System | How many | Owns the truth for |
+|---|---|---|---|
+| Fleet object | Fleet central | one for the whole fleet | workspaces, boards, projects, ADRs, repository links, the request log |
+| Copy | Fleet central | one per project | the project's threads, posts, roles and grants (a replica; the Router writes the original) |
+| Registry | Fleet central | one for the whole fleet | enrolled machines and leases; in the design, also the list of organizations |
+| Connection, Mailbox | Fleet central | one per Router | session state and message delivery for that Router |
+| Organization authority (design) | Fleet central | one per organization | members, bots, sessions, allowances, ordered marks, removal outbox |
+| Sign-in D1 | Sign-in service | one per deployment | people, logins, passkeys, sessions, OAuth clients and tokens |
+| Workspace store (design) | Tool Portal | one per workspace | approval use (each approval used once), removal marks and notices |
+
+<h2 id="fleet-objects">Fleet central's objects, from the code</h2>
+
+Central has a closed set of object kinds: `Copy(DatabaseId)`, `Registry`, `Fleet`, `Connection(ServiceId)` and `Mailbox(ServiceId)`. Only `Copy`, `Connection` and `Mailbox` carry a key; `Fleet` and `Registry` are one each for the whole fleet.
+
+| Object | Tables | Anything per workspace? | Anything per organization? |
+|---|---|---|---|
+| Fleet | `workspaces` (`name UNIQUE` across the fleet), `boards`, `project_directory`, `workspace_adrs`, `repository_attachments`, `fleet_feed`, `fleet_request_decisions`, `creation_decisions`, `feed_readers` | Yes: each workspace is a row, and its boards, projects and ADRs point at it | No |
+| Copy | the project database: actors, threads, posts, owner grants, roles, notification subscriptions; `project_state.workspace_id` | Only `project_state.workspace_id` | No |
+| Registry | machine enrollments, leases, machine notices | No | No |
+| Connection, Mailbox | session state, delivery | No | No |
+
+<ex-callout id="no-org-today" title="Observed: no organization anywhere" tone="note" icon="database">
+
+No table, column or payload field in codex-router scopes data by organization, tenant, account or owner. The `Workspace` type has `workspace_id`, `name`, `description`, `state` and `repositories`; its record envelope keeps the creator's identity for attribution only. There is no workspace membership: the table called `subscription_memberships` holds per-project notification subscriptions.
+
+</ex-callout>
+
+<h2 id="workspace-creation">How a workspace is created today</h2>
+
+<ex-mermaid id="create-today" label="Workspace creation today"><script type="text/plain">
+sequenceDiagram
+  participant U as Person or agent
+  participant R as Router on any enrolled machine
+  participant C as Central: machine session
+  participant F as Fleet object
+  U->>R: workspace_create(name, actor)
+  Note over R: no permission check, actor is self-declared
+  R->>C: Fleet request, queued and sent over the machine session
+  C->>F: decide, origin bound from this machine's session
+  Note over F: two checks only: workspace ID free, name free across the fleet
+  F->>F: one transaction: workspaces row, feed entry, request log row
+  F-->>R: decision
+</script></ex-mermaid>
+
+<p id="creation-meaning" data-comment-label="What creation means today">Any enrolled machine can create a workspace with any unused name. The CLI help says to "obtain the workspace owner's permission", but nothing enforces it. Central's only identity check is that the recorded machine is the one whose session sent the request. For one owner's own fleet that's consistent, because an enrolled machine is the boundary of trust. Once two customers share one central, it isn't.</p>
+
+<h2 id="feed-today">What every machine reads today</h2>
+
+<ex-mermaid id="feed-scope-today" label="The fleet feed today"><script type="text/plain">
+flowchart LR
+  F["Fleet object feed<br/>one position sequence<br/>every workspace's records"] -->|"whole feed"| A["Router: machine used by O1"]
+  F -->|"whole feed"| B["Router: machine used by O2"]
+  A -.-> X["also receives O2's workspace names,<br/>boards, projects, ADRs,<br/>and the request log with each requester"]
+</script></ex-mermaid>
+
+<p id="feed-meaning" data-comment-label="What the feed means">The feed and the snapshot filter only by position. Every Router caches every workspace, board, project, ADR and request-log entry in the fleet. The request log carries who asked and from which machine. With organizations, that is a cross-organization leak, and nothing in the identity design closes it.</p>
+
+<h2 id="identity-adds">What the identity design adds</h2>
+
+<ex-mermaid id="identity-additions" label="Identity design: organizations around identity only" data-width="canvas"><script type="text/plain">
+flowchart TB
+  RG["Registry: ONE<br/>machines + list of organizations"]
+  subgraph PER["One per organization (new)"]
+    OA1["Organization authority O1<br/>members, bots, sessions,<br/>allowances, marks, outbox"]
+    OA2["Organization authority O2"]
+  end
+  FO["Fleet object: ONE<br/>workspaces of O1 and O2 mixed,<br/>no organization column"]
+  RG -->|"creates and initializes"| OA1
+  RG --> OA2
+  OA1 -->|"CreateWorkspace through an outbox"| FO
+  OA2 -->|"CreateWorkspace through an outbox"| FO
+  FO -.->|"archive must reach memberships through an outbox"| OA1
+</script></ex-mermaid>
+
+- **New object kind:** the organization authority, one per organization, holds E1 Organization (with its owner and sign-in allowlist), bots, fleet harness sessions, memberships, allowances, workspace pairs, bot collaborations, ordered marks and the removal outbox.
+- **Registry:** gains the list of organizations and the per-organization fan-out of a machine revocation.
+- **`CreateWorkspace`:** becomes an owner command. The organization authority checks the owner, records the command and replies `Admitted`; its outbox then has the Fleet object create the workspace. If you stop being the owner in between, the workspace is still created, empty.
+- **Fleet object:** bound to E2 Workspace and E16 Project **unchanged**.
+
+<h2 id="gaps">The gaps, fact by fact</h2>
+
+| Fact | Today | Identity design | Gap |
+|---|---|---|---|
+| W belongs to O | nowhere | the Specification requires it (E2 "belongs to exactly one E1"); the Program Design binds E2 to the existing table unchanged | **no storage home** |
+| Workspace name unique | across the whole fleet | unchanged | two customers can't both have "main"; archived workspaces still hold their names |
+| Who may create a workspace | any enrolled machine | the owner command `CreateWorkspace` | the existing Router `workspace_create` path stays open alongside it |
+| Workspace record and archive | Fleet object | Fleet object | archiving has to reach memberships in another database, through an outbox |
+| Members, bots, sessions, allowances | none | organization authority, one per organization | fine |
+| Which workspaces a machine sees | all | unchanged | O2's names, ADRs and request log reach O1's machines |
+| Approval use (each approval used once) | Portal, per workspace | Portal, per workspace | fine; see [after the decision](#after-decision) |
+| People and logins | sign-in D1 | sign-in D1 | fine; see [after the decision](#after-decision) |
+
+<h2 id="tenancy">Decision 1: is Fleet central shared by several organizations?</h2>
+
+<p id="tenancy-why" data-comment-label="Why this comes first">This decides where every workspace fact lives, so the column question, name uniqueness and feed isolation all follow from it. Open a card's detail button to see its diagram.</p>
+
+<ex-choice id="tenancy-choice" title="Where does each organization's workspace data live?">
+  <ex-option id="one-fleet-object-per-organization" title="**Shared central, one Fleet object per organization** (Option 3, recommended)">
+    <template slot="summary">
+`ObjectAddress::Fleet` gains an organization key. Today's tables move unchanged into each organization's Fleet object. The Registry stays fleet-wide.
+
+- Gains: which organization a workspace belongs to is the database it lives in, with no copy to keep in step; names are unique per organization automatically (the same `UNIQUE(name)`, per database); a Router reads only the feeds of organizations where it has an allowance, so isolation is structural rather than a filter on every read; each organization has its own writer and failure domain, which is what your D2 decision asked for.
+- Costs: codex-router work, which the Fleet team pays after the 0.1.102 release ships (orchestration U3): the address key and routing on both hosts, Routers reading one feed per organization (the FleetClient cache and cursors become per organization), and admin import per organization. A one-time migration turns today's fleet into your organization's Fleet object.
+- A project can never move between organizations. The Specification already forbids that.
+    </template>
+    <div slot="details">
+      <ex-mermaid id="option-3-shape" label="Option 3: one Fleet object per organization"><script type="text/plain">
+flowchart TB
+  RG["Registry: ONE<br/>machines, list of organizations"]
+  subgraph O1["Organization O1"]
+    F1["Fleet object O1<br/>O1's workspaces, boards, projects,<br/>ADRs, request log, feed"]
+    A1["Organization authority O1<br/>members, bots, sessions, allowances"]
+  end
+  subgraph O2["Organization O2"]
+    F2["Fleet object O2"]
+    A2["Organization authority O2"]
+  end
+  F1 -->|"O1 feed only"| RA["Router: machine allowed in O1"]
+  F2 -->|"O2 feed only"| RB["Router: machine allowed in O2"]
+  RG --> A1
+  RG --> A2
+</script></ex-mermaid>
+    </div>
+  </ex-option>
+  <ex-option id="organization-column" title="Shared central, an `organization_id` column on the one Fleet object (Option 2)">
+    <template slot="summary">
+Add `organization_id` (fixed for life) to `workspaces` and `UNIQUE(organization_id, name)`. Keep one fleet-wide Fleet object and filter what each machine reads.
+
+- Gains: the smallest schema change; boards, projects and workspaces keep their foreign keys inside one database.
+- Costs: every read becomes a filter for its reader. The global feed then has gaps for each Router, and cursors and snapshots become per-reader logic. To filter, the Fleet object needs each machine's allowances, which the organization authority owns: either a copy with a refresh rule or a call on every read. Every read path is a place to leak (snapshot, discovery search, request effects, the request log), and Fleet maintainers pay that risk on every future feature. All customers share one writer and one failure domain, so isolation by organization stays partial.
+    </template>
+    <div slot="details">
+      <ex-mermaid id="option-2-shape" label="Option 2: one Fleet object with an organization column"><script type="text/plain">
+flowchart TB
+  FO["Fleet object: ONE<br/>workspaces + organization_id<br/>UNIQUE(organization_id, name)"]
+  OA1["Organization authority O1<br/>allowances"]
+  FL["Filter for each reader:<br/>feed, snapshot, search, request log"]
+  OA1 -.->|"copy with a refresh rule, or a call per read"| FL
+  FO --> FL
+  FL -->|"O1 rows only"| RA["Router: machine allowed in O1"]
+  FL -->|"O2 rows only"| RB["Router: machine allowed in O2"]
+</script></ex-mermaid>
+    </div>
+  </ex-option>
+  <ex-option id="one-organization-per-deployment" title="One organization per central deployment (Option 1)">
+    <template slot="summary">
+Each customer gets its own Fleet central, and its own sign-in deployment with it. The organization is the deployment.
+
+- Gains: no change to Fleet's schema or feed; the strongest isolation, because it is a separate deployment; the identity design gets much smaller (no organization list in the Registry, no revocation fan-out per organization, no ordering rules between objects).
+- Costs: you run, upgrade and provision N deployments; a person in two organizations signs in to two deployments; machines can't be shared between customers.
+- **It reverses your D2 decision** of 2026-10-20 ("one Durable Object per organization"). It is here so that you reject it deliberately or take it knowingly.
+    </template>
+    <div slot="details">
+      <ex-mermaid id="option-1-shape" label="Option 1: one deployment per organization"><script type="text/plain">
+flowchart LR
+  subgraph C1["Deployment for customer 1"]
+    F1["Fleet object"]
+    R1["Registry"]
+    S1["Sign-in D1"]
+  end
+  subgraph C2["Deployment for customer 2"]
+    F2["Fleet object"]
+    R2["Registry"]
+    S2["Sign-in D1"]
+  end
+  M1["Customer 1's machines"] --> C1
+  M2["Customer 2's machines"] --> C2
+</script></ex-mermaid>
+    </div>
+  </ex-option>
+</ex-choice>
+
+<h3 id="assumption">The assumption it rests on</h3>
+
+<p id="assumption-text" data-comment-label="The load-bearing assumption">Several organizations will share one central and its machines. Your D2 decision says yes, and so does the allowance shape (<code>{ installationId, workspaceId }</code>, where nothing ties a machine to one organization). If you actually mean one customer per deployment, Option 1 wins, and most of the organization machinery in the identity design should be deleted rather than built.</p>
+
+<h3 id="why-3">Why Option 3 over Option 2</h3>
+
+<p id="why-3-text" data-comment-label="Why 3 over 2">This is a structural choice about who owns what and where isolation lives. Option 2 is cheaper in code today, but it turns isolation into a filter that every future read path has to remember. Option 3 makes leaking structurally impossible, and it keeps the shipped tables as they are; only their address changes.</p>
+
+<h3 id="if-deferred">If you defer it</h3>
+
+<p id="if-deferred-text" data-comment-label="What waits">The identity design's E2 binding, the codex-router identity slices and the feed design all wait. The Tool Portal remediation and the sign-in work don't depend on this and can go ahead.</p>
+
+<h2 id="after-decision">What comes after (not asked yet)</h2>
+
+These come one at a time, after Decision 1. They're listed so that you can see where the decision leads.
+
+1. **Under Option 3: merge each organization's Fleet object and its organization authority into one database (3a), or keep them as two objects (3b)?** My lean is 3a: one SQLite database per organization with two code modules. Creating a workspace, archiving it and ending its memberships then commit in one transaction. The `CreateWorkspace` outbox goes away, and so does its "an empty workspace even if you stopped being the owner in between" caveat. 3b touches less of the shipped Fleet code.
+2. **Close the Router's `workspace_create`.** Creating a workspace becomes an owner command only. This applies under every option, and the identity design currently misses it.
+3. **Approvals are two different things.** Using an approval once has to be checked atomically on each call, and has to work on a standalone Node host, so it stays in the Portal's store for each workspace (`proxy_token_use`, `batch_approval_use`). Recording who approved what is a different thing, and today nothing records it: the decision lives only inside the signed token. If you want an organization-level approval audit, that record belongs in the organization's database. It would be a new feature and its own decision.
+4. **The Portal keeps one store per workspace.** That matches one MCP address per workspace. Grouping by organization would push all of an organization's tool calls through one single-threaded object.
+5. **Sign-in keeps one D1.** A person is one account per deployment and can sign in to several organizations, so splitting D1 by organization would split people. Rows specific to an organization are already keyed by organization. I'd revisit this if D1 approaches its size limit.
+
+<ex-mermaid id="option-3a-3b" label="After Option 3: one database per organization (3a) or two objects (3b)"><script type="text/plain">
+flowchart LR
+  subgraph A3["3a: one database per organization"]
+    M1["Organization O1<br/>module: workspaces, boards, projects, feed<br/>module: members, bots, sessions, allowances"]
+  end
+  subgraph B3["3b: two objects per organization"]
+    F1["Fleet object O1"]
+    A1["Organization authority O1"]
+    A1 -->|"CreateWorkspace outbox"| F1
+    F1 -.->|"archive outbox"| A1
+  end
+</script></ex-mermaid>
+
+<h2 id="evidence">Evidence</h2>
+
+All paths are in codex-router `integration-0.1.102` at `f465808f`, under `crates/`, unless they name the identity design.
+
+| Claim | Source |
+|---|---|
+| Closed set of object kinds | `collaboration-central-core/src/core_contract.rs:36-42` `ObjectAddress { Copy, Registry, Fleet, Connection, Mailbox }` |
+| Fleet tables, fleet-wide `name UNIQUE` | `collaboration-central-core/core_migrations/0003_fleet_records.sql` |
+| Creation checks only ID and name | `fleet-admission/src/fleet_metadata_rules.rs:17-40` |
+| No permission check at the Router; actor self-declared | `collaboration-service/src/collaboration_application/board_fleet_operations.rs:38, 52-71`; `message-board/src/owner_grants.rs:1` |
+| Origin bound from the machine session | `collaboration-central-core/src/effect_driver/fleet_requests.rs:25`; `fleet_metadata_calls.rs:108` |
+| Feed filtered only by position | `collaboration-central-core/sql/fleet/read_fleet_feed_page.sql` |
+| Feed and snapshot scopes take no parameters | `board-sync-protocol/src/board_payloads.rs:74-75` |
+| `Workspace` fields, no owner | `message-board/src/board_metadata.rs:117-124` |
+| The project database keeps its workspace | `message-board-storage/project_migrations/1_board_project.sql:13` |
+| E2 binding unchanged in the identity design | identity Program Design, entity binding row E2 |
+| `CreateWorkspace` through the organization authority's outbox | identity Program Design, "A change another store applies" |
+| Portal approval tables record use, not decisions | remediation Specification E5; remediation Program Design tables `proxy_token_use`, `batch_approval_use` |
+
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>
