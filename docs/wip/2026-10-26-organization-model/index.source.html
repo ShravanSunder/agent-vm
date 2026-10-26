@@ -22,18 +22,39 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.11">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.12">
 
 <h1>Organization model</h1>
 
-<p id="answer">Two steps put anyone to work. <strong>First, a person or a bot is added to an organization. Then they join that organization's workspaces, each as a member or a collaborator.</strong> A member does the workspace's work and uses its tools through the workspace's Tool Portal. A collaborator only sends messages and tasks to the workspace's members. Fleet machines are enrolled in one organization and allowed to serve chosen workspaces; a Fleet harness session belongs to the workspace of the project it was started for. Nothing is shared or sent across organizations. Where work physically runs (its room) is a separate picture, at the end.</p>
+<p id="answer">This page is the model we are agreeing before any design spec is written. Read the two short lists first: what you have decided, and the seven choices still open. Everything below them is detail and examples. Your decisions are marked as yours; anything I inferred is marked <strong>Proposed</strong>.</p>
 
-<ex-callout title="Your model, 2026-10-26" tone="decision" icon="users">
-  <p>"you add people bot to organization. then join workspaces or allowed to as members, or collaborators."</p>
-  <p>Earlier today: "person can belong to any orgs but not agents"; "a single router only belongs to one organization"; "i dont want cross organization any sharing stuff or comm".</p>
-</ex-callout>
+<h2 id="decided">Decided so far</h2>
+
+<ul>
+  <li><strong>Organization first.</strong> People and bots are added to an organization, then join its workspaces as members or collaborators. (<a href="#two-steps">Details</a>)</li>
+  <li><strong>One Fleet central, several organizations, nothing shared or sent between them.</strong> A person may be in several organizations; a bot or a Router belongs to exactly one.</li>
+  <li><strong>People never hold tool tokens.</strong> People members get work done by talking to a bot that has access, through the bot's own channel. (<a href="#examples">Example 11</a>)</li>
+  <li><strong>Only you log Routers in for now,</strong> for machines you set up; VMs are enrolled by a VM creator or platform you approved. Managers come later, per workspace. Once a Router is logged in, anyone at it can start sessions; you control that per Router. (<a href="#router-identity">Details</a>)</li>
+  <li><strong>One login model for every machine.</strong> Every machine will log in with short-lived tokens from an issuer you register: a device code you approve for machines you set up; your VM creator or a platform's OIDC for VMs, approved one by one or pre-approved. (<a href="#machine-login">Details</a>)</li>
+  <li><strong>Three steps to get there:</strong> build the new login; switch to it behind Cloudflare Access and re-enroll every machine; remove Access in the next change.</li>
+  <li><strong>Routers run on Linux and Firecracker VMs,</strong> so everything (including the secret store) must work there, not only on a Mac.</li>
+</ul>
+
+<h2 id="choices-summary">Your seven choices</h2>
+
+<ol>
+  <li><a href="#room-organization">Does "one organization" also cover the room a Router runs in?</a> Recommended: yes.</li>
+  <li><a href="#room-assurance">If yes, how strongly is it held in the first round?</a> Recommended: declared and shown.</li>
+  <li><a href="#readmission">If someone is added back, do their old workspace roles return?</a> Recommended: no, grant them again.</li>
+  <li><a href="#bot-membership">Keep your rule that a bot is a member of at most one workspace?</a> Recommended: keep.</li>
+  <li><a href="#collaborator-allowed">Who makes someone a collaborator?</a> Recommended: the admin, per workspace.</li>
+  <li><a href="#portal-deployment">One Tool Portal deployment per organization?</a> Your earlier pick: yes; please re-confirm.</li>
+  <li><a href="#bot-channel-after-removal">After someone leaves, who stops them reaching a bot through its own channel?</a> Recommended: the bot's channel.</li>
+</ol>
 
 <h2 id="tree">What belongs to what</h2>
+
+<p>Your words: "you add people bot to organization. then join workspaces or allowed to as members, or collaborators"; "person can belong to any orgs but not agents"; "a single router only belongs to one organization"; "i dont want cross organization any sharing stuff or comm".</p>
 
 <p>One example fleet; the names are made up. Organizations contain workspaces, and workspaces contain projects. The member, collaborator and allowed-machine rows inside a workspace point back at the people, bots and Routers added to the organization above them; they are references, not copies.</p>
 
@@ -75,7 +96,7 @@
   <tbody>
     <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces. Gets work done by talking to bots. No person but you, the owner, may log in a Router.</td></tr>
     <tr><td>Bot</td><td>Added by the admin to exactly one organization. It proves itself with its own credential.</td><td>Member or collaborator of chosen workspaces in that organization.</td></tr>
-    <tr><td>Fleet machine (an enrolled Router)</td><td>Logged in (enrolled) by you, the owner, into exactly one organization.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
+    <tr><td>Fleet machine (an enrolled Router)</td><td>Logged in (enrolled) into exactly one organization: by you, or, for VMs, by a VM creator or platform you registered and approved.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
     <tr><td>Fleet harness session</td><td>Never added. The Fleet machine it runs on vouches for it.</td><td>Member of its project's workspace, automatically.</td></tr>
   </tbody>
 </table>
@@ -201,6 +222,16 @@ sequenceDiagram
 
 <h2 id="router-identity">How a Router's identity and enrollment are kept</h2>
 
+<ex-callout title="Decided: who logs Routers in, and who can start sessions" tone="decision" icon="key">
+  <p>Your decisions: "we can add managers later but it can be a concept, right now its just owner"; people members "use existing channels or bots to communicate"; "a bot is an existing channel. talk to bots who have access"; for VMs, "it needs to be preauthorized ... something that can spin up vms and enroll them so a service account too".</p>
+  <ul>
+    <li><strong>Who logs a Router into an organization:</strong> you, the owner, for machines you set up. For VMs, a VM creator or platform you registered enrolls each VM it starts, within the limits you set; you approve the creator, not each VM, unless you set it to approve each. Today's login is the fleet operator token (you hold both roles).</li>
+    <li><strong>Who starts sessions:</strong> anyone or anything that can operate a logged-in Router, for the workspaces that Router may serve. The system knows which Router and which session, not which human. You control starting by where Routers run (keeping them on machines only you use is your operating practice, not something the system proves), what each Router may serve, and revoking a Router when needed.</li>
+    <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts with its own authority and persona, recorded as the bot, plus "on behalf of" the person where the channel can identify them; carrying the requester through is designed later (Fleet framework F-30, F-35).</li>
+    <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided.</li>
+  </ul>
+</ex-callout>
+
 <p>The thing enrolled is one Router installation, not a computer: nothing is derived from hardware (Fleet framework F-34). The installation keeps a stable identity in its own saved state; the enrollment is Fleet central's record that this installation may connect.</p>
 
 <table>
@@ -213,11 +244,11 @@ sequenceDiagram
     <tr><td>Sessions vouched for</td><td>Each session is registered and bound over that connection, so Fleet central knows which conversation on which Router is calling.</td><td>Identity design, not built (today the Router only declares the session)</td></tr>
     <tr><td>Revoke or expire</td><td>A revoked or expired enrollment is refused at its next connect. Tokens already issued to its sessions stop when the Tool Portal is told, or at their expiry.</td><td>In source (connect refusal); identity design (token cut-off)</td></tr>
     <tr><td>Organization</td><td>The enrollment belongs to exactly one organization.</td><td>Your decision; not in source yet</td></tr>
-    <tr><td>Owner login and "logged in by"</td><td>The login proves an organization's owner, not just the fleet operator, and records who logged the Router in.</td><td><strong>Proposed</strong>: today's operator token is a fleet-wide credential, not an organization owner's sign-in</td></tr>
+    <tr><td>What authorized it</td><td>The enrollment records what authorized it: you (by device code), or the VM creator or platform you registered. Today's operator token is a fleet-wide credential, not an organization owner's sign-in.</td><td><strong>Proposed</strong> (see <a href="#machine-login">How machines log in</a>)</td></tr>
   </tbody>
 </table>
 
-<p>What this means: replacing the Router program keeps the same identity and enrollment, because both live in the Router's saved state. Only a fresh state needs a new enrollment, and then the old one should be revoked. Anyone who can use that Router's unlocked secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
+<p>What this means: replacing the Router program keeps the same identity and enrollment, because both live in the Router's saved state. In normal use only a fresh state needs a new enrollment, and then the old one should be revoked. The one exception is the switch to the new login (<a href="#machine-login">step 2</a>), which re-enrolls every machine while keeping its saved identity. Anyone who can use that Router's unlocked secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
 
 <h2 id="machine-login">How machines log in: where this is going</h2>
 
@@ -241,15 +272,23 @@ sequenceDiagram
 <table>
   <thead><tr><th>Machine type</th><th>Issuer</th><th>New machine</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td>Mac or Linux server you set up</td><td>The sign-in service, after you approve a <strong>device code</strong>: the Router prints a short code and a web address; on your phone or laptop you sign in, check the code and the machine's name, and approve. The machine then keeps one refresh credential and swaps it for short-lived tokens</td><td>You approve each one</td><td><strong>Proposed</strong>. Better Auth (the sign-in service's library) has a device-code plugin since 1.7. The refresh credential needs the Linux and Firecracker secret store (a gap today)</td></tr>
-    <tr><td>VM your own VM creator starts</td><td>Your VM creator, registered by you as an issuer for one organization; it signs a short-lived token for each VM it started</td><td>Pre-approved within your limits, or approve each</td><td><strong>Proposed</strong>; the identity design lists platform identity as the later path for VMs. No long-lived secret inside the VM</td></tr>
+    <tr><td>Mac or Linux server you set up</td><td>The sign-in service, after you approve a <strong>device code</strong>: the Router prints a short code and a web address; on your phone or laptop you sign in, check the code and the machine's name, and approve. The machine then keeps one refresh credential and swaps it for short-lived tokens</td><td>You approve each one</td><td><strong>Your decision:</strong> device code. <strong>Proposed, still to design:</strong> Better Auth's OAuth device grant (its device plugin with its OAuth provider) issues a token for the approving person and the CLI, not for a machine. Binding the approval to one Router installation, its organization and its enrollment, and refusing renewal once that machine is revoked, is design still to do. The refresh credential needs the Linux and Firecracker secret store (a gap today)</td></tr>
+    <tr><td>VM your own VM creator starts</td><td>Your VM creator, registered by you as an issuer for one organization; it signs a short-lived token for each VM it started</td><td>Pre-approved within your limits, or approve each</td><td><strong>Proposed</strong>. After step 3 the VM holds no long-lived machine secret; until then it still carries its Access token. How a running VM gets a fresh short-lived token from its creator (for example over its private link) is still to design</td></tr>
     <tr><td>VM on a platform with its own OIDC (for example Fly)</td><td>That platform, registered by you with which apps count</td><td>Pre-approved by that rule</td><td><strong>Proposed</strong>; identity design "platform identity, later"</td></tr>
   </tbody>
 </table>
 
 <ul>
   <li><strong>Device-code risk:</strong> someone starts a login on their own machine and tricks you into approving it. Proposed guards: the approval page shows the machine's name and organization and asks you to confirm the code it prints; codes expire within minutes and work once; only you can approve; attempts are rate-limited.</li>
-  <li><strong>What step 2 proves, and what step 3 adds:</strong> step 2 proves the new login on every real machine while Access still guards Fleet central. Step 3's only new risk is Fleet central facing the internet without the gate, so that change must show it refusing unauthenticated traffic, and keep Cloudflare's rate limiting. Until step 3, every machine (including test VMs) still needs its Access service token.</li>
+  <li><strong>What step 2 must prove.</strong> Today Fleet central also uses Access for identity, not only as a gate: each enrollment must match its Access client, its expiry matches the Access token, and your admin access comes through Access. So the step 2 change must show, with Access still in front:
+    <ul>
+      <li>Fleet central takes each machine's identity, organization, enrollment state and expiry only from the new login;</li>
+      <li>your admin access works through the sign-in service;</li>
+      <li>an old enrollment credential, or a missing or invalid new token, is refused even with a valid Access token;</li>
+      <li>a running machine, including a VM, can renew its token, and a revoked machine cannot.</li>
+    </ul>
+    After that, Access is only an outer gate.</li>
+  <li><strong>What step 3 must prove:</strong> the new login works with no Access token at all, unauthenticated or wrong traffic is refused, and Cloudflare's rate limiting stays. Until step 3, every machine (including test VMs) still needs its Access service token.</li>
   <li><strong>Parked:</strong> agents in a VM using the host's Router instead of their own. The identity design notes it needs agent-vm to hand the host Router a launch record over a local channel, which does not exist; the first round registers only <code>Host</code> and <code>ProcessSandbox</code> sessions.</li>
 </ul>
 
@@ -268,18 +307,7 @@ sequenceDiagram
 
 <p>The agreed first identity round will have each session record its room kind when it starts, and will show which workspaces share one Router. This is designed, not built. Even then nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
 
-<h2 id="decisions">Still to decide</h2>
-
-<ex-callout title="Decided: only you log Routers in" tone="decision" icon="key">
-  <p>Your decision: "we can add managers later but it can be a concept, right now its just owner"; earlier: people members "use existing channels or bots to communicate"; "a bot is an existing channel. talk to bots who have access".</p>
-  <ul>
-    <li><strong>Who logs a Router into an organization:</strong> only you, the owner. That login is the one person check. Today it is the fleet operator token (you hold both roles); a sign-in that proves an organization's owner is a design change. Afterwards the Router acts with its own credential.</li>
-    <li><strong>Who starts sessions:</strong> anyone or anything that can operate a Router you logged in, for the workspaces that Router may serve. The system knows which Router and which session, not which human. So you control starting by where you log Routers in (keeping them on machines only you use is your operating practice, not something the system proves), what each Router may serve, and revoking a Router when needed.</li>
-    <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts with its own authority and persona, recorded as the bot, plus "on behalf of" the person where the channel can identify them; carrying the requester through is designed later (Fleet framework F-30, F-35).</li>
-    <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided.</li>
-    <li><strong>Not enforced either way:</strong> who is physically using one of your Routers.</li>
-  </ul>
-</ex-callout>
+<h2 id="decisions">The seven choices</h2>
 
 <p>Seven choices remain, most consequential first. Pick one per question, add comments, and copy or export your answers from the Comments panel. Every recommendation is mine; none is decided until you pick it.</p>
 
@@ -424,6 +452,7 @@ Before Hermes acts for someone, the system checks that the person is still in Ac
     <li>People may be collaborators; the identity design had only bot collaborators (its E9).</li>
     <li>The identity design still mentions a machine serving two organizations (its V9); your rule says one Router, one organization.</li>
     <li>The Fleet framework's old note "machines map to one workspace" (Q-B11) is replaced: a Fleet machine may serve several workspaces of its organization (identity U6).</li>
+    <li>Machine login changes. The identity design says a machine proves itself only through its existing enrollment (U17), with no platform-signed machine identity yet (requirements, line 110) and platform identity later (alternatives). Your decision replaces that with issuer tokens for every machine, device code for machines you set up, and the three-step switch. The identity design's rule of no new private key on each machine still holds: a VM creator's signing key lives with the creator, not in each VM. The identity design needs revising before planning.</li>
     <li>Sources: Fleet framework F-6, F-34, F-77, F-80, F-82; identity requirements U4–U8, U17, U18; identity program design, token sequences; your decisions on 2026-10-26.</li>
   </ul>
 </details>
