@@ -52,16 +52,16 @@ There are three systems. Each database is SQLite: a Durable Object or D1 on Clou
 <ex-mermaid id="all-databases" label="Every database today, plus the designs' additions" data-width="canvas"><script type="text/plain">
 flowchart TB
   subgraph FC["Fleet central: one deployment"]
-    FO["Fleet object: ONE for the fleet<br/>workspaces, boards, projects,<br/>ADRs, repositories, request log, feed"]
+    FO["Fleet object (one for the whole fleet)<br/>workspaces, boards, projects,<br/>ADRs, repositories, request log, feed"]
     CP["Copy: one per project<br/>central's replica of the project database"]
-    RG["Registry: ONE<br/>enrolled machines, leases"]
+    RG["Registry (one for the whole fleet)<br/>every enrolled machine, leases"]
     CN["Connection: one per Router"]
     MB["Mailbox: one per Router"]
     OA["Organization authority: one per organization<br/>members, bots, sessions, allowances,<br/>removal outbox"]:::added
     RO["Registry addition:<br/>list of organizations"]:::added
   end
   subgraph SI["Sign-in service"]
-    D1["D1: ONE for the deployment<br/>people, logins, sessions, OAuth clients,<br/>sign-in audit, admission claims"]
+    D1["D1 (one for the deployment)<br/>people, logins, sessions, OAuth clients,<br/>sign-in audit, admission claims"]
   end
   subgraph TP["Tool Portal"]
     WS["Workspace store: one per workspace<br/>approval use, removal marks and notices"]:::added
@@ -70,6 +70,12 @@ flowchart TB
   RB["Router on machine B"] -->|"machine session"| FC
   classDef added stroke-dasharray: 5 5
 </script></ex-mermaid>
+
+<ex-callout id="what-is-a-machine" title="What a machine is" tone="note" icon="cpu">
+
+A **machine** is a computer enrolled in your fleet that runs codex-router's Router service: your laptop, a VM or a server. Enrolling it gives it an identity at central (one `machine_enrollments` row in the Registry: its service ID, label and access client). Its Router talks to central over one machine session, and the agents on that computer reach Fleet through it. "One for the whole fleet" on a box means one database for all of Fleet central, not one machine. In the identity design, an organization lets a machine work in particular workspaces through a machine allowance `{ installationId, workspaceId }`, so one machine can serve workspaces in two organizations.
+
+</ex-callout>
 
 <h3 id="how-many">How many of each</h3>
 
@@ -134,12 +140,12 @@ flowchart LR
 
 <ex-mermaid id="identity-additions" label="Identity design: organizations around identity only" data-width="canvas"><script type="text/plain">
 flowchart TB
-  RG["Registry: ONE<br/>machines + list of organizations"]
+  RG["Registry (one for the whole fleet)<br/>every enrolled machine + list of organizations"]
   subgraph PER["One per organization (new)"]
     OA1["Organization authority O1<br/>members, bots, sessions,<br/>allowances, marks, outbox"]
     OA2["Organization authority O2"]
   end
-  FO["Fleet object: ONE<br/>workspaces of O1 and O2 mixed,<br/>no organization column"]
+  FO["Fleet object (one for the whole fleet)<br/>workspaces of O1 and O2 mixed,<br/>no organization column"]
   RG -->|"creates and initializes"| OA1
   RG --> OA2
   OA1 -->|"CreateWorkspace through an outbox"| FO
@@ -181,7 +187,7 @@ flowchart TB
     <div slot="details">
       <ex-mermaid id="option-3-shape" label="Option 3: one Fleet object per organization"><script type="text/plain">
 flowchart TB
-  RG["Registry: ONE<br/>machines, list of organizations"]
+  RG["Registry (one for the whole fleet)<br/>every enrolled machine + list of organizations"]
   subgraph O1["Organization O1"]
     F1["Fleet object O1<br/>O1's workspaces, boards, projects,<br/>ADRs, request log, feed"]
     A1["Organization authority O1<br/>members, bots, sessions, allowances"]
@@ -207,7 +213,7 @@ Add `organization_id` (fixed for life) to `workspaces` and `UNIQUE(organization_
     <div slot="details">
       <ex-mermaid id="option-2-shape" label="Option 2: one Fleet object with an organization column"><script type="text/plain">
 flowchart TB
-  FO["Fleet object: ONE<br/>workspaces + organization_id<br/>UNIQUE(organization_id, name)"]
+  FO["Fleet object (one for the whole fleet)<br/>workspaces + organization_id<br/>UNIQUE(organization_id, name)"]
   OA1["Organization authority O1<br/>allowances"]
   FL["Filter for each reader:<br/>feed, snapshot, search, request log"]
   OA1 -.->|"copy with a refresh rule, or a call per read"| FL
