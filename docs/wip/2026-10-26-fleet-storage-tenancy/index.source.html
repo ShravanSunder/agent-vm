@@ -112,48 +112,25 @@ Central has a closed set of object kinds: `Copy(DatabaseId)`, `Registry`, `Fleet
 
 <ex-mermaid id="entities-today-diagram" label="Entity diagram: today" data-width="canvas"><script type="text/plain">
 erDiagram
-  WORKSPACE ||--o{ BOARD : has
-  BOARD ||--o{ PROJECT : has
-  WORKSPACE ||--o{ ADR : has
-  WORKSPACE ||--o{ REPOSITORY_LINK : has
-  WORKSPACE ||--o{ REQUEST_LOG_ENTRY : "requests about it"
-  WORKSPACE {
-    uuid workspace_id PK
-    text name "unique across the whole fleet"
-    text state "active or archived"
-  }
-  BOARD {
-    uuid board_id PK
-    uuid workspace_id FK
-    text name "unique in its workspace"
-  }
-  PROJECT {
-    uuid project_id PK
-    uuid workspace_id FK
-    uuid board_id FK
-    text name "unique on its board"
-  }
-  ADR {
-    uuid adr_id PK
-    uuid workspace_id FK
-  }
-  REPOSITORY_LINK {
-    uuid attachment_id PK
-    uuid workspace_id FK
-  }
-  REQUEST_LOG_ENTRY {
-    uuid request_id PK
-    uuid workspace_id
-    text origin_machine "which machine asked"
-    text actor "self-declared"
-  }
-  MACHINE {
-    uuid service_id PK "one Router installation"
-    text access_client_id "unique"
-    text credential_hash "unique"
-    text state "enrolled or revoked"
-  }
+  WORKSPACE ||--o{ BOARD : "has many"
+  BOARD ||--o{ PROJECT : "has many"
+  WORKSPACE ||--o{ ADR : "has many"
+  WORKSPACE ||--o{ REPOSITORY_LINK : "has many"
+  WORKSPACE ||--o{ REQUEST_LOG_ENTRY : "has many"
+  MACHINE ||--o{ REQUEST_LOG_ENTRY : "sent many"
 </script></ex-mermaid>
+
+<p id="entities-key-today" data-comment-label="How to read the lines">How to read a line: two short bars mean "exactly one"; a circle with a fork means "zero or many". So "WORKSPACE has many BOARD" reads: one workspace has zero or many boards, and each board belongs to exactly one workspace. MACHINE stands apart: the only link is that the request log remembers which machine sent each request.</p>
+
+| Entity | Key fields | Notes |
+|---|---|---|
+| Workspace | `workspace_id`, `name`, `state` | name unique across the whole fleet |
+| Board | `board_id`, `workspace_id`, `name` | name unique in its workspace |
+| Project | `project_id`, `workspace_id`, `board_id`, `name` | name unique on its board |
+| ADR | `adr_id`, `workspace_id` | |
+| Repository link | `attachment_id`, `workspace_id` | |
+| Request log entry | `request_id`, `workspace_id`, `origin_machine`, `actor` | the actor is self-declared |
+| Machine | `service_id`, `access_client_id`, `credential_hash`, `state` | one Router installation; not tied to any workspace |
 
 <ex-callout id="no-org-today" title="Observed: no organization anywhere" tone="note" icon="database">
 
@@ -248,83 +225,40 @@ This is Option 3, taken further in two ways. **Each organization gets its whole 
 
 <ex-mermaid id="entities-new-diagram" label="Entity diagram: new model" data-width="canvas"><script type="text/plain">
 erDiagram
-  ORGANIZATION ||--o{ WORKSPACE : owns
-  ORGANIZATION ||--o{ ROUTER : "logged in to it"
-  ORGANIZATION ||--o{ BOT : has
-  ORGANIZATION ||--o{ PERSON_ADMISSION : admits
-  PERSON ||--o{ PERSON_ADMISSION : "any number of organizations"
-  WORKSPACE ||--o{ BOARD : has
-  BOARD ||--o{ PROJECT : has
-  WORKSPACE ||--o{ MEMBERSHIP : has
-  PERSON ||--o{ MEMBERSHIP : "may hold several"
-  BOT ||--o| MEMBERSHIP : "at most one"
-  AGENT_SESSION ||--|| MEMBERSHIP : "exactly one, never changes"
-  ROUTER ||--o{ AGENT_SESSION : runs
-  PROJECT ||--o{ AGENT_SESSION : "started for"
-  ROUTER ||--o{ ROUTER_ALLOWANCE : has
-  WORKSPACE ||--o{ ROUTER_ALLOWANCE : "lets Routers serve it"
-  WORKSPACE ||--o{ WORKSPACE_PAIR : "from or to, same organization"
-  ORGANIZATION {
-    uuid organization_id PK
-    text name
-    text state "creating or active"
-  }
-  PERSON {
-    text person_id PK
-    text email "one sign-in account"
-  }
-  PERSON_ADMISSION {
-    uuid organization_id FK
-    text person_id FK
-    bool is_owner
-  }
-  ROUTER {
-    uuid router_id PK "was machine service_id"
-    uuid organization_id FK "exactly one, set at login"
-    text credential_hash "unique across the deployment"
-    text state "enrolled or revoked"
-  }
-  WORKSPACE {
-    uuid workspace_id PK
-    uuid organization_id FK "new, fixed for life"
-    text name "unique per organization"
-    text state "active or archived"
-  }
-  BOARD {
-    uuid board_id PK
-    uuid workspace_id FK
-  }
-  PROJECT {
-    uuid project_id PK
-    uuid board_id FK
-  }
-  BOT {
-    uuid bot_id PK
-    uuid organization_id FK "exactly one"
-    text state "active or retired"
-  }
-  AGENT_SESSION {
-    text session_ref PK
-    uuid router_id FK
-    uuid project_id FK
-    text state "active, removed or ended"
-  }
-  MEMBERSHIP {
-    uuid workspace_id FK
-    text member "a person, a bot or a session"
-    text persona "which tools"
-    text state "active or removed"
-  }
-  ROUTER_ALLOWANCE {
-    uuid router_id FK
-    uuid workspace_id FK
-  }
-  WORKSPACE_PAIR {
-    uuid from_workspace_id FK
-    uuid to_workspace_id FK
-    text state "active or withdrawn"
-  }
+  ORGANIZATION ||--o{ WORKSPACE : "owns many"
+  ORGANIZATION ||--o{ ROUTER : "has many logged in"
+  ORGANIZATION ||--o{ BOT : "has many"
+  ORGANIZATION ||--o{ PERSON_ADMISSION : "admits many"
+  PERSON ||--o{ PERSON_ADMISSION : "in many organizations"
+  WORKSPACE ||--o{ BOARD : "has many"
+  BOARD ||--o{ PROJECT : "has many"
+  WORKSPACE ||--o{ MEMBERSHIP : "has many"
+  PERSON ||--o{ MEMBERSHIP : "holds many"
+  BOT ||--o| MEMBERSHIP : "holds at most one"
+  AGENT_SESSION ||--|| MEMBERSHIP : "holds exactly one"
+  ROUTER ||--o{ AGENT_SESSION : "runs many"
+  PROJECT ||--o{ AGENT_SESSION : "has many started for it"
+  ROUTER ||--o{ ROUTER_ALLOWANCE : "has many"
+  WORKSPACE ||--o{ ROUTER_ALLOWANCE : "has many"
+  WORKSPACE ||--o{ WORKSPACE_PAIR : "has many, same organization"
 </script></ex-mermaid>
+
+<p id="entities-key-new" data-comment-label="How to read the lines">Same key as above: two short bars mean "exactly one", a circle with a fork means "zero or many", and a circle with a bar means "zero or one". Only PERSON has lines into more than one organization's data; every other entity hangs off exactly one ORGANIZATION.</p>
+
+| Entity | Key fields | Rules |
+|---|---|---|
+| Organization | `organization_id`, `name`, `state` | state: creating or active |
+| Person | `person_id`, `email` | one sign-in account; can join any number of organizations |
+| Person admission | `organization_id`, `person_id`, `is_owner` | one row per person per organization they joined |
+| Router | `router_id`, `organization_id`, `credential_hash`, `state` | **new owner:** exactly one organization, set when it logs in; credential unique across the deployment |
+| Workspace | `workspace_id`, `organization_id`, `name`, `state` | **changed:** organization fixed for life; name unique per organization |
+| Board | `board_id`, `workspace_id` | unchanged |
+| Project | `project_id`, `board_id` | unchanged |
+| Bot | `bot_id`, `organization_id`, `state` | exactly one organization; member of at most one workspace |
+| Agent session | `session_ref`, `router_id`, `project_id`, `state` | member of its project's workspace, for its whole life |
+| Membership | `workspace_id`, member (person, bot or session), `persona`, `state` | the persona decides which tools |
+| Router allowance | `router_id`, `workspace_id` | which workspaces a Router may serve and see |
+| Workspace pair | `from_workspace_id`, `to_workspace_id`, `state` | both workspaces in one organization; may message; sees only ID and name |
 
 | Entity | Stored in |
 |---|---|
