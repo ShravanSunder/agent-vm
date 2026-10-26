@@ -20,7 +20,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.4">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.5">
 
 <h1 id="heading-organization-model">Organization model</h1>
 
@@ -186,11 +186,11 @@ sequenceDiagram
   </tbody>
 </table>
 
-<ex-callout title="What your two-step model changes (your decisions; how they are carried out is proposed)" tone="question" icon="plug">
+<ex-callout title="What your two-step model changes: your decisions, one proposed consequence, and proposed mechanics" tone="question" icon="plug">
   <p>The identity design already registers each bot in one organization and keeps an allowlist of people per organization. What your model adds:</p>
   <ul>
     <li><strong>The organization comes first for every workspace role.</strong> Fleet central gives no membership, collaboration or token to anyone not in that workspace's organization.</li>
-    <li><strong>Leaving the organization ends its workspace roles</strong> (example 10). For a bot, Fleet central sends removal notices to each workspace it was a member of, using the removal notices the identity design already plans for a removed bot (designed, not built).</li>
+    <li><strong>Proposed consequence: leaving the organization ends its workspace roles</strong> (example 10; you have not decided this). For a bot, Fleet central sends removal notices to each workspace it was a member of, using the removal notices the identity design already plans for a removed bot (designed, not built).</li>
     <li><strong>People as collaborators.</strong> No change in the Tool Portal, because collaborators never use tools. Fleet central needs a way for a signed-in person to send collaboration messages, which the identity design only has for bots.</li>
   </ul>
 </ex-callout>
