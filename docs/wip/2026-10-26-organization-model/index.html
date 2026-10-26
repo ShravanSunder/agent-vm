@@ -20,7 +20,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.3">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.4">
 
 <h1 id="heading-organization-model">Organization model</h1>
 
@@ -120,32 +120,32 @@
 
 <h2 id="data">What is recorded, and who owns it</h2>
 
-<p>Each fact has one owner, and nothing is copied: the Tool Portal stops keeping its own member records. "Exists in code" means the record is in the current source, not that it is deployed. <strong>Proposed</strong> wherever the status says new.</p>
+<p>Each fact has one owner. Membership is owned by Fleet central alone; the Tool Portal stops keeping its own copy. Some facts are deliberately passed along: a token carries what was granted, and the Tool Portal keeps the removals it has been told about. The status column uses four labels: <strong>your decision</strong> (said by you; not built yet), <strong>identity design</strong> (already specified there; not built yet), <strong>proposed</strong> (my inference, not yet decided) and <strong>in source</strong> (present in the named code snapshot, which is not proof it is deployed): Router code at <code>f465808f</code>, the earlier sign-in code at <code>02c23489</code>, and the Tool Portal branches.</p>
 
 <div data-width="canvas">
 <table>
   <thead><tr><th>Record</th><th>What it means</th><th>Scoped to</th><th>Owner</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td>Organization</td><td>One organization and its owner (a person)</td><td>Fleet central's organization registry</td><td>Fleet central</td><td>In the identity design; the shared registry is new (your decision today)</td></tr>
-    <tr><td>Person account</td><td>One sign-in account, with its logins and passkeys; the same account may be added to several organizations</td><td>The sign-in deployment, not one organization</td><td>Sign-in service</td><td>Exists in code</td></tr>
-    <tr><td>Person added to an organization</td><td>The organization's allowlist entry for that person (step 1 for people)</td><td>One organization</td><td>Fleet central</td><td>In the identity and sign-in designs</td></tr>
+    <tr><td>Organization</td><td>One organization and its owner (a person)</td><td>Fleet central's organization registry</td><td>Fleet central</td><td>Identity design (the registry and the organization). Your decision: one Fleet central shared by several organizations, each with its own fleet</td></tr>
+    <tr><td>Person account</td><td>One sign-in account, with its logins and passkeys; the same account may be added to several organizations</td><td>The sign-in deployment, not one organization</td><td>Sign-in service</td><td>In source at the earlier sign-in snapshot <code>02c23489</code> (not in this checkout)</td></tr>
+    <tr><td>Person added to an organization</td><td>An allowlist entry: the organization plus a verified email. It binds to the person's account the first time they sign in with that email (step 1 for people)</td><td>One organization</td><td>Fleet central</td><td>In the identity and sign-in designs</td></tr>
     <tr><td>Bot</td><td>A bot ID, registered once by the admin (step 1 for bots)</td><td>One organization</td><td>Fleet central</td><td>In the identity design</td></tr>
     <tr><td>Bot credential</td><td>A client ID the bot proves itself with; a bot may have several</td><td>The bot's organization</td><td>Sign-in service</td><td>In the identity design</td></tr>
-    <tr><td>Workspace, board, project</td><td>Existing IDs; a project belongs to a board, a board to a workspace</td><td>One organization</td><td>Fleet central</td><td>Exist in code; the organization parent is new</td></tr>
-    <tr><td>Membership</td><td>A workspace plus a person, bot or session, with a persona</td><td>One workspace</td><td>Fleet central</td><td>In the identity design; "must be in the organization first" is new</td></tr>
-    <tr><td>Collaboration</td><td>A workspace plus a person or bot: messages and tasks only</td><td>One workspace</td><td>Fleet central</td><td>In the identity design for bots; people are new</td></tr>
+    <tr><td>Workspace, board, project</td><td>Existing IDs; a project belongs to a board, a board to a workspace</td><td>One organization</td><td>Fleet central</td><td>In source (Router <code>f465808f</code>), without an organization; identity design adds the organization parent</td></tr>
+    <tr><td>Membership</td><td>A workspace plus a person, bot or session, with a persona</td><td>One workspace</td><td>Fleet central</td><td>Identity design. Your decision: in the organization first</td></tr>
+    <tr><td>Collaboration</td><td>A workspace plus a person or bot: messages and tasks only</td><td>One workspace</td><td>Fleet central</td><td>Identity design, for bots. Your decision: people too</td></tr>
     <tr><td>Workspace pair</td><td>"Members of A may message members of B", one direction</td><td>Two workspaces in one organization</td><td>Fleet central</td><td>In the identity design</td></tr>
-    <tr><td>Fleet machine enrollment</td><td>One enrolled Router installation, not a computer</td><td>One organization</td><td>Fleet central</td><td>Exists in code; the organization link is new</td></tr>
+    <tr><td>Fleet machine enrollment</td><td>One enrolled Router installation, not a computer</td><td>One organization</td><td>Fleet central</td><td>In source (Router <code>f465808f</code>), without an organization. Your decision: one Router, one organization</td></tr>
     <tr><td>Machine allowance</td><td>A Router plus a workspace it may serve</td><td>One organization</td><td>Fleet central</td><td>In the identity design</td></tr>
-    <tr><td>Session registration</td><td>A session, the project it was started for, and its Router</td><td>The project's workspace</td><td>Fleet central</td><td>In the identity design; today only the session's address exists in code</td></tr>
-    <tr><td>Isolation record</td><td>The room kind a session declared when it started</td><td>Its session</td><td>Fleet central</td><td>In the identity design, not built</td></tr>
-    <tr><td>Personas, tool profiles, approvals</td><td>Which tools a persona may use, and with or without approval</td><td>One workspace</td><td>Tool Portal</td><td>Exist in code</td></tr>
-    <tr><td>Received removals</td><td>The newest removal the Tool Portal has been told about, per bot, session or Router</td><td>One workspace</td><td>Tool Portal</td><td>In the identity design</td></tr>
+    <tr><td>Session registration</td><td>A session, the project it was started for, and its Router</td><td>The project's workspace</td><td>Fleet central</td><td>Identity design; only the session's address is in source (Router <code>f465808f</code>)</td></tr>
+    <tr><td>Isolation record</td><td>The room kind asserted by whatever launched the session (for example the Router), recorded once at launch and never changed; not proven</td><td>Its session</td><td>Fleet central</td><td>In the identity design, not built</td></tr>
+    <tr><td>Personas, tool profiles, approvals</td><td>Which tools a persona may use, and with or without approval</td><td>One workspace</td><td>Tool Portal</td><td>In source on the Tool Portal branches</td></tr>
+    <tr><td>Received removals</td><td>Per bot, session or Router, the highest removal mark received (a late, older notice cannot lower it), plus the notice IDs already handled</td><td>One workspace</td><td>Tool Portal</td><td>In the identity design</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>Two things are deliberately not here: a room record (a reusable "place" with its own admission is not decided), and any choice of databases. Where each record is stored comes after we agree this list.</p>
+<p>This is an overview of who owns what, not the complete data list. The identity design also has issued tokens and grant decisions, people's sign-in sessions, the delivery state of removal notices and approval use; they keep their owners there. Two things are deliberately not here: a room record (a reusable "place" with its own admission is not decided), and any choice of databases. Where each record is stored comes after we agree this list.</p>
 
 <h2 id="tool-portal">What this means for the Tool Portal</h2>
 
@@ -186,11 +186,11 @@ sequenceDiagram
   </tbody>
 </table>
 
-<ex-callout title="Proposed: what your two-step model changes" tone="question" icon="plug">
+<ex-callout title="What your two-step model changes (your decisions; how they are carried out is proposed)" tone="question" icon="plug">
   <p>The identity design already registers each bot in one organization and keeps an allowlist of people per organization. What your model adds:</p>
   <ul>
     <li><strong>The organization comes first for every workspace role.</strong> Fleet central gives no membership, collaboration or token to anyone not in that workspace's organization.</li>
-    <li><strong>Leaving the organization ends its workspace roles</strong> (example 10). For a bot, Fleet central sends removal notices to each workspace it was a member of, as it does today for a removed bot.</li>
+    <li><strong>Leaving the organization ends its workspace roles</strong> (example 10). For a bot, Fleet central sends removal notices to each workspace it was a member of, using the removal notices the identity design already plans for a removed bot (designed, not built).</li>
     <li><strong>People as collaborators.</strong> No change in the Tool Portal, because collaborators never use tools. Fleet central needs a way for a signed-in person to send collaboration messages, which the identity design only has for bots.</li>
   </ul>
 </ex-callout>
@@ -283,10 +283,10 @@ Sam is removed from Acme. A tool-portal session Sam started stays a Product memb
   </ex-option>
   <ex-option id="sessions-end" title="**End them too**">
     <template slot="summary">
-Removing Sam also ends every session Sam started in Acme; each workspace's Tool Portal is told about those sessions.
+Removing Sam also ends the sessions Sam started directly in Acme; each workspace's Tool Portal is told about those sessions. Helpers that those sessions started are sessions of their own, started by a session, not by Sam; whether they end too needs its own rule.
 
-- Gain: one action removes everything a person set going.
-- Cost: work stops mid-task; Fleet central must track who started each session as a live dependency, not just a launch note.
+- Gain: one action stops the sessions a person started directly.
+- Cost: work stops mid-task; Fleet central must treat "who started it" as a live link, not just a launch note. Ending helpers too would also need the chain of who started whom.
     </template>
   </ex-option>
 </ex-choice>
@@ -343,7 +343,7 @@ Being added to Acme lets a bot talk to no workspace until the admin makes it a m
 Anyone added to Acme may message members of every Acme workspace.
 
 - Gain: no setup per workspace; new workspaces are reachable at once.
-- Cost: adding an outside bot to Acme lets it message every workspace, and replies flow back to it. A Product member who is automatically a Docs collaborator can message Docs even without a "Product may message Docs" pair, so pairs stop restricting anything. Each workspace's members bear the exposure.
+- Cost: adding an outside bot to Acme lets it message every workspace, and replies flow back to it. A person or bot in Product who is automatically a Docs collaborator can message Docs without a "Product may message Docs" pair, so pairs stop restricting people and bots. Sessions are not collaborators and still need pairs. Each workspace's members bear the exposure.
     </template>
   </ex-option>
 </ex-choice>
