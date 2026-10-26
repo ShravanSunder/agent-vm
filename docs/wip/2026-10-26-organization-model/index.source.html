@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.9">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.10">
 
 <h1>Organization model</h1>
 
@@ -208,7 +208,7 @@ sequenceDiagram
   <tbody>
     <tr><td>Log in</td><td>Today you run the Router's enroll command with the <strong>fleet operator</strong> token. The Router reuses its saved installation identity (or creates one on a fresh install) and makes a random enrollment credential.</td><td>In source (Router <code>f465808f</code>)</td></tr>
     <tr><td>Fleet central records it</td><td>One enrollment row: the installation ID, a label, the Access client ID, <strong>only a hash</strong> of the credential, its state (enrolled, revoked) and an expiry.</td><td>In source</td></tr>
-    <tr><td>The Router keeps the secret</td><td>The credential and the Access secret go in the Router's encrypted secret store, its key in the macOS Keychain; plain text only in debug builds (Fleet decision 1201). This is the Mac path; a Router on a Linux VM has no production secret store at this code snapshot.</td><td>In source (Mac only)</td></tr>
+    <tr><td>The Router keeps the secret</td><td>The credential and the Access secret go in the Router's encrypted secret store; plain text only in debug builds (Fleet decision 1201). Routers run on Linux and Firecracker VMs, so the store must work there. Today it exists only on macOS (its key in the Keychain); on Linux the production store returns "unavailable".</td><td><strong>Gap:</strong> in source for macOS only; a Linux and Firecracker secret store is required and not built</td></tr>
     <tr><td>Every connection</td><td>The Router presents the credential; Fleet central hashes it, finds the enrollment, and binds the connection to that Router.</td><td>In source</td></tr>
     <tr><td>Sessions vouched for</td><td>Each session is registered and bound over that connection, so Fleet central knows which conversation on which Router is calling.</td><td>Identity design, not built (today the Router only declares the session)</td></tr>
     <tr><td>Revoke or expire</td><td>A revoked or expired enrollment is refused at its next connect. Tokens already issued to its sessions stop when the Tool Portal is told, or at their expiry.</td><td>In source (connect refusal); identity design (token cut-off)</td></tr>
