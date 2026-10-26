@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.7">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.8">
 
 <h1>Organization model</h1>
 
@@ -73,7 +73,7 @@
 <table>
   <thead><tr><th>Who</th><th>Step 1: added to the organization</th><th>Step 2: in a workspace</th></tr></thead>
   <tbody>
-    <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces. Gets work done by talking to bots; never logs in a Router.</td></tr>
+    <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces. Gets work done by talking to bots. No person but you, the owner, may log in a Router.</td></tr>
     <tr><td>Bot</td><td>Added by the admin to exactly one organization. It proves itself with its own credential.</td><td>Member or collaborator of chosen workspaces in that organization.</td></tr>
     <tr><td>Fleet machine (an enrolled Router)</td><td>Logged in (enrolled) by you, the owner, into exactly one organization.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
     <tr><td>Fleet harness session</td><td>Never added. The Fleet machine it runs on vouches for it.</td><td>Member of its project's workspace, automatically.</td></tr>
@@ -86,7 +86,7 @@
   <thead><tr><th></th><th>Member</th><th>Collaborator</th></tr></thead>
   <tbody>
     <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Bots and sessions: yes, within their persona. People: never with a tool token of their own; they ask a bot, and you work through sessions on your Routers</td><td>No. It never gets a token for that workspace</td></tr>
-    <tr><td>Starts work (a session) in the workspace</td><td>Whoever can operate a Router you logged in, for workspaces that Router may serve; the system sees only the Router. A session may start helpers in its own workspace</td><td>Never</td></tr>
+    <tr><td>Starts work (a session) in the workspace</td><td>Membership gives a person no right to start work. In practice, whoever can operate a Router you logged in can start sessions for the workspaces it may serve; the system knows the Router and the session, not the human at the keyboard. A session may start helpers in its own workspace</td><td>No right to start work. The same practical limit applies: anyone at a logged-in Router can start sessions there</td></tr>
     <tr><td>Sends messages and tasks to the workspace's members</td><td>Yes</td><td>Yes, through agent-collaboration</td></tr>
   </tbody>
 </table>
@@ -115,8 +115,8 @@
     <tr><td>7</td><td>Someone starts a session for tool-portal on Build VM Router.</td><td>Refused</td><td>Build VM Router is allowed to serve Docs, not Product.</td></tr>
     <tr><td>8</td><td>Your agent in Personal messages Sam in Acme.</td><td>Refused</td><td>Nothing crosses organizations, not even messages.</td></tr>
     <tr><td>9</td><td>A bot nobody added to Acme asks to talk to Product.</td><td>Refused</td><td>It must be added to Acme first; only then can it be a member or collaborator.</td></tr>
-    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td><strong>Proposed:</strong> Sam's Product and Docs memberships end</td><td>Your two-step model implies that leaving the organization ends its workspace roles; the identity design does not have this cascade yet. Sam holds no tool token and starts no sessions, so no Tool Portal needs telling about Sam. Whether Sam's roles come back if Sam is added again is question 3 below.</td></tr>
-    <tr><td>11</td><td>Sam messages Hermes in Hermes's own chat channel: "open a pull request for the Product docs fix".</td><td>Hermes does it with Product's tools</td><td>Sam is a person member and talks to a bot that has access. Hermes is a Product member; its tool call is recorded as Hermes, on behalf of Sam where the channel identifies Sam (Fleet framework F-30).</td></tr>
+    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td><strong>Proposed:</strong> Sam's Product and Docs memberships end</td><td>Your two-step model implies that leaving the organization ends its workspace roles; the identity design does not have this cascade yet. No Tool Portal needs telling about Sam: only bots and sessions hold tool tokens, and a session's identity is its own, not the person who happened to start it. If Sam has used one of your Routers, the sessions started there stay as they are until you end them or revoke the Router. Whether Sam's roles come back if Sam is added again is question 3 below.</td></tr>
+    <tr><td>11</td><td>Sam messages Hermes in Hermes's own chat channel: "open a pull request for the Product docs fix".</td><td>Hermes may do it with Product's tools, if Hermes accepts the request and its Product persona allows it (with approval where required)</td><td>Sam is a person member and talks to a bot that has access. Hermes acts with its own authority, never Sam's. Its tool call is recorded as Hermes, plus "on behalf of Sam" only where the channel can identify Sam; carrying the requester through is designed later (Fleet framework F-30, F-35). Whether the system or Hermes's channel stops Sam after Sam leaves Acme is question 7.</td></tr>
     <tr><td>12</td><td>Sam tries to log a Router on their own laptop into Acme.</td><td>Refused</td><td>Only you log Routers in (your decision). A member logging one in, with someone authorizing it, is a later option.</td></tr>
   </tbody>
 </table>
@@ -201,21 +201,23 @@ sequenceDiagram
 
 <h2 id="router-identity">How a Router's identity and enrollment are kept</h2>
 
-<p>The thing enrolled is one Router installation, not a computer: nothing is derived from hardware (Fleet framework F-34). Its identity <em>is</em> its enrollment.</p>
+<p>The thing enrolled is one Router installation, not a computer: nothing is derived from hardware (Fleet framework F-34). The installation keeps a stable identity in its own saved state; the enrollment is Fleet central's record that this installation may connect.</p>
 
 <table>
   <thead><tr><th>Step</th><th>What happens</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td>Log in</td><td>You run the Router's enroll command with your owner token. The Router makes a random enrollment credential of its own.</td><td>In source (Router <code>f465808f</code>)</td></tr>
-    <tr><td>Fleet central records it</td><td>One enrollment row: the Router's installation ID, a label, the Access client ID, <strong>only a hash</strong> of the credential, its state (enrolled, revoked) and an expiry.</td><td>In source</td></tr>
-    <tr><td>The Router keeps the secret</td><td>The credential and the Access secret go in the Router's encrypted secret store, its key in the macOS Keychain; plain text only in debug builds (Fleet decision 1201).</td><td>In source, with decision 1201</td></tr>
-    <tr><td>Every connection</td><td>The Router presents the credential; Fleet central hashes it, finds the enrollment, and binds the connection to it. Sessions on that Router are vouched for through this connection.</td><td>In source</td></tr>
-    <tr><td>Revoke or expire</td><td>A revoked or expired enrollment is refused at connect, and vouches for nothing.</td><td>In source</td></tr>
-    <tr><td>Organization and "logged in by"</td><td>The enrollment also records its one organization and who logged it in.</td><td><strong>Proposed</strong> (your rule: one Router, one organization)</td></tr>
+    <tr><td>Log in</td><td>Today you run the Router's enroll command with the <strong>fleet operator</strong> token. The Router reuses its saved installation identity (or creates one on a fresh install) and makes a random enrollment credential.</td><td>In source (Router <code>f465808f</code>)</td></tr>
+    <tr><td>Fleet central records it</td><td>One enrollment row: the installation ID, a label, the Access client ID, <strong>only a hash</strong> of the credential, its state (enrolled, revoked) and an expiry.</td><td>In source</td></tr>
+    <tr><td>The Router keeps the secret</td><td>The credential and the Access secret go in the Router's encrypted secret store, its key in the macOS Keychain; plain text only in debug builds (Fleet decision 1201). This is the Mac path; a Router on a Linux VM has no production secret store at this code snapshot.</td><td>In source (Mac only)</td></tr>
+    <tr><td>Every connection</td><td>The Router presents the credential; Fleet central hashes it, finds the enrollment, and binds the connection to that Router.</td><td>In source</td></tr>
+    <tr><td>Sessions vouched for</td><td>Each session is registered and bound over that connection, so Fleet central knows which conversation on which Router is calling.</td><td>Identity design, not built (today the Router only declares the session)</td></tr>
+    <tr><td>Revoke or expire</td><td>A revoked or expired enrollment is refused at its next connect. Tokens already issued to its sessions stop when the Tool Portal is told, or at their expiry.</td><td>In source (connect refusal); identity design (token cut-off)</td></tr>
+    <tr><td>Organization</td><td>The enrollment belongs to exactly one organization.</td><td>Your decision; not in source yet</td></tr>
+    <tr><td>Owner login and "logged in by"</td><td>The login proves an organization's owner, not just the fleet operator, and records who logged the Router in.</td><td><strong>Proposed</strong>: today's operator token is a fleet-wide credential, not an organization owner's sign-in</td></tr>
   </tbody>
 </table>
 
-<p>What this means: reinstalling the Router makes a new enrollment, and the old one should be revoked. Whoever holds that Router's secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
+<p>What this means: replacing the Router program keeps the same identity and enrollment, because both live in the Router's saved state. Only a fresh state needs a new enrollment, and then the old one should be revoked. Anyone who can use that Router's unlocked secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
 
 <h2 id="rooms">Where work runs: rooms</h2>
 
@@ -237,15 +239,15 @@ sequenceDiagram
 <ex-callout title="Decided: only you log Routers in" tone="decision" icon="key">
   <p>Your decision: "we can add managers later but it can be a concept, right now its just owner"; earlier: people members "use existing channels or bots to communicate"; "a bot is an existing channel. talk to bots who have access".</p>
   <ul>
-    <li><strong>Who logs a Router into an organization:</strong> only you, the owner. That login is the one person check; today it is your operator token. Afterwards the Router acts with its own credential.</li>
-    <li><strong>Who starts sessions:</strong> anyone or anything that can operate a Router you logged in, for the workspaces that Router may serve. The system cannot tell who; it only knows which Router. So you control starting by which machines you log Routers in on (machines only you use), what each Router may serve, and revoking a Router when needed. People members never log in Routers.</li>
-    <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts, recorded as the bot on behalf of that person (Fleet framework F-30).</li>
+    <li><strong>Who logs a Router into an organization:</strong> only you, the owner. That login is the one person check. Today it is the fleet operator token (you hold both roles); a sign-in that proves an organization's owner is a design change. Afterwards the Router acts with its own credential.</li>
+    <li><strong>Who starts sessions:</strong> anyone or anything that can operate a Router you logged in, for the workspaces that Router may serve. The system knows which Router and which session, not which human. So you control starting by where you log Routers in (keeping them on machines only you use is your operating practice, not something the system proves), what each Router may serve, and revoking a Router when needed.</li>
+    <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts with its own authority and persona, recorded as the bot, plus "on behalf of" the person where the channel can identify them; carrying the requester through is designed later (Fleet framework F-30, F-35).</li>
     <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided.</li>
     <li><strong>Not enforced either way:</strong> who is physically using one of your Routers.</li>
   </ul>
 </ex-callout>
 
-<p>Six choices remain, most consequential first. Pick one per question, add comments, and copy or export your answers from the Comments panel. Every recommendation is mine; none is decided until you pick it.</p>
+<p>Seven choices remain, most consequential first. Pick one per question, add comments, and copy or export your answers from the Comments panel. Every recommendation is mine; none is decided until you pick it.</p>
 
 <ex-choice id="room-organization" title="1. Does &quot;one organization&quot; also cover the room a Router runs in?">
   <ex-option id="room-one-organization" title="**Yes: different organizations never share an open room** (recommended)">
@@ -270,7 +272,7 @@ An Acme Router and a Personal Router may both run directly on your Mac.
 <ex-choice id="room-assurance" title="2. If yes to 1: how strongly is it held in the first round?">
   <ex-option id="assurance-declared" title="**Declared and shown** (recommended for the first round)">
     <template slot="summary">
-Each session declares its room kind when it starts (the identity design's isolation record). The rule is shown, not proven: nothing attests where a Router runs, and nothing is refused because of it.
+Whatever launches a session (the Router) asserts its room kind at launch, and Fleet central records it (the identity design's isolation record). The rule is shown, not proven: nothing attests where a Router runs, and nothing is refused because of it.
 
 - Gain: no new machinery; matches your "record and show now, enforce later" for workspaces.
 - Cost: a wrong or careless setup is not caught; you rely on how you set up your machines.
@@ -358,6 +360,25 @@ Every workspace keeps its own endpoint and store, but all organizations share th
 
 - Gain: one deployment to operate and roll out. It is not clearly cheaper: Cloudflare bills by usage, not per deployment.
 - Cost: on Cloudflare each isolate has 128 MB shared by the calls it is serving at that moment, so a heavy call from one organization can affect another organization's call that lands in the same isolate. The other organizations bear it.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="bot-channel-after-removal" title="7. After Sam leaves Acme, who stops Sam from asking Hermes for Product work through Hermes's own channel?">
+  <ex-option id="channel-owner-responsible" title="**Hermes's channel decides who it listens to** (recommended)">
+    <template slot="summary">
+Fleet central controls what Hermes itself may do (its membership, persona and tokens). Who may talk to Hermes in its own chat channel is that channel's setting, managed by whoever runs Hermes.
+
+- Gain: no new machinery; matches your "a bot is an existing channel".
+- Cost: removing Sam from Acme does not by itself stop Sam messaging Hermes; whoever runs Hermes must also remove Sam from its channel.
+    </template>
+  </ex-option>
+  <ex-option id="fleet-enforces-requester" title="**The system checks the requester too**">
+    <template slot="summary">
+Before Hermes acts for someone, the system checks that the person is still in Acme and in Product.
+
+- Gain: one removal stops Sam everywhere.
+- Cost: every bot channel must identify the requester reliably and pass that identity through; this is the pass-through design Fleet framework F-30 left for later, and it must be built for each kind of channel.
     </template>
   </ex-option>
 </ex-choice>
