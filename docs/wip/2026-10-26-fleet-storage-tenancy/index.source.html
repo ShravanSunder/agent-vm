@@ -129,7 +129,7 @@ erDiagram
 | Project | `project_id`, `workspace_id`, `board_id`, `name` | name unique on its board |
 | ADR | `adr_id`, `workspace_id` | |
 | Repository link | `attachment_id`, `workspace_id` | |
-| Request log entry | `request_id`, `workspace_id`, `origin_machine`, `actor` | the actor is self-declared |
+| Request log entry | `request_id`, `canonical_hash`, `workspace_id`, `origin_machine`, `actor` | one change a Router asked central to make (create, rename, attach), with central's decision. A resent request gets the original answer instead of applying twice. Every entry goes into the feed, so today every Router sees every request; the actor is self-declared |
 | Machine | `service_id`, `access_client_id`, `credential_hash`, `state` | one Router installation; not tied to any workspace |
 
 <ex-callout id="no-org-today" title="Observed: no organization anywhere" tone="note" icon="database">
