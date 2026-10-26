@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.10">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.11">
 
 <h1>Organization model</h1>
 
@@ -218,6 +218,40 @@ sequenceDiagram
 </table>
 
 <p>What this means: replacing the Router program keeps the same identity and enrollment, because both live in the Router's saved state. Only a fresh state needs a new enrollment, and then the old one should be revoked. Anyone who can use that Router's unlocked secret store can act as that Router, so revoking the enrollment is the way to cut off a lost or copied machine. If members may later log Routers in, the enrollment would start as <strong>pending</strong> until you approve it, and only then connect (<strong>proposed</strong>, for later).</p>
+
+<h2 id="machine-login">How machines log in: where this is going</h2>
+
+<p>Today every Router passes two checks, each with a long-lived secret: a <strong>Cloudflare Access service token</strong> (Cloudflare's gate in front of Fleet central, checked at Cloudflare's edge) and its <strong>enrollment credential</strong> (Fleet central's check of which Router it is). Long-lived means weeks or months: a leaked one works until it is revoked or expires.</p>
+
+<ex-callout title="Decided: one login model for every machine, built behind Cloudflare Access" tone="decision" icon="key">
+  <p>Your decisions: "i like oidc idea ... can i use this for all my machines mac, linux vms everything? then when a new machine is created, i approve, or its pre approved depending on the type of identity system"; "we keep cloudflare access and build the other too, then we keep cloudflare access on until we ready to switch over"; "no half steps. after we switch over we remove cloudflare access"; then, on the steps: "everything in access guard till i can prove login works behind it"; "its accept behind no? not either?"; "yes, this is safer".</p>
+  <ul>
+    <li><strong>Every machine</strong> (Mac, Linux server, Firecracker or cloud VM) connects with a short-lived signed token from an <strong>issuer you registered</strong>. Fleet central checks the issuer, the machine and its one organization.</li>
+    <li><strong>Approval depends on the issuer:</strong> machines you set up are approved by you one by one; an issuer you trust can be pre-approved within limits you set.</li>
+    <li><strong>Three steps, no half steps:</strong>
+      <ol>
+        <li><strong>Build</strong> the new login completely. Machines keep today's login (Cloudflare Access plus the enrollment credential).</li>
+        <li><strong>Switch, behind Access.</strong> One change: Fleet central accepts only the new login, and the old enrollment credential stops working. Cloudflare Access stays in front of everything. You re-enroll every machine. If it breaks, machines are offline until it is fixed or the change is reverted, but nothing is exposed.</li>
+        <li><strong>Remove Access</strong>, in the next change, once step 2 works on every machine.</li>
+      </ol>
+    </li>
+  </ul>
+</ex-callout>
+
+<table>
+  <thead><tr><th>Machine type</th><th>Issuer</th><th>New machine</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Mac or Linux server you set up</td><td>The sign-in service, after you approve a <strong>device code</strong>: the Router prints a short code and a web address; on your phone or laptop you sign in, check the code and the machine's name, and approve. The machine then keeps one refresh credential and swaps it for short-lived tokens</td><td>You approve each one</td><td><strong>Proposed</strong>. Better Auth (the sign-in service's library) has a device-code plugin since 1.7. The refresh credential needs the Linux and Firecracker secret store (a gap today)</td></tr>
+    <tr><td>VM your own VM creator starts</td><td>Your VM creator, registered by you as an issuer for one organization; it signs a short-lived token for each VM it started</td><td>Pre-approved within your limits, or approve each</td><td><strong>Proposed</strong>; the identity design lists platform identity as the later path for VMs. No long-lived secret inside the VM</td></tr>
+    <tr><td>VM on a platform with its own OIDC (for example Fly)</td><td>That platform, registered by you with which apps count</td><td>Pre-approved by that rule</td><td><strong>Proposed</strong>; identity design "platform identity, later"</td></tr>
+  </tbody>
+</table>
+
+<ul>
+  <li><strong>Device-code risk:</strong> someone starts a login on their own machine and tricks you into approving it. Proposed guards: the approval page shows the machine's name and organization and asks you to confirm the code it prints; codes expire within minutes and work once; only you can approve; attempts are rate-limited.</li>
+  <li><strong>What step 2 proves, and what step 3 adds:</strong> step 2 proves the new login on every real machine while Access still guards Fleet central. Step 3's only new risk is Fleet central facing the internet without the gate, so that change must show it refusing unauthenticated traffic, and keep Cloudflare's rate limiting. Until step 3, every machine (including test VMs) still needs its Access service token.</li>
+  <li><strong>Parked:</strong> agents in a VM using the host's Router instead of their own. The identity design notes it needs agent-vm to hand the host Router a launch record over a local channel, which does not exist; the first round registers only <code>Host</code> and <code>ProcessSandbox</code> sessions.</li>
+</ul>
 
 <h2 id="rooms">Where work runs: rooms</h2>
 
