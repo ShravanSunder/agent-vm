@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.8">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.9">
 
 <h1>Organization model</h1>
 
@@ -375,9 +375,10 @@ Fleet central controls what Hermes itself may do (its membership, persona and to
   </ex-option>
   <ex-option id="fleet-enforces-requester" title="**The system checks the requester too**">
     <template slot="summary">
-Before Hermes acts for someone, the system checks that the person is still in Acme and in Product.
+Before Hermes acts for someone, the system checks that the person is still in Acme and still has a qualifying role in Product. Whether a Product collaborator qualifies, or only a member, is part of this choice.
 
-- Gain: one removal stops Sam everywhere.
+- Gain: once Sam is removed, Sam's future requests through bot channels that identify Sam and apply this check are refused.
+- Limits: it does not stop Sam at one of your logged-in Routers, remove Sam from the bot's chat, or undo actions taken before the removal.
 - Cost: every bot channel must identify the requester reliably and pass that identity through; this is the pass-through design Fleet framework F-30 left for later, and it must be built for each kind of channel.
     </template>
   </ex-option>
