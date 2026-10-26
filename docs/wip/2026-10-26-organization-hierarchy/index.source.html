@@ -24,7 +24,8 @@
 
 <ex-presentation id="path-hierarchy" title="The hierarchy, top to bottom" description="Deployment to project, where each thing runs and is stored, one example, and what is still open.">
   <ex-step to="hierarchy" icon="stack">The containment tree: deployment, organization registry, organization, workspace, board, project.</ex-step>
-  <ex-step to="hierarchy-picture" icon="users">The same tree as a picture, with people outside every organization.</ex-step>
+  <ex-step to="hierarchy-picture" icon="users">The same tree as a picture: boxes inside boxes, with people outside every organization.</ex-step>
+  <ex-step to="references-picture" icon="path">The references that cross the tree: allowlist entry, membership, machine allowance, workspace pair.</ex-step>
   <ex-step to="placement" icon="cpu">Where a session runs: isolation unit, Fleet machine, session, room. A separate view.</ex-step>
   <ex-step to="storage" icon="database">Which database holds each level, and which storage choices are still open.</ex-step>
   <ex-step to="example" icon="path">One example end to end: a person, a Fleet machine, a session, a tool call.</ex-step>
@@ -94,38 +95,48 @@
 
 <h3 id="hierarchy-picture">The same tree as a picture</h3>
 
-<p id="picture-intro" data-comment-label="How to read the picture">Boxes inside boxes are containment. Dashed arrows are references that cross the tree: a person into an organization's allowlist and a workspace's memberships, a Fleet machine's allowance to a workspace, and a workspace pair.</p>
+<p id="picture-intro" data-comment-label="How to read the picture">Boxes inside boxes, nothing else: each box contains the boxes drawn inside it. The references between them are in the next picture.</p>
 
-<ex-mermaid id="hierarchy-diagram" label="Containment, with references dashed" data-width="canvas"><script type="text/plain">
+<ex-mermaid id="hierarchy-diagram" label="Containment only" data-width="canvas"><script type="text/plain">
 flowchart TB
   subgraph DEP["Deployment"]
-    subgraph SIGN["Sign-in service: deployment-wide"]
-      PER["Person<br/>one account"]
+    subgraph SIGN["Sign-in service"]
+      PER["Persons"]
     end
-    REG["Organization registry<br/>which organizations exist,<br/>which enrollment belongs to which"]
-    subgraph O1["Organization O1: its fleet"]
+    REG["Organization registry"]
+    subgraph O1["Organization O1"]
       ADM["Owner and allowlist entries"]
-      FM["Fleet machine M<br/>enrolled in O1"]
-      BOT["Bot<br/>registered in O1"]
+      FM["Fleet machine M"]
+      BOT["Bot"]
       subgraph W1["Workspace W1"]
         MEM["Memberships and personas"]
         subgraph B1["Board B1"]
-          P1["Project P1<br/>and its Fleet harness sessions"]
+          subgraph P1["Project P1"]
+            SES["Fleet harness sessions"]
+          end
         end
       end
-      W2["Workspace W2"]
+      subgraph W2["Workspace W2"]
+        B2["Boards and projects"]
+      end
     end
-    subgraph O2["Organization O2: same shape, no links to O1"]
-      W3["Workspace W3"]
+    subgraph O2["Organization O2"]
+      W3["Its workspaces"]
     end
   end
-  REG --> O1
-  REG --> O2
-  PER -.->|"allowlist entry"| ADM
-  PER -.->|"membership"| MEM
-  BOT -.->|"membership, at most one workspace"| MEM
-  FM -.->|"machine allowance"| W1
-  W1 -.->|"workspace pair: messages, sees only ID and name"| W2
+</script></ex-mermaid>
+
+<h3 id="references-picture">The references that cross the tree</h3>
+
+<p id="references-intro" data-comment-label="How to read the references">These link things that sit in different places in the tree. Only a person reaches outside one organization; everything else here stays inside O1.</p>
+
+<ex-mermaid id="references-diagram" label="References between parts of the tree"><script type="text/plain">
+flowchart LR
+  PER["Person Alice"] -->|"allowlist entry"| ADM["O1's allowlist"]
+  PER -->|"membership"| W1["Workspace W1"]
+  BOT["Bot in O1"] -->|"membership, one workspace"| W1
+  FM["Fleet machine M in O1"] -->|"machine allowance"| W1
+  W1 -->|"workspace pair: messages, ID and name only"| W2["Workspace W2"]
 </script></ex-mermaid>
 
 <h2 id="placement">Where a session runs: a separate view</h2>
