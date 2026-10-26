@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Organization model</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
+<a href="index.html">Organization model</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../../specs/2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../../specs/2026-10-24-agent-identity/index.html">Agent identity and workspace access</a>
+<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in: Requirements</a>
+<a href="../../specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">People sign-in: Specification</a>
+<a href="../../specs/2026-10-20-people-sign-in/program-design.html">People sign-in: Program Design</a>
+<a href="../../specs/2026-10-20-people-sign-in/verification-design.html">People sign-in: Verification Design</a>
+<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
+<a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
+</nav></ex-nav>
+
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.1">
+
+<h1>Organization model</h1>
+
+<p id="answer">Two steps put anyone to work. <strong>First, a person or a bot is added to an organization. Then they join that organization's workspaces, each as a member or a collaborator.</strong> A member does the workspace's work and uses its tools through the workspace's Tool Portal. A collaborator only sends messages and tasks to the workspace's members. Fleet machines are enrolled in one organization and allowed to serve chosen workspaces; a Fleet harness session belongs to the workspace of the project it was started for. Nothing is shared or sent across organizations. Where work physically runs (its room) is a separate picture, at the end.</p>
+
+<ex-callout title="Your model, 2026-10-26" tone="decision" icon="users">
+  <p>"you add people bot to organization. then join workspaces or allowed to as members, or collaborators."</p>
+  <p>Earlier today: "person can belong to any orgs but not agents"; "a single router only belongs to one organization"; "i dont want cross organization any sharing stuff or comm".</p>
+</ex-callout>
+
+<h2 id="tree">What belongs to what</h2>
+
+<p>One example fleet. Each line belongs to the line above it. The names are made up for the example.</p>
+
+<ex-tree id="example-tree" title="Example: two organizations on one Fleet central" icon="stack"><script type="text/markdown">
+- **Fleet central**, shared by several organizations; no organization can see another
+  - Organization **Acme**
+    - People added to Acme: **You**, **Sam**
+    - Bots added to Acme: **Hermes**, **Review bot**
+    - Fleet machines enrolled in Acme: **Laptop Router**, **Build VM Router**
+    - Workspace **Product**
+      - Members: You, Sam, Hermes
+      - Collaborator: Review bot (messages and tasks only)
+      - Fleet machine allowed to serve it: Laptop Router
+      - Project **tool-portal**
+        - Fleet harness session: a Codex conversation on Laptop Router, started for tool-portal
+    - Workspace **Docs**
+      - Members: Sam, Review bot
+      - Collaborator: Hermes (messages and tasks only)
+      - Fleet machine allowed to serve it: Build VM Router
+  - Organization **Personal**
+    - People added to Personal: **You**
+    - Fleet machines enrolled in Personal: **Home VM Router**
+    - Workspace **Notes**
+      - Member: You
+</script></ex-tree>
+
+<p>What the example shows:</p>
+<ul>
+  <li><strong>You are in two organizations</strong> (Acme and Personal). People may be; bots and Fleet machines may not.</li>
+  <li><strong>Hermes and Review bot are each a member of one workspace and a collaborator of the other.</strong></li>
+  <li><strong>Each Router belongs to one organization.</strong> Your Personal work runs on a different Router (Home VM Router), never on an Acme one.</li>
+  <li><strong>A session is never added by hand.</strong> It joins the workspace of the project it was started for, on a Fleet machine allowed to serve that workspace.</li>
+</ul>
+
+<h2 id="two-steps">Two steps: add to the organization, then join workspaces</h2>
+
+<table>
+  <thead><tr><th>Who</th><th>Step 1: added to the organization</th><th>Step 2: in a workspace</th></tr></thead>
+  <tbody>
+    <tr><td>Person</td><td>Added by the admin. One person may be added to several organizations.</td><td>Member or collaborator of chosen workspaces.</td></tr>
+    <tr><td>Bot</td><td>Added by the admin to exactly one organization. It proves itself with its own credential.</td><td>Member or collaborator of chosen workspaces in that organization.</td></tr>
+    <tr><td>Fleet machine (an enrolled Router)</td><td>Enrolled in exactly one organization; the Router is logged in.</td><td>Allowed by the admin to serve chosen workspaces. It is not a member itself.</td></tr>
+    <tr><td>Fleet harness session</td><td>Never added. The Fleet machine it runs on vouches for it.</td><td>Member of its project's workspace, automatically.</td></tr>
+  </tbody>
+</table>
+
+<h3 id="member-collaborator">Member or collaborator</h3>
+
+<table>
+  <thead><tr><th></th><th>Member</th><th>Collaborator</th></tr></thead>
+  <tbody>
+    <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Yes, within its persona</td><td>No. It never gets a token for that workspace</td></tr>
+    <tr><td>Starts work (a session) in the workspace</td><td>You, or a session that is already a member</td><td>Never</td></tr>
+    <tr><td>Sends messages and tasks to the workspace's members</td><td>Yes</td><td>Yes, through agent-collaboration</td></tr>
+  </tbody>
+</table>
+
+<p>Members of two workspaces in the same organization may message each other only when the admin allows that pair of workspaces (for example "Product may message Docs"). There is no pair across organizations.</p>
+
+<h2 id="examples">Examples</h2>
+
+<p>Each row uses the example fleet above.</p>
+
+<div data-width="canvas">
+<table>
+  <thead><tr><th>#</th><th>What happens</th><th>Result</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Sam's agent asks Product's GitHub tool to read a pull request.</td><td>Allowed, if Sam's persona in Product allows that tool</td><td>Sam is a member of Product. The Tool Portal checks Sam's Product token and persona.</td></tr>
+    <tr><td>2</td><td>Hermes calls a Product tool.</td><td>Allowed, within Hermes's persona</td><td>Hermes is a member of Product.</td></tr>
+    <tr><td>3</td><td>Hermes sends Sam a task in Docs.</td><td>Delivered</td><td>Hermes is a collaborator of Docs; collaborators may send members messages and tasks.</td></tr>
+    <tr><td>4</td><td>Hermes calls a Docs tool.</td><td>Refused</td><td>A collaborator never gets a token for that workspace, so the Tool Portal has nothing to admit.</td></tr>
+    <tr><td>5</td><td>You start a Codex conversation on Laptop Router for project tool-portal.</td><td>It becomes a member of Product</td><td>tool-portal is in Product, and Laptop Router is allowed to serve Product. You never sign the conversation in; the Router vouches for it.</td></tr>
+    <tr><td>6</td><td>That Codex session calls a Product tool.</td><td>Allowed, within Product's session persona</td><td>The Router gets the session's token from Fleet central and attaches it to the call. The agent never holds the token.</td></tr>
+    <tr><td>7</td><td>Someone starts a session for tool-portal on Build VM Router.</td><td>Refused</td><td>Build VM Router is allowed to serve Docs, not Product.</td></tr>
+    <tr><td>8</td><td>Your agent in Personal messages Sam in Acme.</td><td>Refused</td><td>Nothing crosses organizations, not even messages.</td></tr>
+    <tr><td>9</td><td>A bot nobody added to Acme asks to talk to Product.</td><td>Refused</td><td>It must be added to Acme first; only then can it be a member or collaborator.</td></tr>
+    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td>Sam leaves Product and Docs at once</td><td>Leaving the organization ends every workspace role in it. Each workspace's Tool Portal is told and stops admitting Sam's token.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="tool-portal">What this means for the Tool Portal</h2>
+
+<p>The Tool Portal's unit stays the workspace: <strong>one MCP endpoint per workspace</strong>, with that workspace's personas, tool profiles and approvals. What moves is <strong>who decides membership</strong>: Fleet central decides, and the Tool Portal only checks the token it is handed. The Tool Portal never calls Fleet central during a tool call.</p>
+
+<p>How example 6 runs, as the identity design draws it:</p>
+
+<ex-mermaid id="session-tool-call" label="A Fleet harness session calls a Product tool" data-width="canvas"><script type="text/plain">
+sequenceDiagram
+  autonumber
+  participant H as Session
+  participant R as Laptop Router
+  participant F as Fleet central
+  participant I as Sign-in
+  participant P as Tool Portal
+  H->>R: call a Product tool
+  R->>F: token for this session
+  F->>F: checks membership and Router
+  F->>I: grant for Product
+  I-->>F: token: Acme, Product, session, persona
+  F-->>R: token
+  R->>P: tool call + token
+  P->>P: checks token
+  P-->>R: result, or refused
+  R-->>H: result
+</script></ex-mermaid>
+
+<p>A bot asks the sign-in service for its token itself, with its own credential; the sign-in service asks Fleet central whether the bot is a member of that workspace before it signs anything.</p>
+
+<table>
+  <thead><tr><th>For the Tool Portal</th><th>Today</th><th>With this model</th></tr></thead>
+  <tbody>
+    <tr><td>Who is a member</td><td>The Tool Portal keeps member records and has its own agent-management routes</td><td>Fleet central keeps them. The Tool Portal's member records and agent-management routes are removed</td></tr>
+    <tr><td>On each tool call</td><td>Reads membership from its own store</td><td>Reads who is calling and their persona from the token</td></tr>
+    <tr><td>Collaborators</td><td>No such idea</td><td>Nothing new: they never hold a token for the workspace, so their tool calls are refused</td></tr>
+    <tr><td>Removal</td><td>Its own retirement route</td><td>Fleet central sends a removal notice to each affected workspace's Tool Portal; the token's expiry is the backstop</td></tr>
+    <tr><td>Endpoint, personas, tool profiles, approvals</td><td colspan="2">Unchanged: per workspace, defined in the Tool Portal</td></tr>
+  </tbody>
+</table>
+
+<ex-callout title="Proposed: what your two-step model adds" tone="question" icon="plug">
+  <ul>
+    <li><strong>No token without the organization.</strong> Fleet central refuses a workspace token to anyone not added to that workspace's organization.</li>
+    <li><strong>Removing someone from an organization reaches every workspace.</strong> Fleet central sends a removal notice to each workspace they were in.</li>
+    <li><strong>People as collaborators.</strong> The identity design only had bot collaborators. Allowing people too changes nothing in the Tool Portal, because collaborators never use tools.</li>
+  </ul>
+  <p>These follow from your model; they are not yet in the identity design.</p>
+</ex-callout>
+
+<h2 id="rooms">Where work runs: rooms</h2>
+
+<p>Everything above says who belongs where. A <strong>room</strong> says where an agent physically runs, and so which files it can reach. Rooms are not membership: being in a room grants no workspace, and being a member puts you in no room.</p>
+
+<table>
+  <thead><tr><th>Room</th><th>Example</th><th>What it keeps apart</th></tr></thead>
+  <tbody>
+    <tr><td>Open room</td><td>Laptop Router running directly on your Mac</td><td>Nothing. Everything on that Mac can read each other's files</td></tr>
+    <tr><td>Walled-off corner</td><td>A sandboxed agent process on that Mac with fenced reads</td><td>Best effort, for that agent only</td></tr>
+    <tr><td>Locked room</td><td>Home VM Router inside a VM</td><td>Files, really: a VM is the only true file wall</td></tr>
+  </tbody>
+</table>
+
+<p>Today each session records its room kind when it starts, and the system shows which workspaces share a machine. Nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
+
+<h2 id="decisions">Still to decide</h2>
+
+<p>Four choices. Pick one per question, add comments, and copy or export your answers from the Comments panel.</p>
+
+<ex-choice id="room-organization" title="Does &quot;one organization&quot; also cover the room a Router runs in?">
+  <ex-option id="room-one-organization" title="**Yes: different organizations never share an open room** (recommended)">
+    <template slot="summary">
+Laptop Router (Acme) and a Personal Router may not both run directly on your Mac. Personal runs in a VM or on another machine, as Home VM Router does in the example.
+
+- Fits "i dont want cross organization any sharing", which includes files.
+- Cost: personal and work agents cannot both run bare on one laptop.
+- First round: declared and shown, like isolation today; not proven.
+    </template>
+  </ex-option>
+  <ex-option id="room-router-only" title="**No: only each Router belongs to one organization**">
+    <template slot="summary">
+An Acme Router and a Personal Router may both run directly on your Mac. The system shows it.
+
+- Cheaper: no VM needed for a second organization.
+- Cost: Personal's agents can read Acme's files on that Mac.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="bot-membership" title="How many workspaces may a bot be a member of?">
+  <ex-option id="bot-member-one" title="**One; a collaborator anywhere else** (recommended)">
+    <template slot="summary">
+As in the example: Hermes is a member of Product and a collaborator of Docs.
+
+- Keeps your earlier "a bot should only be member in one workspace. rest collaborator."
+- A bot's memory then holds one workspace's work.
+    </template>
+  </ex-option>
+  <ex-option id="bot-member-many" title="**Any number**">
+    <template slot="summary">
+Hermes could be a member of both Product and Docs and use both workspaces' tools, with a token for each.
+
+- The Tool Portal handles this already: one token per workspace.
+- Cost: one bot's memory mixes both workspaces' work.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="collaborator-allowed" title="Who makes someone a collaborator of a workspace?">
+  <ex-option id="collaborator-admin-picks" title="**The admin, per workspace** (recommended)">
+    <template slot="summary">
+Being in Acme lets Review bot talk to no workspace until the admin makes it a collaborator of Product.
+
+- An outside bot reaches only the workspaces you pick.
+    </template>
+  </ex-option>
+  <ex-option id="collaborator-whole-organization" title="**Everyone in the organization, automatically**">
+    <template slot="summary">
+Anyone added to Acme may message members of every Acme workspace.
+
+- Less setup.
+- Cost: adding an outside bot to Acme lets it message every workspace.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<ex-choice id="portal-deployment" title="One Tool Portal deployment per organization? (you picked yes earlier; please re-confirm)">
+  <ex-option id="portal-per-organization" title="**Yes: one deployment per organization** (your earlier pick)">
+    <template slot="summary">
+Acme's workspaces and Personal's workspaces are served by separate Tool Portal deployments.
+
+- A failure or overload in one organization's deployment cannot reach another's.
+- Cost: one more deployment to run per organization.
+    </template>
+  </ex-option>
+  <ex-option id="portal-shared" title="**No: one shared deployment for all organizations**">
+    <template slot="summary">
+Every workspace keeps its own endpoint and store, but all organizations share the running deployment.
+
+- Cheaper to run.
+- Cost: on Cloudflare a Worker's 128 MB of memory is shared by calls from every workspace at that moment, so one organization's heavy call can fail another's.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<details>
+  <summary>Where this differs from the identity design, and its sources</summary>
+  <ul>
+    <li>People may be collaborators; the identity design had only bot collaborators (its E9).</li>
+    <li>The identity design still mentions a machine serving two organizations (its V9); your rule says one Router, one organization.</li>
+    <li>The Fleet framework's old note "machines map to one workspace" (Q-B11) is replaced: a Fleet machine may serve several workspaces of its organization (identity U6).</li>
+    <li>Sources: Fleet framework F-6, F-34, F-77, F-80, F-82; identity requirements U4–U8, U17, U18; identity program design, token sequences; your decisions on 2026-10-26.</li>
+  </ul>
+</details>
+
+</ex-document>
+</body>
+</html>
