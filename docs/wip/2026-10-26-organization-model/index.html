@@ -20,7 +20,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.1">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.2">
 
 <h1 id="heading-organization-model">Organization model</h1>
 
@@ -33,7 +33,7 @@
 
 <h2 id="tree">What belongs to what</h2>
 
-<p>One example fleet. Each line belongs to the line above it. The names are made up for the example.</p>
+<p>One example fleet; the names are made up. Organizations contain workspaces, and workspaces contain projects. The member, collaborator and allowed-machine rows inside a workspace point back at the people, bots and Routers added to the organization above them; they are references, not copies.</p>
 
 <ex-tree id="example-tree" title="Example: two organizations on one Fleet central" icon="stack"><script type="text/markdown">
 - **Fleet central**, shared by several organizations; no organization can see another
@@ -83,13 +83,18 @@
 <table>
   <thead><tr><th></th><th>Member</th><th>Collaborator</th></tr></thead>
   <tbody>
-    <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Yes, within its persona</td><td>No. It never gets a token for that workspace</td></tr>
+    <tr><td>Uses the workspace's tools (its Tool Portal MCP endpoint)</td><td>Bots and sessions: yes, within their persona. People: through the sessions they start, never with a tool token of their own</td><td>No. It never gets a token for that workspace</td></tr>
     <tr><td>Starts work (a session) in the workspace</td><td>You, or a session that is already a member</td><td>Never</td></tr>
     <tr><td>Sends messages and tasks to the workspace's members</td><td>Yes</td><td>Yes, through agent-collaboration</td></tr>
   </tbody>
 </table>
 
-<p>Members of two workspaces in the same organization may message each other only when the admin allows that pair of workspaces (for example "Product may message Docs"). There is no pair across organizations.</p>
+<p>Messages reach a workspace's members by two separate routes, both inside one organization:</p>
+<ul>
+  <li><strong>Collaboration.</strong> A bot collaborator of a workspace and that workspace's members may message each other, both ways, while the collaboration exists. No workspace pair is needed.</li>
+  <li><strong>Workspace pair.</strong> Members of workspace A may message members of workspace B only when the admin has allowed A → B. A pair has one direction: "Product may message Docs" does not let Docs message Product.</li>
+</ul>
+<p>There is no collaboration or pair across organizations. People as collaborators are new in your model (the identity design only had bot collaborators); they would use the collaboration route. <strong>Proposed.</strong></p>
 
 <h2 id="examples">Examples</h2>
 
@@ -99,16 +104,16 @@
 <table>
   <thead><tr><th>#</th><th>What happens</th><th>Result</th><th>Why</th></tr></thead>
   <tbody>
-    <tr><td>1</td><td>Sam's agent asks Product's GitHub tool to read a pull request.</td><td>Allowed, if Sam's persona in Product allows that tool</td><td>Sam is a member of Product. The Tool Portal checks Sam's Product token and persona.</td></tr>
+    <tr><td>1</td><td>Sam, a person, asks for a token to call Product's GitHub tool directly.</td><td>Refused</td><td>People never hold workspace tool tokens. Sam uses Product's tools through a session Sam starts for a Product project (examples 5 and 6).</td></tr>
     <tr><td>2</td><td>Hermes calls a Product tool.</td><td>Allowed, within Hermes's persona</td><td>Hermes is a member of Product.</td></tr>
-    <tr><td>3</td><td>Hermes sends Sam a task in Docs.</td><td>Delivered</td><td>Hermes is a collaborator of Docs; collaborators may send members messages and tasks.</td></tr>
+    <tr><td>3</td><td>Hermes sends Review bot (a Docs member) a task.</td><td>Delivered; Review bot may reply</td><td>Hermes is a collaborator of Docs, so it and Docs's members may message each other. No workspace pair is involved.</td></tr>
     <tr><td>4</td><td>Hermes calls a Docs tool.</td><td>Refused</td><td>A collaborator never gets a token for that workspace, so the Tool Portal has nothing to admit.</td></tr>
     <tr><td>5</td><td>You start a Codex conversation on Laptop Router for project tool-portal.</td><td>It becomes a member of Product</td><td>tool-portal is in Product, and Laptop Router is allowed to serve Product. You never sign the conversation in; the Router vouches for it.</td></tr>
     <tr><td>6</td><td>That Codex session calls a Product tool.</td><td>Allowed, within Product's session persona</td><td>The Router gets the session's token from Fleet central and attaches it to the call. The agent never holds the token.</td></tr>
     <tr><td>7</td><td>Someone starts a session for tool-portal on Build VM Router.</td><td>Refused</td><td>Build VM Router is allowed to serve Docs, not Product.</td></tr>
     <tr><td>8</td><td>Your agent in Personal messages Sam in Acme.</td><td>Refused</td><td>Nothing crosses organizations, not even messages.</td></tr>
     <tr><td>9</td><td>A bot nobody added to Acme asks to talk to Product.</td><td>Refused</td><td>It must be added to Acme first; only then can it be a member or collaborator.</td></tr>
-    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td>Sam leaves Product and Docs at once</td><td>Leaving the organization ends every workspace role in it. Each workspace's Tool Portal is told and stops admitting Sam's token.</td></tr>
+    <tr><td>10</td><td>The admin removes Sam from Acme.</td><td><strong>Proposed:</strong> Sam's Product and Docs memberships end</td><td>Your two-step model implies that leaving the organization ends its workspace roles; the identity design does not have this rule yet. Fleet central stops new grants at once; each workspace's Tool Portal refuses from when its removal notice arrives, and the admin sees the removal as pending until then. What happens to sessions Sam started is not decided.</td></tr>
   </tbody>
 </table>
 </div>
@@ -155,7 +160,7 @@ sequenceDiagram
 <ex-callout title="Proposed: what your two-step model adds" tone="question" icon="plug">
   <ul>
     <li><strong>No token without the organization.</strong> Fleet central refuses a workspace token to anyone not added to that workspace's organization.</li>
-    <li><strong>Removing someone from an organization reaches every workspace.</strong> Fleet central sends a removal notice to each workspace they were in.</li>
+    <li><strong>Removing someone from an organization reaches every workspace.</strong> Fleet central sends a removal notice to each workspace they were in (example 10).</li>
     <li><strong>People as collaborators.</strong> The identity design only had bot collaborators. Allowing people too changes nothing in the Tool Portal, because collaborators never use tools.</li>
   </ul>
   <p>These follow from your model; they are not yet in the identity design.</p>
@@ -174,7 +179,7 @@ sequenceDiagram
   </tbody>
 </table>
 
-<p>Today each session records its room kind when it starts, and the system shows which workspaces share a machine. Nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
+<p>The agreed first identity round will have each session record its room kind when it starts, and will show which workspaces share one Router. This is designed, not built. Even then nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
 
 <h2 id="decisions">Still to decide</h2>
 
@@ -185,36 +190,36 @@ sequenceDiagram
     <template slot="summary">
 Laptop Router (Acme) and a Personal Router may not both run directly on your Mac. Personal runs in a VM or on another machine, as Home VM Router does in the example.
 
-- Fits "i dont want cross organization any sharing", which includes files.
-- Cost: personal and work agents cannot both run bare on one laptop.
-- First round: declared and shown, like isolation today; not proven.
+- Gain: fits "i dont want cross organization any sharing", which includes files.
+- Cost: you run a VM or a second machine for each extra organization; personal and work agents cannot both run bare on one laptop.
+- First round: declared, not proven, like room kinds in the identity design.
     </template>
   </ex-option>
   <ex-option id="room-router-only" title="**No: only each Router belongs to one organization**">
     <template slot="summary">
-An Acme Router and a Personal Router may both run directly on your Mac. The system shows it.
+An Acme Router and a Personal Router may both run directly on your Mac.
 
-- Cheaper: no VM needed for a second organization.
-- Cost: Personal's agents can read Acme's files on that Mac.
+- Gain: cheaper; no VM needed for a second organization.
+- Cost: Personal's agents can read Acme's files on that Mac. Nothing in the records links two Routers to one Mac, so the system cannot even show it; only you know. Acme bears the leak.
     </template>
   </ex-option>
 </ex-choice>
 
-<ex-choice id="bot-membership" title="How many workspaces may a bot be a member of?">
-  <ex-option id="bot-member-one" title="**One; a collaborator anywhere else** (recommended)">
+<ex-choice id="bot-membership" title="Keep your earlier rule that a bot is a member of at most one workspace, or reopen it?">
+  <ex-option id="bot-member-one" title="**Keep: a member of one workspace, a collaborator elsewhere** (recommended)">
     <template slot="summary">
-As in the example: Hermes is a member of Product and a collaborator of Docs.
+Your decision of 2026-10-24: "a bot shoudl only be member in one workspace. rest collaborator." The example assumes it: Hermes is a member of Product and a collaborator of Docs.
 
-- Keeps your earlier "a bot should only be member in one workspace. rest collaborator."
-- A bot's memory then holds one workspace's work.
+- Gain: a bot's memory holds one workspace's work.
+- Cost: a bot that needs tools in two workspaces must be added as two bots, which the admin registers and manages separately.
     </template>
   </ex-option>
-  <ex-option id="bot-member-many" title="**Any number**">
+  <ex-option id="bot-member-many" title="**Reopen: any number of memberships** (replaces that rule)">
     <template slot="summary">
 Hermes could be a member of both Product and Docs and use both workspaces' tools, with a token for each.
 
-- The Tool Portal handles this already: one token per workspace.
-- Cost: one bot's memory mixes both workspaces' work.
+- Gain: one bot, one registration, tools in several workspaces. The Tool Portal already handles one token per workspace.
+- Cost: one bot's memory mixes several workspaces' work, which the workspaces' owners bear.
     </template>
   </ex-option>
 </ex-choice>
@@ -222,17 +227,18 @@ Hermes could be a member of both Product and Docs and use both workspaces' tools
 <ex-choice id="collaborator-allowed" title="Who makes someone a collaborator of a workspace?">
   <ex-option id="collaborator-admin-picks" title="**The admin, per workspace** (recommended)">
     <template slot="summary">
-Being in Acme lets Review bot talk to no workspace until the admin makes it a collaborator of Product.
+Being added to Acme lets a bot talk to no workspace until the admin makes it a member or a collaborator there. Review bot reaches Product only because the admin made it Product's collaborator.
 
-- An outside bot reaches only the workspaces you pick.
+- Gain: an outside bot reaches only the workspaces you pick.
+- Cost: the admin creates and maintains every collaboration, and a bot or person waits until it exists.
     </template>
   </ex-option>
   <ex-option id="collaborator-whole-organization" title="**Everyone in the organization, automatically**">
     <template slot="summary">
 Anyone added to Acme may message members of every Acme workspace.
 
-- Less setup.
-- Cost: adding an outside bot to Acme lets it message every workspace.
+- Gain: no setup per workspace.
+- Cost: adding an outside bot to Acme lets it message every workspace; each workspace's members bear the exposure.
     </template>
   </ex-option>
 </ex-choice>
@@ -242,16 +248,16 @@ Anyone added to Acme may message members of every Acme workspace.
     <template slot="summary">
 Acme's workspaces and Personal's workspaces are served by separate Tool Portal deployments.
 
-- A failure or overload in one organization's deployment cannot reach another's.
-- Cost: one more deployment to run per organization.
+- Gain: a failure or overload in one organization's deployment cannot reach another's.
+- Cost: one more deployment to run, configure and pay for per organization; you as operator bear it.
     </template>
   </ex-option>
   <ex-option id="portal-shared" title="**No: one shared deployment for all organizations**">
     <template slot="summary">
 Every workspace keeps its own endpoint and store, but all organizations share the running deployment.
 
-- Cheaper to run.
-- Cost: on Cloudflare a Worker's 128 MB of memory is shared by calls from every workspace at that moment, so one organization's heavy call can fail another's.
+- Gain: cheaper to run; one deployment to operate.
+- Cost: on Cloudflare a Worker's 128 MB of memory is shared by calls from every workspace at that moment, so one organization's heavy call can fail another's; the other organizations bear it.
     </template>
   </ex-option>
 </ex-choice>
