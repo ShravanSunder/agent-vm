@@ -67,7 +67,7 @@ The set is one concern, so it has no capability through-lines. The task paths be
 3. [Specification: organizations](specification.md#organizations)
 4. [Program Design: organizations, admission first, nothing across](program-design.md#organizations-admission-first-nothing-across-r34r38)
 5. [Verification Design: coverage rows](verification-design.md#coverage-rows)
-6. [Alternatives: how organizations' Fleet data are kept apart (OD8)](alternatives.md#21-open-how-are-organizations-fleet-data-kept-apart-od8)
+6. [Alternatives: how organizations' Fleet data are kept apart (OD8)](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
 
 ## Reading path: a machine logs in
 
@@ -109,6 +109,6 @@ The set is one concern, so it has no capability through-lines. The task paths be
 
 ## Open owner decisions
 
-- [Requirements: open owner decisions](requirements.md#open-owner-decisions) (OD2, OD4–OD10; OD1 and OD3 closed)
-- [Alternatives: OD8 drawn](alternatives.md#21-open-how-are-organizations-fleet-data-kept-apart-od8)
+- [Requirements: open owner decisions](requirements.md#owner-decisions) (OD2, OD4–OD10; OD1 and OD3 closed)
+- [Alternatives: OD8 drawn](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
 - [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.md#waiting-on-you-before-the-slices-that-need-it)
