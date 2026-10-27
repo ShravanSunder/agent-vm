@@ -125,6 +125,301 @@ flowchart TB
 | E13 Isolation record | Organization authority | session registry (new) | `identity_contract.rs`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design) | registration; the token's `principal` | persisted | Rust tagged enum |
 | E14 Shared bucket | Organization authority (a derived query) | `organization_authority` (new) | `identity_contract.rs` lookup result (new) | admin lookup | derived | Rust |
 
+### The database map
+
+Five stores, each with one owner. They share no database and no foreign key: they refer to each other only by identifiers, and each check reads its own store. On Cloudflare the sign-in service uses D1 and the others are Durable Objects; on Node and Tokio each is a SQLite database. Each picture below shows one table and the tables that hang off it; columns are the keys and the fields this design relies on.
+
+```mermaid
+flowchart TB
+  SI["Sign-in service: one database<br/>people, OAuth clients and tokens, device codes"]
+  REG["Fleet central · Registry: one<br/>organizations, machine claims"]
+  OA["Fleet central · organization authority:<br/>one per organization<br/>admissions, bots, roles, machines, sessions,<br/>remote starts, removal outbox"]
+  FO["Fleet central · Fleet object: one per organization<br/>workspaces, boards, projects, feed"]
+  WS["Tool Portal · workspace store: one per workspace<br/>approval uses, removal marks"]
+  REG -->|"organization_id"| OA
+  OA -->|"workspace_id, project_id"| FO
+  SI -.->|"enrollment ID on device codes<br/>and refresh tokens"| OA
+  OA -->|"removal notices, by subject key"| WS
+```
+
+#### Sign-in service
+
+D1, or `better-sqlite3` on Node (OD4). Better Auth's tables as its CLI generates them, plus our additions. Also generated and not drawn: `verification`, `jwks`, `oauthConsent`, `oauthClientAssertion`, `oauthResource`. Our `sign_in_audit` (`id` primary key, `organization_id`, `request_id`, `kind`, `actor`, `outcome`, `recorded_at_ms`; unique `request_id` and `kind`) stands alone.
+
+People, and their admission to organizations:
+
+```mermaid
+erDiagram
+  user ||--o{ session : "signs in as"
+  user ||--o{ account : "signs in with"
+  user ||--o{ passkey : has
+  user ||--o{ organization_admission_claim : "pending claims"
+  user ||--o{ admitted_person_guard : "admitted in"
+  user {
+    text id PK
+    text email
+  }
+  session {
+    text id PK
+    text userId FK
+    text organizationId "added"
+  }
+  account {
+    text id PK
+    text userId FK
+    text providerId
+  }
+  passkey {
+    text id PK
+    text userId FK
+  }
+  organization_admission_claim {
+    text attempt_id PK
+    text person_id
+    text organization_id
+  }
+  admitted_person_guard {
+    text person_id PK
+    text organization_id PK
+  }
+```
+
+Clients, tokens and machine login:
+
+```mermaid
+erDiagram
+  oauthClient ||--o{ oauthAccessToken : issues
+  oauthClient ||--o{ oauthRefreshToken : issues
+  oauthClient ||--o{ deviceCode : "Router login client"
+  oauthClient {
+    text clientId PK
+    text metadata "a bot credential's botId, organizationId"
+  }
+  oauthAccessToken {
+    text id PK
+    text clientId FK
+  }
+  oauthRefreshToken {
+    text id PK
+    text clientId FK
+    text referenceId "organizationId:enrollmentId"
+  }
+  deviceCode {
+    text id PK
+    text userId FK "the approving owner"
+    text machineInstallationId "added"
+    text machinePeerId "added"
+    text machineLabel "added"
+    text organizationId "added"
+    text enrollmentId "added, after approval"
+  }
+```
+
+#### Fleet central · Registry
+
+One for the whole Fleet central. New at step 2; today's `machine_enrollments` is dropped in the same deploy.
+
+```mermaid
+erDiagram
+  organizations ||--o{ fleet_machines : claims
+  organizations {
+    text organization_id PK
+    text state "creating or active"
+    text authority_address
+  }
+  fleet_machines {
+    text service_id PK "the installation"
+    text peer_id UK
+    text organization_id FK
+    text claimed_at "once, after authorization"
+  }
+```
+
+#### Fleet central · organization authority
+
+New, one per organization. Table names follow the record types in the binding table above. Not drawn: the ordered mark counter, the records of changes, the credential and admitted-command outboxes, and the removal outbox (`notice_id` primary key, `subject` as a removal subject key, `mark`, `state` pending, acknowledged or lapsed).
+
+Admission comes first:
+
+```mermaid
+erDiagram
+  organization ||--o{ admission : admits
+  organization ||--o{ workspace_pair : allows
+  organization {
+    text organization_id PK
+    text owner_person_id
+    text state
+  }
+  admission {
+    text admission_id PK
+    text kind "person or bot"
+    text person_id "a sign-in allowlist entry"
+    text bot_id
+    text state
+  }
+  workspace_pair {
+    text workspace_a PK
+    text workspace_b PK
+  }
+```
+
+Every role is keyed by an admission:
+
+```mermaid
+erDiagram
+  admission ||--o| bot : "for a bot"
+  admission ||--o{ membership : keys
+  admission ||--o{ collaboration : keys
+  admission {
+    text admission_id PK
+    text kind "person or bot"
+  }
+  bot {
+    text bot_id PK
+    text admission_id FK
+    text state "registered or retired"
+  }
+  membership {
+    text workspace_id PK
+    text principal PK "a bot or a session"
+    text persona
+    text admission_ref "or, for a session, its machine"
+    text state
+  }
+  collaboration {
+    text workspace_id PK
+    text collaborator PK "a person or a bot"
+    text admission_id FK
+    text state
+  }
+```
+
+Machines:
+
+```mermaid
+erDiagram
+  machine_enrollment }o..o{ machine_allowance : "same installation"
+  machine_enrollment {
+    text enrollment_id PK
+    text installation_id
+    text authorized_by "the owner's approval"
+    text request_id UK
+    text state "reserved, approved, enrolled, revoked, expired"
+  }
+  machine_allowance {
+    text installation_id PK
+    text workspace_id PK
+    text state
+  }
+```
+
+Sessions, and starts on another machine:
+
+```mermaid
+erDiagram
+  fleet_session ||--|| isolation_record : has
+  fleet_session ||--o| remote_start : "started by, if remote"
+  fleet_session {
+    text session_ref PK
+    text project_id
+    text workspace_id
+    text persona
+    text started_by "machine, session or remote session"
+    text state "active, removed, ended"
+  }
+  isolation_record {
+    text session_ref PK
+    text kind
+    text environment
+  }
+  remote_start {
+    text request_id PK
+    text requester_session
+    text target_installation
+    text launch "directory, harness, policy"
+    integer deadline
+    text bound_session
+    text state
+  }
+```
+
+#### Fleet central · Fleet object
+
+Existing, now one per organization (OD8). Today's tables (`core_migrations/0003_fleet_records.sql` at `f465808f`) plus each machine's stored scope for the filtered view. A project also names its board, and each board belongs to one workspace. Not drawn: `fleet_feed` (`entry_id` primary key, `position` unique and contiguous, `record_id`), and the decision, request and feed-reader tables.
+
+```mermaid
+erDiagram
+  workspaces ||--o{ boards : has
+  workspaces ||--o{ project_directory : has
+  workspaces ||--o{ repository_attachments : has
+  workspaces ||--o{ workspace_adrs : has
+  workspaces ||--o{ machine_scope : "visible to"
+  workspaces {
+    text workspace_id PK
+    text name UK "unique in its organization"
+  }
+  boards {
+    text board_id PK
+    text workspace_id FK
+  }
+  project_directory {
+    text project_id PK
+    text workspace_id FK
+    text board_id FK
+  }
+  repository_attachments {
+    text attachment_id PK
+    text workspace_id FK
+    text repository_reference
+  }
+  workspace_adrs {
+    text adr_id PK
+    text workspace_id FK
+  }
+  machine_scope {
+    text installation_id PK "new"
+    text workspace_id PK
+    text level "full or paired"
+  }
+```
+
+#### Tool Portal · workspace store
+
+One database per workspace: the remediation design's tables (RD1) at store version 2, which drops `membership` and `membership_removal`, re-keys approval uses by `principal`, and adds the removal tables.
+
+```mermaid
+erDiagram
+  store_meta ||--o{ proxy_token_use : holds
+  store_meta ||--o{ batch_approval_use : holds
+  store_meta ||--o{ removal_mark : holds
+  store_meta ||--o{ removal_notice : holds
+  store_meta {
+    integer id PK "one row"
+    text workspace_id
+    integer security_time_ms
+  }
+  proxy_token_use {
+    text token_id PK
+    text principal PK
+    integer expires_at_ms
+  }
+  batch_approval_use {
+    text token_id PK
+    text principal
+    text state "reserved, armed, proven-not-dispatched"
+  }
+  removal_mark {
+    text subject PK "bot, session or machine key"
+    integer highest_revision "highest notice seen"
+    integer expires_at_ms
+  }
+  removal_notice {
+    text notice_id PK
+    text subject
+    integer removal_revision
+  }
+```
+
 ### Organizations: admission first, nothing across (R34–R38)
 
 - **Admission keys every role (R35, R37).** Every membership and collaboration row records the admission it was granted under: a person's allowlist entry ID, a bot's record ID, or for a session its machine. A session's membership counts while its machine has any active enrollment in the organization, so logging the machine in again keeps its sessions (R40). Every other role counts only while its admission is active, and the check runs in the same transaction as the decision that relies on it. Adding someone back creates a new admission ID, so no earlier row counts again (R37); the admin grants roles afresh.

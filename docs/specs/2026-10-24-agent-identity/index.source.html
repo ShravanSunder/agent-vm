@@ -10,6 +10,7 @@
 <body>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="plans/2026-10-27-agent-identity-delivery.html">Delivery plan</a>
 <a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
 <a href="../../wip/2026-10-26-organization-model/index.html">Organization model</a>
 <a href="../2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
@@ -65,6 +66,7 @@
   <ex-step to="delivery-plan--how-to-read-this-plan" icon="book-open">Deliverables, workstreams and pieces: what each word means here.</ex-step>
   <ex-step to="delivery-plan--the-deliverables-at-a-glance" icon="rocket">The seven deliverables, what you'll see working, and what each waits on.</ex-step>
   <ex-step to="delivery-plan--how-the-deliverables-connect" icon="path">How the deliverables depend on each other.</ex-step>
+  <ex-step to="delivery-plan--tickets-by-workstream" icon="stack">Every ticket, by workstream, with its deliverable and what it waits on.</ex-step>
   <ex-step to="delivery-plan--d1-organizations-who-is-in-what" icon="users">D1, organizations: its workstreams and pieces.</ex-step>
   <ex-step to="delivery-plan--d2-a-machine-logs-in" icon="key">D2, a machine logs in.</ex-step>
   <ex-step to="delivery-plan--d3-sessions-and-bots-use-their-workspace-s-tools" icon="plug">D3, sessions and bots use their workspace's tools.</ex-step>
@@ -246,6 +248,10 @@ flowchart TB
 
 <p id="how-access-text" data-comment-label="Three steps">Three steps, no half steps. First everything is built while today's login keeps running. Then, still behind Access, Fleet central accepts only the new login, and you log every machine in again. Then, in the next change, Access is removed. Each step is rehearsed on the private test stack first.</p>
 
+<h3 id="how-data">Where the data lives</h3>
+
+<p id="how-data-text" data-comment-label="Database map">Five stores, each with one owner, linked only by identifiers: the sign-in service's database, Fleet central's Registry, one organization authority and one Fleet object per organization, and one Tool Portal store per workspace. The <a href="#program-design--the-database-map">database map</a> draws each one's tables and how they relate.</p>
+
 <h3 id="how-plan">How it gets built</h3>
 
 <p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="#delivery-plan">delivery plan</a> cuts the work into seven deliverables, each something you can see working: D1 organizations, D2 machine login, D3 sessions and bots using tools, D4 collaboration, D5 removal, D6 starting a session on another machine, and D7 the move off Access. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Tool Portal.</p>
@@ -324,7 +330,7 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
 
 <h2 id="sign-in-storage">What lives where: D1 and Durable Objects</h2>
 
-<p id="storage-rule" data-comment-label="The storage rule">Three owners, three storage homes. The sign-in service keeps only its own records in D1. Everything per organization lives in Fleet central, as one Durable Object per organization. Everything per workspace that the Tool Portal enforces lives in one Durable Object per workspace. On Node and on Fleet's Tokio host, each home is a SQLite file instead. To be walked through it, press <strong>W</strong> and choose <em>What lives where</em>.</p>
+<p id="storage-rule" data-comment-label="The storage rule">Three owners, three storage homes. The sign-in service keeps only its own records in D1. Everything per organization lives in Fleet central, as one Durable Object per organization. Everything per workspace that the Tool Portal enforces lives in one Durable Object per workspace. On Node and on Fleet's Tokio host, each home is a SQLite file instead. To be walked through it, press <strong>W</strong> and choose <em>What lives where</em>. Every table in each home is drawn in the <a href="#program-design--the-database-map">database map</a>.</p>
 
 <ex-mermaid id="storage-homes" label="Where each kind of state lives" data-width="canvas"><script type="text/plain">
 flowchart LR

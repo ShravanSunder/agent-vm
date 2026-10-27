@@ -1,28 +1,10 @@
 # Agent identity delivery plan
 
-## Result and basis
+## Result
 
 - **Planning result:** `ready`, plan-only.
   - Your decisions of 27 October are in the design (`b734d002`). The Sol Reviewer's checks of the changes closed at `b73f308b` with `ready` (`reviewer-recheck-5.md`).
   - Nothing is built until you approve the design and this plan.
-- **Originating planner:** `plan-implementation`
-- **Governing planning basis:** reviewed four-document design
-  - [Requirements](../requirements.md)
-  - [Specification](../specification.md)
-  - [Program Design](../program-design.md)
-  - [Verification Design](../verification-design.md)
-  - Review history is in `tmp/practices-research/2026-10-27-identity-four-document-review/`:
-    - the four-document review at `66dd3b66`;
-    - checks at `33bee8bd` and `5327c6c7`, which closed every correction and returned `decision-needed` on your choices;
-    - check 3 at `b05285cf` (`reviewer-recheck-3.md`, needs-revision, RC3-1 to RC3-4) and the Advisor's second look (`advisor-recheck-3.md`, N1 to N4), corrected at `fe47ee33`;
-    - check 4 at `fe47ee33` (`reviewer-recheck-4.md`, RC4-1 and RC4-2), corrected at `b73f308b`;
-    - check 5 at `b73f308b` (`reviewer-recheck-5.md`): `ready`, no finding left.
-  - Applicability anchors: agent-vm `design/portal-remediation`, design at `b73f308b`; codex-router `f465808f` (and `main` for the create path and mail kinds); Better Auth 1.7.11 (`52ab801c`)
-- **Delivery context:**
-  - Requested terminal: `plan-only`. You said nothing is built until the design is agreed, so this plan goes to you, not to an Implementer.
-  - Delivery grouping: `deliverables`, by your direction (27 October): "each plan parts to be delivery vertical slices and how they correlate. within each deliverable, there are workstreams."
-  - PR topology: `separate-prs`. Each workstream piece of a deliverable is one PR in its own repository, as the delivery orchestration's rule "every slice merges as one pull request" requires.
-- **Order it extends:** the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.md), which owns the cross-repository order and is updated in the same change.
 
 ## How to read this plan
 
@@ -71,6 +53,59 @@ flowchart TB
 
 D2 comes before D3 because a session is registered only through a machine logged in the new way, whose connection carries its enrollment. D4, D5 and D6 can run side by side once D3 is proven. D6 is not needed for the switch off Access, so it doesn't hold D7 up.
 
+## Tickets by workstream
+
+The same pieces, seen from the other side: each workstream's tickets, in order, with the deliverable each belongs to. One ticket is one pull request.
+
+**Fleet central and the Router** (Fleet Lead, codex-router)
+
+| Ticket | Deliverable | Waits on |
+|---|---|---|
+| F1 identity contracts | D1 | F0; design approval |
+| F2 organization authority | D1 | F1; K5, K6 from B3 |
+| F2b Fleet data per organization and the filtered view | D1 | F2 |
+| F3a central receivers and service caller | D1 | F2; K7 from B4a |
+| F12 Router secret store, Linux backend | D2 | design approval |
+| F10 machine enrollment and the machine token check | D2 | F2, F3a; K8, K9 from F1; K10 from B5 |
+| F11 Router machine login | D2 | F1; F12 for Linux; B5 for the real flow |
+| F14 SO8 machine login journey | D2 | F10, F11, B5 |
+| F4 Router registrar, binding, forwarder | D3 | F2, F2b, F11 |
+| F3b grant decisions and credential management | D3 | F3a, F4; K1 from B4b |
+| F8 SO1 journey | D3 | F4, F11, F14 |
+| F6 collaboration admission | D4 | F2, F4 |
+| F7 bot messaging | D4 | F6 |
+| F5 removal outbox | D5 | F2, F10 |
+| F15 starting a session on another machine | D6 | F2, F4, F10, F11 |
+| F16 SO11 remote start journey | D6 | F15, F14 |
+| F9 SO4 conformance on both central hosts | DONE | F2b, F3b, F10, F15 |
+
+**Sign-in service** (Tool Portal Lead)
+
+| Ticket | Deliverable | Waits on |
+|---|---|---|
+| B1 sign-in core and storage | D1 | OD4 |
+| B3 design-thread fixes | D1 | B1 |
+| B4a issuer core | D1 | B3; K3 from F1 |
+| B2 sign-in Node host | D2 | B1 |
+| B5 device-code login | D2 | B4a, B2; K8, K9 from F1 |
+| B4b session and bot tokens | D3 | B4a; K2–K4 from F1 |
+
+**Tool Portal** (Tool Portal Lead; the remediation slices A1–A8 are their own plan)
+
+| Ticket | Deliverable | Waits on |
+|---|---|---|
+| P1a Portal token check | D3 | A8; K1 from B4b |
+| P1b Portal removal receiver | D5 | P1a; K2 from F1 |
+
+**Joint and production** (the Tool Portal Lead coordinates; you run the production steps)
+
+| Ticket | Deliverable | Waits on |
+|---|---|---|
+| JC1 identity joint cut, private stack | D7 | D1–D5's tickets merged |
+| JC2 private stack without Access | D7 | JC1 |
+| PROD2 production step 2 | D7 | JC2; your go |
+| PROD3 production step 3 | D7 | PROD2 holding; your go |
+
 ## Goal, scope and non-goals
 
 **Goal:** every identity requirement (U1–U39) delivered and proven on its planned target. Your production fleet then moves to the new machine login in U34's three steps.
@@ -98,6 +133,27 @@ D2 comes before D3 because a session is registered only through a machine logged
 | OD2, the default token lifetime | nothing; 5 minutes is built and is one setting | 5 minutes |
 | OD-R1 to OD-R4, RD1 to RD6 | as in the delivery orchestration and the remediation design | unchanged |
 | Running PROD2 and PROD3 | D7's production steps | at PROD2 you run the new Router build and log every machine in again; nothing in production changes before you say go |
+
+## Basis and review history
+
+- **Originating planner:** `plan-implementation`
+- **Governing planning basis:** reviewed four-document design
+  - [Requirements](../requirements.md)
+  - [Specification](../specification.md)
+  - [Program Design](../program-design.md)
+  - [Verification Design](../verification-design.md)
+  - Review history is in `tmp/practices-research/2026-10-27-identity-four-document-review/`:
+    - the four-document review at `66dd3b66`;
+    - checks at `33bee8bd` and `5327c6c7`, which closed every correction and returned `decision-needed` on your choices;
+    - check 3 at `b05285cf` (`reviewer-recheck-3.md`, needs-revision, RC3-1 to RC3-4) and the Advisor's second look (`advisor-recheck-3.md`, N1 to N4), corrected at `fe47ee33`;
+    - check 4 at `fe47ee33` (`reviewer-recheck-4.md`, RC4-1 and RC4-2), corrected at `b73f308b`;
+    - check 5 at `b73f308b` (`reviewer-recheck-5.md`): `ready`, no finding left.
+  - Applicability anchors: agent-vm `design/portal-remediation`, design at `b73f308b`; codex-router `f465808f` (and `main` for the create path and mail kinds); Better Auth 1.7.11 (`52ab801c`)
+- **Delivery context:**
+  - Requested terminal: `plan-only`. You said nothing is built until the design is agreed, so this plan goes to you, not to an Implementer.
+  - Delivery grouping: `deliverables`, by your direction (27 October): "each plan parts to be delivery vertical slices and how they correlate. within each deliverable, there are workstreams."
+  - PR topology: `separate-prs`. Each workstream piece of a deliverable is one PR in its own repository, as the delivery orchestration's rule "every slice merges as one pull request" requires.
+- **Order it extends:** the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.md), which owns the cross-repository order and is updated in the same change.
 
 ## Current evidence
 
