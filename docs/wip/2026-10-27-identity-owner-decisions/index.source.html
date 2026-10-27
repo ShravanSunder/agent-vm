@@ -23,11 +23,43 @@
 <a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
-<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.4">
+<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.5">
 
 <h1>Identity decisions</h1>
 
-<p id="intro" data-comment-label="What this page is">Nothing is left to pick here. Your answers are recorded below and are now in the design documents. Your four questions are answered further down.</p>
+<p id="intro" data-comment-label="What this page is">One question is new, because you asked for starting a session on another machine to come first. Pick an answer, then use <strong>Copy</strong> or <strong>Export</strong> in the Comments panel and paste it back to me. Your earlier answers are recorded further down.</p>
+
+<h2 id="window">What runs between your switch and the second cut?</h2>
+
+<p id="window-what" data-comment-label="The window">Remote start goes live in production at your switch, with only the pieces it needs. Bots, roles, what each machine may see, tools and removal go live later, together, at the second cut. In between, those rules don't exist yet, so something has to fill the gap.</p>
+
+<ex-mermaid id="window-picture" label="The window"><script type="text/plain">
+flowchart TB
+  S["Your switch:<br/>remote start live"] --> W["The window"]
+  W --> C["Second cut: roles, what machines see,<br/>tools and removal live"]
+  C --> A["Cloudflare Access off"]
+</script></ex-mermaid>
+
+<ex-choice id="window-choice" title="What runs in the window?">
+  <ex-option id="window-today" title="**Today's behavior inside your organization** (recommended)">
+    <template slot="summary">
+Everything remote start doesn't change works as it does today. Every machine still sees every workspace. Collaboration calls are tagged with their real session but aren't checked per workspace yet. The Tool Portal keeps today's tokens. Cloudflare Access stays in front until everything is live.
+
+- Gains: remote start soonest, with nothing else broken.
+- Costs: a period where the new login runs beside today's rules, and the sign-in service keeps today's token path until the tools work lands. Access comes off later than "the next change", once every rule holds. Only your machines are in the organization the whole time.
+    </template>
+  </ex-option>
+  <ex-option id="window-strict" title="Every rule from the switch">
+    <template slot="summary">
+What each machine may see and the per-workspace collaboration check move into remote start's deliverable. The Tool Portal pauses on the private stack between the cuts.
+
+- Gains: no window with today's rules.
+- Costs: more work before remote start works, and no Tool Portal in the window.
+    </template>
+  </ex-option>
+</ex-choice>
+
+<p id="earlier" data-comment-label="Earlier answers">Your earlier answers are recorded below and are now in the design documents. Your four questions are answered further down.</p>
 
 <h2 id="question">Device-code login only, for now: decided</h2>
 

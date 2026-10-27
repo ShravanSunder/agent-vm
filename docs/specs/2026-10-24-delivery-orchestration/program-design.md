@@ -10,41 +10,40 @@ flowchart TB
   F0["F0 Fleet release"]
   R["R Tool Portal remediation<br/>A1 to A8"]
   D1["D1 Start a session on another machine<br/>with its building blocks<br/>JC1 → PROD2"]
-  D2["D2 Off Cloudflare Access<br/>JA1 → PROD3"]
-  D3["D3 Organizations: people, bots,<br/>what machines see"]
-  D4["D4 Sessions and bots use tools"]
-  D5["D5 Collaboration and bot messages"]
-  D6["D6 Removal stops the next call"]
-  D7["D7 Everything else live<br/>JC2 → PROD4"]
-  DONE["DONE<br/>every governed outcome proven"]
+  D2["D2 Organizations: people, bots,<br/>what machines see"]
+  D3["D3 Sessions and bots use tools"]
+  D4["D4 Collaboration and bot messages"]
+  D5["D5 Removal stops the next call"]
+  D6["D6 Everything else live<br/>JC2 → PROD4"]
+  D7["D7 Off Cloudflare Access<br/>JA1 → PROD3"]
+  DONE["DONE<br/>every governed outcome proven and live"]
   APPROVE --> R
   APPROVE --> D1
   F0 --> D1
   D1 --> D2
-  D1 --> D3
+  D2 --> D3
+  R --> D3
   D3 --> D4
-  R --> D4
-  D4 --> D5
+  D3 --> D5
   D4 --> D6
-  D5 --> D7
+  D5 --> D6
   D6 --> D7
-  D2 --> DONE
   D7 --> DONE
 ```
 
-**The shape:** the work is cut into deliverables, each something you can see working end to end, and each built from slices in the workstreams below (one PR per slice). The Tool Portal remediation (R, slices A1–A8) needs nothing from codex-router, so it runs as soon as the designs are approved. codex-router ships its release (F0) first. Then D1, starting a session on another machine, comes first, carrying its building blocks: your sign-in and the organization core, machine login, and session registration. D1 goes live on the private stack at the first joint cut (JC1) and then in production at your switch (PROD2), so remote start works on your real machines before anything else. D2 removes Cloudflare Access, and D3 adds bots, roles and the filtered view, side by side. D4 (tools, which also needs R), then D5 (collaboration) and D6 (removal) follow; D7 takes D3–D6 live together at the second joint cut (JC2) and then updates production (PROD4), with no machine logging in again (identity U34). The identity [delivery plan](../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.md) gives each deliverable's slices and proofs.
+**The shape:** the work is cut into deliverables, each something you can see working end to end, and each built from slices in the workstreams below (one PR per slice). The Tool Portal remediation (R, slices A1–A8) needs nothing from codex-router, so it runs as soon as the designs are approved. codex-router ships its release (F0) first. Then D1, starting a session on another machine, comes first, carrying its building blocks: your sign-in and the organization core, machine login, and session registration. D1 goes live on the private stack at the first joint cut (JC1) and then in production at your switch (PROD2), so remote start works on your real machines before anything else. D2 adds people, bots, roles and the filtered view; D3 tools (which also needs R); D4 collaboration and D5 removal side by side. D6 takes D2–D5 live together at the second joint cut (JC2) and then in production (PROD4), with no machine logging in again. Cloudflare Access comes off last (D7), because every rule must hold first (identity R43). Between PROD2 and PROD4, inside the one organization, today's behavior continues for what D1 doesn't change, and the Tool Portal keeps today's tokens; that window is the owner's open question. The identity [delivery plan](../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.md) gives each deliverable's slices and proofs.
 
 | Deliverable | Slices, by workstream | Waits on |
 |---|---|---|
 | R Tool Portal remediation | A (agent-vm): A1–A8 | design approval; RD1 |
-| D1 Start a session on another machine | B (sign-in): B1, B3, B4a, B2, B5 · F (codex-router): F1, F2a, F2b, F3a, F10, F11, F12, F4a, F15, F14, F8a, F16 · J: JC1 · F with you: PROD2 | design approval; OD4; F0 |
-| D2 Off Cloudflare Access | J: JA1 · F with you: PROD3 | D1 in production |
-| D3 Organizations: people, bots, what machines see | F: F2c, F2v | D1 |
-| D4 Sessions and bots use tools | B: B4b · F: F3b, F4f, F8b · P (Portal identity): P1a | D3; R (A8) |
-| D5 Collaboration and bot messages | F: F6, F7 | D4 |
-| D6 Removal stops the next call | F: F5 · P: P1b | D4 |
-| D7 Everything else live | J: JC2 · F with you: PROD4 | D3–D6 |
-| DONE | F9, and every deliverable proven | D2, D7 |
+| D1 Start a session on another machine | B (sign-in): B1, B3, B4a, B2, B5 · F (codex-router): F1, F2a, F2b, F3a, F10, F11, F4a, F15, F14, F8a, F16; F12 off the first-use path · J: JC1 · F with you: PROD2 | design approval; OD4; F0 |
+| D2 Organizations: people, bots, what machines see | F: F2c, F2v | D1 |
+| D3 Sessions and bots use tools | B: B4b · F: F3b, F4f, F8b · P (Portal identity): P1a | D2; R (A8) |
+| D4 Collaboration and bot messages | F: F6, F7 | D3 |
+| D5 Removal stops the next call | F: F5 · P: P1b | D3 |
+| D6 Everything else live | J: JC2 · F with you: PROD4 | D2–D5 |
+| D7 Off Cloudflare Access | J: JA1 · F with you: PROD3 | D6 |
+| DONE | F9, F12, and every deliverable proven and live | D7 |
 
 ## Workstreams
 
@@ -52,7 +51,7 @@ flowchart TB
 |---|---|---|---|---|
 | **A** Tool Portal remediation | agent-vm | Tool Portal Lead | [Tool Portal remediation](../2026-10-24-tool-portal-remediation/program-design.md) | the owner approves the designs; A2 also waits on RD1 |
 | **B** Sign-in revision | agent-vm | Tool Portal Lead | [people sign-in](../2026-10-20-people-sign-in/program-design.md) and [agent identity](../2026-10-24-agent-identity/program-design.md) (sign-in parts) | the owner approves the designs and the sign-in schema |
-| **P** Portal identity | agent-vm | Tool Portal Lead | agent identity (Tool Portal parts) on the remediated store | A8 has cut over, and K2 is produced |
+| **P** Portal identity | agent-vm | Tool Portal Lead | agent identity (Tool Portal parts) on the remediated store | A8 has cut over, and B4b has produced K1 |
 | **F0** Fleet release | codex-router | Fleet Lead | the Fleet release (unchanged by this design) | now |
 | **F** Fleet identity | codex-router | Fleet Lead | agent identity (Fleet central and Router parts) | F0 has shipped (R3) and the owner approves the designs |
 | **J** Joint | both | Tool Portal Lead coordinates; each Lead runs its own side | all three | JC1: D1's slices have merged; JC2: D3–D6's slices have merged |
@@ -71,43 +70,43 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | A6 clean build | agent-vm | remediation R16, R18, R19; R17 in part (see "Parked work this touches") | A3 | as A1 |
 | A7 large requests | agent-vm | remediation R26 | A3; the #33 evidence | as A2, plus the deployed check |
 | A8 Portal cutover | agent-vm | remediation R9, and the complete remediation going live | A4, A5, A6, A7 | deployed cutover check (temporary) on the private Worker and a Node host |
-| B1 sign-in core and storage | agent-vm | identity R29, R30, R31, R32, R33, with the device-code table in the one schema; people sign-in R3 (the per-attempt claim and cleanup), R12 (audit) | design approval; OD4 (the sign-in schema) | as A2 |
-| B2 sign-in Node host | agent-vm | identity R30 (the Node host), U16 for sign-in; people sign-in R11 as superseded | B1 | as A2 |
-| B3 design-thread fixes | agent-vm | the nine still-open #237 threads: identity R5 (people sign-in R1–R20 as revised: linking never binds, introspection by client authentication, `checkedAt` from the first session read); produces K5 and K6 (generated schema plus examples from the real issuer) | B1 | as A1 |
-| B4a issuer core (D1) | agent-vm | identity R26, R27 (issuer side), R38 (no token of any kind for a person): closed token dispatch keeping today's agent client-credentials row until B4b, one-operation service tokens, person confirmation, person admission asked of central (K3's person half); produces K7 | B3; K3 produced by F1 | as A2; its central-facing paths use stand-ins until JC1, named as unverified |
-| B4b session and bot tokens (D4) | agent-vm | identity R1, R4, R15, R16, R18, R25: workspace and collaboration token claims replacing today's agent row, fleet-session grant, bot claims, receivers for K4, the collaboration resource; produces K1 | B4a; K2–K4 produced by F1 | as B4a, until JC2 |
-| B5 device-code login | agent-vm | identity R42, R40 (issuer side), R31 (single use): the Router login client, the device grant extended with the machine's fields, the approval hook asking central, machine claims from central's decision on each device-code and refresh mint; produces K10 (example machine tokens from the real issuer) | B4, B2; K8 and K9 produced by F1 | as A2; SO2's device-code cases on D1 and `better-sqlite3` |
-| P1a Portal token check (D4) | agent-vm | identity R9 (persona narrowed at the Portal), R17, R38 (no requester field read), R45 (one organization per deployment); remediation store version 2 and R9 (no approval revived at the re-key): token-only caller check, principal keys | A8; K1 produced by B4b | as A2 |
-| P1b Portal removal receiver (D6) | agent-vm | identity R19–R22 (Portal side): removal receiver (K2), stored marks, `deriveRemovalSubjectKey` | P1a; K2 produced by F1 | as A2 |
+| B1 sign-in core and storage (D1) | agent-vm | identity R29, R30, R31, R32, R33, with the device-code table in the one schema; people sign-in R3 (the per-attempt claim and cleanup), R12 (audit); today's agent registration, metadata and resource links move onto the new storage and stay until B4b | design approval; OD4 (the sign-in schema) | as A2 |
+| B2 sign-in Node host (D1) | agent-vm | identity R30 (the Node host), U16 for sign-in; people sign-in R11 as superseded | B1 | as A2 |
+| B3 design-thread fixes (D1) | agent-vm | the nine still-open #237 threads: identity R5 (people sign-in R1–R20 as revised: linking never binds, introspection by client authentication, `checkedAt` from the first session read); produces K5 and K6 | B1 | as A1 |
+| B4a issuer core (D1) | agent-vm | identity R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; admin and operator tokens stay): closed token dispatch, one-operation service tokens, person confirmation, person admission asked of central (K3's person half); keeps today's agent path (client-credentials row, registration metadata, resource links, workspace policy, release checks) until B4b; produces K7 | B3; F1's contract fixtures | as A2; its central-facing paths use stand-ins until JC1, named as unverified |
+| B4b session and bot tokens (D3) | agent-vm | identity R1, R4, R15, R16, R18, R25: workspace and collaboration token claims, fleet-session grant, bot claims, receivers for K4, the collaboration resource; removes today's agent path; produces K1 | B4a; F1's contract fixtures | as B4a, until JC2 |
+| B5 device-code login (D1) | agent-vm | identity R42, R40 (issuer side), R31 (single use): the Router login client, the device grant extended with the machine's fields, the approval hook asking central, machine claims from central's decision on each device-code and refresh mint; produces K10 (machine tokens from the real issuer) | B4a, B2; F1's contract fixtures | as A2; SO2's device-code cases on D1 and `better-sqlite3` |
+| P1a Portal token check (D3) | agent-vm | identity R9 (persona narrowed at the Portal), R17, R38 (no requester field read), R45 (one organization per deployment); remediation store version 2 and R9 (no approval revived at the re-key): token-only caller check, principal keys | A8; B4b | as A2 |
+| P1b Portal removal receiver (D5) | agent-vm | identity R19–R22 (Portal side): removal receiver (K2), stored marks, `deriveRemovalSubjectKey` | P1a | as A2 |
 | F0 Fleet release | codex-router | — | — | codex-router's own gates (Fleet Lead) |
-| F1 identity contracts | codex-router | identity R26: the Rust contract home (`identity_contract.rs`) and generated JSON Schema for K2–K4, K8 and K9 | F0; design approval | codex-router gates |
-| F2a organization authority core (D1) | codex-router | identity R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, enabled at PROD2), R14 (people, machines, sessions), R34, R35 for people: organizations and their owner, machine allowances, marks; consumes K5 and K6 | F1; K5 and K6 produced by B3 | codex-router gates; both central hosts |
-| F2c bots, roles and workspace pairs (D3) | codex-router | identity R6, R10, R14 (bots and roles), R20, R35 for bots, R36, R37: bots, memberships, collaborations and workspace pairs, each keyed by its admission | F2a | as F2a |
+| F1 identity contracts (D1) | codex-router | identity R26: the Rust contract home (`identity_contract.rs`) and generated JSON Schema with structural fixtures for K2–K4, K8 and K9 (the real-output checks run later; see Cross-repository contracts) | F0; design approval | codex-router gates |
+| F2a organization authority core (D1) | codex-router | identity R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, enabled at PROD2), R14 (people, machines, sessions), R34, R35 for people: organizations and their owner, machine allowances, marks; consumes K5 and K6 | F1 | codex-router gates; both central hosts |
+| F2c bots, roles and workspace pairs (D2) | codex-router | identity R6, R10, R14 (bots and roles), R20, R35 for bots, R36, R37: bots, memberships, collaborations and workspace pairs, each keyed by its admission | F2a | as F2a |
 | F2b Fleet data per organization (D1) | codex-router | identity R34's storage separation (OD8): the Fleet object addressed by organization, the first organization adopting today's storage through a fixed mapping on both hosts, the old address refused | F2a | as F2a, plus a migration test over a populated store |
-| F2v the filtered view (D3) | codex-router | identity R34 and U29: each machine's visible set; directory, snapshot and feed filtered with `Withheld` and `ScopeChanged`; the Router's replica applying them | F2b, F2c, F11 | as F2a |
-| F3a central receivers and service caller (D1) | codex-router | identity R27 (central side): C7 service caller, central's receivers checking each service token, person admission and standing decisions (K3's person half); consumes K7 | F2; K7 produced by B4a | as F2 |
-| F3b grant decisions and credential management (D4) | codex-router | identity R18, R25 (central side): bot and session issuance decisions (K3's grant half), credential and resource management (K4), the collaboration token check; consumes K1 | F3a, F4a, F2c; K1 produced by B4b | as F2a |
+| F2v the filtered view (D2) | codex-router | identity R34 and U29: each machine's visible set; directory, snapshot and feed filtered with `Withheld` and `ScopeChanged`; the Router's replica applying them, observed with a real Router against a local central | F2b, F2c, F11 | as F2a |
+| F3a central receivers and service caller (D1) | codex-router | identity R27 (central side): C7 service caller, central's receivers checking each service token, person admission and standing decisions (K3's person half); consumes K7 | F2a | as F2a |
+| F3b grant decisions and credential management (D3) | codex-router | identity R18, R25 (central side): bot and session issuance decisions (K3's grant half), credential and resource management (K4), the collaboration token check; consumes K1 | F3a, F4a, F2c | as F2a |
 | F4a Router registrar and binding (D1) | codex-router | identity R3, R7, R8, R23, R24: session registration to the machine's organization, the binding, the start check | F2a, F2b, F11 | as F2a |
-| F4f Router token forwarder (D4) | codex-router | identity R2's token path: getting, caching and attaching each session's token | F4a, F3b | as F2a |
-| F5 removal outbox (D6) | codex-router | identity R19, R20, R21: removal notices (K2, with the token's session shape) with acknowledgement and resend; a machine's revocation in one organization-authority transaction | F2c, F10 | as F2a |
-| F10 machine enrollment, token check (D1) | codex-router | identity R39, R40, R42 (central side), C9: enrollments; authorize, claim, then activate, with the Registry's write-once machine index; the active-enrollment check on every decision; the login and token decisions, with their receivers (K8) on F3a's service edges; the machine token check for the sign-in service's tokens, refusing any other issuer; renewal over the connection; the single-valued `machineLogin` setting; the entry's request limit | F2a, F3a; K8 and K9 from F1; K10 from B5 | as F2a |
-| F11 Router machine login (D1) | codex-router | identity R40, R41 (Router side): the device-code flow run in the Router host, where the refresh credential lives, presenting and renewing the machine token, deleting the old enrollment credential | F1; F12 for Linux; B5 for the real flow | as F2a |
-| F12 Router secret store, Linux (D1) | codex-router | identity R41, R44 for the store: the data key from a systemd encrypted credential; without it, the refresh credential is kept only in memory | design approval | codex-router gates (the existing `ubuntu-latest` test job runs the crate's tests) |
+| F4f Router token forwarder (D3) | codex-router | identity R2's token path: getting, caching and attaching each session's token | F4a, F3b | as F2a |
+| F5 removal outbox and notices (D5) | codex-router | identity R19, R20, R21: removal notices to the Tool Portal (K2, with the token's session shape) with acknowledgement and resend, added to each removal's transaction; a machine's revocation keeps F10's local transaction and adds its notices | F2c, F10 | as F2a |
+| F10 machine enrollment, token check, revocation (D1) | codex-router | identity R39, R40, R42 (central side), C9, R19's local part for machines: enrollments; authorize, claim, then activate, with the Registry's write-once machine index; the active-enrollment check on every decision; the login and token decisions, with their receivers (K8) on F3a's service edges; revocation as one transaction (allowances withdrawn, sessions removed, connection closed); the machine token check for the sign-in service's tokens, refusing any other issuer; renewal over the connection; the single-valued `machineLogin` setting; the entry's request limit | F2a, F3a | as F2a |
+| F11 Router machine login (D1) | codex-router | identity R40, R41 (Router side): the device-code flow run in the Router host, where the refresh credential lives, presenting and renewing the machine token, deleting the old enrollment credential | F1; B5 for the real flow | as F2a |
+| F12 Router secret store, Linux (D1, off the first-use path) | codex-router | identity R41, R44 for the store: the data key from a systemd encrypted credential; without it, the refresh credential is kept only in memory | design approval; merged before DONE | codex-router gates (the existing `ubuntu-latest` test job runs the crate's tests) |
 | F15 starting a session on another machine (D1) | codex-router | identity R46, C11: the organization authority's admission and remote-start records; delivery through both connections' delivery faces; the `remoteSession` starter; the Router's create path for another machine and the target's start handler | F2a, F4a, F10, F11 | codex-router gates |
 | F16 SO11 remote start journey (D1) | codex-router | identity SO11 (observes R46, R8): two Routers and a local Fleet central; a real conversation created on the target | F15, F14 | codex-router gates |
-| F6 collaboration admission (D5) | codex-router | identity R12, R28: admission on every collaboration effect path | F2c, F4a | as F2a |
-| F7 bot messaging (D5) | codex-router | identity R11: bot origin, mailbox, receipts | F6; B4b's collaboration tokens | as F2a |
+| F6 collaboration admission (D4) | codex-router | identity R12, R28: admission on every collaboration effect path | F2c, F4a | as F2a |
+| F7 bot messaging (D4) | codex-router | identity R11: bot origin, mailbox, receipts | F6; B4b's collaboration tokens | as F2a |
 | F8a SO1 journey: sessions and binding (D1) | codex-router | identity SO1's session cases (observes R3, R7, R8, R23): the fleet identity journey, in TypeScript, replacing any Python; the Router logged in by device code (F14's arrangement) | F4a, F14 | codex-router gates |
-| F8b SO1 journey: tokens and tools (D4) | codex-router | identity SO1's token, tool, collaboration and removal cases (observes R2, R11, R28, R34): other-organization starts; the replica read for the filtered view | F8a, F4f, F2v | codex-router gates |
-| F9 SO4 conformance (DONE) | codex-router | identity SO4 (observes R6, R13, R14, R19–R21, R34–R37, R39, R40, R46 on both central hosts) | F2b, F2v, F3b, F10, F15 | codex-router gates |
-| F14 SO8 machine login journey (D1) | codex-router | identity SO8 (observes R39–R42): device-code login, renewal, revocation, re-login, memory-only keeping across a restart | F10, F11, B5 | codex-router gates |
-| JC1 first joint cut (D1) | both | D1 live together on the private stack, on machine tokens behind its test Access application: K3's person half and K5–K10 go live whole | B1, B2, B3, B4a, B5, F1, F2a, F2b, F3a, F4a, F10, F11, F12, F15 merged; SO8, SO11, JP4 and SO10 step 2 passing on the private stack | SO8; SO11; JP4; SO10 step 2 |
-| JA1 private stack without Access (D2) | both | identity R43 step 3 on the private stack | JC1 | SO10 step 3 |
-| PROD2 production switch (D1) | codex-router, with you | identity R43 step 2 in production: D1's changes, machine tokens only, the old login's code and table removed, the first organization created for you, your machines on the new Router build and logged in again | JC1; your go | each machine connects with machine tokens; the old credential refused; sessions and allowances still attached; a session on your Mac starts a helper on Sunclaw |
-| PROD3 production without Access (D2) | codex-router, with you | identity R43 step 3 in production: the Access application and the Routers' Access tokens removed | PROD2 holding for a period you choose; JA1; your go | every machine still connects; an unauthenticated request changes nothing |
-| JC2 second joint cut (D7) | both | D3–D6 live together on the private stack: K1, K2, K3's grant half and K4 go live whole; the token claims and the Portal's check together | B4b, P1a, P1b, F2c, F2v, F3b, F4f, F5, F6, F7 merged; JC1; JP1–JP3 passing on the private stack | JP1–JP3; SO5 |
-| PROD4 production update (D7) | codex-router, with you | Fleet central in production gets D3–D6's changes; no machine logs in again | JC2; your go | a session's tool call works through its token; a removal stops the next call |
-| DONE delivery complete | both | every governed outcome delivered, not only the cuts: identity U7 (bot messaging), U16 (both hosts, including the sign-in Node host), U33–U35 (machine login on macOS and Linux), U39 (starting a session on another machine), remediation U1–U15 | A8, JA1, JC2, B2, F7, F8b, F9, F14, F16, P1b merged and deployed on the private stack | identity SO1 (native sessions and bot messaging), SO4 on both central hosts, SO8, SO9 (macOS, and the Linux tests in codex-router's existing CI job), SO11, and the sign-in suite on the Node host, all against the deployed cut builds; a slice not merged keeps DONE open |
+| F8b SO1 journey: tokens and tools (D3) | codex-router | identity SO1's token, tool, collaboration and removal cases (observes R2, R11, R28, R34), reusing F2v's replica read; SO8's session-token case | F8a, F4f | codex-router gates |
+| F9 SO4 conformance (DONE) | codex-router | identity SO4's final sweep on both central hosts (observes R6, R13, R14, R19–R21, R34–R37, R39, R40, R46); each deliverable's own SO4 scenarios run on Tokio as its slices land | F2v, F3b, F10, F15 | codex-router gates |
+| F14 SO8 machine login journey (D1) | codex-router | identity SO8 (observes R39–R42): device-code login, renewal, revocation removing sessions, re-login with the old connection refused for a registration and a remote start (the session-token case added in D3), memory-only keeping across a restart | F10, F11, F4a, B5 | codex-router gates |
+| JC1 first joint cut (D1) | both | D1 live together on the private stack, on machine tokens behind its test Access application: K3's person half and K5–K10 go live whole; the Tool Portal is left untouched; a cut inventory of instances, callers, audiences and central destinations comes first | B1, B2, B3, B4a, B5, F1, F2a, F2b, F3a, F4a, F10, F11, F15 merged, and the proof slices F14, F8a, F16 merged with their local runs passing; then SO8, SO11, JP4, the legacy-path control and SO10 step 2 passing on the private stack | SO8; SO11; JP4; legacy-path control; SO10 step 2 |
+| JA1 private stack without Access (D7) | both | identity R43 step 3 on the private stack, once every rule is live | JC2 | SO10 step 3 |
+| PROD2 production switch (D1) | codex-router, with you | identity R43 step 2 in production: D1's changes, machine tokens only, the old login's code and table removed, the first organization created for you, your machines on the new Router build and logged in again; the production cut inventory names the sign-in deployment serving production first | JC1; your go | each machine connects with machine tokens; the old credential refused; sessions and allowances still attached; a session on your Mac starts a helper on Sunclaw |
+| PROD3 production without Access (D7) | codex-router, with you | identity R43 step 3 in production: the Access application and the Routers' Access tokens removed, once every rule is live | PROD4 holding for a period you choose; JA1; your go | every machine still connects; an unauthenticated request changes nothing |
+| JC2 second joint cut (D6) | both | D2–D5 live together on the private stack: K1, K2, K3's grant half and K4 go live whole; the token claims and the Portal's check together; today's agent path removed; a cut inventory comes first | B4b, P1a, P1b, F2c, F2v, F3b, F4f, F5, F6, F7 merged; JC1; JP1–JP3 passing on the private stack | JP1–JP3; SO5 |
+| PROD4 production update (D6) | codex-router, with you | production gets D2–D5's changes on every component the production cut inventory names, so each contract goes live whole there too; no machine logs in again | JC2; PROD2; your go | a session's tool call works through its token; a removal stops the next call |
+| DONE delivery complete | both | every governed outcome delivered and live, not only the cuts: identity U7 (bot messaging), U16 (both hosts, including the sign-in Node host), U33–U35 (machine login on macOS and Linux), U39 (starting a session on another machine), remediation U1–U15 | A8, PROD3 (and through it PROD4, JA1, JC2, PROD2, JC1), B2, F7, F8b, F9, F12, F14, F16, P1b | identity SO1 (native sessions and bot messaging), SO4 on both central hosts, SO8, SO9 (macOS, and the Linux tests in codex-router's existing CI job), SO11, and the sign-in suite on the Node host, against the deployed builds; the production observations at PROD2, PROD4 and PROD3; a slice not merged or a production step not done keeps DONE open |
 
 **Why A runs ahead of P.** Store version 1 keeps today's membership records, so the remediated Tool Portal is deployable on its own (A8) without waiting for codex-router. P1a then moves the store to version 2 and switches the caller check to identity tokens. The cost is one extra migration, and the benefit is that A never blocks on F.
 
@@ -126,20 +125,20 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 
 ## Cross-repository contracts
 
-Each shape has one home, and its home generates the artifact the other side tests against. The consumer's test parses the real producer's generated output; nothing is written by hand on both sides.
+Each shape has one home, and its home generates the artifact the other side tests against; nothing is written by hand on both sides. F1 generates the schemas and structural fixtures, so every consumer can build and test against the shape from the start. The check that the consumer parses the **real** producer's output runs in whichever of the producer's and consumer's slices merges second, and must pass before the contract's cut, so no slice waits on another's runtime output.
 
 | Contract | Home (producer) | Generated artifact | Consumer and its test | Goes live at |
 |---|---|---|---|---|
-| K1 workspace and collaboration token claims | agent-vm `tool-access/contracts` (Zod) | JSON Schema plus example tokens minted by the real issuer in tests | codex-router central (collaboration token) parses them in F3b's tests | JC2 |
-| K2 removal notice and acknowledgement | codex-router `identity_contract.rs` | JSON Schema plus example notices from the real outbox | agent-vm Portal receiver (Zod derived from the schema) parses them in P1b's tests | JC2 |
-| K3 decision requests and replies (`DecideBotIssuance`, `IssuanceDecision`, `PersonAdmissionRequest`, `OrganizationStanding`) | codex-router `identity_contract.rs` | JSON Schema plus example replies from the real organization authority | agent-vm issuer parses them in B4a's tests (person half) and B4b's tests (grant half) | JC1 for the person half (B4a); JC2 for the issuance half (B4b) |
-| K4 credential and resource management (`ProvisionBotCredential`, `DisableBotCredential`, `SetWorkspaceResource`) | codex-router `identity_contract.rs` | JSON Schema plus example requests from the real service caller | agent-vm issuer receivers parse them in B4b's tests | JC2 |
-| K5 session confirmation (RFC 7662 introspection reply) | agent-vm people sign-in (reply shape) | example replies from the real issuer | codex-router admin guard parses them in F2's tests (produced by B3) | JC1 |
-| K6 person token claims (`personTokenClaimsSchema`) | agent-vm `tool-access/contracts` | JSON Schema plus example tokens from the real issuer | codex-router admin guard in F2's tests (produced by B3) | JC1 |
-| K7 service-token claims and audiences (C7) | agent-vm issuer | example tokens from the real issuer per edge | codex-router receivers in F3a's tests | JC1 |
-| K8 device-login and machine-token decisions (`DecideDeviceLogin`, `DecideMachineToken` and their replies) | codex-router `identity_contract.rs` | JSON Schema plus example replies from the real organization authority | agent-vm issuer parses them in B5's tests | JC1 |
-| K9 machine token claims | codex-router `identity_contract.rs` | JSON Schema plus examples | the sign-in issuer (B5) in its tests | JC1 |
-| K10 machine tokens as minted | agent-vm issuer | example machine tokens minted by the real issuer | codex-router machine token check in F10's tests | JC1 |
+| K1 workspace and collaboration token claims | agent-vm `tool-access/contracts` (Zod) | JSON Schema; real tokens minted by B4b's issuer | the Tool Portal's check (P1a, which waits on B4b); codex-router central's collaboration token check, run in the later of B4b and F3b | JC2 |
+| K2 removal notice and acknowledgement | codex-router `identity_contract.rs` | JSON Schema and fixtures (F1); real notices from F5's outbox | the Portal receiver (Zod derived from the schema), run in the later of F5 and P1b | JC2 |
+| K3 decision requests and replies (`DecideBotIssuance`, `IssuanceDecision`, `PersonAdmissionRequest`, `OrganizationStanding`) | codex-router `identity_contract.rs` | JSON Schema and fixtures (F1); real person-half replies from F3a, real grant-half replies from F3b | the sign-in issuer: person half in the later of F3a and B4a; grant half in the later of F3b and B4b | JC1 for the person half; JC2 for the grant half |
+| K4 credential and resource management (`ProvisionBotCredential`, `DisableBotCredential`, `SetWorkspaceResource`) | codex-router `identity_contract.rs` | JSON Schema and fixtures (F1); real requests from F3b's service caller | the sign-in issuer's receivers, run in the later of F3b and B4b | JC2 |
+| K5 session confirmation (RFC 7662 introspection reply) | agent-vm people sign-in (reply shape) | real replies from B3's issuer | codex-router admin guard, in F2a | JC1 |
+| K6 person token claims (`personTokenClaimsSchema`) | agent-vm `tool-access/contracts` | JSON Schema; real tokens from B3's issuer | codex-router admin guard, in F2a | JC1 |
+| K7 service-token claims and audiences (C7) | agent-vm issuer | real tokens from B4a's issuer, per edge | codex-router receivers, run in the later of B4a and F3a | JC1 |
+| K8 device-login and machine-token decisions (`DecideDeviceLogin`, `DecideMachineToken` and their replies) | codex-router `identity_contract.rs` | JSON Schema and fixtures (F1); real replies from F10 | the sign-in issuer, run in the later of F10 and B5 | JC1 |
+| K9 machine token claims | codex-router `identity_contract.rs` | JSON Schema and fixtures (F1) | the sign-in issuer (B5); the real minted claims are checked as K10 | JC1 |
+| K10 machine tokens as minted | agent-vm issuer | real machine tokens minted by B5's issuer | codex-router machine token check, run in the later of B5 and F10 | JC1 |
 
 **How the artifact crosses the repositories is the owner's decision (OD-R3).** The identity build's scheme was agreed between agents, which the owner rejected.
 
