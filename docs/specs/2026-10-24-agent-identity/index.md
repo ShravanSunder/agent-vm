@@ -9,6 +9,7 @@ The agent entry to this design set. People start at [index.html](index.html), a 
 - Program Design: [program-design.md](program-design.md). The owners, shapes, flows, state, failure handling and trust boundaries.
 - Verification Design: [verification-design.md](verification-design.md). How each requirement will be shown to hold. Planned, not observed.
 - Alternatives: [alternatives.md](alternatives.md). Every option weighed, drawn. It decides nothing.
+- Delivery plan: [plans/2026-10-27-agent-identity-delivery.md](plans/2026-10-27-agent-identity-delivery.md). The slices, their order across the repositories, and which slice earns each Verification Design row. Plan only; nothing is built.
 
 The set is one concern, so it has no capability through-lines. The task paths below cross it.
 
@@ -59,14 +60,43 @@ The set is one concern, so it has no capability through-lines. The task paths be
 4. [Program Design: failure, recovery and concurrency](program-design.md#failure-recovery-and-concurrency)
 5. [Verification Design: coverage rows](verification-design.md#coverage-rows)
 
+## Reading path: organizations, who is in what
+
+1. [Requirements: needs U26–U30, U36, U37](requirements.md#needs)
+2. [Specification: entities (organizations and who is in them)](specification.md#entities)
+3. [Specification: organizations](specification.md#organizations)
+4. [Program Design: organizations, admission first, nothing across](program-design.md#organizations-admission-first-nothing-across-r34r38)
+5. [Verification Design: coverage rows](verification-design.md#coverage-rows)
+6. [Alternatives: how organizations' Fleet data are kept apart (OD8)](alternatives.md#21-open-how-are-organizations-fleet-data-kept-apart-od8)
+
+## Reading path: a machine logs in
+
+1. [Requirements: needs U17, U31–U33, U35](requirements.md#needs)
+2. [Specification: machine login](specification.md#machine-login)
+3. [Specification: C8 machine login by device code](specification.md#c8-machine-login-by-device-code)
+4. [Specification: C9 machine token](specification.md#c9-machine-token)
+5. [Program Design: machine login](program-design.md#machine-login-r39r43-c8c10)
+6. [Program Design: how the owner logs a machine in by device code](program-design.md#how-the-owner-logs-a-machine-in-by-device-code)
+7. [Program Design: how a VM logs in through its creator](program-design.md#how-a-vm-logs-in-through-its-creator)
+8. [Verification Design: shared observations (SO8, SO9)](verification-design.md#shared-observations)
+9. [Alternatives: how a machine logs in](alternatives.md#19-how-does-a-machine-log-in)
+
+## Reading path: the three steps off Cloudflare Access
+
+1. [Requirements: need U34](requirements.md#needs)
+2. [Specification: machine login (R43)](specification.md#machine-login)
+3. [Program Design: changes and cutover](program-design.md#changes-and-cutover)
+4. [Verification Design: shared observations (SO10)](verification-design.md#shared-observations)
+5. [Alternatives: how the switch happens](alternatives.md#20-how-does-the-switch-to-the-new-login-happen)
+6. [Delivery plan](plans/2026-10-27-agent-identity-delivery.md)
+
 ## Reading path: machines and what they share
 
 1. [Requirements: needs U17, U18](requirements.md#needs)
 2. [Specification: machines and exposure](specification.md#machines-and-exposure)
 3. [Program Design: trust boundaries](program-design.md#trust-boundaries)
 4. [Verification Design: coverage rows](verification-design.md#coverage-rows)
-5. [Alternatives: how a machine proves it is yours](alternatives.md#7-how-does-a-machine-prove-it-is-yours)
-6. [Alternatives: sessions sharing a machine](alternatives.md#13-what-about-sessions-sharing-a-machine)
+5. [Alternatives: sessions sharing a machine](alternatives.md#13-what-about-sessions-sharing-a-machine)
 
 ## Reading path: services calling each other
 
@@ -79,6 +109,6 @@ The set is one concern, so it has no capability through-lines. The task paths be
 
 ## Open owner decisions
 
-- [Requirements: open owner decisions](requirements.md#open-owner-decisions) (OD1, OD2, OD3)
-- [Alternatives: OD1 drawn](alternatives.md#14-open-who-may-start-a-session-in-a-workspace-od1)
-- [Alternatives: OD3 drawn](alternatives.md#15-open-is-a-bot-automatically-a-collaborator-of-every-other-workspace-od3)
+- [Requirements: open owner decisions](requirements.md#open-owner-decisions) (OD2, OD4–OD10; OD1 and OD3 closed)
+- [Alternatives: OD8 drawn](alternatives.md#21-open-how-are-organizations-fleet-data-kept-apart-od8)
+- [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.md#waiting-on-you-before-the-slices-that-need-it)
