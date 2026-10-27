@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.13">
+<ex-document id="content" document-id="organization-model" revision="2026-10-26.14">
 
 <h1>Organization model</h1>
 
@@ -46,10 +46,10 @@
   <thead><tr><th>Question</th><th>Your pick</th><th>From your comments</th></tr></thead>
   <tbody>
     <tr><td>Does "one organization" cover the room a Router runs in?</td><td>Yes: different organizations never share an open room</td><td>A walled-off corner (sandbox) does not separate organizations, and neither does a container. Only a separate machine or a VM does. <strong>Proposed</strong></td></tr>
-    <tr><td>How strongly is that held?</td><td>Declared and shown</td><td>You state "dedicated to this organization" when you approve a machine; the VM creator states it for VMs it makes. Nothing checks it: no software can tell whether another organization's Router runs on the same OS. <strong>Proposed</strong></td></tr>
+    <tr><td>How strongly is that held?</td><td>Declared and shown</td><td>You state "dedicated to this organization" when you approve a machine; the VM creator states it for VMs it makes. Nothing checks it: the current design cannot tell, from enrollment or from what is declared, whether another organization's Router runs on the same OS. <strong>Proposed</strong></td></tr>
     <tr><td>Do a re-added person's old roles return?</td><td>No: grant them again</td><td></td></tr>
     <tr><td>Is a bot a member of at most one workspace?</td><td>Keep: one membership, a collaborator elsewhere</td><td>A bot is one agent running in a gateway such as Hermes. The bot is what logs in; how the gateway keeps the bot's memory and credential is the gateway's business.</td></tr>
-    <tr><td>Who makes someone a collaborator?</td><td>The admin, per workspace</td><td>Later, managers grant collaborators for their own workspace.</td></tr>
+    <tr><td>Who makes someone a collaborator?</td><td>The admin, per workspace</td><td><strong>Proposed</strong> for later: managers grant collaborators for their own workspace. Admin only for now.</td></tr>
     <tr><td>One Tool Portal deployment per organization?</td><td>Yes</td><td></td></tr>
     <tr><td>After someone leaves, who stops them reaching a bot through its own channel?</td><td>The bot's channel decides who it listens to</td><td>Fleet central controls what the bot itself may do; it cannot see or control a bot's outside chat channels.</td></tr>
   </tbody>
@@ -231,7 +231,7 @@ sequenceDiagram
     <li><strong>Who logs a Router into an organization:</strong> you, the owner, for machines you set up. For VMs, a VM creator or platform you registered enrolls each VM it starts, within the limits you set; you approve the creator, not each VM, unless you set it to approve each. Today's login is the fleet operator token (you hold both roles).</li>
     <li><strong>Who starts sessions:</strong> anyone or anything that can operate a logged-in Router, for the workspaces that Router may serve. The system knows which Router and which session, not which human. You control starting by where Routers run (keeping them on machines only you use is your operating practice, not something the system proves), what each Router may serve, and revoking a Router when needed.</li>
     <li><strong>How people members get work done:</strong> they talk to a bot that has access, through the bot's own channel. The bot acts with its own authority and persona, recorded as the bot, plus "on behalf of" the person where the channel can identify them; carrying the requester through is designed later (Fleet framework F-30, F-35).</li>
-    <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided.</li>
+    <li><strong>Managers:</strong> a concept for later; they are per workspace (F-29). What they may do is not decided; granting collaborators for their own workspace is a <strong>proposed</strong> later use.</li>
   </ul>
 </ex-callout>
 
@@ -308,7 +308,7 @@ sequenceDiagram
   </tbody>
 </table>
 
-<p><strong>Your rule:</strong> different organizations never share an open room. Only a separate machine or a VM separates organizations; a walled-off corner or a container does not. It is declared and shown, not enforced: you state "dedicated to this organization" when you approve a machine, and the VM creator states it for the VMs it makes. No software can tell whether another organization's Router runs on the same OS. (A lock that stops a second Router starting on the same OS could catch honest mistakes later; it is not in the plan.)</p>
+<p><strong>Your rule:</strong> different organizations never share an open room, declared and shown, not enforced. <strong>Proposed details:</strong> only a separate machine or a VM separates organizations, and a walled-off corner or a container does not; you state "dedicated to this organization" when you approve a machine, and the VM creator states it for the VMs it makes. The current design cannot tell, from enrollment or from what is declared, whether another organization's Router runs on the same OS. (A lock that stops a second Router starting on the same OS could catch honest mistakes later; it is not in the plan.)</p>
 
 <p>The agreed first identity round will have each session record its room kind when it starts, and will show which workspaces share one Router. This is designed, not built. Even then nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
 
