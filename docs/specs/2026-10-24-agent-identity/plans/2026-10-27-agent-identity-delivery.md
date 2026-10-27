@@ -2,8 +2,9 @@
 
 ## Result and basis
 
-- **Planning result:** proposed, not yet `ready`.
-  - Your decisions of 27 October are in the design (`b734d002`), with check 3's corrections at `fe47ee33`. The Sol Reviewer is checking those corrections. When that check closes and you approve the design, this record becomes `ready`.
+- **Planning result:** `ready`, plan-only.
+  - Your decisions of 27 October are in the design (`b734d002`). The Sol Reviewer's checks of the changes closed at `b73f308b` with `ready` (`reviewer-recheck-5.md`).
+  - Nothing is built until you approve the design and this plan.
 - **Originating planner:** `plan-implementation`
 - **Governing planning basis:** reviewed four-document design
   - [Requirements](../requirements.md)
@@ -13,8 +14,10 @@
   - Review history is in `tmp/practices-research/2026-10-27-identity-four-document-review/`:
     - the four-document review at `66dd3b66`;
     - checks at `33bee8bd` and `5327c6c7`, which closed every correction and returned `decision-needed` on your choices;
-    - check 3 at `b05285cf` (`reviewer-recheck-3.md`, needs-revision, RC3-1 to RC3-4) and the Advisor's second look (`advisor-recheck-3.md`, N1 to N4), all corrected at `fe47ee33`.
-  - Applicability anchors: agent-vm `design/portal-remediation`, design at `fe47ee33`; codex-router `f465808f` (and `main` for the create path and mail kinds); Better Auth 1.7.11 (`52ab801c`)
+    - check 3 at `b05285cf` (`reviewer-recheck-3.md`, needs-revision, RC3-1 to RC3-4) and the Advisor's second look (`advisor-recheck-3.md`, N1 to N4), corrected at `fe47ee33`;
+    - check 4 at `fe47ee33` (`reviewer-recheck-4.md`, RC4-1 and RC4-2), corrected at `b73f308b`;
+    - check 5 at `b73f308b` (`reviewer-recheck-5.md`): `ready`, no finding left.
+  - Applicability anchors: agent-vm `design/portal-remediation`, design at `b73f308b`; codex-router `f465808f` (and `main` for the create path and mail kinds); Better Auth 1.7.11 (`52ab801c`)
 - **Delivery context:**
   - Requested terminal: `plan-only`. You said nothing is built until the design is agreed, so this plan goes to you, not to an Implementer.
   - Delivery grouping: `deliverables`, by your direction (27 October): "each plan parts to be delivery vertical slices and how they correlate. within each deliverable, there are workstreams."
@@ -90,7 +93,7 @@ D2 comes before D3 because a session is registered only through a machine logged
 
 | Decision | Holds | Recommendation |
 |---|---|---|
-| Design approval, after the Reviewer's check of `fe47ee33` | everything | — |
+| Design and plan approval | everything | — |
 | OD4, the sign-in tables (now with `deviceCode` and its `enrollmentId`) | D1's B1 | approve the drawn tables and generated SQL together |
 | OD2, the default token lifetime | nothing; 5 minutes is built and is one setting | 5 minutes |
 | OD-R1 to OD-R4, RD1 to RD6 | as in the delivery orchestration and the remediation design | unchanged |

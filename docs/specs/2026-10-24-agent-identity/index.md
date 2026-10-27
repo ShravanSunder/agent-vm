@@ -120,4 +120,4 @@ The set is one concern, so it has no capability through-lines. The task paths be
 
 - [Requirements: owner decisions](requirements.md#owner-decisions) (OD2 and OD4 open; the rest decided)
 - [Alternatives: OD8, decided](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
-- [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.md#waiting-on-you-before-the-slices-that-need-it)
+- [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.md#waiting-on-you)

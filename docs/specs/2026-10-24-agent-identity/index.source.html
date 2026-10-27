@@ -49,7 +49,7 @@
   <ex-step to="program-design--changes-and-cutover" icon="stack">What changes at each step, and why step 2 fixes forward.</ex-step>
   <ex-step to="verification-design--shared-observations" icon="test-tube">The checks run once per step on a test deployment.</ex-step>
   <ex-step to="alternatives--20-how-does-the-switch-to-the-new-login-happen" icon="git-branch">The options weighed.</ex-step>
-  <ex-step to="delivery-plan--joint-and-production-steps" icon="rocket">Where the steps sit in the delivery plan.</ex-step>
+  <ex-step to="delivery-plan--d7-off-cloudflare-access" icon="rocket">Where the steps sit in the delivery plan: deliverable D7.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-remote-start" title="A session starts a helper on another machine" description="Through Fleet central, over both machines' connections, never queued.">
@@ -61,12 +61,16 @@
   <ex-step to="alternatives--22-how-does-a-session-start-a-helper-on-another-machine" icon="git-branch">The options weighed.</ex-step>
 </ex-presentation>
 
-<ex-presentation id="path-plan" title="How the work is sequenced" description="The slices, their order across the repositories, and what waits on you.">
-  <ex-step to="delivery-plan--result-and-basis" icon="rocket">What the plan is based on, and why it goes to you, not to an Implementer.</ex-step>
-  <ex-step to="delivery-plan--waiting-on-you-before-the-slices-that-need-it" icon="users">What waits on you, and which slices each answer unblocks.</ex-step>
-  <ex-step to="delivery-plan--slices" icon="stack">Every slice, per repository.</ex-step>
-  <ex-step to="delivery-plan--dependency-edges-that-matter" icon="path">The order that matters.</ex-step>
-  <ex-step to="delivery-plan--verification-design-rows-scheduled" icon="test-tube">Which slice earns each proof row.</ex-step>
+<ex-presentation id="path-plan" title="How the work is delivered" description="Seven deliverables you can see working, how they depend on each other, and the workstreams inside each.">
+  <ex-step to="delivery-plan--how-to-read-this-plan" icon="book-open">Deliverables, workstreams and pieces: what each word means here.</ex-step>
+  <ex-step to="delivery-plan--the-deliverables-at-a-glance" icon="rocket">The seven deliverables, what you'll see working, and what each waits on.</ex-step>
+  <ex-step to="delivery-plan--how-the-deliverables-connect" icon="path">How the deliverables depend on each other.</ex-step>
+  <ex-step to="delivery-plan--d1-organizations-who-is-in-what" icon="users">D1, organizations: its workstreams and pieces.</ex-step>
+  <ex-step to="delivery-plan--d2-a-machine-logs-in" icon="key">D2, a machine logs in.</ex-step>
+  <ex-step to="delivery-plan--d3-sessions-and-bots-use-their-workspace-s-tools" icon="plug">D3, sessions and bots use their workspace's tools.</ex-step>
+  <ex-step to="delivery-plan--d6-start-a-session-on-another-machine" icon="path">D6, starting a session on another machine.</ex-step>
+  <ex-step to="delivery-plan--d7-off-cloudflare-access" icon="rocket">D7, everything live together, then off Access.</ex-step>
+  <ex-step to="delivery-plan--waiting-on-you" icon="users">What waits on you.</ex-step>
   <ex-step to="delivery-plan--risks-and-false-greens" icon="bug">What could pass for the wrong reason.</ex-step>
 </ex-presentation>
 
@@ -185,11 +189,66 @@ Used approvals and the removal marks Fleet sends. It never holds membership: the
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven on D1 and on a better-sqlite3 file, including the held-refusal race.</ex-step>
 </ex-presentation>
 
-<ex-document id="content" document-id="agent-identity-design" revision="2026-10-27.2">
+<ex-document id="content" document-id="agent-identity-design" revision="2026-10-27.3">
 
 <h1>Agent identity and workspace access</h1>
 
 Who acts in the fleet and the Tool Portal, how each one proves who it is, which workspace it belongs to, and how its tool access is granted and taken away. This is a design. Nothing in it is built or observed yet.
+
+<h2 id="how-it-works">How it works, in plain words</h2>
+
+<p id="how-intro" data-comment-label="How it works">This section is the whole design in a few pictures. Everything below it, and every tab, is the detail behind these.</p>
+
+<h3 id="how-who">Who is who</h3>
+
+<p id="how-who-text" data-comment-label="Who is who">Everything lives inside an organization, and nothing crosses between organizations. You add a person or a bot to an organization first; only then can it join a workspace, as a member (does the workspace's work, gets its tools) or a collaborator (only messages and tasks members). A machine, meaning a Router, belongs to one organization, and you choose which workspaces it serves. A session runs on a machine and belongs to the workspace of the project it was started for. People never hold tool tokens: they get work done by talking to a bot.</p>
+
+<ex-mermaid id="how-who-picture" label="Who belongs to what"><script type="text/plain">
+flowchart TB
+  O["Organization"] -->|"has"| W["Workspaces"]
+  W -->|"members and<br/>collaborators"| P["People and bots<br/>admitted first"]
+  W -->|"served by"| M["Machines<br/>you logged in"]
+  M -->|"run"| S["Sessions, each in<br/>its project's workspace"]
+</script></ex-mermaid>
+
+<h3 id="how-login">How a machine gets in</h3>
+
+<p id="how-login-text" data-comment-label="Machine login">You run <code>fleet login</code> on the machine. It shows a short code; you approve it on the sign-in page and pick the workspaces it serves. From then on the machine renews its own short-lived token. If the machine has no secret store, it keeps the login in memory, and you approve it again after it restarts. Revoking it stops its next renewal and cuts its connection.</p>
+
+<ex-mermaid id="how-login-picture" label="Logging a machine in"><script type="text/plain">
+flowchart TB
+  A["fleet login<br/>shows a code"] --> B["You approve it<br/>and pick workspaces"]
+  B --> C["The machine connects<br/>and renews on its own"]
+  C --> D["You revoke it:<br/>renewals stop"]
+</script></ex-mermaid>
+
+<h3 id="how-tool">How a session uses a tool</h3>
+
+<p id="how-tool-text" data-comment-label="Tool call">A session asks its own Router for a token. Fleet central, which holds the truth about who belongs where, decides; the sign-in service mints a token that lasts minutes and names the workspace. The Tool Portal checks the token on each call without asking Fleet central again. A bot gets its token the same way, with its own credential.</p>
+
+<ex-mermaid id="how-tool-picture" label="A session calls a tool"><script type="text/plain">
+flowchart TB
+  S["Session"] --> R["Its Router"]
+  R --> F["Fleet central decides"]
+  F --> T["Sign-in service<br/>mints a short token"]
+  T --> P["Tool Portal checks it<br/>on each call"]
+</script></ex-mermaid>
+
+<h3 id="how-remove">Taking access away</h3>
+
+<p id="how-remove-text" data-comment-label="Removal">When you remove a member, retire a bot or revoke a machine, Fleet central pushes a removal notice to that organization's Tool Portal, and the next call is refused as soon as it arrives. Token expiry is only the backstop. If Fleet central is down, no new token is issued, and work stops as the tokens run out: the system fails closed.</p>
+
+<h3 id="how-remote">Starting a session on another machine</h3>
+
+<p id="how-remote-text" data-comment-label="Remote start">A session on your Mac can start a helper on Sunclaw for a project in its own workspace, without SSH. Fleet central checks that the session is a member, the project is in the workspace, and Sunclaw serves it, then hands the start to Sunclaw over its open connection. The answer is started, refused (nothing created) or unknown (look it up later). An offline machine is refused, never queued.</p>
+
+<h3 id="how-access">Getting off Cloudflare Access</h3>
+
+<p id="how-access-text" data-comment-label="Three steps">Three steps, no half steps. First everything is built while today's login keeps running. Then, still behind Access, Fleet central accepts only the new login, and you log every machine in again. Then, in the next change, Access is removed. Each step is rehearsed on the private test stack first.</p>
+
+<h3 id="how-plan">How it gets built</h3>
+
+<p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="#delivery-plan">delivery plan</a> cuts the work into seven deliverables, each something you can see working: D1 organizations, D2 machine login, D3 sessions and bots using tools, D4 collaboration, D5 removal, D6 starting a session on another machine, and D7 the move off Access. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Tool Portal.</p>
 
 <h2 id="where">Where each answer lives</h2>
 
@@ -198,15 +257,15 @@ Who acts in the fleet and the Tool Portal, how each one proves who it is, which 
 - **How the parts are built and talk to each other:** [Program Design](#program-design)
 - **How each need will be proven:** [Verification Design](#verification-design)
 - **Every option we weighed, drawn:** [Alternatives](#alternatives)
-- **How the work is sequenced, and which slice proves what:** [Delivery plan](#delivery-plan)
+- **How the work is delivered, deliverable by deliverable:** [Delivery plan](#delivery-plan)
 
-To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, a session starts a helper on another machine, the three steps off Cloudflare Access, how the work is sequenced, every option one at a time, a session calls a tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
+To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, a session starts a helper on another machine, the three steps off Cloudflare Access, how the work is delivered, every option one at a time, a session calls a tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
 
 <ex-callout id="waiting" title="What waits on you" tone="question" icon="users">
 
-- **Design approval**, once the Sol reviewer has checked the changes your 27 October answers made.
+- **Design and plan approval.** The Sol reviewer's checks of your 27 October changes closed with `ready`; nothing is built until you approve.
 - **OD4**, the sign-in tables, and **OD2**, the default token lifetime: [Requirements: owner decisions](#requirements--owner-decisions). The rest are decided.
-- **The two production steps you run:** [Delivery plan: waiting on you](#delivery-plan--waiting-on-you-before-the-slices-that-need-it).
+- **The two production steps you run:** [Delivery plan: waiting on you](#delivery-plan--waiting-on-you).
 
 </ex-callout>
 
@@ -309,7 +368,7 @@ flowchart LR
     <ex-markdown id="alternatives" label="Alternatives" src="./alternatives.md"></ex-markdown>
   </section>
   <section id="tab-delivery-plan" label="Delivery plan" icon="rocket">
-    <p>The slices in order across codex-router, the sign-in service and the Tool Portal, which slice earns each proof row, and the stop conditions: Better Auth refusing the device-grant wrapper, a replication or delivery path not where the design assumes, or the Tool Portal and sign-in moving to a new repository. Plan only; nothing is built.</p>
+    <p>Seven deliverables, each something you can see working, with a picture of how they depend on each other. Each lists its workstreams (Fleet central, the Router, the sign-in service, the Tool Portal) and its pieces, one pull request each, with what proves it and what it waits on. Then which piece earns each proof row, the risks, and the stop conditions. Plan only; nothing is built.</p>
     <ex-markdown id="delivery-plan" label="Delivery plan" src="./plans/2026-10-27-agent-identity-delivery.md"></ex-markdown>
   </section>
 </ex-tabs>
