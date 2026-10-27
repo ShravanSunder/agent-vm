@@ -75,11 +75,20 @@ The set is one concern, so it has no capability through-lines. The task paths be
 2. [Specification: machine login](specification.md#machine-login)
 3. [Specification: C8 machine login by device code](specification.md#c8-machine-login-by-device-code)
 4. [Specification: C9 machine token](specification.md#c9-machine-token)
-5. [Program Design: machine login](program-design.md#machine-login-r39r43-c8c10)
+5. [Program Design: machine login](program-design.md#machine-login-r39r43-c8-c9)
 6. [Program Design: how the owner logs a machine in by device code](program-design.md#how-the-owner-logs-a-machine-in-by-device-code)
-7. [Program Design: how a VM logs in through its creator](program-design.md#how-a-vm-logs-in-through-its-creator)
-8. [Verification Design: shared observations (SO8, SO9)](verification-design.md#shared-observations)
-9. [Alternatives: how a machine logs in](alternatives.md#19-how-does-a-machine-log-in)
+7. [Verification Design: shared observations (SO8, SO9)](verification-design.md#shared-observations)
+8. [Alternatives: how a machine logs in](alternatives.md#19-how-does-a-machine-log-in)
+
+## Reading path: a session starts a helper on another machine
+
+1. [Requirements: need U39](requirements.md#needs)
+2. [Specification: R8 and R46 (membership and collaboration)](specification.md#membership-and-collaboration)
+3. [Specification: C11 starting a session on another machine](specification.md#c11-starting-a-session-on-another-machine)
+4. [Program Design: starting a session on another machine](program-design.md#starting-a-session-on-another-machine-r46-c11)
+5. [Program Design: how a session starts a helper on another machine](program-design.md#how-a-session-starts-a-helper-on-another-machine)
+6. [Verification Design: shared observations (SO11)](verification-design.md#shared-observations)
+7. [Alternatives: how a session starts a helper on another machine](alternatives.md#22-how-does-a-session-start-a-helper-on-another-machine)
 
 ## Reading path: the three steps off Cloudflare Access
 
@@ -107,8 +116,8 @@ The set is one concern, so it has no capability through-lines. The task paths be
 5. [Verification Design: shared observations (SO7)](verification-design.md#shared-observations)
 6. [Alternatives: how services prove who's calling](alternatives.md#16-how-do-the-services-prove-whos-calling-each-other)
 
-## Open owner decisions
+## Owner decisions
 
-- [Requirements: open owner decisions](requirements.md#owner-decisions) (OD2, OD4–OD10; OD1 and OD3 closed)
-- [Alternatives: OD8 drawn](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
+- [Requirements: owner decisions](requirements.md#owner-decisions) (OD2 and OD4 open; the rest decided)
+- [Alternatives: OD8, decided](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
 - [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.md#waiting-on-you-before-the-slices-that-need-it)

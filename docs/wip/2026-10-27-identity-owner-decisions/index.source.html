@@ -22,32 +22,17 @@
 <a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
-<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.3">
+<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.4">
 
 <h1>Identity decisions</h1>
 
-<p id="intro" data-comment-label="What this page is">One question is left. Below it are your recorded answers, then your four questions, answered. Pick an answer, then use <strong>Copy</strong> or <strong>Export</strong> in the Comments panel and paste it back to me.</p>
+<p id="intro" data-comment-label="What this page is">Nothing is left to pick here. Your answers are recorded below and are now in the design documents. Your four questions are answered further down.</p>
 
-<h2 id="question">The one question: device-code login only, for now?</h2>
+<h2 id="question">Device-code login only, for now: decided</h2>
 
-<p id="question-what" data-comment-label="The two ways in">The design had two ways to log a machine in. Either you approve a device code, or an external issuer logs its VMs in: something that creates VMs, such as agent-vm or a cloud platform. agent-vm was the only external issuer, and it's now out of scope. So nothing in this build would use the second way.</p>
+<p id="question-proposal" data-comment-label="Decided">You called VM creators scope creep, so this build logs machines in by device code only. VM creators come later as one more kind of issuer. A machine without systemd logs in by device code and keeps its login in memory, as you suggested; after it restarts, you approve it again.</p>
 
-<ex-mermaid id="issuers-picture" label="Two ways a machine gets its tokens"><script type="text/plain">
-flowchart TB
-  D["Device code<br/>(now)"] --> F["Fleet central<br/>checks every<br/>machine token"]
-  V["VM creator<br/>(later)"] -.-> F
-</script></ex-mermaid>
-
-<p id="question-proposal" data-comment-label="Proposed">Proposed: build only device-code login now. VM creators come later as one more kind of issuer, your "later we can have something that can spin up VMs and enrol them". A machine without systemd then logs in by device code and keeps its login in memory, as you suggested. After it restarts, you approve it again.</p>
-
-<ex-choice id="first-build-choice" title="Device-code login only, for now?">
-  <ex-option id="first-build-device-code-only" title="**Yes: device code only for now** (recommended)">
-    <template slot="summary">A smaller first build, with nothing built that can't be tested for real. A VM can still log in by device code, like any machine.</template>
-  </ex-option>
-  <ex-option id="first-build-with-issuers" title="No: build VM creator issuers now">
-    <template slot="summary">Built and tested only against a stand-in, because no real VM creator exists.</template>
-  </ex-option>
-</ex-choice>
+<p id="remote-start" data-comment-label="Remote start">Added on your ask: a session can start a helper on another machine of its organization that serves its workspace, through Fleet central, without anyone logging in to that machine (U39). The <a href="../../specs/2026-10-24-agent-identity/index.html">identity page</a> walks through it.</p>
 
 <h2 id="decided">What you decided</h2>
 
@@ -55,7 +40,7 @@ flowchart TB
 <thead><tr><th>Decision</th><th>Your answer</th><th>What happens</th></tr></thead>
 <tbody>
 <tr><td>Fleet data per organization (OD8)</td><td>One Fleet object per organization</td><td>Your existing Fleet data becomes the first organization's.</td></tr>
-<tr><td>agent-vm and VMs (OD10)</td><td>Out of scope</td><td>The agent-vm VM creator and the VM proof leave the design and the plan.</td></tr>
+<tr><td>VM proof (OD10)</td><td>Out of scope</td><td>No VM run is planned or proven.</td></tr>
 <tr><td>Linux CI job</td><td>No</td><td>No new gate. codex-router's existing CI already runs every Rust test on Linux, so the Linux secret store is still tested. Logging in a real Linux machine end to end stays unverified.</td></tr>
 <tr><td>Leaving an organization (OD5)</td><td>Roles end with it</td><td>Sessions aren't affected.</td></tr>
 <tr><td>Device code lifetime (OD6)</td><td>10 minutes, single use</td><td>One setting.</td></tr>
@@ -120,7 +105,7 @@ flowchart TB
 
 <h2 id="next">Next</h2>
 
-<p id="next-steps" data-comment-label="Next">Once you answer, I'll put everything into the four design documents in one pass. The Sol reviewer checks the changes, and the plan comes back to you for approval.</p>
+<p id="next-steps" data-comment-label="Next">Everything is in the four design documents. The Sol reviewer checks the changes, and the plan comes back to you for approval.</p>
 
 </ex-document>
 <ex-comments for="content"></ex-comments>

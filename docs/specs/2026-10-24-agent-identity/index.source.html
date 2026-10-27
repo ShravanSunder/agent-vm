@@ -29,28 +29,36 @@
   <ex-step to="specification--organizations" icon="book-open">What must hold between organizations.</ex-step>
   <ex-step to="program-design--organizations-admission-first-nothing-across-r34-r38" icon="stack">How admission gates every role, and how nothing crosses.</ex-step>
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven with two organizations on one Fleet central.</ex-step>
-  <ex-step to="alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8" icon="git-branch">The one open question here: how organizations' Fleet data are kept apart (OD8).</ex-step>
+  <ex-step to="alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8" icon="git-branch">How organizations' Fleet data are kept apart: one Fleet object each (OD8, your call).</ex-step>
 </ex-presentation>
 
-<ex-presentation id="path-machine-login" title="A machine logs in" description="Device code for machines you set up, a VM creator or platform for VMs, and renewal with no person acting.">
-  <ex-step to="requirements--needs" icon="users">The needs: only you log machines in, one login model, Linux and Firecracker too.</ex-step>
+<ex-presentation id="path-machine-login" title="A machine logs in" description="A device code you approve, renewal with no person acting, and memory-only keeping where there is no store.">
+  <ex-step to="requirements--needs" icon="users">The needs: only you log machines in, one login model, macOS and Linux.</ex-step>
   <ex-step to="specification--machine-login" icon="book-open">What must hold for every login.</ex-step>
   <ex-step to="specification--c8-machine-login-by-device-code" icon="key">What you and the machine see during a device-code login.</ex-step>
   <ex-step to="specification--c9-machine-token" icon="key">What a machine token says, and what Fleet central accepts.</ex-step>
-  <ex-step to="program-design--machine-login-r39-r43-c8-c10" icon="stack">Who decides what, renewal, the open connection, and the token sources.</ex-step>
+  <ex-step to="program-design--machine-login-r39-r43-c8-c9" icon="stack">Who decides what, renewal, the open connection, and where the refresh credential lives.</ex-step>
   <ex-step to="program-design--how-the-owner-logs-a-machine-in-by-device-code" icon="path">The device-code login, end to end.</ex-step>
-  <ex-step to="program-design--how-a-vm-logs-in-through-its-creator" icon="path">A VM logging in through its creator, and running past its first token.</ex-step>
-  <ex-step to="verification-design--shared-observations" icon="test-tube">How it will be proven, on macOS, Linux and Firecracker.</ex-step>
+  <ex-step to="verification-design--shared-observations" icon="test-tube">How it will be proven: on macOS, and on Linux through codex-router's existing CI.</ex-step>
   <ex-step to="alternatives--19-how-does-a-machine-log-in" icon="git-branch">The options weighed.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-three-steps" title="The three steps off Cloudflare Access" description="Build, switch behind Access, then remove Access, with no half steps.">
   <ex-step to="requirements--needs" icon="users">The need: three steps, no half steps.</ex-step>
   <ex-step to="specification--machine-login" icon="book-open">What each step must prove.</ex-step>
-  <ex-step to="program-design--changes-and-cutover" icon="stack">What changes at each step, and how step 2 is reverted.</ex-step>
+  <ex-step to="program-design--changes-and-cutover" icon="stack">What changes at each step, and why step 2 fixes forward.</ex-step>
   <ex-step to="verification-design--shared-observations" icon="test-tube">The checks run once per step on a test deployment.</ex-step>
   <ex-step to="alternatives--20-how-does-the-switch-to-the-new-login-happen" icon="git-branch">The options weighed.</ex-step>
   <ex-step to="delivery-plan--joint-and-production-steps" icon="rocket">Where the steps sit in the delivery plan.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-remote-start" title="A session starts a helper on another machine" description="Through Fleet central, over both machines' connections, never queued.">
+  <ex-step to="requirements--needs" icon="users">The need: start a session on another fleet machine without logging in to it (U39).</ex-step>
+  <ex-step to="specification--membership-and-collaboration" icon="book-open">What must hold: own workspace, a machine allowed to serve it, refused when it can't be reached (R8, R46).</ex-step>
+  <ex-step to="specification--c11-starting-a-session-on-another-machine" icon="key">What a start names, and every answer it can get.</ex-step>
+  <ex-step to="program-design--starting-a-session-on-another-machine-r46-c11" icon="stack">Who decides what, and what happens when a machine disconnects mid-start.</ex-step>
+  <ex-step to="program-design--how-a-session-starts-a-helper-on-another-machine" icon="path">The start, end to end.</ex-step>
+  <ex-step to="alternatives--22-how-does-a-session-start-a-helper-on-another-machine" icon="git-branch">The options weighed.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-plan" title="How the work is sequenced" description="The slices, their order across the repositories, and what waits on you.">
@@ -62,7 +70,7 @@
   <ex-step to="delivery-plan--risks-and-false-greens" icon="bug">What could pass for the wrong reason.</ex-step>
 </ex-presentation>
 
-<ex-presentation id="path-options" title="Every option, one at a time" description="Twenty-one questions, each with the options we weighed. Twenty are settled; one waits on you.">
+<ex-presentation id="path-options" title="Every option, one at a time" description="Twenty-two questions, each with the options we weighed, all settled.">
   <ex-step to="alternatives--1-who-is-the-identity-when-your-agent-acts" icon="robot">**Who acts for you?** A registered name, a session you approve, or the session itself.</ex-step>
   <ex-step to="alternatives--2-which-workspace-does-a-session-belong-to" icon="folder">**Where does a session belong?** By folder, by machine, or by project.</ex-step>
   <ex-step to="alternatives--3-who-holds-the-truth-and-who-mints-tokens" icon="database">**Who holds the truth, who mints?** Y, Z, X and X′ side by side.</ex-step>
@@ -81,9 +89,10 @@
   <ex-step to="alternatives--16-how-do-the-services-prove-who-s-calling-each-other" icon="lock">**How services prove who's calling.** Why a token per receiver and operation.</ex-step>
   <ex-step to="alternatives--17-how-does-a-token-say-which-session-it-is-for" icon="key">**How a token names its session.** What Better Auth lets us set, and what we add.</ex-step>
   <ex-step to="alternatives--18-where-is-a-collaboration-message-or-board-write-checked" icon="chat-circle">**Where collaboration is checked.** One path, a local copy, or Fleet central on every path.</ex-step>
-  <ex-step to="alternatives--19-how-does-a-machine-log-in" icon="key">**How a machine logs in.** Keep Access, a key per machine, or short-lived tokens from an issuer you registered.</ex-step>
+  <ex-step to="alternatives--19-how-does-a-machine-log-in" icon="key">**How a machine logs in.** Keep Access, a key per machine, or a device code you approve; VM creators later.</ex-step>
   <ex-step to="alternatives--20-how-does-the-switch-to-the-new-login-happen" icon="path">**How the switch happens.** All at once, either login for a while, or three steps.</ex-step>
-  <ex-step to="alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8" icon="users">**Open: keeping organizations' Fleet data apart.** One object per organization, or one with a column.</ex-step>
+  <ex-step to="alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8" icon="users">**Decided: keeping organizations' Fleet data apart.** One object per organization, or one with a column, and your answer.</ex-step>
+  <ex-step to="alternatives--22-how-does-a-session-start-a-helper-on-another-machine" icon="path">**Starting a session on another machine.** Through Fleet central, a relaxed check, or fleet mail.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-tool-call" title="A session calls a tool" description="From your need to the token, the call, and how it will be proven.">
@@ -156,7 +165,7 @@ Accounts, sessions, passkeys, OAuth clients and tokens, bot credentials, machine
   <ex-step to="storage-homes--OrgDO" icon="users"><script type="text/markdown">
 **A Durable Object per organization, in Fleet central**
 
-Who may sign in, the owner, membership, bots, workspace pairs, machine issuers and logins, removals. The sign-in service asks it "admit this person?", "is this person still in?" and "may this machine log in?". On Fleet's Tokio host, it's its own SQLite database.
+Who may sign in, the owner, membership, bots, workspace pairs, machine logins, remote starts, removals. The sign-in service asks it "admit this person?", "is this person still in?" and "may this machine log in?". On Fleet's Tokio host, it's its own SQLite database.
   </script></ex-step>
   <ex-step to="program-design--the-choices-and-why" icon="git-branch">Why one authority per organization, and why in Fleet: the "Organization isolation (D2)" row.</ex-step>
   <ex-step to="specification--what-this-replaces" icon="book-open">Where the 10-20 D2 wording ("in the sign-in service") changed location, and the meaning it keeps.</ex-step>
@@ -166,7 +175,7 @@ Who may sign in, the owner, membership, bots, workspace pairs, machine issuers a
 Used approvals and the removal marks Fleet sends. It never holds membership: the token carries that.
   </script></ex-step>
   <ex-step to="../2026-10-24-tool-portal-remediation/index.html#program-design--where-the-database-lives-and-how-it-is-migrated" icon="database">The Portal's store: one Durable Object per workspace on Cloudflare, one file per workspace on Node.</ex-step>
-  <ex-step to="alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8" icon="users">The one storage question still open: one Fleet object per organization (OD8).</ex-step>
+  <ex-step to="alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8" icon="users">One Fleet object per organization (OD8, your call).</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-sign-in-storage" title="Sign-in on Drizzle and SQLite" description="What the sign-in service stores, where, and how its multi-row decisions stay safe without transactions.">
@@ -176,7 +185,7 @@ Used approvals and the removal marks Fleet sends. It never holds membership: the
   <ex-step to="verification-design--coverage-rows" icon="test-tube">How it will be proven on D1 and on a better-sqlite3 file, including the held-refusal race.</ex-step>
 </ex-presentation>
 
-<ex-document id="content" document-id="agent-identity-design" revision="2026-10-27.1">
+<ex-document id="content" document-id="agent-identity-design" revision="2026-10-27.2">
 
 <h1>Agent identity and workspace access</h1>
 
@@ -191,12 +200,13 @@ Who acts in the fleet and the Tool Portal, how each one proves who it is, which 
 - **Every option we weighed, drawn:** [Alternatives](#alternatives)
 - **How the work is sequenced, and which slice proves what:** [Delivery plan](#delivery-plan)
 
-To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, the three steps off Cloudflare Access, how the work is sequenced, every option one at a time, a session calls a tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
+To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, a session starts a helper on another machine, the three steps off Cloudflare Access, how the work is sequenced, every option one at a time, a session calls a tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
 
 <ex-callout id="waiting" title="What waits on you" tone="question" icon="users">
 
-- **The open decisions** (OD2, OD4–OD10), each with a recommendation: [Requirements: open owner decisions](#requirements--open-owner-decisions). OD8 is drawn in [Alternatives](#alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8).
-- **Which slices each answer unblocks**, plus the two CI jobs that need your approval and the two production steps you run: [Delivery plan: waiting on you](#delivery-plan--waiting-on-you-before-the-slices-that-need-it).
+- **Design approval**, once the Sol reviewer has checked the changes your 27 October answers made.
+- **OD4**, the sign-in tables, and **OD2**, the default token lifetime: [Requirements: owner decisions](#requirements--owner-decisions). The rest are decided.
+- **The two production steps you run:** [Delivery plan: waiting on you](#delivery-plan--waiting-on-you-before-the-slices-that-need-it).
 
 </ex-callout>
 
@@ -212,15 +222,15 @@ Its meaning: an organization admits people and bots first, and only then do they
 - **Rules:** [organizations](#specification--organizations), [membership and collaboration](#specification--membership-and-collaboration).
 - **Who enforces them:** [admission first, nothing across](#program-design--organizations-admission-first-nothing-across-r34-r38), [where each entity lives](#program-design--where-each-entity-lives).
 - **How they're proven:** [coverage rows](#verification-design--coverage-rows).
-- **Options weighed:** [keeping organizations apart](#alternatives--11-how-are-organizations-kept-apart), [organizations' Fleet data (OD8)](#alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8).
+- **Options weighed:** [keeping organizations apart](#alternatives--11-how-are-organizations-kept-apart), [organizations' Fleet data (OD8)](#alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8).
 
 <h2 id="machine-login">Machine login</h2>
 
-Its meaning: every machine logs in with short-lived tokens from an issuer you registered, in [machine login](#specification--machine-login). Its pictures: [the device-code login](#program-design--how-the-owner-logs-a-machine-in-by-device-code) and [a VM logging in through its creator](#program-design--how-a-vm-logs-in-through-its-creator).
+Its meaning: every machine logs in by a device code you approve, then renews itself with short-lived tokens, in [machine login](#specification--machine-login). Its picture: [the device-code login](#program-design--how-the-owner-logs-a-machine-in-by-device-code). Starting a session on another machine is [its own path](#program-design--how-a-session-starts-a-helper-on-another-machine).
 
 - **Needs:** U17 and U31–U35 in [Requirements](#requirements--needs).
-- **Rules:** [machine login](#specification--machine-login), [C8](#specification--c8-machine-login-by-device-code), [C9](#specification--c9-machine-token), [C10](#specification--c10-machine-issuer-registration).
-- **Who enforces them:** [machine login](#program-design--machine-login-r39-r43-c8-c10), [components](#program-design--components), [trust boundaries](#program-design--trust-boundaries), [changes and cutover](#program-design--changes-and-cutover).
+- **Rules:** [machine login](#specification--machine-login), [C8](#specification--c8-machine-login-by-device-code), [C9](#specification--c9-machine-token).
+- **Who enforces them:** [machine login](#program-design--machine-login-r39-r43-c8-c9), [components](#program-design--components), [trust boundaries](#program-design--trust-boundaries), [changes and cutover](#program-design--changes-and-cutover).
 - **How they're proven:** [shared observations SO8–SO10](#verification-design--shared-observations), [coverage rows](#verification-design--coverage-rows).
 - **Options weighed:** [how a machine logs in](#alternatives--19-how-does-a-machine-log-in), [how the switch happens](#alternatives--20-how-does-the-switch-to-the-new-login-happen).
 
@@ -263,7 +273,7 @@ flowchart LR
     D1["D1: accounts, sessions, passkeys, OAuth clients and tokens, bot credentials, device-code requests, audit, sign-in claims"]
   end
   subgraph Fleet["Fleet central (holds the truth)"]
-    OrgDO["Durable Object per organization: allowlist, owner, membership, bots, pairs, machine issuers and logins, removals"]
+    OrgDO["Durable Object per organization: allowlist, owner, membership, bots, pairs, machine logins, remote starts, removals"]
   end
   subgraph Portal["Tool Portal (enforces)"]
     WsDO["Durable Object per workspace: used approvals, removal marks received"]
@@ -273,7 +283,7 @@ flowchart LR
   D1 -- "tokens carry the decision" --> WsDO
 </script></ex-mermaid>
 
-<p id="d2-answer-pointer" data-comment-label="The open storage question">One storage question is still open: whether each organization's Fleet data gets its own Fleet object (<a href="#alternatives--21-open-how-are-organizations-fleet-data-kept-apart-od8">OD8, drawn</a>).</p>
+<p id="d2-answer-pointer" data-comment-label="Fleet data per organization">Each organization's Fleet data gets its own Fleet object (<a href="#alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8">OD8, your call</a>).</p>
 
 <h2 id="documents">The documents</h2>
 
@@ -283,15 +293,15 @@ flowchart LR
     <ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
   </section>
   <section id="tab-specification" label="Specification" icon="book-open">
-    <p>The entities and their three maps, obligations R1–R45, ten contracts, and the failure cases: a request that would cross organizations, a device code denied, expired or reused, someone other than the owner approving a code, a machine issuer withdrawn or its key leaked, a refresh credential leaked, the step 2 switch breaking login, a refused sign-in racing an admitted one, an unknown answer from Fleet central, Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</p>
+    <p>The entities and their three maps, obligations R1–R46, ten contracts, and the failure cases: a request that would cross organizations, a device code denied, expired or reused, someone other than the owner approving a code, a machine without a store restarting, a remote start's target disconnecting, a refresh credential leaked, the step 2 switch breaking login, a refused sign-in racing an admitted one, an unknown answer from Fleet central, Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</p>
     <ex-markdown id="specification" label="Specification" src="./specification.md"></ex-markdown>
   </section>
   <section id="tab-program-design" label="Program Design" icon="stack">
-    <p>The structure, organizations and admission, the token and decision shapes, machine login and the three steps, service requests, removal across owners, seven flows, state, trust boundaries, and failure handling: Fleet central unreachable during a login or renewal, an approval whose code then fails, two polls redeeming one code, an installation claimed by another organization, a machine token expiring on an open connection, an issuer's keys unreachable, a Linux Router without systemd, a delayed mint, a notice not acknowledged, notices out of order, a duplicate notice, a restart, a removal racing a grant, an interrupted machine revocation or credential retirement, a stale binding, a signing key rotation, and the sign-in service's storage: its typed store, atomic statement groups on D1 and Node, and the tables for your approval.</p>
+    <p>The structure, organizations and admission, the token and decision shapes, machine login and the three steps, service requests, removal across owners, seven flows, state, trust boundaries, and failure handling: Fleet central unreachable during a login or renewal, an approval whose code then fails, two polls redeeming one code, an installation claimed by another organization, a machine token expiring on an open connection, a Router without an encrypted store, a remote start interrupted at each step, a delayed mint, a notice not acknowledged, notices out of order, a duplicate notice, a restart, a removal racing a grant, an interrupted machine revocation or credential retirement, a stale binding, a signing key rotation, and the sign-in service's storage: its typed store, atomic statement groups on D1 and Node, and the tables for your approval.</p>
     <ex-markdown id="program-design" label="Program Design" src="./program-design.md"></ex-markdown>
   </section>
   <section id="tab-verification-design" label="Verification Design" icon="test-tube">
-    <p>One line per need, ten shared observations, coverage rows naming the wrong build each must catch, and the journeys still to build, including the Linux and Firecracker jobs that wait for your approval. Planned, not observed.</p>
+    <p>One line per need, eleven shared observations, coverage rows naming the wrong build each must catch, and the journeys still to build, including the remote-start journey. Linux is tested in codex-router's existing CI; the full Linux login and any VM run are named unverified. Planned, not observed.</p>
     <ex-markdown id="verification-design" label="Verification Design" src="./verification-design.md"></ex-markdown>
   </section>
   <section id="tab-alternatives" label="Alternatives" icon="git-branch">
@@ -299,7 +309,7 @@ flowchart LR
     <ex-markdown id="alternatives" label="Alternatives" src="./alternatives.md"></ex-markdown>
   </section>
   <section id="tab-delivery-plan" label="Delivery plan" icon="rocket">
-    <p>The slices in order across codex-router, the sign-in service, the Tool Portal and agent-vm, which slice earns each proof row, and the stop conditions: Better Auth refusing the device-grant wrapper, a replication path not where the design assumes, you choosing the column for OD8, or a CI job declined. Plan only; nothing is built.</p>
+    <p>The slices in order across codex-router, the sign-in service and the Tool Portal, which slice earns each proof row, and the stop conditions: Better Auth refusing the device-grant wrapper, a replication or delivery path not where the design assumes, or the Tool Portal and sign-in moving to a new repository. Plan only; nothing is built.</p>
     <ex-markdown id="delivery-plan" label="Delivery plan" src="./plans/2026-10-27-agent-identity-delivery.md"></ex-markdown>
   </section>
 </ex-tabs>
