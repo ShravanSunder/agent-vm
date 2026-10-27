@@ -446,7 +446,7 @@ flowchart TB
 |---|---|---|---|
 | A. Switch and remove Access at once | One change. | If the new login has a hole, nothing guards Fleet central while you find it. | Turned down by you: "too risky" |
 | B. Accept either login for a while | No re-login day. | Two ways in at once, the half step you ruled out. | Turned down by you: "no half steps" |
-| C. Three steps | Access still guards Fleet central while the new login proves itself; at no time are both logins accepted; reverting step 2 is a redeploy. | Every machine logs in again at step 2. | **Chosen** by you ([U34](requirements.md#needs)) |
+| C. Three steps | Access still guards Fleet central while the new login proves itself; at no time are both logins accepted. | Every machine logs in again at step 2; step 2 fixes forward, with no way back to the old login, because that could readmit a machine revoked after the switch. | **Chosen** by you ([U34](requirements.md#needs)) |
 
 ## 21. Open: how are organizations' Fleet data kept apart? (OD8)
 
@@ -471,4 +471,4 @@ flowchart TB
 | A. One Fleet object per organization | Separate by address: a machine can reach only its organization's object, so a forgotten filter can't leak. Workspace names stay unique per organization for free. Your existing Fleet data becomes the first organization's, with nothing migrated. | One more object per organization to operate. |
 | B. One Fleet object with an organization column | One store. | Every Fleet read and write must filter by organization; one missed filter leaks across organizations; existing rows need a migration to gain the column. |
 
-**Recommended: A. Not decided.** Until you decide, everything else is built; only the Fleet object's addressing waits, and your production switch (step 2) waits for it.
+**Recommended: A. Not decided.** Until you decide, the organization authority, machine login and the sign-in work are built. The Fleet object's addressing, organization-scoped project lookups, the filtered view and your production switch (step 2) wait.
