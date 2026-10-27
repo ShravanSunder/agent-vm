@@ -22,145 +22,208 @@
 <a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
-<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.1">
+<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.2">
 
 <h1>Identity decisions</h1>
 
-<p id="intro" data-comment-label="What this page is">The identity design now carries all your 26 October decisions: organizations first, people working through bots, owner-only machine login with issuers and device codes, the three steps off Cloudflare Access, and Linux and VMs. The independent Sol reviewer and the Advisor checked all four documents twice. No correction is left open; what remains is yours to decide. Pick an answer for each question, comment on anything (press <strong>C</strong>, or select a passage), then use <strong>Copy</strong> or <strong>Export</strong> in the Comments panel and paste the result back to me. Nothing is sent automatically, and nothing is built until you approve the design.</p>
+<p id="intro" data-comment-label="What this page is">Thanks for the answers. This revision records what you decided and answers your four questions in plain terms, each with a picture. Taking agent-vm out of scope leaves two new decisions, and both have a recommended answer. Pick, comment (press <strong>C</strong>, or select a passage), then <strong>Copy</strong> or <strong>Export</strong> from the Comments panel and paste it back to me.</p>
 
-<ex-callout id="order" title="Decide in this order" tone="question" icon="users">
-<p><strong>1. Fleet data per organization (OD8)</strong> unblocks the Fleet object's addressing, the filtered view, session registration and your production switch. <strong>2. Which VMs (OD10)</strong> fixes the VM proof target. <strong>3. Linux without systemd (OD9)</strong> and <strong>4. the Linux CI job</strong> settle Linux coverage. The smaller ones below block nothing; their proposed defaults are built and are each one setting to change.</p>
+<ex-callout id="left" title="Two decisions left" tone="question" icon="users">
+<p><strong>1. VM creators and cloud platforms wait until later.</strong> agent-vm was the only one the design named, so nothing in this build would use them (<a href="#issuers">below</a>).</p>
+<p><strong>2. Machines without systemd log in by device code and keep the credential only in memory.</strong> This is your question, and with no other way in, it's the answer I'd pick (<a href="#od9">below</a>).</p>
+<p>Then <a href="#explained">five design calls, explained</a>: keep or change each.</p>
 </ex-callout>
 
-<h2 id="od8">1. How organizations' Fleet data are kept apart (OD8)</h2>
+<h2 id="decided">What you decided</h2>
 
-<p id="od8-why" data-comment-label="Why OD8 is open">You decided one Fleet central serves several organizations with nothing shared between them (U27). Fleet central keeps each organization's admissions and roles in its own object. Workspaces, projects and boards, though, live in one Fleet object today, shared by everyone, and no earlier decision says how to split them. This is a storage boundary, so it is yours. Both reviewers agree the choice is real and the costs below are honest. The Advisor added that option A is still a storage cutover, not "no migration".</p>
+<p id="decided-lead" data-comment-label="Decided">These go into the four design documents now.</p>
 
-<ex-mermaid id="od8-today" label="Today: one Fleet object for the whole fleet"><script type="text/plain">
+<table id="decided-table">
+<thead><tr><th>Decision</th><th>Your answer</th><th>What happens</th></tr></thead>
+<tbody>
+<tr><td>Fleet data per organization (OD8)</td><td>One Fleet object per organization</td><td>Your existing Fleet data becomes the first organization's. The Fleet object's addressing, the filtered view and session registration are no longer waiting.</td></tr>
+<tr><td>agent-vm and VMs (OD10)</td><td>Out of scope: identity and the Tool Portal are moving out of agent-vm</td><td>The agent-vm VM creator, its token directory and the VM proof leave the design and the plan.</td></tr>
+<tr><td>Linux CI job</td><td>No</td><td>No new gate. codex-router's existing CI already runs every Rust test on Linux (<code>ubuntu-latest</code>), so the Linux secret store's tests run there. Logging a real Linux machine in, end to end, stays unverified. The plan records that as your accepted limit.</td></tr>
+<tr><td>Leaving an organization (OD5)</td><td>Roles end with it</td><td>Bots' removal notices go out in the same step. Sessions aren't affected.</td></tr>
+<tr><td>Device code lifetime (OD6)</td><td>10 minutes, single use</td><td>One setting.</td></tr>
+<tr><td>Room record (OD7)</td><td>Keep</td><td>Each session records its room kind; nothing is refused because of it.</td></tr>
+</tbody>
+</table>
+
+<h2 id="issuers">1. VM creators and cloud platforms: later</h2>
+
+<p id="issuers-what" data-comment-label="What an issuer is">The design lets two kinds of thing log a machine in. The built-in one is the sign-in service: it gives a machine its tokens after you approve a device code. The other kind is an external issuer: something that creates VMs, such as agent-vm or a cloud platform, signs tokens for them, and you register it once. agent-vm was the only external issuer the design named. With agent-vm out of scope, no machine in this build would ever arrive with an external issuer's token.</p>
+
+<ex-mermaid id="issuers-picture" label="Two ways a machine gets its tokens"><script type="text/plain">
 flowchart TB
-  M1["Your machines"] --> F["One Fleet object<br/>every workspace, project and board"]
-  M2["Others' machines"] --> F
+  D["Device code<br/>(now)"] --> F["Fleet central<br/>checks every<br/>machine token"]
+  V["VM creator<br/>(later)"] -.-> F
 </script></ex-mermaid>
 
-<ex-choice id="od8-choice" title="How are organizations' Fleet data kept apart?">
-  <ex-option id="od8-object-per-organization" title="**A: one Fleet object per organization** (recommended)">
-    <template slot="summary">
-Each organization gets its own Fleet object. Your existing Fleet data becomes the first organization's, through a fixed mapping to today's storage on both hosts, so no rows are rewritten.
+<p id="issuers-removes" data-comment-label="What waiting removes">Waiting takes these out of the first build: registering and withdrawing issuers; pre-approved and approve-each machines, with the "pending" state between them; checking an external issuer's signing keys at Fleet central; the retry key a VM's first login needs; and the Router's VM and platform token sources. None of it would be proven against a real issuer anyway, only against a test stand-in.</p>
 
-- Gains: separated by address. A machine can only reach its own organization's object, so a forgotten filter can't leak. Workspace names stay unique per organization for free.
-- Costs: it is still a storage cutover. Every caller of the Fleet object, its restart and wake recovery, each connection's feed, and refusing the old address all change. One more object per organization to run.
+<p id="issuers-keeps" data-comment-label="What stays">What stays: Fleet central still checks each token against the issuer that signed it, so a VM creator added later is one more issuer kind. That means one more token source on the Router and its check at Fleet central; device-code machines don't change. Your "one login model, expandable" (U33) still holds, and your "later we can have something that can spin up VMs and enrol them" (U31) becomes that later step.</p>
+
+<ex-choice id="issuers-choice" title="VM creators and cloud platforms as issuers: now or later?">
+  <ex-option id="issuers-later" title="**Later, when something creates VMs** (recommended)">
+    <template slot="summary">
+This build logs machines in by device code only.
+
+- Gains: a much smaller first build, and nothing built without a real user to prove it.
+- Costs: a VM can still log in, but by device code, the way you log in any machine. Automatic VM login waits for the later step.
     </template>
   </ex-option>
-  <ex-option id="od8-column" title="B: one Fleet object with an organization column">
+  <ex-option id="issuers-now" title="Now, against a test issuer">
     <template slot="summary">
-Keep one Fleet object; tag every row with its organization.
+Build issuer registration and external tokens now.
 
-- Gains: one store to operate.
-- Costs: every existing row is backfilled, names are made unique per organization, and every Fleet read and write must filter by organization. One missed filter leaks across organizations.
-    </template>
-  </ex-option>
-</ex-choice>
-
-<p id="od8-defer" data-comment-label="If OD8 waits">If you defer: the organization authority, machine login and the sign-in work go ahead. The Fleet object's addressing, organization-scoped project lookups, the filtered view, session registration and your production switch wait.</p>
-
-<h2 id="od10">2. Which VMs the Router must be proven in (OD10)</h2>
-
-<p id="od10-why" data-comment-label="Why OD10 is open">You said Routers must run on "linux or fmvs" and that "a firecracker vm could communicate to a router outside vm". The reviewers found that agent-vm's own VMs boot through Gondolin on QEMU, not Firecracker, and nothing in the product runs Firecracker today. The Router doesn't care which hypervisor runs it. What matters is a Linux guest with no Keychain, logged in by the thing that created it. Both reviewers say a QEMU run must not be reported as Firecracker proof, so this needs your word.</p>
-
-<ex-choice id="od10-choice" title="Which VMs must the Router be proven in?">
-  <ex-option id="od10-agent-vm" title="**agent-vm's own VMs** (recommended)">
-    <template slot="summary">
-Prove the Router inside agent-vm's Gondolin VMs, with agent-vm as the VM creator. The run uses agent-vm's existing VM test lane in CI; no new job or gate.
-
-- Gains: the real product path, with a real VM creator keeping tokens fresh through a read-only mounted directory.
-- Costs: Firecracker itself stays unproven until you have a Firecracker host.
-    </template>
-  </ex-option>
-  <ex-option id="od10-firecracker" title="Firecracker specifically">
-    <template slot="summary">
-Prove it in a Firecracker guest.
-
-- Gains: proof on the exact hypervisor you named.
-- Costs: needs a Firecracker host or runner you name. KVM isn't on sunclaw (a Mac), and nothing in agent-vm boots Firecracker today, so this is new infrastructure.
-    </template>
-  </ex-option>
-  <ex-option id="od10-both" title="Both">
-    <template slot="summary">
-agent-vm's VMs now, Firecracker when you name a host.
-
-- Gains: the product path proven now, Firecracker later.
-- Costs: as for Firecracker, when it comes.
+- Gains: ready the day a VM creator exists.
+- Costs: everything listed above is built and tested only against a stand-in, with no real issuer to prove it.
     </template>
   </ex-option>
 </ex-choice>
 
-<h2 id="od9">3. Linux machines without systemd (OD9)</h2>
+<h2 id="od9">2. Machines without systemd: device code, kept in memory</h2>
 
-<p id="od9-why" data-comment-label="Why OD9 is open">A machine you log in by device code keeps one refresh credential in an encrypted store. On macOS that store's key lives in the Keychain. On Linux, the design takes it from a systemd encrypted credential, sealed with the machine's TPM when it has one and read by the Router running as a service. A Linux machine that doesn't run systemd has no such key. Your "Linux and Firecracker, everything a Router needs" (U35) doesn't say whether that case must log in by device code.</p>
+<p id="od9-question" data-comment-label="Your question">You picked "log in through an issuer" and asked: "why would this not just use an authority and in memory with login?" It can. Once VM creators and platforms wait (above), it's the only way those machines get in. Otherwise "issuer only" would leave them with no login at all.</p>
 
-<ex-choice id="od9-choice" title="Can a Linux machine without systemd log in by device code?">
-  <ex-option id="od9-issuer-only" title="**No: it logs in through an issuer instead** (recommended)">
+<p id="od9-how" data-comment-label="How it works">Every machine you log in by device code gets a refresh credential: the thing it uses to renew its tokens without asking you again. Where that credential lives decides what happens when the Router restarts:</p>
+
+<table id="od9-table">
+<thead><tr><th>Machine</th><th>Where its refresh credential lives</th><th>When the Router restarts</th></tr></thead>
+<tbody>
+<tr><td>macOS</td><td>Encrypted store, key in the Keychain</td><td>Renews by itself</td></tr>
+<tr><td>Linux with systemd</td><td>Encrypted store, key from a systemd encrypted credential</td><td>Renews by itself</td></tr>
+<tr><td>Anything else (proposed)</td><td>Memory only, never written to disk</td><td>Shows a new device code. Once you approve it, it's the same machine with the same sessions and workspaces.</td></tr>
+</tbody>
+</table>
+
+<ex-choice id="od9-memory-choice" title="How does a machine without systemd log in?">
+  <ex-option id="od9-memory" title="**Device code, credential in memory only** (recommended)">
     <template slot="summary">
-Without systemd, production refuses device-code login; that machine logs in through a VM creator or platform issuer.
-
-- Gains: no plaintext anywhere; one Linux store to build and prove.
-- Costs: device-code login on Linux needs the Router run as a systemd service.
+- Gains: works on any machine. Nothing is written to disk, which fits your "no plain text secrets for prod" (decision 1201). No extra store to build.
+- Costs: after each restart, reboot, crash or upgrade, you approve a new code before that machine reconnects. Its sessions wait until then and carry on afterwards.
     </template>
   </ex-option>
-  <ex-option id="od9-key-file" title="Yes, with a key file beside the Router">
+  <ex-option id="od9-issuer-only" title="Issuer only (your earlier pick)">
     <template slot="summary">
-A data-key file next to the Router on those machines.
-
-- Gains: works anywhere.
-- Costs: on those machines the refresh credential is only as safe as a plaintext file the Router's user can read; a second store to build and prove.
+- Costs: if VM creators and platforms wait, these machines can't log in at all until an issuer exists.
+    </template>
+  </ex-option>
+  <ex-option id="od9-key-file" title="A key file beside the Router">
+    <template slot="summary">
+- Gains: survives restarts without you.
+- Costs: the credential is only as safe as a plain file the Router's user can read, and that's a second store to build and prove.
     </template>
   </ex-option>
 </ex-choice>
 
-<h2 id="linux-ci">4. A Linux CI job in codex-router</h2>
+<h2 id="explained">Five design calls, explained</h2>
 
-<p id="linux-ci-why" data-comment-label="Why the Linux job needs you">Proving the whole machine login on Linux needs a Linux machine running the Router as a systemd service. The only Linux machines available are GitHub Actions runners; sunclaw is a Mac. codex-router's existing Linux jobs can already run the secret store's own tests. The whole journey needs one new job, and check gates are yours to change.</p>
+<p id="explained-lead" data-comment-label="About these">You ticked five of these and asked about three, so I've taken the ticks as "explain this", not "change this". Each comes from a real gap the reviewers found. After each explanation, keep it or change it.</p>
 
-<ex-choice id="linux-ci-choice" title="Add one codex-router CI job that runs the machine-login journey on Linux?">
-  <ex-option id="linux-ci-yes" title="**Yes, one job on ubuntu-latest** (recommended)">
-    <template slot="summary">The Router as a systemd service, Fleet central on Tokio, the sign-in service on its Node host. Linux login is then proven, not assumed.</template>
-  </ex-option>
-  <ex-option id="linux-ci-no" title="No">
-    <template slot="summary">Linux stays unproven beyond the secret store's own tests; the plan records it as your accepted limit.</template>
-  </ex-option>
+<h3 id="fix-forward">Does step 2 break login? What "fixes forward" means</h3>
+
+<p id="fix-forward-steps" data-comment-label="The three steps">No, step 2 isn't expected to break login. "Fixes forward" only answers one question: if a bug gets through anyway, what then? Here are the three steps you chose:</p>
+
+<table id="steps-table">
+<thead><tr><th>Step</th><th>Fleet central in production</th><th>Your machines</th></tr></thead>
+<tbody>
+<tr><td>1. Build</td><td>Today's login, unchanged</td><td>Unchanged</td></tr>
+<tr><td>2. Switch, behind Access</td><td>Accepts only the new login</td><td>Each logs in again by device code</td></tr>
+<tr><td>3. Remove Access</td><td>Access deleted</td><td>Access token deleted</td></tr>
+</tbody>
+</table>
+
+<p id="fix-forward-rehearse" data-comment-label="Rehearsed first">The switch is rehearsed on test deployments, behind a test Access application, before you run it in production, so a bug should show up there first. Suppose one still shows up after the real switch, say renewals fail after an hour. There are two ways out:</p>
+
+<ex-mermaid id="fix-forward-picture" label="A bug found after step 2"><script type="text/plain">
+flowchart TB
+  B["Bug found<br/>after step 2"] --> FF["Fix forward<br/>(the design)"]
+  B --> RB["Roll back to<br/>the old login"]
+  FF --> FF1["Offline until<br/>the fix deploys;<br/>Access still guards"]
+  RB --> RB1["The old table never<br/>saw later revocations"]
+  RB1 --> RB2["A machine you<br/>revoked gets back in"]
+</script></ex-mermaid>
+
+<p id="fix-forward-why" data-comment-label="Why fix forward">Rolling back also means keeping the old login's code and table alive after step 2: exactly the half step you ruled out ("no half steps").</p>
+
+<ex-choice id="fix-forward-choice" title="Step 2: fix forward?">
+  <ex-option id="fix-forward-keep" title="**Keep: fix forward** (recommended)"><template slot="summary">A bug means machines are offline, still behind Access, until the fix lands.</template></ex-option>
+  <ex-option id="fix-forward-rollback" title="Change: keep the old login for a rollback window"><template slot="summary">A rollback is possible, but it lets back in any machine you revoked after the switch, and the old code stays.</template></ex-option>
 </ex-choice>
 
-<h2 id="smaller">Smaller decisions (nothing waits on them)</h2>
+<h3 id="token-note">What "the token family carries its organization and enrollment" means</h3>
 
-<ex-choice id="od5-choice" title="OD5: when someone leaves an organization, do their roles end with it?" view="table">
-  <ex-option id="od5-yes" title="**Yes** (recommended)"><template slot="summary">Roles end in the same step; bots' removal notices go out. Sessions are not affected by a person leaving.</template></ex-option>
-  <ex-option id="od5-rows-stay" title="Rows stay but stop counting"><template slot="summary">Nothing comes back on readmission either way (your U36).</template></ex-option>
+<p id="token-note-tokens" data-comment-label="Two tokens">When you approve a device code, the machine gets two tokens from the sign-in service. The access token lasts minutes, and the machine shows it to Fleet central. The refresh token it trades for a fresh pair before the access token runs out. Each trade issues a new refresh token, and that chain is the token family.</p>
+
+<p id="token-note-problem" data-comment-label="The problem it solves">At every trade, the sign-in service has to know which machine this is, in which organization, and whether your approval of it still stands. If you revoked the machine, the trade has to fail. A token on its own only says who approved it, and that's you for every machine you own, so it can't tell your machines apart.</p>
+
+<p id="token-note-answer" data-comment-label="The note">Better Auth keeps one short note on a refresh token and copies it onto each new one (it calls the note <code>referenceId</code>). When the first tokens are issued, we write "organization X, approval Y" there. Each trade after that reads the note and asks your organization whether approval Y is still that machine's current one:</p>
+
+<ex-mermaid id="token-note-picture" label="Every renewal asks whether your approval still stands"><script type="text/plain">
+flowchart TB
+  R["Router trades its refresh token<br/>note: org X, approval Y"] --> S["Sign-in service asks org X:<br/>is approval Y still current?"]
+  S -->|"yes"| T["New tokens,<br/>same note"]
+  S -->|"revoked or<br/>replaced"| X["Refused"]
+</script></ex-mermaid>
+
+<p id="token-note-cost" data-comment-label="Its cost">Cost: it depends on Better Auth carrying the note across trades. The first sign-in slice proves that against version 1.7.11. If it doesn't hold, we write the same note from our own device-code endpoints.</p>
+
+<ex-choice id="token-note-choice" title="Renewals carry the machine's organization and approval?">
+  <ex-option id="token-note-keep" title="**Keep** (recommended)"><template slot="summary">Revoking a machine stops its renewals, even when you approve machines in two organizations.</template></ex-option>
+  <ex-option id="token-note-table" title="Change: a separate table instead"><template slot="summary">Map every refresh token to its approval in our own table, updated on every trade. More moving parts for the same result.</template></ex-option>
 </ex-choice>
 
-<ex-choice id="od6-choice" title="OD6: how long a device code stays usable" view="table">
-  <ex-option id="od6-10" title="**10 minutes, single use** (recommended)"><template slot="summary">Short, as the device-code standard asks; Better Auth's default is 30.</template></ex-option>
-  <ex-option id="od6-30" title="30 minutes"><template slot="summary">More time to walk to another device.</template></ex-option>
+<h3 id="filtered">What "machines see only their workspaces, with gaps marked" means</h3>
+
+<p id="filtered-rule" data-comment-label="Your rule">This enforces a rule you set on 26 October (U29): "if a machine not enrolled in a workspace or cant communicate with it … they dont know about the rest." Today every connected Router receives the whole Fleet: every workspace, board and project. The filtered view stops that.</p>
+
+<ex-mermaid id="filtered-picture" label="One organization, three workspaces: what machine M1 receives"><script type="text/plain">
+flowchart TB
+  P["Personal<br/>(M1 serves it)"] -->|"everything"| M["Machine M1<br/>learns nothing<br/>about Client"]
+  OSS["OSS<br/>(Personal may<br/>talk to it)"] -->|"name only"| M
+</script></ex-mermaid>
+
+<p id="filtered-feed" data-comment-label="Gaps marked">Fleet sends a Router data three ways: a list of workspaces, a full copy, and every change since that copy, numbered 1, 2, 3… All three get the same filter. "Gaps marked" is about those numbers. Fleet and the Router treat a missing number as lost data (<code>fleet_feed_store.rs:113–123</code>). Suppose Fleet just left out change 7 because it's about Client. M1 would see 6 and then 8, and couldn't tell "hidden from you" from "lost". So Fleet sends "7: withheld", a number with nothing in it:</p>
+
+<table id="filtered-table">
+<thead><tr><th>Number</th><th>What Fleet stores</th><th>What M1 receives</th></tr></thead>
+<tbody>
+<tr><td>6</td><td>Task added in Personal</td><td>Task added in Personal</td></tr>
+<tr><td>7</td><td>Project added in Client</td><td>7: withheld</td></tr>
+<tr><td>8</td><td>OSS renamed</td><td>OSS renamed (name only)</td></tr>
+</tbody>
+</table>
+
+<p id="filtered-change" data-comment-label="When you change access">When you change what a machine serves, its copy follows. A workspace it now serves arrives as a fresh copy. One it no longer serves is deleted from its copy. One you drop to talk-only keeps just its name. A machine that was offline gets the same correction when it reconnects.</p>
+
+<ex-choice id="filtered-choice" title="Machines see only their workspaces?">
+  <ex-option id="filtered-keep" title="**Keep** (recommended)"><template slot="summary">Your U29 rule holds on every read. Cost: two new messages ("withheld" and "your workspaces changed") and a filter on each of the three reads.</template></ex-option>
+  <ex-option id="filtered-whole" title="Change: machines see their whole organization"><template slot="summary">Drops U29. The filter and the two messages go, and every machine learns every workspace in its organization.</template></ex-option>
 </ex-choice>
 
-<ex-choice id="od7-choice" title="OD7: keep recording each session's room kind and showing which workspaces share a machine?" view="table">
-  <ex-option id="od7-keep" title="**Keep it** (recommended)"><template slot="summary">Already designed, cheap, and shows what shares a machine. Nothing is refused because of it.</template></ex-option>
-  <ex-option id="od7-strike" title="Strike it"><template slot="summary">Removes U18 and its proof.</template></ex-option>
+<h3 id="claim">Why a machine is claimed for an organization only after you approve it</h3>
+
+<p id="claim-why" data-comment-label="Claim after approval">A machine belongs to one organization, for good ("a single router only belongs to one organization", U27). Fleet records that once, in a list that is never rewritten. The question is when it's written. If it were written when a machine asks to log in, before you approve, then a login you deny would still lock that machine into the organization forever. And anyone who knew a machine's ID could start a login just to lock it into the wrong one. So the record is written only after you approve, and a denied login leaves nothing behind.</p>
+
+<ex-choice id="claim-choice" title="Claim only after approval?">
+  <ex-option id="claim-keep" title="**Keep** (recommended)"><template slot="summary">A denied or abandoned login leaves no trace.</template></ex-option>
+  <ex-option id="claim-early" title="Change: claim when the login starts"><template slot="summary">Simpler by one step, but a denied login locks the machine into that organization for good.</template></ex-option>
 </ex-choice>
 
-<p id="od4-pointer" data-comment-label="Where OD4 lives">OD4, the sign-in tables, is still on the <a href="../2026-10-24-remediation-owner-decisions/index.html#schemas">remediation decisions page</a>. The tables now also include the device-code table with its machine fields and enrollment.</p>
+<h3 id="old-connection">Why logging a machine in again cuts off its old connection</h3>
 
-<h2 id="choices-made">Design calls made during the reviews</h2>
+<p id="old-connection-why" data-comment-label="One live login">One machine, one live login. You might approve a new login for a machine after rebuilding it, or because you think its old credential leaked. Either way, anything still connected with the old login is cut off at once, so the old credential stops working immediately, not minutes later. The machine's sessions, workspaces and boards carry over to the new login, because they belong to the machine, not to the login. The reviewers found that the earlier design let the old connection keep registering sessions and getting tokens; this closes that.</p>
 
-<ex-choice id="overrule-choice" title="Overrule any of these? (tick the ones you want changed)" multiple>
-  <ex-option id="overrule-fix-forward" title="Step 2 fixes forward: no way back to the old login"><template slot="summary">Restoring the old login could let a machine you revoked after the switch back in. Cost: if step 2 breaks login, machines are offline, still behind Access, until a fix lands.</template></ex-option>
-  <ex-option id="overrule-authorize-then-claim" title="A machine is claimed for an organization only after you or its issuer authorized it"><template slot="summary">A refused attempt leaves nothing behind. Cost: a three-step exchange inside Fleet central.</template></ex-option>
-  <ex-option id="overrule-reference" title="A machine's token family carries its organization and enrollment"><template slot="summary">Each machine renews as itself, even when you approve machines in two organizations. Cost: relies on a Better Auth field the first sign-in slice must prove.</template></ex-option>
-  <ex-option id="overrule-old-connection" title="Logging a machine in again closes its old connection"><template slot="summary">A superseded connection can't act. Its sessions and allowances carry over.</template></ex-option>
-  <ex-option id="overrule-filtered-view" title="Machines see only their workspaces through every read, with gaps marked"><template slot="summary">Directory, snapshot and feed are filtered; the feed keeps its positions with placeholders. Cost: two new protocol frames.</template></ex-option>
-  <ex-option id="overrule-vm-directory" title="A VM's token arrives in a read-only mounted directory"><template slot="summary">Uses agent-vm's existing mount; the signing key never enters the VM.</template></ex-option>
+<ex-choice id="old-connection-choice" title="Cut off the old connection at once?">
+  <ex-option id="old-connection-keep" title="**Keep** (recommended)"><template slot="summary">A replaced login stops acting the moment you approve the new one.</template></ex-option>
+  <ex-option id="old-connection-expiry" title="Change: let it run until its token expires"><template slot="summary">For a few minutes, a leaked old credential could still act.</template></ex-option>
 </ex-choice>
 
-<p id="where-to-read" data-comment-label="Where to read more">Everything above is drawn in full on the <a href="../../specs/2026-10-24-agent-identity/index.html">identity page</a>: Alternatives 19–21 for the options, and the delivery plan tab for which slice waits on which answer.</p>
+<h2 id="next">What happens next</h2>
+
+<p id="next-steps" data-comment-label="Next">I'm putting the decided items into the four design documents now. Once you answer the two decisions above, I'll apply them too. The Sol reviewer then checks the changed parts, and the plan comes back to you ready for approval. OD4, the sign-in tables, is still on the <a href="../2026-10-24-remediation-owner-decisions/index.html#schemas">remediation decisions page</a>. Revision 1 of this page, with the OD8 options in full, is in the branch history (commit <code>f8128cdf</code>).</p>
 
 </ex-document>
 <ex-comments for="content"></ex-comments>
