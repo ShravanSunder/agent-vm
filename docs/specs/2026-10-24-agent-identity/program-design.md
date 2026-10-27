@@ -336,20 +336,28 @@ The Router may only name sessions on its own installation; central refuses any o
 // Requesting Router → Fleet central, on /v1/session. The requester is the session whose binding the call arrived on (R3).
 #[serde(rename_all = "camelCase")]
 pub struct RequestRemoteStart {
-    pub request_id: RemoteStartId,              // UUIDv7 from the requesting Router; a repeat returns the first answer
+    pub request_id: RemoteStartId,              // UUIDv7 from the requesting Router: the same ID and body return the first answer; a changed body is refused
     pub requester: SessionRef,                  // on the requesting machine's own installation
     pub organization_id: OrganizationId,        // from the requester's Registered
     pub workspace_id: WorkspaceId,              // from the requester's Registered
     pub target: InstallationId,
     pub project_id: ProjectId,
+    pub launch: RemoteLaunch,
+    pub timeout_seconds: u32,                   // the create's existing timeout; central caps it and fixes the deadline from it
+}
+// Interpreted on the target machine, never on the requester's.
+#[serde(rename_all = "camelCase")]
+pub struct RemoteLaunch {
     pub harness: HarnessKind,                   // codex | claude | cursor
-    pub requested_persona: Option<PersonaName>, // narrower only (R9)
+    pub working_directory: AbsolutePath,        // a path on the target; the target checks it exists before creating
+    pub execution_policy: ExecutionPolicy,      // the existing create input, unchanged (provider_conversation_contract.rs:441–451)
+    pub requested_persona: Option<PersonaName>, // narrower only (R9); tool access, not the sandbox
 }
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RemoteStartAdmission {
     #[serde(rename_all = "camelCase")]
-    Forwarded { request_id: RemoteStartId },
-    Refused { reason: RemoteStartRefusal },     // notMember | projectNotInWorkspace | machineNotAllowed | machineNotConnected
+    Forwarded { request_id: RemoteStartId, deadline: UnixSeconds },
+    Refused { reason: RemoteStartRefusal },     // notMember | projectNotInWorkspace | machineNotAllowed | machineNotConnected | requestIdReused
 }
 
 // Fleet central → the target Router, through the target connection's delivery face.
@@ -359,35 +367,61 @@ pub struct StartRequestedSession {
     pub requester: SessionRef,
     pub workspace_id: WorkspaceId,
     pub project_id: ProjectId,
-    pub harness: HarnessKind,
-    pub requested_persona: Option<PersonaName>,
+    pub launch: RemoteLaunch,
+    pub deadline: UnixSeconds,                  // the target begins nothing after it
 }
-// The target Router → Fleet central on its own connection; Fleet central → the requesting Router, through its delivery face.
+// The target Router → Fleet central, on its own connection.
+#[serde(rename_all = "camelCase")]
+pub struct ReportRemoteStart { pub request_id: RemoteStartId, pub outcome: RemoteStartOutcome }
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RemoteStartOutcome {
     #[serde(rename_all = "camelCase")]
     Started { session: SessionRef },
-    RefusedByTarget { reason: StartRefusal },   // the target's own start check (R8), or the provider's create failed
+    RefusedByTarget { reason: TargetStartRefusal }, // workingDirectoryMissing | startCheckRefused | deadlinePassed | providerCreateFailed
 }
-// Requesting Router → Fleet central after a reconnect: RemoteStartStatus { request_id } → the recorded outcome, or pending.
+// Fleet central → the requesting Router, through its delivery face; and the answer to RemoteStartStatus { request_id },
+// which only the original requester may ask.
+#[serde(rename_all = "camelCase")]
+pub struct RemoteStartAnswer { pub request_id: RemoteStartId, pub result: RemoteStartResult }
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum RemoteStartResult {
+    #[serde(rename_all = "camelCase")]
+    Started { session: SessionRef, late: bool },  // late: completed after the request had lapsed to unknown
+    RefusedByTarget { reason: TargetStartRefusal },
+    Unknown,                                      // the outcome could not be learned by the deadline plus one minute
+    Pending,                                      // status only: still before the lapse
+}
 
 #[serde(rename_all = "camelCase")]
 pub struct ListWorkspaceMachines { pub organization_id: OrganizationId, pub workspace_id: WorkspaceId } // → [{ installation, label }]
 ```
 
-`Unavailable` is a transport failure or timeout, which the requesting Router reports as `refused: unavailable` (R25).
+**Unavailable versus unknown (R46).** The requesting Router reports `refused: unavailable` only when the request never reached Fleet central: no open connection, or a send that failed before anything was written. Nothing was created. Once the request may have reached central, a lost or late answer is `unknown`, never a refusal, because the target may already have created the session. The requesting Router then asks `RemoteStartStatus` with the same request ID, which reconciles the original start and never begins a new one.
 
 **Who decides what:**
-- **The requesting machine's organization authority** admits the request in one transaction. The requester must be a registered, active member session of W. The project must be in W, which it asks its own Fleet object. The target must be one of its own machines, enrolled, with an active allowance for W. A target that is unknown, in another organization, not enrolled or without an allowance gets the same `machineNotAllowed`, so nothing about another organization shows (R34). It records the remote start (`request_id`, requester, target, project, state `forwarded`), then delivers `StartRequestedSession` through the target's connection delivery face (`Connection(target)`, rank 5, which the authority may call: `call_graph.rs:97–171` at `f465808f`). If the target has no open connection, the record ends as `machineNotConnected` and the requester is refused. Nothing is queued.
-- **The target Router** runs its own start check (R8: a named project, an allowance for W). It creates the conversation with the requester as creator and approver, and registers it with `started_by: remoteSession { session: requester, request_id }`. The organization authority accepts that starter only for a forwarded remote start to this machine and this project, and refuses any other `remoteSession` starter. The target then sends `RemoteStartOutcome` over its connection.
-- **The requesting Router** receives the outcome, which the organization authority records and delivers through the requester's connection, and hands it to the session as the create's answer. If no outcome arrives within the create's timeout, the answer is `unknown`; the session can ask `RemoteStartStatus`, or find the new session among its workspace's sessions. Nothing retries the start.
+- **The requesting machine's organization authority** admits the request in one transaction.
+  - The requester must be a registered, active member session of W. The project must be in W, which it asks its own Fleet object. The target must be one of its own machines, enrolled, with an active allowance for W.
+  - A target that is unknown, in another organization, not enrolled or without an allowance gets the same `machineNotAllowed`, so nothing about another organization shows (R34).
+  - It records the remote start with its whole body (requester, target, project, launch) and a deadline: admission time plus the request's timeout, capped at central's maximum. A repeat with the same ID and body returns the recorded answer; the same ID with a different body is `requestIdReused`.
+  - It then delivers `StartRequestedSession` through the target's connection delivery face (`Connection(target)`, rank 5, which the authority may call: `call_graph.rs:97–171` at `f465808f`). The delivery handler only sends the frame and acknowledges it; it never calls back into the authority. This follows the bounded live-delivery pattern already used for forwarded deliveries, which carry a deadline and a correlation and check duplicates (`forward_delivery.rs:43–144`), not the durable notice path that resumes later.
+  - **No open connection:** a known non-delivery. The record ends as `machineNotConnected` and the requester is refused, with nothing created. **An ambiguous send** (the delivery call fails or times out): the record stays `forwarded`, the requester gets `Forwarded`, and the outcome either arrives or lapses to `unknown`.
+- **The target Router**, on `StartRequestedSession`:
+  - After the deadline, it reports `deadlinePassed` and begins nothing.
+  - Otherwise the request ID becomes the operation ID of its create, through the existing provider create admission, which looks up a stable operation ID (`conversation_operations.rs:208–225`). So a duplicate delivery, or a resend after a restart around the create, reuses the same operation and never creates a second conversation.
+  - It checks that the working directory exists on this machine and refuses `workingDirectoryMissing` before creating anything. It runs its own start check (R8: a named project, an allowance for W). It creates the conversation with the requester as creator and approver.
+  - It registers the conversation with `started_by: remoteSession { session: requester, request_id }`, then sends `ReportRemoteStart` over its connection.
+- **The organization authority binds one session to one request.** It accepts a `remoteSession` starter only for a record forwarded to this machine for this project that is not yet bound, or is already bound to this same session. The first acceptance binds the record to that session; a different session for the same record is refused. It accepts `ReportRemoteStart` only from the record's target, and a `Started` session only if it is the bound one. A report after a terminal state is kept beside it, and changes nothing.
+- **The requesting Router** receives `RemoteStartAnswer`, matched to its request by `request_id`, and hands it to the session as the create's answer. If none arrives before the deadline plus one minute, the answer is `unknown`. The session can ask `RemoteStartStatus` later, or find the new session among its workspace's sessions. Nothing retries the start.
+- **Late completion:** a create the target began before the deadline may finish after the record has lapsed to `unknown`. Its registration is still accepted while the record is unbound, and the record then reads `started`, with `late: true`, in status and lookups. A session never appears without its record saying so.
 
-**What changes in the client:** a create naming another machine of the organization goes out as `RequestRemoteStart` instead of a local create, and the same-Router check stays for local creates. On the target, only the `StartRequestedSession` path accepts a creator from another Router, because Fleet central vouched for it. A Codex start still has a session as its creator (`conversation_create_actor.rs:53–70`).
+**What changes in the client:** a create naming another machine of the organization goes out as `RequestRemoteStart`, carrying the existing create's inputs, with the working directory interpreted on the target. The same-Router check stays for local creates. On the target, only the `StartRequestedSession` path accepts a creator from another Router, because Fleet central vouched for it. A Codex start still has a session as its creator (`conversation_create_actor.rs:53–70`).
 
 **Interleavings:**
-- **The target disconnects after delivery:** no outcome arrives. The record stays `forwarded` until the target's next connection reports it, or a lapse (the create's timeout plus one minute) ends it as `unknown`. If the target did create and register the session, it is a normal member session (R7).
+- **Two starts at once from one session:** each has its own request ID, so their outcomes, whatever order they return in, reach the right request.
+- **A duplicate delivery before the first outcome, or a target restart around the create:** one operation, so one conversation and one bound session.
+- **The target disconnects after delivery:** no outcome arrives, and the record lapses to `unknown`. If the target did create and register the session, it is a normal member session (R7), and the record says `started`, late.
 - **The allowance is withdrawn in between:** the target's registration is refused (`machineNotAllowed`), so the new conversation never activates, as for any start ("Order and late outcomes" above).
-- **The same request ID again** returns the recorded answer. A new request ID starts a second session.
+- **The organization authority restarts after recording a start:** the record is never redelivered; it lapses to `unknown` at its deadline (a wake).
 
 ### Machine login (R39–R43, C8, C9)
 
@@ -481,10 +515,14 @@ The plan's first sign-in slice proves this against 1.7.11. It checks in particul
 - **After a revocation,** a new log-in brings nothing back. The revocation removed its sessions and withdrew its allowances (state tables below), so the owner chooses its workspaces again on the approval page.
 
 **Where the refresh credential lives (R41, OD9).** `RefreshCredentialKeeping` is a closed set, chosen when the Router host starts:
-- `encryptedStore`: the store's data key is available (the Keychain on macOS; the systemd encrypted credential on Linux). The refresh credential is the store's only long-lived credential of the new login.
-- `memoryOnly`: neither is available. The credential lives only in the host process. A restart loses it, and the Router asks for a new device code before it connects.
+- `encryptedStore`: the store's data key is read (the Keychain on macOS; on Linux, the systemd encrypted credential in the service's `$CREDENTIALS_DIRECTORY`). The refresh credential is the store's only long-lived credential of the new login.
+- `memoryOnly`: the machine has no store for the Router: on Linux, no credentials directory or no credential in it; on any platform without a backend. The credential lives only in the host process. A restart loses it, and the Router asks for a new device code before it connects.
 
-The login answer tells the owner which it is ("kept in memory: you approve this machine again after a restart"). Production never writes the credential to disk in plaintext; debug builds may. A later issuer kind adds its own token source beside this one, plus its check at central, and device-code machines don't change.
+The store's existing results are classified, not lumped together (`encrypted_credential_store.rs:83–103`; `keychain_data_key.rs:220–249`):
+- **Absent, meaning no store:** `memoryOnly`.
+- **Present but unusable:** the Keychain denies access, the key or its metadata is invalid, or a migration is incomplete. This is an error. The host refuses to log in with a clear message, never falls back to memory, and never overwrites or migrates the store's contents.
+
+The choice holds for the host's lifetime, and the login answer tells the owner which it is ("kept in memory: you approve this machine again after a restart"). Only the refresh credential is kept this way; the Router's other uses of its secret store are unchanged. Production never writes the credential to disk in plaintext; debug builds may. A later issuer kind adds its own token source beside this one, plus its check at central, and device-code machines don't change.
 
 **The three steps (R43).** `machineLogin` is a deploy-time setting of Fleet central with exactly one value:
 - **Step 1**, `accessEnrollment`: production runs today's login unchanged. The new login is built and exercised only on test deployments, and production central refuses machine tokens.
@@ -811,12 +849,13 @@ sequenceDiagram
   RA->>OA: RequestRemoteStart (binding names S)
   OA->>OA: S a member of W? P in W? B enrolled, allowed for W?
   OA->>OA: record the remote start: forwarded
-  OA->>RB: StartRequestedSession (B's delivery face)
-  RB->>RB: start check (R8); create, creator S
+  OA->>RB: StartRequestedSession, with deadline (B's delivery face)
+  RB->>RB: directory on B? start check (R8)
+  RB->>RB: create once, keyed by the request ID; creator S
   RB->>OA: RegisterFleetSession (started by S, request ID)
-  OA-->>RB: Registered
-  RB->>OA: RemoteStartOutcome: Started
-  OA->>RA: outcome (A's delivery face)
+  OA-->>RB: Registered; record bound to this session
+  RB->>OA: ReportRemoteStart(request ID): Started
+  OA->>RA: RemoteStartAnswer(request ID) (A's delivery face)
   RA-->>S: the new session on B
 ```
 
@@ -824,8 +863,8 @@ Refusals at each step:
 - **S not an active member of W, or P not in W:** refused at the organization authority; nothing is delivered.
 - **B unknown, in another organization, not enrolled, or without an allowance for W:** one answer, `machineNotAllowed`.
 - **B not connected:** refused at once; nothing is queued.
-- **B's own start check refuses, or its create fails:** `RefusedByTarget`, carried back the same way.
-- **No outcome before the create's timeout:** the session gets `unknown`, and nothing retries.
+- **The directory is missing on B, B's own start check refuses, the deadline has passed, or the create fails:** `RefusedByTarget`, carried back the same way.
+- **No answer by the deadline plus one minute:** the session gets `unknown`, reads the outcome later under the same request ID, and nothing retries.
 
 The session on B is an ordinary member session of W from its registration on: it gets tokens through B (R2), and B's revocation removes it like any other.
 
@@ -1027,7 +1066,7 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 | revoked | `RevokeMachineEnrollment`, or superseded | — (terminal) | if not superseded: allowances withdrawn, mark, machine notices, connection closed |
 | expired | its optional end time passes (set at approval; none by default) | — (terminal) | as revoked, at the next decision that reads it |
 
-**A remote start** (organization authority): `forwarded` (admitted and delivered) → `started` or `refusedByTarget` (the target's outcome) or `unknown` (no outcome within the create's timeout plus one minute). A refusal before delivery is recorded as `refused` with its reason. Every state after `forwarded` is terminal; a late outcome after `unknown` is recorded beside it for lookups, and nothing retries.
+**A remote start** (organization authority), keyed by its request ID and holding its body, its deadline and, once bound, its one session: `forwarded` (admitted, delivery sent or ambiguous) → `started` or `refusedByTarget` (the target's report) or `unknown` (nothing by the deadline plus one minute, on a wake). A refusal before delivery is recorded as `refused` with its reason. From `unknown`, a registration that arrives while the record is unbound moves it to `started` with `late`; every other state after `forwarded` is terminal. A second session for a bound record, or a report from any machine but the target, is refused. Nothing retries.
 
 **A device-code request** (the provider's record): `pending` → `approved` (only after `Approved` from central) or `denied` → `used` when redeemed once (`consumeOne`); `expired` when its lifetime passes before redemption. Only `approved` redeems.
 
@@ -1066,9 +1105,10 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 | An installation already claimed by another organization asks to log in | the Registry claim | `machineInAnotherOrganization`; nothing changes in either organization | Registry |
 | A machine token expires on an open connection | the Connection object's stored expiry | The connection closes; the Router reconnects with a fresh token | Connection object; Router |
 | A revocation's connection close is lost | outbox | The close retries; the connection ends at its token's expiry at the latest; its effects are already refused | organization authority |
-| A Router has no encrypted store (Linux without systemd, or no credential installed) | the data-key seam returns `Unavailable` | The Router keeps the refresh credential only in memory and says so at login; after a restart it asks for a new device code; no plaintext fallback | Router machine login |
+| A Router has no encrypted store (Linux without systemd, or no credential installed) | the data-key seam reports the store absent | The Router keeps the refresh credential only in memory and says so at login; after a restart it asks for a new device code; no plaintext fallback | Router machine login |
+| A Router's encrypted store exists but can't be used | access denied, an invalid key or metadata, an incomplete migration | Login is refused with a clear error; no memory fallback; the store's contents are left untouched | Router machine login; Router secret store |
 | The step 2 deploy breaks login | machines can't connect | Fix forward: deploy a corrected build; the old login is not restored, so no machine revoked after the switch regains access; Access still guards central, so nothing is exposed | operator |
-| A remote start's target disconnects after delivery | no outcome by the create's timeout | The requester gets `unknown`; the record lapses to `unknown`; a session the target did create is registered normally; nothing retries | organization authority; remote start |
+| A remote start's target disconnects after delivery, or the answer to the requester is lost | no outcome by the deadline plus one minute | The requester gets `unknown` and can read the outcome under the same request ID; a session the target did create is registered normally and the record reads `started`, late; nothing retries | organization authority; remote start |
 | The requesting Router restarts while it waits | its pending request ID, kept with the create | After reconnecting it asks `RemoteStartStatus` and gets the recorded outcome | remote start |
 | The organization authority restarts after recording a start | a `forwarded` record | Never redelivered; it lapses to `unknown` at its deadline (a wake), like a lost outcome | organization authority |
 
@@ -1351,7 +1391,7 @@ Step 2 fixes forward; there is no revert to the old login. Restoring it could gi
 | U | R | E | Owner | Interface | Shape and home | State | Failure | Proof |
 |---|---|---|---|---|---|---|---|---|
 | U1 | R1: three agent kinds only; machines and services are not agent actors | E3, E4, E6, E7 | organization authority; issuer | `Principal`; `principal` claim; `MachinePrincipal` kept separate | `identity_contract.rs`; claims schema | none: parse rule | unknown kind rejected at parse; a machine or service token refused where an agent actor is expected | contract: claims and principal parse/refuse, machine and service tokens each under their own schema |
-| U3, U17 | R2: a session only as vouched by its logged-in machine | E6, E7, E21 | broker; organization authority | `IssueSessionToken` over the logged-in connection | `identity_contract.rs` | session active; enrollment enrolled | pending, revoked or expired enrollment → `IdentityNotProven` | Fleet integration: enrolled vs pending, revoked, expired |
+| U3, U17 | R2: a session only as vouched by its logged-in machine | E6, E7, E21 | broker; organization authority | `IssueSessionToken` over the logged-in connection | `identity_contract.rs` | session active; enrollment enrolled | revoked, expired or superseded enrollment → `IdentityNotProven` | Fleet integration: enrolled vs revoked, expired, superseded |
 | U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
 | U2 | R4: bot only with an active credential | E4, E5 | issuer + organization authority | client credentials; `DecideBotIssuance` | Better Auth client + `botId`; `BotRecord` | credential active/retiring/retired | retired → `invalid_client` | sign-in integration; two-credential bot |
 | U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `AdmitSignIn` (provider sign-in only) and `Standing` (passkey, token, confirmation); the people sign-in design's interfaces | `PersonAdmissionRequest`; audit in the organization authority | entry and owner bindings | admission unavailable → refuse; unwritable record → no binding | that design's proof re-run through central; SO7 |
@@ -1394,7 +1434,7 @@ Step 2 fixes forward; there is no revert to the old login. Restoring it could gi
 | U33, U31 | R42: code and address shown; owner-only approval; single use; lifetime; guess limit; only the requesting installation, only that organization | E6, E21, E23 | sign-in device-login rule; Better Auth device grant; organization authority | the extended grant; owner hooks on verify, approve and deny; `DecideDeviceLogin`; the device-code token handler | `deviceCode` columns including `enrollmentId` | code states | denied, expired, used or wrong person viewing, approving or denying → nothing, and the code stays for the owner | sign-in integration on both hosts; concurrent redemption; guess limit; a non-owner opening and denying a code |
 | U34, U31 | R43: three steps; never both logins | E6, E21, E22 | central deploy setting | `machineLogin` (one value per deployment) | central's deploy configuration | the step the deployment is at | step 2 failure → fix forward under Access; the old login is not restored | each step's checks on a test deployment behind and without Access; a machine revoked after step 2 never regains access |
 | U35 | R44: every Router obligation on macOS and Linux | E6 | Router | all Router contracts | the `KeychainAccess` adapters: Keychain, systemd credential | none: a platform matrix | a missing platform capability falls back to memory, never weakens | the Router suites and login on each platform |
-| U39, U6 | R46: a session starts a helper on another machine of its organization, for a project in its own workspace; refused when not a member, the project is elsewhere, the machine isn't allowed or isn't connected; never queued | E6, E7, E15, E16 | organization authority; remote start (both Routers) | `RequestRemoteStart`; `StartRequestedSession`; `RemoteStartOutcome`; `RemoteStartStatus`; `ListWorkspaceMachines`; `started_by: remoteSession` | `RemoteStartAdmission`; `RemoteStartOutcome`; the remote-start record | forwarded → started, refusedByTarget or unknown | each refusal creates nothing; a lost outcome → unknown, nothing retried | central integration with two Routers: a start on another machine, each refusal, a disconnect after delivery, a requester restart |
+| U39, U6 | R46: a session starts a helper on another machine of its organization, for a project in its own workspace, in a directory on that machine; one start, one session; a deadline; started, refused or unknown; never queued | E6, E7, E15, E16 | organization authority; remote start (both Routers) | `RequestRemoteStart`; `StartRequestedSession`; `ReportRemoteStart`; `RemoteStartAnswer`; `RemoteStartStatus`; `ListWorkspaceMachines`; `started_by: remoteSession` | `RemoteStartAdmission`; `RemoteStartResult`; the remote-start record keyed by request ID, with its body, deadline and bound session | forwarded → started, refusedByTarget or unknown; unknown → started (late) | each refusal creates nothing; a changed body under a used ID is refused; a lost answer is unknown, never refused; a second session for one start is refused | central integration with two Routers: a start on another machine with different directories, each refusal, two concurrent starts with reversed outcomes, a duplicate delivery, a lost answer read back by status, a stale instruction past its deadline, a requester restart |
 | U37 | R45: one Tool Portal deployment per organization | E1, E2, E11 | caller check; configuration loading | `portal.organizationId` | Portal configuration schema | none: deployment configuration | another organization's token or workspace → refused or fails to load | Portal host e2e with two deployments |
 
 **Coverage:** R1–R46 each have a row. OD5, OD7 and OD8 are decided. E1–E23 are each bound above. U38 is a non-goal with no obligation: nothing in this design detects two organizations' Routers on one machine. Supersessions are as listed in the Specification.
