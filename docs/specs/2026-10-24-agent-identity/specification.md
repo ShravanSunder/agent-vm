@@ -381,6 +381,8 @@ C10 (machine issuer registration) was removed on 2026-10-27 with U31's narrowing
 | refused: unavailable | The request never reached Fleet central, or the fleet's truth could not be consulted (R25); nothing was created |
 | unknown | The request may have reached Fleet central or the target, and no outcome arrived by the deadline plus one minute; the requester reads the outcome later under the same identifier, and nothing is retried |
 
+Asking for the outcome later, under the same identifier, returns whichever of these results Fleet central recorded, a refusal at admission included. A session the target registered counts as started from that moment, even if the target's own report is lost.
+
 ## Failure and partial outcomes
 
 | Situation | Observable outcome |
