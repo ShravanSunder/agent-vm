@@ -50,7 +50,7 @@
   <ex-step to="program-design--changes-and-cutover" icon="stack">What changes at each step, and why step 2 fixes forward.</ex-step>
   <ex-step to="verification-design--shared-observations" icon="test-tube">The checks run once per step on a test deployment.</ex-step>
   <ex-step to="alternatives--20-how-does-the-switch-to-the-new-login-happen" icon="git-branch">The options weighed.</ex-step>
-  <ex-step to="delivery-plan--d7-off-cloudflare-access" icon="rocket">Where the steps sit in the delivery plan: deliverable D7.</ex-step>
+  <ex-step to="delivery-plan--d2-off-cloudflare-access" icon="rocket">Where the steps sit in the delivery plan: the switch ends D1, and Access is removed in D2.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-remote-start" title="A session starts a helper on another machine" description="Through Fleet central, over both machines' connections, never queued.">
@@ -67,11 +67,11 @@
   <ex-step to="delivery-plan--the-deliverables-at-a-glance" icon="rocket">The seven deliverables, what you'll see working, and what each waits on.</ex-step>
   <ex-step to="delivery-plan--how-the-deliverables-connect" icon="path">How the deliverables depend on each other.</ex-step>
   <ex-step to="delivery-plan--tickets-by-workstream" icon="stack">Every ticket, by workstream, with its deliverable and what it waits on.</ex-step>
-  <ex-step to="delivery-plan--d1-organizations-who-is-in-what" icon="users">D1, organizations: its workstreams and pieces.</ex-step>
-  <ex-step to="delivery-plan--d2-a-machine-logs-in" icon="key">D2, a machine logs in.</ex-step>
-  <ex-step to="delivery-plan--d3-sessions-and-bots-use-their-workspace-s-tools" icon="plug">D3, sessions and bots use their workspace's tools.</ex-step>
-  <ex-step to="delivery-plan--d6-start-a-session-on-another-machine" icon="path">D6, starting a session on another machine.</ex-step>
-  <ex-step to="delivery-plan--d7-off-cloudflare-access" icon="rocket">D7, everything live together, then off Access.</ex-step>
+  <ex-step to="delivery-plan--d1-start-a-session-on-another-machine" icon="path">D1, starting a session on another machine, with its building blocks; live at your switch.</ex-step>
+  <ex-step to="delivery-plan--d2-off-cloudflare-access" icon="rocket">D2, off Cloudflare Access.</ex-step>
+  <ex-step to="delivery-plan--d3-organizations-people-bots-and-what-machines-see" icon="users">D3, organizations: people, bots and what machines see.</ex-step>
+  <ex-step to="delivery-plan--d4-sessions-and-bots-use-their-workspace-s-tools" icon="plug">D4, sessions and bots use their workspace's tools.</ex-step>
+  <ex-step to="delivery-plan--d7-everything-else-live" icon="rocket">D7, everything else live together.</ex-step>
   <ex-step to="delivery-plan--waiting-on-you" icon="users">What waits on you.</ex-step>
   <ex-step to="delivery-plan--risks-and-false-greens" icon="bug">What could pass for the wrong reason.</ex-step>
 </ex-presentation>
@@ -254,7 +254,7 @@ flowchart TB
 
 <h3 id="how-plan">How it gets built</h3>
 
-<p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="#delivery-plan">delivery plan</a> cuts the work into seven deliverables, each something you can see working: D1 organizations, D2 machine login, D3 sessions and bots using tools, D4 collaboration, D5 removal, D6 starting a session on another machine, and D7 the move off Access. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Tool Portal.</p>
+<p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="#delivery-plan">delivery plan</a> cuts the work into seven deliverables, each something you can see working. Starting a session on another machine comes first (D1), carrying the building blocks it needs: your sign-in, the organization core, machine login and session registration. It goes live at your production switch. Then come D2, off Cloudflare Access; D3, people, bots and what machines see; D4, sessions and bots using tools; D5, collaboration; D6, removal; and D7, everything else live together. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Tool Portal.</p>
 
 <h2 id="where">Where each answer lives</h2>
 

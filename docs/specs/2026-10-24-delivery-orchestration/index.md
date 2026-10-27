@@ -20,7 +20,7 @@ It orders the work these designs define: [Tool Portal remediation](../2026-10-24
 
 1. [Requirements: what went wrong without one](requirements.md#what-went-wrong-without-one)
 2. [Specification: R4 contracts go live whole](specification.md#obligations)
-3. [Program Design: why B4b and P1a meet only at JC1](program-design.md#slices-and-dependency-points)
+3. [Program Design: why B4b and P1a meet only at JC2](program-design.md#slices-and-dependency-points)
 4. [Verification Design: U4](verification-design.md#u4--no-half-shipped-contract)
 
 ## Reading path: the real joint proof

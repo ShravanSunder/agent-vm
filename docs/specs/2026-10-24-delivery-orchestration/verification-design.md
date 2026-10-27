@@ -11,7 +11,7 @@ How each need in the [Requirements](requirements.md) will be shown to hold, at t
 | **U3** Fleet release first | codex-router's release record shows 0.1.102 shipped before F1's first commit. | — |
 | **U4** No half-shipped contract | At the joint cut, the deployed issuer, Tool Portal and Fleet central builds are read back and must all be the joint-cut builds. Before it, the previous builds are still deployed. | Customer deployments, which don't exist yet |
 | **U5** One home per shape, a real test | For each contract, the consumer's test is seen parsing the home's generated artifact, and a deliberately changed producer field fails it. | — |
-| **U6** The real joint path | JP1–JP4 run on the private stack with real sessions, a real bot, the real issuer, Fleet central and both Tool Portal hosts: one effect each, removal stops the next call, refusals run nothing, an admin command needs a live session. | Hardware-attested isolation; VM sessions (not in the first round) |
+| **U6** The real joint path | At the first cut, JP4 runs on the private stack with the real sign-in Worker and Fleet central: an admin command needs a live session; SO8 and SO11 run there too. At the second cut, JP1–JP3 run with real sessions, a real bot, the real issuer, Fleet central and both Tool Portal hosts: one effect each, removal stops the next call, refusals run nothing. | Hardware-attested isolation; VM sessions (not in the first round) |
 | **U7** Questions go out fast | The trace shows each blocking question sent as an HTML page or Sun message at the time the block was found. | — |
 | **U8** Heavy runs on sunclaw, VMs in CI | Run records name sunclaw or CI for every heavy or VM run. | — |
 | **U9** Gates unchanged except the guard | The gate files in each repository are compared with their approved state. | — |
@@ -38,7 +38,7 @@ How each need in the [Requirements](requirements.md) will be shown to hold, at t
 | **Proven by** | The order is walked: every slice appears once, every wait points backward, every gate has an owner, and the page opens. |
 | **Reference** | The three governing designs' slices; the Program Design's slices, contracts and gate tables |
 | **Target and journey** | This design set and its page; journey: none (structural) |
-| **Passes when** | Every slice the governing designs need is in the slices table exactly once. Every "waits on" entry names an earlier slice or a contract version, and the dependency graph has no cycle. Every gate in the gate table has one owner. Every slice reaches the terminal DONE barrier through its waits: removing any one slice from the graph leaves DONE unreachable. The page renders its picture and tables at desktop and phone width. **Wrong designs that fail:** P1 listed before A8; a gate with two owners; A4, B2, F7, F8 or F9 able to stay unmerged while the terminal predicate passes (the d032c7fd graph, where JC1 was the last node). |
+| **Passes when** | Every slice the governing designs need is in the slices table exactly once. Every "waits on" entry names an earlier slice or a contract version, and the dependency graph has no cycle. Every gate in the gate table has one owner. Every slice reaches the terminal DONE barrier through its waits: removing any one slice from the graph leaves DONE unreachable. The page renders its picture and tables at desktop and phone width. **Wrong designs that fail:** P1a listed before A8; a gate with two owners; A4, B2, F7, F8b or F9 able to stay unmerged while the terminal predicate passes (the d032c7fd graph, where JC1 was the last node). |
 | **Reuses** | none |
 | **Unverified** | — |
 
@@ -84,7 +84,7 @@ How each need in the [Requirements](requirements.md) will be shown to hold, at t
 | | |
 |---|---|
 | **Requirement** | U6 → R6 |
-| **Proven by** | JP1–JP4 run on the private stack with every real component, and each passes. |
+| **Proven by** | JP4 at JC1 and JP1–JP3 at JC2 run on the private stack with every real component that cut deploys, and each passes. |
 | **Reference** | The agent identity Specification's obligations for issuance, removal, refusal and admin freshness; the Tool Portal Specification checks 13–14 |
 | **Target and journey** | Private test stack: the remediated Tool Portal Worker and the Node host, the sign-in Worker, Fleet central on its Durable Object host (its Tokio host is covered by identity SO4 in F9, not here), with JP2's restart being a Tool Portal restart: a Worker redeploy and a Node host process restart, a real Router with real Claude and Codex harness sessions, and a test bot. `needed:` `verify-tool-portal` › `joint` (JP1–JP3) and the agent-vm `verify-auth` journey extended for JP4; codex-router's F8 SO1 TypeScript journey for the Router side. |
 | **Lifetime** | lasting |
@@ -135,9 +135,9 @@ How each need in the [Requirements](requirements.md) will be shown to hold, at t
 | U1 | R1 | plan slices against approval | records | plans, Git history | rows named; commits after approval | — |
 | U2 | R2 | dependency-graph walk | structural | this design and page | complete, acyclic, owned | — |
 | U3 | R3 | release before F1 | records | codex-router tags | tag precedes F1 | — |
-| U4 | R4 | deployed-version check at JC1 | version read-back | private stack · `joint-cut` (needed, temporary) | all-old then all-new | customer deployments |
+| U4 | R4 | deployed-version check at JC1 and at JC2 | version read-back | private stack · `joint-cut` (needed, temporary) | all-old then all-new | customer deployments |
 | U5 | R5 | consumer tests on home artifacts | test run with a mutated field | each repository's tests | parses real artifact; mutation fails | OD-R3 scheme |
-| U6 | R6 | JP1–JP4 | real joint run | private stack, both Portal hosts · `joint` (needed, lasting), `verify-auth`, SO1 | one effect; removal; refusals; live session | VM sessions |
+| U6 | R6 | JP4 at JC1; JP1–JP3 at JC2 | real joint run | private stack, both Portal hosts · `joint` (needed, lasting), `verify-auth`, SO1 | one effect; removal; refusals; live session | VM sessions |
 | U7 | R7 | trace timestamps | records | trace | sent at block time | — |
 | U8 | R8 | run receipts | records | receipts | sunclaw / CI | — |
 | U9 | R9 | gate-file diff | structural | gate files | guard only | — |

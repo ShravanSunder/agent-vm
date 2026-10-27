@@ -1676,7 +1676,7 @@ The statements above are written as SQL so the condition each one carries is vis
 
 | Step | Fleet central in production | Machines | Proven before the next step |
 |---|---|---|---|
-| 1. Build | today's login, `machineLogin = accessEnrollment`; Access in front; no organizations yet | unchanged | everything in this set on test deployments, including the step 2 checks below behind a test Access application |
+| 1. Build | today's login, `machineLogin = accessEnrollment`; Access in front; no organizations yet | unchanged | the machine login, the organization core, session registration and starting a session on another machine, on test deployments behind a test Access application (the first joint cut), including the step 2 checks below; the rest of this set goes live later, at a second cut, with no second log-in |
 | 2. Switch, behind Access | `machineLogin = machineTokens`; the old login's code and its `machine_enrollments` table removed; the first organization created for you, adopting the existing Fleet object's storage (OD8); operator commands through the sign-in service | each runs the new Router build and logs in again by device code, keeping its installation and peer IDs, then deletes its old enrollment credential; still sends its Access token to pass the edge | every machine connects only with machine tokens; the old credential and a missing, bad, expired or other-organization token are refused even with a valid Access token; admin and operator actions need no Access identity |
 | 3. Remove Access (the next change) | the Access application deleted; the request limit at the entry | the Access token deleted from each Router | every obligation holds with no Access token; unauthenticated, malformed or wrong-kind requests change nothing |
 
