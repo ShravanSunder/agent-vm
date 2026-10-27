@@ -83,7 +83,7 @@ The same tickets, seen from the other side: each workstream's tickets, in order,
 | F10 machine enrollment, the machine token check, and revocation | D1 | F2a, F3a |
 | F11 Router machine login | D1 | F1; B5 for the real flow |
 | F4a Router registrar and binding | D1 | F2a, F2b, F11 |
-| F14 SO8 machine login journey | D1 | F10, F11, F4a, B5 |
+| F14 SO8 machine login journey | D1 | F10, F11, F4a, B5, F15 |
 | F15 starting a session on another machine | D1 | F2a, F4a, F10, F11 |
 | F8a SO1 journey: sessions and binding | D1 | F4a, F14 |
 | F16 SO11 remote start journey | D1 | F15, F14 |
@@ -129,12 +129,12 @@ The same tickets, seen from the other side: each workstream's tickets, in order,
 
 ## How a contract's real output is checked
 
-Every cross-repository contract (K1–K10) has one home. F1 generates each one's schema and structural fixtures, so every consumer can build and test against the shape from the start: that is all a ticket waits on. The check that the consumer parses the **real** producer's output (a real decision reply, a real minted token) runs in whichever of the producer's and the consumer's tickets merges second, and must pass before the contract's cut. So no ticket waits on another's runtime output, and nothing that came from a schema is reported as real output.
+Every cross-repository contract (K1–K10) has one home, which publishes the shape its consumer builds and tests against from the start: that is all a ticket waits on. F1 generates the schemas and structural fixtures for the Rust-owned contracts (K2–K4, K8, K9); K1, K5, K6, K7 and K10 keep their agent-vm homes (`tool-access/contracts`, the people sign-in and the issuer). The check that the consumer parses the **real** producer's output (a real decision reply, a real minted token) runs in whichever of the producer's and the consumer's tickets merges second, and must pass before the contract's cut. So no ticket waits on another's runtime output, and nothing that came from a schema is reported as real output.
 
 | Contract | Real producer | Consumer | Real check runs in | Live at |
 |---|---|---|---|---|
 | K3 person half (admission, standing) | F3a | B4a | the later of F3a and B4a | JC1 |
-| K5, K6 (session confirmation, person token) | B3 | F2a | F2a | JC1 |
+| K5, K6 (session confirmation, person token) | B3 | F2a | the later of B3 and F2a | JC1 |
 | K7 (service tokens) | B4a | F3a | the later of B4a and F3a | JC1 |
 | K8 (device-login and machine-token decisions) | F10 | B5 | the later of F10 and B5 | JC1 |
 | K9 (machine token claims) | F1 (schema) and B5 (minted) | F10 | as K10 | JC1 |
@@ -261,7 +261,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 - **Earns:** U22, U23, U24 and U25 in SO2 on D1.
 - **Waits on:** OD4.
 
-**B3 design-thread fixes:** unchanged; produces K5 and K6.
+**B3 design-thread fixes:** unchanged; produces K5 and K6, and runs their real-output check against F2a's guard if it merges after F2a.
 
 **B4a issuer core (split from B4).**
 - **Covers:** R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; people do get their admin and operator tokens), people sign-in asking central for admission (K3's person half), person confirmation; the closed token-kind dispatch and its refused combinations; one-operation service tokens (K7).
@@ -317,7 +317,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 - **Waits on:** F0; design approval.
 
 **F2a organization authority core (split from F2).**
-- **Covers:** R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, built and enabled at PROD2), R14 (lookups for people, machines and sessions), R34 (organization-scoped rows; cross-organization references answer as unknown), R35 for people; organizations and their owner; machine allowances; the ordered marks. Runs the real-output check for K5 and K6 against B3's issuer.
+- **Covers:** R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, built and enabled at PROD2), R14 (lookups for people, machines and sessions), R34 (organization-scoped rows; cross-organization references answer as unknown), R35 for people; organizations and their owner; machine allowances; the ordered marks. Runs the real-output check for K5 and K6 against B3's issuer if it merges after B3.
 - **Earns (its SO4 scenarios):** U21's command and guard cases; U27's central half for people, machines and sessions.
 - **Focused proof:**
   - **Wrong behaviors caught:** an admin command applied without the current owner; a reference to another organization answering differently from a missing one.
@@ -391,7 +391,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 
 **F14 SO8 machine login journey (new, TypeScript).** `verify-codex-router` `fleet-machine-login`, with registered sessions (F4a), including a Router host started with no encrypted store and restarted, and one with a damaged store. At D1, the old connection left open after a re-login is checked with a registration and a remote start, each refused and the connection closed, against a positive control on the new connection; the session-token case is added once F3b exists (D3).
 - **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, U14's renewal case, and revocation removing sessions.
-- **Waits on:** F10, F11, F4a, B5.
+- **Waits on:** F10, F11, F4a, B5, and F15 for the remote-start control.
 
 **F15 starting a session on another machine (new).**
 - **Covers:** R46, R8's extension, C11:
@@ -609,7 +609,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 
 ## Dependency edges that matter
 
-- **Contracts:** F1's fixtures come before every consumer. Each real-output check runs in the later of its producer's and consumer's tickets ("How a contract's real output is checked"), so no ticket waits on another's runtime output.
+- **Contracts:** each contract's home publishes its shape before every consumer (F1 for the Rust-owned ones). Each real-output check runs in the later of its producer's and consumer's tickets ("How a contract's real output is checked"), so no ticket waits on another's runtime output.
 - **Storage before registration:** F2b comes before F4a, because registration looks the project up in the organization's own Fleet object.
 - **Machine login before sessions:** F11 comes before F4a, because registration checks the connection's enrollment.
 - **Registration before remote start:** F4a and F11 come before F15, because the target registers the new session and both machines must be logged in.
