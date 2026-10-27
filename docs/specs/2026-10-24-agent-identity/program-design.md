@@ -72,9 +72,9 @@ The picture shows services; the components table below names each part inside th
 | Who owns a machine's enrollment | **The machine's organization authority**, with the Registry keeping only an index from installation and peer to organization, written once | Keep enrollments in the Registry with an organization column | A revocation and its grant fence are one transaction, so the revocation fan-out disappears; the owner's approval and issuer state are read where they live | Each new log-in touches the Registry once, then the organization authority | A machine must move between organizations (Fleet Q-B11) |
 | How the device-code login is built | Better Auth's OAuth device grant, extended with the machine's fields, and the existing extension claim contributor asking Fleet central before each machine token | Our own device-code endpoints minting through `issueTokens` (the fallback, the surface the fleet-session grant uses) | Single use, guess limits, polling and refresh come from the library; the decision stays with Fleet central | The machine token's `sub` is the approving owner's account (the provider owns `sub`), so consumers read only `principal`; deleting that account ends the machine's renewals | The extension can't add fields or the contributor can't refuse a device-code mint at 1.7.11 (then the fallback) |
 | How a VM gets fresh tokens | Its VM creator signs a short-lived token for it and keeps a fresh one where the VM's Router reads it; a platform's VM reads its platform's identity token | A long-lived secret placed in each VM | No secret in a VM; a VM runs past its first token's expiry with no person acting | The VM creator holds a signing key for all its VMs, the issuer's key (R24) | — |
-| Linux and Firecracker secret store | The store's data key comes from a **systemd encrypted credential** (`LoadCredentialEncrypted=`, sealed with the machine's TPM2 when it has one, the host key otherwise) through the existing `KeychainAccess` seam; without one, production refuses | A data-key file beside the store (protects nothing more than plaintext); the desktop Secret Service (needs a desktop session) | Works for a Router run as a service on any systemd Linux, inside a Firecracker guest too; the data key never changes, so a read-only credential is enough | A Linux machine without systemd can't be logged in by device code (it can use an issuer); creating the credential is an install step run as root | A target Linux runs the Router outside systemd |
-| How separate organizations' Fleet data is kept | **One Fleet object per organization** (OD8, proposed): the first organization adopts the existing Fleet object's storage | One Fleet object with an organization column on every row | Separation by address: a machine reaches only its organization's objects; workspace names stay unique per organization for free; no data migration | One more object per organization to operate | You prefer one store (then the column, with an organization filter on every Fleet read and write) |
-| How the cutover flips | One deploy-time setting, `machineLogin`, with exactly one value per deployment: today's login before step 2, machine tokens from step 2 | Accept either login during a transition | You ruled out "either"; one value makes "both at once" impossible by construction | Step 2 needs every machine logged in again | — |
+| Linux secret store | The store's data key comes from a **systemd encrypted credential** read through the existing `KeychainAccess` seam. It is created once, at install, by `systemd-creds encrypt` run as root, and delivered to the Router service with `LoadCredentialEncrypted=`. The Linux adapter only reads it; without it, production refuses. The login runs inside the Router host, where that key is available. | A data-key file beside the store; the desktop Secret Service (needs a desktop session) | Works for a Router run as a systemd service, inside a VM guest with systemd too; the data key never changes, so a read-only credential is enough | Protection: with a TPM2, a copied disk can't decrypt; with only the host key, root on that host can. Neither protects from processes running as the Router's own user, the same as the macOS Keychain (the shared bucket). A Linux machine without systemd can't be logged in by device code (OD9). | A target Linux runs the Router outside systemd |
+| How separate organizations' Fleet data is kept | **One Fleet object per organization** (OD8, proposed). The first organization adopts today's storage through a fixed mapping on both hosts: the Cloudflare object named `fleet`, and the Tokio singleton key. | One Fleet object with an organization column on every row | Separation by address: a machine reaches only its organization's object, so a forgotten filter can't leak; workspace names stay unique per organization; no rows rewritten | A storage cutover all the same: the address type, every caller, restart and wake recovery, each connection's feed, and refusing the old address all change; one more object per organization | You prefer one store. Then every row is backfilled with the column, names are made unique per organization, and every Fleet read and write filters by organization. |
+| How the cutover flips | One deploy-time setting, `machineLogin`, with exactly one value per deployment: today's login before step 2, machine tokens from step 2. Step 2 fixes forward; there is no revert to the old login. | Accept either login during a transition; keep the old login restorable as a revert | You ruled out "either". Restoring the old login after step 2 could readmit a machine revoked after the switch | Step 2 needs every machine logged in again; a broken step 2 leaves machines offline, still behind Access, until a fix lands | — |
 | How a session's token reaches the Portal | A Router forwarder attaches it | Token in the harness's MCP config (can't refresh); the session fetches its own (an agent holding a credential) | The agent never holds a credential; refresh is invisible | A new Router component on the tool path | A harness lets the Router set per-call headers itself |
 | How the issuer knows a workspace's audience | Fleet central provisions one resource row per workspace at the issuer (the workspace's MCP address, enabled or disabled), recording existence only; per-client resource links are turned off (`enforcePerClientResources: false`) and replaced by the token-kind dispatch and Fleet's decisions | Keep per-client links (a second copy of membership, which you rejected); one shared audience for all workspaces (breaks the MCP rule that a client asks for the server's own address) | Membership keeps one owner; the issuer still refuses unknown or disabled audiences | One more Fleet → sign-in operation; the issuer holds a list of workspace addresses | Better Auth gains a resource resolver hook |
 | Who asks the issuer for a session token | Fleet central, as a `private_key_jwt` client using a fleet-session extension grant | The Router as client (a new machine secret) | No machine secrets; central already decides | Central's client key is the system's most valuable key | — |
@@ -113,10 +113,10 @@ flowchart TB
 | E19 Organization admission | Organization authority | `organization_authority` (new): a person's is their sign-in allowlist entry bound to them (`AllowedSignIn`, moved from sign-in); a bot's is its `BotRecord` | `identity_contract.rs`: `AdmissionId` (UUIDv7), `OrganizationAdmission { admissionId, identity: Person { personId } \| Bot { botId }, state }` (new) | admin lookup; every E8 and E9 row carries the `admissionId` it was granted under | persisted (the entry or record); the view is derived | Rust tagged enum |
 | E4 Bot | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `BotId`, `BotRecord` (new) | `bot_id` UUIDv7 string in `principal`; never equal to a credential's client ID | persisted | Rust newtype |
 | E5 Bot credential | Better Auth (existing agent-client store) | `packages/auth` `d1-persistence/agent-registration-store.ts` (modified: binds `botId`; workspace links removed) | Better Auth OAuth client plus metadata (modified) | `client_id`; metadata `{ botId, organizationId }` set only through central's admin path | persisted | Zod at the boundary |
-| E6 Fleet machine | Registry: which organization an installation and its peer belong to, written once; its organization authority: its enrollments and so its state | Registry `fleet_machines` (new at step 2; `machine_enrollments` is dropped at step 3: `service_id` primary key, `peer_id` unique, `organization_id`, `claimed_at`); the Router's saved state keeps the installation and peer IDs (existing) | `machine_enrollment.rs` `AdmittedMachine` (existing, modified: gains `organizationId`, `enrollmentId`; loses the Access client) | installation `service_id`; the session reference's installation | persisted | existing |
-| E21 Machine enrollment | Organization authority | `organization_authority` `machine_enrollment` table (new) | `identity_contract.rs`: `EnrollmentId` (UUIDv7), `MachineEnrollment { enrollmentId, installation, issuerId, issuerSubject, authorizedBy: DeviceCodeApproval { personId, requestId } \| IssuerPreApproved \| OwnerApproved { personId }, state, endsAt: Option }` (new) | the built-in issuer's machine token claims; `AdmittedMachine`; admin lookup | persisted | Rust tagged enum |
+| E6 Fleet machine | Registry: which organization an installation and its peer belong to, written once; its organization authority: its enrollments and so its state | Registry `fleet_machines` (new at step 2, when `machine_enrollments` is dropped: `service_id` primary key, `peer_id` unique, `organization_id`, `claimed_at`, written only after the organization authority authorized the log-in); the Router's saved state keeps the installation and peer IDs (existing) | `machine_enrollment.rs` `AdmittedMachine` (existing, modified: gains `organizationId`, `enrollmentId`; loses the Access client) | installation `service_id`; the session reference's installation | persisted | existing |
+| E21 Machine enrollment | Organization authority | `organization_authority` `machine_enrollment` table (new) | `identity_contract.rs`: `EnrollmentId` (UUIDv7), `MachineEnrollment { enrollmentId, installation, issuerId, issuerSubject, authorizedBy: DeviceCodeApproval { personId, requestId } \| IssuerPreApproved \| OwnerApproved { personId }, requestId, state, endsAt: Option }` (new); `state` adds an internal `reserved`, never observable, which admits nothing and shows in no lookup | the built-in issuer's machine token claims and the token family's `referenceId`; `AdmittedMachine`; admin lookup | persisted | Rust tagged enum |
 | E20 Machine issuer | Organization authority | `organization_authority` `machine_issuer` table (new); the built-in device-code issuer exists for every organization without a row | `identity_contract.rs`: `IssuerId`, `MachineIssuer { issuerId, kind: DeviceCode \| VmCreator \| PlatformOidc, verification, subjectRule, approval: ApproveEach \| PreApproved { workspaces }, state }` (new) | admin API (`RegisterMachineIssuer`); the machine token check | persisted | Rust tagged enum |
-| E23 Device-code login request | Better Auth (the device grant's record) | `packages/auth`: the `deviceCode` table with the grant's fields plus ours (`machineInstallationId`, `machinePeerId`, `machineLabel`, `organizationId`) | Better Auth `deviceCode` model (generated); `sign-in-core/device-login/machine-login-fields.ts` (new) | the Router's device-authorization request; the owner's approval page; `DecideDeviceLogin` | persisted until redeemed or expired | Zod at the boundary |
+| E23 Device-code login request | Better Auth (the device grant's record) | `packages/auth`: the `deviceCode` table with the grant's fields plus ours (`machineInstallationId`, `machinePeerId`, `machineLabel`, `organizationId`, and `enrollmentId`, written only after central's `Approved`); the enrollment then lives on as the token family's `referenceId` | Better Auth `deviceCode` model (generated); `sign-in-core/device-login/machine-login-fields.ts` (new) | the Router's device-authorization request; the owner's approval page; `DecideDeviceLogin` | persisted until redeemed or expired | Zod at the boundary |
 | E22 Machine token | Its issuer: the sign-in service for device-code machines, a VM creator or platform otherwise | `packages/auth` (modified) for the built-in issuer; the VM creator's own signer (agent-vm, new) | `identity_contract.rs`: `MachineTokenClaims` (new, the contract home; the sign-in service's Zod schema is generated from it) | JWT claims, below | derived (signed, never stored) | Rust serde, Zod derived |
 | E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId }`; `DecideDeviceLogin` and `ApproveMachineEnrollment` carry the workspaces chosen at log-in | persisted | Rust |
 | E7 Fleet harness session | Organization authority | `organization_authority` session registry (new) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new) | `principal.session_ref` object in tokens; `session` in registration | persisted (with retention) | existing `SessionRef` plus Rust |
@@ -135,8 +135,30 @@ flowchart TB
 - **Admission keys every role (R35, R37).** Every membership and collaboration row records the admission it was granted under: a person's allowlist entry ID, a bot's record ID, or for a session its machine. A session's membership counts while its machine has any active enrollment in the organization, so logging the machine in again keeps its sessions (R40). Every other role counts only while its admission is active, and the check runs in the same transaction as the decision that relies on it. Adding someone back creates a new admission ID, so no earlier row counts again (R37); the admin grants roles afresh.
 - **Ending an admission (R36, proposed in OD5)** is `RemoveSignIn` for a person and `RetireBot` for a bot. In that same transaction, the organization authority ends every role held under that admission, and for a bot writes the `botRetired` notices it already writes. People hold no tokens, so ending a person's roles needs no notice. A session's membership is keyed to its machine, not to any person, so a person leaving changes no session. If you decline OD5, the rows stay but no longer count, and they show as ended in lookups: R37 holds either way.
 - **Nothing crosses (R34).** Every command and decision names one organization. The organization authority holds only that organization's rows, so a reference to another organization's workspace, bot, session or machine is not found there. It is refused with the same answer as a reference that doesn't exist, so nothing about the other organization is revealed. A workspace pair's two workspaces are both in the authority's own Fleet object, or the pair is refused. A session's project must be in its machine's organization: central sends `RegisterFleetSession` to the organization authority of the connection's machine, which looks the project up in its own Fleet object, so a project in another organization is `projectUnknown`.
-- **What a machine is told (R34, U29).** The Fleet object sends a connection only the workspaces its machine is allowed to serve, plus the ID and name of each workspace paired with them. The organization authority pushes that set to its Fleet object, in rank order, whenever an allowance or pair changes. The replication path this filters is not yet cited here: the Fleet Lead names its anchor, as for F6.
+- **What a machine is told (R34, U29):** see "The filtered view" below.
 - **People hold no tool tokens (R38).** The issuer's dispatch has no row that mints a workspace, collaboration or machine token for a person. A bot's tool call is decided by its own membership and persona alone: the caller check reads no requester field, and a bot's claims carry none.
+
+### The filtered view: what a machine reads of its organization's Fleet (R34, U29)
+
+**Today:**
+- A connection reads Fleet records three ways: a directory query, a snapshot (paged by a snapshot cursor) and the feed (`after` a position) (`session_scope/fleet_reads.rs:23–45`, `fleet_read_calls.rs:22–35` at `f465808f`).
+- The snapshot assembles canonical workspace, board, project, decision-record and request records (`fleet_snapshot_read.rs:44–105`).
+- The feed is one stored range per Fleet object whose positions must be exactly contiguous (`fleet_feed_store.rs:80–124`).
+- Nothing is filtered: every connection reads the whole fleet.
+
+**The view contract:**
+- **The visible set.** Each machine has a visible set in its organization's Fleet object: the workspaces it is allowed to serve (full records) and the workspaces paired with them (projected to ID and name only). The organization authority owns the allowances and pairs. In the same command, before replying `Applied`, it sends the machine's new visible set to its Fleet object (rank order). If that call fails, an outbox resends it and the command shows pending. The Fleet object only stores and applies the set.
+- **Each read path is filtered for the connection's machine** (its `AdmittedMachine`):
+  - **Directory:** answers only from the visible set.
+  - **Snapshot:** includes the full records of allowed workspaces and their boards, projects, decision records and requests, plus `{ id, name }` for each paired workspace; nothing else.
+  - **Feed:** keeps its global positions. An entry outside the visible set is sent as `Withheld { position }`, carrying no content. The Router's replica advances its cursor over it. Contiguity holds on the wire and in the replica, and the stored range is unchanged.
+- **Scope changes.** When a machine's visible set changes, the Fleet object sends each of its open connections `ScopeChanged { visibleWorkspaces }`.
+  - **A workspace removed from the set:** the Router deletes its replica records for that workspace. Data the machine already read is not unread (R19's limit).
+  - **A workspace added:** the Router reads a fresh snapshot for it, then continues the feed from its cursor.
+  - **The cut-off:** data stops flowing to a machine at the Fleet object's receipt of the new set. Grants were already fenced at the organization authority's commit.
+- **Reconnect and resume:** a reconnecting Router resumes the feed from its cursor, filtered by its machine's current visible set. A cursor issued under an older set stays valid, because positions never change.
+
+**Cost:** two new frames (`Withheld`, `ScopeChanged`), one stored set per machine in the Fleet object, and a filter on each of the three read paths. No second replication engine is added.
 
 ### Encoding rules for every boundary below
 
@@ -207,7 +229,7 @@ export type WorkspaceTokenClaims = z.infer<typeof workspaceTokenClaimsSchema>;
 
 ### Machine token claims (E22, C9)
 
-Home: `identity_contract.rs`. Every machine token has `aud` = Fleet central's machine address, and only Fleet central accepts it.
+Home: `identity_contract.rs`. Every machine token has `aud` = Fleet central's machine address, and only Fleet central accepts it. A machine is infrastructure, not an agent actor (R1): `MachinePrincipal` is its own type, never a variant of the agent `Principal` union, and the workspace and collaboration claim schemas don't parse it.
 
 ```rust
 // Minted by the sign-in service for a device-code machine. Better Auth owns iss, sub (the approving owner's
@@ -321,15 +343,20 @@ The Router may only name sessions on its own installation; central refuses any o
 
 ### Machine login (R39–R43, C8–C10)
 
-**Device-code login request (Router → sign-in service).** The Router's `fleet login --organization <id> --label <label>` posts the standard device-authorization request for the Router login client (a public client registered at deploy, allowed `offline_access`, resource = central's machine address) with four added request fields the extended device grant persists on the code: `machine_installation_id` and `machine_peer_id` (from the Router's saved state), `machine_label`, and `organization_id`. It shows the returned user code and verification address and polls the token endpoint with the device code. The Router refuses to log in to an organization other than the one its saved state already names (E6: one organization).
+**Device-code login request (Router → sign-in service).**
+- **Where it runs:** `fleet login --organization <id> --label <label>` asks the running Router host to log in, over the CLI's existing local connection to the host. The host runs the flow and the CLI only prints the user code and address it returns. The refresh credential is therefore written only where the store's data key is available: inside the systemd service on Linux, and in the same host process on macOS, so there is one behavior everywhere.
+- **The request:** the host posts the standard device-authorization request for the Router login client (a public client registered at deploy, allowed `offline_access`, resource = central's machine address). The extended device grant persists four added fields on the code: `machine_installation_id` and `machine_peer_id` (from the Router's saved state), `machine_label`, and `organization_id`.
+- **The poll:** the host polls the token endpoint with the device code.
+- **One organization:** the Router refuses to log in to an organization other than the one its saved state already names (E6).
 
 ```rust
-// Sign-in → Fleet central, sent when the owner presses Approve, before the code is marked approved.
+// Sign-in → Fleet central, sent when the owner presses Approve, after the sign-in core has checked the code
+// is still pending and unexpired, and before the code is marked approved.
 #[serde(rename_all = "camelCase")]
 pub struct DecideDeviceLogin {
     pub organization_id: OrganizationId,       // the code's organization, which must equal the approver's session organization
     pub approver: PersonId,                    // from the approver's current session at the sign-in service
-    pub request_id: DeviceLoginRequestId,      // the device code record's ID, never the code itself
+    pub request_id: DeviceLoginRequestId,      // the device code record's ID, never the code itself; the idempotency key
     pub installation: InstallationId,
     pub peer: PeerId,
     pub label: MachineLabel,
@@ -343,16 +370,18 @@ pub enum DeviceLoginDecision {
 }
 
 // Sign-in → Fleet central, from the extension claim contributor, before each device-code or refresh mint.
+// The enrollment comes only from the token family's server-side reference (below), never from the request.
+// The first Grant for an `approved` device-code enrollment makes it `enrolled` and supersedes the earlier one, in one transaction.
 #[serde(rename_all = "camelCase")]
 pub struct DecideMachineToken { pub organization_id: OrganizationId, pub enrollment_id: EnrollmentId }
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum MachineTokenDecision {
     #[serde(rename_all = "camelCase")]
     Grant { installation: InstallationId, enrollment_id: EnrollmentId, decided_at: UnixSeconds, grant_expires_at: UnixSeconds },
-    Refuse { reason: MachineTokenRefusal },    // enrollmentNotActive | issuerWithdrawn
+    Refuse { reason: MachineTokenRefusal },    // enrollmentNotActive | superseded
 }
 
-// Fleet central's connection entry → Registry → organization authority, for every new connection.
+// Fleet central's connection entry → Registry → organization authority, for every new connection and renewal.
 #[serde(rename_all = "camelCase")]
 pub struct AdmitMachineConnection {
     pub organization_id: OrganizationId,
@@ -366,41 +395,89 @@ pub enum MachineConnectionAdmission {
     #[serde(rename_all = "camelCase")]
     Admitted { machine: AdmittedMachine },     // installation, peer, organizationId, enrollmentId, token expiry
     Pending { enrollment_id: EnrollmentId },   // an approve-each issuer's new machine: recorded, no connection
-    Refused { reason: MachineConnectionRefusal }, // unknownMachine | issuerWithdrawn | enrollmentNotActive | outsideIssuerLimits | machineInAnotherOrganization
+    Refused { reason: MachineConnectionRefusal }, // unknownMachine | issuerWithdrawn | enrollmentNotActive | superseded | outsideIssuerLimits | machineInAnotherOrganization
 }
 ```
 
-**Who decides what, in rank order.** Both a device-code approval and a first connection with a registered issuer's token for an unknown machine go through the Registry first, then the organization authority:
+**Who decides what, in rank order: authorize, then claim, then activate.** A device-code approval, or a first connection with a registered issuer's token for an unknown machine, enters at the Registry. The Registry calls the organization authority in rank order, and nothing is written anywhere until the organization authority has authorized:
 
-- The Registry claims the installation and peer for the organization. The claim is written once and kept; a claim by another organization is refused as `machineInAnotherOrganization`.
-- Then the organization authority decides, in one transaction:
-  - **The device-code approver** must be the current owner of the organization. The organization authority creates the enrollment (`authorizedBy: DeviceCodeApproval`) and the chosen allowances, with its record. Any active enrollment of that installation ends as superseded.
-  - **A pre-approved issuer's new machine** is enrolled at once. It gets allowances for the issuer's listed workspaces.
-  - **An approve-each issuer's new machine** is recorded as a `pending` enrollment and its connection is refused. The owner's `ApproveMachineEnrollment` enrolls it later, with the workspaces the owner chooses.
+1. **Check.** The Registry reads its machine index. An installation or peer already claimed by another organization is refused as `machineInAnotherOrganization`, and nothing changes.
+2. **Authorize and reserve.** The organization authority decides in one transaction:
+   - **A device-code approval:** the approver must be the current owner, and every chosen workspace must exist.
+   - **A pre-approved issuer's machine:** the issuer must be active, and its listed workspaces apply.
+   - **An approve-each issuer's machine:** the issuer must be active, and the enrollment will be pending.
 
-The sign-in service marks the code approved only after `Approved`. If that marking then fails (the code expired in between), the enrollment exists but no token can be minted for it. The machine's next login supersedes it.
+   On success it writes a **reserved** enrollment, keyed by the request ID, and the decision's record. A reserved enrollment admits nothing. On refusal nothing is written, here or at the Registry.
+3. **Claim.** The Registry writes its claim for the installation and peer: once, and only for that organization. A repeat for the same organization is a no-op. If another organization's claim won a race in between, the Registry refuses.
+4. **Activate or cancel.** The Registry calls the organization authority again:
+   - **Activate:** the reserved enrollment moves on, and its allowances are written:
+     - **A pre-approved issuer's:** to `enrolled`. Any earlier active enrollment of that installation ends as superseded in the same transaction.
+     - **An approve-each issuer's:** to `pending`.
+     - **A device-code approval's:** to `approved`. It becomes `enrolled`, and only then supersedes the earlier one, at its first machine token. So an approval whose code is never redeemed never displaces a working enrollment.
+   - **Cancel:** the reserved enrollment is dropped.
 
-**Renewal.** A device-code machine refreshes at the sign-in service before `grant_expires_at`. The contributor asks `DecideMachineToken` each time, so a revoked or expired enrollment, or a withdrawn issuer, stops renewal at once. A VM creator keeps a fresh token in the VM, and a platform's VM reads its platform's token. Central refuses those tokens once the issuer is withdrawn or the enrollment is not active.
+**Lost replies and restarts.** Every step is idempotent on the request ID, so the caller resends the same request:
+- The sign-in service resends until the code expires.
+- A VM resends by reconnecting.
 
-**The open connection.** An open connection carries its token's expiry. Before the token expires, the Router sends a fresh one over the connection (`RenewMachineToken { token }` on `/v1/session`), checked like a new connection. The Connection object closes a connection whose token has expired. A revocation also closes the connection at once, through the organization authority's outbox and the existing close path (FL-12). So an open connection outlives a revocation by at most one token lifetime even if that close is lost. Every effect it asks for in the meantime is refused, because grants and admissions read the enrollment live.
+A reserved enrollment left by an interrupted attempt admits nothing. It lapses when its request can no longer be resent: at the device code's lifetime, or after the same span for an issuer's attempt. Either way the claim is written only after an authorization succeeded, so a refused attempt leaves nothing in the Registry.
+
+**The device code, from approval to refresh (F1).** The enrollment travels with the token family through the issuer's own persisted reference. Nothing the Router sends chooses it:
+
+- **The approval hooks.** Before-hooks guard the device plugin's verify, approve and deny endpoints. Each first checks, in the sign-in core, that the code is still pending and unexpired, and that the signed-in person is the current owner of the code's organization (`Standing` from central, role `owner`). Anyone else gets a refusal before the plugin's own handler runs, so they never claim the code's user slot and the code stays for the owner. The approve hook then sends `DecideDeviceLogin`. On `Approved`, it writes the returned enrollment ID onto the device code row (an added `enrollmentId` field) before letting the plugin mark the code approved. A refused or unavailable decision leaves the code pending.
+- **The first mint.** The sign-in service registers its own token handler for the device-code grant type. It redeems the code with the device plugin's exported redemption (`redeemDeviceCode`: the plugin's polling, expiry, denial and single-use `consumeOne` rules). It then calls the provider's `issueTokens` with `referenceId` set to the redeemed code's `enrollmentId`. The provider stores that reference on the refresh token.
+- **Every refresh.** The provider restores the reference from the refresh token on each refresh, across rotation and restarts, and passes it to the extension claim contributor as `referenceId`. The contributor sends `DecideMachineToken` for exactly that enrollment. A superseded, revoked or expired enrollment is refused and nothing is minted.
+- **Machines never share a token family.** Two machines approved by the same owner under the one public client are separate code rows, separate enrollments and separate token families.
+
+The plan's first sign-in slice proves this against 1.7.11. It checks in particular that `referenceId`, which the provider also uses to match consent, raises no consent requirement for the Router login client, which asks for no consent. The fallback is our own device endpoints minting through `issueTokens` with the same reference.
+
+**Renewal.**
+- **A device-code machine** refreshes at the sign-in service before `grant_expires_at`, as above.
+- **A VM** gets fresh tokens from its creator through the mounted token file (below).
+- **A platform's VM** reads its platform's token.
+
+Fleet central decides whether any of these is admitted: on each new connection and each `RenewMachineToken`, the organization authority reads the issuer and enrollment live. An external issuer may keep signing after its machine is revoked, its issuer withdrawn, or Fleet central is down. Fleet central refuses what it signs, so nothing it signs authorizes any work (F3).
+
+**The open connection, and supersession.**
+- **Renewing:** an open connection carries its token's expiry and its enrollment ID. Before the token expires, the Router sends a fresh one over the connection (`RenewMachineToken { token }` on `/v1/session`), checked like a new connection. The Connection object closes a connection whose token has expired.
+- **Every decision checks the connection's own enrollment:** registration, token issuance, collaboration admission and Fleet reads all check that the connection's `AdmittedMachine.enrollmentId` is the installation's active enrollment, not merely that the installation has one. A connection on a superseded or pending enrollment is refused for every grant and effect, and closed.
+- **Revocation and supersession** close the connection at once, through the organization authority's outbox and the existing close path (FL-12). If that close is lost, the connection still gets nothing, because every decision reads the enrollment live, and it ends at its token's expiry.
+
+**Logging in again.**
+- **While the machine is active,** a new log-in supersedes the old enrollment and keeps its sessions, allowances and board relationships.
+- **After a revocation,** a new log-in brings nothing back. The revocation removed its sessions and withdrew its allowances (state tables below), so the owner chooses its workspaces again on the approval page.
 
 **Machine token sources on the Router (R40, R41, R44).** `MachineTokenSource` is a closed set:
 - `deviceCodeRefresh`: the refresh credential sits in the encrypted secret store, the Router's only long-lived credential of the new login.
-- `issuerFile { path }`: the VM creator keeps a fresh token at that path inside the VM. How the token gets there is agent-vm's work; the plan names it.
+- `issuerFile { path }`: a file the VM creator keeps fresh, mounted read-only into the guest; the Router rereads it before each connect and renewal.
 - `platformOidc { endpoint, audience }`: the platform's local token endpoint.
 
 A new issuer kind adds one variant here, plus the matching verification at central. Nothing else changes.
 
-**Issuer registration (C10):** `RegisterMachineIssuer { organizationId, kind: vmCreator { issuer, jwks } | platformOidc { discoveryUrl, audience, subjectRule, requiredClaims }, approval: approveEach | preApproved { workspaces } }` and `WithdrawMachineIssuer { organizationId, issuerId }`, both owner commands. Withdrawal is one transaction: it refuses every later connection, renewal and enrollment from that issuer. Its machines' open connections end at their current token's expiry unless the owner revokes them sooner.
+**The VM creator in agent-vm (F8).** agent-vm's VMs boot through Gondolin, whose existing VFS providers mount host files into the guest (`docs/subsystems/gondolin-vm-layer.md`, "What Gondolin Provides").
+- **Creating the VM:** agent-vm's VM creator, a host-side controller, assigns the VM's installation and peer IDs (UUIDv7) when it creates the VM, and writes them into the guest Router's saved state through a mount.
+- **The token file:** it mounts one host-owned file read-only at the guest Router's `fleet/machine-token`. It writes the first token before `start()`, and re-signs the file at half the token's lifetime for as long as the VM runs.
+- **Restarts:** after a restart, the controller re-signs a token for every VM it still runs, from its own record of their installation IDs.
+- **If signing stops:** the token expires and the guest's connection closes (fail closed).
+- **The signing key:** it is the issuer's key, kept in the creator host's secret store. It never enters a guest; the guest holds only a short-lived token.
 
-**The three steps (R43).** `machineLogin` is a deploy-time setting with exactly one value:
+The neutral `ManagedVm` mount option that carries the file is named in V1's slice. This uses existing mounts; no new host-to-guest transport is added.
+
+**Issuer registration (C10):**
+- **Commands:** `RegisterMachineIssuer { organizationId, kind: vmCreator { issuer, jwks } | platformOidc { discoveryUrl, audience, subjectRule, requiredClaims }, approval: approveEach | preApproved { workspaces } }` and `WithdrawMachineIssuer { organizationId, issuerId }`, both owner commands.
+- **Withdrawal** is one transaction. Fleet central then refuses every later enrollment, connection and renewal on that issuer's tokens; the issuer may keep signing. Its machines' open connections end at their current token's expiry unless the owner revokes them sooner.
+
+**The three steps (R43).** `machineLogin` is a deploy-time setting of Fleet central with exactly one value:
 - **Step 1**, `accessEnrollment`: production runs today's login unchanged. The new login is built and exercised only on test deployments, and production central refuses machine tokens.
 - **Step 2**, `machineTokens`, with Cloudflare Access still in front:
-  - **Removed from the code:** the enrollment credential check, the Access-client match, the Access-derived machine identity, and `EnrollMachine` with its operator-token preparation. The `machine_enrollments` table and each Router's old secrets stay, unused, so reverting step 2 is redeploying step 1's build. The Router's own `machineLogin` setting picks one login, and the step 2 Router keeps the old one only for that revert; step 3 deletes it.
+  - **Removed from the code:** the enrollment credential check, the Access-client match, the Access-derived machine identity, and `EnrollMachine` with its operator-token preparation. The `machine_enrollments` table is dropped in the same deploy.
+  - **No revert path:** step 2 fixes forward. Restoring the old login could give access back to a machine revoked after the switch, and Access keeps Fleet central guarded while a fix lands.
   - **Now through the sign-in service:** the operator's commands, through the operator check below.
-  - **On the Routers:** they still send their Access service token, only to pass the edge. Central reads nothing from it.
-  - **Every machine logs in again.** It keeps its installation and peer IDs, so its sessions, allowances and board relationships stay attached.
-- **Step 3**, the next change: the Cloudflare Access application in front of central is deleted, along with the Routers' Access headers, their stored Access token and old enrollment credential, and the `machine_enrollments` table. A request limit takes Access's place at the entry: the Workers rate-limit binding on Cloudflare, a fixed-window counter keyed by peer address on Tokio. It limits unauthenticated requests and failed token checks per source.
+  - **On the Routers:** they still send their Access service token, only to pass the edge; central reads nothing from it.
+  - **Every machine logs in again.** It keeps its installation and peer IDs, so its sessions, allowances and board relationships stay attached. The new Router build deletes its old enrollment credential once it has logged in.
+- **Step 3**, the next change:
+  - The Cloudflare Access application in front of central is deleted, along with the Routers' Access headers and stored Access token.
+  - A request limit takes Access's place at the entry: the Workers rate-limit binding on Cloudflare, a fixed-window counter keyed by peer address on Tokio. It limits unauthenticated requests and failed token checks per source.
 
 ### Collaboration admission (Router → Fleet central, R28)
 
@@ -569,7 +646,7 @@ Every organization command and lookup names its organization and is refused unle
 | Fleet central → sign-in: disable a bot credential | a service token as above, `aud` = the sign-in service's credential-disabling address, `scope` = `credential-disable` | as above; the body is a `DisableBotCredential` | disable → `AlreadyDisabled` |
 | Sign-in → Fleet central: admit a provider sign-in | a service token the sign-in service self-signs, `aud` = central's admission address, `scope` = `admit-sign-in`, lifetime ≤ 60 s | as for bot decisions; the body is an `AdmitSignIn`, only with a provider-verified email | a repeat adds no binding |
 | Sign-in → Fleet central: read a person's standing | a service token the sign-in service self-signs, `aud` = central's standing address, `scope` = `person-standing`, lifetime ≤ 60 s | as for bot decisions; the body is a `Standing` read | writes nothing |
-| Sign-in → Fleet central: decide a device-code approval | a service token the sign-in service self-signs, `aud` = central's device-login address, `scope` = `device-login-decisions`, lifetime ≤ 60 s | as for bot decisions; the body is a `DecideDeviceLogin` whose organization is the approver's session organization | the same request ID returns the same `Approved`; a used or expired code never reaches central |
+| Sign-in → Fleet central: decide a device-code approval | a service token the sign-in service self-signs, `aud` = central's device-login address, `scope` = `device-login-decisions`, lifetime ≤ 60 s | as for bot decisions; the body is a `DecideDeviceLogin` whose organization is the approver's session organization | the same request ID returns the same `Approved` (every step of the authorize, claim and activate sequence is idempotent on it); the sign-in core sends nothing for a code that is not pending or has expired |
 | Sign-in → Fleet central: decide a machine token | a service token the sign-in service self-signs, `aud` = central's machine-token address, `scope` = `machine-token-decisions`, lifetime ≤ 60 s | as for bot decisions; the body is a `DecideMachineToken` | decides again |
 
 **One credential, one operation (security finding SEC-05).** Every C7 operation has its own audience and scope; no two operations share one. The receiver picks the operation from the authenticated audience and scope *before* it parses the body. It then parses the body only as that operation's type, and refuses any other body as `wrong-operation`. A `Standing` credential therefore cannot carry an `AdmitSignIn`, and a provisioning credential cannot disable.
@@ -591,7 +668,13 @@ Every issuance runs one closed dispatch on the **authenticated** client's regist
 
 **Refused combinations** include a bot asking for a service or machine audience, Fleet's client asking client credentials for a workspace or collaboration address, any other client using the fleet-session grant, the Router login client asking for any audience but the machine address, and a person asking for a workspace, collaboration or machine address.
 
-**The device-code grant, extended.** The sign-in service configures the OAuth provider's device grant wrapped by its own grant object. That object keeps every behavior of the provider's grant and adds the four machine request fields, persisting them on the code. On the owner's verification page it shows the label, the organization's name and the code. A `before` hook on the approve endpoint sends `DecideDeviceLogin` and lets the approval proceed only on `Approved`. Single use is the provider's `consumeOne`, one conditional statement on D1 and on `better-sqlite3`. Guess limits are the plugin's verification limit. The code lifetime is set to OD6's 10 minutes, not the plugin's 30-minute default. The plan's first sign-in slice proves this mapping against 1.7.11. The fallback is our own device-code endpoints in the sign-in core, minting through `issueTokens` with the same contributor. Resource-policy `customClaims` on these resources carry none of the claim names above.
+**The device-code grant, extended.**
+- **The grant object:** the sign-in service configures the device plugin with its own grant object. It keeps the provider's request authorization and adds the machine request fields, persisting them, and later `enrollmentId`, on the code. On the owner's verification page it shows the label, the organization's name and the code.
+- **The guards:** before-hooks on the verify, approve and deny endpoints apply the owner rule first; the approve hook sends `DecideDeviceLogin` ("The device code, from approval to refresh", above).
+- **The token handler:** the sign-in service's own handler for the device-code grant type redeems with the exported `redeemDeviceCode` and mints with `referenceId` = the enrollment.
+- **Inherited from the library:** single use is the provider's `consumeOne`, one conditional statement on D1 and on `better-sqlite3`, and guess limits are the plugin's verification limit.
+- **Lifetime:** the code lifetime is set to OD6's 10 minutes, not the plugin's 30-minute default.
+- **Proof and fallback:** the plan's first sign-in slice proves this mapping against 1.7.11. The fallback is our own device-code endpoints in the sign-in core, minting through `issueTokens` with the same reference and contributor. Resource-policy `customClaims` on these resources carry none of the claim names above.
 
 ## Removal across owners (R19–R21)
 
@@ -617,15 +700,15 @@ No transaction spans Better Auth and organization objects. Each removal commits 
 | **Admin surface** (modified) | Organization-owner commands and lookups with their guard, the fleet operator's two commands under the operator check (R13, R14), and the bearer checks of central's new receivers | `central_router.rs` admin routes and `access_rules.rs` (modified; the Access branches deleted at step 2) | the owner's CLI and console | admin commands change |
 | **Machine token check** (new, central entry) | Verifying a machine token on `/v1/session` and on `RenewMachineToken` (C9): issuer selection, signature, audience, time; then `AdmitMachineConnection` through the Registry and the organization authority; the step-3 request limit | `collaboration-central-core` (new module `machine_token_check`), using the existing RS256 capability and a generalized key fetch; each host's entry | the Connection object | an issuer kind or the token contract changes |
 | **Collaboration admission** (modified) | The `AdmitCollaboration` decision at central (bound actor, operation, target, memberships, pairs, bot collaborations), and its enforcement before each effect on every path in the table above: the holder's project write, the forwarded post at the holder, `send_draft` (behind `message_send` and `message_reply`) and the Fleet writes | central: a new admission route in `collaboration-central-core`; Router: `board_project_operations.rs`, `board_composition/server_calls.rs` and `project_admission`, `message_operations.rs` `send_draft`, `board_fleet_operations.rs` and `board_adr_operations.rs`, `mcp_server/message_tools.rs` (modified); `session_request_admission` unchanged (it binds replication writers to peers) | every collaboration effect; bots via their collaboration token | collaboration rules change |
-| **Registry: organization list and machine index** (modified) | The list of organizations and their creation; which organization each installation and peer belong to, claimed once | Registry object (modified): `organizations` and `fleet_machines` (`machine_enrollments` dropped at step 3) | the fleet operator, the machine token check, the sign-in service's device-login decisions | organization lifecycle or the machine claim changes |
-| **Fleet object** (existing, one per organization, OD8) | E2, E16; what each connection is sent, filtered to its machine's allowed and paired workspaces | existing, addressed by organization; the first organization adopts today's storage | organization authority, connections | — |
+| **Registry: organization list and machine index** (modified) | The list of organizations and their creation; which organization each installation and peer belong to, claimed once and only after the organization authority authorized; orchestrating authorize, claim, then activate or cancel | Registry object (modified): `organizations` and `fleet_machines` (`machine_enrollments` dropped at step 2) | the fleet operator, the machine token check, the sign-in service's device-login decisions | organization lifecycle or the machine claim changes |
+| **Fleet object** (existing, one per organization, OD8) | E2, E16; each machine's visible set and the filtered view of its directory, snapshot and feed reads (`Withheld`, `ScopeChanged`) | existing, addressed by organization; the first organization adopts today's storage through a fixed mapping on both hosts | organization authority, connections | the view contract changes |
 | **Session binding** (new, Router) | Which session each collaboration call came from; binding lifecycle | `collaboration-mcp`, `collaboration-service` (modified); Codex: the native `StartThread` and `ForkThread` config where it is built (`native_thread_preparation.rs`; the client bridge's `session_creation.rs` for helper starts) (modified); Claude and Cursor: `acp-client-runtime` per-session MCP list through the create and restore commands (modified) | collaboration MCP tools | harness wiring changes |
 | **Session registrar** (new, Router) | Checking each start (a named project; a session starts only in its own workspace, R8); registering each launched session exactly once and recording which project it was started for; minting, activating, persisting and retiring its binding; refusing a start that can't carry one; reporting its end | `collaboration-service` (new module `fleet_session_registrar`) | session binding, forwarder | launch facts change |
 | **Tool Portal forwarder** (new, Router) | Getting, caching in memory and attaching each session's token; refetching before `grant_expires_at` and once on a 401 | `codex-router-host` (new module `portal_session_forwarder`) | the harness's Tool Portal MCP entry | token or Portal contract changes |
-| **Machine login** (new, Router) | The `fleet login` command and its device-code flow; the `MachineTokenSource`; presenting the machine token on connect and renewing it over the open connection | `codex-router-host` (new module `fleet_machine_login`); `codex-router-cli` (the command) | the collaboration runtime's connection | the login contract or an issuer kind changes |
-| **Router secret store, Linux backend** (new) | The data key from a systemd encrypted credential, behind the existing `KeychainAccess` seam; production refuses without one | `codex-router-secret-store` (new `systemd_credential_data_key.rs`, selected on Linux); the Router's systemd unit and installer step | the encrypted secret store | Linux secret handling changes |
-| **VM creator issuer** (new, agent-vm) | Assigning each VM's installation and peer IDs, signing its short-lived machine tokens with the issuer key, keeping a fresh one in the VM | agent-vm (the plan names the module) | VMs' Routers | the VM token format changes |
-| **Token issuer** (existing, modified) | Bot credentials (E5) and their provisioning and disabling for central; the token-kind dispatch; bot and machine claim stamping; the fleet-session grant; the extended device-code grant and its approval hook; service tokens; person session confirmation; asking central for person admission | `packages/auth` | bots, Routers (login and renewal), Fleet central, Tool Portal (published keys) | claims or grants change |
+| **Machine login** (new, Router) | The device-code flow, run in the Router host; the `MachineTokenSource`; presenting the machine token on connect and renewing it over the open connection; applying `ScopeChanged` to the replica | `codex-router-host` (new module `fleet_machine_login`); `codex-router-cli` (the `fleet login` command, which asks the host and prints the code) | the collaboration runtime's connection | the login contract or an issuer kind changes |
+| **Router secret store, Linux backend** (new) | The data key from a systemd encrypted credential, behind the existing `KeychainAccess` seam: `read_secret` reads `$CREDENTIALS_DIRECTORY`, `add_secret` returns `Unavailable` because the key is created only at install; production refuses without one, and never falls back to plaintext | `codex-router-secret-store` (new `systemd_credential_data_key.rs`, selected on Linux); the Router's systemd unit and installer step | the encrypted secret store | Linux secret handling changes |
+| **VM creator issuer** (new, agent-vm) | Assigning each VM's installation and peer IDs; signing its short-lived machine tokens with the issuer key; keeping a fresh one in a host-owned file mounted read-only into the guest, re-signed at half its lifetime and again after a controller restart | agent-vm's VM controller, through the neutral `ManagedVm` mounts that Gondolin's VFS providers implement | VMs' Routers | the VM token format or the mount contract changes |
+| **Token issuer** (existing, modified) | Bot credentials (E5) and their provisioning and disabling for central; the token-kind dispatch; bot and machine claim stamping; the fleet-session grant; the extended device-code grant, its owner hooks on verify, approve and deny, and its own token handler minting with the enrollment as `referenceId`; service tokens; person session confirmation; asking central for person admission | `packages/auth` | bots, Routers (login and renewal), Fleet central, Tool Portal (published keys) | claims or grants change |
 | **Caller check** (existing, modified) | Admit or refuse a call: token, marks, persona narrowing | `tool-host-core/src/caller-admission`; narrowing in `tool-access/src/authorization` | hosted MCP proxy | admission rules change |
 | **Workspace store** (existing, modified) | Approval single-use counts (unchanged, keyed by `principal`) and received removal marks (new) | `tool-host-core/src/workspace-store` (the remediation design's `WorkspaceStore`, store version 2: `removal_mark`, `removal_notice`, approval-use tables keyed by `principal`); Cloudflare `WorkspaceStoreObject` Durable Object; Node `<stateDirectory>/tool-portal-<workspaceId>.sqlite` | caller check, removal receiver, approval use | store shape changes |
 | **Service caller** (new, central host capability) | Sending C7 requests outside storage transactions (live ones inline, durable ones from outbox steps); signing with central's client key | each central host: Workers and Tokio | outbox steps | a C7 edge changes |
@@ -659,25 +742,29 @@ No transaction spans Better Auth and organization objects. Each removal commits 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant R as Router
+  participant R as Router host
   participant B as Sign-in service
   participant O as Owner's browser
   participant REG as Registry
   participant OA as Organization authority
   R->>B: device request with machine fields
   B-->>R: user code, address, device code
-  Note over R: shows the code and address, then polls
-  O->>B: signs in, opens the address, enters the code
+  Note over R: the CLI prints the code; the host polls
+  O->>B: signs in, enters the code
+  B->>B: code pending? owner of its organization?
   B-->>O: label, organization, code
   O->>B: Approve, with workspaces
   B->>REG: DecideDeviceLogin (service token)
+  REG->>REG: machine claimed elsewhere? (read)
+  REG->>OA: authorize
+  Note left of OA: owner? reserve enrollment, record
+  OA-->>REG: reserved
   REG->>REG: claim machine, once
-  REG->>OA: create enrollment
-  Note left of OA: owner? enroll, allow, record
+  REG->>OA: activate
   OA-->>B: Approved(enrollment)
-  B->>B: mark the code approved
+  B->>B: store enrollment on the code; mark approved
   R->>B: poll: device code
-  B->>B: consume the code once
+  B->>B: redeem once; mint with reference = enrollment
   B->>OA: DecideMachineToken(enrollment)
   OA-->>B: Grant(grant_expires_at)
   B-->>R: machine token, refresh credential
@@ -685,37 +772,45 @@ sequenceDiagram
   R->>OA: connect (through the token check)
 ```
 
-Refusals at each step: a non-owner approving gets `notOwner` and the code stays pending until it expires; an installation already claimed by another organization gets `machineInAnotherOrganization`; a denied, expired or used code mints nothing. Renewal repeats the last three messages with the refresh credential.
+Refusals at each step:
+- **A non-owner** opening, approving or denying the code is refused by the sign-in service before the plugin's handler runs; the code stays pending for the owner.
+- **An installation already claimed by another organization** gets `machineInAnotherOrganization`, and nothing is written.
+- **A refused authorization** writes nothing in either owner.
+- **A denied, expired or used code** mints nothing.
+
+Renewal repeats the last three messages with the refresh credential. The enrollment comes back from the token family's reference, never from the Router.
 
 ## How a VM logs in through its creator
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant VC as VM creator
+  participant VC as VM creator (agent-vm host)
   participant V as Router in the VM
   participant E as Token check
   participant REG as Registry
   participant OA as Organization authority
   VC->>VC: create VM, assign its IDs
-  VC->>V: short-lived token
+  VC->>V: short-lived token in a read-only mounted file
   V->>E: connect with token
   E->>E: key, audience, lifetime
   E->>REG: AdmitMachineConnection
+  REG->>OA: authorize (issuer active, limits)
+  OA-->>REG: reserved
   REG->>REG: claim machine, once
-  REG->>OA: admit
+  REG->>OA: activate
   alt pre-approved issuer
     OA-->>V: Admitted: enrolled, allowances set
   else approve-each issuer
     OA-->>V: Pending enrollment: no connection
   end
-  loop before each token expires
-    VC->>V: fresh token
+  loop at half of each token's lifetime
+    VC->>V: re-signed token in the same file
     V->>E: RenewMachineToken
   end
 ```
 
-A platform's VM follows the same path. Its Router reads the platform's identity token instead of a file. The registration's subject rule names which claim identifies the machine, and the enrollment binds that subject to the installation the first time.
+A platform's VM follows the same path. Its Router reads the platform's identity token instead of a file. The registration's subject rule names which claim identifies the machine, and the enrollment binds that subject to the installation the first time. Later connections of a known machine skip the claim: the token check goes to the organization authority, which reads the issuer and enrollment live.
 
 ## How a session gets and uses its token
 
@@ -909,8 +1004,10 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 
 | State | Entered by | Leaves to | Guard and effect |
 |---|---|---|---|
-| pending | an approve-each issuer's first token for an unknown machine | enrolled, revoked | no connection, no session, no token |
-| enrolled | a device-code approval, a pre-approved issuer's first token, or `ApproveMachineEnrollment` | revoked, expired | connections, renewals and grants allowed; a newer enrollment of the same installation ends this one (`revoked`, reason superseded) without a removal notice, because the machine and its allowances stay |
+| reserved (internal) | an authorized log-in attempt, before the Registry's claim | approved, enrolled, pending, cancelled | admits nothing and shows in no lookup; lapses when its request can no longer be resent |
+| approved (internal) | activation of a device-code approval | enrolled, lapsed | admits nothing; becomes `enrolled` at its first machine token, and only then supersedes the installation's earlier enrollment; lapses at the code's lifetime if never redeemed, leaving the working enrollment untouched |
+| pending | activation for an approve-each issuer's first token | enrolled, revoked | no connection, no session, no token |
+| enrolled | a device-code enrollment's first machine token, a pre-approved issuer's activation, or `ApproveMachineEnrollment` | revoked, expired | connections, renewals and grants allowed, only on connections carrying this enrollment; a newer enrollment of the same installation becoming `enrolled` ends this one (`revoked`, reason superseded) in the same transaction, without a removal notice, because the machine and its allowances stay; this one's open connections are closed |
 | revoked | `RevokeMachineEnrollment`, or superseded | — (terminal) | if not superseded: allowances withdrawn, mark, machine notices, connection closed |
 | expired | its optional end time passes (set at approval; none by default) | — (terminal) | as revoked, at the next decision that reads it |
 
@@ -946,14 +1043,16 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 | The owner changes while a workspace creation waits | — | It still applies once: an empty workspace | Fleet object |
 | The issuer's signing key rotates | published key set | Receivers refetch once on an unknown key ID | each receiver |
 | Fleet central unreachable during a device-code approval or renewal | the decision request times out | The approval is refused and the code stays pending until it expires; a renewal fails and the machine retries before its token's grant expiry, then stops connecting | sign-in core; Router machine login |
-| Central approves, then marking the code approved fails | the approve endpoint errors after `Approved` | The enrollment exists with no token; the machine's next login supersedes it | sign-in core |
+| Central approves, then marking the code approved fails | the approve endpoint errors after `Approved` | The new enrollment stays `approved` and admits nothing; it lapses at the code's lifetime; the machine's working enrollment, if any, is untouched | sign-in core; organization authority |
+| An attempt is interrupted between authorize, claim and activate | a lost reply; a restart | The caller resends with the same request ID; every step is idempotent; a reserved enrollment admits nothing and lapses; no claim exists without a prior authorization | Registry; organization authority |
+| A superseded or pending connection asks for a grant or effect | the connection's enrollment is not the installation's active one | Refused, and the connection is closed | organization authority |
 | Two polls redeem one approved code at once | `consumeOne` returns a row to one of them | One token set; the other gets `invalid_grant` | Better Auth |
 | An installation already claimed by another organization asks to log in | the Registry claim | `machineInAnotherOrganization`; nothing changes in either organization | Registry |
 | A machine token expires on an open connection | the Connection object's stored expiry | The connection closes; the Router reconnects with a fresh token | Connection object; Router |
 | A revocation's connection close is lost | outbox | The close retries; the connection ends at its token's expiry at the latest; its effects are already refused | organization authority |
 | A registered issuer's keys can't be fetched | key fetch fails or times out | Its tokens are refused (fail closed); cached keys serve up to 5 minutes | machine token check |
 | A Linux Router has no systemd credential | the data-key seam returns `Unavailable` | Production refuses device-code login with a clear error; the machine can be logged in by an issuer instead; no plaintext fallback | Router secret store |
-| The step 2 deploy breaks login | machines can't connect | Revert the deploy; Access still guards central, so nothing is exposed | operator |
+| The step 2 deploy breaks login | machines can't connect | Fix forward: deploy a corrected build; the old login is not restored, so no machine revoked after the switch regains access; Access still guards central, so nothing is exposed | operator |
 
 ## Trust boundaries
 
@@ -1159,8 +1258,8 @@ export type DeviceLoginAnswer =
 	| CentralUnknown; // the approval is refused; the code stays pending until it expires
 
 export type MachineTokenAnswer =
-	| { readonly kind: 'grant'; readonly installationId: InstallationId; readonly enrollmentId: EnrollmentId; readonly grantExpiresAt: UnixSeconds }
-	| { readonly kind: 'refuse'; readonly reason: 'enrollment-not-active' | 'issuer-withdrawn' }
+	| { readonly kind: 'grant'; readonly installationId: InstallationId; readonly enrollmentId: EnrollmentId; readonly decidedAt: UnixSeconds; readonly grantExpiresAt: UnixSeconds } // the issuer mints only within 60 s of decidedAt (R16's window)
+	| { readonly kind: 'refuse'; readonly reason: 'enrollment-not-active' | 'superseded' }
 	| CentralUnknown; // nothing is minted
 
 export interface CentralClient {
@@ -1206,7 +1305,8 @@ The statements above are written as SQL so the condition each one carries is vis
 | `sign_in_audit` | `id` text primary key (UUIDv7) · `organization_id` text not null · `request_id` text not null · `kind` text not null · `actor` text not null · `outcome` text null · `recorded_at_ms` integer not null | unique (`request_id`, `kind`) for the intent; index on `organization_id` | intent, then outcome (people sign-in R12) |
 | `organization_admission_claim` | `attempt_id` text primary key (UUIDv7) · `person_id` text not null · `organization_id` text not null · `claimed_at_ms` integer not null | index on `person_id` | one pending claim per sign-in attempt (R31, SEC-02) |
 | `admitted_person_guard` | `person_id` text not null · `organization_id` text not null · `admitted_at_ms` integer not null | primary key (`person_id`, `organization_id`) | D1 never deletes a Person central admitted (R31) |
-| `deviceCode` (generated with the device grant) | as generated, plus `machineInstallationId` text not null · `machinePeerId` text not null · `machineLabel` text not null · `organizationId` text not null | as generated; the code and user code stay random secrets (R32) | the machine login request (E23, R42) |
+| `deviceCode` (generated with the device grant) | as generated, plus `machineInstallationId` text not null · `machinePeerId` text not null · `machineLabel` text not null · `organizationId` text not null · `enrollmentId` text null (set only after central's `Approved`) | as generated; the code and user code stay random secrets (R32) | the machine login request (E23, R42); carries the enrollment to the first mint |
+| `oauthRefreshToken` (as generated) | its existing `referenceId` holds the machine's enrollment ID for the Router login client's tokens | — | binds a machine's whole token family to its enrollment (R40) |
 | removed | `allowed_email`, `deployment_owner` | — | admission moved to Fleet central (R5) |
 
 `drizzle-kit` generates the migration from the one schema module. The old `0001`/`0002` files are replaced, not migrated, because nothing is deployed.
@@ -1227,66 +1327,71 @@ The statements above are written as SQL so the condition each one carries is vis
 | Step | Fleet central in production | Machines | Proven before the next step |
 |---|---|---|---|
 | 1. Build | today's login, `machineLogin = accessEnrollment`; Access in front; no organizations yet | unchanged | everything in this set on test deployments, including the step 2 checks below behind a test Access application |
-| 2. Switch, behind Access | `machineLogin = machineTokens`; the old login's code removed (its table kept, unused); the first organization created for you, adopting the existing Fleet object's storage (OD8); operator commands through the sign-in service | each logs in again by device code, keeping its installation and peer IDs; still sends its Access token to pass the edge | every machine connects only with machine tokens; the old credential and a missing, bad, expired or other-organization token are refused even with a valid Access token; admin and operator actions need no Access identity |
-| 3. Remove Access (the next change) | the Access application deleted; the request limit at the entry; the old `machine_enrollments` table dropped | the Access token and the old enrollment credential deleted from each Router | every obligation holds with no Access token; unauthenticated, malformed or wrong-kind requests change nothing |
+| 2. Switch, behind Access | `machineLogin = machineTokens`; the old login's code and its `machine_enrollments` table removed; the first organization created for you, adopting the existing Fleet object's storage (OD8); operator commands through the sign-in service | each runs the new Router build and logs in again by device code, keeping its installation and peer IDs, then deletes its old enrollment credential; still sends its Access token to pass the edge | every machine connects only with machine tokens; the old credential and a missing, bad, expired or other-organization token are refused even with a valid Access token; admin and operator actions need no Access identity |
+| 3. Remove Access (the next change) | the Access application deleted; the request limit at the entry | the Access token deleted from each Router | every obligation holds with no Access token; unauthenticated, malformed or wrong-kind requests change nothing |
 
-Reverting step 2 is redeploying step 1's build and setting each Router back to the old login: the old table and each Router's old enrollment secrets stay, unused, until step 3. Access guards central until step 3.
+Step 2 fixes forward; there is no revert to the old login. Restoring it could give access back to a machine revoked after the switch, because the old table knows nothing of revocations made under the new login. While a fix lands, machines are offline and Access still guards central.
 
 ## Requirement trace
 
 | U | R | E | Owner | Interface | Shape and home | State | Failure | Proof |
 |---|---|---|---|---|---|---|---|---|
-| U1 | R1: three kinds only | E3, E4, E7 | organization authority; issuer | `Principal`; `principal` claim | `identity_contract.rs`; claims schema | none | unknown kind rejected at parse | contract: claims and principal parse/refuse |
+| U1 | R1: three agent kinds only; machines and services are not agent actors | E3, E4, E6, E7 | organization authority; issuer | `Principal`; `principal` claim; `MachinePrincipal` kept separate | `identity_contract.rs`; claims schema | none: parse rule | unknown kind rejected at parse; a machine or service token refused where an agent actor is expected | contract: claims and principal parse/refuse, machine and service tokens each under their own schema |
 | U3, U17 | R2: a session only as vouched by its logged-in machine | E6, E7, E21 | broker; organization authority | `IssueSessionToken` over the logged-in connection | `identity_contract.rs` | session active; enrollment enrolled | pending, revoked or expired enrollment → `IdentityNotProven` | Fleet integration: enrolled vs pending, revoked, expired |
 | U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
 | U2 | R4: bot only with an active credential | E4, E5 | issuer + organization authority | client credentials; `DecideBotIssuance` | Better Auth client + `botId`; `BotRecord` | credential active/retiring/retired | retired → `invalid_client` | sign-in integration; two-credential bot |
 | U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `AdmitSignIn` (provider sign-in only) and `Standing` (passkey, token, confirmation); the people sign-in design's interfaces | `PersonAdmissionRequest`; audit in the organization authority | entry and owner bindings | admission unavailable → refuse; unwritable record → no binding | that design's proof re-run through central; SO7 |
 | U5 | R6: a bot in at most one workspace | E4, E8 | organization authority | `SetBotMembership` | `Membership` | active/removed | second → refused | central unit + admin API |
 | U6 | R7: session in its project's workspace, registered once | E7, E8, E16 | session registrar; organization authority | `RegisterFleetSession` | as named | session active | other project → refused; repeat → same result; until `Registered`, the binding admits nothing | Router + central with a real session; restart before and after the reply; ambiguous creation; resend |
-| U6, U32 | R8: no allowance or no project → start refused; never prompted before registration; no sign-in to start; recorded as from the machine; a helper only in its starter's workspace | E6, E7, E15 | session registrar; organization authority | the Router's start check; `RegisterFleetSession` (`started_by`) | `SessionRefusal::MachineNotAllowed` | — | refused by the Router: nothing created; refused at registration: no prompt, no effect | central integration; Router start negatives, including a helper start naming another workspace |
+| U6, U32 | R8: no allowance or no project → start refused; never prompted before registration; no sign-in to start; recorded as from the machine; a helper only in its starter's workspace | E6, E7, E15 | session registrar; organization authority | the Router's start check; `RegisterFleetSession` (`started_by`) | `SessionRefusal::MachineNotAllowed` | none: the start check is stateless; registration state is R7's | refused by the Router: nothing created; refused at registration: no prompt, no effect | central integration; Router start negatives, including a helper start naming another workspace |
 | U11 | R9: effective persona = both allow; changes apply with the deployment that carries them | E8, E10 | caller check | two assessments, stricter wins | `personaRefSchema`; `portal.sessionDefaultProfile` | none | undefined → nothing | Portal unit + host e2e across a configuration deployment |
 | U20, U21, U4 | R10: person memberships and collaborations, any number, admin-managed, in admitted organizations | E3, E8, E9 | admin surface | `SetPersonMembership`, `SetCollaboration` | `Membership`, `Collaboration` | active/removed | non-owner refused; not admitted → refused | admin API through the guard |
 | U7, U2, U30 | R11: bot collaborator messages with a collaboration token; the admin sets each per workspace; a person's admits nothing | E9, E18 | collaboration admission; issuer | collaboration resource; `CollaborationDecision`; `AdmitCollaboration` | `collaborationTokenClaimsSchema` | collaboration active/withdrawn | tool, board write, start, role refused; wrong audience refused | central + Portal; the bot's reply reaches only its mailbox; a person's collaboration admits no effect |
 | U8, U7, U28 | R12: messages and tasks need a pair in one organization | E17 | collaboration admission | `AdmitCollaboration` | `WorkspacePair` | active/withdrawn | no pair, or another organization → refused | Router + central on each path |
 | U7, U8, U19, U15 | R28: every collaboration effect admitted before it happens, on every path | E7, E9, E17 | collaboration admission (central decision, Router enforcement) | `AdmitCollaboration` | `CollaborationOperation` | none: per effect | refuse → nothing stored, delivered or started; central unreachable → refuse | every path in the effect table: holding, forwarded at the holder, direct message, conversation start, Fleet write |
 | U21, U20, U31 | R13: only the current owner administers (admissions, roles, allowances, pairs, workspaces, device-code approvals, issuers, enrollment approval and revocation, lookups), with an audit record; organization creation only by the fleet operator | E1, E2, E4, E6, E8, E9, E15, E17, E19, E20, E21, E23 | admin surface; the device-login decision; each state owner records its own changes | owner guard + person confirmation, held when you ask; `DecideDeviceLogin`; operator check through the sign-in service from step 2 | person token; confirmation request; a record at each change's owner, assembled into the organization's view | none | anyone else refused, nothing revealed; unwritable record → nothing changes | admin API and the approval page: owner, member, other owner, removed owner, stale session, bot, session, machine issuer; an organization owner attempting `CreateOrganization`; an unwritable record |
-| U9 | R14: lookups answer, including machines (organization, enrollment state, what authorized it) and issuers | E1–E23 | organization authority | lookups | lookup results | none: read | — | admin API |
-| U10, U30 | R15: tokens only to active members that are bots or sessions; claims | E8, E11 | issuer + organization authority | `IssuanceDecision::Grant`; claims; the dispatch | claims schema | — | refuse → no token; a person → refused before minting | contract + sign-in integration |
+| U9 | R14: lookups answer, including machines (organization, enrollment state, what authorized it) and issuers | E1–E23 | organization authority | lookups | lookup results | none: read | an owner's records unreadable → that part shown unavailable, nothing inferred | admin API |
+| U10, U30 | R15: tokens only to active members that are bots or sessions; claims | E8, E11 | issuer + organization authority | `IssuanceDecision::Grant`; claims; the dispatch | claims schema | none: one decision per request; marks are R20's | refuse → no token; a person → refused before minting | contract + sign-in integration |
 | U12 | R16: grant expiry fixed at decision; redemption window on the issuer's clock; ≤ 60 min | E11, E18 | organization authority; issuer | `grant_expires_at`; 60 s window | `TokenLifetimeSeconds`; `UnixSeconds` | organization setting | past the window → nothing | unit + mint timing with pinned and offset clocks |
 | U10, U12 | R17: Portal admission, no fleet call | E10, E11, E12 | caller check | `checkHostedCaller` (modified) | claims; stored marks | none | each C1 refusal before tools run | Portal host e2e (production entry) |
 | U14, U15 | R18: consult once; ended session, missing allowance or inactive enrollment refused | E8, E11, E15, E21 | organization authority | `IssuanceDecision` | `identity_contract.rs` | marks | unavailable → refuse | central + sign-in integration |
 | U13 | R19: every removal kind, a machine's revocation included, cut off at the organization's transaction; no new connection or machine token after revocation; pending shown | E8, E12, E15, E21 | organization authority | outboxes | `RemovalNotice` | removal states | interrupted steps resume | interruption cases; a grant decided just before a revocation; a connection and a renewal just after |
-| U13 | R20: ordered marks; strict cover; no lowering | E11, E12 | organization authority; caller check | `removal_revision` vs `grant_revision` | both shapes | marks | — | property test + e2e |
+| U13 | R20: ordered marks; strict cover; no lowering | E11, E12 | organization authority; caller check | `removal_revision` vs `grant_revision` | `Mark` in `identity_contract.rs`; `removal_mark` in the workspace store | marks | a lower late notice changes nothing | property test + e2e |
 | U13 | R21: resend; durable before ack; retention | E12 | organization authority; workspace store | outbox; persisted marks | `RemovalNotice` | notice states | restart → still applied | Portal down and restarted; retention boundary |
 | U13, U15 | R22: notices only from central | E12 | removal receiver | service token check | pinned trust | none | forged → refused | Portal host e2e with forged notices |
-| U18 | R23: isolation recorded and shown (kept unless you strike it, OD7) | E7, E13, E14 | organization authority | registration; lookup | `AgentIsolation`, `MachineEnvironment` | recorded | — | central + token claims round trip |
-| U17, U33 | R24: no machine needs a key of its own; an issuer's key stays with the issuer | E6, E20 | Router machine login; VM creator issuer | machine token sources | `MachineTokenSource` | none | — | structural review of the Router and the VM image: no key created or stored |
-| U14 | R25: no new decision while central is out, so no workspace, collaboration or machine token; an in-flight grant completes only inside its window | E11, E18, E22 | issuer; broker; machine token decisions | timeout → refuse; window | — | — | fail closed | central stopped before a decision and between a decision and its mint; a renewal during the outage |
-| U16 | R26: one contract, any host | all | each host adapter | `/v1/` HTTP + JSON | generated JSON Schema; Zod derived | — | — | the same suites on Cloudflare and Tokio/Node |
-| U13, U15, U16 | R27: service requests authenticated per edge and operation, including credential management and person admission | all | each receiver, including central's new bearer receivers; the issuer's dispatch; central's service caller | service tokens; `private_key_jwt` | pinned trust configuration | — | wrong caller/operation/receiver refused | per-edge negative cases; every dispatch row and refused combination |
+| U18 | R23: isolation recorded and shown (kept unless you strike it, OD7) | E7, E13, E14 | organization authority | registration; lookup | `AgentIsolation`, `MachineEnvironment` | recorded | none: nothing is refused for isolation | central + token claims round trip |
+| U17, U33 | R24: no machine needs a key of its own; an issuer's key stays with the issuer | E6, E20 | Router machine login; VM creator issuer | machine token sources | `MachineTokenSource` | none | none: structural; no key path exists to fail | structural review of the Router and the VM image: no key created or stored |
+| U14 | R25: no new decision while central is out, so no workspace, collaboration or machine token; an in-flight grant completes only inside its window | E11, E18, E22 | issuer; broker; machine token decisions | timeout → refuse; window | `IssuanceDecision`, `MachineTokenDecision`; a timeout is `CentralUnknown` | none: no decision is made while central is out | fail closed | central stopped before a decision and between a decision and its mint; a renewal during the outage |
+| U16 | R26: one contract, any host | all | each host adapter | `/v1/` HTTP + JSON | generated JSON Schema; Zod derived | none: a contract, not a store | a host-specific divergence fails the shared suites | the same suites on Cloudflare and Tokio/Node |
+| U13, U15, U16 | R27: service requests authenticated per edge and operation, including credential management and person admission | all | each receiver, including central's new bearer receivers; the issuer's dispatch; central's service caller | service tokens; `private_key_jwt` | pinned trust configuration | none: each request authenticated on its own; key caches bounded at 5 minutes | wrong caller/operation/receiver refused | per-edge negative cases; every dispatch row and refused combination |
 | U22 | R29: sign-in storage is Drizzle on D1 / `better-sqlite3`; Better Auth's Drizzle adapter; generated migrations, the device-code table included | E3, E5, E11, E18, E23 | `SignInStore` | typed store operations; `drizzleAdapter` | `sign-in-core/storage/sign-in-schema.ts`; `packages/auth/drizzle/` | migration history per database | a database serves only after migrating | the sign-in suite on D1 (workerd) and `better-sqlite3`; source scan |
 | U23, U16 | R30: one sign-in core, the device-code approval rule included; hosts inject only | E3, E5, E11, E18, E23 | sign-in core | `SignInPlatform` | `sign-in-core` platform module | none | missing capability is a type error | the same suite on both hosts; recording-capability run |
 | U22, U16, U33 | R31: multi-row decisions without interactive transactions; a device code consumed once | E3, E23 | `SignInStore`; Better Auth `consumeOne` | `runAtomically(statements)`; one conditional statement | the statements in "The decisions that write more than one row" | claim present/absent; code approved/used | zero-row conditional statements are correct outcomes | concurrent sign-in and cleanup, and concurrent redemption of one code, on D1 and `better-sqlite3`; Hegel families |
-| U24 | R32: no UUID but v7; secrets stay random; derived single-use keys stay derived | E3, E5 | `SignInPlatform.ids`; Better Auth `generateId` (a function returning `platform.ids.nextId()`) | `nextId()` | branded `Uuid7` | — | a client-assertion record keeps Better Auth's derived `jti`-digest key (`encodeDeterministicId`, base64url under a function generator) | every UUID-shaped stored identifier parsed as v7; a replayed client assertion refused |
-| U25 | R33: no wall clock in sign-in tests; Hegel | E11, E18, E23 | sign-in test suites | controlled clock; Vitest system time for Better Auth cases on Node | test fixtures | — | — | test-file scan; the four Hegel families |
-| U27, U28, U29 | R34: one organization each; nothing across; a machine told only its allowed and paired workspaces; a pair shows ID and name | E1, E2, E4, E6, E7, E8, E9, E15, E17, E20 | organization authority; Registry machine index; Fleet object per organization (OD8) | every command and decision names its organization; `unknownTarget`; the filtered connection feed | `identity_contract.rs` | — | a cross-organization reference answers as unknown | central integration across two organizations, each kind of request; a machine's feed inspected |
+| U24 | R32: no UUID but v7; secrets stay random; derived single-use keys stay derived | E3, E5 | `SignInPlatform.ids`; Better Auth `generateId` (a function returning `platform.ids.nextId()`) | `nextId()` | branded `Uuid7` | none: identifier minting | a client-assertion record keeps Better Auth's derived `jti`-digest key (`encodeDeterministicId`, base64url under a function generator) | every UUID-shaped stored identifier parsed as v7; a replayed client assertion refused |
+| U25 | R33: no wall clock in sign-in tests; Hegel | E11, E18, E23 | sign-in test suites | controlled clock; Vitest system time for Better Auth cases on Node | test fixtures | none: test discipline | none: structural; the test scan finds a wall-clock read | test-file scan; the four Hegel families |
+| U27, U28, U29 | R34: one organization each; nothing across; a machine told only its allowed and paired workspaces; a pair shows ID and name | E1, E2, E4, E6, E7, E8, E9, E15, E17, E20 | organization authority; Registry machine index; Fleet object per organization (OD8) | every command and decision names its organization; `unknownTarget`; the filtered view of directory, snapshot and feed (`Withheld`, `ScopeChanged`) | `identity_contract.rs` | each machine's visible set in its Fleet object; the Registry's write-once claims | a cross-organization reference answers as unknown | central integration across two organizations, each kind of request; a machine's feed inspected |
 | U26, U27 | R35: no role without admission at that moment | E8, E9, E19, E21 | organization authority | role commands; `AdmissionRef` checked in the same transaction | `Membership`, `Collaboration` | admission active/ended | not admitted → refused, nothing changed | central unit and admin API: before and after admission |
-| U26 | R36 (proposed, OD5): ending an admission ends its roles; bot notices | E8, E9, E19 | organization authority | `RemoveSignIn`, `RetireBot` | as above | roles ended in the same transaction | — | admin API; a session unaffected by a person leaving |
-| U36 | R37: no role comes back on readmission | E8, E9, E19 | organization authority | new `AdmissionId` on readmission | `AdmissionId` | — | old rows never count | admin API: remove, re-add, look up |
-| U30 | R38: no tokens for people; a bot decided by its own membership only | E3, E4, E8, E11, E18 | issuer dispatch; caller check | the dispatch's refused combinations; no requester field | claims schema | — | a person's token request refused before minting | sign-in integration; Portal e2e with an extra requester claim present |
-| U31, U33 | R39: only the owner's device-code approval or a registered issuer logs a machine in; approve-each stays pending; what authorized it recorded | E6, E20, E21, E23 | organization authority; Registry claim; sign-in device-login rule | `DecideDeviceLogin`; `AdmitMachineConnection`; `ApproveMachineEnrollment` | `MachineEnrollment.authorizedBy` | enrollment states | non-owner, withdrawn or foreign issuer → refused; pending → no connection | central + sign-in integration; issuer cases with a test issuer |
-| U33, U34 | R40: from step 2 only valid machine tokens; identity from the token and enrollment; lifetime ≤ the organization's; renewal without a person; re-login keeps the installation | E6, E20, E21, E22 | machine token check; organization authority; Router machine login | C9 check; `DecideMachineToken`; `RenewMachineToken` | `MachineTokenClaims`; `AdmittedMachine` | enrollment states; connection token expiry | expired, revoked, withdrawn or foreign → refused | central integration with each issuer kind; a VM renewing past its first token's expiry; re-login keeping sessions and allowances |
-| U17, U33, U35 | R41: one refresh credential on a device-code machine, in an encrypted store on each platform; nothing long-lived on an issuer's VM after step 3 | E6, E21 | Router secret store (Keychain; systemd credential) | `KeychainAccess` | `MachineTokenSource` | — | no store → refused in production, no plaintext | per-platform runs; store inspection; VM image inspection |
-| U33, U31 | R42: code and address shown; owner-only approval; single use; lifetime; guess limit; only the requesting installation, only that organization | E6, E21, E23 | sign-in device-login rule; Better Auth device grant; organization authority | the extended grant; the approve hook; `DecideDeviceLogin` | `deviceCode` columns | code states | denied, expired, used or wrong approver → nothing | sign-in integration on both hosts; concurrent redemption; guess limit |
-| U34, U31 | R43: three steps; never both logins | E6, E21, E22 | central deploy setting; Router setting | `machineLogin` | configuration | step | step 2 failure → revert under Access | each step's checks on a test deployment behind and without Access |
-| U35 | R44: every Router obligation on macOS, Linux and Firecracker | E6 | Router | all Router contracts | — | — | a missing platform capability refuses, never weakens | the Router suites and login on each platform |
-| U37 | R45: one Tool Portal deployment per organization | E1, E2, E11 | caller check; configuration loading | `portal.organizationId` | Portal configuration schema | — | another organization's token or workspace → refused or fails to load | Portal host e2e with two deployments |
+| U26 | R36 (proposed, OD5): ending an admission ends its roles; bot notices | E8, E9, E19 | organization authority | `RemoveSignIn`, `RetireBot` | `Membership`, `Collaboration` with their `AdmissionRef` | roles ended in the same transaction | an unwritable record → nothing ends | admin API; a session unaffected by a person leaving |
+| U36 | R37: no role comes back on readmission | E8, E9, E19 | organization authority | new `AdmissionId` on readmission | `AdmissionId` | admission active/ended; a fresh `AdmissionId` per readmission | old rows never count | admin API: remove, re-add, look up |
+| U30 | R38: no tokens for people; a bot decided by its own membership only | E3, E4, E8, E11, E18 | issuer dispatch; caller check | the dispatch's refused combinations; no requester field | claims schema | none: a dispatch rule | a person's token request refused before minting | sign-in integration; Portal e2e with an extra requester claim present |
+| U31, U33 | R39: only the owner's device-code approval or a registered issuer logs a machine in; approve-each stays pending; what authorized it recorded | E6, E20, E21, E23 | organization authority; Registry claim; sign-in device-login rule | `DecideDeviceLogin`; `AdmitMachineConnection`; `ApproveMachineEnrollment`; authorize, claim, activate | `MachineEnrollment.authorizedBy`; `fleet_machines` | enrollment states, including internal reserved and approved | non-owner, withdrawn or foreign issuer → refused with nothing written in either owner; pending → no connection; interrupted attempt → resend, reserved lapses | central + sign-in integration reading both owners after each refusal; issuer cases with a test issuer |
+| U33, U34 | R40: from step 2 only valid machine tokens; identity from the token and enrollment; lifetime ≤ the organization's; renewal without a person; re-login keeps the installation | E6, E20, E21, E22 | machine token check; organization authority; Router machine login | C9 check; `DecideMachineToken` with the token family's `referenceId`; `RenewMachineToken`; the active-enrollment check on every decision | `MachineTokenClaims`; `AdmittedMachine`; `oauthRefreshToken.referenceId` | enrollment states; connection token expiry | expired, revoked, withdrawn or foreign → refused; superseded or pending connection → refused and closed; external issuers may keep signing, nothing they sign is admitted | central integration with each issuer kind; two machines under one owner and client kept apart through refresh and restart; a VM renewing past its first token's expiry; re-login keeping sessions and allowances, and re-login after revocation restoring nothing |
+| U17, U33, U35 | R41: one refresh credential on a device-code machine, in an encrypted store on each platform; nothing long-lived on an issuer's VM after step 3 | E6, E21 | Router secret store (Keychain; systemd credential) | `KeychainAccess` | `MachineTokenSource` | one refresh credential per device-code machine in its encrypted store | no store → refused in production, no plaintext | per-platform runs; store inspection; VM image inspection |
+| U33, U31 | R42: code and address shown; owner-only approval; single use; lifetime; guess limit; only the requesting installation, only that organization | E6, E21, E23 | sign-in device-login rule; Better Auth device grant; organization authority | the extended grant; owner hooks on verify, approve and deny; `DecideDeviceLogin`; the device-code token handler | `deviceCode` columns including `enrollmentId` | code states | denied, expired, used or wrong person viewing, approving or denying → nothing, and the code stays for the owner | sign-in integration on both hosts; concurrent redemption; guess limit; a non-owner opening and denying a code |
+| U34, U31 | R43: three steps; never both logins | E6, E21, E22 | central deploy setting | `machineLogin` (one value per deployment) | central's deploy configuration | the step the deployment is at | step 2 failure → fix forward under Access; the old login is not restored | each step's checks on a test deployment behind and without Access; a machine revoked after step 2 never regains access |
+| U35 | R44: every Router obligation on macOS, Linux and Firecracker | E6 | Router | all Router contracts | the `KeychainAccess` adapters: Keychain, systemd credential | none: a platform matrix | a missing platform capability refuses, never weakens | the Router suites and login on each platform |
+| U37 | R45: one Tool Portal deployment per organization | E1, E2, E11 | caller check; configuration loading | `portal.organizationId` | Portal configuration schema | none: deployment configuration | another organization's token or workspace → refused or fails to load | Portal host e2e with two deployments |
 
 **Coverage:** R1–R45 each have a row. **R36** is proposed (OD5) and **R23** is kept unless you strike it (OD7); the Fleet object per organization is proposed (OD8). E1–E23 are each bound above. U38 is a non-goal with no obligation: nothing in this design detects two organizations' Routers on one machine. Supersessions are as listed in the Specification.
 
 ## Deviations and unresolved decisions
 
-- **OD8 (new, storage boundary): one Fleet object per organization.** Recommended: the organization becomes part of the Fleet object's address, and the first organization adopts today's Fleet object storage, so nothing is migrated. The alternative is one Fleet object with an organization column, where every Fleet read and write filters by organization. The recommendation separates by address, at the cost of one more object per organization. Until you decide, the plan builds everything else; the Fleet object's addressing is the one slice that waits.
+- **OD8 (new, storage boundary): one Fleet object per organization.**
+  - **Recommended:** the organization becomes part of the Fleet object's address. Today's address is a singleton (`core_contract.rs:34–42`; `call_graph.rs:127–129`; Cloudflare binding `FLEET`, name `fleet`, `object_location.rs:8`; the Tokio singleton key, `object_keys.rs:12–17`). The first organization adopts that storage through a fixed mapping on both hosts, so no rows are rewritten, though it is still a storage cutover. The address type, every caller, restart and wake recovery, each connection's filtered feed, and refusing the old address all change.
+  - **The alternative:** one Fleet object with an organization column: every row backfilled, names unique per organization, and a filter on every Fleet read and write, where one missed filter leaks.
+  - **What waits:** until you decide, the organization authority, machine login and the sign-in work proceed. The Fleet object's addressing, organization-scoped project lookups, the filtered view and your production switch wait.
+- **OD9 (new):** whether Linux without systemd may use device-code login. Recommended: no; those machines use an issuer. The alternative is a key file beside the Router, protected only as well as a plaintext file.
+- **OD10 (new):** which VMs the Router is proven in. Recommended: agent-vm's own VMs, booted through Gondolin on QEMU, with agent-vm as the VM creator. Firecracker specifically needs a host or runner you name.
 - **OD5** (R36): ending an admission ends that identity's roles. The design keys every role to its admission, so R37 holds either way; OD5 only decides whether the old rows show as ended or simply stop counting.
 - **OD6**: the device code's lifetime, proposed 10 minutes, set on the device grant (the plugin's default is 30).
 - **OD7**: keep or strike U18 and R23 (isolation recorded and the shared bucket shown).
@@ -1302,10 +1407,12 @@ Reverting step 2 is redeploying step 1's build and setting each Router back to t
 - **Collaboration needs central:** every collaboration effect waits for central's admission, so collaboration stops while central is unreachable (fail closed, as for tokens).
 - **Better Auth mapping:** session tokens use a fleet-session extension grant; bot tokens use the existing gate and claim hook, with a bot extension grant as the stated fallback; machine tokens use the provider's device grant, extended, with our own device-code endpoints as the fallback. None is proven until the plan's first sign-in slice runs against the locked 1.7.11.
 - **A device-code machine token's `sub` is the approving owner's account,** because the provider owns `sub`. Fleet central reads only `principal`, and the token's audience and client keep it from being used anywhere else. Deleting the approving owner's account ends that machine's renewals; it logs in again.
-- **The replication path R34 filters** (what a machine is sent about workspaces) is not yet cited in this design; the Fleet Lead names its anchor before that slice.
+- **The filtered view** changes the replication contract with two frames (`Withheld`, `ScopeChanged`). The Router's replica must accept withheld positions and scope changes; data a machine already read before a scope shrinks is not unread.
 - **Sign-in on a non-Cloudflare host** is new work (U16 covers every service).
-- **A Linux Router without systemd** can't keep a refresh credential, so it is logged in by an issuer instead; a production Router never falls back to plaintext.
+- **A Linux Router without systemd** can't keep a refresh credential, so it is logged in by an issuer instead (OD9); a production Router never falls back to plaintext.
+- **External issuers keep signing:** Fleet central fences what it admits; it cannot stop a VM creator or platform from signing. Every guarantee about withdrawal, revocation and outages is about what Fleet central admits.
+- **`referenceId` carries the enrollment.** The provider also uses it to match consent. The Router login client asks for no consent, and the first sign-in slice proves that no consent requirement follows; otherwise the fallback endpoints apply.
 - **Fleet's attestation proposal:** its path B (a machine identity key certifying a short-lived boot key) is not adopted: you ruled out per-machine keys (U17). Machines prove themselves through the issuer login. Its extra launch evidence (profile and image digests, the VM launch record) waits with VM sessions; the launch context is recorded as proposed.
 - **agent-vm VM sessions:** the `Vm` isolation kind and its launch record need agent-vm to hand the host Router a launch record over a local channel. In the first round, only Router-launched `Host` and `ProcessSandbox` sessions are registered. This is separate from a VM that runs its own Router and logs in through its VM creator, which this round builds.
-- **How a VM creator's token reaches the VM** is agent-vm's mechanism; the design fixes only the token's format and that the Router rereads it from one path. The plan names agent-vm's delivery.
+- **How a VM creator's token reaches the VM:** a host-owned file mounted read-only into the guest through the existing `ManagedVm` mounts, re-signed by agent-vm's controller ("The VM creator in agent-vm"). The exact neutral mount option is named in V1's slice.
 - **People's organization admission** moves to Fleet central. The D2 sign-in revision (people sign-in, 34d1a0e0) changes location before it is built.

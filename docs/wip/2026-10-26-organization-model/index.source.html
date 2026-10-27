@@ -22,7 +22,7 @@
 <a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
 </nav></ex-nav>
 
-<ex-document id="content" document-id="organization-model" revision="2026-10-26.14">
+<ex-document id="content" document-id="organization-model" revision="2026-10-27.15">
 
 <h1>Organization model</h1>
 
@@ -40,13 +40,12 @@
   <li><strong>Routers run on Linux and Firecracker VMs,</strong> so everything (including the secret store) must work there, not only on a Mac.</li>
 </ul>
 
-<h2 id="picks">Your picks (review of revision 12)</h2>
+<h2 id="picks">Your picks (reviews of revisions 12 and 14)</h2>
 
 <table>
   <thead><tr><th>Question</th><th>Your pick</th><th>From your comments</th></tr></thead>
   <tbody>
-    <tr><td>Does "one organization" cover the room a Router runs in?</td><td>Yes: different organizations never share an open room</td><td>A walled-off corner (sandbox) does not separate organizations, and neither does a container. Only a separate machine or a VM does. <strong>Proposed</strong></td></tr>
-    <tr><td>How strongly is that held?</td><td>Declared and shown</td><td>You state "dedicated to this organization" when you approve a machine; the VM creator states it for VMs it makes. Nothing checks it: the current design cannot tell, from enrollment or from what is declared, whether another organization's Router runs on the same OS. <strong>Proposed</strong></td></tr>
+    <tr><td>Does "one organization" cover the room a Router runs in?</td><td>Dropped: no organization room rule</td><td>Your comment on revision 14: "thers no point to this". Keeping organizations on separate machines or VMs is your practice; the system declares, checks and shows nothing about it (identity U38).</td></tr>
     <tr><td>Do a re-added person's old roles return?</td><td>No: grant them again</td><td></td></tr>
     <tr><td>Is a bot a member of at most one workspace?</td><td>Keep: one membership, a collaborator elsewhere</td><td>A bot is one agent running in a gateway such as Hermes. The bot is what logs in; how the gateway keeps the bot's memory and credential is the gateway's business.</td></tr>
     <tr><td>Who makes someone a collaborator?</td><td>The admin, per workspace</td><td><strong>Proposed</strong> for later: managers grant collaborators for their own workspace. Admin only for now.</td></tr>
@@ -308,7 +307,7 @@ sequenceDiagram
   </tbody>
 </table>
 
-<p><strong>Your rule:</strong> different organizations never share an open room, declared and shown, not enforced. <strong>Proposed details:</strong> only a separate machine or a VM separates organizations, and a walled-off corner or a container does not; you state "dedicated to this organization" when you approve a machine, and the VM creator states it for the VMs it makes. The current design cannot tell, from enrollment or from what is declared, whether another organization's Router runs on the same OS. (A lock that stops a second Router starting on the same OS could catch honest mistakes later; it is not in the plan.)</p>
+<p><strong>No organization room rule (your call, 26 October):</strong> a rule nothing checks adds nothing. Keeping organizations on separate machines or VMs is your practice; the system declares, checks and shows nothing about it (identity U38).</p>
 
 <p>The agreed first identity round will have each session record its room kind when it starts, and will show which workspaces share one Router. This is designed, not built. Even then nothing proves the record and nothing is refused because of it (your "record and show now, enforce later"). Enrollment proves which Router installation is connecting. It does not prove which machine or VM that Router runs on, and no identity is derived from hardware.</p>
 

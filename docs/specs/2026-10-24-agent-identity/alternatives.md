@@ -12,18 +12,21 @@ Each section gives the question, a picture with one row per option, then a table
 | 4 | How does the Tool Portal know who is a member? | Token-only, with pushed removals | you |
 | 5 | How long does a token live? | Configurable, at most 60 minutes | you; the default is open (OD2) |
 | 6 | How do a removal and a token minted at about the same time stay in order? | Every grant and every removal gets its own number in one order | the Lead |
-| 7 | How does a machine prove it is yours? | Its existing enrolled connection | you |
+| 7 | How does a machine prove it is yours? | Replaced by 19: the issuer-token login | you |
 | 8 | How does a session's token reach the Tool Portal? | A Router forwarder attaches it | the Lead |
 | 9 | Who asks the issuer for a session's token? | Fleet central, as a service client | the Lead |
 | 10 | Where is a session's persona narrowing checked? | At the Tool Portal, on each call: the session gets what both its default and its persona allow | the Lead |
 | 11 | How are organizations kept apart? | One organization authority per organization | you (D2); the Lead (where it lives) |
 | 12 | Who may message across workspaces? | Members, where you allow the workspace pair | you |
 | 13 | What about sessions sharing a machine? | Record and show the shared bucket now; enforce later | you |
-| 14 | Who may start a session in a workspace? | **Open: OD1** | waits on you |
-| 15 | Is a bot automatically a collaborator of every other workspace? | **Open: OD3** | waits on you |
+| 14 | Who may start a session in a workspace? | Anyone at a logged-in machine, for the workspaces it serves; a session starts helpers only in its own workspace | you (OD1, closed) |
+| 15 | Is a bot automatically a collaborator of every other workspace? | No: you set each collaboration per workspace | you (OD3, closed) |
 | 16 | How do the services prove who's calling each other? | Short-lived service tokens, one per receiver and operation | the Lead |
 | 17 | How does a token say which session it is for? | A separate principal claim; Better Auth keeps its own subject | the Lead |
 | 18 | Where is a collaboration message or board write checked? | At Fleet central, before the effect, on every path | the Lead |
+| 19 | How does a machine log in? | Short-lived tokens from an issuer you registered: device code for machines you set up, a VM creator or platform for VMs | you |
+| 20 | How does the switch to the new login happen? | Three steps: build; switch behind Access and log every machine in again; remove Access | you |
+| 21 | How are organizations' Fleet data kept apart? | **Open: OD8.** Recommended: one Fleet object per organization | waits on you |
 
 ## 1. Who is the identity when your agent acts?
 
@@ -194,11 +197,11 @@ flowchart TB
     direction LR
     KC1["Machine"] -- key held in<br/>the Keychain --> KC2["Fleet central"]
   end
-  subgraph PI["Platform identity (later)"]
+  subgraph PI["Platform identity (now one issuer kind, 19)"]
     direction LR
     PI1["Cloud VM"] -- token signed by the platform,<br/>for example Fly OIDC --> PI2["Fleet central"]
   end
-  subgraph EC["The existing enrolled connection (chosen)"]
+  subgraph EC["The existing enrolled connection (replaced by 19)"]
     direction LR
     EC1["Your Router"] -- Access token + enrollment<br/>credential, already in place --> EC2["Fleet central"]
   end
@@ -209,8 +212,8 @@ flowchart TB
 |---|---|---|---|
 | A new key file per machine | Standard signed assertions. | A new secret on every machine to create, store and rotate. | Turned down by you ("no bespoke private keys in machine") |
 | macOS Keychain as the machine's identity | Storage the OS protects. | It doesn't work for this, and it is Mac-only. | Turned down by you |
-| Platform identity, for example Fly OIDC | No secret on the machine: the platform vouches. | Only for cloud VMs on such platforms. | Later, when cloud VMs arrive |
-| The existing enrolled connection | No new secret. Revoking the machine's enrollment revokes its vouching. | Vouching needs Fleet central reachable. The enrollment credential is the machine's one secret: whoever steals it can act as every session on that machine until you revoke it. It is kept in the Router's existing encrypted secret store, its data key in the Keychain (your decision 1201: no plaintext secrets in production); that encrypts an existing secret and adds no new key. | **Chosen** by you ([U17](requirements.md#needs)) |
+| Platform identity, for example Fly OIDC | No secret on the machine: the platform vouches. | Only for cloud VMs on such platforms. | Now one issuer kind in [19](#19-how-does-a-machine-log-in) |
+| The existing enrolled connection | No new secret. Revoking the machine's enrollment revokes its vouching. | Two long-lived secrets tied to your own Cloudflare Access (an Access service token and an enrollment credential whose expiry must match it); enrolling needs the fleet operator's token; the Router's production secret store exists only on macOS. | Chosen by you on 24 October; **replaced on 26 October** by [19](#19-how-does-a-machine-log-in) |
 
 ## 8. How does a session's token reach the Tool Portal?
 
@@ -285,7 +288,7 @@ flowchart LR
 | A separate OS user per workspace | A file wall without a VM. | A new isolation mechanism outside the agreed isolation kinds. | Dropped |
 | Record and show now, enforce later | Each session records its isolation kind, and lookups show which workspaces share a machine's bucket. The leak is visible before it is fenced. | Nothing is prevented yet. | **Chosen** by you ([U18](requirements.md#needs)) |
 
-## 14. Open: who may start a session in a workspace? (OD1)
+## 14. Decided: who may start a session in a workspace? (OD1)
 
 ```mermaid
 flowchart TB
@@ -311,11 +314,11 @@ flowchart TB
 | B. You, or a session already a member of W | Matches how Leads start helpers today. A collaborator never can ([U7](requirements.md#needs)). | A member session can start more members of its own workspace. |
 | C. Any session on a machine allowed to serve W | No starter check at all. | A session of workspace A on a shared machine could start work in workspace B, which defeats the workspace boundary. |
 
-**Recommended: B. Not decided.** Until you decide, only the starter rule in [R8](specification.md#membership-and-collaboration) waits; the rest of the design doesn't depend on it.
+**Decided by you (2026-10-26, U32):** C for the machine, B for helpers. There is no way to control the person at a logged-in machine, so anyone who can operate it starts sessions for the workspaces it may serve, and the start is recorded as from the machine. A session starts helpers only in its own workspace. The workspace boundary is held by which workspaces the machine may serve, which you choose when you log it in.
 
-**Decided by you (2026-10-24):** you sign in once, when you launch and enroll a local Router, and choose there which workspaces it serves; nothing on it needs another sign-in or approval, and a start names its project. Still open: whether a session may start one in another workspace the same Router serves (B says no). A conversation started outside the fleet can't join later just by being resumed: a running conversation keeps the configuration it started with, so it would need its own attach step. You decided (2026-10-24) to leave that out of the first round: the boundary is semi-permeable. A UI at Router launch does the one sign-in and picks the workspaces; Agent Studio can hook it later.
+**Earlier (2026-10-24):** you sign in once, when you launch and enroll a local Router, and choose there which workspaces it serves; nothing on it needs another sign-in or approval, and a start names its project. Still open: whether a session may start one in another workspace the same Router serves (B says no). A conversation started outside the fleet can't join later just by being resumed: a running conversation keeps the configuration it started with, so it would need its own attach step. You decided (2026-10-24) to leave that out of the first round: the boundary is semi-permeable. A UI at Router launch does the one sign-in and picks the workspaces; Agent Studio can hook it later.
 
-## 15. Open: is a bot automatically a collaborator of every other workspace? (OD3)
+## 15. Decided: is a bot automatically a collaborator of every other workspace? (OD3)
 
 You said a bot is a member of at most one workspace, and "rest collaborator". That can mean two things.
 
@@ -337,7 +340,7 @@ flowchart TB
 | A. Automatic | No setup per bot. | Every bot you register, including a customer's bot you don't own, can message the members of every workspace in the organization. You can stop it only by retiring the bot. |
 | B. Where you allow it | Matches how you chose workspace pairs ([U8](requirements.md#needs)). A bot you don't own reaches only the workspaces you pick. | One admin action per bot per workspace. |
 
-**Recommended: B. Not decided.** Until you decide, only whether a bot collaboration needs your allowance ([R11](specification.md#membership-and-collaboration)) waits; the rest of the design doesn't depend on it.
+**Decided by you (2026-10-26, U7): B.** You set each collaboration per workspace, for a bot or a person. Managers granting collaborators for their own workspace is a later idea, not decided.
 
 ## 16. How do the services prove who's calling each other?
 
@@ -393,3 +396,79 @@ Since the owner's simplification (2026-10-24), a conversation start is checked b
 | Each Router keeps a copy of memberships and pairs and checks locally | No round trip; works while Fleet central is down. | A copy to keep correct, which you called "fishy" for tokens. | Turned down by the Lead |
 | Fleet central admits each effect before it happens, on every path | One owner of the rule; nothing stored or delivered on a refusal. A pair admits messages and tasks only. | One round trip per collaboration effect; collaboration stops while Fleet central is down (fail closed, as for tokens). | **Chosen** by the Lead ([R28](specification.md#membership-and-collaboration)) |
 
+
+## 19. How does a machine log in?
+
+```mermaid
+flowchart TB
+  subgraph A["A · Keep Cloudflare Access and the enrollment credential (turned down)"]
+    direction LR
+    A1["Router"] -- two long-lived secrets<br/>tied to your Access --> A2["Fleet central"]
+  end
+  subgraph B["B · A key file per machine (turned down)"]
+    direction LR
+    B1["Router"] -- signs with its own<br/>private key --> B2["Fleet central"]
+  end
+  subgraph C["C · Short-lived tokens from an issuer you registered (chosen)"]
+    direction LR
+    C1["Router you set up"] -- device code you approve,<br/>then renews itself --> C3["Fleet central"]
+    C2["VM"] -- token from its VM creator<br/>or platform --> C3
+  end
+  A ~~~ B ~~~ C
+```
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| A. Keep Access and the enrollment credential | Already built. | Ties every machine to your own Cloudflare Access, forever; two long-lived secrets per machine; a VM would need them placed in it. | Turned down by you: "we want to slowly move off the Access token" |
+| B. A key file per machine | Standard signed assertions. | A new private key on every machine to create, store and rotate. | Turned down by you ([U17](requirements.md#needs)) |
+| C. Short-lived tokens from a registered issuer | One model for every machine; nothing long-lived in a VM; a new kind of machine is a new issuer, not new machinery; you approve each machine you set up, or pre-approve a VM creator within limits. | Fleet central checks tokens from more than one issuer; a machine you set up keeps one refresh credential in an encrypted store, which on Linux needs systemd. | **Chosen** by you ([U31](requirements.md#needs), [U33](requirements.md#needs)) |
+
+## 20. How does the switch to the new login happen?
+
+```mermaid
+flowchart TB
+  subgraph A["A · Switch and remove Access at once (turned down)"]
+    direction LR
+    A1["Today's login"] --> A2["New login, no Access"]
+  end
+  subgraph B["B · Accept either login for a while (turned down)"]
+    direction LR
+    B1["Today's login"] --> B2["Either login"] --> B3["New login"]
+  end
+  subgraph C["C · Three steps, Access kept until the new login is proven (chosen)"]
+    direction LR
+    C1["1 Build; today's login unchanged"] --> C2["2 Switch behind Access;<br/>log every machine in again"] --> C3["3 Next change:<br/>remove Access"]
+  end
+  A ~~~ B ~~~ C
+```
+
+| Option | Gains | Costs | Verdict |
+|---|---|---|---|
+| A. Switch and remove Access at once | One change. | If the new login has a hole, nothing guards Fleet central while you find it. | Turned down by you: "too risky" |
+| B. Accept either login for a while | No re-login day. | Two ways in at once, the half step you ruled out. | Turned down by you: "no half steps" |
+| C. Three steps | Access still guards Fleet central while the new login proves itself; at no time are both logins accepted; reverting step 2 is a redeploy. | Every machine logs in again at step 2. | **Chosen** by you ([U34](requirements.md#needs)) |
+
+## 21. Open: how are organizations' Fleet data kept apart? (OD8)
+
+Fleet central holds each organization's workspaces, projects and boards. One Fleet central serves several organizations, and nothing may be shared between them ([U27](requirements.md#needs)).
+
+```mermaid
+flowchart TB
+  subgraph A["A · One Fleet object per organization (recommended)"]
+    direction LR
+    A1["Organization 1"] --> A2["Its Fleet object<br/>(today's storage)"]
+    A3["Organization 2"] --> A4["Its own Fleet object"]
+  end
+  subgraph B["B · One Fleet object with an organization column"]
+    direction LR
+    B1["Organizations 1 and 2"] --> B2["One Fleet object,<br/>every row tagged"]
+  end
+  A ~~~ B
+```
+
+| Option | Gains | Costs |
+|---|---|---|
+| A. One Fleet object per organization | Separate by address: a machine can reach only its organization's object, so a forgotten filter can't leak. Workspace names stay unique per organization for free. Your existing Fleet data becomes the first organization's, with nothing migrated. | One more object per organization to operate. |
+| B. One Fleet object with an organization column | One store. | Every Fleet read and write must filter by organization; one missed filter leaks across organizations; existing rows need a migration to gain the column. |
+
+**Recommended: A. Not decided.** Until you decide, everything else is built; only the Fleet object's addressing waits, and your production switch (step 2) waits for it.
