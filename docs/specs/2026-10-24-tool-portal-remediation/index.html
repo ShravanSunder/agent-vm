@@ -46,7 +46,7 @@
 
 <h1 id="heading-switchboard-remediation">Switchboard remediation</h1>
 
-<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name.</p>
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name. Its code moves to its own <code>agent-collaboration</code> repository before this work starts (OD13, the plan's M1).</p>
 
 The Switchboard code in PR #262 works, but it was built on choices you never made. This design fixes that code so it follows your rules: one core that every runtime injects into, storage in SQLite through Drizzle, strong types and UUIDv7, deterministic tests with Hegel, your check gates unchanged, one version of each dependency, and the known defects fixed. It is a design; nothing in it is built or observed yet.
 

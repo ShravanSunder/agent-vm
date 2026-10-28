@@ -42,7 +42,7 @@
 
 <h1 id="heading-delivery-orchestration">Delivery orchestration</h1>
 
-<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name.</p>
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name. Its code, and the sign-in service's, moves to its own <code>agent-collaboration</code> repository first (OD13, slice M1).</p>
 
 The order of work across agent-vm and codex-router for the Switchboard remediation, the sign-in revision and agent identity. agent-vm's remediation and sign-in work start as soon as you approve the designs; codex-router ships its release first, then its identity work. The two sides meet at one joint cut, JC1, where every changed cross-repository contract goes live together after its joint proofs pass. Delivery is complete only at DONE, after bot messaging, both central hosts and the sign-in Node host are also proven. It is a design; nothing in it is built or observed yet.
 

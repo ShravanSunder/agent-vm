@@ -27,6 +27,7 @@ The order of work across agent-vm and codex-router. It names every workstream an
 flowchart TB
   APPROVE["You approve the designs<br/>and the schemas (RD1, OD4)"]
   F0["F0 Fleet release"]
+  M1["M1 move Switchboard and sign-in<br/>to agent-collaboration"]
   R["R Switchboard remediation<br/>A1 to A8"]
   D1["D1 Start a session on another machine<br/>with its building blocks<br/>JC1 → PROD2"]
   D2["D2 Organizations: people, bots,<br/>what machines see"]
@@ -36,8 +37,9 @@ flowchart TB
   D6["D6 Everything else live<br/>JC2 → PROD4"]
   D7["D7 Off Cloudflare Access<br/>JA1 → PROD3"]
   DONE["DONE<br/>every governed outcome proven and live"]
-  APPROVE --> R
-  APPROVE --> D1
+  APPROVE --> M1
+  M1 --> R
+  M1 --> D1
   F0 --> D1
   D1 --> D2
   D2 --> D3
@@ -68,9 +70,9 @@ flowchart TB
 <ex-markdown id="program-design--workstreams-text"><script type="text/markdown">
 | Workstream | Repository | Lead | Governing design | Starts when |
 |---|---|---|---|---|
-| **A** Switchboard remediation | agent-vm | Switchboard Lead | [Switchboard remediation](../2026-10-24-tool-portal-remediation/program-design.md) | the owner approves the designs; A2 also waits on RD1 |
-| **B** Sign-in revision | agent-vm | Switchboard Lead | [people sign-in](../2026-10-20-people-sign-in/program-design.md) and [agent identity](../2026-10-24-agent-identity/program-design.html) (sign-in parts) | the owner approves the designs and the sign-in schema |
-| **P** Switchboard identity | agent-vm | Switchboard Lead | agent identity (Switchboard parts) on the remediated store | A8 has cut over, and B4b has produced K1 |
+| **A** Switchboard remediation | agent-collaboration (after M1) | Switchboard Lead | [Switchboard remediation](../2026-10-24-tool-portal-remediation/program-design.md) | the owner approves the designs; A2 also waits on RD1 |
+| **B** Sign-in revision | agent-collaboration (after M1) | Switchboard Lead | [people sign-in](../2026-10-20-people-sign-in/program-design.md) and [agent identity](../2026-10-24-agent-identity/program-design.html) (sign-in parts) | the owner approves the designs and the sign-in schema |
+| **P** Switchboard identity | agent-collaboration (after M1) | Switchboard Lead | agent identity (Switchboard parts) on the remediated store | A8 has cut over, and B4b has produced K1 |
 | **F0** Fleet release | codex-router | Fleet Lead | the Fleet release (unchanged by this design) | now |
 | **F** Fleet identity | codex-router | Fleet Lead | agent identity (Fleet central and Router parts) | F0 has shipped (R3) and the owner approves the designs |
 | **J** Joint | both | Switchboard Lead coordinates; each Lead runs its own side | all three | JC1: D1's slices have merged; JC2: D3–D6's slices have merged |
@@ -81,22 +83,23 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 
 | Slice | Repository | Realizes | Waits on | Gates |
 |---|---|---|---|---|
-| A1 platform capabilities | agent-vm | remediation R3 (clock, IDs, crypto, timers as capabilities), R10 (the closed unions in the capability contracts), R11 (the type-check guard), R12 | design approval | agent-vm check, unit, integration; review |
-| A2 workspace store v1 | agent-vm | remediation R4–R8, R10 (the store's result unions) | A1; RD1 (schema and `drizzle-kit`); RD6 (Node state directory) | as A1, plus host e2e on sunclaw |
-| A3 Node host on the core | agent-vm | remediation R1, R2, R24 (one canonical encoder) | A2 | as A2 |
-| A4 defects | agent-vm | remediation R20, R21, R22, R23, R25 | design approval | as A1 |
-| A5 deterministic tests | agent-vm | remediation R13, R14, R15; the `verify-tool-portal` journeys | A3 | as A2 |
-| A6 clean build | agent-vm | remediation R16, R18, R19; R17 in part (see "Parked work this touches") | A3 | as A1 |
-| A7 large requests | agent-vm | remediation R26 | A3; the #33 evidence | as A2, plus the deployed check |
-| A8 Switchboard cutover | agent-vm | remediation R9, and the complete remediation going live | A4, A5, A6, A7 | deployed cutover check (temporary) on the private Worker and a Node host |
-| B1 sign-in core and storage (D1) | agent-vm | identity R29, R30, R31, R32, R33, with the device-code table in the one schema; people sign-in R3 (the per-attempt claim and cleanup), R12 (audit); today's agent registration, metadata and resource links move onto the new storage and stay until B4b | design approval; OD4 (the sign-in schema) | as A2 |
-| B2 sign-in Node host (D1) | agent-vm | identity R30 (the Node host), U16 for sign-in; people sign-in R11 as superseded | B1 | as A2 |
-| B3 design-thread fixes (D1) | agent-vm | the nine still-open #237 threads: identity R5 (people sign-in R1–R20 as revised: linking never binds, introspection by client authentication, `checkedAt` from the first session read); produces K5 and K6 | B1 | as A1 |
-| B4a issuer core (D1) | agent-vm | identity R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; admin and operator tokens stay): closed token dispatch, one-operation service tokens, person confirmation, person admission asked of central (K3's person half); keeps today's agent path (client-credentials row, registration metadata, resource links, workspace policy, release checks) until B4b; produces K7 | B3; F1's contract fixtures | as A2; its central-facing paths use stand-ins until JC1, named as unverified |
-| B4b session and bot tokens (D3) | agent-vm | identity R1, R4, R15, R16, R18, R25: workspace and collaboration token claims, fleet-session grant, bot claims, receivers for K4, the collaboration resource; removes today's agent path; produces K1 | B4a; F1's contract fixtures | as B4a, until JC2 |
-| B5 device-code login (D1) | agent-vm | identity R42, R40 (issuer side), R31 (single use): the Router login client, the device grant extended with the machine's fields, the approval hook asking central, machine claims from central's decision on each device-code and refresh mint; produces K10 (machine tokens from the real issuer) | B4a, B2; F1's contract fixtures | as A2; SO2's device-code cases on D1 and `better-sqlite3` |
-| P1a Switchboard token check (D3) | agent-vm | identity R9 (persona narrowed at the Switchboard), R17, R38 (no requester field read), R45 (one organization per deployment); remediation store version 2 and R9 (no approval revived at the re-key): token-only caller check, principal keys | A8; B4b | as A2 |
-| P1b Switchboard removal receiver (D5) | agent-vm | identity R19–R22 (Switchboard side): removal receiver (K2), stored marks, `deriveRemovalSubjectKey` | P1a | as A2 |
+| M1 move to agent-collaboration | agent-collaboration (new) | OD13: `auth`, `tool-access`, `tool-engine` and the `tool-host-*` packages move from agent-vm with their history and the `@agent-collaboration` publishing; they use `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` as published packages | design approval; OD-R1 (where #262 and #263 land sets the starting commit) | the moved packages' existing checks, unchanged; any new gate is the owner's call |
+| A1 platform capabilities | agent-collaboration | remediation R3 (clock, IDs, crypto, timers as capabilities), R10 (the closed unions in the capability contracts), R11 (the type-check guard), R12 | M1 | agent-vm check, unit, integration; review |
+| A2 workspace store v1 | agent-collaboration | remediation R4–R8, R10 (the store's result unions) | A1; RD1 (schema and `drizzle-kit`); RD6 (Node state directory) | as A1, plus host e2e on sunclaw |
+| A3 Node host on the core | agent-collaboration | remediation R1, R2, R24 (one canonical encoder) | A2 | as A2 |
+| A4 defects | agent-collaboration | remediation R20, R21, R22, R23, R25 | M1 | as A1 |
+| A5 deterministic tests | agent-collaboration | remediation R13, R14, R15; the `verify-tool-portal` journeys | A3 | as A2 |
+| A6 clean build | agent-collaboration | remediation R16, R18, R19; R17 in part (see "Parked work this touches") | A3 | as A1 |
+| A7 large requests | agent-collaboration | remediation R26 | A3; the #33 evidence | as A2, plus the deployed check |
+| A8 Switchboard cutover | agent-collaboration | remediation R9, and the complete remediation going live | A4, A5, A6, A7 | deployed cutover check (temporary) on the private Worker and a Node host |
+| B1 sign-in core and storage (D1) | agent-collaboration | identity R29, R30, R31, R32, R33, with the device-code table in the one schema; people sign-in R3 (the per-attempt claim and cleanup), R12 (audit); today's agent registration, metadata and resource links move onto the new storage and stay until B4b | M1; OD4 (the sign-in schema) | as A2 |
+| B2 sign-in Node host (D1) | agent-collaboration | identity R30 (the Node host), U16 for sign-in; people sign-in R11 as superseded | B1 | as A2 |
+| B3 design-thread fixes (D1) | agent-collaboration | the nine still-open #237 threads: identity R5 (people sign-in R1–R20 as revised: linking never binds, introspection by client authentication, `checkedAt` from the first session read); produces K5 and K6 | B1 | as A1 |
+| B4a issuer core (D1) | agent-collaboration | identity R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; admin and operator tokens stay): closed token dispatch, one-operation service tokens, person confirmation, person admission asked of central (K3's person half); keeps today's agent path (client-credentials row, registration metadata, resource links, workspace policy, release checks) until B4b; produces K7 | B3; F1's contract fixtures | as A2; its central-facing paths use stand-ins until JC1, named as unverified |
+| B4b session and bot tokens (D3) | agent-collaboration | identity R1, R4, R15, R16, R18, R25: workspace and collaboration token claims, fleet-session grant, bot claims, receivers for K4, the collaboration resource; removes today's agent path; produces K1 | B4a; F1's contract fixtures | as B4a, until JC2 |
+| B5 device-code login (D1) | agent-collaboration | identity R42, R40 (issuer side), R31 (single use): the Router login client, the device grant extended with the machine's fields, the approval hook asking central, machine claims from central's decision on each device-code and refresh mint; produces K10 (machine tokens from the real issuer) | B4a, B2; F1's contract fixtures | as A2; SO2's device-code cases on D1 and `better-sqlite3` |
+| P1a Switchboard token check (D3) | agent-collaboration | identity R9 (persona narrowed at the Switchboard), R17, R38 (no requester field read), R45 (one organization per deployment); remediation store version 2 and R9 (no approval revived at the re-key): token-only caller check, principal keys | A8; B4b | as A2 |
+| P1b Switchboard removal receiver (D5) | agent-collaboration | identity R19–R22 (Switchboard side): removal receiver (K2), stored marks, `deriveRemovalSubjectKey` | P1a | as A2 |
 | F0 Fleet release | codex-router | — | — | codex-router's own gates (Fleet Lead) |
 | F1 identity contracts (D1) | codex-router | identity R26: the Rust contract home (`identity_contract.rs`) and generated JSON Schema with structural fixtures for K2–K4, K8 and K9 (the real-output checks run later; see Cross-repository contracts) | F0; design approval | codex-router gates |
 | F2a organization authority core (D1) | codex-router | identity R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, enabled at PROD2), R14 (people, machines, sessions), R34, R35 for people: organizations and their owner, machine allowances, marks; consumes K5 and K6 | F1 | codex-router gates; both central hosts |

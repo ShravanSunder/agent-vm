@@ -38,6 +38,7 @@
   - Your decisions of 27 October are in the design (`b734d002`). The Sol Reviewer's checks of the changes closed at `b73f308b` with `ready` (`reviewer-recheck-5.md`).
   - The order puts starting a session on another machine first, with its building blocks, at your direction (27 October). The Advisor's review of this order (`advisor-plan-review.md`) is folded in.
   - Nothing is built until you approve the design and this plan.
+  - Switchboard and the sign-in service move to their own `agent-collaboration` repository first (OD13, 28 October; M1).
 - **Your priorities (28 October):** sign-in, messaging across machines, and starting a session on another machine. D1 delivers all three. Messaging between machines already works today; D1 now proves it still works on the new login, locally (SO11 step 10), at JC1 and at your production switch, because the switch replaces the connections those messages travel over.
 </script></ex-markdown>
 <h2 id="plan--how-to-read-this-plan">How to read this plan</h2>
@@ -135,7 +136,8 @@ The same tickets, seen from the other side: each workstream's tickets, in order,
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| B1 sign-in core and storage | D1 | OD4 |
+| M1 move Switchboard and sign-in to agent-collaboration | D1 (first) | design approval; OD-R1 |
+| B1 sign-in core and storage | D1 | M1; OD4 |
 | B3 design-thread fixes | D1 | B1 |
 | B4a issuer core | D1 | B3; F1's contract fixtures |
 | B2 sign-in Node host | D1 | B1 |
@@ -248,7 +250,7 @@ Every cross-repository contract (K1–K10) has one home, which publishes the sha
   - `redeemDeviceCode` is exported, and redemption is `consumeOne`, a single conditional statement (`routes.ts:509–645`; `drizzle-adapter.ts:1078–1131`).
   - `issueTokens` takes a `referenceId` that the refresh token stores and restores (`types/index.ts:164–173`; `token.ts:594–640, 1957–1969`), and the claim contributor receives it (`types/index.ts:374–392`).
   - The first signed-in visitor claims a pending code's user slot (`routes.ts:866–885`), which is why the owner hooks guard verify, approve and deny.
-- **The Switchboard and sign-in repository** (agent-vm's repository until they move out):
+- **agent-collaboration, the Switchboard and sign-in repository** (from M1; agent-vm's repository until then):
   - Check gates are yours (`scripts/run-check-gate.ts`).
   - Heavy runs go to sunclaw, a Mac.
 </script></ex-markdown>
@@ -276,7 +278,7 @@ Every cross-repository contract (K1–K10) has one home, which publishes the sha
 
 | Workstream | Tickets |
 |---|---|
-| Sign-in (Switchboard Lead) | B1, B3, B4a, B2, B5 |
+| Sign-in (Switchboard Lead) | M1, then B1, B3, B4a, B2, B5 |
 | Fleet central (Fleet Lead) | F1, F2a, F2b, F3a, F10, F15 |
 | Router (Fleet Lead) | F11, F4a; F12 after first use |
 | Proof (Fleet Lead) | F14, F8a, F16 |
@@ -289,6 +291,18 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 **Proven by:** SO8 (F14); SO11 (F16); SO1's session and binding cases (F8a); D1's SO4 scenarios (organization, admission, guard, machine login, revocation, registration and remote start); SO2's people sign-in and device-code cases; SO7 for these edges; SO9 on macOS; then, at JC1, SO8, SO11 and JP4 against the private stack, the legacy-path control below, and SO10 step 2. **Done when:** PROD2 holds, with every machine on the new login.
 </script></ex-markdown>
 <h3 id="plan--d1-start-a-session-on-another-machine--tickets">Tickets</h3>
+<details id="ticket-m1">
+<summary><strong>M1</strong> move Switchboard and sign-in to agent-collaboration (new) · waits on design approval; OD-R1</summary>
+<ex-markdown id="ticket-m1-text"><script type="text/markdown">
+- **Covers:** OD13. A new `agent-collaboration` repository receives `auth`, `tool-access`, `tool-engine`, `tool-host-core`, `tool-host-cloudflare` and `tool-host-node` from agent-vm, with their history.
+  - They keep using `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk`, now as published packages, because agent-vm's own packages use them too.
+  - Publishing the `@agent-collaboration` scope moves with them.
+  - The moved packages' existing checks come across unchanged; adding or changing a gate is your call.
+- **Why first:** every B and P ticket, and the Switchboard remediation (A1–A8), is built there, so nothing is written twice.
+- **Starts from:** wherever OD-R1 lands #262 and #263.
+- **Proven by:** the moved packages' existing tests and checks pass in the new repository, unchanged.
+</script></ex-markdown>
+</details>
 <details id="ticket-b1">
 <summary><strong>B1</strong> sign-in core and storage (extended) · waits on OD4</summary>
 <ex-markdown id="ticket-b1-text"><script type="text/markdown">
