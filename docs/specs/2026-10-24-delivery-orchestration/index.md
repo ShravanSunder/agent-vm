@@ -1,6 +1,6 @@
 # Delivery orchestration design
 
-The order of work across agent-vm and codex-router for the Tool Portal remediation, the sign-in revision and agent identity.
+The order of work across agent-vm and codex-router for the Switchboard remediation, the sign-in revision and agent identity.
 
 - Requirements: [requirements.md](requirements.md)
 - Specification: [specification.md](specification.md)
@@ -8,7 +8,7 @@ The order of work across agent-vm and codex-router for the Tool Portal remediati
 - Verification Design: [verification-design.md](verification-design.md)
 - People: [index.html](index.html)
 
-It orders the work these designs define: [Tool Portal remediation](../2026-10-24-tool-portal-remediation/index.md), [agent identity](../2026-10-24-agent-identity/index.md), [people sign-in](../2026-10-20-people-sign-in/requirements.md).
+It orders the work these designs define: [Switchboard remediation](../2026-10-24-tool-portal-remediation/index.md), [agent identity](../2026-10-24-agent-identity/index.md), [people sign-in](../2026-10-20-people-sign-in/requirements.md).
 
 ## Reading path: what runs first
 

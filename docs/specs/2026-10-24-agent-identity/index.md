@@ -27,7 +27,7 @@ The set is one concern, so it has no capability through-lines. The task paths be
 1. [Requirements: need U13](requirements.md#needs)
 2. [Specification: removal](specification.md#removal)
 3. [Specification: C3 removal notice](specification.md#c3-removal-notice)
-4. [Program Design: how a removal reaches the Tool Portal](program-design.html#program-design--how-a-removal-reaches-the-tool-portal)
+4. [Program Design: how a removal reaches the Switchboard](program-design.html#program-design--how-a-removal-reaches-the-tool-portal)
 5. [Program Design: removal across owners](program-design.html#program-design--removal-across-owners-r19-r21)
 6. [Program Design: state](program-design.html#program-design--state)
 7. [Verification Design: coverage rows](verification-design.md#coverage-rows)

@@ -13,8 +13,8 @@
 <a href="../2026-10-24-agent-identity/index.html">Identity design</a>
 <a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
 <a href="index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Tool Portal decisions</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
 <a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
 
@@ -26,7 +26,7 @@
   <ex-step to="verification-design.html#verification-design--u2-one-complete-order-readable" icon="test-tube">How the order is checked complete: no slice can stay unmerged.</ex-step>
 </ex-presentation>
 
-<ex-presentation id="path-cut" title="Why the token change can't break calls again" description="How the issuer and the Tool Portal change together, and what happens if a deploy fails.">
+<ex-presentation id="path-cut" title="Why the token change can't break calls again" description="How the issuer and the Switchboard change together, and what happens if a deploy fails.">
   <ex-step to="requirements.html#requirements--what-went-wrong-without-one" icon="bug">What broke the identity build.</ex-step>
   <ex-step to="specification.html#specification--obligations" icon="book-open">R4: contracts go live whole.</ex-step>
   <ex-step to="program-design.html#program-design--slices-and-dependency-points" icon="lock">Why B4 and P1 meet only at JC1, the deploy hold before it, and how JC1 cuts over: stop, settle, deploy, prove with a cohort, resume; repair forward on failure.</ex-step>
@@ -44,7 +44,9 @@
 
 <h1>Delivery orchestration</h1>
 
-The order of work across agent-vm and codex-router for the Tool Portal remediation, the sign-in revision and agent identity. agent-vm's remediation and sign-in work start as soon as you approve the designs; codex-router ships its release first, then its identity work. The two sides meet at one joint cut, JC1, where every changed cross-repository contract goes live together after its joint proofs pass. Delivery is complete only at DONE, after bot messaging, both central hosts and the sign-in Node host are also proven. It is a design; nothing in it is built or observed yet.
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name.</p>
+
+The order of work across agent-vm and codex-router for the Switchboard remediation, the sign-in revision and agent identity. agent-vm's remediation and sign-in work start as soon as you approve the designs; codex-router ships its release first, then its identity work. The two sides meet at one joint cut, JC1, where every changed cross-repository contract goes live together after its joint proofs pass. Delivery is complete only at DONE, after bot messaging, both central hosts and the sign-in Node host are also proven. It is a design; nothing in it is built or observed yet.
 
 <ex-callout id="waiting" title="Decisions that wait on you" tone="question" icon="users">
 
@@ -64,7 +66,7 @@ Answer them all on the [decision page](../../wip/2026-10-24-remediation-owner-de
 - **The order, slices, contracts, cut and proofs:** [Program Design](program-design.html)
 - **How each need will be proven:** [Verification Design](verification-design.html)
 
-The designs this orders: [Tool Portal remediation](../2026-10-24-tool-portal-remediation/index.html), [agent identity](../2026-10-24-agent-identity/index.html) and [people sign-in](../2026-10-20-people-sign-in/requirements.html). To be walked through, press **W** or use the path button.
+The designs this orders: [Switchboard remediation](../2026-10-24-tool-portal-remediation/index.html), [agent identity](../2026-10-24-agent-identity/index.html) and [people sign-in](../2026-10-20-people-sign-in/requirements.html). To be walked through, press **W** or use the path button.
 
 <h2 id="documents">The documents</h2>
 

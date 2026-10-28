@@ -1,6 +1,6 @@
-# Tool Portal remediation design
+# Switchboard remediation design
 
-Fixes the Tool Portal code from PR #262 so it follows the owner's rules: one core every runtime injects into, Drizzle on SQLite, strong types, deterministic tests, the owner's gates, one version of each dependency, and the known defects fixed.
+Fixes the Switchboard code from PR #262 so it follows the owner's rules: one core every runtime injects into, Drizzle on SQLite, strong types, deterministic tests, the owner's gates, one version of each dependency, and the known defects fixed.
 
 - Requirements: [requirements.md](requirements.md)
 - Specification: [specification.md](specification.md)
@@ -54,7 +54,7 @@ Beside it: the [agent identity](../2026-10-24-agent-identity/index.md) and [peop
 
 ## Reading path: a used approval after a restart
 
-1. [Requirements: U5 and the change from the Tool Portal design](requirements.md#what-this-work-changes-from-the-tool-portal-design)
+1. [Requirements: U5 and the change from the Switchboard design](requirements.md#what-this-work-changes-from-the-switchboard-design)
 2. [Specification: R7, R8](specification.md#storage-drizzle-on-sqlite)
 3. [Program Design: how each decision stays atomic](program-design.md#how-each-decision-stays-atomic)
 4. [Program Design: approval-use lifecycle](program-design.md#approval-use-lifecycle)

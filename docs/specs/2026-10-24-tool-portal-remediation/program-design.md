@@ -1,6 +1,6 @@
-# Tool Portal remediation: Program Design
+# Switchboard remediation: Program Design
 
-How the fixed Tool Portal code is built. The [Specification](specification.md) says what must be true (R1–R26); this document says which component owns each truth, what crosses each boundary, and where each obligation is observed. The [Verification Design](verification-design.md) chooses how each one is proven.
+How the fixed Switchboard code is built. The [Specification](specification.md) says what must be true (R1–R26); this document says which component owns each truth, what crosses each boundary, and where each obligation is observed. The [Verification Design](verification-design.md) chooses how each one is proven.
 
 ## The structure in one picture
 
@@ -8,9 +8,9 @@ One core holds every rule. Each host builds the platform capabilities for its ru
 
 ```mermaid
 flowchart TB
-  subgraph CORE["Portal core (runtime-free): tool-access · tool-engine · tool-host-core"]
+  subgraph CORE["Switchboard core (runtime-free): tool-access · tool-engine · tool-host-core"]
     PROXY["Hosted MCP proxy<br/>caller check · workspace boundary · direct/indirect · dispatch · limits · projection"]
-    STANDALONE["Standalone Tool Portal service<br/>tool_portal_* · JSON route · batch approval"]
+    STANDALONE["Standalone Switchboard service<br/>tool_portal_* · JSON route · batch approval"]
     STORE["Workspace store<br/>typed operations + the one Drizzle mapping<br/>schema + drizzle-kit migrations"]
     CAPS["Platform capabilities (one module)<br/>clock · UUIDv7 ids · crypto · timers · upstream transport · log · analytics"]
     PROXY --> STORE
@@ -37,7 +37,7 @@ flowchart TB
   WEB -.->|"used by both hosts to build"| CAPS
 ```
 
-**Selected structure:** the Fleet central shape in TypeScript. The core owns the rules, the schema, the migrations and the queries; the hosts own only platform construction, listeners, and opening the database. Both Tool Portal databases are synchronous Drizzle drivers, so the core takes a synchronous Drizzle database and uses real synchronous transactions; no statement-plan executor is needed.
+**Selected structure:** the Fleet central shape in TypeScript. The core owns the rules, the schema, the migrations and the queries; the hosts own only platform construction, listeners, and opening the database. Both Switchboard databases are synchronous Drizzle drivers, so the core takes a synchronous Drizzle database and uses real synchronous transactions; no statement-plan executor is needed.
 
 ## Today in #262
 
@@ -53,43 +53,43 @@ Every anchor below is at `2dfea38e`.
 | Ports with platform fallbacks | `props.now ?? Date.now()`, `props.jti ?? globalThis.crypto.randomUUID()`, `options.now ?? Date.now`, direct `globalThis.crypto.subtle` in seven core files, `setTimeout` in the engine's upstream timeout. | `tool-access/src/contracts/agent-proof.ts:96`; `person-proof.ts:119`; `tool-engine/src/mcp-gateway/signed-tokens/approval-token-signing.ts:39–40`; `agent-catalog-view-cache.ts:114`; `upstream-mcp-protocol.ts:286–299`; full list in the evidence for this design |
 | Test-only production surfaces | `createVolatileWorkspaceAuthorityStore` exported from the core's public index; auth's `beforeFinalCheck` and `observeManagement` hooks (auth package, owned by the identity design). | `tool-host-core/src/index.ts:36`; `volatile-authority-store.ts:6` |
 
-**Constraint degree:** compatibility-bound on the Tool Portal's three ways in, tool names, results and approval token bytes; platform-bound on Durable Object SQLite, `better-sqlite3`, Drizzle 0.45.2 and the MCP 2026-07-28 SDK; migration-bound on the workspace store, where the only consumers are the private test deployment and local runs (identity Program Design, "Changes and cutover").
+**Constraint degree:** compatibility-bound on the Switchboard's three ways in, tool names, results and approval token bytes; platform-bound on Durable Object SQLite, `better-sqlite3`, Drizzle 0.45.2 and the MCP 2026-07-28 SDK; migration-bound on the workspace store, where the only consumers are the private test deployment and local runs (identity Program Design, "Changes and cutover").
 
-**What stays authoritative:** the Tool Portal Specification's checks 1–17, today's limits, the approval token formats, workspace configuration, and the engine's dispatcher and gateway, which both hosts already reuse.
+**What stays authoritative:** the Switchboard Specification's checks 1–17, today's limits, the approval token formats, workspace configuration, and the engine's dispatcher and gateway, which both hosts already reuse.
 
 ## The choices, and why
 
 | Choice | Selected | Credible alternative | Why the selection wins | What would reopen it |
 |---|---|---|---|---|
 | Who writes the store's queries | The core owns typed operations and the one Drizzle implementation; hosts pass in a database (owner: "feet styel yes", "interface and mappign") | A store interface in the core implemented per host | One query per operation means a fix lands once; per-host queries are the drift the owner rejected | None inside this boundary; it is the owner's decision |
-| The database type the core accepts | `BaseSQLiteDatabase<'sync', unknown, typeof workspaceStoreSchema>`; synchronous transactions | Fleet's generic executor-in-a-transaction port, or a prebuilt statement-plan executor that also fits D1 | Both Portal drivers are synchronous (`durable-sqlite` runs `transactionSync`; `better-sqlite3` is native sync), so real transactions express every decision directly; a plan executor would add an abstraction no Portal obligation needs | The Portal gaining an asynchronous database, such as D1 |
+| The database type the core accepts | `BaseSQLiteDatabase<'sync', unknown, typeof workspaceStoreSchema>`; synchronous transactions | Fleet's generic executor-in-a-transaction port, or a prebuilt statement-plan executor that also fits D1 | Both Switchboard drivers are synchronous (`durable-sqlite` runs `transactionSync`; `better-sqlite3` is native sync), so real transactions express every decision directly; a plan executor would add an abstraction no Switchboard obligation needs | The Switchboard gaining an asynchronous database, such as D1 |
 | Where the store runs on Cloudflare | Inside the workspace's Durable Object; the Worker calls it by RPC | The Worker opening D1 directly | The owner chose a Durable Object with Drizzle; one object per workspace gives isolation by construction and serializes each workspace's decisions | A measured per-workspace throughput limit |
-| Where web-standard adapters live | A small new package used by the two Tool Portal hosts | Each host writing its own adapters; or adapters inside the core; or one package shared with the sign-in service | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals; the sign-in service's capability contract differs (it signs service tokens), so sharing would couple `packages/auth` to the Tool Portal's contracts for no shared rule | Either host needing a different implementation of a capability, or the two services' capability contracts converging |
+| Where web-standard adapters live | A small new package used by the two Switchboard hosts | Each host writing its own adapters; or adapters inside the core; or one package shared with the sign-in service | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals; the sign-in service's capability contract differs (it signs service tokens), so sharing would couple `packages/auth` to the Switchboard's contracts for no shared rule | Either host needing a different implementation of a capability, or the two services' capability contracts converging |
 | How the storage change cuts over | A hard replacement: a new Durable Object class, the old one deleted, the approval signing keys rotated (the Worker's and the Node hosts' standalone HMAC credentials alike), and each workspace's members re-added through the existing management route before traffic resumes | Reading the old key-value rows into the new tables at first start | Only test deployments hold state (identity Program Design); rotation makes every old token fail verification, which satisfies R9 without keeping key-value code alive; re-adding members keeps the workspace usable, so a refusal after cutover means what it should | A production deployment existing before cutover |
-| Membership during this work | Store version 1 keeps today's membership and removal-intent records as tables; the identity cutover's version 2 drops them | Ship only the identity-target tables, with the identity cutover in the same release | Keeps the Tool Portal deployable after this work without waiting for codex-router | The owner choosing one combined Portal cutover |
+| Membership during this work | Store version 1 keeps today's membership and removal-intent records as tables; the identity cutover's version 2 drops them | Ship only the identity-target tables, with the identity cutover in the same release | Keeps the Switchboard deployable after this work without waiting for codex-router | The owner choosing one combined Switchboard cutover |
 
 ## Where each thing lives
 
 | E | Semantic owner | Package or module home | Schema/type home | Shape at each boundary | Disposition | Convention |
 |---|---|---|---|---|---|---|
-| E1 Portal core | the core composition roots `createHostedMcpProxy` and `createStandaloneToolPortalService` | `tool-access`, `tool-engine`, `tool-host-core` (modified) | the packages' public indexes | the host calls one composition root per server kind with `PortalPlatform` and its server configuration | derived | Zod at boundaries; discriminated unions (`AGENTS.md:415–419`) |
+| E1 Switchboard core | the core composition roots `createHostedMcpProxy` and `createStandaloneToolPortalService` | `tool-access`, `tool-engine`, `tool-host-core` (modified) | the packages' public indexes | the host calls one composition root per server kind with `PortalPlatform` and its server configuration | derived | Zod at boundaries; discriminated unions (`AGENTS.md:415–419`) |
 | E2 Host | the host composition (`tool-host-cloudflare` Worker entry and `WorkspaceStoreObject`; `tool-host-node` startup) | `tool-host-cloudflare`, `tool-host-node` (modified) | none: a host defines no shared type | passes `PortalPlatform` and a store access in; receives `HostedMcpProxy.handle(request): Promise<Response>` | derived | — |
 | E3 Platform capability | the capability contracts, each owned at the lowest package that consumes it; `PortalPlatform` aggregates them | clock, identifier, crypto and key-set source contracts: `tool-access/src/contracts/platform-capabilities.ts` (new); timers and upstream transport: `tool-engine` (timers new, transport existing); `PortalPlatform` with log and analytics: `tool-host-core/src/platform-capabilities` (new) | those three modules | `PortalPlatform`, below | derived | interfaces with branded values |
 | E4 Workspace store | `WorkspaceStore` (the core's Drizzle implementation) | implementation, schema and migrations: `tool-host-core/src/workspace-store` (new; replaces `workspace-authority`'s key-value store) | the approval-use port its `tool-engine` consumers need: `tool-engine/src/approval-use/models/approval-use-store.ts` (new); the rest of the store's operations and the Drizzle tables: `tool-host-core/src/workspace-store/models/workspace-store.ts`, `workspace-store-schema.ts` | `WorkspaceStore` operations, below; on Cloudflare the same operations cross Durable Object RPC with structured-clone values | persisted | Drizzle `sqlite-core` schema; Zod parse of every row read |
 | E5 Approval-use record | `WorkspaceStore`, through the approval-use port | as E4 | tables `proxy_token_use` and `batch_approval_use`; result unions in `approval-use-store.ts` | `ProxyTokenPresentation`, `BatchReservationResult`, `BatchArmResult`, below | persisted | discriminated union |
 | E6 Removal mark | `WorkspaceStore` | as E4 | tables `removal_mark`, `removal_notice` (store version 2); the notice's wire contract stays `RemovalNotice` in the identity design's Rust home | `RemovalNoticeRecording` result, below | persisted | discriminated union |
 | E8 Schema version | `drizzle-kit` output, applied by each host's migrator | `tool-host-core/drizzle/` (new, checked in, published in the package files) | the migration journal `drizzle/meta/_journal.json` | SQL files for `better-sqlite3`; the generated `migrations.js` bundle for the Durable Object | persisted | drizzle-kit 0.31.10 (the version paired with drizzle-orm 0.45.2) |
-| E9 Portal identifier | `PortalIdSource` | `tool-access/src/contracts/platform-capabilities.ts` (the lowest consumer; `PortalPlatform` in `tool-host-core` composes it) | `Uuid7` branded string, parsed by `uuid7Schema` | every minted id, as a canonical lower-case UUID string | derived | branded type with a Zod refinement on version 7 |
+| E9 Switchboard identifier | `PortalIdSource` | `tool-access/src/contracts/platform-capabilities.ts` (the lowest consumer; `PortalPlatform` in `tool-host-core` composes it) | `Uuid7` branded string, parsed by `uuid7Schema` | every minted id, as a canonical lower-case UUID string | derived | branded type with a Zod refinement on version 7 |
 | E10 Controlled clock | the test host | test fixtures in each package (never production entries) | `PortalClock` | supplied as `platform.clock` | derived | — |
 | E11 Check gate | the owner | `scripts/run-check-gate.ts`, `vitest.config.ts`, `.github/workflows/` (restored to `38569fca`) plus one guard step | — | — | — | — |
 | E12 Known defect | the component named in "The defects and their owners" | as listed there | — | — | — | — |
-| Workspace (Tool Portal E2) | workspace configuration | existing | existing | `workspaceId` from the address `/workspaces/‹id›/mcp` on Cloudflare; one configured portal per Node host | existing | existing |
-| Approval (Tool Portal E7) | `tool-engine` approval signing and verification (existing) | `tool-engine/src/mcp-gateway/signed-tokens`; `standalone-tool-portal` batch approval (moved from `tool-host-node`) | existing token formats, unchanged bytes | the approval token string in call input or MCP metadata | derived | existing |
+| Workspace (Switchboard E2) | workspace configuration | existing | existing | `workspaceId` from the address `/workspaces/‹id›/mcp` on Cloudflare; one configured portal per Node host | existing | existing |
+| Approval (Switchboard E7) | `tool-engine` approval signing and verification (existing) | `tool-engine/src/mcp-gateway/signed-tokens`; `standalone-tool-portal` batch approval (moved from `tool-host-node`) | existing token formats, unchanged bytes | the approval token string in call input or MCP metadata | derived | existing |
 | Removal notice (identity E12) | the identity design's organization authority (sends); `WorkspaceStore` (keeps) | identity design | `RemovalNotice` (identity contract home) | HTTP JSON to the removal receiver route | persisted | owned by the identity design |
 
 ```mermaid
 flowchart LR
-  E1["E1 Portal core"] -->|owner| ROOT["createHostedMcpProxy · createStandaloneToolPortalService<br/>tool-host-core (modified)"]
+  E1["E1 Switchboard core"] -->|owner| ROOT["createHostedMcpProxy · createStandaloneToolPortalService<br/>tool-host-core (modified)"]
   E3["E3 Platform capability"] -->|owner| PP["PortalPlatform<br/>tool-host-core/platform-capabilities (new)"]
   E3 -->|member contracts| CC["clock · ids · crypto · key sets<br/>tool-access/contracts/platform-capabilities.ts (new)"]
   PP -.->|composes| CC
@@ -97,7 +97,7 @@ flowchart LR
   E5["E5 Approval-use record"] -->|owner| WS
   E6["E6 Removal mark"] -->|owner| WS
   E8["E8 Schema version"] -->|home| DK["tool-host-core/drizzle (new)"]
-  E9["E9 Portal identifier"] -->|owner: PortalIdSource| CC
+  E9["E9 Switchboard identifier"] -->|owner: PortalIdSource| CC
   E2["E2 Host"] -->|homes| H["tool-host-cloudflare · tool-host-node (modified)"]
   WS -.->|schema home| SCH["workspace-store-schema.ts (new)"]
   PP -.->|type home| PPT["tool-host-core/platform-capabilities/models/platform-capabilities.ts (new)"]
@@ -108,13 +108,13 @@ flowchart LR
 | Component | Owns | Home | Consumed by | Changes when |
 |---|---|---|---|---|
 | **Hosted MCP proxy** | every rule on the MCP proxy way in: caller check, workspace boundary, persona narrowing, `direct`/`indirect`, search/describe, dispatch, approval checks, limits, projection, redaction, the analytics data point | `tool-host-core/src/hosted-mcp-proxy` (modified) | both hosts | an MCP proxy rule changes |
-| **Standalone Tool Portal service** | the standalone Tool Portal's operations and its signed batch approval: challenge, verification, reservation, arming, canonical batch fingerprint | `tool-engine/src/standalone-tool-portal` (modified: absorbs `standalone-batch-approval`, `standalone-batch-dispatch` decisions and `standalone-dispatch-identity` from `tool-host-node`) | the Node host's standalone routes | a standalone rule changes |
+| **Standalone Switchboard service** | the standalone Switchboard's operations and its signed batch approval: challenge, verification, reservation, arming, canonical batch fingerprint | `tool-engine/src/standalone-tool-portal` (modified: absorbs `standalone-batch-approval`, `standalone-batch-dispatch` decisions and `standalone-dispatch-identity` from `tool-host-node`) | the Node host's standalone routes | a standalone rule changes |
 | **Workspace store** | E4–E6: every approval-use, membership, removal-intent and removal-mark record; their atomic decisions; retention pruning | `tool-host-core/src/workspace-store` (new) | the proxy, the standalone service, the removal receiver | the store's schema or a decision rule changes |
 | **Platform capabilities** | the one list of what a host must supply (`PortalPlatform`), and the value types that cross it | `PortalPlatform` in `tool-host-core/src/platform-capabilities` (new); its member contracts at their lowest consumer, in `tool-access/contracts` and `tool-engine` (see "Where each contract lives") | every core component; both hosts | a capability is added or its contract changes |
 | **Upstream MCP runtime** | client cache, generations, retries, pagination, timeouts and redaction for every upstream server, remote or stdio | `tool-engine/src/upstream-mcp-connectors` (modified: takes `timers`; the Node stdio copy is deleted) | the proxy | an upstream protocol rule changes |
-| **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signature checks, `fetch` for key sets, `setTimeout` timers | `packages/tool-host-web-platform` (new) | the two Tool Portal hosts only. The sign-in service builds its own platform for its own contract (`SignInPlatform` signs service tokens, which `PortalCrypto` does not); the identity design records that decision, so this package has no sign-in consumer and no dependency on `packages/auth` | a web API or adapter library changes |
+| **Web-platform adapters** | building `PortalPlatform` values from web-standard APIs: system clock, UUIDv7 from `uuid@11.1.1` `v7()`, WebCrypto plus `jose` for signature checks, `fetch` for key sets, `setTimeout` timers | `packages/tool-host-web-platform` (new) | the two Switchboard hosts only. The sign-in service builds its own platform for its own contract (`SignInPlatform` signs service tokens, which `PortalCrypto` does not); the identity design records that decision, so this package has no sign-in consumer and no dependency on `packages/auth` | a web API or adapter library changes |
 | **Cloudflare host** | the Worker's routing, Cloudflare bindings, `WorkspaceStoreObject` (opens Durable Object SQLite, runs the migrator inside `blockConcurrencyWhile`, exposes the store's operations by RPC) | `tool-host-cloudflare` (modified) | Cloudflare | a Cloudflare binding or runtime API changes |
-| **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening each workspace's `tool-portal-<workspaceId>.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Portal SDK's tests | a Node API or a listener changes |
+| **Node host** | HTTP and stdio listeners, configuration files, the stdio process transport for upstream servers, the catalog TypeScript compiler, opening each workspace's `tool-portal-<workspaceId>.sqlite` with `better-sqlite3` and running the migrator | `tool-host-node` (modified: the parallel portal, Map stores and copied runtime are deleted) | agent-vm configuration validation, `mcp-portal` until it is deleted, the Switchboard SDK's tests | a Node API or a listener changes |
 
 **Allowed dependency edges:**
 - hosts → core;
@@ -445,14 +445,14 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 | `store_meta` | `id` integer primary key · `workspace_id` text not null · `security_time_ms` integer not null | `id` check `= 1` (one row) | which workspace this database belongs to, and the store's security time |
 | `proxy_token_use` | `token_id` text not null · `principal` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null · `entry_bytes` integer not null (this use's share of today's byte measure) | primary key (`token_id`, `principal`); index on `expires_at_ms` | E5 for the MCP proxy approval token |
 | `batch_approval_use` | `token_id` text primary key · `principal` text not null · `state` text not null · `batch_fingerprint` text not null · `operation_ids` text not null (JSON array of UUIDv7) · `service_generation` text not null · `expires_at_ms` integer not null · `recorded_at_ms` integer not null | `state` check in (`reserved`, `armed`, `proven-not-dispatched`); index on `expires_at_ms` | E5 for the standalone batch approval |
-| `membership` | `principal` text primary key · `state` text not null · `persona` text null | `state` check in (`member`, `removed`); `persona` not null when `state = 'member'` | Tool Portal E4 Membership, as today |
+| `membership` | `principal` text primary key · `state` text not null · `persona` text null | `state` check in (`member`, `removed`); `persona` not null when `state = 'member'` | Switchboard E4 Membership, as today |
 | `membership_removal` | `principal` text primary key · `status` text not null · `operation` text not null · `request_id` text not null | `status` check in (`pending`, `complete`); `operation` check in (`unlink`, `disable`) | today's agent-retirement intents |
 
 **Store version 2** (the identity cutover, sequenced by the delivery orchestration):
 
 | Change | Detail |
 |---|---|
-| drop `membership`, `membership_removal` | membership and agent management leave the Tool Portal (identity Program Design) |
+| drop `membership`, `membership_removal` | membership and agent management leave the Switchboard (identity Program Design) |
 | re-key `principal` | from the agent client id to the identity design's canonical `principal`; existing approval-use rows are deleted. That is safe only because the same cutover rotates the approval keys on the Worker and on every Node host, so every approval token issued before it fails verification (R9; the joint cut's deploy step in the delivery orchestration) |
 | add `removal_mark` | `subject` text primary key (a `RemovalSubjectKey`: `bot:…`, `session:…` or `machine:…`) · `highest_revision` integer not null · `received_at_ms` integer not null · `expires_at_ms` integer not null (pruned when `<= now`) |
 | add `removal_notice` | `notice_id` text primary key · `subject` text not null (a `RemovalSubjectKey`) · `removal_revision` integer not null · `received_at_ms` integer not null; index on `received_at_ms` |
@@ -530,7 +530,7 @@ sequenceDiagram
 | object → storage: `ctx.storage.get/put` (`workspace-authority.ts:14–21`) | **removed** | — |
 | object → storage: Drizzle transaction on Durable Object SQLite | **added** | tables above |
 | token verification → `jose` inside `tool-access` | **changed**: `platform.crypto.verifyJwsSignature`, claims in the core | `SignatureVerification` |
-| one-use refused when the use cannot be recorded (Tool Portal check 13) | **intentionally unchanged** | `store-unavailable` refuses the call; nothing runs |
+| one-use refused when the use cannot be recorded (Switchboard check 13) | **intentionally unchanged** | `store-unavailable` refuses the call; nothing runs |
 
 ### An MCP proxy call on Node
 
@@ -542,7 +542,7 @@ Today the Node host builds its own gateway (`node-host-composition.ts:51–295`)
 | in-memory approval token list (`node-host-composition.ts:82`) | **removed**: `presentProxyToken` on the file store |
 | Node operation store `Map` (`node-operation-store.ts:53`) | **removed**: the proxy's request-local operation entries, as on Cloudflare (`request-operation-entries.ts:8`) |
 | Node stdio upstream runtime copy (`stdio-upstream-runtime.ts`) | **removed**: the engine's upstream runtime with a Node stdio transport from the host |
-| configured bearer credentials, listener rotation and drain (`node-authenticated-http-server.ts`) | **intentionally unchanged** in this work: the credential kinds each way in accepts are defined by the Tool Portal and identity designs; the bearer check's decision logic moves into the core's caller check, and the listener keeps only rotation and drain mechanics |
+| configured bearer credentials, listener rotation and drain (`node-authenticated-http-server.ts`) | **intentionally unchanged** in this work: the credential kinds each way in accepts are defined by the Switchboard and identity designs; the bearer check's decision logic moves into the core's caller check, and the listener keeps only rotation and drain mechanics |
 
 ### A standalone batch approval on Node
 
@@ -567,7 +567,7 @@ sequenceDiagram
 | Edge | Status |
 |---|---|
 | `tombstonesByTokenId` `Map` (`standalone-batch-approval.ts:315`) | **removed**: `batch_approval_use` in the file |
-| stale service generation refused (Tool Portal check 6) | **intentionally unchanged** |
+| stale service generation refused (Switchboard check 6) | **intentionally unchanged** |
 | `localeCompare` key sort (`standalone-dispatch-identity.ts:19`) | **changed**: code-unit order (R24) |
 | batch approval logic in `tool-host-node` | **moved** into the standalone service in the core |
 
@@ -603,7 +603,7 @@ stateDiagram-v2
 |---|---|---|---|
 | The database errors during a store operation | the store's transaction throws | the operation returns `store-unavailable`; the proxy refuses the call before dispatch, as when a use cannot be recorded today | the host's operator; no retry inside the store |
 | A migration fails | the Durable Object constructor or Node startup | Cloudflare: that workspace refuses every call; Node: the process does not listen | a fixed deployment |
-| The host restarts mid-call after arming | — | the client's request ends with the process; the record stays `armed`; a retry with the same approval gets `ambiguous` and nothing runs | the client decides; the Portal never replays |
+| The host restarts mid-call after arming | — | the client's request ends with the process; the record stays `armed`; a retry with the same approval gets `ambiguous` and nothing runs | the client decides; the Switchboard never replays |
 | Two Worker copies present the same token at once | both reach the one workspace object, which runs one call at a time | exactly one `first-use` | the store |
 | Two Node processes share one store file | `behavior: 'immediate'` transactions | the second waits for the write lock, then sees the first's row | the store |
 | A removal notice arrives late with a lower revision (v2) | `max` in the upsert | the mark keeps the higher revision; the receiver acknowledges `already-recorded` or `recorded` | the store |
@@ -625,12 +625,12 @@ stateDiagram-v2
 | R22 advertised schema | `tool-engine` portal input schemas (`portal-input-schemas.ts:22`) | publish `callExecutionInputSchema`, the schema the handler parses |
 | R23 origins at load | Node host configuration schema (`node-host-config.ts:26`) | the schema applies today's origin rules (`http-request-policy.ts:50`), so load fails with the field named |
 | R24 canonical order | the core's one canonical encoder (the engine's `canonicalDispatchJson`) | sort keys by code-unit order; the Node copy is deleted |
-| R25 transport extra | Portal SDK TypeScript transport (`node-tool-portal-mcp-transport.ts:123`) | forward every callback argument |
+| R25 transport extra | Switchboard SDK TypeScript transport (`node-tool-portal-mcp-transport.ts:123`) | forward every callback argument |
 | R26 large requests | the hosted proxy's body reading (new `request-body` module in `tool-host-core`), with a host-supplied body source | see "Large requests" below |
 
 ### Large requests (R26)
 
-**What the evidence shows.** The MCP SDK's handler (`@modelcontextprotocol/server` 2.3.1, `createMcpHandler.ts:486–518, 958`) clones every POST, reads it as complete text up to `maxRequestBodySize`, and answers an overrun with 413. The Tool Portal sets 4 MiB (`hosted-mcp-proxy.ts:97`). Nothing in that path returns 502, and the Worker's own catch returns 503 (`tool-host-cloudflare/src/index.ts:77–79`). So the deployed 502 came from somewhere the deployed check never recorded: it keeps only the status and drops headers and body (`deployed-portal-client.ts:96–139`). The handler accepts a `parsedBody` option that skips its own body read, cap and clone (`createMcpHandler.ts:124`). On Cloudflare the account's request ceiling is 100 MB on Free and Pro plans, an isolate has 128 MB shared by concurrent requests, and a Worker's `/tmp` is memory, not disk.
+**What the evidence shows.** The MCP SDK's handler (`@modelcontextprotocol/server` 2.3.1, `createMcpHandler.ts:486–518, 958`) clones every POST, reads it as complete text up to `maxRequestBodySize`, and answers an overrun with 413. The Switchboard sets 4 MiB (`hosted-mcp-proxy.ts:97`). Nothing in that path returns 502, and the Worker's own catch returns 503 (`tool-host-cloudflare/src/index.ts:77–79`). So the deployed 502 came from somewhere the deployed check never recorded: it keeps only the status and drops headers and body (`deployed-portal-client.ts:96–139`). The handler accepts a `parsedBody` option that skips its own body read, cap and clone (`createMcpHandler.ts:124`). On Cloudflare the account's request ceiling is 100 MB on Free and Pro plans, an isolate has 128 MB shared by concurrent requests, and a Worker's `/tmp` is memory, not disk.
 
 **The design.**
 
@@ -639,20 +639,20 @@ stateDiagram-v2
    - **Cloudflare:** the stream goes straight into the incremental parser; there is no disk to spill to.
    - **Node:** a body larger than a small in-memory threshold is first written to a temporary file, then parsed from that file as a stream. Spill files are temporary data, never durable state, and have one owner, the Node host's body source:
      - **Where:** a per-process directory `tool-portal-spill-<process UUIDv7>` under a spill parent, never under `stateDirectory`, so spill files are never in backups of durable state. The parent is the one RD6 lets agent-vm's effective-config writer name, else the operating system's temporary directory.
-     - **Capacity (RD6, recommended option):** spilling is enabled only when the deployment declares that the spill parent's exhaustion cannot exhaust the store: a separate allocation domain (its own disk, partition or memory-backed filesystem, not merely another volume sharing a pool), or an enforced quota or reservation that protects the store. agent-vm's effective-config writer makes that declaration when it provisions such a location. Different device identifiers are not proof (APFS volumes, for example, can share one container's free space); the host only logs them as a diagnostic, and a declared separation on the same device as `stateDirectory` is refused at startup as a configuration error. When no declaration is made, the host logs that spilling is off and streams large bodies into the parser in memory, as the Worker does. There is still no Portal cap. The alternative RD6 option keeps a same-filesystem default and withdraws the promise that spill exhaustion leaves the store unaffected.
+     - **Capacity (RD6, recommended option):** spilling is enabled only when the deployment declares that the spill parent's exhaustion cannot exhaust the store: a separate allocation domain (its own disk, partition or memory-backed filesystem, not merely another volume sharing a pool), or an enforced quota or reservation that protects the store. agent-vm's effective-config writer makes that declaration when it provisions such a location. Different device identifiers are not proof (APFS volumes, for example, can share one container's free space); the host only logs them as a diagnostic, and a declared separation on the same device as `stateDirectory` is refused at startup as a configuration error. When no declaration is made, the host logs that spilling is off and streams large bodies into the parser in memory, as the Worker does. There is still no Switchboard cap. The alternative RD6 option keeps a same-filesystem default and withdraws the promise that spill exhaustion leaves the store unaffected.
      - **How:** the directory is created with mode `0700` and holds an owner file recording the process id and that process's start time as the operating system reports it. Each body file is created exclusively (`wx`) with mode `0600`.
      - **Cleanup:** a file is removed on completion, parser failure, error or abort. At startup, the host removes a sibling spill directory unless a live process has *both* its recorded id and its recorded start time. So a reused process id never keeps a dead process's files, and another live writer's files are never removed.
      - **No new promise:** R7's "no argument, result or credential is stored" holds, because a spill file lives only while its request does and never enters the store or its backups.
-3. **No Portal size refusal.** The Portal adds no byte cap of its own. What remains is the platform's: Cloudflare's account request ceiling answers above it with its own 413, and the parsed message, plus any whole-value copies validation, canonical fingerprinting and upstream serialization make of it, must fit in the isolate's memory, which concurrent requests share.
+3. **No Switchboard size refusal.** The Switchboard adds no byte cap of its own. What remains is the platform's: Cloudflare's account request ceiling answers above it with its own 413, and the parsed message, plus any whole-value copies validation, canonical fingerprinting and upstream serialization make of it, must fit in the isolate's memory, which concurrent requests share.
 4. **First, decide the 502.** Before building, one correlated deployed observation is taken on the private test Worker: the raw response with status, headers, body and CF-Ray, plus the Worker invocation outcome from `wrangler tail`, for a request just over 4 MiB. If it shows the 502 comes from outside the Worker, step 1 does not fix it, and the cause becomes its own finding.
 
-**The owner's tradeoff (RD7).** Streaming removes the raw-text copy and the clone. It does not bound memory. The parsed request is still one whole object, and validation, canonical fingerprinting and upstream serialization each hold another whole-value form of it. The six-call limit is per batch; nothing limits the total across concurrent requests. So with no Portal cap, one authenticated member's very large request, or several moderate ones at once, can exhaust an isolate. That ends every other call running there, including calls from other workspaces. A call that had already armed an approval then ends `ambiguous` for its client. The durable one-use records stay correct (security finding SEC-03). Avoiding this without a cap would need a bounded-memory path end to end: streamed or spooled values through validation, fingerprinting and dispatch, plus admission and backpressure across requests. On Workers that may mean a separate bulk runtime. That is a much larger design. Incremental parsing also needs a streaming JSON parser, which is a new dependency. The options are in the Requirements, RD7. Until the owner decides, R26's promise carries this limit in its own words.
+**The owner's tradeoff (RD7).** Streaming removes the raw-text copy and the clone. It does not bound memory. The parsed request is still one whole object, and validation, canonical fingerprinting and upstream serialization each hold another whole-value form of it. The six-call limit is per batch; nothing limits the total across concurrent requests. So with no Switchboard cap, one authenticated member's very large request, or several moderate ones at once, can exhaust an isolate. That ends every other call running there, including calls from other workspaces. A call that had already armed an approval then ends `ambiguous` for its client. The durable one-use records stay correct (security finding SEC-03). Avoiding this without a cap would need a bounded-memory path end to end: streamed or spooled values through validation, fingerprinting and dispatch, plus admission and backpressure across requests. On Workers that may mean a separate bulk runtime. That is a much larger design. Incremental parsing also needs a streaming JSON parser, which is a new dependency. The options are in the Requirements, RD7. Until the owner decides, R26's promise carries this limit in its own words.
 
 ## Clean build and gates
 
 | Item | Design |
 |---|---|
-| MCP SDK generations | Product code uses only the 2026-07-28 SDK (`@modelcontextprotocol/{core,server,client,node}`). The 1.x SDK leaves product code with the deletion of `@agent-vm/mcp-portal` and `@agent-vm/tool-portal` at agent-vm's cutover (Tool Portal check 12) and from `gateway-runtime`'s runtime dependencies. Tests that must speak to a 2025-era client or server use one fixture module, per RD3. |
+| MCP SDK generations | Product code uses only the 2026-07-28 SDK (`@modelcontextprotocol/{core,server,client,node}`). The 1.x SDK leaves product code with the deletion of `@agent-vm/mcp-portal` and `@agent-vm/tool-portal` at agent-vm's cutover (Switchboard check 12) and from `gateway-runtime`'s runtime dependencies. Tests that must speak to a 2025-era client or server use one fixture module, per RD3. |
 | esbuild, jose, vitest | One version each across the workspace: esbuild 0.27.7 (the version master already uses), jose 6.2.12 (Better Auth's) in the web-platform adapters and auth only, vitest 4.1.5 with the same range everywhere. |
 | Miniflare | No direct alpha pin. Hosts' tests use the Miniflare that the chosen `wrangler` release depends on; if every current `wrangler` release depends on an alpha, that is recorded as an owner decision rather than silently kept. |
 | Gates | `scripts/run-check-gate.ts`, `vitest.config.ts`, root `package.json` scripts and `.github/workflows/` return to `38569fca`. The 26 scripts #262 added go (RD5). The one added gate is the core type-check guard: a `tsconfig.portable.json` per core package, run by the existing `typecheck` step. |
@@ -666,7 +666,7 @@ stateDiagram-v2
 | Temporary request data (Node) | the Node body source | private per-process spill directory outside `stateDirectory`; exclusive `0600` files; removal on every end and dead-owner cleanup at startup | that request fails; the store is untouched | V26 spill cases |
 | Trusted capabilities | each host | the injected crypto, clock, IDs, database and transport are part of the trusted base; injection gives portability and observability, not containment | a wrong adapter can approve forgeries or reopen expiry | known-answer and tamper vectors through each real adapter (V1) |
 | Cutover safety | each host's deployment, at both storage changes | this work: new object class, old class deleted, approval keys rotated on the Worker and Node; store version 2: approval rows deleted, keys rotated again on the Worker and every Node host | an old token fails signature verification | V9, O7 at each change |
-| Secrets | the core's redaction (unchanged) | no argument, result or credential is stored | — | existing Tool Portal check 7 |
+| Secrets | the core's redaction (unchanged) | no argument, result or credential is stored | — | existing Switchboard check 7 |
 | Privacy | `WorkspaceStore` | stores token ids, principals, fingerprints and timestamps only | — | schema review |
 | Reliability | each host | fail closed on store or migration failure | listed above | V6, V7 |
 | Observability | the core's log capability | each store failure logs a bounded reason and table name, never row contents | — | log review in V1 |
@@ -676,10 +676,10 @@ stateDiagram-v2
 | U | R | E | owner | interface | shape and home | state | failure | proof |
 |---|---|---|---|---|---|---|---|---|
 | U1 | R1 every rule in the core: same outcomes on both hosts, apart from host-supplied limit values | E1 E2 | hosted MCP proxy; standalone service | `createHostedMcpProxy`, `createStandaloneToolPortalService`; `HostedProxyLimits` supplied by each host | `PortalPlatform`, `HostedMcpProxy` in `tool-host-core`; the Worker-only limit values in `tool-host-cloudflare/src/worker-limits.ts`; the shared 4 MiB upstream-response limit in `tool-engine` on both hosts | none: rules are stateless apart from the store | as each rule today | conformance suite run against the Cloudflare host in workerd and the Node host over HTTP, with limit scenarios expecting each host's own answer; deployed row 15 limit checks rerun after A7 and A8 |
-| U1 | R2 the Node host runs the core | E1 E2 | Node host | the same composition roots | as R1 | none: composition only | startup fails closed on store or migration failure | Node host process proof: every Node-only behaviour listed in the Tool Portal design, through the core |
+| U1 | R2 the Node host runs the core | E1 E2 | Node host | the same composition roots | as R1 | none: composition only | startup fails closed on store or migration failure | Node host process proof: every Node-only behaviour listed in the Switchboard design, through the core |
 | U1 U6 | R3 runtime only through capabilities | E1 E3 | platform capabilities | `PortalPlatform` | `platform-capabilities.ts` | none | missing capability is a type error, not a runtime default | fixed-capability determinism run; type-check guard |
 | U2 U3 | R4 typed operations, one mapping | E1 E2 E4 | workspace store | `WorkspaceStore` | `workspace-store.ts`; `workspace-store-schema.ts` | E4 tables | `store-unavailable` variant | the same store suite on Durable Object SQLite and `better-sqlite3` |
-| U3 | R5 only the chosen databases, through the query builder | E4 | Cloudflare host; Node host | Drizzle drivers in hosts only; the store's statements through the query builder | — | — | — | source scan of Tool Portal packages for forbidden storage APIs and SQL-text execution (`sql.raw(`, `.sql.exec(`, `.run(sql`, `.all(sql`, `.get(sql`, `.values(sql`, `.prepare(`, `.exec(`, `ctx.storage.get/put/list/delete/transaction`, `node:sqlite`, Kysely) |
+| U3 | R5 only the chosen databases, through the query builder | E4 | Cloudflare host; Node host | Drizzle drivers in hosts only; the store's statements through the query builder | — | — | — | source scan of Switchboard packages for forbidden storage APIs and SQL-text execution (`sql.raw(`, `.sql.exec(`, `.run(sql`, `.all(sql`, `.get(sql`, `.values(sql`, `.prepare(`, `.exec(`, `ctx.storage.get/put/list/delete/transaction`, `node:sqlite`, Kysely) |
 | U3 U4 | R6 generated migrations, applied once | E4 E8 | each host's migrator; `drizzle-kit` config in the core | `migrate(...)` per driver | `tool-host-core/drizzle/` | `__drizzle_migrations` | constructor throws / startup fails | upgrade run from every earlier schema version on both databases; structural evidence that no request is served before migration (Durable Object: migrate inside `blockConcurrencyWhile`; Node: listener opens after `migrate`) |
 | U5 | R7 survives restart | E4 E5 E6 | workspace store | all store operations | tables above | durable rows | `store-unavailable` refuses | restart and redeploy runs on both hosts with presentations before and after |
 | U3 U5 | R8 atomic decisions | E5 E6 | workspace store | `presentProxyToken`, `reserveBatchApproval`, `armBatchApproval`, `proveBatchNotDispatched`, `recordRemovalNotice`, `readRemovalMark`; `deriveRemovalSubjectKey` | as above | transitions in "Approval-use lifecycle" | the transaction aborts as a whole | contention runs: many copies and connections, exactly one first use, on both databases; Hegel interleavings; subject-key cases (one key per bot, session and machine; a machine mark covers a session token) |
@@ -699,7 +699,7 @@ stateDiagram-v2
 | U13 | R22 advertised schema | E12 | portal input schemas | published `mcp_portal_call` schema | `portal-input-schemas.ts` | — | — | a schema-validating client sends `portalApprovalToken` |
 | U13 | R23 origins at load | E12 | Node host configuration | config load | `node-host-config.ts` | — | load error names the field | an origin with a path refused at load |
 | U13 | R24 canonical order | E12 | the canonical encoder | canonical bytes | `canonicalDispatchJson` | — | — | Hegel: equal data under shuffled keys and locales gives equal bytes |
-| U13 | R25 transport extra | E12 | Portal SDK transport | `onmessage` wrapper | `node-tool-portal-mcp-transport.ts` | — | — | the wrapped client receives the second argument |
+| U13 | R25 transport extra | E12 | Switchboard SDK transport | `onmessage` wrapper | `node-tool-portal-mcp-transport.ts` | — | — | the wrapped client receives the second argument |
 | U14 | R26 large requests streamed | E12 | the core's `request-body` module; the host's body source | `readJsonRpcBody(source) → parsed message \| malformed`; SDK `fetch(request, { parsedBody })` | `tool-host-core/src/request-body` (new) | Node: a temporary spill file per request, removed at the end | malformed body → today's protocol error, nothing runs; platform ceiling → Cloudflare's 413 | deployed over-budget call on the private Worker with the raw exchange kept; Node spill run with the temporary file observed and removed |
 
 ## Open evidence and unresolved decisions
@@ -716,4 +716,4 @@ stateDiagram-v2
   - RD4: hang guards;
   - RD5: the added scripts;
   - RD6: the Node `stateDirectory` written by agent-vm's effective-config writer (`packages/agent-vm/src/gateway/mcp-portal-effective-config.ts`);
-  - RD7: large requests with no Portal cap.
+  - RD7: large requests with no Switchboard cap.

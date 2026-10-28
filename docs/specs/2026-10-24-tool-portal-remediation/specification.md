@@ -1,8 +1,8 @@
-# Tool Portal remediation: Specification
+# Switchboard remediation: Specification
 
-What must be observably true when the Tool Portal code is fixed. Each obligation traces to a need in the [Requirements](requirements.md). How the code realizes it is the [Program Design](program-design.md); how each one is proven is the [Verification Design](verification-design.md).
+What must be observably true when the Switchboard code is fixed. Each obligation traces to a need in the [Requirements](requirements.md). How the code realizes it is the [Program Design](program-design.md); how each one is proven is the [Verification Design](verification-design.md).
 
-**Reference for "same behaviour":** the Tool Portal's promises to its callers are the [Tool Portal Specification](../2026-10-14-portable-tool-portal-hosts/2026-10-14-portable-tool-portal-hosts.md) checks 1–17, with the identity changes in the [agent identity Specification](../2026-10-24-agent-identity/specification.md). This set must not change any of them, except where an obligation below names the change. The code reference is PR #262 at `2dfea38e`.
+**Reference for "same behaviour":** the Switchboard's promises to its callers are the [Switchboard Specification](../2026-10-14-portable-tool-portal-hosts/2026-10-14-portable-tool-portal-hosts.md) checks 1–17, with the identity changes in the [agent identity Specification](../2026-10-24-agent-identity/specification.md). This set must not change any of them, except where an obligation below names the change. The code reference is PR #262 at `2dfea38e`.
 
 ## The parts and their obligations
 
@@ -17,54 +17,54 @@ What must be observably true when the Tool Portal code is fixed. Each obligation
 
 ## What these obligations are about
 
-Three nouns come from the Tool Portal and identity designs and keep their meaning there: **Workspace** (Tool Portal E2), **Approval** (Tool Portal E7) and **Removal notice** (agent identity E12). The table defines the nouns this set adds.
+Three nouns come from the Switchboard and identity designs and keep their meaning there: **Workspace** (Switchboard E2), **Approval** (Switchboard E7) and **Removal notice** (agent identity E12). The table defines the nouns this set adds.
 
 | | Thing | Same one when | Belongs to | Always true | Its states |
 |---|---|---|---|---|---|
-| E1 | **Portal core** | the same release of the one implementation of every Tool Portal rule and decision | used by every host of that release | holds every rule and decision listed in R1; reaches its runtime only through E3 capabilities | — |
-| E2 | **Host** | one runtime's adapter in one release: the Cloudflare host or the Node host | runs exactly one E1; supplies one set of E3 | contains no Tool Portal rule; only builds and supplies capabilities, and accepts connections | — |
+| E1 | **Switchboard core** | the same release of the one implementation of every Switchboard rule and decision | used by every host of that release | holds every rule and decision listed in R1; reaches its runtime only through E3 capabilities | — |
+| E2 | **Host** | one runtime's adapter in one release: the Cloudflare host or the Node host | runs exactly one E1; supplies one set of E3 | contains no Switchboard rule; only builds and supplies capabilities, and accepts connections | — |
 | E3 | **Platform capability** | one kind of capability supplied by one host instance: the database, clock, identifier source, crypto, outbound transport, timers, log or analytics sink | supplied by one E2 to one E1 | every kind E1 needs is supplied; E1 has no fallback for a missing one | — |
-| E4 | **Workspace store** | the durable state of one Workspace in one deployment of one host. On Node, one configured portal is one Workspace, as the Tool Portal design treats one proxy configuration on a machine | belongs to one Workspace; holds E5 and E6 records | survives restart and redeploy; one Workspace's store is never read or written for another Workspace | — |
-| E5 | **Approval-use record** | one Approval, identified by its token identifier and the principal it was issued to, recorded in one Workspace's store. Both kinds of Approval count: the MCP proxy's approval token and the standalone Tool Portal's signed batch approval | belongs to one E4 and one Approval | at most one per Approval; created only by that Approval's first presentation; a later presentation of the same Approval is never accepted as a first use | proxy approval token: used → expired. Batch approval: reserved → armed → expired, or reserved → proven-not-dispatched → expired. A later presentation of an armed batch approval is answered "ambiguous": its effect may have started. A record is removable once the Approval's own expiry has passed |
+| E4 | **Workspace store** | the durable state of one Workspace in one deployment of one host. On Node, one configured portal is one Workspace, as the Switchboard design treats one proxy configuration on a machine | belongs to one Workspace; holds E5 and E6 records | survives restart and redeploy; one Workspace's store is never read or written for another Workspace | — |
+| E5 | **Approval-use record** | one Approval, identified by its token identifier and the principal it was issued to, recorded in one Workspace's store. Both kinds of Approval count: the MCP proxy's approval token and the standalone Switchboard's signed batch approval | belongs to one E4 and one Approval | at most one per Approval; created only by that Approval's first presentation; a later presentation of the same Approval is never accepted as a first use | proxy approval token: used → expired. Batch approval: reserved → armed → expired, or reserved → proven-not-dispatched → expired. A later presentation of an armed batch approval is answered "ambiguous": its effect may have started. A record is removable once the Approval's own expiry has passed |
 | E6 | **Removal mark** | the highest removal a Workspace's store has received for one subject, together with the Removal notices that set it | belongs to one E4; set by Removal notices | never decreases; a lower or repeated notice changes nothing | held → expired (removable after the retention the identity design sets, at least 61 minutes after receipt) |
 | E8 | **Schema version** | one checked-in migration, identified by its position in the migration history | belongs to the store schema; applied to each physical database | applied at most once to a database, in order, before that database serves a request | pending → applied |
-| E9 | **Portal identifier** | one identifier the Portal itself mints (operation, record, receipt, request correlation, approval token identifier) | minted by E1 through the identifier capability | is a UUIDv7 | — |
+| E9 | **Switchboard identifier** | one identifier the Switchboard itself mints (operation, record, receipt, request correlation, approval token identifier) | minted by E1 through the identifier capability | is a UUIDv7 | — |
 | E10 | **Controlled clock** | one test-supplied time source for one test | supplied through the clock capability | moves only when the test moves it | — |
 | E11 | **Check gate** | one step of `pnpm check` or one CI job | owned by the owner | changes only with the owner's approval | approved |
 | E12 | **Known defect** | one finding listed under `known-defects`, identified by its PR thread or deployed-check row | — | has a test that fails before its fix and passes after | open → fixed |
 
 ```mermaid
 flowchart TB
-  E1["E1 Portal core<br/>every rule, once"]
+  E1["E1 Switchboard core<br/>every rule, once"]
   E2["E2 Host<br/>Cloudflare or Node; no rules"] -->|"runs 1"| E1
   E2 -->|"supplies 1 set of"| E3["E3 Platform capability<br/>database · clock · ids · crypto · transport · timers · log"]
   E3 -->|"used by"| E1
-  WS["Workspace<br/>(Tool Portal E2)"] -->|"has 1"| E4["E4 Workspace store<br/>survives restart"]
+  WS["Workspace<br/>(Switchboard E2)"] -->|"has 1"| E4["E4 Workspace store<br/>survives restart"]
   E4 -->|"0..n"| E5["E5 Approval-use record<br/>used | reserved → armed | proven-not-dispatched"]
   E4 -->|"0..n, one per subject"| E6["E6 Removal mark<br/>never decreases"]
-  APR["Approval<br/>(Tool Portal E7)"] -->|"at most 1"| E5
+  APR["Approval<br/>(Switchboard E7)"] -->|"at most 1"| E5
   RN["Removal notice<br/>(identity E12)"] -->|"sets"| E6
   E8["E8 Schema version<br/>applied once, in order"] -->|"shapes"| E4
-  E1 -->|"mints"| E9["E9 Portal identifier<br/>UUIDv7"]
+  E1 -->|"mints"| E9["E9 Switchboard identifier<br/>UUIDv7"]
 ```
 
 ## `one-core`: one core, injected
 
 **R1 — Every rule lives in the core.** (U1)
-The Portal core (E1) implements every Tool Portal rule and decision: caller admission, the workspace boundary, persona narrowing, the `direct` and `indirect` cases, search and describe, dispatch through the one dispatcher, approval checks and one-use, removal fencing, today's limits, result and error projection, secret redaction, and the analytics data point. A host (E2) implements none of them.
+The Switchboard core (E1) implements every Switchboard rule and decision: caller admission, the workspace boundary, persona narrowing, the `direct` and `indirect` cases, search and describe, dispatch through the one dispatcher, approval checks and one-use, removal fencing, today's limits, result and error projection, secret redaction, and the analytics data point. A host (E2) implements none of them.
 - **Pass:** the same scenario gives the same outcome on the Cloudflare host and the Node host: the same tools listed, the same results, the same refusals with the same codes, the same approval outcomes, and the same analytics data point.
-- **The one allowed difference: host-supplied limit values.** The rule that enforces a limit is the core's; the value is the host's. Today's values stay as the Tool Portal design sets them (checks 8 and 15):
+- **The one allowed difference: host-supplied limit values.** The rule that enforces a limit is the core's; the value is the host's. Today's values stay as the Switchboard design sets them (checks 8 and 15):
   - On both hosts: 4 MiB per upstream response, today's engine limit (`tool-engine` `upstream-mcp-protocol.ts:126` `defaultMaxResponseBytes`, used at `upstream-mcp-client-runtime.ts:58` at `2dfea38e`). It is shared, not a host difference.
   - On the Worker only: 50 calls per batch, 6 in flight and 16 MiB per reply (`tool-host-cloudflare/src/worker-limits.ts` at `2dfea38e`), and its approval-use cap.
   - On Node: none of the Worker-only three, and its own approval-use cap.
 
   A scenario that crosses a Worker-only limit passes when each host gives its own expected answer: a refusal on the Worker and a normal result on Node. A scenario that crosses the shared upstream-response limit gets the same refusal on both.
 - **Fail:** any scenario whose outcome differs between hosts other than by a host-supplied limit value; any rule implemented in a host's own code; a Worker-only limit added to Node, the shared upstream-response limit removed from either host, or a Worker limit removed from the Worker.
-- **Unchanged:** the standalone Tool Portal's routes (its `tool_portal_*` MCP tools and its JSON route) and stdio stay on the Node host only, as the Tool Portal design says; they too dispatch through the core.
+- **Unchanged:** the standalone Switchboard's routes (its `tool_portal_*` MCP tools and its JSON route) and stdio stay on the Node host only, as the Switchboard design says; they too dispatch through the core.
 
 **R2 — The Node host runs the core.** (U1)
 The Node host composes the same core the Cloudflare host composes, including the hosted proxy, the workspace authority and the workspace store. It keeps only Node work: its HTTP and stdio listeners, configuration files, stdio connections to tool servers, the catalog TypeScript compiler, and the `better-sqlite3` database file.
-- **Pass:** every Node-only behaviour the Tool Portal design lists keeps working, and every rule in R1 runs through the core.
+- **Pass:** every Node-only behaviour the Switchboard design lists keeps working, and every rule in R1 runs through the core.
 - **Fail:** a Node module that decides admission, approval, one-use, replay, canonical identity or result policy itself.
 
 **R3 — The core reaches its runtime only through supplied capabilities.** (U1, U6)
@@ -83,7 +83,7 @@ The core defines the workspace store's operations in domain terms, with typed in
 **R5 — The databases the owner chose, and nothing else.** (U3)
 On Cloudflare the workspace store (E4) is the workspace's Durable Object SQLite, reached through Drizzle's Durable Object driver. On Node it is a `better-sqlite3` database file, reached through Drizzle's `better-sqlite3` driver.
 - **What "no hand-written SQL" means:** every store statement is built with Drizzle's query builder. Drizzle's `sql` template is allowed only as an expression inside a query-builder call, with its values bound as parameters, for example `max(...)` in an upsert's `set` or an `insert … select` condition. Executing SQL text is forbidden.
-- **Fail:** any use, in Tool Portal storage, of:
+- **Fail:** any use, in Switchboard storage, of:
   - the Durable Object key-value API (`get`, `put`, `list`, `delete`, `transaction` on key-value storage);
   - `node:sqlite` or Kysely;
   - executing SQL text: `sql.raw(`, `ctx.storage.sql.exec(`, `db.run(sql…)`, `db.all(sql…)`, `db.get(sql…)` or `db.values(sql…)`, or a driver's own `.prepare(` or `.exec(`;
@@ -99,9 +99,9 @@ The store's schema changes only through migrations that `drizzle-kit` generates 
 Approval-use records (E5) and removal marks (E6) survive a host restart and a redeploy, on both hosts. After a restart:
 - an Approval presented before the restart is never accepted as a first use again, until its own expiry: a used or reserved one is refused as already used, and an armed batch approval is answered "ambiguous";
 - a removal received before the restart still refuses the removed subject.
-- **Fail:** any of these lost or reset by a restart. Today the standalone Tool Portal's batch-approval records live only in memory while its service generation comes from configuration, so a restart with the same configuration lets an unexpired approval be used again; that must become impossible.
-- **Unchanged:** a batch approval issued for an earlier service generation is still refused after a restart with a new one (Tool Portal Specification check 6).
-- **Not stored:** a record of every call, call arguments, results or credentials (Tool Portal design, "Not in this work").
+- **Fail:** any of these lost or reset by a restart. Today the standalone Switchboard's batch-approval records live only in memory while its service generation comes from configuration, so a restart with the same configuration lets an unexpired approval be used again; that must become impossible.
+- **Unchanged:** a batch approval issued for an earlier service generation is still refused after a restart with a new one (Switchboard Specification check 6).
+- **Not stored:** a record of every call, call arguments, results or credentials (Switchboard design, "Not in this work").
 
 **R8 — Atomic decisions on every driver.** (U3, U5)
 Each of these decisions is atomic on every database the hosts use:
@@ -129,16 +129,16 @@ Every state machine and every result that crosses a boundary in the core is a di
 The core, together with the rules and engine it uses, type-checks in a configuration where neither Node's nor Cloudflare Workers' type definitions are available. This check is an owner-approved gate (E11).
 - **Fail:** any core import of `node:*`, `cloudflare:*`, a Drizzle driver module, or a type that only exists in one runtime.
 
-**R12 — Every Portal identifier is a UUIDv7.** (U8)
-Every identifier the Portal mints (E9) is a UUIDv7 from the identifier capability.
+**R12 — Every Switchboard identifier is a UUIDv7.** (U8)
+Every identifier the Switchboard mints (E9) is a UUIDv7 from the identifier capability.
 - **Pass:** every minted identifier parses as version 7.
-- **Fail:** any `randomUUID()` or other UUID version in Tool Portal code or its tests.
+- **Fail:** any `randomUUID()` or other UUID version in Switchboard code or its tests.
 - **Not identifiers:** secret bytes such as signing keys and token entropy stay random secret material, not UUIDs. Identifiers received from other services keep their own format.
 
 ## `deterministic-tests`: tests that never read the clock
 
 **R13 — No wall-clock time in tests.** (U9)
-No Tool Portal test reads the wall clock, sleeps, or waits on real time to decide an outcome. Expiry, TTL, retention, timeouts and polling are exercised by moving a controlled clock (E10).
+No Switchboard test reads the wall clock, sleeps, or waits on real time to decide an outcome. Expiry, TTL, retention, timeouts and polling are exercised by moving a controlled clock (E10).
 - **Fail:** a test calling `Date.now()`, `new Date()` with no argument, `performance.now()` or a real timer to compute an expected value, an expiry or a deadline; a test that sleeps between probes.
 - **Open:** whether an end-to-end test may keep a timeout that can only fail a hung external process (RD4).
 
@@ -157,8 +157,8 @@ Property tests written with Hegel cover at least:
 - **Fail:** any of these covered only by hand-picked examples; the Durable Object half dropped without an owner decision.
 
 **R16 — Verification scripts are TypeScript.** (U11)
-Every verification, journey and tooling script in this work is TypeScript. The Python Portal SDK's own tests stay Python, because they test product Python.
-- **Fail:** a Python script that drives or asserts Tool Portal protocol behaviour outside the Python SDK's own test suite.
+Every verification, journey and tooling script in this work is TypeScript. The Python Switchboard SDK's own tests stay Python, because they test product Python.
+- **Fail:** a Python script that drives or asserts Switchboard protocol behaviour outside the Python SDK's own test suite.
 
 ## `build-hygiene`: clean build, owner's gates
 
@@ -191,16 +191,16 @@ A configured allowed origin that is not a bare `http` or `https` origin (no user
 Canonical encoding sorts object keys by code-unit order, never by locale collation, so equal data gives the same fingerprint on every machine.
 
 **R25 — The MCP transport passes everything through.** (U13; PR #245 finding)
-The Portal SDK's MCP transport forwards every argument of the message callback, including MCP's second metadata argument, to the client it wraps.
+The Switchboard SDK's MCP transport forwards every argument of the message callback, including MCP's second metadata argument, to the client it wraps.
 
 **R26 — Large requests are streamed, not capped.** (U14; #33, deployed row 15)
-A request whose body is larger than the Worker's in-memory budget is processed by streaming or spilling, not refused by a size cap of the Portal's own. On Node, when spilling is enabled (RD6), a large request body is spilled to a temporary file rather than held in memory; when it is not, the body streams into the parser in memory, as on the Worker.
-- **Which way in:** this covers the MCP proxy way in, `/workspaces/‹id›/mcp` on the Worker and the Node host's MCP proxy listener, where today's 4 MiB request budget sits. The standalone Tool Portal's JSON route keeps its 64 KiB request limit unchanged (Tool Portal Program Design, "Limits today"; check 8). The standalone MCP route keeps today's limits.
+A request whose body is larger than the Worker's in-memory budget is processed by streaming or spilling, not refused by a size cap of the Switchboard's own. On Node, when spilling is enabled (RD6), a large request body is spilled to a temporary file rather than held in memory; when it is not, the body streams into the parser in memory, as on the Worker.
+- **Which way in:** this covers the MCP proxy way in, `/workspaces/‹id›/mcp` on the Worker and the Node host's MCP proxy listener, where today's 4 MiB request budget sits. The standalone Switchboard's JSON route keeps its 64 KiB request limit unchanged (Switchboard Program Design, "Limits today"; check 8). The standalone MCP route keeps today's limits.
 - **Pass:** a call with a body above today's 4 MiB budget and within the platform's own request limit completes with the same result it would have under the budget.
 - **Spill files are temporary, private and never durable:** a Node spill file is readable only by the host's user and is never written where the store or its backups live. It is gone after its request ends, however it ends, and after a restart following a crash, even when the dead process's id has been reused. One process never removes another live process's spill file. Spilling is enabled only where the deployment declares that the spill storage's exhaustion cannot exhaust the store's (RD6); a different device identifier alone is not that declaration; otherwise the body is parsed in memory.
 - **The true limit, stated:** the parsed request and its working copies must fit in the memory of the runtime handling it. On a Worker, concurrent requests share that memory. A request that exhausts it ends the other requests running there, from any workspace. This limit stands until the owner decides RD7.
-- **Fail:** a Portal-imposed size refusal; a 502 for a request within the platform's limit; caller data or an approval token left in a spill file after its request, in the store's location or in its backups.
-- **Undefined here:** what Cloudflare itself does above its own request limit; the Portal cannot change that.
+- **Fail:** a Switchboard-imposed size refusal; a 502 for a request within the platform's limit; caller data or an approval token left in a spill file after its request, in the store's location or in its backups.
+- **Undefined here:** what Cloudflare itself does above its own request limit; the Switchboard cannot change that.
 
 ## Coverage
 
@@ -210,7 +210,7 @@ A request whose body is larger than the Worker's in-memory budget is processed b
 | `one-core` | U1 | E1 E2 | R2 | V2 every Node-only behaviour works through the core |
 | `one-core` | U1 U6 | E1 E3 | R3 | V3 fixed capabilities give byte-identical outputs; no fallback path |
 | `storage` | U2 U3 | E1 E2 E4 | R4 | V4 one store implementation on both databases |
-| `storage` | U3 | E4 | R5 | V5 no forbidden storage call or SQL-text execution in Portal code |
+| `storage` | U3 | E4 | R5 | V5 no forbidden storage call or SQL-text execution in Switchboard code |
 | `storage` | U3 U4 | E4 E8 | R6 | V6 every earlier version upgrades; nothing served before migration |
 | `storage` | U5 | E4 E5 E6 | R7 | V7 restart and redeploy keep approval uses and marks |
 | `storage` | U3 U5 | E5 E6 | R8 | V8 exactly one first use under contention, on every driver; one subject key per removed identity |
@@ -230,7 +230,7 @@ A request whose body is larger than the Worker's in-memory budget is processed b
 
 ## Not specified here
 
-- The Tool Portal's own promises (Tool Portal Specification checks 1–17) and the identity obligations: unchanged, owned by those documents.
+- The Switchboard's own promises (Switchboard Specification checks 1–17) and the identity obligations: unchanged, owned by those documents.
 - How the workspace store's records are laid out in tables: the [Program Design](program-design.md), for the owner's approval (RD1).
 - The sign-in service's storage: owned by the [agent identity](../2026-10-24-agent-identity/program-design.html) and [people sign-in](../2026-10-20-people-sign-in/program-design.md) designs.
 - The order of work across repositories, and what happens to #262: the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) set.

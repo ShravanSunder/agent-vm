@@ -13,13 +13,13 @@
 <a href="index.html">Identity design</a>
 <a href="plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
 <a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Tool Portal decisions</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
 <a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
 
 <ex-presentation id="path-organizations" title="Organizations: who is in what" description="Organization first, nothing across organizations, and what a machine is told.">
-  <ex-step to="requirements.html#requirements--needs" icon="users">The needs: organization first, nothing shared between organizations, no Tool Portal tokens for people, one Tool Portal each.</ex-step>
+  <ex-step to="requirements.html#requirements--needs" icon="users">The needs: organization first, nothing shared between organizations, no Switchboard tokens for people, one Switchboard each.</ex-step>
   <ex-step to="specification.html#specification--entities" icon="folder">Who belongs to what: the map of organizations and who is in them.</ex-step>
   <ex-step to="specification.html#specification--organizations" icon="book-open">What must hold between organizations.</ex-step>
   <ex-step to="program-design.html#program-design--organizations-admission-first-nothing-across-r34-r38" icon="stack">How admission gates every role, and how nothing crosses.</ex-step>
@@ -64,7 +64,7 @@
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--tickets-by-workstream" icon="stack">Every ticket, by workstream, with its deliverable and what it waits on.</ex-step>
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d1-start-a-session-on-another-machine" icon="path">D1, starting a session on another machine, with its building blocks; live at your switch.</ex-step>
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d2-organizations-people-bots-and-what-machines-see" icon="users">D2, organizations: people, bots and what machines see.</ex-step>
-  <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d3-sessions-and-bots-use-their-workspace-s-tool-portal-tools" icon="plug">D3, sessions and bots use their workspace's Tool Portal tools.</ex-step>
+  <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d3-sessions-and-bots-use-their-workspace-s-tool-portal-tools" icon="plug">D3, sessions and bots use their workspace's Switchboard tools.</ex-step>
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d6-everything-else-live" icon="rocket">D6, everything else live together.</ex-step>
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--d7-off-cloudflare-access" icon="rocket">D7, off Cloudflare Access, last.</ex-step>
   <ex-step to="plans/2026-10-27-agent-identity-delivery.html#plan--waiting-on-you" icon="users">What waits on you.</ex-step>
@@ -75,11 +75,11 @@
   <ex-step to="alternatives.html#alternatives--1-who-is-the-identity-when-your-agent-acts" icon="robot">**Who acts for you?** A registered name, a session you approve, or the session itself.</ex-step>
   <ex-step to="alternatives.html#alternatives--2-which-workspace-does-a-session-belong-to" icon="folder">**Where does a session belong?** By folder, by machine, or by project.</ex-step>
   <ex-step to="alternatives.html#alternatives--3-who-holds-the-truth-and-who-mints-tokens" icon="database">**Who holds the truth, who mints?** Y, Z, X and X′ side by side.</ex-step>
-  <ex-step to="alternatives.html#alternatives--4-how-does-the-tool-portal-know-who-is-a-member" icon="shield-check">**How does the Tool Portal know?** Live check, copies, or the token plus pushed removals.</ex-step>
+  <ex-step to="alternatives.html#alternatives--4-how-does-the-switchboard-know-who-is-a-member" icon="shield-check">**How does the Switchboard know?** Live check, copies, or the token plus pushed removals.</ex-step>
   <ex-step to="alternatives.html#alternatives--5-how-long-does-a-token-live" icon="clock">**How long does a token live?** What a minute, an hour and several hours each cost.</ex-step>
   <ex-step to="alternatives.html#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order" icon="clock">**A removal racing a token.** Why a clock gets this wrong and a revision number doesn't.</ex-step>
   <ex-step to="alternatives.html#alternatives--7-how-does-a-machine-prove-it-is-yours" icon="key">**How a machine proves it's yours.** The first round's options, since replaced by question 19.</ex-step>
-  <ex-step to="alternatives.html#alternatives--8-how-does-a-session-s-token-reach-the-tool-portal" icon="plug">**How the token reaches the Tool Portal.** A config file, the agent itself, or the Router.</ex-step>
+  <ex-step to="alternatives.html#alternatives--8-how-does-a-session-s-token-reach-the-switchboard" icon="plug">**How the token reaches the Switchboard.** A config file, the agent itself, or the Router.</ex-step>
   <ex-step to="alternatives.html#alternatives--9-who-asks-the-issuer-for-a-session-s-token" icon="key">**Who asks for the token.** The Router or Fleet central, and which key that makes precious.</ex-step>
   <ex-step to="alternatives.html#alternatives--10-where-is-a-session-s-persona-narrowing-checked" icon="gear">**Where a narrowed persona is checked.** At session start or on each call.</ex-step>
   <ex-step to="alternatives.html#alternatives--11-how-are-organizations-kept-apart" icon="users">**Keeping organizations apart.** One shared store, or one authority per organization.</ex-step>
@@ -96,10 +96,10 @@
   <ex-step to="alternatives.html#alternatives--22-how-does-a-session-start-a-helper-on-another-machine" icon="path">**Starting a session on another machine.** Through Fleet central, a relaxed check, or fleet mail.</ex-step>
 </ex-presentation>
 
-<ex-presentation id="path-tool-call" title="A session calls a Tool Portal tool" description="From your need to the token, the call, and how it will be proven.">
+<ex-presentation id="path-tool-call" title="A session calls a Switchboard tool" description="From your need to the token, the call, and how it will be proven.">
   <ex-step to="requirements.html#requirements--needs" icon="users">The needs this path serves: sessions vouched for by their machine, the project's workspace, members only, no live check.</ex-step>
   <ex-step to="specification.html#specification--identity-and-proof" icon="book-open">What must hold about who a session is.</ex-step>
-  <ex-step to="specification.html#specification--c1-workspace-token" icon="key">What the token carries, and how the Tool Portal answers.</ex-step>
+  <ex-step to="specification.html#specification--c1-workspace-token" icon="key">What the token carries, and how the Switchboard answers.</ex-step>
   <ex-step to="program-design.html#program-design--how-a-session-gets-and-uses-its-token" icon="path">The whole round trip: register, get a token, call.</ex-step>
   <ex-step to="verification-design.html#verification-design--coverage-rows" icon="test-tube">How each part will be shown to hold.</ex-step>
 </ex-presentation>
@@ -110,7 +110,7 @@
   <ex-step to="specification.html#specification--c3-removal-notice" icon="envelope">The notice Fleet central sends.</ex-step>
   <ex-step to="program-design.html#program-design--how-a-removal-reaches-the-tool-portal" icon="path">How the notice travels, and what happens if it can't.</ex-step>
   <ex-step to="alternatives.html#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order" icon="clock">Why revision numbers, not clocks.</ex-step>
-  <ex-step to="verification-design.html#verification-design--coverage-rows" icon="test-tube">How it will be proven, including a Tool Portal that is down.</ex-step>
+  <ex-step to="verification-design.html#verification-design--coverage-rows" icon="test-tube">How it will be proven, including a Switchboard that is down.</ex-step>
 </ex-presentation>
 
 <ex-presentation id="path-bot" title="A bot gets a token" description="A bot proving itself with its own credential and getting its one workspace's tools.">
@@ -148,14 +148,14 @@
   <ex-step to="requirements.html#requirements--needs" icon="users"><script type="text/markdown">
 **The rule: one owner per truth (U15)**
 
-Fleet central holds organizations, workspaces and membership. The sign-in service only proves who someone is and mints tokens. The Tool Portal only enforces.
+Fleet central holds organizations, workspaces and membership. The sign-in service only proves who someone is and mints tokens. The Switchboard only enforces.
   </script></ex-step>
   <ex-step to="storage-homes" icon="database"><script type="text/markdown">
 **Three owners, three homes**
 
 - **D1** is only the sign-in service's own records.
 - Each **organization** is a Durable Object inside Fleet central.
-- Each **workspace** the Portal enforces is a Durable Object in the Tool Portal.
+- Each **workspace** the Switchboard enforces is a Durable Object in the Switchboard.
   </script></ex-step>
   <ex-step to="storage-homes--D1" icon="key"><script type="text/markdown">
 **D1: the sign-in service**
@@ -171,11 +171,11 @@ Who may sign in, the owner, membership, bots, workspace pairs, machine logins, r
   <ex-step to="program-design.html#program-design--the-choices-and-why" icon="git-branch">Why one authority per organization, and why in Fleet: the "Organization isolation (D2)" row.</ex-step>
   <ex-step to="specification.html#specification--what-this-replaces" icon="book-open">Where the 10-20 D2 wording ("in the sign-in service") changed location, and the meaning it keeps.</ex-step>
   <ex-step to="storage-homes--WsDO" icon="shield-check"><script type="text/markdown">
-**A Durable Object per workspace, in the Tool Portal**
+**A Durable Object per workspace, in the Switchboard**
 
 Used approvals and the removal marks Fleet sends. It never holds membership: the token carries that.
   </script></ex-step>
-  <ex-step to="../2026-10-24-tool-portal-remediation/index.html#program-design--where-the-database-lives-and-how-it-is-migrated" icon="database">The Portal's store: one Durable Object per workspace on Cloudflare, one file per workspace on Node.</ex-step>
+  <ex-step to="../2026-10-24-tool-portal-remediation/index.html#program-design--where-the-database-lives-and-how-it-is-migrated" icon="database">The Switchboard's store: one Durable Object per workspace on Cloudflare, one file per workspace on Node.</ex-step>
   <ex-step to="alternatives.html#alternatives--21-decided-how-are-organizations-fleet-data-kept-apart-od8" icon="users">One Fleet object per organization (OD8, your call).</ex-step>
 </ex-presentation>
 
@@ -190,7 +190,7 @@ Used approvals and the removal marks Fleet sends. It never holds membership: the
 
 <h1>Agent identity and workspace access</h1>
 
-Who acts in the fleet and the Tool Portal, how each one proves who it is, which workspace it belongs to, and how its access to Tool Portal tools is granted and taken away. A Tool Portal tool is one of the MCP tools a workspace's Tool Portal serves. This is a design. Nothing in it is built or observed yet.
+Who acts in the fleet and the Switchboard, how each one proves who it is, which workspace it belongs to, and how its access to Switchboard tools is granted and taken away. A Switchboard tool is one of the MCP tools a workspace's Switchboard serves. Switchboard was called the Tool Portal until 28 October (OD12); its code packages keep their `tool-*` names for now, and older documents use the old name. This is a design. Nothing in it is built or observed yet.
 
 <h2 id="how-it-works">How it works, in plain words</h2>
 
@@ -198,7 +198,7 @@ Who acts in the fleet and the Tool Portal, how each one proves who it is, which 
 
 <h3 id="how-who">Who is who</h3>
 
-<p id="how-who-text" data-comment-label="Who is who">Everything lives inside an organization, and nothing crosses between organizations. You add a person or a bot to an organization first; only then can it join a workspace, as a member (does the workspace's work, uses its Tool Portal tools) or a collaborator (only messages and tasks members). A machine, meaning a Router, belongs to one organization, and you choose which workspaces it serves. A session runs on a machine and belongs to the workspace of the project it was started for. People never hold Tool Portal tokens: they get work done by talking to a bot.</p>
+<p id="how-who-text" data-comment-label="Who is who">Everything lives inside an organization, and nothing crosses between organizations. You add a person or a bot to an organization first; only then can it join a workspace, as a member (does the workspace's work, uses its Switchboard tools) or a collaborator (only messages and tasks members). A machine, meaning a Router, belongs to one organization, and you choose which workspaces it serves. A session runs on a machine and belongs to the workspace of the project it was started for. People never hold Switchboard tokens: they get work done by talking to a bot.</p>
 
 <ex-mermaid id="how-who-picture" label="Who belongs to what"><script type="text/plain">
 flowchart TB
@@ -219,21 +219,21 @@ flowchart TB
   C --> D["You revoke it:<br/>renewals stop"]
 </script></ex-mermaid>
 
-<h3 id="how-tool">How a session uses a Tool Portal tool</h3>
+<h3 id="how-tool">How a session uses a Switchboard tool</h3>
 
-<p id="how-tool-text" data-comment-label="Tool call">A session asks its own Router for a token. Fleet central, which holds the truth about who belongs where, decides; the sign-in service mints a token that lasts minutes and names the workspace. The Tool Portal checks the token on each call without asking Fleet central again. A bot gets its token the same way, with its own credential.</p>
+<p id="how-tool-text" data-comment-label="Tool call">A session asks its own Router for a token. Fleet central, which holds the truth about who belongs where, decides; the sign-in service mints a token that lasts minutes and names the workspace. The Switchboard checks the token on each call without asking Fleet central again. A bot gets its token the same way, with its own credential.</p>
 
-<ex-mermaid id="how-tool-picture" label="A session calls a Tool Portal tool"><script type="text/plain">
+<ex-mermaid id="how-tool-picture" label="A session calls a Switchboard tool"><script type="text/plain">
 flowchart TB
   S["Session"] --> R["Its Router"]
   R --> F["Fleet central decides"]
   F --> T["Sign-in service<br/>mints a short token"]
-  T --> P["Tool Portal checks it<br/>on each call"]
+  T --> P["Switchboard checks it<br/>on each call"]
 </script></ex-mermaid>
 
 <h3 id="how-remove">Taking access away</h3>
 
-<p id="how-remove-text" data-comment-label="Removal">When you remove a member, retire a bot or revoke a machine, Fleet central pushes a removal notice to that organization's Tool Portal, and the next call is refused as soon as it arrives. Token expiry is only the backstop. If Fleet central is down, no new token is issued, and work stops as the tokens run out: the system fails closed.</p>
+<p id="how-remove-text" data-comment-label="Removal">When you remove a member, retire a bot or revoke a machine, Fleet central pushes a removal notice to that organization's Switchboard, and the next call is refused as soon as it arrives. Token expiry is only the backstop. If Fleet central is down, no new token is issued, and work stops as the tokens run out: the system fails closed.</p>
 
 <h3 id="how-remote">Starting a session on another machine</h3>
 
@@ -245,11 +245,11 @@ flowchart TB
 
 <h3 id="how-data">Where the data lives</h3>
 
-<p id="how-data-text" data-comment-label="Database map">Five stores, each with one owner, linked only by identifiers: the sign-in service's database, Fleet central's Registry, one organization authority and one Fleet object per organization, and one Tool Portal store per workspace. The <a href="program-design.html#program-design--the-database-map">database map</a> draws each one's tables and how they relate.</p>
+<p id="how-data-text" data-comment-label="Database map">Five stores, each with one owner, linked only by identifiers: the sign-in service's database, Fleet central's Registry, one organization authority and one Fleet object per organization, and one Switchboard store per workspace. The <a href="program-design.html#program-design--the-database-map">database map</a> draws each one's tables and how they relate.</p>
 
 <h3 id="how-plan">How it gets built</h3>
 
-<p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="plans/2026-10-27-agent-identity-delivery.html">delivery plan</a> cuts the work into seven deliverables, each something you can see working. Starting a session on another machine comes first (D1), carrying the building blocks it needs: your sign-in, the organization core, machine login and session registration. D1 also proves that messages between machines, which work today, still work on the new login. It goes live at your production switch. Then come D2, people, bots and what machines see; D3, sessions and bots using Tool Portal tools; D4, collaboration; D5, removal; D6, everything else live together; and D7, Cloudflare Access off, last. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Tool Portal.</p>
+<p id="how-plan-text" data-comment-label="Delivery">Nothing is built yet. The <a href="plans/2026-10-27-agent-identity-delivery.html">delivery plan</a> cuts the work into seven deliverables, each something you can see working. Starting a session on another machine comes first (D1), carrying the building blocks it needs: your sign-in, the organization core, machine login and session registration. D1 also proves that messages between machines, which work today, still work on the new login. It goes live at your production switch. Then come D2, people, bots and what machines see; D3, sessions and bots using Switchboard tools; D4, collaboration; D5, removal; D6, everything else live together; and D7, Cloudflare Access off, last. Each deliverable lists its workstreams: Fleet central, the Router, the sign-in service and the Switchboard.</p>
 
 <h2 id="where">Where each answer lives</h2>
 
@@ -260,7 +260,7 @@ flowchart TB
 - **Every option we weighed, drawn:** [Alternatives](alternatives.html)
 - **How the work is delivered, deliverable by deliverable:** [Delivery plan](plans/2026-10-27-agent-identity-delivery.html)
 
-To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, a session starts a helper on another machine, the three steps off Cloudflare Access, how the work is delivered, every option one at a time, a session calls a Tool Portal tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
+To be walked through any of these, press **W** or use the path button. The paths are: organizations, a machine logs in, a session starts a helper on another machine, the three steps off Cloudflare Access, how the work is delivered, every option one at a time, a session calls a Switchboard tool, you remove access, a bot gets a token, a session messages another workspace, Fleet central is down, and machines and what they share.
 
 <ex-callout id="waiting" title="What waits on you" tone="question" icon="users">
 
@@ -306,13 +306,13 @@ Its meaning: the three kinds of identity and how each relates to a workspace, in
 
 <h2 id="access">Access: tokens and removal</h2>
 
-Its meaning: what a workspace token says and how the Tool Portal answers it, in [C1 workspace token](specification.html#specification--c1-workspace-token). Its picture: [how a session gets and uses its token](program-design.html#program-design--how-a-session-gets-and-uses-its-token).
+Its meaning: what a workspace token says and how the Switchboard answers it, in [C1 workspace token](specification.html#specification--c1-workspace-token). Its picture: [how a session gets and uses its token](program-design.html#program-design--how-a-session-gets-and-uses-its-token).
 
 - **Needs:** U10–U16 in [Requirements](requirements.html#requirements--needs).
 - **Rules:** [tokens and tool calls](specification.html#specification--tokens-and-tool-calls), [removal](specification.html#specification--removal), [hosts, outages and service requests](specification.html#specification--hosts-outages-and-service-requests).
-- **Who enforces them:** [components](program-design.html#program-design--components), [service requests](program-design.html#program-design--service-requests-r27-c7), [removal across owners](program-design.html#program-design--removal-across-owners-r19-r21), [how a removal reaches the Tool Portal](program-design.html#program-design--how-a-removal-reaches-the-tool-portal), [state](program-design.html#program-design--state).
+- **Who enforces them:** [components](program-design.html#program-design--components), [service requests](program-design.html#program-design--service-requests-r27-c7), [removal across owners](program-design.html#program-design--removal-across-owners-r19-r21), [how a removal reaches the Switchboard](program-design.html#program-design--how-a-removal-reaches-the-tool-portal), [state](program-design.html#program-design--state).
 - **How they're proven:** [coverage rows](verification-design.html#verification-design--coverage-rows).
-- **Options weighed:** [who mints](alternatives.html#alternatives--3-who-holds-the-truth-and-who-mints-tokens), [how the Tool Portal knows](alternatives.html#alternatives--4-how-does-the-tool-portal-know-who-is-a-member), [token lifetime](alternatives.html#alternatives--5-how-long-does-a-token-live), [ordering](alternatives.html#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order), [how the token travels](alternatives.html#alternatives--8-how-does-a-session-s-token-reach-the-tool-portal), [how services prove who's calling](alternatives.html#alternatives--16-how-do-the-services-prove-who-s-calling-each-other), [how a token names its session](alternatives.html#alternatives--17-how-does-a-token-say-which-session-it-is-for).
+- **Options weighed:** [who mints](alternatives.html#alternatives--3-who-holds-the-truth-and-who-mints-tokens), [how the Switchboard knows](alternatives.html#alternatives--4-how-does-the-switchboard-know-who-is-a-member), [token lifetime](alternatives.html#alternatives--5-how-long-does-a-token-live), [ordering](alternatives.html#alternatives--6-how-do-a-removal-and-a-token-minted-at-about-the-same-time-stay-in-order), [how the token travels](alternatives.html#alternatives--8-how-does-a-session-s-token-reach-the-switchboard), [how services prove who's calling](alternatives.html#alternatives--16-how-do-the-services-prove-who-s-calling-each-other), [how a token names its session](alternatives.html#alternatives--17-how-does-a-token-say-which-session-it-is-for).
 
 <h2 id="machines">Machines and what they share</h2>
 
@@ -325,7 +325,7 @@ Its meaning: a machine vouches for its sessions and may serve several workspaces
 
 <h2 id="sign-in-storage">What lives where: D1 and Durable Objects</h2>
 
-<p id="storage-rule" data-comment-label="The storage rule">Three owners, three storage homes. The sign-in service keeps only its own records in D1. Everything per organization lives in Fleet central, as one Durable Object per organization. Everything per workspace that the Tool Portal enforces lives in one Durable Object per workspace. On Node and on Fleet's Tokio host, each home is a SQLite file instead. To be walked through it, press <strong>W</strong> and choose <em>What lives where</em>. Every table in each home is drawn in the <a href="program-design.html#program-design--the-database-map">database map</a>.</p>
+<p id="storage-rule" data-comment-label="The storage rule">Three owners, three storage homes. The sign-in service keeps only its own records in D1. Everything per organization lives in Fleet central, as one Durable Object per organization. Everything per workspace that the Switchboard enforces lives in one Durable Object per workspace. On Node and on Fleet's Tokio host, each home is a SQLite file instead. To be walked through it, press <strong>W</strong> and choose <em>What lives where</em>. Every table in each home is drawn in the <a href="program-design.html#program-design--the-database-map">database map</a>.</p>
 
 <ex-mermaid id="storage-homes" label="Where each kind of state lives" data-width="canvas"><script type="text/plain">
 flowchart LR
@@ -335,7 +335,7 @@ flowchart LR
   subgraph Fleet["Fleet central (holds the truth)"]
     OrgDO["Durable Object per organization: allowlist, owner, membership, bots, pairs, machine logins, remote starts, removals"]
   end
-  subgraph Portal["Tool Portal (enforces)"]
+  subgraph Portal["Switchboard (enforces)"]
     WsDO["Durable Object per workspace: used approvals, removal marks received"]
   end
   D1 -- "asks: admit this person? standing? log this machine in?" --> OrgDO
@@ -351,11 +351,11 @@ flowchart LR
 
 <ul id="documents-list">
 <li><a href="requirements.html"><strong>Requirements</strong></a>: The picture of your decisions, 38 needs with your words as evidence, the goal boundary, and the open decisions.</li>
-<li><a href="specification.html"><strong>Specification</strong></a>: The entities and their three maps, obligations R1–R46, ten contracts, and the failure cases: a request that would cross organizations, a device code denied, expired or reused, someone other than the owner approving a code, a machine without a store restarting, a remote start's target disconnecting, a refresh credential leaked, the step 2 switch breaking login, a refused sign-in racing an admitted one, an unknown answer from Fleet central, Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Tool Portal restart, a session ending, a collaborator calling Tool Portal tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</li>
+<li><a href="specification.html"><strong>Specification</strong></a>: The entities and their three maps, obligations R1–R46, ten contracts, and the failure cases: a request that would cross organizations, a device code denied, expired or reused, someone other than the owner approving a code, a machine without a store restarting, a remote start's target disconnecting, a refresh credential leaked, the step 2 switch breaking login, a refused sign-in racing an admitted one, an unknown answer from Fleet central, Fleet central unavailable, a delayed or repeated mint, a removal still pending, a notice not delivered, notices out of order, a persona change followed by a new token, a Switchboard restart, a session ending, a collaborator calling Switchboard tools, a machine revoked mid-session, a leaked bot secret, a compromised machine or stolen binding, and files read across a shared machine.</li>
 <li><a href="program-design.html"><strong>Program Design</strong></a>: The structure, organizations and admission, the token and decision shapes, machine login and the three steps, service requests, removal across owners, seven flows, state, trust boundaries, and failure handling: Fleet central unreachable during a login or renewal, an approval whose code then fails, two polls redeeming one code, an installation claimed by another organization, a machine token expiring on an open connection, a Router without an encrypted store, a remote start interrupted at each step, a delayed mint, a notice not acknowledged, notices out of order, a duplicate notice, a restart, a removal racing a grant, an interrupted machine revocation or credential retirement, a stale binding, a signing key rotation, and the sign-in service's storage: its typed store, atomic statement groups on D1 and Node, and the tables for your approval.</li>
 <li><a href="verification-design.html"><strong>Verification Design</strong></a>: One line per need, eleven shared observations, coverage rows naming the wrong build each must catch, and the journeys still to build, including the remote-start journey. Linux is tested in codex-router's existing CI; the full Linux login and any VM run are named unverified. Planned, not observed.</li>
 <li><a href="alternatives.html"><strong>Alternatives</strong></a>: Twenty-two questions, each with its options and what each gains and costs. All are settled.</li>
-<li><a href="plans/2026-10-27-agent-identity-delivery.html"><strong>Delivery plan</strong></a>: Seven deliverables, each something you can see working, with a picture of how they depend on each other. Each lists its workstreams (Fleet central, the Router, the sign-in service, the Tool Portal) and its pieces, one pull request each, with what proves it and what it waits on. Then which piece earns each proof row, the risks, and the stop conditions. Plan only; nothing is built.</li>
+<li><a href="plans/2026-10-27-agent-identity-delivery.html"><strong>Delivery plan</strong></a>: Seven deliverables, each something you can see working, with a picture of how they depend on each other. Each lists its workstreams (Fleet central, the Router, the sign-in service, the Switchboard) and its pieces, one pull request each, with what proves it and what it waits on. Then which piece earns each proof row, the risks, and the stop conditions. Plan only; nothing is built.</li>
 </ul>
 
 </ex-document>

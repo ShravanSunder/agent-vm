@@ -1,4 +1,4 @@
-# Tool Portal remediation: Verification Design
+# Switchboard remediation: Verification Design
 
 How each need in the [Requirements](requirements.md) will be shown to hold. Each row names what will be done and seen, judged against the [Specification](specification.md), at a seam the [Program Design](program-design.md) exposes. This is a plan: nothing in it has been run or observed yet.
 
@@ -16,15 +16,15 @@ Heavy runs go to sunclaw. No VM is involved. Every time-dependent case moves a c
 |---|---|---|
 | **U1** One core, every runtime only injects | The same scripted session is played against the Cloudflare host and the Node host; their recorded answers (tools listed, call results, refusals, approval outcomes, analytics data points) are compared and must match exactly. The one exception is a limit: a scenario that crosses one must get the Worker's refusal on the Worker and a normal result on Node. The deployed Worker's limit checks are run again after the large-request change and the cutover. | Hosts other than these two; agent-vm's managed path, which keeps its own adapter |
 | **U2** The core owns typed store operations and their one mapping | The same store test suite runs on Durable Object SQLite and on a `better-sqlite3` file through the one store implementation, and the hosts contain no store query. | — |
-| **U3** Drizzle on SQLite only, with generated migrations | A scan of the Tool Portal's code finds no key-value storage call, `node:sqlite`, Kysely, or SQL text executed outside the query builder; a database created at every earlier schema version opens, upgrades and keeps its records. | Remote D1 is not used by the Portal, so not tried |
+| **U3** Drizzle on SQLite only, with generated migrations | A scan of the Switchboard's code finds no key-value storage call, `node:sqlite`, Kysely, or SQL text executed outside the query builder; a database created at every earlier schema version opens, upgrades and keeps its records. | Remote D1 is not used by the Switchboard, so not tried |
 | **U4** The owner approves the schema before code | The schema in the Program Design carries the owner's approval before the plan admits any store code. | — |
 | **U5** Nothing that must survive is lost on restart | Approvals are used, the host is restarted (and the Worker redeployed), and the same approvals are presented again: each is refused as used, or answered "ambiguous" if it was armed. | A machine crash mid-write (power loss), beyond what SQLite's own durability settings give |
 | **U6** Crypto is injected | The core runs with fake crypto that records every call; every digest, signature and verification goes through it, and a fixed-capability run gives the same bytes twice. | — |
 | **U7** Type safety, discriminated unions, the type-check guard | The core is type-checked with no Node or Workers types and must pass; a deliberately forbidden import (including any Drizzle driver module) and an unhandled union variant must each fail that check. | Type errors hidden inside dependency declarations; deliberate casts |
-| **U8** UUIDv7 only | Every identifier the Portal mints during the shared session is parsed and must be version 7; a scan finds no `randomUUID`. | Identifiers received from other services, which keep their own format |
+| **U8** UUIDv7 only | Every identifier the Switchboard mints during the shared session is parsed and must be version 7; a scan finds no `randomUUID`. | Identifiers received from other services, which keep their own format |
 | **U9** No wall clock in tests | A scan of the test files finds no wall-clock read, sleep or real-time deadline deciding an outcome, and no clock substitution in a production bundle. | Hang guards, pending RD4 |
 | **U10** Gates as approved | The gate files are compared with master and must differ only by the approved type-check guard. | — |
-| **U11** TypeScript verification | A scan finds no Python driving or asserting Portal behaviour outside the Python SDK's own tests. | — |
+| **U11** TypeScript verification | A scan finds no Python driving or asserting Switchboard behaviour outside the Python SDK's own tests. | — |
 | **U12** One SDK generation; one version each | The lockfile and imports are scanned: one MCP SDK generation in product code; one esbuild, jose and vitest; no alpha Miniflare. | RD3 decides whether one test fixture may keep the old SDK |
 | **U13** Known defects fixed | Each of the six findings gets a test that fails on `2dfea38e` and passes on the delivered commit. | — |
 | **U14** Large requests streamed, not capped | A call with a 12 MiB argument completes on the private Worker and on Node with the same result as a small one; on Node with spilling enabled the spill file is private, outside durable state, and gone after every kind of ending (with spilling off, no file and the same result), including a crash and restart. | Concurrent large requests sharing one Worker isolate: the shared-failure limit R26 states, pending RD7 |
@@ -35,7 +35,7 @@ Heavy runs go to sunclaw. No VM is involved. Every time-dependent case moves a c
 These are described once; the rows below name which obligations each one decides.
 
 **O1 — Two-host conformance session** (needed journey `verify-tool-portal` › `conformance`, lasting: every later change to either host can make them drift.)
-A fixed scenario script drives the MCP proxy way in on both hosts with the same workspace configuration, credentials, controlled clock, seeded UUIDv7 source and fixed key material. It records each exchange: `tools/list` in `direct` and `indirect`, search and describe, allowed calls, refused calls (unknown caller, wrong workspace, non-member, removed member, persona-narrowed tool), a call needing approval with and without a token, the same token twice, and the analytics data point each call writes. On Node it also drives the standalone Tool Portal routes and stdio, which have no Cloudflare counterpart. The two MCP proxy transcripts are compared field by field after replacing only transport framing.
+A fixed scenario script drives the MCP proxy way in on both hosts with the same workspace configuration, credentials, controlled clock, seeded UUIDv7 source and fixed key material. It records each exchange: `tools/list` in `direct` and `indirect`, search and describe, allowed calls, refused calls (unknown caller, wrong workspace, non-member, removed member, persona-narrowed tool), a call needing approval with and without a token, the same token twice, and the analytics data point each call writes. On Node it also drives the standalone Switchboard routes and stdio, which have no Cloudflare counterpart. The two MCP proxy transcripts are compared field by field after replacing only transport framing.
 
 **Limit scenarios (F3).** Limit values are the one allowed difference between hosts (R1), so these scenarios carry each host's own expected answer instead of being compared for equality:
 - a batch of 51 calls;
@@ -44,7 +44,7 @@ A fixed scenario script drives the MCP proxy way in on both hosts with the same 
 - a reply over 16 MiB;
 - a proxy approval presented with the approval-use cap full.
 
-Expected: the upstream response over 4 MiB is refused on both hosts with the same code, because that limit is the engine's and shared (check 8). The batch of 51, the seventh concurrent call and the reply over 16 MiB get the limit refusal Tool Portal check 15 defines on the Worker, each with its code, and the normal result on Node, which has none of those three (check 8). A full approval-use cap answers `saturated` on both hosts, at each host's own cap.
+Expected: the upstream response over 4 MiB is refused on both hosts with the same code, because that limit is the engine's and shared (check 8). The batch of 51, the seventh concurrent call and the reply over 16 MiB get the limit refusal Switchboard check 15 defines on the Worker, each with its code, and the normal result on Node, which has none of those three (check 8). A full approval-use cap answers `saturated` on both hosts, at each host's own cap.
 - **Entry:** HTTP to `/workspaces/‹id›/mcp` on workerd; HTTP to the Node listener; the Node standalone MCP and JSON routes.
 - **Reads:** response bodies, status codes, refusal codes, and the analytics sink's recorded data points.
 - **Deployed limits again:** the deployed row 15 checks on the private test Worker (batch size, upstream response size and the six in flight, which cycle 6 did not run) are run again after slice A7 (large requests) and after A8 (the cutover), because R26 rewrites the request path in front of those limits.
@@ -94,7 +94,7 @@ Families:
 4. Store results matching a pure model after any operation sequence.
 5. Canonical encoding: equal data under shuffled keys and any collation gives equal bytes.
 
-**O5 — Structural scans** (no journey: structural evidence.) Source and manifest scans of the Tool Portal packages and their tests, the lockfile, and the gate files, each named in its row with the behaviour it leaves unevaluated.
+**O5 — Structural scans** (no journey: structural evidence.) Source and manifest scans of the Switchboard packages and their tests, the lockfile, and the gate files, each named in its row with the behaviour it leaves unevaluated.
 
 **O6 — The type-check guard** (no journey.) The core packages' guard configuration is run; then a deliberately forbidden import and an unhandled variant are introduced in a throwaway branch of the check and must each fail it.
 
@@ -123,10 +123,10 @@ Families:
 |---|---|
 | **Requirement** | U1 → R1 (every rule in the core: same outcomes on both hosts), R2 (the Node host runs the core) |
 | **Proven by** | The same scripted session is played against both hosts, and their answers must match exactly. |
-| **Reference** | The Tool Portal Specification's checks 1–17 for each scenario's expected answer; R1's list of rules; the transcript of the other host for equality |
+| **Reference** | The Switchboard Specification's checks 1–17 for each scenario's expected answer; R1's list of rules; the transcript of the other host for equality |
 | **Target and journey** | Cloudflare host in workerd and Node host process, delivered commit, the conformance configuration; O1 (`needed:` `verify-tool-portal` › `conformance`, driving both hosts' HTTP entries and reading responses and analytics data points) |
 | **Lifetime** | lasting |
-| **Passes when** | Every MCP proxy exchange in O1 is equal on both hosts, except the limit scenarios. Each of those gets its own host's expected answer: the Worker refuses with the check 15 code; Node returns the normal result. Every Node-only route answers as the Tool Portal Specification says. The deployed row 15 limit checks pass again after A7 and after A8. **Wrong builds that fail:** a Node host that keeps its own approval list or gateway (it answers a repeated token differently after the O2 restart, and its analytics data point lacks a field the core writes); a Node host given the Worker's limits (its 51-call batch is refused, breaking check 8); a Worker whose limits were lost with the old request path (the deployed rerun accepts a 51-call batch). **Allowed different build that passes:** a host that supplies a different transport framing. |
+| **Passes when** | Every MCP proxy exchange in O1 is equal on both hosts, except the limit scenarios. Each of those gets its own host's expected answer: the Worker refuses with the check 15 code; Node returns the normal result. Every Node-only route answers as the Switchboard Specification says. The deployed row 15 limit checks pass again after A7 and after A8. **Wrong builds that fail:** a Node host that keeps its own approval list or gateway (it answers a repeated token differently after the O2 restart, and its analytics data point lacks a field the core writes); a Node host given the Worker's limits (its 51-call batch is refused, breaking check 8); a Worker whose limits were lost with the old request path (the deployed rerun accepts a 51-call batch). **Allowed different build that passes:** a host that supplies a different transport framing. |
 | **Reuses** | none: the existing Node and Cloudflare suites at `2dfea38e` test each host's own composition, which is the duplication being removed |
 | **Unverified** | agent-vm's managed adapter path (out of scope); hosts other than these two |
 
@@ -150,7 +150,7 @@ Families:
 | **Proven by** | A scan finds no forbidden storage API, and databases created at every earlier schema version open, upgrade and keep their records on both hosts. |
 | **Reference** | R5's forbidden list; the checked-in migration journal; the records written before upgrade |
 | **Target and journey** | O5 for R5. For R6: an upgrade case per earlier schema version on each database, and structural evidence for "nothing served before migration". Journey: none, decided by the store suite run on both databases. |
-| **Passes when** | **R5:** the scan of the Tool Portal packages finds none of:<br>• `ctx.storage.get/put/list/delete/transaction` on key-value storage;<br>• `node:sqlite` or Kysely;<br>• SQL-text execution: `sql.raw(`, `.sql.exec(`, `.run(sql`, `.all(sql`, `.get(sql`, `.values(sql`, a driver's `.prepare(` or `.exec(`.<br>Every `sql` template that remains sits inside a query-builder call (`.set(`, `.where(`, `.values(`, `.select(`) with bound values; each is listed for review.<br>**R6:** every earlier-version database reaches the latest version with identical records, and each database shows one `__drizzle_migrations` history. A request cannot be served before migration, for a structural reason that the review reads in the delivered code: on the Durable Object, `migrate` runs inside `ctx.blockConcurrencyWhile` in the constructor, which holds every request until it returns or throws; on Node, the listener is created only after `migrate` returns. No test-only hook is added to hold a migration open, because that would be a production export for tests (R14). **Wrong builds that fail:** a host that serves before migrating (the structural reading finds the listener or the RPC method reachable before `migrate`); a migration applied twice (two history rows); a store that runs `db.run(sql\`insert …\`)` (the scan). |
+| **Passes when** | **R5:** the scan of the Switchboard packages finds none of:<br>• `ctx.storage.get/put/list/delete/transaction` on key-value storage;<br>• `node:sqlite` or Kysely;<br>• SQL-text execution: `sql.raw(`, `.sql.exec(`, `.run(sql`, `.all(sql`, `.get(sql`, `.values(sql`, a driver's `.prepare(` or `.exec(`.<br>Every `sql` template that remains sits inside a query-builder call (`.set(`, `.where(`, `.values(`, `.select(`) with bound values; each is listed for review.<br>**R6:** every earlier-version database reaches the latest version with identical records, and each database shows one `__drizzle_migrations` history. A request cannot be served before migration, for a structural reason that the review reads in the delivered code: on the Durable Object, `migrate` runs inside `ctx.blockConcurrencyWhile` in the constructor, which holds every request until it returns or throws; on Node, the listener is created only after `migrate` returns. No test-only hook is added to hold a migration open, because that would be a production export for tests (R14). **Wrong builds that fail:** a host that serves before migrating (the structural reading finds the listener or the RPC method reachable before `migrate`); a migration applied twice (two history rows); a store that runs `db.run(sql\`insert …\`)` (the scan). |
 | **Reuses** | none |
 | **Unverified** | Only one earlier version exists at first (version 1); the version-2 upgrade is proven when the identity cutover adds it |
 
@@ -207,12 +207,12 @@ Families:
 
 | | |
 |---|---|
-| **Requirement** | U8 → R12 (every Portal identifier is a UUIDv7) |
-| **Proven by** | Every identifier the Portal mints during the shared session must parse as version 7, and a scan finds no `randomUUID`. |
+| **Requirement** | U8 → R12 (every Switchboard identifier is a UUIDv7) |
+| **Proven by** | Every identifier the Switchboard mints during the shared session must parse as version 7, and a scan finds no `randomUUID`. |
 | **Reference** | RFC 9562 version 7 layout |
 | **Target and journey** | O1 transcripts (operation ids, receipt references, approval token ids, correlation ids) and O5; journey: O1 |
 | **Lifetime** | lasting (O1) |
-| **Passes when** | Every minted identifier in O1 parses as version 7, and O5 finds no `randomUUID(` or other UUID version call in Tool Portal code or tests. **Wrong build that fails:** today's `newId: crypto.randomUUID`, which mints version 4. |
+| **Passes when** | Every minted identifier in O1 parses as version 7, and O5 finds no `randomUUID(` or other UUID version call in Switchboard code or tests. **Wrong build that fails:** today's `newId: crypto.randomUUID`, which mints version 4. |
 | **Reuses** | none |
 | **Unverified** | identifiers received from sign-in or Fleet |
 
@@ -223,7 +223,7 @@ Families:
 | **Requirement** | U9 → R13 (no wall-clock time in tests), R14 (time controlled only through the clock capability) |
 | **Proven by** | A scan of the test files finds no wall-clock read, sleep or real-time deadline deciding an outcome; a scan of production bundles finds no clock substitution or test entry. |
 | **Reference** | R13's fail list; the 23 clock-dependent and 10 timestamp sites the evidence lists at `2dfea38e`, each of which must be gone |
-| **Target and journey** | O5 over the test files of the Tool Portal packages and the built production bundles; journey: none |
+| **Target and journey** | O5 over the test files of the Switchboard packages and the built production bundles; journey: none |
 | **Passes when** | No test file calls `Date.now()`, no-argument `new Date()`, `performance.now()`, or a real timer to compute an expected value, an expiry or a deadline. The built Worker and Node bundles contain no `Date.now` replacement, no test-only route and no test-only export. **Wrong build that fails:** today's `worker-approval.host.e2e.test.ts:19–20`, which issues tokens from the real Worker clock. |
 | **Reuses** | none |
 | **Unverified** | timeouts that only fail a hung external process, until RD4 is decided |
@@ -245,10 +245,10 @@ Families:
 | | |
 |---|---|
 | **Requirement** | U11 → R16 |
-| **Proven by** | A scan finds no Python driving or asserting Portal behaviour outside the Python SDK's own tests. |
+| **Proven by** | A scan finds no Python driving or asserting Switchboard behaviour outside the Python SDK's own tests. |
 | **Reference** | R16 |
 | **Target and journey** | O5 over the repository's Python files touched by this work; journey: none |
-| **Passes when** | `python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py`'s wire and protocol assertions live in a TypeScript host test. Any remaining Python only calls the Python SDK's public API in its own suite. **Wrong build that fails:** the journey script kept as the Portal's protocol proof. |
+| **Passes when** | `python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py`'s wire and protocol assertions live in a TypeScript host test. Any remaining Python only calls the Python SDK's public API in its own suite. **Wrong build that fails:** the journey script kept as the Switchboard's protocol proof. |
 | **Reuses** | none |
 | **Unverified** | — |
 
@@ -285,7 +285,7 @@ Families:
 | **Reference** | R26's pass condition; the call's result at a size under 4 MiB, taken as the expected result for the same tool and arguments structure |
 | **Target and journey** | Private test Worker and the Node host process, delivered commit. `needed:` `verify-tool-portal` › `large-request`: drives one call at 3 MiB, 5 MiB and 12 MiB through the MCP proxy entry; keeps each raw response (status, headers, body, CF-Ray) and the `wrangler tail` invocation outcome; on Node, lists the spill directory during and after the call. |
 | **Lifetime** | lasting |
-| **Passes when** | All three calls return the tool's normal result. No response is a Portal size refusal or a 502. On Node with spilling enabled, these spill checks hold (SEC-04):<br>• The spill file exists during the 12 MiB call, in the spill directory and not under `stateDirectory`. It has mode `0600` in a `0700` directory.<br>• The file is gone after the call, after a client abort mid-upload, and after a malformed tail. A malformed tail also produces no upstream effect.<br>• After a host killed mid-upload restarts, the dead process's spill directory is removed, including when an unrelated live process now has the dead one's process id (a different start time). A second live process's spill directory is not removed.<br>• A planted approval token and argument value from the request appear nowhere under `stateDirectory` afterwards.<br>• With a declared separate allocation domain, filling it fails only that request, and a store decision made at the same time still succeeds. With no capacity declaration, including a spill parent on a different volume of the same disk, the host reports spilling off at startup and a large body is parsed in memory instead. A declaration on the same device as `stateDirectory` is refused at startup.<br>**Wrong builds that fail:** today's handler path, which answers 413 at 4 MiB; a Node build with spilling enabled that buffers in memory and leaves no spill file; a Node build with spilling off that writes a file or refuses the call; one that spills under `stateDirectory`; one with no startup cleanup, which leaves the killed process's file behind. **Allowed build that passes:** a different streaming parser. Before building, the same journey takes the one correlated observation of today's 502 (Program Design, "Large requests", step 4). |
+| **Passes when** | All three calls return the tool's normal result. No response is a Switchboard size refusal or a 502. On Node with spilling enabled, these spill checks hold (SEC-04):<br>• The spill file exists during the 12 MiB call, in the spill directory and not under `stateDirectory`. It has mode `0600` in a `0700` directory.<br>• The file is gone after the call, after a client abort mid-upload, and after a malformed tail. A malformed tail also produces no upstream effect.<br>• After a host killed mid-upload restarts, the dead process's spill directory is removed, including when an unrelated live process now has the dead one's process id (a different start time). A second live process's spill directory is not removed.<br>• A planted approval token and argument value from the request appear nowhere under `stateDirectory` afterwards.<br>• With a declared separate allocation domain, filling it fails only that request, and a store decision made at the same time still succeeds. With no capacity declaration, including a spill parent on a different volume of the same disk, the host reports spilling off at startup and a large body is parsed in memory instead. A declaration on the same device as `stateDirectory` is refused at startup.<br>**Wrong builds that fail:** today's handler path, which answers 413 at 4 MiB; a Node build with spilling enabled that buffers in memory and leaves no spill file; a Node build with spilling off that writes a file or refuses the call; one that spills under `stateDirectory`; one with no startup cleanup, which leaves the killed process's file behind. **Allowed build that passes:** a different streaming parser. Before building, the same journey takes the one correlated observation of today's 502 (Program Design, "Large requests", step 4). |
 | **Reuses** | none: today's `row-15-limits` check asserts a 413, which R26 replaces, and keeps no response details |
 | **Unverified** | requests near the account ceiling (100 MB) and near isolate memory. Concurrent large requests from two workspaces in one isolate, and many-field or deep objects, are not proven safe: under RD7 option A they are the accepted shared-failure limit R26 states. Under option B they become a required observation in the same isolate, with memory, invocation outcomes and effect counts kept. Three calls that land in different isolates prove nothing about this. |
 
@@ -315,10 +315,10 @@ Families:
 | U8 | R12 | minted ids parsed; source scan | O1, O5 | `conformance` | all v7; no `randomUUID` | received ids |
 | U9 | R13 R14 | test-file scan; bundle scan | O5 | scans · none | no wall-clock reads; no substitution | hang guards (RD4) |
 | U10 | R19 | gate diff | O5 | gate files · none | diff = guard only | — |
-| U11 | R16 | Python scan | O5 | Python files · none | no Python Portal verification | — |
+| U11 | R16 | Python scan | O5 | Python files · none | no Python Switchboard verification | — |
 | U12 | R17 R18 | lockfile and import scan | O5 | lockfile · none | one generation; one version each; no alpha | RD3 |
 | U13 | R20–R25 | each defect's focused case | focused tests, O4 family 5 | owning modules · none | each fails before, passes after | — |
-| U14 | R26 | the U14 row: 3, 5 and 12 MiB calls; spill cases | raw responses, `wrangler tail` outcomes, spill directory listings | private Worker and Node host · `large-request` (needed, lasting) | normal result; no Portal 413 or 502; with spilling enabled, spill file private, outside `stateDirectory`, removed on every end; with spilling off, no file | same-isolate concurrency (RD7) |
+| U14 | R26 | the U14 row: 3, 5 and 12 MiB calls; spill cases | raw responses, `wrangler tail` outcomes, spill directory listings | private Worker and Node host · `large-request` (needed, lasting) | normal result; no Switchboard 413 or 502; with spilling enabled, spill file private, outside `stateDirectory`, removed on every end; with spilling off, no file | same-isolate concurrency (RD7) |
 | U15 | R15 | Hegel families in Node on both databases; Durable Object through the test runtime's stub | O4 | core suite · none | five families vs pure models; mutants caught | separate processes |
 
 ## Journeys this needs

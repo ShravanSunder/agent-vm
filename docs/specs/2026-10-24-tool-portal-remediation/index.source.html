@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tool Portal remediation</title>
+<title>Switchboard remediation</title>
 <link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
 <script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
 </head>
@@ -13,13 +13,13 @@
 <a href="../2026-10-24-agent-identity/index.html">Identity design</a>
 <a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
 <a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="index.html">Tool Portal remediation</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Tool Portal decisions</a>
+<a href="index.html">Switchboard remediation</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
 <a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
 
 <ex-presentation id="path-restart" title="A used approval after a restart" description="Why an approval stays used when a host restarts, and how that is proven.">
-  <ex-step to="requirements--what-this-work-changes-from-the-tool-portal-design" icon="users">The change: approval state survives a restart on every host.</ex-step>
+  <ex-step to="requirements--what-this-work-changes-from-the-switchboard-design" icon="users">The change: approval state survives a restart on every host.</ex-step>
   <ex-step to="specification--storage-drizzle-on-sqlite" icon="book-open">What must hold: R7 (what survives) and R8 (one first use on every driver).</ex-step>
   <ex-step to="program-design--the-tables-for-the-owner-s-approval-rd1" icon="database">The tables that hold it, for your approval.</ex-step>
   <ex-step to="program-design--how-each-decision-stays-atomic" icon="lock">How each decision stays atomic on the Durable Object and on Node.</ex-step>
@@ -46,9 +46,11 @@
 
 <ex-document id="content" document-id="tool-portal-remediation-design" revision="2026-10-25.2">
 
-<h1>Tool Portal remediation</h1>
+<h1>Switchboard remediation</h1>
 
-The Tool Portal code in PR #262 works, but it was built on choices you never made. This design fixes that code so it follows your rules: one core that every runtime injects into, storage in SQLite through Drizzle, strong types and UUIDv7, deterministic tests with Hegel, your check gates unchanged, one version of each dependency, and the known defects fixed. It is a design; nothing in it is built or observed yet.
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name.</p>
+
+The Switchboard code in PR #262 works, but it was built on choices you never made. This design fixes that code so it follows your rules: one core that every runtime injects into, storage in SQLite through Drizzle, strong types and UUIDv7, deterministic tests with Hegel, your check gates unchanged, one version of each dependency, and the known defects fixed. It is a design; nothing in it is built or observed yet.
 
 <ex-callout id="waiting" title="Seven decisions wait on you" tone="question" icon="users">
 
@@ -78,14 +80,14 @@ To be walked through any of these, press **W** or use the path button. The paths
 - **Drizzle on SQLite:** [obligations R4–R9](#specification--storage-drizzle-on-sqlite) · [the workspace store](#program-design--the-workspace-store) · [proof](#verification-design--u5-nothing-that-must-survive-is-lost-on-restart)
 - **Types that say what is valid:** [obligations R10–R12](#specification--type-safety-types-that-say-what-is-valid) · [operations and results](#program-design--operations-and-results) · [proof](#verification-design--u7-type-safety-discriminated-unions-the-type-check-guard)
 - **Deterministic tests:** [obligations R13–R16](#specification--deterministic-tests-tests-that-never-read-the-clock) · [proof](#verification-design--u9-no-wall-clock-in-tests)
-- **Clean build, your gates:** [obligations R17–R19](#specification--build-hygiene-clean-build-owners-gates) · [clean build and gates](#program-design--clean-build-and-gates) · [proof](#verification-design--u10-gates-as-approved)
+- **Clean build, your gates:** [obligations R17–R19](#specification--build-hygiene-clean-build-owner-s-gates) · [clean build and gates](#program-design--clean-build-and-gates) · [proof](#verification-design--u10-gates-as-approved)
 - **Known defects fixed:** [obligations R20–R26](#specification--known-defects-findings-and-deployed-failures-fixed) · [the defects and their owners](#program-design--the-defects-and-their-owners) · [proof](#verification-design--u13-known-defects-fixed)
 
 <h2 id="documents">The documents</h2>
 
 <ex-tabs id="design-set" label="Design documents" data-width="canvas">
   <section id="tab-requirements" label="Requirements" icon="users">
-    <p>What #262 got wrong, the six parts, fifteen needs with your words as evidence, the one change of outcome from the Tool Portal design, the goal boundary, and seven open decisions.</p>
+    <p>What #262 got wrong, the six parts, fifteen needs with your words as evidence, the one change of outcome from the Switchboard design, the goal boundary, and seven open decisions.</p>
     <ex-markdown id="requirements" label="Requirements" src="./requirements.md"></ex-markdown>
   </section>
   <section id="tab-specification" label="Specification" icon="book-open">
