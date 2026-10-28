@@ -1,9 +1,29 @@
-# Switchboard remediation: Program Design
-
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Switchboard remediation: Program Design</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
+<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="index.html">Switchboard remediation</a>
+<a href="plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="switchboard-remediation-program-design" revision="2026-10-28.1">
+<p id="set-pages"><a href="index.html">Switchboard remediation</a>: <a href="requirements.html">Requirements</a> · <a href="specification.html">Specification</a> · <strong>Program Design</strong> · <a href="verification-design.html">Verification Design</a> · <a href="plans/2026-10-28-switchboard-remediation-delivery.html">Plan</a></p>
+<h1 id="program-design--switchboard-remediation-program-design">Switchboard remediation: Program Design</h1>
+<ex-markdown id="program-design--switchboard-remediation-program-design-text"><script type="text/markdown">
 How the fixed Switchboard code is built. The [Specification](specification.md) says what must be true (R1–R26); this document says which component owns each truth, what crosses each boundary, and where each obligation is observed. The [Verification Design](verification-design.md) chooses how each one is proven.
-
-## The structure in one picture
-
+</script></ex-markdown>
+<h2 id="program-design--the-structure-in-one-picture">The structure in one picture</h2>
+<ex-markdown id="program-design--the-structure-in-one-picture-text"><script type="text/markdown">
 One core holds every rule. Each host builds the platform capabilities for its runtime and hands them in. The workspace store's schema, migrations and every query live in the core; a host only opens the database.
 
 ```mermaid
@@ -38,9 +58,9 @@ flowchart TB
 ```
 
 **Selected structure:** the Fleet central shape in TypeScript. The core owns the rules, the schema, the migrations and the queries; the hosts own only platform construction, listeners, and opening the database. Both Switchboard databases are synchronous Drizzle drivers, so the core takes a synchronous Drizzle database and uses real synchronous transactions; no statement-plan executor is needed.
-
-## Today in #262
-
+</script></ex-markdown>
+<h2 id="program-design--today-in-262">Today in #262</h2>
+<ex-markdown id="program-design--today-in-262-text"><script type="text/markdown">
 Every anchor below is at `2dfea38e`.
 
 | Area | Today | Anchor |
@@ -56,9 +76,9 @@ Every anchor below is at `2dfea38e`.
 **Constraint degree:** compatibility-bound on the Switchboard's three ways in, tool names, results and approval token bytes; platform-bound on Durable Object SQLite, `better-sqlite3`, Drizzle 0.45.2 and the MCP 2026-07-28 SDK; migration-bound on the workspace store, where the only consumers are the private test deployment and local runs (identity Program Design, "Changes and cutover").
 
 **What stays authoritative:** the Switchboard Specification's checks 1–17, today's limits, the approval token formats, workspace configuration, and the engine's dispatcher and gateway, which both hosts already reuse.
-
-## The choices, and why
-
+</script></ex-markdown>
+<h2 id="program-design--the-choices-and-why">The choices, and why</h2>
+<ex-markdown id="program-design--the-choices-and-why-text"><script type="text/markdown">
 | Choice | Selected | Credible alternative | Why the selection wins | What would reopen it |
 |---|---|---|---|---|
 | Who writes the store's queries | The core owns typed operations and the one Drizzle implementation; hosts pass in a database (owner: "feet styel yes", "interface and mappign") | A store interface in the core implemented per host | One query per operation means a fix lands once; per-host queries are the drift the owner rejected | None inside this boundary; it is the owner's decision |
@@ -67,9 +87,9 @@ Every anchor below is at `2dfea38e`.
 | Where web-standard adapters live | A small new package used by the two Switchboard hosts | Each host writing its own adapters; or adapters inside the core; or one package shared with the sign-in service | Two hosts copying adapters is duplication the owner forbids; adapters in the core would make it reach platform globals; the sign-in service's capability contract differs (it signs service tokens), so sharing would couple `packages/auth` to the Switchboard's contracts for no shared rule | Either host needing a different implementation of a capability, or the two services' capability contracts converging |
 | How the storage change cuts over | A hard replacement: a new Durable Object class, the old one deleted, the approval signing keys rotated (the Worker's and the Node hosts' standalone HMAC credentials alike), and each workspace's members re-added through the existing management route before traffic resumes | Reading the old key-value rows into the new tables at first start | Only test deployments hold state (identity Program Design); rotation makes every old token fail verification, which satisfies R9 without keeping key-value code alive; re-adding members keeps the workspace usable, so a refusal after cutover means what it should | A production deployment existing before cutover |
 | Membership during this work | Store version 1 keeps today's membership and removal-intent records as tables; the identity cutover's version 2 drops them | Ship only the identity-target tables, with the identity cutover in the same release | Keeps the Switchboard deployable after this work without waiting for codex-router | The owner choosing one combined Switchboard cutover |
-
-## Where each thing lives
-
+</script></ex-markdown>
+<h2 id="program-design--where-each-thing-lives">Where each thing lives</h2>
+<ex-markdown id="program-design--where-each-thing-lives-text"><script type="text/markdown">
 | E | Semantic owner | Package or module home | Schema/type home | Shape at each boundary | Disposition | Convention |
 |---|---|---|---|---|---|---|
 | E1 Switchboard core | the core composition roots `createHostedMcpProxy` and `createStandaloneToolPortalService` | `tool-access`, `tool-engine`, `tool-host-core` (modified) | the packages' public indexes | the host calls one composition root per server kind with `PortalPlatform` and its server configuration | derived | Zod at boundaries; discriminated unions (`AGENTS.md:415–419`) |
@@ -102,9 +122,9 @@ flowchart LR
   WS -.->|schema home| SCH["workspace-store-schema.ts (new)"]
   PP -.->|type home| PPT["tool-host-core/platform-capabilities/models/platform-capabilities.ts (new)"]
 ```
-
-## Components and who owns what
-
+</script></ex-markdown>
+<h2 id="program-design--components-and-who-owns-what">Components and who owns what</h2>
+<ex-markdown id="program-design--components-and-who-owns-what-text"><script type="text/markdown">
 | Component | Owns | Home | Consumed by | Changes when |
 |---|---|---|---|---|
 | **Hosted MCP proxy** | every rule on the MCP proxy way in: caller check, workspace boundary, persona narrowing, `direct`/`indirect`, search/describe, dispatch, approval checks, limits, projection, redaction, the analytics data point | `tool-host-core/src/hosted-mcp-proxy` (modified) | both hosts | an MCP proxy rule changes |
@@ -137,9 +157,9 @@ flowchart LR
 | core → `Date.now`, no-argument `new Date()` or `Date()`, `crypto`, `setTimeout`, `setInterval`, `AbortSignal.timeout`, `performance`, `Math.random` | the guard's library set: these names don't exist in it, so each use is a compile error |
 | host → a rule listed under the hosted proxy or standalone service | the conformance suite: identical outcomes on both hosts, apart from host-supplied limits (V1) |
 | any module other than `WorkspaceStore` writing a store table | the store's tables are not exported; only `WorkspaceStore` operations are |
-
-### The type-check guard
-
+</script></ex-markdown>
+<h3 id="program-design--the-type-check-guard">The type-check guard</h3>
+<ex-markdown id="program-design--the-type-check-guard-text"><script type="text/markdown">
 The guard is one `tsconfig.portable.json` per core package (`tool-access`, `tool-engine`, `tool-host-core`), run by the existing `typecheck` step. An experiment against the pinned dependencies showed it works (`c-drizzle-drivers/experiment-2/report-2.md`):
 
 - **`noLib: true`, `types: []`.** The program sees only the libraries listed next.
@@ -155,9 +175,9 @@ The guard is one `tsconfig.portable.json` per core package (`tool-access`, `tool
   The mapping is part of the approved guard's configuration, not a new gate.
 
 What the guard cannot catch: a deliberate cast or `any`, `eval`, and effects inside a dependency at runtime. The conformance and determinism observations cover those behaviourally.
-
-## Platform capabilities: the one list
-
+</script></ex-markdown>
+<h2 id="program-design--platform-capabilities-the-one-list">Platform capabilities: the one list</h2>
+<ex-markdown id="program-design--platform-capabilities-the-one-list-text"><script type="text/markdown">
 Every capability is required; no field is optional and no core code supplies a default. Values crossing this boundary are branded so a raw `number` or `string` cannot stand in for them.
 
 ```ts
@@ -269,11 +289,10 @@ The core reads the token's protected header (pure base64url and JSON), picks the
 | `options.now ?? Date.now` in the agent catalog cache, and the omitted `now` at `workspace-engine.ts:157` and `node-host-composition.ts:203` | `platform.clock` passed explicitly |
 
 Secrets stay random secret material: signing keys and token entropy are not identifiers and are not UUIDs (Specification R12).
-
-## The workspace store
-
-### Operations and results
-
+</script></ex-markdown>
+<h2 id="program-design--the-workspace-store">The workspace store</h2>
+<h3 id="program-design--operations-and-results">Operations and results</h3>
+<ex-markdown id="program-design--operations-and-results-text"><script type="text/markdown">
 The core owns this interface and its only implementation. Every result is a closed union; a storage failure is its own variant, never a business outcome. The approval operations (`presentProxyToken`, `reserveBatchApproval`, `armBatchApproval`, `proveBatchNotDispatched`) and their result types form the approval-use port in `tool-engine`, because the gateway and the standalone batch approval consume them there. `WorkspaceStore` in `tool-host-core` extends that port with the membership and removal operations.
 
 ```ts
@@ -435,9 +454,9 @@ export interface WorkspaceStoreLimits {
 `WorkspaceStoreLimits` carries each cap as a tagged measure, `{ kind: 'utf8-json-bytes'; bytes }` or `{ kind: 'entries'; count }`, so a host supplies today's measure, not a converted one. The sum or count is taken inside the same transaction as the insert, after expired rows are pruned, through the query builder, so two concurrent presentations cannot both pass a full cap. A presentation over the cap answers `saturated`, as `replay-cache-full` does today. The byte arithmetic equals today's `JSON.stringify(retained)` length for the same entries; a property test compares the two over generated keys and expiries.
 
 Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile, { schema })` (`better-sqlite3`) produce a `WorkspaceStoreDatabase` without a cast. This is settled: the C experiment observed the `'sync'` type on both drivers (`c-drizzle-drivers/experiment-2/report-2.md` §4).
-
-### The tables (for the owner's approval, RD1)
-
+</script></ex-markdown>
+<h3 id="program-design--the-tables-for-the-owner-s-approval-rd1">The tables (for the owner's approval, RD1)</h3>
+<ex-markdown id="program-design--the-tables-for-the-owner-s-approval-rd1-text"><script type="text/markdown">
 **Store version 1** (this work):
 
 | Table | Columns | Keys and checks | Holds |
@@ -458,9 +477,9 @@ Both `drizzle(ctx.storage, { schema })` (Durable Object) and `drizzle(sqliteFile
 | add `removal_notice` | `notice_id` text primary key · `subject` text not null (a `RemovalSubjectKey`) · `removal_revision` integer not null · `received_at_ms` integer not null; index on `received_at_ms` |
 
 No column has a database default: every timestamp is written from `PortalClock` and every identifier from `PortalIdSource`, so no wall clock enters storage. Rows are parsed with Zod when read; a row that does not parse fails closed as `store-unavailable` with the field named in the log.
-
-### How each decision stays atomic
-
+</script></ex-markdown>
+<h3 id="program-design--how-each-decision-stays-atomic">How each decision stays atomic</h3>
+<ex-markdown id="program-design--how-each-decision-stays-atomic-text"><script type="text/markdown">
 Each operation runs as one synchronous Drizzle transaction on the store's database. Inside it, queries use `.get()`, `.all()` and `.run()`; nothing inside awaits. Every operation starts the same way: read `store_meta`, compute security time `now = max(clock.now(), security_time_ms)`, and write `now` back.
 
 | Operation | Inside one transaction, after reading security time `now` | Why it holds |
@@ -478,9 +497,9 @@ Each operation runs as one synchronous Drizzle transaction on the store's databa
 
 - **Durable Object:** Drizzle's `durable-sqlite` transaction runs inside `ctx.storage.transactionSync`, and the object processes one call at a time.
 - **Node:** `better-sqlite3` transactions run with `behavior: 'immediate'`, so a second process using the same file waits for the write lock. The file is opened as `oauth-broker` opens its catalog (`oauth-credential-catalog.ts:38`): WAL, `foreign_keys = ON`, `synchronous = FULL`, a busy timeout.
-
-### Where the database lives and how it is migrated
-
+</script></ex-markdown>
+<h3 id="program-design--where-the-database-lives-and-how-it-is-migrated">Where the database lives and how it is migrated</h3>
+<ex-markdown id="program-design--where-the-database-lives-and-how-it-is-migrated-text"><script type="text/markdown">
 | | Cloudflare | Node |
 |---|---|---|
 | Database | `WorkspaceStoreObject`, a new Durable Object class, one per workspace (`idFromName(workspaceId)`), SQLite-backed | `<stateDirectory>/tool-portal-<workspaceId>.sqlite`, one per configured workspace, bound by `store_meta` |
@@ -491,11 +510,10 @@ Each operation runs as one synchronous Drizzle transaction on the store's databa
 | Configuration | `wrangler` migration tag `v3`: `new_sqlite_classes: ["WorkspaceStoreObject"]`, `deleted_classes: ["WorkspaceAuthority"]` | Node host configuration gains a required `stateDirectory` (RD6) |
 
 `drizzle-kit` is configured once, in the core: `dialect: 'sqlite'`, `driver: 'durable-sqlite'`, `schema: './src/workspace-store/workspace-store-schema.ts'`, `out: './drizzle'`. That one command writes both the SQL files the Node migrator reads and the `migrations.js` bundle the Durable Object imports. `drizzle-kit` 0.31.10 is a new development dependency of `tool-host-core`; the owner approves it with the schema (RD1).
-
-## How a call works now
-
-### An MCP proxy call on Cloudflare
-
+</script></ex-markdown>
+<h2 id="program-design--how-a-call-works-now">How a call works now</h2>
+<h3 id="program-design--an-mcp-proxy-call-on-cloudflare">An MCP proxy call on Cloudflare</h3>
+<ex-markdown id="program-design--an-mcp-proxy-call-on-cloudflare-text"><script type="text/markdown">
 ```mermaid
 sequenceDiagram
   participant C as Client
@@ -531,9 +549,9 @@ sequenceDiagram
 | object → storage: Drizzle transaction on Durable Object SQLite | **added** | tables above |
 | token verification → `jose` inside `tool-access` | **changed**: `platform.crypto.verifyJwsSignature`, claims in the core | `SignatureVerification` |
 | one-use refused when the use cannot be recorded (Switchboard check 13) | **intentionally unchanged** | `store-unavailable` refuses the call; nothing runs |
-
-### An MCP proxy call on Node
-
+</script></ex-markdown>
+<h3 id="program-design--an-mcp-proxy-call-on-node">An MCP proxy call on Node</h3>
+<ex-markdown id="program-design--an-mcp-proxy-call-on-node-text"><script type="text/markdown">
 Today the Node host builds its own gateway (`node-host-composition.ts:51–295`). After the change it calls the same `createHostedMcpProxy` with its own `PortalPlatform` and a `WorkspaceStore` opened on that workspace's `tool-portal-<workspaceId>.sqlite`. The sequence is the one above, with the RPC hop replaced by an in-process call.
 
 | Edge | Status |
@@ -543,9 +561,9 @@ Today the Node host builds its own gateway (`node-host-composition.ts:51–295`)
 | Node operation store `Map` (`node-operation-store.ts:53`) | **removed**: the proxy's request-local operation entries, as on Cloudflare (`request-operation-entries.ts:8`) |
 | Node stdio upstream runtime copy (`stdio-upstream-runtime.ts`) | **removed**: the engine's upstream runtime with a Node stdio transport from the host |
 | configured bearer credentials, listener rotation and drain (`node-authenticated-http-server.ts`) | **intentionally unchanged** in this work: the credential kinds each way in accepts are defined by the Switchboard and identity designs; the bearer check's decision logic moves into the core's caller check, and the listener keeps only rotation and drain mechanics |
-
-### A standalone batch approval on Node
-
+</script></ex-markdown>
+<h3 id="program-design--a-standalone-batch-approval-on-node">A standalone batch approval on Node</h3>
+<ex-markdown id="program-design--a-standalone-batch-approval-on-node-text"><script type="text/markdown">
 ```mermaid
 sequenceDiagram
   participant C as Portal SDK client
@@ -570,9 +588,9 @@ sequenceDiagram
 | stale service generation refused (Switchboard check 6) | **intentionally unchanged** |
 | `localeCompare` key sort (`standalone-dispatch-identity.ts:19`) | **changed**: code-unit order (R24) |
 | batch approval logic in `tool-host-node` | **moved** into the standalone service in the core |
-
-## Approval-use lifecycle
-
+</script></ex-markdown>
+<h2 id="program-design--approval-use-lifecycle">Approval-use lifecycle</h2>
+<ex-markdown id="program-design--approval-use-lifecycle-text"><script type="text/markdown">
 ```mermaid
 stateDiagram-v2
   [*] --> used: proxy token, first presentation
@@ -596,9 +614,9 @@ stateDiagram-v2
 | any | its expiry passes the store's security time | pruned on the next write in that workspace |
 | none (never seen, or pruned) | a presentation whose expiry is at or before security time | `expired`; no row is written and nothing runs |
 | reserved | `armBatchApproval` after expiry | `proven-not-dispatched`; answers `not-dispatched` (`expired-before-arming`) |
-
-## When things fail
-
+</script></ex-markdown>
+<h2 id="program-design--when-things-fail">When things fail</h2>
+<ex-markdown id="program-design--when-things-fail-text"><script type="text/markdown">
 | Failure | Detected by | What happens | Recovery owner |
 |---|---|---|---|
 | The database errors during a store operation | the store's transaction throws | the operation returns `store-unavailable`; the proxy refuses the call before dispatch, as when a use cannot be recorded today | the host's operator; no retry inside the store |
@@ -615,9 +633,9 @@ stateDiagram-v2
 | A token names a key not in the cached set | the issuer key cache | one refetch; still absent → refused as an unknown key, with no further refetch for that set until its 5 minutes pass | the store of keys is the issuer's |
 | A removal notice names a subject in a shape the token does not use | the receiver's `deriveRemovalSubjectKey` | cannot happen by construction: the notice carries the token's session shape (identity K2); a notice that fails to parse is refused before any mark is written, so central's outbox resends it | the sender (Fleet central) |
 | A store row fails to parse | Zod at read | `store-unavailable`, field named in the log; never treated as "no record" | the host's operator |
-
-## The defects and their owners
-
+</script></ex-markdown>
+<h2 id="program-design--the-defects-and-their-owners">The defects and their owners</h2>
+<ex-markdown id="program-design--the-defects-and-their-owners-text"><script type="text/markdown">
 | R | Owner | Change |
 |---|---|---|
 | R20 Google timeout kind | `tool-access` access assessor (`access-assessor.ts:166–172`) | choose the Google command schema by the configured kind before parsing, so a quick command's schema has no `timeoutMs` |
@@ -627,9 +645,9 @@ stateDiagram-v2
 | R24 canonical order | the core's one canonical encoder (the engine's `canonicalDispatchJson`) | sort keys by code-unit order; the Node copy is deleted |
 | R25 transport extra | Switchboard SDK TypeScript transport (`node-tool-portal-mcp-transport.ts:123`), in agent-vm's `agent-portal-sdk`, which stays in agent-vm and is published (OD13) | forward every callback argument |
 | R26 large requests | the hosted proxy's body reading (new `request-body` module in `tool-host-core`), with a host-supplied body source | see "Large requests" below |
-
-### Large requests (R26)
-
+</script></ex-markdown>
+<h3 id="program-design--large-requests-r26">Large requests (R26)</h3>
+<ex-markdown id="program-design--large-requests-r26-text"><script type="text/markdown">
 **What the evidence shows.** The MCP SDK's handler (`@modelcontextprotocol/server` 2.3.1, `createMcpHandler.ts:486–518, 958`) clones every POST, reads it as complete text up to `maxRequestBodySize`, and answers an overrun with 413. The Switchboard sets 4 MiB (`hosted-mcp-proxy.ts:97`). Nothing in that path returns 502, and the Worker's own catch returns 503 (`tool-host-cloudflare/src/index.ts:77–79`). So the deployed 502 came from somewhere the deployed check never recorded: it keeps only the status and drops headers and body (`deployed-portal-client.ts:96–139`). The handler accepts a `parsedBody` option that skips its own body read, cap and clone (`createMcpHandler.ts:124`). On Cloudflare the account's request ceiling is 100 MB on Free and Pro plans, an isolate has 128 MB shared by concurrent requests, and a Worker's `/tmp` is memory, not disk.
 
 **The design.**
@@ -647,18 +665,18 @@ stateDiagram-v2
 4. **First, decide the 502.** Before building, one correlated deployed observation is taken on the private test Worker: the raw response with status, headers, body and CF-Ray, plus the Worker invocation outcome from `wrangler tail`, for a request just over 4 MiB. If it shows the 502 comes from outside the Worker, step 1 does not fix it, and the cause becomes its own finding.
 
 **The owner's tradeoff (RD7).** Streaming removes the raw-text copy and the clone. It does not bound memory. The parsed request is still one whole object, and validation, canonical fingerprinting and upstream serialization each hold another whole-value form of it. The six-call limit is per batch; nothing limits the total across concurrent requests. So with no Switchboard cap, one authenticated member's very large request, or several moderate ones at once, can exhaust an isolate. That ends every other call running there, including calls from other workspaces. A call that had already armed an approval then ends `ambiguous` for its client. The durable one-use records stay correct (security finding SEC-03). Avoiding this without a cap would need a bounded-memory path end to end: streamed or spooled values through validation, fingerprinting and dispatch, plus admission and backpressure across requests. On Workers that may mean a separate bulk runtime. That is a much larger design. Incremental parsing also needs a streaming JSON parser, which is a new dependency. The options are in the Requirements, RD7. Until the owner decides, R26's promise carries this limit in its own words.
-
-## Clean build and gates
-
+</script></ex-markdown>
+<h2 id="program-design--clean-build-and-gates">Clean build and gates</h2>
+<ex-markdown id="program-design--clean-build-and-gates-text"><script type="text/markdown">
 | Item | Design |
 |---|---|
 | MCP SDK generations | In `agent-collaboration` (after the move, OD13), product code uses only the 2026-07-28 SDK (`@modelcontextprotocol/{core,server,client,node}`); the clean-build work makes and checks that there. In agent-vm, the 1.x SDK leaves product code when the old `@agent-vm/mcp-portal` and `@agent-vm/tool-portal` are deleted (Switchboard check 12) and `gateway-runtime` drops its 1.x runtime dependency. That agent-vm cleanup belongs to #255's parked agent-vm work and is decided by OD-R4 in the delivery orchestration; until then R17 holds in `agent-collaboration` and stays open, named, in agent-vm. Tests that must speak to a 2025-era client or server use one fixture module, per RD3. |
 | esbuild, jose, vitest | One version each across the `agent-collaboration` workspace: esbuild 0.27.7 (the version master already uses), jose 6.2.12 (Better Auth's) in the web-platform adapters and auth only, vitest 4.1.5 with the same range everywhere. |
 | Miniflare | No direct alpha pin. Hosts' tests use the Miniflare that the chosen `wrangler` release depends on; if every current `wrangler` release depends on an alpha, that is recorded as an owner decision rather than silently kept. |
 | Gates | Two homes. **In agent-vm**, `scripts/run-check-gate.ts`, `vitest.config.ts`, the root `package.json` scripts and `.github/workflows/` return to `38569fca` (an agent-vm commit, kept as the reference), and the 26 scripts #262 added go (RD5) and are not moved; this lands before the move copies the packages (OD-R1). **In `agent-collaboration`**, the move carries the moved packages' checks unchanged: the same commands those packages ran under agent-vm's gate at `38569fca`. The one added gate is the core type-check guard: a `tsconfig.portable.json` per core package, run by the `typecheck` step. |
-
-## Security and the other qualities
-
+</script></ex-markdown>
+<h2 id="program-design--security-and-the-other-qualities">Security and the other qualities</h2>
+<ex-markdown id="program-design--security-and-the-other-qualities-text"><script type="text/markdown">
 | Quality | Owner | Mechanism | Fails how | Observed at |
 |---|---|---|---|---|
 | One-use approvals | `WorkspaceStore` | transactional first-use insert; expiry admitted against the store's nondecreasing security time; durable rows | refuse when the use cannot be recorded; `expired` at or after expiry | concurrent-presentation, held-past-expiry, clock-offset and restart seams (V7, V8) |
@@ -670,9 +688,9 @@ stateDiagram-v2
 | Privacy | `WorkspaceStore` | stores token ids, principals, fingerprints and timestamps only | — | schema review |
 | Reliability | each host | fail closed on store or migration failure | listed above | V6, V7 |
 | Observability | the core's log capability | each store failure logs a bounded reason and table name, never row contents | — | log review in V1 |
-
-## How each obligation is realized and observed
-
+</script></ex-markdown>
+<h2 id="program-design--how-each-obligation-is-realized-and-observed">How each obligation is realized and observed</h2>
+<ex-markdown id="program-design--how-each-obligation-is-realized-and-observed-text"><script type="text/markdown">
 | U | R | E | owner | interface | shape and home | state | failure | proof |
 |---|---|---|---|---|---|---|---|---|
 | U1 | R1 every rule in the core: same outcomes on both hosts, apart from host-supplied limit values | E1 E2 | hosted MCP proxy; standalone service | `createHostedMcpProxy`, `createStandaloneToolPortalService`; `HostedProxyLimits` supplied by each host | `PortalPlatform`, `HostedMcpProxy` in `tool-host-core`; the Worker-only limit values in `tool-host-cloudflare/src/worker-limits.ts`; the shared 4 MiB upstream-response limit in `tool-engine` on both hosts | none: rules are stateless apart from the store | as each rule today | conformance suite run against the Cloudflare host in workerd and the Node host over HTTP, with limit scenarios expecting each host's own answer; deployed row 15 limit checks rerun after A7 and A8 |
@@ -701,9 +719,9 @@ stateDiagram-v2
 | U13 | R24 canonical order | E12 | the canonical encoder | canonical bytes | `canonicalDispatchJson` | — | — | Hegel: equal data under shuffled keys and locales gives equal bytes |
 | U13 | R25 transport extra | E12 | Switchboard SDK transport | `onmessage` wrapper | `node-tool-portal-mcp-transport.ts` | — | — | the wrapped client receives the second argument |
 | U14 | R26 large requests streamed | E12 | the core's `request-body` module; the host's body source | `readJsonRpcBody(source) → parsed message \| malformed`; SDK `fetch(request, { parsedBody })` | `tool-host-core/src/request-body` (new) | Node: a temporary spill file per request, removed at the end | malformed body → today's protocol error, nothing runs; platform ceiling → Cloudflare's 413 | deployed over-budget call on the private Worker with the raw exchange kept; Node spill run with the temporary file observed and removed |
-
-## Open evidence and unresolved decisions
-
+</script></ex-markdown>
+<h2 id="program-design--open-evidence-and-unresolved-decisions">Open evidence and unresolved decisions</h2>
+<ex-markdown id="program-design--open-evidence-and-unresolved-decisions-text"><script type="text/markdown">
 - **R26 large requests:** the design is above; the deployed 502's cause is decided by one correlated observation before building, and the remaining bound is the owner's choice (RD7).
 - **Settled by experiment:**
   - the guard, including the custom library that removes no-argument `Date.now()` (TS2339 observed, `report-2.md` §2) and the Drizzle driver-subpath allowlist (`experiment-3-driver-subpaths/driver-subpath-probe.log`);
@@ -717,3 +735,8 @@ stateDiagram-v2
   - RD5: the added scripts;
   - RD6: the Node `stateDirectory`, supplied by each deployment's configuration; for agent-vm, by its effective-config writer (`packages/agent-vm/src/gateway/mcp-portal-effective-config.ts`), an agent-vm consumer outside the moved packages;
   - RD7: large requests with no Switchboard cap.
+</script></ex-markdown>
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

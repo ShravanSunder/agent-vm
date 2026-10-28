@@ -6,7 +6,7 @@ This design set has four documents:
 
 - **Requirements:** this file.
 - **[Specification](specification.md)**
-- **[Program Design](program-design.md)**
+- **[Program Design](program-design.html)**
 - **[Verification Design](verification-design.md)**
 
 [index.md](index.md) leads agents through them; [index.html](index.html) is the page for people.
@@ -136,7 +136,7 @@ The [Switchboard design](../2026-10-14-portable-tool-portal-hosts/requirements.m
 
 | ID | Decision | Recommendation (not decided) |
 |---|---|---|
-| RD1 | The storage schema and migrations (U4). | The tables are drawn in the [Program Design](program-design.md#the-workspace-store); nothing is built until you approve them. |
+| RD1 | The storage schema and migrations (U4). | The tables are drawn in the [Program Design](program-design.html#program-design--the-workspace-store); nothing is built until you approve them. |
 | RD2 | What happens to #262: merge it as it is and fix on master, or hold it and fix on its branch. | Owned by the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) set. |
 | RD3 | Whether the old MCP SDK may stay as a test-only dependency, used solely to stand in for 2025-era clients and servers in compatibility tests. | Allow it in one test-fixture module only, never in product code; the alternative is hand-written protocol fixtures. |
 | RD4 | Whether an end-to-end test may keep a timeout that only fails a hung external process or request (allowed by `AGENTS.md:178`), given "no wall clock time ever". | Allow it only as a hang guard that can fail a run and can never make it pass; every time-dependent assertion uses a controlled clock. |

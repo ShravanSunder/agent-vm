@@ -1,6 +1,6 @@
 # Switchboard remediation: Verification Design
 
-How each need in the [Requirements](requirements.md) will be shown to hold. Each row names what will be done and seen, judged against the [Specification](specification.md), at a seam the [Program Design](program-design.md) exposes. This is a plan: nothing in it has been run or observed yet.
+How each need in the [Requirements](requirements.md) will be shown to hold. Each row names what will be done and seen, judged against the [Specification](specification.md), at a seam the [Program Design](program-design.html) exposes. This is a plan: nothing in it has been run or observed yet.
 
 **Where the proof runs:** the delivered commit of this work, on:
 

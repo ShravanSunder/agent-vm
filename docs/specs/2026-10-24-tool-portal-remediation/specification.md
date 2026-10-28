@@ -1,6 +1,6 @@
 # Switchboard remediation: Specification
 
-What must be observably true when the Switchboard code is fixed. Each obligation traces to a need in the [Requirements](requirements.md). How the code realizes it is the [Program Design](program-design.md); how each one is proven is the [Verification Design](verification-design.md).
+What must be observably true when the Switchboard code is fixed. Each obligation traces to a need in the [Requirements](requirements.md). How the code realizes it is the [Program Design](program-design.html); how each one is proven is the [Verification Design](verification-design.md).
 
 **Reference for "same behaviour":** the Switchboard's promises to its callers are the [Switchboard Specification](../2026-10-14-portable-tool-portal-hosts/2026-10-14-portable-tool-portal-hosts.md) checks 1–17, with the identity changes in the [agent identity Specification](../2026-10-24-agent-identity/specification.md). This set must not change any of them, except where an obligation below names the change. The code reference is PR #262 at `2dfea38e`.
 
@@ -231,6 +231,6 @@ A request whose body is larger than the Worker's in-memory budget is processed b
 ## Not specified here
 
 - The Switchboard's own promises (Switchboard Specification checks 1–17) and the identity obligations: unchanged, owned by those documents.
-- How the workspace store's records are laid out in tables: the [Program Design](program-design.md), for the owner's approval (RD1).
-- The sign-in service's storage: owned by the [agent identity](../2026-10-24-agent-identity/program-design.html) and [people sign-in](../2026-10-20-people-sign-in/program-design.md) designs.
+- How the workspace store's records are laid out in tables: the [Program Design](program-design.html), for the owner's approval (RD1).
+- The sign-in service's storage: owned by the [agent identity](../2026-10-24-agent-identity/program-design.html) and [people sign-in](../2026-10-20-people-sign-in/program-design.html) designs.
 - The order of work across repositories, and what happens to #262: the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) set.
