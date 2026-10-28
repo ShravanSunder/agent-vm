@@ -1,9 +1,28 @@
-# Delivery orchestration: Program Design
-
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delivery orchestration: Program Design</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
+<a href="index.html">Delivery orchestration</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Tool Portal decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="delivery-orchestration-program-design" revision="2026-10-28.1">
+<p id="set-pages"><a href="index.html">Delivery orchestration</a>: <a href="requirements.html">Requirements</a> · <a href="specification.html">Specification</a> · <strong>Program Design</strong> · <a href="verification-design.html">Verification Design</a></p>
+<h1 id="program-design--delivery-orchestration-program-design">Delivery orchestration: Program Design</h1>
+<ex-markdown id="program-design--delivery-orchestration-program-design-text"><script type="text/markdown">
 The order of work across agent-vm and codex-router. It names every workstream and slice, where each waits on the other, the contracts that cross the repositories, the joint cuts, their proofs, and who owns each gate. The [Specification](specification.md) says what the order must satisfy (R1–R9); the [Verification Design](verification-design.md) says how that is checked.
-
-## The order in one picture
-
+</script></ex-markdown>
+<h2 id="program-design--the-order-in-one-picture">The order in one picture</h2>
+<ex-markdown id="program-design--the-order-in-one-picture-text"><script type="text/markdown">
 ```mermaid
 flowchart TB
   APPROVE["You approve the designs<br/>and the schemas (RD1, OD4)"]
@@ -11,7 +30,7 @@ flowchart TB
   R["R Tool Portal remediation<br/>A1 to A8"]
   D1["D1 Start a session on another machine<br/>with its building blocks<br/>JC1 → PROD2"]
   D2["D2 Organizations: people, bots,<br/>what machines see"]
-  D3["D3 Sessions and bots use tools"]
+  D3["D3 Sessions and bots use Tool Portal tools"]
   D4["D4 Collaboration and bot messages"]
   D5["D5 Removal stops the next call"]
   D6["D6 Everything else live<br/>JC2 → PROD4"]
@@ -31,33 +50,33 @@ flowchart TB
   D7 --> DONE
 ```
 
-**The shape:** the work is cut into deliverables, each something you can see working end to end, and each built from slices in the workstreams below (one PR per slice). The Tool Portal remediation (R, slices A1–A8) needs nothing from codex-router, so it runs as soon as the designs are approved. codex-router ships its release (F0) first. Then D1, starting a session on another machine, comes first, carrying its building blocks: your sign-in and the organization core, machine login, and session registration. D1 goes live on the private stack at the first joint cut (JC1) and then in production at your switch (PROD2), so remote start works on your real machines before anything else. D2 adds people, bots, roles and the filtered view; D3 tools (which also needs R); D4 collaboration and D5 removal side by side. D6 takes D2–D5 live together at the second joint cut (JC2) and then in production (PROD4), with no machine logging in again. Cloudflare Access comes off last (D7), because every rule must hold first (identity R43). Between PROD2 and PROD4, inside the one organization, today's behavior continues for what D1 doesn't change, and the Tool Portal keeps today's tokens; that window is the owner's open question. The identity [delivery plan](../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.md) gives each deliverable's slices and proofs.
+**The shape:** the work is cut into deliverables, each something you can see working end to end, and each built from slices in the workstreams below (one PR per slice). The Tool Portal remediation (R, slices A1–A8) needs nothing from codex-router, so it runs as soon as the designs are approved. codex-router ships its release (F0) first. Then D1, starting a session on another machine, comes first, carrying its building blocks: your sign-in and the organization core, machine login, and session registration. D1 goes live on the private stack at the first joint cut (JC1) and then in production at your switch (PROD2), so remote start works on your real machines before anything else. D2 adds people, bots, roles and the filtered view; D3 Tool Portal tools (which also needs R); D4 collaboration and D5 removal side by side. D6 takes D2–D5 live together at the second joint cut (JC2) and then in production (PROD4), with no machine logging in again. Cloudflare Access comes off last (D7), because every rule must hold first (identity R43). Between PROD2 and PROD4, inside the one organization, today's behavior continues for what D1 doesn't change, and the Tool Portal keeps today's tokens; that window is the owner's open question. The identity [delivery plan](../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.md) gives each deliverable's slices and proofs.
 
 | Deliverable | Slices, by workstream | Waits on |
 |---|---|---|
 | R Tool Portal remediation | A (agent-vm): A1–A8 | design approval; RD1 |
 | D1 Start a session on another machine | B (sign-in): B1, B3, B4a, B2, B5 · F (codex-router): F1, F2a, F2b, F3a, F10, F11, F4a, F15, F14, F8a, F16; F12 off the first-use path · J: JC1 · F with you: PROD2 | design approval; OD4; F0 |
 | D2 Organizations: people, bots, what machines see | F: F2c, F2v | D1 |
-| D3 Sessions and bots use tools | B: B4b · F: F3b, F4f, F8b · P (Portal identity): P1a | D2; R (A8) |
+| D3 Sessions and bots use Tool Portal tools | B: B4b · F: F3b, F4f, F8b · P (Portal identity): P1a | D2; R (A8) |
 | D4 Collaboration and bot messages | F: F6, F7 | D3 |
 | D5 Removal stops the next call | F: F5 · P: P1b | D3 |
 | D6 Everything else live | J: JC2 · F with you: PROD4 | D2–D5 |
 | D7 Off Cloudflare Access | J: JA1 · F with you: PROD3 | D6 |
 | DONE | F9, F12, and every deliverable proven and live | D7 |
-
-## Workstreams
-
+</script></ex-markdown>
+<h2 id="program-design--workstreams">Workstreams</h2>
+<ex-markdown id="program-design--workstreams-text"><script type="text/markdown">
 | Workstream | Repository | Lead | Governing design | Starts when |
 |---|---|---|---|---|
 | **A** Tool Portal remediation | agent-vm | Tool Portal Lead | [Tool Portal remediation](../2026-10-24-tool-portal-remediation/program-design.md) | the owner approves the designs; A2 also waits on RD1 |
-| **B** Sign-in revision | agent-vm | Tool Portal Lead | [people sign-in](../2026-10-20-people-sign-in/program-design.md) and [agent identity](../2026-10-24-agent-identity/program-design.md) (sign-in parts) | the owner approves the designs and the sign-in schema |
+| **B** Sign-in revision | agent-vm | Tool Portal Lead | [people sign-in](../2026-10-20-people-sign-in/program-design.md) and [agent identity](../2026-10-24-agent-identity/program-design.html) (sign-in parts) | the owner approves the designs and the sign-in schema |
 | **P** Portal identity | agent-vm | Tool Portal Lead | agent identity (Tool Portal parts) on the remediated store | A8 has cut over, and B4b has produced K1 |
 | **F0** Fleet release | codex-router | Fleet Lead | the Fleet release (unchanged by this design) | now |
 | **F** Fleet identity | codex-router | Fleet Lead | agent identity (Fleet central and Router parts) | F0 has shipped (R3) and the owner approves the designs |
 | **J** Joint | both | Tool Portal Lead coordinates; each Lead runs its own side | all three | JC1: D1's slices have merged; JC2: D3–D6's slices have merged |
-
-## Slices and dependency points
-
+</script></ex-markdown>
+<h2 id="program-design--slices-and-dependency-points">Slices and dependency points</h2>
+<ex-markdown id="program-design--slices-and-dependency-points-text"><script type="text/markdown">
 Every slice merges as one pull request. "Waits on" lists its dependency points; each one points earlier in the order, and there is no cycle.
 
 | Slice | Repository | Realizes | Waits on | Gates |
@@ -105,7 +124,7 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | PROD2 production switch (D1) | codex-router, with you | identity R43 step 2 in production: D1's changes, machine tokens only, the old login's code and table removed, the first organization created for you, your machines on the new Router build and logged in again; the production cut inventory names the sign-in deployment serving production first | JC1; your go | each machine connects with machine tokens; the old credential refused; sessions and allowances still attached; a session on your Mac starts a helper on Sunclaw |
 | PROD3 production without Access (D7) | codex-router, with you | identity R43 step 3 in production: the Access application and the Routers' Access tokens removed, once every rule is live | PROD4 holding for a period you choose; JA1; your go | every machine still connects; an unauthenticated request changes nothing |
 | JC2 second joint cut (D6) | both | D2–D5 live together on the private stack: K1, K2, K3's grant half and K4 go live whole; the token claims and the Portal's check together; today's agent path removed; a cut inventory comes first | B4b, P1a, P1b, F2c, F2v, F3b, F4f, F5, F6, F7 merged; JC1; JP1–JP3 passing on the private stack | JP1–JP3; SO5 |
-| PROD4 production update (D6) | codex-router, with you | production gets D2–D5's changes on every component the production cut inventory names, so each contract goes live whole there too; no machine logs in again | JC2; PROD2; your go | a session's tool call works through its token; a removal stops the next call |
+| PROD4 production update (D6) | codex-router, with you | production gets D2–D5's changes on every component the production cut inventory names, so each contract goes live whole there too; no machine logs in again | JC2; PROD2; your go | a session's Tool Portal call works through its token; a removal stops the next call |
 | DONE delivery complete | both | every governed outcome delivered and live, not only the cuts: identity U7 (bot messaging), U16 (both hosts, including the sign-in Node host), U33–U35 (machine login on macOS and Linux), U39 (starting a session on another machine), remediation U1–U15 | A8, PROD3 (and through it PROD4, JA1, JC2, PROD2, JC1), B2, F7, F8b, F9, F12, F14, F16, P1b | identity SO1 (native sessions and bot messaging), SO4 on both central hosts, SO8, SO9 (macOS, and the Linux tests in codex-router's existing CI job), SO11, and the sign-in suite on the Node host, against the deployed builds; the production observations at PROD2, PROD4 and PROD3; a slice not merged or a production step not done keeps DONE open |
 
 **Why A runs ahead of P.** Store version 1 keeps today's membership records, so the remediated Tool Portal is deployable on its own (A8) without waiting for codex-router. P1a then moves the store to version 2 and switches the caller check to identity tokens. The cost is one extra migration, and the benefit is that A never blocks on F.
@@ -122,9 +141,9 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 5. **Resume.** Start the ordinary callers (the sessions, the bot and any held production cohort) only after every component's build identity reads back as the cut's build, and that cut's proofs have passed against exactly those builds.
 
 **If a deploy fails part-way, or any of the cut's proofs fails: admission stays stopped, and the stack is repaired forward.** The previous Tool Portal and issuer builds are not redeployed. Store version 2 has already dropped their tables and re-keyed approval state, and their approval and signing keys are retired, so an old build could not run correctly against the store it would find. Redeploying old code must also never reactivate old keys against a replay store that no longer holds their uses. The fix is a corrected build of the failed component, then steps 3–5 again. Nothing runs while the stack is mixed, not even the proof cohort: it starts only after every component reads back its intended cut build, and it is stopped before any repair of a failed proof. No caller observes a mixed state. The cost is that the private stack stays down until the fix lands; no rollback mechanism is built to avoid that.
-
-## Cross-repository contracts
-
+</script></ex-markdown>
+<h2 id="program-design--cross-repository-contracts">Cross-repository contracts</h2>
+<ex-markdown id="program-design--cross-repository-contracts-text"><script type="text/markdown">
 Each shape has one home, and its home generates the artifact the other side tests against; nothing is written by hand on both sides. F1 generates the schemas and structural fixtures for the Rust-owned contracts (K2–K4, K8, K9); K1, K5, K6, K7 and K10 keep their agent-vm homes, whose artifacts the table names. Either way, every consumer can build and test against the shape from the start. The check that the consumer parses the **real** producer's output runs in whichever of the producer's and consumer's slices merges second, and must pass before the contract's cut, so no slice waits on another's runtime output.
 
 | Contract | Home (producer) | Generated artifact | Consumer and its test | Goes live at |
@@ -146,9 +165,9 @@ Each shape has one home, and its home generates the artifact the other side test
 |---|---|---|---|
 | **Recommended** | The home commits its generated artifact with its source commit. The consumer keeps a copy pinned to that commit and refreshes it only by a deliberate commit. The consumer's existing test command parses the copy. | No network in tests; a change is a visible commit on both sides; no new gate | Someone has to refresh the copy, and a stale copy passes until refreshed (the contract's real-output check catches a mismatch before its cut) |
 | Alternative | The home publishes the artifact in a versioned package (npm for agent-vm, a crate for codex-router), and the consumer depends on a version | Versioned and discoverable | A Rust crate consuming a TypeScript-owned schema, or the reverse, needs packaging on both sides, and agent-vm's publishing isn't set up yet (#264) |
-
-## Joint proofs (the real path)
-
+</script></ex-markdown>
+<h2 id="program-design--joint-proofs-the-real-path">Joint proofs (the real path)</h2>
+<ex-markdown id="program-design--joint-proofs-the-real-path-text"><script type="text/markdown">
 All four run on the private test stack: the remediated Tool Portal Worker, the sign-in Worker, Fleet central on its Durable Object host, and a real Router with real harness sessions. JP4 runs at JC1, with SO8 and SO11 against the same stack; JP1–JP3 run at JC2. They also run against the Tool Portal's Node host and central's Tokio host where noted. No stand-in sits on the path a proof claims.
 
 | Proof | What is done | What must be seen | Runs on |
@@ -159,9 +178,9 @@ All four run on the private test stack: the remediated Tool Portal Worker, the s
 | JP4 a person's admin command | the owner signs in and sends an admin command | it applies with a live session; after sign-out the same command is refused | central with the real sign-in Worker |
 
 The row 14 real-issuer check deferred from the Tool Portal's deployed cycles is JP1 and JP3.
-
-## Gate owners
-
+</script></ex-markdown>
+<h2 id="program-design--gate-owners">Gate owners</h2>
+<ex-markdown id="program-design--gate-owners-text"><script type="text/markdown">
 | Gate | Definition owned by | Run by | Result read and accepted by |
 |---|---|---|---|
 | agent-vm `pnpm check` (plus the approved type-check guard) | the owner | each slice's Implementer | Tool Portal Lead |
@@ -175,9 +194,9 @@ The row 14 real-issuer check deferred from the Tool Portal's deployed cycles is 
 | JP1–JP4 | this design | both Leads' Verifiers, on the private stack | Tool Portal Lead, with the Fleet Lead's agreement on its side |
 
 No gate is added except the type-check guard; the producer-against-consumer contract tests run inside each repository's existing test commands.
-
-## What happens to #262 and #263
-
+</script></ex-markdown>
+<h2 id="program-design--what-happens-to-262-and-263">What happens to #262 and #263</h2>
+<ex-markdown id="program-design--what-happens-to-262-and-263-text"><script type="text/markdown">
 #262 (head `2dfea38e`) is the collapsed Tool Portal stack and already contains #263's sign-in issuer. Its auto-merge is paused, and #238–#247 are open beneath it. This is OD-R1, the owner's decision.
 
 | | Option | Gain | Cost | Risk |
@@ -188,18 +207,18 @@ No gate is added except the type-check guard; the producer-against-consumer cont
 | Alternative | Close #262 and rebuild from master, porting what holds up | The cleanest history | Redoing work that is mostly right (the engine, the rules, the Worker routing) | Weeks of rework |
 
 **If deferred:** A1, A4 and B1 can't start, because their base is undecided.
-
-## Parked work this touches
-
+</script></ex-markdown>
+<h2 id="program-design--parked-work-this-touches">Parked work this touches</h2>
+<ex-markdown id="program-design--parked-work-this-touches-text"><script type="text/markdown">
 - **#255 (S4c2, managed distribution) is parked by the owner.** It carries the deletion of `@agent-vm/mcp-portal` and `@agent-vm/tool-portal` (Tool Portal check 12), which is what removes the 1.x MCP SDK from product code (remediation R17). Until it is unparked, A6 removes the 1.x SDK from every new package and from `gateway-runtime`, and R17 stays partial for the two old packages. This is OD-R4.
 - **#33 (large requests)** is A7; it waits on the evidence named in the remediation Program Design.
-
-## When a slice is blocked on the owner
-
+</script></ex-markdown>
+<h2 id="program-design--when-a-slice-is-blocked-on-the-owner">When a slice is blocked on the owner</h2>
+<ex-markdown id="program-design--when-a-slice-is-blocked-on-the-owner-text"><script type="text/markdown">
 A slice that needs an owner decision stops, and the question goes to the owner at once: an HTML question page in the agent-vm worktree's `docs/wip/`, and a one-line note through Sun (cursor-local/45c0db23). Slices that don't depend on it continue. The open questions this design already knows are OD-R1 to OD-R4 here, RD1 to RD6 in the remediation design, and the identity and sign-in decisions in their revised designs.
-
-## How each obligation is realized and observed
-
+</script></ex-markdown>
+<h2 id="program-design--how-each-obligation-is-realized-and-observed">How each obligation is realized and observed</h2>
+<ex-markdown id="program-design--how-each-obligation-is-realized-and-observed-text"><script type="text/markdown">
 | U | R | E | owner | interface | shape and home | state | failure | proof |
 |---|---|---|---|---|---|---|---|---|
 | U1 | R1 design before build | E3 | each repository's Lead | each slice names its governing rows | the slices table above | slice: planned → ready → building → merged | a slice without approval or rows doesn't start | each plan's slice list against this order and the approval record |
@@ -211,12 +230,17 @@ A slice that needs an owner decision stops, and the question goes to the owner a
 | U7 | R7 owner questions fast | E10 | each Lead | HTML page plus Sun | `docs/wip/` question pages | question: open → decided | — | the trace's timestamps: question sent when the block was found |
 | U8 | R8 where heavy runs happen | E7 | each Implementer and Verifier | sunclaw; CI for VMs | gate owners table | — | — | run records naming sunclaw or CI |
 | U9 | R9 gates as approved | E7 E8 | the owner | gate owners table | gate files at `38569fca` plus the guard | — | an unapproved gate change is reverted | gate-file diff; the gate owners table |
-
-## Deviations and unresolved decisions
-
+</script></ex-markdown>
+<h2 id="program-design--deviations-and-unresolved-decisions">Deviations and unresolved decisions</h2>
+<ex-markdown id="program-design--deviations-and-unresolved-decisions-text"><script type="text/markdown">
 | ID | Decision | Recommendation |
 |---|---|---|
 | OD-R1 | #262 and #263 | Revert #262's gate changes on its branch, merge it, fix on master; hold publishing and deploys until A8 |
 | OD-R2 | Whether the codex-router slices handed out before today stand | They are re-cut as F1–F9 from this design after F0 ships |
 | OD-R3 | How a contract artifact crosses the repositories | A pinned copy of the home's committed artifact, refreshed by a deliberate commit |
 | OD-R4 | Unparking #255's deletion of the two old packages | Unpark only that deletion, so R17 can complete; the rest of #255 stays parked |
+</script></ex-markdown>
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

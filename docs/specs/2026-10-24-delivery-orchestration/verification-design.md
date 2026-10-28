@@ -1,6 +1,6 @@
 # Delivery orchestration: Verification Design
 
-How each need in the [Requirements](requirements.md) will be shown to hold, at the seams the [Program Design](program-design.md) exposes. This is a plan; nothing in it has been observed. Most of these needs are about the order of work rather than product behaviour, so most of the evidence is the plans and records the order produces. Only R6 runs software, and it runs the real joint path.
+How each need in the [Requirements](requirements.md) will be shown to hold, at the seams the [Program Design](program-design.html) exposes. This is a plan; nothing in it has been observed. Most of these needs are about the order of work rather than product behaviour, so most of the evidence is the plans and records the order produces. Only R6 runs software, and it runs the real joint path.
 
 ## What the owner will see proven
 

@@ -1,6 +1,6 @@
 # Agent identity and workspace access: Alternatives
 
-This study draws every option weighed for this design, with what each gains, what it costs, and why one was chosen. It decides nothing new. Your decisions are recorded in [Requirements](requirements.md), and the Lead's structural choices in [Program Design: the choices, and why](program-design.md#the-choices-and-why).
+This study draws every option weighed for this design, with what each gains, what it costs, and why one was chosen. It decides nothing new. Your decisions are recorded in [Requirements](requirements.md), and the Lead's structural choices in [Program Design: the choices, and why](program-design.html#program-design--the-choices-and-why).
 
 Each section gives the question, a picture with one row per option, then a table. "Decided by" says whose call it was: **you** (the owner), or the **Lead** (a structural choice you can overrule).
 
@@ -115,7 +115,7 @@ flowchart TB
 | Y. One TypeScript identity service | A new TypeScript service on Better Auth holds every truth and mints. | One service. A Tool Portal product could ship without Fleet. | Workspace creation moves out of Fleet, which churns built data. Fleet and the Rust services depend on a TypeScript service to know what a workspace or machine is. | Turned down. Reopen if a Tool Portal product without Fleet central becomes the priority. |
 | Z. Everything in Fleet central | Fleet central holds the truth and mints with a token server written in Rust. | One service, all Rust. | A hand-written, security-critical token server. The MCP sign-in flow that Better Auth already does would be rebuilt. The tested issuer is thrown away. | Turned down by you ([U15](requirements.md#needs)) |
 | X. Better Auth mints from copies | Fleet central holds the truth and feeds copies of membership to Better Auth and the Tool Portal. | Fleet central is off the sign-in and tool-call path. | Two copies to keep correct, in order, safe to apply twice, caught up after outages. You called the copies "fishy". | Turned down by you |
-| X′. Better Auth mints on central's decision | Fleet central decides each issuance. Better Auth mints only on that decision. The Tool Portal keeps no membership, only the removal notices central pushes. | One owner per truth and no copies. The tested issuer stays. | Fleet central must be up to issue tokens (fail closed, [U14](requirements.md#needs)). Two services take part in every issuance. | **Chosen** ([U15](requirements.md#needs); [Program Design](program-design.md#the-choices-and-why)) |
+| X′. Better Auth mints on central's decision | Fleet central decides each issuance. Better Auth mints only on that decision. The Tool Portal keeps no membership, only the removal notices central pushes. | One owner per truth and no copies. The tested issuer stays. | Fleet central must be up to issue tokens (fail closed, [U14](requirements.md#needs)). Two services take part in every issuance. | **Chosen** ([U15](requirements.md#needs); [Program Design](program-design.html#program-design--the-choices-and-why)) |
 
 ## 4. How does the Tool Portal know who is a member?
 
@@ -184,7 +184,7 @@ sequenceDiagram
 |---|---|---|---|---|
 | Wall-clock times | A notice says "removed at 10:00:05", and tokens minted later are trusted. | Familiar. | A decision taken before the removal but minted after it slips through, and clocks on different services drift. | Turned down by the Lead |
 | Count only the removals | A token carries the latest removal count its decision saw; a notice covers every token up to its own count. | No write per grant. | A token decided right after a persona change carries the change's own number and is wrongly refused. | Turned down by the Lead after review |
-| One order for grants and removals | Fleet central gives every grant decision and every removal in an organization its own next number. Each token carries its decision's number, and a notice covers every token with a smaller number. The Tool Portal keeps the highest removal number it has received. | Exact order, no ties, no clocks; a late notice can't undo a newer one. | One durable write per grant decision, about once per token lifetime per identity. | **Chosen** by the Lead ([Program Design](program-design.md#how-a-removal-reaches-the-tool-portal)) |
+| One order for grants and removals | Fleet central gives every grant decision and every removal in an organization its own next number. Each token carries its decision's number, and a notice covers every token with a smaller number. The Tool Portal keeps the highest removal number it has received. | Exact order, no ties, no clocks; a late notice can't undo a newer one. | One durable write per grant decision, about once per token lifetime per identity. | **Chosen** by the Lead ([Program Design](program-design.html#program-design--how-a-removal-reaches-the-tool-portal)) |
 
 ## 7. How does a machine prove it is yours?
 
@@ -247,7 +247,7 @@ flowchart TB
 | Option | Gains | Costs | Verdict |
 |---|---|---|---|
 | The Router | Fleet central isn't involved in minting. | The Router would need its own credential at the issuer: a new machine secret, against [U17](requirements.md#needs). | Turned down by the Lead |
-| Fleet central, as a client of the issuer | No machine secrets, and Fleet central already makes the decision. | Fleet central's client key becomes the most valuable key in the system: with it, any session's token can be minted and removal notices sent. It lives in Fleet central's host secret store. | **Chosen** by the Lead ([Program Design: trust boundaries](program-design.md#trust-boundaries)) |
+| Fleet central, as a client of the issuer | No machine secrets, and Fleet central already makes the decision. | Fleet central's client key becomes the most valuable key in the system: with it, any session's token can be minted and removal notices sent. It lives in Fleet central's host secret store. | **Chosen** by the Lead ([Program Design: trust boundaries](program-design.html#program-design--trust-boundaries)) |
 
 ## 10. Where is a session's persona narrowing checked?
 
@@ -372,7 +372,7 @@ Better Auth (1.7.8, unchanged in 1.7.11) sets a token's subject itself: always t
 |---|---|---|---|
 | Make the subject the session | Standard field. | Not possible in 1.7.8 or 1.7.11 without patching the provider. | Not possible |
 | Create a user record per session | The subject becomes the session. | Fake "people" for every conversation, mixed into sign-in records. | Turned down by the Lead |
-| Keep Better Auth's subject, add a principal claim naming the bot or the whole session | Uses the provider as documented. The Tool Portal also checks that only Fleet central's client issued session tokens. | Every consumer reads the principal, never the subject. | **Chosen** by the Lead ([Program Design](program-design.md#workspace-and-collaboration-token-claims)) |
+| Keep Better Auth's subject, add a principal claim naming the bot or the whole session | Uses the provider as documented. The Tool Portal also checks that only Fleet central's client issued session tokens. | Every consumer reads the principal, never the subject. | **Chosen** by the Lead ([Program Design](program-design.html#program-design--workspace-and-collaboration-token-claims)) |
 
 ## 18. Where is a collaboration message or board write checked?
 

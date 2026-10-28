@@ -10,18 +10,12 @@
 <body>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="index.html">Identity decisions</a>
-<a href="../../specs/2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Delivery plan</a>
-<a href="../2026-10-24-remediation-owner-decisions/index.html">Remediation decisions</a>
-<a href="../2026-10-26-organization-model/index.html">Organization model</a>
-<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../../specs/2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../../specs/2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
 <a href="../../specs/2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../../specs/2026-10-24-agent-identity/index.html">Agent identity and workspace access</a>
-<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in: Requirements</a>
-<a href="../../specs/2026-10-20-people-sign-in/2026-10-20-people-sign-in.html">People sign-in: Specification</a>
-<a href="../../specs/2026-10-20-people-sign-in/program-design.html">People sign-in: Program Design</a>
-<a href="../../specs/2026-10-20-people-sign-in/verification-design.html">People sign-in: Verification Design</a>
-<a href="../../specs/2026-10-14-portable-tool-portal-hosts/index.html">Tool Portal design (base)</a>
-<a href="../../specs/2026-10-18-fleet-framework/who-owns-what.html">Fleet Framework: who owns what</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Tool Portal remediation</a>
+<a href="../2026-10-24-remediation-owner-decisions/index.html">Tool Portal decisions</a>
+<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-27.5">
 
@@ -31,7 +25,7 @@
 
 <h2 id="window">What runs between your switch and the second cut?</h2>
 
-<p id="window-what" data-comment-label="The window">Remote start goes live in production at your switch, with only the pieces it needs. Bots, roles, what each machine may see, tools and removal go live later, together, at the second cut. In between, those rules don't exist yet, so something has to fill the gap.</p>
+<p id="window-what" data-comment-label="The window">Remote start goes live in production at your switch, with only the pieces it needs. Bots, roles, what each machine may see, Tool Portal tools and removal go live later, together, at the second cut. In between, those rules don't exist yet, so something has to fill the gap.</p>
 
 <ex-mermaid id="window-picture" label="The window"><script type="text/plain">
 flowchart TB
@@ -46,7 +40,7 @@ flowchart TB
 Everything remote start doesn't change works as it does today. Every machine still sees every workspace. Collaboration calls are tagged with their real session but aren't checked per workspace yet. The Tool Portal keeps today's tokens. Cloudflare Access stays in front until everything is live.
 
 - Gains: remote start soonest, with nothing else broken.
-- Costs: a period where the new login runs beside today's rules, and the sign-in service keeps today's token path until the tools work lands. Access comes off later than "the next change", once every rule holds. Only your machines are in the organization the whole time.
+- Costs: a period where the new login runs beside today's rules, and the sign-in service keeps today's token path until the Tool Portal tools work lands. Access comes off later than "the next change", once every rule holds. Only your machines are in the organization the whole time.
     </template>
   </ex-option>
   <ex-option id="window-strict" title="Every rule from the switch">

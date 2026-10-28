@@ -1,6 +1,6 @@
 # Agent identity and workspace access: Verification Design
 
-How each requirement in [Requirements](requirements.md) will be shown to hold, against the [Specification](specification.md)'s obligations and the [Program Design](program-design.md)'s seams. This is a plan; nothing in it has been observed.
+How each requirement in [Requirements](requirements.md) will be shown to hold, against the [Specification](specification.md)'s obligations and the [Program Design](program-design.html)'s seams. This is a plan; nothing in it has been observed.
 
 ## Proven by: one line per requirement
 

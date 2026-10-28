@@ -6,7 +6,7 @@ This design set has four documents:
 
 - **Requirements:** this file.
 - **[Specification](specification.md)**
-- **[Program Design](program-design.md)**
+- **[Program Design](program-design.html)**
 - **[Verification Design](verification-design.md)**
 
 [index.md](index.md) leads agents through them; [index.html](index.html) is the page for people.
@@ -85,5 +85,5 @@ The owner stopped all work.
 
 | ID | Decision | Recommendation (not decided) |
 |---|---|---|
-| OD-R1 | What happens to #262 (the Tool Portal stack) and #263 (the sign-in issuer). | Drawn in the [Program Design](program-design.md#what-happens-to-262-and-263). |
+| OD-R1 | What happens to #262 (the Tool Portal stack) and #263 (the sign-in issuer). | Drawn in the [Program Design](program-design.html#program-design--what-happens-to-262-and-263). |
 | OD-R2 | Whether the codex-router identity slices handed to the Fleet Lead before today's redesign still stand. | They wait for this design's approval and are re-cut from it; the Fleet release is untouched. |

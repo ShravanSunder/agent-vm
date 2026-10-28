@@ -1,6 +1,6 @@
 # Delivery orchestration: Specification
 
-What must be observably true of the order of work. Each obligation traces to a need in the [Requirements](requirements.md). The order itself is the [Program Design](program-design.md); the proof is the [Verification Design](verification-design.md).
+What must be observably true of the order of work. Each obligation traces to a need in the [Requirements](requirements.md). The order itself is the [Program Design](program-design.html); the proof is the [Verification Design](verification-design.md).
 
 ## What these obligations are about
 

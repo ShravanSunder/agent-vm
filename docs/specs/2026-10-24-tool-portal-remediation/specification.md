@@ -232,5 +232,5 @@ A request whose body is larger than the Worker's in-memory budget is processed b
 
 - The Tool Portal's own promises (Tool Portal Specification checks 1–17) and the identity obligations: unchanged, owned by those documents.
 - How the workspace store's records are laid out in tables: the [Program Design](program-design.md), for the owner's approval (RD1).
-- The sign-in service's storage: owned by the [agent identity](../2026-10-24-agent-identity/program-design.md) and [people sign-in](../2026-10-20-people-sign-in/program-design.md) designs.
+- The sign-in service's storage: owned by the [agent identity](../2026-10-24-agent-identity/program-design.html) and [people sign-in](../2026-10-20-people-sign-in/program-design.md) designs.
 - The order of work across repositories, and what happens to #262: the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) set.

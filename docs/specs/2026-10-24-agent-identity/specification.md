@@ -1,6 +1,6 @@
 # Agent identity and workspace access: Specification
 
-What must be observably true about who acts, how each identity is proven, which organization and workspace it belongs to, how machines log in, and how tool access is granted and removed. Authority: [Requirements](requirements.md). Structure: [Program Design](program-design.md). Proof: [Verification Design](verification-design.md).
+What must be observably true about who acts, how each identity is proven, which organization and workspace it belongs to, how machines log in, and how tool access is granted and removed. Authority: [Requirements](requirements.md). Structure: [Program Design](program-design.html). Proof: [Verification Design](verification-design.md).
 
 ## Who uses this, and where they see it
 

@@ -6,7 +6,7 @@ This design set has four documents:
 
 - **Requirements:** this file.
 - **[Specification](specification.md)**
-- **[Program Design](program-design.md)**
+- **[Program Design](program-design.html)**
 - **[Verification Design](verification-design.md)**
 
 Two entries lead into them: [index.md](index.md) for agents, and [index.html](index.html), a page for people. A fifth document, [Alternatives](alternatives.md), draws every option weighed and decides nothing. The owner's decisions of 2026-10-26 were first drawn on the [Organization model](../../wip/2026-10-26-organization-model/index.html) page.
