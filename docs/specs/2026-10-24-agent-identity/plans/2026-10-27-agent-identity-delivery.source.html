@@ -38,6 +38,7 @@
   - Your decisions of 27 October are in the design (`b734d002`). The Sol Reviewer's checks of the changes closed at `b73f308b` with `ready` (`reviewer-recheck-5.md`).
   - The order puts starting a session on another machine first, with its building blocks, at your direction (27 October). The Advisor's review of this order (`advisor-plan-review.md`) is folded in.
   - Nothing is built until you approve the design and this plan.
+- **Your priorities (28 October):** sign-in, messaging across machines, and starting a session on another machine. D1 delivers all three. Messaging between machines already works today; D1 now proves it still works on the new login, locally (SO11 step 10), at JC1 and at your production switch, because the switch replaces the connections those messages travel over.
 </script></ex-markdown>
 <h2 id="plan--how-to-read-this-plan">How to read this plan</h2>
 <ex-markdown id="plan--how-to-read-this-plan-text"><script type="text/markdown">
@@ -51,7 +52,7 @@
 <ex-markdown id="plan--the-deliverables-at-a-glance-text"><script type="text/markdown">
 | Deliverable | What you'll see working | Workstreams in it | Waits on |
 |---|---|---|---|
-| **D1 Start a session on another machine** | You log your Mac and Sunclaw in by device code. A session on your Mac starts a helper on Sunclaw for a project in its workspace, with no SSH. Then your production fleet switches to the new login, and you can do this for real. | sign-in; Fleet central; Router | design approval; OD4 (sign-in tables); the Fleet release F0 |
+| **D1 Start a session on another machine** | You log your Mac and Sunclaw in by device code. A session on your Mac starts a helper on Sunclaw for a project in its workspace, with no SSH, and sessions on the two machines keep messaging each other on the new login. Then your production fleet switches to the new login, and you can do both for real. | sign-in; Fleet central; Router | design approval; OD4 (sign-in tables); the Fleet release F0 |
 | **D2 Organizations: people, bots and what machines see** | You add bots and give people and bots their roles; workspace pairs; leaving an organization ends its roles; a machine is told only about the workspaces it serves. | Fleet central; Router | D1 |
 | **D3 Sessions and bots use their workspace's Tool Portal tools** | A session gets a token for its workspace through its machine and calls an allowed Tool Portal tool; a disallowed one, a collaborator and a person are refused. A bot does the same with its own credential. | Router; Fleet central; sign-in; Tool Portal | D2; the Tool Portal remediation (A8) |
 | **D4 Collaboration and bot messages** | A false sender is refused. Members message members in allowed workspace pairs. A bot's messages are stored as the bot's. | Fleet central | D3 |
@@ -262,7 +263,7 @@ Every cross-repository contract (K1–K10) has one home, which publishes the sha
 </script></ex-markdown>
 <h2 id="plan--d1-start-a-session-on-another-machine">D1 Start a session on another machine</h2>
 <ex-markdown id="plan--d1-start-a-session-on-another-machine-text"><script type="text/markdown">
-**You'll see:** you log your Mac and Sunclaw in by device code, approving each on the sign-in page; a session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw, in a directory on Sunclaw; you get started, refused (nothing created) or unknown (read the outcome later); one start never makes two sessions; an offline machine is refused, never queued; revoking a machine stops it and removes its sessions. Then your production fleet switches to the new login (PROD2), and you can do this on your real machines.
+**You'll see:** you log your Mac and Sunclaw in by device code, approving each on the sign-in page; a session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw, in a directory on Sunclaw; sessions on the two machines message each other as they do today, now over the new login; you get started, refused (nothing created) or unknown (read the outcome later); one start never makes two sessions; an offline machine is refused, never queued; revoking a machine stops it and removes its sessions. Then your production fleet switches to the new login (PROD2), and you can do this on your real machines.
 
 **Its building blocks**, each needed for the feature to work:
 
@@ -487,7 +488,8 @@ Real sessions on each harness path start and restore on a Router logged in by de
 <summary><strong>F16</strong> SO11 remote start journey (new, TypeScript) · waits on F15, F14</summary>
 <ex-markdown id="ticket-f16-text"><script type="text/markdown">
 `verify-codex-router` `fleet-remote-start`: two Routers under isolated debug Hosts with different directories, a local Fleet central, a third Router in another organization; B creates a real Codex conversation (a provider account on the run machine, as SO1).
-- **Earns:** U39.
+- **Messaging across machines:** after both Routers log in by device code, A's session and B's helper exchange a message and a reply, each recorded with its sending session (SO11 step 10). The same step runs at JC1 and at PROD2.
+- **Earns:** U39; today's messaging between machines kept on the new login (U34).
 </script></ex-markdown>
 </details>
 <details id="ticket-f12">
@@ -518,7 +520,7 @@ Real sessions on each harness path start and restore on a Router logged in by de
 - **Covers:** R43 step 2 in production:
   - Fleet central deploys D1's changes with `machineLogin = machineTokens`, the old login's code and table removed, the first organization created for you adopting today's Fleet storage (F2b), and operator commands through the sign-in service;
   - you run the new Router build and log every machine in again by device code.
-- **Earns:** U34's production line, and starting a session on another machine on your real machines: each machine connects with machine tokens; the old credential is refused (one spot check); your sessions, allowances and board relationships are still attached; a session on your Mac starts a helper on Sunclaw.
+- **Earns:** U34's production line, and starting a session on another machine on your real machines: each machine connects with machine tokens; the old credential is refused (one spot check); your sessions, allowances and board relationships are still attached; a session on your Mac and one on Sunclaw exchange a message and a reply; a session on your Mac starts a helper on Sunclaw.
 - **If it breaks:** fix forward. There is no revert to the old login, because a machine revoked after the switch could regain access through it. Access still guards central meanwhile.
 </script></ex-markdown>
 </details>
