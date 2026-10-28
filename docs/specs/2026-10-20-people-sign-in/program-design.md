@@ -10,7 +10,7 @@
 
 ## What the agent identity design changed (2026-10-24)
 
-The [agent identity](../2026-10-24-agent-identity/program-design.md) design, which the owner simplified and kept on 2026-10-24, moves two things out of this Worker. Where this document still describes them, the identity design governs:
+The [agent identity](../2026-10-24-agent-identity/program-design.html) design, which the owner simplified and kept on 2026-10-24, moves two things out of this Worker. Where this document still describes them, the identity design governs:
 
 | Here | Now |
 |---|---|
