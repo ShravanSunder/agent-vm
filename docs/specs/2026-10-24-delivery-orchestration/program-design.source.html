@@ -12,6 +12,7 @@
 <a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
 <a href="index.html">Delivery orchestration</a>
 <a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
 <a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
 <a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
@@ -84,7 +85,7 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | Slice | Repository | Realizes | Waits on | Gates |
 |---|---|---|---|---|
 | M1 move to agent-collaboration | agent-collaboration (new) | OD13: `auth`, `tool-access`, `tool-engine` and the `tool-host-*` packages move from agent-vm with their history and the `@agent-collaboration` publishing; they use `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` as published packages | design approval; OD-R1 (where #262 and #263 land sets the starting commit) | the moved packages' existing checks, unchanged; any new gate is the owner's call |
-| A1 platform capabilities | agent-collaboration | remediation R3 (clock, IDs, crypto, timers as capabilities), R10 (the closed unions in the capability contracts), R11 (the type-check guard), R12 | M1 | agent-vm check, unit, integration; review |
+| A1 platform capabilities | agent-collaboration | remediation R3 (clock, IDs, crypto, timers as capabilities), R10 (the closed unions in the capability contracts), R11 (the type-check guard), R12 | M1 | the repository's checks (moved by M1), unit, integration; review |
 | A2 workspace store v1 | agent-collaboration | remediation R4–R8, R10 (the store's result unions) | A1; RD1 (schema and `drizzle-kit`); RD6 (Node state directory) | as A1, plus host e2e on sunclaw |
 | A3 Node host on the core | agent-collaboration | remediation R1, R2, R24 (one canonical encoder) | A2 | as A2 |
 | A4 defects | agent-collaboration | remediation R20, R21, R22, R23, R25 | M1 | as A1 |

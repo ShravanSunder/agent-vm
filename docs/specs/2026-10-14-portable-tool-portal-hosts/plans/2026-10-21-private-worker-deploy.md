@@ -1,5 +1,7 @@
 # Private test deploy of the Tool Portal Worker
 
+> **Status (2026-10-28): superseded; record.** Private test deployments now happen in the [Switchboard remediation plan](../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html) (A7's and A8's deployed checks) and at the identity plan's joint cuts (JC1, JC2).
+
 The owner approved deploying the Worker if it's private, and asked that no
 deploy setting or personal detail reach the public repo (2026-10-21). This plan
 covers the deployed half of verification rows 13–16.

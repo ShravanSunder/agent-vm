@@ -1,5 +1,7 @@
 # tool-host-core: the hosted MCP proxy runs anywhere
 
+> **Status (2026-10-28): record.** `tool-host-core` was built into the #262 stack. The [Switchboard remediation plan](../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html) now governs this code, which moves to its own `agent-collaboration` repository first (OD13). The Tool Portal is now called Switchboard (OD12).
+
 The owner asked that the core libraries run anywhere and that the Cloudflare
 packages use them, with Cloudflare's runtime injected the way Fleet does it
 (2026-10-21: "use disaggregate so its injectable", "we do teh same thing in
