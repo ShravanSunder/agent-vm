@@ -89,7 +89,7 @@ Every slice merges as one pull request. "Waits on" lists its dependency points; 
 | A2 workspace store v1 | agent-collaboration | remediation R4–R8, R10 (the store's result unions) | A1; RD1 (schema and `drizzle-kit`); RD6 (Node state directory) | as A1, plus host e2e on sunclaw |
 | A3 Node host on the core | agent-collaboration | remediation R1, R2, R24 (one canonical encoder) | A2 | as A2 |
 | A4 defects | agent-collaboration | remediation R20, R21, R22, R23 | M1 | as A1 |
-| A4b SDK transport defect | agent-vm | remediation R25, in `agent-portal-sdk` (stays in agent-vm and is published) | design approval | agent-vm's existing checks; review |
+| A4b agent-vm side | agent-vm | remediation R25 in `agent-portal-sdk` (stays in agent-vm; the fixed version is published and the moved packages take it); R16's agent-vm half (the Python journey keeps only Python SDK calls once A6 moves its protocol assertions to a TypeScript host test) | A6 | agent-vm's existing checks; review |
 | A5 deterministic tests | agent-collaboration | remediation R13, R14, R15; the `verify-tool-portal` journeys | A3 | as A2 |
 | A6 clean build | agent-collaboration | remediation R16, R18, R19; R17 in part (see "Parked work this touches") | A3 | as A1 |
 | A7 large requests | agent-collaboration | remediation R26 | A3; the #33 evidence | as A2, plus the deployed check |

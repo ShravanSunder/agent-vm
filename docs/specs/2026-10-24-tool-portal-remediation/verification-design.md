@@ -247,7 +247,7 @@ Families:
 | **Requirement** | U11 → R16 |
 | **Proven by** | A scan finds no Python driving or asserting Switchboard behaviour outside the Python SDK's own tests. |
 | **Reference** | R16 |
-| **Target and journey** | O5 over the repository's Python files touched by this work; journey: none |
+| **Target and journey** | O5 over agent-vm's Python files touched by this work and `agent-collaboration`'s TypeScript host tests; journey: none |
 | **Passes when** | `python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py`'s wire and protocol assertions live in a TypeScript host test. Any remaining Python only calls the Python SDK's public API in its own suite. **Wrong build that fails:** the journey script kept as the Switchboard's protocol proof. |
 | **Reuses** | none |
 | **Unverified** | — |
