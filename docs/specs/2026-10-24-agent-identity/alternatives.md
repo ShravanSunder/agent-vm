@@ -444,7 +444,7 @@ flowchart TB
   end
   subgraph C["C · Three steps, Access kept until the new login is proven (chosen)"]
     direction LR
-    C1["1 Build; today's login unchanged"] --> C2["2 Switch behind Access;<br/>log every machine in again"] --> C3["3 Next change:<br/>remove Access"]
+    C1["1 Build; today's login unchanged"] --> C2["2 Switch behind Access;<br/>log every machine in again"] --> C3["3 Once every rule holds:<br/>remove Access"]
   end
   A ~~~ B ~~~ C
 ```

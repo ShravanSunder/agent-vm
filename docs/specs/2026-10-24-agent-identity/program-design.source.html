@@ -847,7 +847,7 @@ The choice holds for the host's lifetime, and the login answer tells the owner w
   - **Now through the sign-in service:** the operator's commands, through the operator check below.
   - **On the Routers:** they still send their Access service token, only to pass the edge; central reads nothing from it.
   - **Every machine logs in again.** It keeps its installation and peer IDs, so its sessions, allowances and board relationships stay attached. The new Router build deletes its old enrollment credential once it has logged in.
-- **Step 3**, the next change:
+- **Step 3**, once every rule in this set holds (OD11):
   - The Cloudflare Access application in front of central is deleted, along with the Routers' Access headers and stored Access token.
   - A request limit takes Access's place at the entry: the Workers rate-limit binding on Cloudflare, a fixed-window counter keyed by peer address on Tokio. It limits unauthenticated requests and failed token checks per source.
 </script></ex-markdown>
@@ -1691,13 +1691,13 @@ The statements above are written as SQL so the condition each one carries is vis
 - **Fleet:** the organization authority, broker, the Registry's organization list and machine index, binding, registrar, forwarder, admin commands, guard and lookups, central's new receivers and service caller, bot messaging, and collaboration admission on every effect path; the Router's start check (a named project); one Fleet object per organization (OD8); the machine token check; the Router's machine login and where it keeps its refresh credential; the Linux secret store backend; remote starts (the organization authority's admission and records, and both Routers' sides).
 - **Tool Portal:** one organization per deployment.
 
-**The three steps (U34, R43).** For the Tool Portal and the sign-in service there is no coexistence period: the test deployments are the only consumers, so their cutover is a hard replacement, with no migration of the old Portal membership records. Fleet central serves your production fleet, so it follows the three steps:
+**The three steps (U34, R43).** For the Tool Portal and the sign-in service there is no migration of the old Portal membership records: the test deployments are the only consumers, so their cutover is a hard replacement. One window is deliberate (OD11): from the first joint cut until the second, the sign-in service keeps today's agent path (registration, resource links, workspace policy, release checks) beside the new issuer, so the Tool Portal keeps working on today's agent tokens until the second cut replaces them. Fleet central serves your production fleet, so it follows the three steps:
 
 | Step | Fleet central in production | Machines | Proven before the next step |
 |---|---|---|---|
 | 1. Build | today's login, `machineLogin = accessEnrollment`; Access in front; no organizations yet | unchanged | the machine login, the organization core, session registration and starting a session on another machine, on test deployments behind a test Access application (the first joint cut), including the step 2 checks below; the rest of this set goes live later, at a second cut, with no second log-in |
 | 2. Switch, behind Access | `machineLogin = machineTokens`; the old login's code and its `machine_enrollments` table removed; the first organization created for you, adopting the existing Fleet object's storage (OD8); operator commands through the sign-in service | each runs the new Router build and logs in again by device code, keeping its installation and peer IDs, then deletes its old enrollment credential; still sends its Access token to pass the edge | every machine connects only with machine tokens; the old credential and a missing, bad, expired or other-organization token are refused even with a valid Access token; admin and operator actions need no Access identity |
-| 3. Remove Access (the next change) | the Access application deleted; the request limit at the entry | the Access token deleted from each Router | every obligation holds with no Access token; unauthenticated, malformed or wrong-kind requests change nothing |
+| 3. Remove Access, once every rule holds (OD11) | the Access application deleted; the request limit at the entry | the Access token deleted from each Router | every obligation holds with no Access token; unauthenticated, malformed or wrong-kind requests change nothing |
 
 Step 2 fixes forward; there is no revert to the old login. Restoring it could give access back to a machine revoked after the switch, because the old table knows nothing of revocations made under the new login. While a fix lands, machines are offline and Access still guards central.
 </script></ex-markdown>

@@ -9,7 +9,7 @@
 <ex-presentation id="path-deliverables" title="The plan, deliverable by deliverable" description="What you'll see working, how the deliverables depend on each other, and the tickets inside each.">
   <ex-step to="plan--the-deliverables-at-a-glance" icon="rocket">The seven deliverables, what you'll see working, and what each waits on.</ex-step>
   <ex-step to="plan--how-the-deliverables-connect" icon="path">How the deliverables depend on each other.</ex-step>
-  <ex-step to="plan--between-the-switch-and-the-second-cut-your-question" icon="users">Your question: what runs between the switch and the second cut.</ex-step>
+  <ex-step to="plan--between-the-switch-and-the-second-cut-decided" icon="users">Decided: what runs between the switch and the second cut.</ex-step>
   <ex-step to="plan--tickets-by-workstream" icon="stack">Every ticket, by workstream, with its deliverable and what it waits on.</ex-step>
   <ex-step to="plan--d1-start-a-session-on-another-machine" icon="path">D1, starting a session on another machine, with its building blocks; live at your switch.</ex-step>
   <ex-step to="plan--d2-organizations-people-bots-and-what-machines-see" icon="users">D2, organizations: people, bots and what machines see.</ex-step>
@@ -34,7 +34,7 @@
 <h1 id="plan--agent-identity-delivery-plan">Agent identity delivery plan</h1>
 <h2 id="plan--result">Result</h2>
 <ex-markdown id="plan--result-text"><script type="text/markdown">
-- **Planning result:** `ready`, plan-only, with one question for you: what runs between your production switch and the second cut (below, "Between the switch and the second cut").
+- **Planning result:** `ready`, plan-only. Your answer on what runs between your production switch and the second cut is in (28 October, OD11): today's behavior inside your organization.
   - Your decisions of 27 October are in the design (`b734d002`). The Sol Reviewer's checks of the changes closed at `b73f308b` with `ready` (`reviewer-recheck-5.md`).
   - The order puts starting a session on another machine first, with its building blocks, at your direction (27 October). The Advisor's review of this order (`advisor-plan-review.md`) is folded in.
   - Nothing is built until you approve the design and this plan.
@@ -87,19 +87,19 @@ flowchart TB
 
 D1 comes first because it's the capability you need now. It carries only what it can't work without: you must sign in to approve a machine, the machine must log in the new way so Fleet central knows which organization it belongs to, and a session must be registered so Fleet central can check it belongs to the workspace. D2 adds the rest of the organization. D3 needs D2's bots and roles, and the Tool Portal remediation (A1–A8) finished. D4 and D5 run side by side once D3 is proven. D6 takes D2–D5 live together. Cloudflare Access comes off last, because every rule must hold before it goes (R43).
 </script></ex-markdown>
-<h2 id="plan--between-the-switch-and-the-second-cut-your-question">Between the switch and the second cut (your question)</h2>
-<ex-markdown id="plan--between-the-switch-and-the-second-cut-your-question-text"><script type="text/markdown">
+<h2 id="plan--between-the-switch-and-the-second-cut-decided">Between the switch and the second cut (decided)</h2>
+<ex-markdown id="plan--between-the-switch-and-the-second-cut-decided-text"><script type="text/markdown">
 Putting remote start first means D1 is live in production before D2–D5 exist. For that window, from PROD2 until PROD4:
 
-- **Proposed:** inside your one organization, everything D1 doesn't change works as it does today.
+- **Decided (28 October, OD11):** inside your one organization, everything D1 doesn't change works as it does today.
   - Every logged-in machine still reads every workspace, because the filtered view comes in D2.
   - Collaboration calls are attributed to their real session (D1's binding), but aren't yet checked per workspace, because that check comes in D4.
   - The Tool Portal keeps working on today's agent tokens: the sign-in service keeps today's agent path (registration, resource links, workspace policy, release checks) until D3 replaces it.
-  - Cloudflare Access stays in front the whole time, and comes off only after everything is live (D7). That's later than the "next change" you described in U34, because R43 requires every rule to hold before Access goes.
+  - Cloudflare Access stays in front the whole time, and comes off only after everything is live (D7). U34 and R43 now say so: Access goes once every rule holds.
 - **What it costs:** a bounded period where the new login runs beside today's in-organization behavior, and the sign-in service maintains today's agent path until D3. Only your machines are in the organization, and Access still guards everything.
-- **The alternative:** bring the filtered view and the per-workspace collaboration check into D1, and pause the Tool Portal on the private stack between the cuts. That's a larger D1, so remote start comes later, and no Tool Portal in that window.
+- **Not chosen:** bring the filtered view and the per-workspace collaboration check into D1, and pause the Tool Portal on the private stack between the cuts. That was a larger D1, so remote start would have come later.
 
-The identity decisions page asks this one question. Your answer also updates two lines of the design: the Program Design's "no coexistence period" for the sign-in service gains the JC1-to-JC2 window under the proposal, and U34's "remove Access in the next change" becomes "once everything is live".
+Your answer updated two lines of the design: the Program Design's cutover paragraph now names the JC1-to-JC2 window for the sign-in service, and U34's step 3 now says Access comes off once every rule holds.
 </script></ex-markdown>
 <h2 id="plan--tickets-by-workstream">Tickets by workstream</h2>
 <ex-markdown id="plan--tickets-by-workstream-text"><script type="text/markdown">
@@ -200,7 +200,6 @@ Every cross-repository contract (K1–K10) has one home, which publishes the sha
 | Decision | Holds | Recommendation |
 |---|---|---|
 | Design and plan approval | everything | — |
-| What runs between the switch and the second cut | D1's scope, and when Access comes off | the proposal above: today's behavior inside your organization, the Tool Portal on today's tokens, Access in front until everything is live |
 | OD4, the sign-in tables (now with `deviceCode` and its `enrollmentId`) | D1's B1 | approve the drawn tables and generated SQL together |
 | OD2, the default token lifetime | nothing; 5 minutes is built and is one setting | 5 minutes |
 | OD-R1 to OD-R4, RD1 to RD6 | as in the delivery orchestration and the remediation design | unchanged |
@@ -822,7 +821,7 @@ What it costs: seven more PRs, a second joint cut, and today's agent path mainta
 <ex-markdown id="plan--risks-and-false-greens-text"><script type="text/markdown">
 - **F11 before B5:** if F11 merges first, its device-code flow is proven only against a stand-in. It stays named unverified until F14 runs against the real B5 issuer.
 - **The Tool Portal between the cuts:** after JC1 the sign-in service runs B4a's dispatch while the Portal still takes today's agent tokens. A build that drops any piece of today's agent path breaks the Portal; B4a's focused proof and the legacy-path control at JC1 and at every deploy until JC2 catch that.
-- **The window between PROD2 and PROD4:** inside your organization, machines still read every workspace and collaboration isn't checked per workspace (your question). Access stays in front throughout.
+- **The window between PROD2 and PROD4:** inside your organization, machines still read every workspace and collaboration isn't checked per workspace (decided, OD11). Access stays in front throughout.
 - **SO10 is temporary.** The step 2 and step 3 checks run once on the private stack; their lasting regression lives in SO4's entry negatives.
 - **Linux:** the store and memory-only tests run on Linux, but the end-to-end login with the Router as a systemd service runs nowhere (no Linux job, your call). A Mac pass plus those tests must not be reported as the whole of U35.
 - **A lost remote-start answer:** the requester reports `unknown` while the session may exist on the target. SO11 step 8 checks that the status read returns `started` under the same request ID and that no second session exists.
