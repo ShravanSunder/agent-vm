@@ -39,7 +39,7 @@ How the Switchboard code gets fixed so it follows your rules: one core, Drizzle 
   - A 12 MiB request completes on the private Worker and on Node.
   - The six known defects each have a test that failed before and passes after.
   - The build has one version of each dependency, and your gates plus the one approved type-check guard.
-- **Nine tickets, one pull request each:** M1 moves the code, A1–A8 fix it. One workstream: Switchboard, owned by the Switchboard Lead, in `agent-collaboration`.
+- **Ten tickets, one pull request each:** M1 moves the code; A1–A8 fix it in `agent-collaboration`; A4b fixes the SDK transport in agent-vm, where `agent-portal-sdk` stays. One workstream: Switchboard, owned by the Switchboard Lead.
 </script></ex-markdown>
 <h2 id="plan--how-the-tickets-connect">How the tickets connect</h2>
 <ex-markdown id="plan--how-the-tickets-connect-text"><script type="text/markdown">
@@ -48,6 +48,8 @@ flowchart TB
   APPROVE["Design approval; OD-R1"] --> M1["M1 move to<br/>agent-collaboration"]
   M1 --> A1["A1 platform capabilities"]
   M1 --> A4["A4 defects"]
+  APPROVE --> A4b["A4b SDK transport defect<br/>(agent-vm)"]
+  A4b --> A8
   A1 --> A2["A2 workspace store v1<br/>(RD1, RD6)"]
   A2 --> A3["A3 Node host on the core"]
   A3 --> A5["A5 deterministic tests<br/>and journeys (RD4)"]
@@ -70,11 +72,12 @@ M1 comes first so nothing is written twice: every ticket below is built in the n
 | A1 platform capabilities | R3, R10 (capability contracts), R11, R12 | M1 |
 | A2 workspace store v1 | R4–R8, R10 (store results) | A1; RD1; RD6 |
 | A3 Node host on the core | R1, R2, R24 | A2 |
-| A4 defects | R20–R23, R25 | M1 |
+| A4 defects | R20–R23 | M1 |
+| A4b SDK transport defect (agent-vm) | R25 | design approval |
 | A5 deterministic tests and journeys | R13, R14, R15; the `verify-tool-portal` journeys; runs O1–O3 | A3; RD4 |
 | A6 clean build | R16, R18, R19; R17 in part | A3; RD3; RD5 |
 | A7 large requests | R26 | A3; RD6; RD7; the #33 evidence |
-| A8 Switchboard cutover | R9; the remediation live on the private Worker and a Node host | A4, A5, A6, A7 |
+| A8 Switchboard cutover | R9; the remediation live on the private Worker and a Node host | A4, A4b, A5, A6, A7 |
 </script></ex-markdown>
 <h2 id="plan--waiting-on-you">Waiting on you</h2>
 <ex-markdown id="plan--waiting-on-you-text"><script type="text/markdown">
@@ -82,6 +85,7 @@ M1 comes first so nothing is written twice: every ticket below is built in the n
 |---|---|---|
 | Design and plan approval | M1, and so everything | — |
 | OD-R1: what happens to #262 and #263 | M1's starting commit | revert #262's gate changes, then merge |
+| OD-R4: the parked agent-vm work (#255) | agent-vm's half of R17: deleting the old `@agent-vm/mcp-portal` and `@agent-vm/tool-portal`, and `gateway-runtime`'s 1.x SDK | as in the delivery orchestration |
 | RD1: the store schema and migrations | A2 | approve the drawn tables and generated SQL together |
 | RD6: where the Node host keeps its store and spill files | A2, A7 | a required `stateDirectory`; spill files outside it, enabled only on a separate allocation |
 | RD3: the old MCP SDK as a test-only fixture | A6 (R17) | allow it in one test-fixture module only |
@@ -95,6 +99,7 @@ M1 comes first so nothing is written twice: every ticket below is built in the n
 <ex-markdown id="ticket-m1-text"><script type="text/markdown">
 The same ticket as M1 in the [identity delivery plan](../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html#ticket-m1); it starts both plans.
 - **Covers:** OD13. `auth`, `tool-access`, `tool-engine`, `tool-host-core`, `tool-host-cloudflare` and `tool-host-node` move from agent-vm with their history and the `@agent-collaboration` publishing. They use `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` as published packages.
+- **Starts from:** wherever OD-R1 lands #262 and #263, with agent-vm's root gate files back at `38569fca` and #262's 26 scripts removed (RD5), so they aren't copied.
 - **Gates:** the moved packages' existing checks, unchanged. Adding or changing a gate is your call.
 - **Proven by:** those checks and tests pass in the new repository.
 </script></ex-markdown>
@@ -131,11 +136,20 @@ The same ticket as M1 in the [identity delivery plan](../../2026-10-24-agent-ide
 <details id="ticket-a4">
 <summary><strong>A4</strong> defects · waits on M1</summary>
 <ex-markdown id="ticket-a4-text"><script type="text/markdown">
-- **Covers:** R20, the Google command schema chosen by the configured kind; R21, one call's failure stays its own; R22, the advertised schema is the one the handler parses; R23, origins checked when the configuration loads; R25, the SDK transport forwards every callback argument.
+- **Covers:** R20, the Google command schema chosen by the configured kind; R21, one call's failure stays its own; R22, the advertised schema is the one the handler parses; R23, origins checked when the configuration loads.
 - **Writes:** the owners named in the design's "The defects and their owners" table.
 - **Proven by:** each defect's focused test fails on `2dfea38e` and passes on the delivered commit.
-- **Earns:** U13 for these five; R24 is in A3 and R26 in A7.
+- **Earns:** U13 for these four; R25 is in A4b, R24 in A3 and R26 in A7.
 - **Gates:** as A1.
+</script></ex-markdown>
+</details>
+<details id="ticket-a4b">
+<summary><strong>A4b</strong> SDK transport defect, in agent-vm · waits on design approval</summary>
+<ex-markdown id="ticket-a4b-text"><script type="text/markdown">
+- **Covers:** R25, the Switchboard SDK's TypeScript transport forwards every callback argument. The file is `packages/agent-portal-sdk/src/tool-portal-mcp-client/node-tool-portal-mcp-transport.ts`; `agent-portal-sdk` stays in agent-vm and is published, so this is one small agent-vm pull request.
+- **Proven by:** the focused test (the wrapped client receives the second argument) fails on `2dfea38e` and passes on the delivered commit.
+- **Earns:** U13 for R25.
+- **Gates:** agent-vm's existing checks; review.
 </script></ex-markdown>
 </details>
 <details id="ticket-a5">
@@ -152,9 +166,9 @@ The same ticket as M1 in the [identity delivery plan](../../2026-10-24-agent-ide
 <details id="ticket-a6">
 <summary><strong>A6</strong> clean build · waits on A3; RD3; RD5</summary>
 <ex-markdown id="ticket-a6-text"><script type="text/markdown">
-- **Covers:** R16, no Python verification script; R18, one esbuild, jose and vitest, and no alpha Miniflare; R19, the gates are the checks M1 brought over plus the approved guard, with #262's 26 scripts removed (RD5); R17 in part, one MCP SDK generation in product code.
-- **R17 in the new repository:** after M1 the moved packages are the product code there, so R17 holds once they use only the 2026-07-28 SDK. The fixture exception follows RD3. agent-vm's own copies of the old SDK stay with agent-vm, which is out of scope.
-- **Proven by:** O5's scans and the gate diff (the guard is the only difference).
+- **Covers, in `agent-collaboration`:** R16, no Python verification script; R18, one esbuild, jose and vitest, and no alpha Miniflare; R19, the checks M1 brought over plus the approved guard; R17's half there, one MCP SDK generation in its product code, with the fixture exception per RD3.
+- **Not here:** agent-vm's half of R17 (deleting the old `@agent-vm/mcp-portal` and `@agent-vm/tool-portal`, and `gateway-runtime`'s 1.x SDK) stays with #255's parked agent-vm work and is decided by OD-R4. It stays open and named, not dropped. agent-vm's own gate files return to `38569fca` before M1 (see M1).
+- **Proven by:** O5's scans of the `agent-collaboration` lockfile and imports, and the gate comparison (the guard is the only difference from the moved packages' commands).
 - **Earns:** U10, U11, U12.
 - **Gates:** as A1.
 </script></ex-markdown>

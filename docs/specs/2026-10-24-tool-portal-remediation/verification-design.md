@@ -233,10 +233,10 @@ Families:
 | | |
 |---|---|
 | **Requirement** | U10 → R19 (the owner's gates, as approved) |
-| **Proven by** | The gate files are compared with master and must differ only by the approved type-check guard. |
+| **Proven by** | In agent-vm, the root gate files are compared with `38569fca` and must match, with #262's 26 scripts gone (RD5). In `agent-collaboration`, the checks are compared with the commands the moved packages ran under agent-vm's gate at `38569fca` and must differ only by the approved type-check guard. |
 | **Reference** | `scripts/run-check-gate.ts`, `vitest.config.ts`, the root `package.json` scripts and `.github/workflows/` at `38569fca`; the guard step |
 | **Target and journey** | O5; journey: none |
-| **Passes when** | The diff against `38569fca` contains only the guard step and its configuration files, and none of the 26 scripts #262 added remains unless RD5 kept it. **Wrong build that fails:** today's `portal-exports` step change. |
+| **Passes when** | agent-vm's root gate files equal `38569fca`, and none of the 26 scripts #262 added remains unless RD5 kept it. `agent-collaboration`'s checks are the moved packages' commands plus only the guard step and its configuration files. **Wrong build that fails:** today's `portal-exports` step change, in either repository. |
 | **Reuses** | none |
 | **Unverified** | — |
 
@@ -257,12 +257,12 @@ Families:
 | | |
 |---|---|
 | **Requirement** | U12 → R17, R18 |
-| **Proven by** | The lockfile and imports are scanned. |
+| **Proven by** | `agent-collaboration`'s lockfile and imports are scanned. agent-vm's remaining 1.x uses are checked when #255's cleanup lands (OD-R4). |
 | **Reference** | R17, R18; RD3's decision |
-| **Target and journey** | O5 over the lockfile and every `import` in product code; journey: none |
+| **Target and journey** | O5 over `agent-collaboration`'s lockfile and every `import` in its product code; journey: none |
 | **Passes when** | No product module imports `@modelcontextprotocol/sdk`. The lockfile resolves one version each of esbuild, jose and vitest, and no Miniflare version ending in `-alpha`. **Wrong build that fails:** today's three `jose` versions. |
 | **Reuses** | none |
-| **Unverified** | the fixture exception, pending RD3 |
+| **Unverified** | the fixture exception, pending RD3; agent-vm's 1.x SDK in `gateway-runtime` and the two old packages, until #255's cleanup (OD-R4) |
 
 ### U13 — Known defects fixed
 
@@ -314,9 +314,9 @@ Families:
 | U7 | R10 R11 | type tests; guard run with the Drizzle `paths` allowlist | O6 | core packages · none | guard passes; forbidden imports (including every driver subpath) and unhandled variant fail | dependency declarations under `skipLibCheck`; casts |
 | U8 | R12 | minted ids parsed; source scan | O1, O5 | `conformance` | all v7; no `randomUUID` | received ids |
 | U9 | R13 R14 | test-file scan; bundle scan | O5 | scans · none | no wall-clock reads; no substitution | hang guards (RD4) |
-| U10 | R19 | gate diff | O5 | gate files · none | diff = guard only | — |
+| U10 | R19 | gate diff in both repositories | O5 | agent-vm's root gate files vs `38569fca`; `agent-collaboration`'s checks vs the moved packages' commands · none | agent-vm equal; agent-collaboration differs by the guard only | — |
 | U11 | R16 | Python scan | O5 | Python files · none | no Python Switchboard verification | — |
-| U12 | R17 R18 | lockfile and import scan | O5 | lockfile · none | one generation; one version each; no alpha | RD3 |
+| U12 | R17 R18 | lockfile and import scan in `agent-collaboration` | O5 | its lockfile · none | one generation; one version each; no alpha | RD3; agent-vm's part until #255 (OD-R4) |
 | U13 | R20–R25 | each defect's focused case | focused tests, O4 family 5 | owning modules · none | each fails before, passes after | — |
 | U14 | R26 | the U14 row: 3, 5 and 12 MiB calls; spill cases | raw responses, `wrangler tail` outcomes, spill directory listings | private Worker and Node host · `large-request` (needed, lasting) | normal result; no Switchboard 413 or 502; with spilling enabled, spill file private, outside `stateDirectory`, removed on every end; with spilling off, no file | same-isolate concurrency (RD7) |
 | U15 | R15 | Hegel families in Node on both databases; Durable Object through the test runtime's stub | O4 | core suite · none | five families vs pure models; mutants caught | separate processes |
