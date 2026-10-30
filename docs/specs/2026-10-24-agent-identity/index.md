@@ -2,6 +2,8 @@
 
 The agent entry to this design set. People start at [index.html](index.html), a page over the same files. This index is navigation only; every rule lives in the document it links to.
 
+**Item two (the owner's steps 1 and 2) has its own design:** [../2026-10-30-item-two/index.html](../2026-10-30-item-two/index.html). This set is the whole identity design, with its history; steps 3–5 still live here.
+
 ## Documents
 
 - Requirements: [requirements.md](requirements.md). Whose need, in the owner's words, and the open owner decisions.

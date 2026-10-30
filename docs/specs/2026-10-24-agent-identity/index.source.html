@@ -193,6 +193,12 @@ Used approvals and the removal marks Fleet sends. It never holds membership: the
 
 <h1>Agent identity and workspace access</h1>
 
+<ex-callout tone="tldr" title="Item two has its own design">
+
+Your steps 1 and 2 (sign-in, machine login, sessions, remote start, the switch, and who is logged in) are designed on their own, current only, in [Item two](../2026-10-30-item-two/index.html). This set is the whole identity design, with its history; steps 3–5 still live here.
+
+</ex-callout>
+
 Who acts in the fleet and the Switchboard, how each one proves who it is, which workspace it belongs to, and how its access to Switchboard tools is granted and taken away. A Switchboard tool is one of the MCP tools a workspace's Switchboard serves. Switchboard was called the Tool Portal until 28 October (OD12); its code packages keep their `tool-*` names for now, and older documents use the old name. Its code, and the sign-in service's, moves to its own `agent-collaboration` repository first (OD13). This is a design. Nothing in it is built or observed yet.
 
 <h2 id="how-it-works">How it works, in plain words</h2>
