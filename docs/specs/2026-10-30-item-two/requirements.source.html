@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Item two: Requirements</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="index.html">Item two</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="item-two-requirements" revision="2026-10-30.1">
+<p id="set-pages"><a href="index.html">Item two</a>: <strong>Requirements</strong> · <a href="specification.html">Specification</a> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a></p>
+<h1 id="requirements--item-two-requirements">Item two: Requirements</h1>
+<ex-callout id="requirements--answer" tone="tldr" title="What item two is for">
+<ex-markdown id="requirements--answer-text"><script type="text/markdown">
+Item two is your **steps 1 and 2**.
+- **Step 1:** Fleet central talks only to things that proved who they are. You sign in. Every machine logs in by a device code you approve. Sessions on those machines are registered and attributed, and a session can start a helper on another machine. Production switches to this login, still behind Cloudflare Access.
+- **Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing. Later the same page adds the people in your organization.
+
+This page says **who needs what, and why**. The [Specification](specification.html) says what must be true, the [Program Design](program-design.html) how it's built, and the [Verification Design](verification-design.html) how each part is proven.
+
+Needs keep the IDs they have in the wider identity design, so the delivery plan and the later steps line up. Gaps in the numbering belong to steps 3–5.
+</script></ex-markdown>
+</ex-callout>
+<h2 id="requirements--the-picture">The picture</h2>
+<ex-markdown id="requirements--the-picture-text"><script type="text/markdown">
+```mermaid
+flowchart TB
+  subgraph ORG["Your organization"]
+    WS["Workspaces<br/>with their projects"]
+  end
+  YOU["You, the owner<br/>signed in at the sign-in service"]
+  M["Fleet machines<br/>your Mac, Sunclaw: each logged in<br/>by a device code you approved"]
+  S["Sessions<br/>Codex, Claude, Cursor conversations"]
+  FC["Fleet central<br/>accepts only logged-in machines"]
+  VIEW["Who is logged in<br/>a live page only you can open"]
+  YOU -->|"approves each machine,<br/>chooses its workspaces"| M
+  M -->|"allowed to serve"| WS
+  S -->|"runs on"| M
+  S -->|"started for a project in"| WS
+  M -->|"connects with its own token"| FC
+  YOU -->|"opens"| VIEW
+  VIEW -->|"reads, live"| FC
+```
+
+- **Organization first.** Everything belongs to one organization, and nothing crosses to another. Today there is one: yours.
+- **A machine is logged in once, by you.** After that it keeps itself logged in with short tokens it renews on its own. You can revoke it.
+- **A session never logs in.** Its machine vouches for it, and it belongs to the workspace of the project it was started for.
+- **The view only shows.** It changes no access.
+</script></ex-markdown>
+<h2 id="requirements--who-is-affected">Who is affected</h2>
+<ex-markdown id="requirements--who-is-affected-text"><script type="text/markdown">
+| Who | Their part in item two |
+|---|---|
+| **You, the owner** | You own your organization. You allow people to sign in, create workspaces, approve each machine's login and choose the workspaces it may serve, revoke machines, and open the who-is-logged-in view. |
+| **Fleet machines** | Each Router (your Mac, Sunclaw, a Linux box) logs in once by device code and stays logged in. |
+| **Sessions** | Codex, Claude and Cursor conversations on a logged-in machine. They register with their project's workspace, message other sessions, and start helpers on other machines. |
+| **People you allow to sign in** | They can sign in. In item two they hold no role yet; roles come in step 3. |
+| **Customers of the product** | Others who run it themselves. Nothing may depend on your own Cloudflare Access account once Access comes off. |
+</script></ex-markdown>
+<h2 id="requirements--needs">Needs</h2>
+<ex-markdown id="requirements--needs-text"><script type="text/markdown">
+Every row is your direction, or a decision already recorded in the people sign-in design. The quotes are your words.
+
+**Who acts**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U1 | Every actor is one of three kinds: a **person**, a **bot** or a **fleet harness session**. A machine is not an actor: it logs in and vouches for its sessions. In item two, people and sessions act; bots come in step 5. | Every grant, refusal and record must say who acted. Today central can only name a machine or "the owner". | "lets deifne diffrent things"; the naming thread ending in "Fleet Harness session" |
+| U3 | A **session** is one Codex, Claude or Cursor conversation on a logged-in machine. Its machine vouches for it. It never logs in and holds no secret. | Your agents are sessions the fleet already knows by conversation ID. | "i have session ids for agents on myk router"; "fleet sesison are assocviated with fleet rotuer" |
+| U19 | Every collaboration call from a session is recorded as coming from the session it **actually came from**. A call naming another session is refused. | Today a session can post as another and be stored as it. | that Fleet uses session information "to authenticate collaboration MCP requests as the actual Actor" |
+
+**Your organization**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U15 | **Fleet central holds the truth**: organizations, workspaces, projects, machines, sessions. The sign-in service, on Better Auth, proves people and machines and mints their tokens. Workspaces keep their existing IDs. | One owner per truth, and no token server written in Rust. | "we have fleet taht shoud be doing the login"; "better auth is onlyk ts … fleet is decoup0ed" |
+| U20 | **People sign in** with Google, GitHub or a passkey. Your organization's owner decides who may sign in. Only people reach administration. | The people sign-in rules carry over. | the people sign-in design (D2, F-64, F-78, F-82) |
+| U21 | **Only you administer.** You allow people to sign in, create workspaces, log machines in by approving their codes, choose the workspaces each machine serves, and revoke machines. Managers are a later concept. | Granting access is your call. | "owners can allow people to log in or allow auth related stuff"; "right now its just owner" |
+| U26 | **Organization first.** A person is admitted to an organization before anything else. | The organization decides who exists in it. | "you add peope bot to organzisiton. then join workspaces" |
+| U27 | **Nothing is shared or sent between organizations.** One Fleet central can serve several. A person may be in several; a machine and a workspace each belong to exactly one. | Organizations stay apart even on one service. | "i dont want cross organization any sharing stuff or comm"; "a single router only belongs to one organization" |
+| U30 | **People never hold tool tokens.** People ask bots, which act with their own authority. | People don't call tools or log machines in. | "members cannot lkokg in anytnhing into a router, they use existin channels or bots" |
+| U9 | You can **look up** who someone is: a person's organizations; a machine's organization, what authorized it and the workspaces it serves; a session's machine, project and isolation. | You must be able to answer "who is this, and where does it belong?" | "know which works ace each identy regsitered with t system belkongs to" |
+
+**Machines log in**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U31 | **Only you log machines in**, by approving each machine's device code. A machine belongs to exactly one organization. | One person controls which machines join. | "only owner can log a comptuer in"; "someone has to authorizxe that machien" |
+| U33 | **One login model for every machine.** Mac, Linux or VM: the machine shows a device code, you approve it, and from then on it renews short-lived tokens by itself. Each token names its issuer, so another kind of issuer can be added later. | No long-lived machine secrets, one way to check every machine. | "login i want login to work with device codes in codex"; "can i use this for all my machiens mac, linux vms eveyrthing?"; "lets make it expandable" |
+| U17 | **No new private keys on machines.** A machine's one secret, its refresh credential, sits in the Router's encrypted secret store, plaintext only in debug builds. A machine with no store keeps it only in memory, and you approve it again after a restart. | You rejected per-machine key files and a Keychain machine identity. | "i dont want bespoke private keysin mahcine"; "no plain text secrets for prod. only for debug"; "why would this not just use an authority and in memory with login?" |
+| U35 | Routers run on **Linux** as well as macOS. On macOS the store's key is in the Keychain; on Linux under systemd it's a systemd encrypted credential; anywhere else, memory only. Proving a Router inside a VM is out of scope, and no Linux CI job is added. | Mac-only machinery doesn't serve the fleet. | "we luse liux or fmvs"; on VM proof, "no we dont need to prove this. out of scope"; on a Linux CI job, "No" |
+| U34 | **Three steps, no half steps.** (1) Build the new login while today's (Cloudflare Access plus the enrollment credential) runs unchanged. (2) Switch, behind Access: central accepts only the new login, and every machine logs in again. (3) Remove Access, once every rule of the whole identity design holds. **Item two takes steps 1 and 2.** | Access can't stay forever, and the switch must be proven while Access still guards everything. | "we keep cloduflare access and build the other too"; "no half steps"; "everythign in access gakurd till i can prove lognin works behidn it?" |
+| U14 | When Fleet central can't be reached, **no new machine token or connection is admitted**: the system fails closed. | You accept the system stopping rather than running on stale grants. | "if central is out yes system shouldn't work?" |
+
+**Sessions**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U6 | A session belongs to **the workspace of the project it was started for**. It runs on one machine. You choose which workspaces each machine may serve; one machine may serve several. The repository doesn't decide the workspace. | Sessions work on projects, projects live in workspaces, and one machine hosts work for several. | "yes" to session → project → workspace, with the machine allowed to serve workspaces |
+| U32 | Once a machine is logged in, **anyone who can operate it can start sessions** for the workspaces it serves. The system knows the machine and the session, not the person at the keyboard. | There's no way to control who sits at a logged-in machine. | "if a rotuer is lgoged in anyoen can startw e hav eno way of contorllign this" |
+| U18 | Each session records its machine and **isolation kind** (`Host`, `ProcessSandbox`, `Container` or `Vm`). The system shows which workspaces share a machine. Nothing is blocked on it yet. | Sessions on one open machine can read each other's files; the leak must be visible before it can be fenced. | "files can only really be enforced with vms"; "agree" to "record and show now, enforce later"; keep it (OD7) |
+| U39 | A session can **start a helper session on another machine** of its organization, for a project in its own workspace, when that machine serves the workspace. | Today a session on another machine can only be started from that machine, by SSH. | "router shoudl allow you to create a new session"; "currently we cant start sessions in antoehr cumoter even fi its in teh fleet" |
+
+**Seeing who is logged in**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U40 | **You can see, live, who is logged in and what each is working on.** First (B+): every machine, whether it's connected now and when it was last seen, and each session on it with what it's working on and whether a turn is running. Then (C): the people signed in, and later bots. The view only shows; it changes no access. | Today you can look up one identity at a time. You want one view of what's present and what it's doing. | "in ui i can see who is logged in and what"; "c, but we can do this in stages. we can do b plus then c as follow up"; "i mean authencated and live to know" |
+
+**How it's built**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U16 | One versioned contract between services, on **any host**. Cloudflare is one runtime; the same design runs elsewhere. | The product runs on Cloudflare or elsewhere without a second design. | "maqke sure clodufalre is one runtiem and we decokuple yes? same design" |
+| U22 | The sign-in service stores everything in **SQLite through Drizzle**: D1 on Cloudflare, `better-sqlite3` on Node. Better Auth uses its Drizzle adapter, and `drizzle-kit` generates the checked-in migrations. Never Kysely, SQL strings or `node:sqlite`. You approve the schema and migrations before code uses them. | Sign-in was built on hand-written SQL and Kysely, which you didn't choose. | "obviously fuckkgin drizzle eveyrwhere"; "we kuse drizzle and sqlite"; "i will nto allow you to yolo zqlite migraiton crap" |
+| U23 | The sign-in service has **one runtime-free core** holding every rule. Each runtime is a host that injects storage, clock, IDs, crypto and outbound calls, the way codex-router's Fleet central does. | One design on any host. | "it shoudl be runtime seperated like fuckign codex router"; "you inject stukff not pkul out engines" |
+| U24 | **Types say what is valid:** discriminated unions for states and results. Only **UUIDv7** is ever used as a UUID. | One identifier format, and types that can't hold an invalid state. | "type safeyt and good tyeps and descrimatn union"; "we ony use uuidv7" |
+| U25 | Tests **never use wall-clock time**, include **Hegel** property tests, and are TypeScript. | Time and ordering are proven deterministically. | "i dont allow wall clock time ever in tests"; "use hegal" |
+</script></ex-markdown>
+<h2 id="requirements--goal-boundary">Goal boundary</h2>
+<ex-markdown id="requirements--goal-boundary-text"><script type="text/markdown">
+**Goal:** Fleet central accepts only authenticated machines, people and services. Sessions are registered and attributed and can start helpers across machines. Production runs on the new machine login behind Access. You see, live, who is logged in.
+
+**What exists to build on:**
+- Fleet central's machine enrollment, owner administration and Cloudflare Access gate, until the switch;
+- the fleet's workspaces, boards and projects, with their IDs;
+- each Router's saved installation identity;
+- the sign-in service and its tested token issuer, on Better Auth, in `agent-collaboration/switchboard` (`packages/auth`, upgraded to 1.7.11);
+- messaging between sessions on different machines, which works today and must keep working on the new login.
+
+**What's missing:**
+- organizations at Fleet central, with you as owner, and people's admission checked there;
+- a session identity in the fleet, registered with its project's workspace, and calls attributed to it;
+- machine-to-workspace allowances;
+- the device-code machine login, its short-lived tokens and renewal, and a secret store on Linux, or memory only;
+- starting a session on another machine;
+- the switch to the new login;
+- the live who-is-logged-in view.
+
+**What may change:**
+- Fleet central and the Router (`agent-collaboration/agent-collaboration`);
+- the sign-in service (`agent-collaboration/switchboard`, `packages/auth`).
+
+agent-vm is frozen and changes for neither. The Switchboard isn't changed by item two.
+
+**Not in item two:**
+- **Steps 3–5:** bots; workspace roles for people and bots; workspace pairs; machines seeing only the workspaces they serve; Switchboard tokens for sessions and bots; collaboration checks per workspace; removal notices to the Switchboard; the admin panel and approval UI; removing Cloudflare Access.
+- **Never:**
+  - a named-agent registry or per-session approvals;
+  - new private keys on machines, or a hardware machine identity;
+  - a token server in Rust;
+  - enforcing isolation (it's recorded and shown);
+  - control over who operates a logged-in machine;
+  - accepting the old and new machine login at the same time;
+  - logging VMs in automatically, or any agent-vm work;
+  - proof inside a VM, or a new Linux CI job;
+  - the view changing any access, or showing who sits at a machine.
+
+**Evidence that it works:**
+- You approve a machine's code, and it logs in to your organization; anyone else's approval is refused.
+- A logged-in machine keeps working past its first token without anyone acting; a revoked one can't renew or connect.
+- Two machines you approved stay independent: one's replayed or revoked token never stops the other.
+- A false sender is refused.
+- A session on your Mac starts a helper on Sunclaw, for a project in its workspace; a start for another workspace, or on a machine that doesn't serve it, is refused and creates nothing.
+- Sessions on two machines still message each other on the new login.
+- With Access still in front, the old enrollment credential is refused.
+- No new machine token or connection while Fleet central is down.
+- You open the view and see each machine and its sessions. A cut machine shows as not connected within the bound. Nobody else can open it.
+</script></ex-markdown>
+<h2 id="requirements--after-the-switch">What stays as today after the switch</h2>
+<ex-markdown id="requirements--after-the-switch-text"><script type="text/markdown">
+Item two goes live before steps 3–5. From your switch until those steps go live, inside your one organization, everything item two doesn't change works as it does today. You decided this (OD11):
+- **Every logged-in machine still reads every workspace.** Machines see only what they serve from step 3.
+- **Collaboration calls are attributed to their real session,** but not yet checked per workspace. That check comes in step 4.
+- **The Switchboard keeps working on today's agent tokens,** so the sign-in service keeps today's agent path until step 3 replaces it.
+- **Cloudflare Access stays in front throughout.**
+
+What it costs: a bounded period where the new login runs beside today's behavior inside the organization. Only your machines are in it, and Access guards everything.
+</script></ex-markdown>
+<h2 id="requirements--open-decisions">What's still yours to decide</h2>
+<ex-markdown id="requirements--open-decisions-text"><script type="text/markdown">
+| ID | Decision | Recommendation | What waits on it |
+|---|---|---|---|
+| OD4 | The sign-in service's tables and migrations: Better Auth 1.7.11's tables as its CLI generates them for the Drizzle adapter (no SQL time default; IDs from the injected generator), plus `session.organizationId`, `sign_in_audit`, `organization_admission_claim`, `admitted_person_guard` and the device-code columns, as drawn in the [Program Design](program-design.html#program-design--the-sign-in-service-storage-core-and-hosts). | Approve the drawn tables now. The generated SQL comes to you before the first code uses it. | the first sign-in ticket, B1 |
+| OD14 | How fresh the view must be: how soon a machine connecting or dropping, or a session starting or stopping, must show. | 15 seconds. It's one setting, and every interval scales from it. | nothing; built at 15 |
+| OD2 | The default lifetime of a machine token (configurable, at most 60 minutes). | 5 minutes. It's one setting. | nothing; built at 5 |
+
+**Inherited, not asked again:** admin actions check that your sign-in is still current, within the people sign-in design's freshness bound **SD8**, which that design still has open.
+</script></ex-markdown>
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>
