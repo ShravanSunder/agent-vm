@@ -9,6 +9,7 @@
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
 <a href="index.html">Identity design</a>
+<a href="item-two.html">Item two</a>
 <a href="plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
 <a href="plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
 <a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
@@ -1375,7 +1376,7 @@ sequenceDiagram
 - **People.** The organization authority lists each admitted person. The sign-in service adds whether they are signed in now (an unexpired sign-in session) and when they last signed in.
 - **Bots.** The organization authority lists each bot, its membership workspaces and its credentials. The sign-in service adds whether each credential is active and when it last obtained a token.
   - **The last token's source.** Workspace and collaboration tokens are signed JWTs, and the provider stores no row for them (`createJwtAccessToken`, `token.ts:224–263` at `52ab801c`, only signs). So the token table holds nothing to read (Reviewer, IT4).
-  - **The release gate writes it instead.** It already checks every token before it leaves; at stage C it also writes the credential's last release time to `bot_token_release`, in one statement, before returning the token. If that write fails, the token isn't released and the bot retries. Tokens stay stateless.
+  - **The release gate writes it instead.** It already checks every token before it leaves; at stage C it also writes the credential's last release time to `bot_token_release`, through the sign-in core's store (Drizzle, in the one schema module), in one statement, before returning the token. If that write fails, the token isn't released and the bot retries. Tokens stay stateless.
 
 Each fact comes from its owner when the page refreshes; nothing is copied.
 </script></ex-markdown>

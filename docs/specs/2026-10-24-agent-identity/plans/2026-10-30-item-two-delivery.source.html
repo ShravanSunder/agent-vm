@@ -20,6 +20,7 @@
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
 <a href="../index.html">Identity design</a>
+<a href="../item-two.html">Item two</a>
 <a href="2026-10-30-item-two-delivery.html">Item two delivery plan</a>
 <a href="2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
 <a href="../../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
@@ -586,7 +587,7 @@ What it does:
     - `ReadMachinePresence` to every enrolled machine in parallel, each with a deadline of half a refresh interval.
     - Workspace and project names from its Fleet object.
     - Never partial: any failure fails the whole lookup.
-- **Writes:** `collaboration-central-core` session runtime and `organization_authority` (`machine_activity`, `session_activity`), the admin route, and both hosts' socket loops (`collaboration-central-tokio/src/native_objects.rs`, `collaboration-central-cloudflare/src/object_shell.rs`).
+- **Writes:** the rules in the runtime-free `collaboration-central-core` (the session runtime and `organization_authority`'s `machine_activity` and `session_activity`, through central's existing stores, on its injected clock), and the admin route. The two hosts add only their mechanics: the receive deadline (`collaboration-central-tokio/src/native_objects.rs`) and the alarm (`collaboration-central-cloudflare/src/object_shell.rs`).
 - **Earns:** SO4's presence and activity scenarios on both central hosts, including offset object clocks, a slow Connection object, reordered reports and the Cloudflare alarm (U40/R48, central half); SO4's lookup scenarios (U40/R47 and R49, central half); SO7 for the lookup's route; SO6's Rust half for K12.
 - **Focused proof:**
   - **Wrong behaviors caught:**
@@ -631,7 +632,7 @@ What it does:
   - **Freshness:** an answer arriving more than one refresh interval after its request is discarded. A failure, or OD14 without a snapshot, shows unavailable.
   - **Refusals:** a refusal shows nothing.
   - **The token stays on the server.**
-- **Writes:** `packages/auth`: a new who-is-logged-in module in `sign-in-core`, its route on both hosts, and the page.
+- **Writes:** `packages/auth`: a new who-is-logged-in module in the runtime-free `sign-in-core`, reaching its clock and central client only through `SignInPlatform` (R30); each host only mounts its route; and the page.
 - **Earns:** SO12's page side, with V4.
 - **Focused proof:**
   - **Wrong behaviors caught:**
