@@ -89,7 +89,7 @@ async function writeHermesProjectFixture(rootPath: string): Promise<string> {
 				agents: [{ id: 'shravan' }],
 				gateway: {
 					type: 'hermes',
-					memory: '2G',
+					memory: '2560M',
 					cpus: 2,
 					port: 18791,
 					config: './gateways/shravan/config.yaml',
@@ -1436,7 +1436,7 @@ describe('runConfigValidation', () => {
 						id: 'coding-agent',
 						gateway: {
 							type: 'hermes',
-							memory: '2G',
+							memory: '2560M',
 							cpus: 2,
 							port: 18791,
 							config: '/etc/agent-vm/gateways/coding-agent/hermes-managed/config.yaml',

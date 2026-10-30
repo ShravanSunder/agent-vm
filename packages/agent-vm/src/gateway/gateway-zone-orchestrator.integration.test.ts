@@ -919,7 +919,7 @@ async function createSystemConfig(): Promise<LoadedSystemConfig> {
 					gateway: {
 						type: 'hermes',
 						imageProfile: 'hermes',
-						memory: '2G',
+						memory: '2560M',
 						cpus: 2,
 						port: 18791,
 						config: gatewayConfigPath,
@@ -1541,7 +1541,7 @@ describe('startGatewayZone', () => {
 						kind: 'host-directory',
 					},
 				}),
-				resources: { cpuCount: 2, memory: '2G' },
+				resources: { cpuCount: 2, memory: '2560M' },
 				rootfsMode: 'cow',
 				runtimeRootfsSize: '12G',
 				sessionLabel: 'agent-vm-tests-a1b2c3d4:shravan:gateway',

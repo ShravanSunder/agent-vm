@@ -33,7 +33,7 @@ const testHermesZone = {
 		config: '/config/hermes.json',
 		cpus: 2,
 		imageProfile: 'hermes',
-		memory: '2G',
+		memory: '2560M',
 		port: 18_791,
 		stateDir: '/storage/zone-test/state',
 		type: 'hermes',
