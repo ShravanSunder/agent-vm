@@ -9,7 +9,8 @@
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
 <a href="../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
 <a href="index.html">Delivery orchestration</a>
 <a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
 <a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
@@ -22,6 +23,15 @@
 <ex-markdown id="program-design--delivery-orchestration-program-design-text"><script type="text/markdown">
 The order of work across agent-vm and codex-router. It names every workstream and slice, where each waits on the other, the contracts that cross the repositories, the joint cuts, their proofs, and who owns each gate. The [Specification](specification.md) says what the order must satisfy (R1–R9); the [Verification Design](verification-design.md) says how that is checked.
 </script></ex-markdown>
+<ex-callout id="program-design--since-2026-10-30" tone="risk" title="Since 30 October, some lines below are out of date">
+<ex-markdown id="program-design--since-2026-10-30-text"><script type="text/markdown">
+- **M1 is done, as M0.** The Switchboard and the sign-in service were copied from agent-vm at `2dfea38e` into their own repository, `agent-collaboration/switchboard` (merged as `8f6be960`), not moved into `agent-collaboration`. M0b brings the admin panel from #243.
+- **agent-vm is frozen,** so A4b, the one agent-vm pull request, is dropped.
+- **OD13 is superseded** (see the identity Requirements).
+- **codex-router** is now `agent-collaboration/agent-collaboration`.
+- **The identity order for item two** is in the [item two delivery plan](../2026-10-24-agent-identity/plans/2026-10-30-item-two-delivery.html), which re-anchors D1 to these repositories.
+</script></ex-markdown>
+</ex-callout>
 <h2 id="program-design--the-order-in-one-picture">The order in one picture</h2>
 <ex-markdown id="program-design--the-order-in-one-picture-text"><script type="text/markdown">
 ```mermaid

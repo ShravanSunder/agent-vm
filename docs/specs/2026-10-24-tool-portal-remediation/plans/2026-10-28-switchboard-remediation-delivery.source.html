@@ -17,7 +17,8 @@
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
 <a href="../../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan</a>
+<a href="../../2026-10-24-agent-identity/plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
+<a href="../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
 <a href="../../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
 <a href="../index.html">Switchboard remediation</a>
 <a href="2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
@@ -30,6 +31,13 @@
 <ex-markdown id="plan--intro-text"><script type="text/markdown">
 How the Switchboard code gets fixed so it follows your rules: one core, Drizzle on SQLite behind core-owned typed stores, UUIDv7 only, no wall clock in tests, one version of each dependency, your gates as approved, and the known defects fixed. Governed by the [Switchboard remediation](../index.html) design; the cross-repository order is the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.html). Plan only; nothing is built.
 </script></ex-markdown>
+<ex-callout id="plan--since-2026-10-30" tone="risk" title="Since 30 October, some lines below are out of date">
+<ex-markdown id="plan--since-2026-10-30-text"><script type="text/markdown">
+- **M1 is done, as M0.** The code was copied from agent-vm at `2dfea38e` into `agent-collaboration/switchboard` (merged as `8f6be960`). A1–A8 are built there.
+- **agent-vm is frozen,** so A4b (the SDK transport and Python journey in agent-vm) is dropped. A8 no longer waits on it.
+- This plan's other tickets are unchanged until it is replanned.
+</script></ex-markdown>
+</ex-callout>
 <h2 id="plan--result">Result</h2>
 <ex-markdown id="plan--result-text"><script type="text/markdown">
 - **Planning result:** `ready`, plan-only. The Reviewer's readiness check of the remediation design closed on 28 October with no review defect left. What remains are your decisions RD1, RD3–RD7, OD-R1 and OD-R4, listed under "Waiting on you". The Advisor's review of this plan is folded in.

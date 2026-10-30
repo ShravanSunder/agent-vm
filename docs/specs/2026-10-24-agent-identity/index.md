@@ -9,7 +9,8 @@ The agent entry to this design set. People start at [index.html](index.html), a 
 - Program Design: [program-design.html](program-design.html), authored in program-design.source.html, one section per heading. The owners, shapes, flows, state, failure handling and trust boundaries.
 - Verification Design: [verification-design.md](verification-design.md). How each requirement will be shown to hold. Planned, not observed.
 - Alternatives: [alternatives.md](alternatives.md). Every option weighed, drawn. It decides nothing.
-- Delivery plan: [plans/2026-10-27-agent-identity-delivery.html](plans/2026-10-27-agent-identity-delivery.html), authored in plans/2026-10-27-agent-identity-delivery.source.html, one section per heading and one disclosure per ticket. The slices, their order across the repositories, and which slice earns each Verification Design row. Plan only; nothing is built.
+- Item two delivery plan: [plans/2026-10-30-item-two-delivery.html](plans/2026-10-30-item-two-delivery.html), authored in plans/2026-10-30-item-two-delivery.source.html. D1, the who-is-logged-in view (DV) and stage C's people (DC), re-anchored to `agent-collaboration/agent-collaboration` and `agent-collaboration/switchboard`, with which ticket earns each Verification Design row. Plan only; nothing is built.
+- Earlier delivery plan: [plans/2026-10-27-agent-identity-delivery.html](plans/2026-10-27-agent-identity-delivery.html). Replaced for D1 by the item two plan; it still records D2–D7 until steps 3–5 are planned.
 
 The set is one concern, so it has no capability through-lines. The task paths below cross it.
 
@@ -134,4 +135,4 @@ The set is one concern, so it has no capability through-lines. The task paths be
 - [Requirements: owner decisions](requirements.md#owner-decisions) (OD2, OD4 and OD14 open; the rest decided)
 - [Requirements: item two and the later steps](requirements.md#item-two-and-the-later-steps) (the owner's 2026-10-30 order of work)
 - [Alternatives: OD8, decided](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
-- [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.html#plan--waiting-on-you)
+- [Item two delivery plan: what waits on you](plans/2026-10-30-item-two-delivery.html#item2--waiting-on-you)
