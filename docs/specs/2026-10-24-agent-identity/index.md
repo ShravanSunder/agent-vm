@@ -99,6 +99,19 @@ The set is one concern, so it has no capability through-lines. The task paths be
 5. [Alternatives: how the switch happens](alternatives.md#20-how-does-the-switch-to-the-new-login-happen)
 6. [Delivery plan](plans/2026-10-27-agent-identity-delivery.html)
 
+## Reading path: who is logged in (item two)
+
+1. [Requirements: need U40](requirements.md#needs)
+2. [Requirements: item two and the later steps](requirements.md#item-two-and-the-later-steps)
+3. [Specification: entities (E24 machine connection, E7 session)](specification.md#entities)
+4. [Specification: who is logged in](specification.md#who-is-logged-in)
+5. [Specification: C12 who is logged in](specification.md#c12-who-is-logged-in-admin-view)
+6. [Specification: proof obligations (V39–V42)](specification.md#proof-obligations)
+7. [Program Design: how the owner sees who is logged in](program-design.html#program-design--how-the-owner-sees-who-is-logged-in)
+8. [Program Design: requests over the machine's connection (presence and activity)](program-design.html#program-design--requests-over-the-machine-s-connection-router-fleet-central)
+9. [Program Design: admin commands and lookups (`WhoIsLoggedIn`)](program-design.html#program-design--admin-commands-and-lookups-person-fleet-central)
+10. [Verification Design: shared observations (SO12)](verification-design.md#shared-observations)
+
 ## Reading path: machines and what they share
 
 1. [Requirements: needs U17, U18](requirements.md#needs)
@@ -118,6 +131,7 @@ The set is one concern, so it has no capability through-lines. The task paths be
 
 ## Owner decisions
 
-- [Requirements: owner decisions](requirements.md#owner-decisions) (OD2 and OD4 open; the rest decided)
+- [Requirements: owner decisions](requirements.md#owner-decisions) (OD2, OD4 and OD14 open; the rest decided)
+- [Requirements: item two and the later steps](requirements.md#item-two-and-the-later-steps) (the owner's 2026-10-30 order of work)
 - [Alternatives: OD8, decided](alternatives.md#21-decided-how-are-organizations-fleet-data-kept-apart-od8)
 - [Delivery plan: what waits on you](plans/2026-10-27-agent-identity-delivery.html#plan--waiting-on-you)

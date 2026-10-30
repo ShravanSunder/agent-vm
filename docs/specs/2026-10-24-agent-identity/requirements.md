@@ -55,7 +55,7 @@ First a person or a bot is added to an organization; then it joins that organiza
 - **authorized (relayed):** the owner's words, quoted verbatim by the Board/Fleet Lead.
 - **existing decision:** an owner decision already recorded in the fleet framework or the people sign-in design.
 
-**Priority:** every row is part of the first identity round. The Switchboard Lead assigned that from the owner's direction to build this set now. U34 sets the order of the machine-login rows: they are built first and switched on only behind Cloudflare Access.
+**Priority:** every row is part of the first identity round. The Switchboard Lead assigned that from the owner's direction to build this set now. U34 sets the order of the machine-login rows: they are built first and switched on only behind Cloudflare Access. The owner's 2026-10-30 order of work decides what is built first; see [Item two and the later steps](#item-two-and-the-later-steps).
 
 | ID | Need | Why it matters | Evidence | Authority |
 |---|---|---|---|---|
@@ -98,6 +98,7 @@ First a person or a bot is added to an organization; then it joins that organiza
 | U37 | **One Switchboard deployment per organization.** | A fault or overload in one organization's Switchboard should not reach another's. | Owner's pick, 2026-10-26: "Yes: one deployment per organization" (re-confirmed). | authorized, 2026-10-26 |
 | U38 | There is **no organization room rule.** Keeping organizations on separate machines or VMs is the owner's operating practice, not something the system declares, checks or shows. | A rule nothing checks adds nothing. | Owner, 2026-10-26, on the declared room rule: "thers no point to this". | authorized, 2026-10-26 |
 | U39 | A session can **start a helper session on another machine** of its organization, for a project in its own workspace, when that machine is allowed to serve the workspace. So a session on the Mac can start the first session on another fleet machine without anyone logging in to that machine. | Today a session on another machine can only be started from that machine, by SSH and a launcher script, outside the fleet. | Owner, 2026-10-27: "router shoudl  allow you to create a new session why it snot working?"; "so how are we solving htis as well?  currently we cant start sessions in antoehr cumoter even fi its in teh fleet". Today the client refuses a creator on another Router (`collaboration-client/src/conversation_client.rs:312–326` on codex-router `main`), and the fleet carries only messages, notifications, cancels and wakes between machines (`collaboration-mail-protocol/src/mail_content.rs:52`). The rule (own workspace, machines allowed to serve it) extends OD1's "a session may start helpers in its own workspace". | authorized, 2026-10-27 (the need); rule from OD1 and U6 |
+| U40 | **The owner can see, live, who is logged in and what each is working on.** In stages: first every logged-in machine of the organization, whether it is connected now and when it was last seen, and the sessions on it with what each is working on and whether it is running; then people signed in and bots, as a follow-up. The view is read-only; it changes no access. | U9 lets the owner look up one identity at a time. The owner wants to open one view and see, live, which machines and sessions are present and what they are doing. | Owner, 2026-10-30: "in ui i can see who is logged in and what"; on the scope options, "c, but we can do this in stages. we can do b plus then c as follow up"; "i mean authencated and live to know". UI: no current UI. The view is new, and where it lives is Program Design's. | authorized, 2026-10-30 |
 
 ## Goal boundary
 
@@ -108,8 +109,9 @@ First a person or a bot is added to an organization; then it joins that organiza
 - The fleet's machine enrollment, owner administration and Cloudflare Access gate (Fleet central), until U34's switch.
 - The fleet's workspaces, boards and projects, and their existing IDs.
 - Each Router's saved installation identity.
-- The sign-in service and its tested token issuer (draft PR #263), and Better Auth 1.7.11.
-- The Switchboard's per-workspace MCP address and token check (draft PR #262).
+- The sign-in service and its tested token issuer (from draft PR #263), and Better Auth 1.7.11.
+- The Switchboard's per-workspace MCP address and token check (from draft PR #262).
+- Both now in `agent-collaboration/switchboard`, copied from #262's head, which contains #263.
 
 **What is missing:**
 
@@ -123,8 +125,9 @@ First a person or a bot is added to an organization; then it joins that organiza
 - A production secret store for Routers on Linux, and an in-memory refresh credential where no store exists.
 - A way for a session to start a session on another machine of its organization (U39).
 - The switch of U34 and the removal of Cloudflare Access.
+- A live view for the owner of who is logged in and what each is working on (U40).
 
-**May change:** Fleet central and the Router (codex-router), the sign-in service (`packages/auth`), and the Switchboard (`tool-host-core`, `tool-host-cloudflare`, `tool-host-node`). The Fleet board release now shipping is not changed by this set. The Switchboard's storage, host structure, tests and build follow the [Switchboard remediation](../2026-10-24-tool-portal-remediation/requirements.md) design; this set changes only what the Switchboard checks and keeps for identity, and U37's one deployment per organization. The order of work across both repositories is the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) design.
+**May change:** Fleet central and the Router (codex-router, the `agent-collaboration/agent-collaboration` repository), the sign-in service (`packages/auth`), and the Switchboard (`tool-host-core`, `tool-host-cloudflare`, `tool-host-node`). Since 2026-10-30, the sign-in service and the Switchboard live in `agent-collaboration/switchboard`, which was copied from agent-vm and stripped down to them. agent-vm itself is frozen and changes for neither. The Fleet board release now shipping is not changed by this set. The Switchboard's storage, host structure, tests and build follow the [Switchboard remediation](../2026-10-24-tool-portal-remediation/requirements.md) design; this set changes only what the Switchboard checks and keeps for identity, and U37's one deployment per organization. The order of work across both repositories is the [delivery orchestration](../2026-10-24-delivery-orchestration/requirements.md) design.
 
 **Non-goals:**
 
@@ -143,6 +146,7 @@ First a person or a bot is added to an organization; then it joins that organiza
 - No mixed old and new machine login (U34).
 - No automatic VM login through something that creates VMs, and no agent-vm work (U31, U33). agent-vm is out of this set.
 - No proof inside a VM, and no new Linux CI job (U35).
+- No change of access from the who-is-logged-in view: it only shows (U40). It never shows the person at a machine's keyboard (U32).
 
 **Acceptable outcome-level evidence:**
 
@@ -156,10 +160,24 @@ First a person or a bot is added to an organization; then it joins that organiza
 - A session on one machine starts a helper on another machine that serves its workspace; a start for another workspace, or on a machine that doesn't serve it, is refused.
 - With Access still in front, the old enrollment credential is refused; after Access is removed, the new login works and unauthenticated traffic is refused.
 - The owner can look up any identity's organization and workspace, any machine's organization, what authorized it, and its shared bucket.
+- The owner opens the who-is-logged-in view and sees each logged-in machine and its sessions. A machine connecting or disconnecting, and a session starting or stopping, shows within the view's freshness bound (OD14). Nobody else can open it, and it shows nothing from another organization.
+
+## Item two and the later steps
+
+On 2026-10-30 the owner set the order of work in five steps. Steps 1 and 2 are **item two**, designed in detail now. Step 3, and steps 4 and 5 together, get their own high-level design documents later. Each step takes whole deliverables from the [delivery plan](plans/2026-10-27-agent-identity-delivery.html), so nothing a step depends on lands after it.
+
+| Design doc | The owner's words (2026-10-30) | Deliverables |
+|---|---|---|
+| **Item two: steps 1 and 2**, in detail | "auth works and central is only exposed to systems connected to cloudflare via websocket and authenticated"; "in ui i can see who is logged in and what"; "whole of d1" | **D1**: your sign-in, the organization core, machine login by device code, session registration and attribution, starting a helper on another machine, and messaging on the new login, ending with the production switch behind Cloudflare Access. **The who-is-logged-in view (U40)**: machines and their sessions, live, first. People and bots follow as stage C. |
+| **Step 3**, high level | "workspace mcp connection and login to switchboard", and an admin panel and approval UI | **D2** (people, bots and roles; workspace pairs; machines see only what they serve), **D3** (workspace tokens and Switchboard tool calls), **D5** (removal), and the admin panel and approval UI, which aren't designed yet |
+| **Steps 4 and 5**, high level | "all my local agents can use workspace switchboard"; "bots can use mcp to talk to fleet agent collaboration" | D3's session path rolled out to every local harness, **D4** (collaboration and bot messages), and an MCP door for bots, routed through central to the right agent, which isn't designed yet |
+| After step 5 | — | **D6** (everything live together) and **D7** (off Cloudflare Access, OD11) |
+
+"Authenticated" means nothing reaches Fleet central without proving who it is (R27, R40, R43). It does not mean WebSocket-only: machines connect over a WebSocket, while the owner's admin actions, the sign-in service's requests and bots' collaboration calls use their own authenticated addresses (owner, 2026-10-30: "i mean authencated and live to know").
 
 ## Owner decisions
 
-OD2 and OD4 are still open; the rest are decided.
+OD2, OD4 and OD14 are still open; the rest are decided.
 
 | ID | Decision | Recommendation or decision |
 |---|---|---|
@@ -175,6 +193,8 @@ OD2 and OD4 are still open; the rest are decided.
 | OD10 | Which VMs must the Router be proven in? | **Decided (owner, 2026-10-27):** none. "no we dont need to prove this. out of scope"; agent-vm is out of this set (U31). Closed. |
 | OD11 | What runs between the production switch (U34 step 2, at D1) and the second cut, where the rest of this set goes live. | **Decided (owner, 2026-10-28, "yes" to the recommended option):** today's behavior inside the organization. Every logged-in machine still reads every workspace until the filtered view (D2). Collaboration calls are attributed to their real session but aren't checked per workspace until D4. The Switchboard keeps working on today's agent tokens, so the sign-in service keeps today's agent path until D3 replaces it. Cloudflare Access stays in front until every rule in this set holds, then comes off (U34 step 3, D7). Closed. |
 | OD12 | The name for what this set called the Tool Portal. | **Decided (owner, 2026-10-28):** Switchboard. The design documents use it from now on. The code packages keep their `tool-*` names until the repository move, and older documents (the 10-14 base design, research notes) keep the old name. Closed. |
-| OD13 | Where Switchboard's code and the sign-in service's code live. | **Decided (owner, 2026-10-28, "yes agent collaboration"):** their own `agent-collaboration` repository, matching the `@agent-collaboration` package scope. The packages move from agent-vm before any B, P or remediation ticket starts (the plan's M1). The two `@agent-vm` type packages they use stay in agent-vm and are used as published packages. Closed. |
+| OD13 | Where Switchboard's code and the sign-in service's code live. | **Decided (owner, 2026-10-28, "yes agent collaboration"); how it happens superseded (owner, 2026-10-30).**<br>- **Where:** agent-vm moved into the `agent-collaboration` GitHub organization.<br>- **How:** the Switchboard and the sign-in service were copied, not moved, into a new repository, `agent-collaboration/switchboard`, from #262's head `2dfea38e`, and the copy was stripped down to them (merged as `8f6be960`).<br>- **The packages:** the two type packages they use (the agent-facing SDK and the OAuth contracts) were copied with them and renamed `@agent-collaboration/*`. They are no longer used from agent-vm as published packages.<br>- **agent-vm:** frozen; it may stay broken until the owner returns to it.<br>Closed. |
+| OD14 | How fresh the who-is-logged-in view must be (U40): how soon a machine connecting or disconnecting, or a session starting or stopping, must show. | **Open.** The Lead proposes 15 seconds. This is configuration, not a design choice; the Lead uses 15 seconds unless the owner says otherwise. |
+| OD15 | What item two covers, and the view's scope. | **Decided (owner, 2026-10-30).** Item two is the whole of D1 plus the who-is-logged-in view. The view is staged: machines, their sessions, and live state first; then people signed in and bots ("c, but we can do this in stages. we can do b plus then c as follow up"). Closed. |
 
 **Inherited, not asked again here:** the owner check for admin actions uses the people sign-in design's freshness bound **SD8** (how old the confirmation that you're still active may be when an admin change applies). That design still lists it as the Lead's 5-second proposal, for you to decide with D5. This set follows whatever is decided there. Whatever bound is chosen, it holds when you make the change; creating a workspace, which Fleet applies shortly after, is checked when you ask. Until U34's step 2, the fleet's existing operator check (Cloudflare Access) proves the fleet operator, not an organization's owner; from step 2 the fleet operator signs in through the sign-in service like any admin.

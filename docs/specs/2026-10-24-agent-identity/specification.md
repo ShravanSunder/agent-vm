@@ -14,6 +14,7 @@ flowchart TB
   SYS[(Agent identity and workspace access<br/>shown as one system)]
   MCP[Each workspace's MCP address<br/>at its organization's Tool Portal<br/>refuses collaborators and people]
   O -->|admin console and device-code approval| SYS
+  O -->|who is logged in: a live, read-only view| SYS
   PP -->|sign in| SYS
   BOT -->|sign in with its own credential| SYS
   RM -->|logs in| SYS
@@ -47,6 +48,7 @@ flowchart TB
 | O5 | The same behavior holds on Cloudflare and on any other host, and every Router behavior holds on macOS and Linux. | The same obligations pass on each. |
 | O6 | Organizations share one Fleet central yet stay apart, and the organization comes first for every workspace role. | Every request that would cross organizations is refused; no role exists without admission (R34, R35). |
 | O7 | Every machine logs in by a device code the owner approves and renews itself with short-lived tokens, and Cloudflare Access is removed only after the new login is proven behind it. | R39–R43 hold, at each of U34's steps. |
+| O8 | The owner sees, live, who is logged in and what each is working on: machines and their sessions first, then people and bots. | The view shows each machine and session with its current state within OD14's bound, and only to the owner (R47–R50). |
 
 ## Entities
 
@@ -65,8 +67,9 @@ The entity table is the normative home. Program Design binds each entity to its 
 | E21 | **Machine enrollment** | Its enrollment ID: one authorization of one E6 into one E1. Each log-in or re-log-in of the same installation is a new enrollment of the same E6. | Belongs to one E6 and one E1. Authorized by its E1's owner approving one E23. | At most one active per E6, and all of an E6's enrollments name one E1. Records what authorized it. Its machine holds one refresh credential, in an encrypted store or only in memory (R41). | enrolled, revoked, expired | "logged in", "enrolled"; today's enrollment record | U31, U33, U34 |
 | E23 | **Device-code login request** | Its device code, which the machine keeps and never shows; the short user code is what the owner checks. | Asks to log one E6 into one E1, under a label the machine supplies. Approved or denied by that E1's owner. | Works at most once. Expires (OD6). Approving it logs in only that installation, only into that organization. | pending, approved, denied, expired, used | "device code", "the code the Router prints" | U33 |
 | E22 | **Machine token** | Its token ID. | Identifies one E6 and its E21, and names its E1 and its issuer, the sign-in service. | Short-lived (R40). Accepted only by Fleet central, never by the Switchboard. The sign-in service mints one only for an enrolled E21. Naming its issuer lets another kind of issuer be added later (U33). | valid, expired, rejected | "machine login token" | U33 |
+| E24 | **Machine connection** | One authenticated session between one E6's Router and Fleet central, from when it opens to when it closes. A reconnect is a new connection. | Belongs to one E6, and to the E21 whose login opened it. An E6 has 0..n over time. | Opened only with that machine's valid login: today Cloudflare Access plus its enrollment credential; from U34's step 2, a machine token (R40). Counts only while its E21 is the machine's active one (R40). Carries no person. | open, closed | "connected", "online"; "last seen" is the latest moment central heard from an open connection, or its close time | U40; R46's "connected" |
 | E15 | **Machine allowance** | The pair of one E6 and one E2. | Belongs to one E6 and one E2 of the same E1. | Only the admin grants or withdraws it. | active, withdrawn | "machine access", "the machine serves the workspace" | U6, U21, U27 |
-| E7 | **Fleet harness session** | Its session reference: its machine's installation, plus its harness endpoint (Codex, Claude or Cursor), plus its conversation ID. A new conversation is a new session. | Runs on exactly one E6. Was started for exactly one E16 in its machine's E1. Holds exactly one E8, in that project's workspace. Has exactly one E13. | Holds no secret. Never logs in. Accepted only as vouched for by its machine. Its machine has an active E15 for its workspace. Once removed or ended, its membership ends and no grant is decided for it again. Started by whoever operates its machine, or by another session of its workspace (R8, R46); no person is recorded as its starter. | active, removed, ended | "agent" (as an identity), "Router session" | U1, U3, U6, U19, U32 |
+| E7 | **Fleet harness session** | Its session reference: its machine's installation, plus its harness endpoint (Codex, Claude or Cursor), plus its conversation ID. A new conversation is a new session. | Runs on exactly one E6. Was started for exactly one E16 in its machine's E1. Holds exactly one E8, in that project's workspace. Has exactly one E13. | Holds no secret. Never logs in. Accepted only as vouched for by its machine. Its machine has an active E15 for its workspace. Once removed or ended, its membership ends and no grant is decided for it again. Started by whoever operates its machine, or by another session of its workspace (R8, R46); no person is recorded as its starter. Records its start time: the moment its Router registered it, which exists for every harness. | active, removed, ended. While active, its machine reports it as **working** (a turn is in progress, including one waiting on an approval or a question) or **idle** (no turn in progress, whether or not the harness has it loaded). It is unknown while its machine has no open E24. | "agent" (as an identity), "Router session" | U1, U3, U6, U19, U32, U40 |
 | E8 | **Membership** | The pair of one workspace and one identity (E3, E4 or E7). | Belongs to one E2 and one identity, in one E1. Names one E10, or the session default for a session. | Requires the identity's active E19 in the workspace's E1 (for a session, its machine's enrollment there). A bot or session has at most one active membership; a person may have several. A session's membership is in its project's workspace. A person's membership grants no tool token. | active, removed. A persona change keeps the membership with a new persona. | sign-in E11 Workspace link; the Switchboard's member record | U4, U5, U6, U10, U26 |
 | E9 | **Collaboration** | The pair of one person or bot and one workspace. | Belongs to one E3 or E4 and one E2, in one E1. | Requires the identity's active E19 in that E1. Only the admin creates it, per workspace. Never grants tools or starting work. Never held together with a membership in the same workspace. | active, withdrawn | "correspondent", "collaborator" | U4, U5, U7, U26 |
 | E17 | **Workspace pair** | An ordered pair: a from-workspace and a to-workspace. | Belongs to two E2s in one E1. | It lets members of the from-workspace message members of the to-workspace, and nothing more. It never grants tools or starting work. It reveals only the other workspace's ID and name. | active, withdrawn | "Personal may message OSS", "communication allowance" | U8, U28 |
@@ -117,7 +120,9 @@ flowchart TB
   E7["E7 Fleet harness session<br/>session reference<br/>active, removed, ended"]
   E13["E13 Isolation record<br/>its session<br/>recorded"]
   E14["E14 Shared bucket<br/>derived per machine"]
+  E24["E24 Machine connection<br/>one session to central<br/>open, closed"]
   E21 -- "into 1" --> E1
+  E24 -- "of 1, opened by its login" --> E6
   E23 -- "approved: creates 1" --> E21
   E23 -- "asks to log in 1" --> E6
   E21 -- "logs in 1; at most 1 active" --> E6
@@ -148,6 +153,8 @@ flowchart TB
 
 ## Obligations
 
+Item two, the owner's steps 1 and 2 (2026-10-30), builds D1's obligations and R47–R49 first, then R50 as stage C. The rest are built in steps 3 to 5. See [Requirements: item two and the later steps](requirements.md#item-two-and-the-later-steps).
+
 ### Identity and proof
 
 | ID | Obligation | Over | Traces to |
@@ -175,7 +182,7 @@ flowchart TB
 | R6 | A bot MUST be a member of at most one workspace. Only the admin creates, changes or removes that membership. Any other relationship a bot has to a workspace is a collaboration (E9). | E4, E8, E9 | U5, P3, O2 |
 | R7 | A fleet harness session MUST be a member of exactly one workspace: the workspace of the project it was started for. It is recorded at start and never changes for that session. A conversation registered for one project MUST NOT be registered again for another; repeating its original registration has no further effect. A session's repository or working directory MUST NOT decide its workspace. | E7, E8, E16 | U6, P3 |
 | R8 | Starting a fleet harness session for a project in W MUST be refused if its machine has no active allowance for W. The start MUST name its project; a project taken from the working directory MUST be refused. Starting needs no sign-in: whoever can operate a logged-in machine may start sessions for the workspaces it may serve, and the start is recorded as coming from that machine, not from a person. A session MAY start a helper session only for a project in its own workspace: on its own machine, or on another machine of its organization as R46 says. A conversation MUST NOT be prompted until its registration succeeds; one whose registration is refused, or whose outcome is unknown, admits no effect, and nothing replays or deletes it automatically. | E6, E7, E15 | U6, U32, OD1 |
-| R46 | A fleet harness session MAY ask to start a helper session on another fleet machine of its organization, for a project in its own workspace W. A member session of W MAY list the machines allowed to serve W, with each one's label. The start MUST be admitted only when, at the time of the request, the requesting session is active and a member of W (identified as R3 says), the project is in W, and the target machine is connected, has an active enrollment in the same organization and has an active allowance for W. Otherwise it MUST be refused with nothing created, revealing nothing about a machine of another organization. The start names the working directory and execution settings to use on the target machine; the target MUST refuse, creating nothing, when that directory doesn't exist there, and MUST also apply R8. Each start carries its own identifier: repeating it with the same content MUST return the first answer, repeating it with different content MUST be refused, and one start MUST create at most one session. Each admitted start has a deadline fixed at admission, after which the target MUST begin nothing. The new session MUST record the requesting session as its starter. The answer MUST be exactly one of: started (with the new session), refused (nothing was created), or unknown (the outcome could not be learned, because the request may have reached Fleet central or the target). An unknown start that later completes MUST be visible to the requester under the same identifier. A start that cannot reach the target machine MUST be refused, not queued, and nothing replays it automatically. | E6, E7, E15, E16 | U39, U6, OD1 |
+| R46 | A fleet harness session MAY ask to start a helper session on another fleet machine of its organization, for a project in its own workspace W. A member session of W MAY list the machines allowed to serve W, with each one's label. The start MUST be admitted only when, at the time of the request, the requesting session is active and a member of W (identified as R3 says), the project is in W, and the target machine is connected (has an open machine connection, E24), has an active enrollment in the same organization and has an active allowance for W. Otherwise it MUST be refused with nothing created, revealing nothing about a machine of another organization. The start names the working directory and execution settings to use on the target machine; the target MUST refuse, creating nothing, when that directory doesn't exist there, and MUST also apply R8. Each start carries its own identifier: repeating it with the same content MUST return the first answer, repeating it with different content MUST be refused, and one start MUST create at most one session. Each admitted start has a deadline fixed at admission, after which the target MUST begin nothing. The new session MUST record the requesting session as its starter. The answer MUST be exactly one of: started (with the new session), refused (nothing was created), or unknown (the outcome could not be learned, because the request may have reached Fleet central or the target). An unknown start that later completes MUST be visible to the requester under the same identifier. A start that cannot reach the target machine MUST be refused, not queued, and nothing replays it automatically. | E6, E7, E15, E16 | U39, U6, OD1 |
 | R9 | A session's effective persona MUST be what both W's session-default persona and the persona its starter named, if any, allow: a tool is available only if both make it available, and it runs without approval only if both let it. The effective persona MUST NEVER make available a tool, or allow a call without approval, that W's session default in effect does not. A named persona W does not define allows nothing. A change to W's tool profiles or session default takes effect from the first call served by the deployment that carries the change; until then calls use the configuration that deployment carries. | E8, E10 | U11 |
 | R10 | A person MAY be a member or collaborator of any number of workspaces in organizations they are admitted to (R35). Only the admin manages person membership and collaboration. | E3, E8, E9 | U20, U21, U4 |
 | R11 | A bot with an active collaboration in W MAY send messages and tasks to W's members, and W's members MAY send messages and tasks to it, only while that collaboration is active. It MUST be refused W's tools, board writes in W, starting work in W, and board roles in W. It proves itself to the fleet's collaboration service with a collaboration token (C6), never with a workspace token. Only the admin creates a collaboration, per workspace. A person's collaboration is recorded and shown (R14) and grants no tools and no effect in W; people send no collaboration messages of their own in this round (they ask bots, R38). | E9, E18 | U7, U2, U30, O2 |
@@ -220,6 +227,15 @@ flowchart TB
 | R23 | Each session MUST record its isolation record at start, as asserted by what launched it. For each machine, the system MUST show which workspaces have had member sessions with isolation kind `Host` on it (its shared bucket). Nothing MUST be refused on the basis of the isolation record in the first round. (OD7: kept unless the owner strikes it.) | E7, E13, E14 | U18, P5, O3 |
 | R24 | No fleet machine MAY need a new private key of its own to prove itself, and none MAY be created on a machine for that. A machine proves itself only through the machine login of R39–R42. | E6 | U17, U33 |
 | R44 | Every obligation in this set that a Router takes part in MUST hold with the Router on macOS and on Linux. A Router inside a VM is a Linux machine; nothing VM-specific is required or proven (U35). | E6 | U35, O5 |
+
+### Who is logged in
+
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R47 | The owner MUST be able to open a who-is-logged-in view of their organization.<br>For every fleet machine with an enrollment in that organization, it MUST show:<br>- its label and installation;<br>- its enrollment state: enrolled, revoked or expired;<br>- who approved its log-in, and when;<br>- the workspaces it may serve;<br>- whether it has an open machine connection now (E24), and when it was last seen.<br>For each active session on such a machine, it MUST show:<br>- its harness: Codex, Claude or Cursor;<br>- its project and workspace;<br>- its isolation kind;<br>- when it started;<br>- whether it is working, idle, or unknown (E7).<br>A revoked or expired machine MUST stay listed, shown as revoked or expired and not connected. Opening or refreshing the view MUST change nothing. | E6, E7, E13, E15, E16, E21, E24 | U40, O8 |
+| R48 | Each of these MUST show in the view within the freshness bound (OD14; the Lead's proposal is 15 seconds) of when it happens, while Fleet central can be reached:<br>- a machine connection opening or closing;<br>- a session starting, stopping, ending or being removed.<br>A machine whose connection ends without closing cleanly (a crash, or lost network) MUST show as not connected within the same bound, with its last-seen time. While a session's machine has no open connection, the session's state MUST show as unknown, never as working or idle. | E7, E24 | U40, O8 |
+| R49 | Only the organization's admin (R13) MAY open the view. It MUST show only that organization's machines, sessions, workspaces and projects (R34). Anyone else MUST be refused with nothing revealed: another organization's owner, a member, a bot, a session, or a machine. While Fleet central's truth can't be consulted, the view MUST say it is unavailable, and MUST NOT show an earlier picture as current. The view MUST NOT show who operates a machine (U32). | E1, E6, E7, E24 | U40, U32, U21 |
+| R50 | **Stage C, after R47–R49.** The view MUST also show the organization's people and bots:<br>- for each admitted person, whether they are signed in now, and when they last signed in;<br>- for each bot, its membership workspace, whether its credentials are active, and when it last obtained a token.<br>R48's freshness and R49's visibility apply to these rows too. | E3, E4, E5, E8, E19 | U40 |
 
 ### Hosts, outages and service requests
 
@@ -383,6 +399,29 @@ C10 (machine issuer registration) was removed on 2026-10-27 with U31's narrowing
 
 Asking for the outcome later, under the same identifier, returns whichever of these results Fleet central recorded, a refusal at admission included. A session the target registered counts as started from that moment, even if the target's own report is lost.
 
+### C12 Who is logged in (admin view)
+
+The owner's live, read-only view of their organization (R47–R50). Only the admin opens it (R49).
+
+| Row | Field | Meaning |
+|---|---|---|
+| Machine | label, installation | The label the machine supplied when it logged in, and its installation ID |
+| | enrollment state | enrolled, revoked or expired (E21) |
+| | approved by, approved at | The owner who approved its device code, and when (R39) |
+| | may serve | The workspaces it has an active allowance for (E15) |
+| | connection | connected now, or not connected (E24) |
+| | last seen | The latest moment central heard from it |
+| Session, under its machine | harness | Codex, Claude or Cursor |
+| | project, workspace | What it was started for (R7) |
+| | isolation kind | From its isolation record (E13) |
+| | started at | When its Router registered it (E7) |
+| | state | working (a turn in progress, including one waiting on an approval or a question), idle, or unknown when its machine has no open connection. Removed and ended sessions aren't listed. |
+| Person (stage C) | name, signed in now, last signed in | From the sign-in service (R50) |
+| Bot (stage C) | name, membership workspace, credential active, last token | R50 |
+| The view | as of | When the picture was taken |
+| | unavailable | Shown instead of rows while the fleet's truth can't be consulted (R49) |
+| | refused | Anyone but the admin gets a refusal that reveals nothing (R49) |
+
 ## Failure and partial outcomes
 
 | Situation | Observable outcome |
@@ -414,6 +453,9 @@ Asking for the outcome later, under the same identifier, returns whichever of th
 | A machine is compromised, or a process on it reads another session's binding | Every session on it can be impersonated, and its isolation records can't be trusted, until the machine's enrollment is revoked. |
 | A session reads another workspace's files on a shared machine | Not prevented in the first round. The shared bucket shows it is possible. Only `Vm` would prevent it. |
 | Two organizations' Routers run on one machine | Not detected or prevented (U38). Keeping organizations on separate machines or VMs is the owner's practice. |
+| A machine crashes or loses its network without closing its connection | Within OD14's bound the view shows it as not connected, with its last-seen time, and its sessions as unknown (R48). |
+| The owner opens the view while the fleet's truth can't be consulted | The view says it is unavailable. It shows no earlier picture as current (R49). |
+| Someone other than the owner opens the view | Refused, with nothing revealed (R49). |
 
 ## What this set does not do
 
@@ -431,6 +473,7 @@ Asking for the outcome later, under the same identifier, returns whichever of th
 - No automatic VM login through something that creates VMs (U31), and no VM-specific proof (U35).
 - No change to the Fleet board release now shipping.
 - Removal does not erase what an identity already read, copied or sent.
+- The who-is-logged-in view changes no access, and never shows who operates a machine (U32, U40).
 
 ## Proof obligations
 
@@ -474,6 +517,10 @@ Asking for the outcome later, under the same identifier, returns whichever of th
 | V36 | R44 | Every Router-involving obligation passes with the Router on macOS and on Linux. | Behavior differs between the two, or one can't run it. | U35 |
 | V37 | R45, C1 | Each organization's Switchboard deployment serves only that organization's workspaces and refuses a token naming another organization's workspace. | One deployment serves two organizations, or accepts another organization's token. | U37 |
 | V38 | R46, C11 | A session on machine A starts a helper for a project in its workspace W on machine B, which serves W, in a working directory on B that differs from A's. The helper runs on B, is a member of W, and names A's session as its starter. A member session lists the machines allowed to serve W. A start for another workspace's project, on a machine without an allowance for W, on a machine of another organization, by an ended session, to a disconnected machine, or naming a directory missing on B is refused and creates nothing, and the other organization's machine is not revealed. Two starts at once reach their own answers even when they finish in reverse order. A duplicate delivery or a restart around B's create yields one session. With the answer to A lost after B created the session, A gets unknown and then reads started under the same identifier, and no second session exists. A start past its deadline is begun nowhere. | A helper is created in a refused case, two sessions come from one start, an answer reaches the wrong start, a lost answer is reported as refused, its starter is recorded as anyone else, or a refused start is queued and later replayed. | U39 |
+| V39 | R47, C12 | Two logged-in machines, one connected and one not, each have sessions. The owner's view lists both machines with their enrollment state, approver and approval time, allowed workspaces, connection and last-seen time. It lists each active session with its harness, project, workspace, isolation kind, start time and state. A revoked machine is listed as revoked and not connected. Opening the view changes nothing. | A machine or session is missing, a field is wrong, a revoked machine shows as connected, or opening the view changes state. | U40 |
+| V40 | R48 | Each of these shows in the view within OD14's bound: a machine connecting; a machine whose network is cut without a clean close (shown not connected, with its last-seen time); a session starting, and stopping. A session whose machine has no open connection shows as unknown. | A change shows later than the bound, a cut-off machine stays connected, or a session shows working or idle while its machine is not connected. | U40, OD14 |
+| V41 | R49 | Only the organization's owner opens the view. Another organization's owner, a member, a bot, a session and a machine are each refused with nothing revealed. The view shows nothing from another organization. While the fleet's truth can't be consulted it says it is unavailable, and shows no earlier picture as current. It shows no one at a machine's keyboard. | Someone else sees it, another organization's machine appears, or an earlier picture shows as current. | U40, U32 |
+| V42 | R50 | Stage C: each admitted person shows as signed in or not, with their last sign-in; each bot shows its membership workspace, credential state and last token. Both follow V40's freshness and V41's visibility. | A person or bot is missing or shown wrongly, or is shown to someone other than the owner. | U40 |
 
 ## Coverage
 
@@ -518,6 +565,7 @@ Asking for the outcome later, under the same identifier, returns whichever of th
 | U37 | E1, E2, E11 | — | — | R45 | C1 | V37 |
 | U38 | — | — | — | — (a non-goal: no obligation) | — | — |
 | U39 | E6, E7, E15, E16 | — | — | R8, R46 | C11 | V38 |
+| U40 | E3, E4, E5, E6, E7, E13, E15, E19, E21, E24 | — | O8 | R47–R50 | C12 | V39–V42 |
 
 ## What this replaces
 
@@ -564,3 +612,4 @@ These earlier rules change. Each is superseded only where stated.
 | E12 Removal notice | — | — | — |
 | E13 Isolation record | — | — | proposed `AgentIsolation` and `MachineEnvironment` (not built) |
 | E14 Shared bucket | — | — | — |
+| E24 Machine connection | — | — | the Router's machine session to Fleet central (the `/v1/session` WebSocket) |
