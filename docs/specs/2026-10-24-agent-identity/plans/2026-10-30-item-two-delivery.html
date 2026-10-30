@@ -114,6 +114,7 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 | F8a SO1 journey: sessions and binding | D1 | F4a, F14 |
 | F16 SO11 remote start journey | D1 | F15, F14 |
 | F12 Router secret store, Linux backend | D1, off the first-use path | your go |
+| F17 remove today's machine login | D1 | F10, F14 |
 | V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10; merges after JC1 |
 | V2 Router heartbeat and session activity reporter | DV | F4a, F11; merges after JC1 |
 | V4 SO12 who-is-logged-in journey | DV | V1, V2, V3, F14 |
@@ -135,7 +136,7 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| JC1 first joint cut, private stack | D1 | D1's tickets merged, F12 aside |
+| JC1 first joint cut, private stack | D1 | D1's tickets merged, F17 included, F12 aside |
 | PROD2 production step 2: the switch | D1 | JC1; your go |
 | JV1 the view on the private stack | DV | V1–V4 merged; JC1 |
 | PRODV the view in production | DV | JV1; PROD2; your go |
@@ -266,7 +267,7 @@ Then production switches (PROD2): central accepts only machines logged in this w
 | Building block | Why D1 needs it | Tickets |
 |---|---|---|
 | Your sign-in and the organization core | you approve each machine as the organization's owner, and Fleet central holds the organization, its machines and their workspaces | B1, B3, B4a · F1, F2a, F2b, F3a |
-| Machine login | Fleet central must know which organization a machine belongs to and that its login is current; each machine has its own client | B2, B5 · F10, F11, F14 |
+| Machine login | Fleet central must know which organization a machine belongs to and that its login is current; each machine has its own client | B2, B5 · F10, F11, F14, F17 |
 | Session registration | Fleet central must know the requesting session is a member of the workspace | F4a, F8a |
 | The feature | the start itself, through Fleet central over both machines' connections | F15, F16 |
 | Going live | the private stack first, then production | JC1, PROD2 |
@@ -411,7 +412,7 @@ unchanged; the local journeys run the sign-in service on it.
   - `RevokeMachineEnrollment` as one organization-authority transaction: allowances withdrawn, the machine's sessions removed, its connection closed. D5's F5 adds the removal notices to the Switchboard on top of this same transaction;
   - the token check for the sign-in service's machine tokens, refusing any other issuer;
   - `RenewMachineToken`, and closing expired and superseded connections;
-  - the single-valued `machineLogin` setting (production stays `accessEnrollment`);
+  - the single-valued `machineLogin` setting, until F17 removes the `accessEnrollment` branch;
   - the entry's request limit.
 - **Writes:** `organization_authority`, the Registry object, new `machine_token_check`, `central_router.rs` `/v1/session`, both hosts' entries.
 - **Earns (its SO4 scenarios):** U31, U33's central half, and revocation's local effects; SO7 for the decision edges.
@@ -505,11 +506,27 @@ Real sessions on each harness path start and restore on a Router logged in by de
 - **Named unverified:** sealing with `systemd-creds` and running the Router as a service; no Linux job is added.
 </script></ex-markdown>
 </details>
+<details id="ticket-f17">
+<summary><strong>F17</strong> remove today's machine login (new) · waits on F10, F14 (SO8 passing on the new login)</summary>
+<ex-markdown id="ticket-f17-text"><script type="text/markdown">
+- **Covers:** R43 step 2's removals, before JC1, so that JC1 tests the exact builds PROD2 promotes (Advisor, IP1).
+  - The enrollment credential check, the Access-client match, the Access-derived machine identity, and `EnrollMachine` with its operator-token preparation are deleted.
+  - So is the `accessEnrollment` branch of `machineLogin`.
+  - The migration that drops `machine_enrollments` is added.
+- **Writes:** `machine_enrollment.rs`, `access_rules.rs`, `enrollment_prepare.rs`, the Registry migrations, and `central_router.rs` `/v1/session`.
+- **Holds production:** from F17 merging until PROD2, production central isn't deployed from `main`. Production keeps its installed build. A production fix in between goes through the orchestration's repair branch.
+- **Earns:** SO4's entry negatives on the final build: the old enrollment credential is refused even with a valid Access token, and the answer is the same whatever the Access identity. JC1 then runs SO10 step 2 on this build.
+- **Focused proof:**
+  - **Wrong behaviors caught:** an old enrollment credential admitted; a machine identity read from Access.
+  - **Layer:** `cargo test -p collaboration-central-core` on the new path.
+  - **Oracle:** R43, C9.
+</script></ex-markdown>
+</details>
 <details id="ticket-jc1">
-<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B1, B2, B3, B4a, B5, F1, F2a, F2b, F3a, F4a, F10, F11, F15, and the proof tickets F14, F8a and F16, with their local runs passing</summary>
+<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B1, B2, B3, B4a, B5, F1, F2a, F2b, F3a, F4a, F10, F11, F15, F17, and the proof tickets F14, F8a and F16, with their local runs passing</summary>
 <ex-markdown id="ticket-jc1-text"><script type="text/markdown">
 - **Before it:** the cut inventory: every serving component instance (sign-in Worker and Node host, Fleet central, the Switchboard Worker and Node host, which this cut leaves untouched), every caller cohort (test Routers, test bot), each audience and the Fleet central each sign-in service asks.
-- **Covers:** D1 live together on the private stack: the sign-in service with B1–B5 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11 and F15, on `machineLogin = machineTokens` behind the test Access application. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
+- **Covers:** D1 live together on the private stack: the sign-in service with B1–B5 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11, F15 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
 - **Earns:** SO8 and SO11 against the private stack; JP4 (your admin command through the sign-in service); SO10 step 2 on the private stack; U34's step-2 row; and the **legacy-path control**: a legacy agent client gets a fresh token from the new issuer and makes one allowed Switchboard call at the unchanged Switchboard, on the Worker and the Node host, while a forbidden call is still refused. The control reruns at every deploy until JC2.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
@@ -519,7 +536,7 @@ Real sessions on each harness path start and restore on a Router logged in by de
 <ex-markdown id="ticket-prod2-text"><script type="text/markdown">
 - **Before it:** the production cut inventory, naming the sign-in deployment that serves your production fleet and the production Fleet central it asks, and every caller cohort.
 - **Covers:** R43 step 2 in production:
-  - Fleet central deploys D1's changes with `machineLogin = machineTokens`, the old login's code and table removed, the first organization created for you adopting today's Fleet storage (F2b), and operator commands through the sign-in service;
+  - Fleet central and the sign-in service promote JC1's recorded builds, unchanged: today's login is already gone from the code (F17), the `machine_enrollments` drop migration runs at this deploy, the first organization is created for you adopting today's Fleet storage (F2b), and operator commands go through the sign-in service;
   - you run the new Router build and log every machine in again by device code.
 - **Earns:** U34's production line, and starting a session on another machine on your real machines: each machine connects with machine tokens; the old credential is refused (one spot check); your sessions, allowances and board relationships are still attached; a session on your Mac and one on Sunclaw exchange a message and a reply; a session on your Mac starts a helper on Sunclaw.
 - **If it breaks:** fix forward. There is no revert to the old login, because a machine revoked after the switch could regain access through it. Access still guards central meanwhile.
@@ -698,7 +715,7 @@ What it does:
 - **DV merges after JC1.** V1, V2, V3 and V4 are built and reviewed while D1 finishes, but merge only once JC1's builds are fixed and its observations pass. So JC1 deploys D1 alone, and no hold from the view can block it (Advisor, IP1).
 - **PROD2 deploys JC1's verified builds,** by the orchestration's exact-build rule. Those predate V2's merge, so no production Router sends a heartbeat before a central that receives it.
 - **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page.
-- **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone.
+- **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From F17 merging until PROD2, production central isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone.
 </script></ex-markdown>
 <h2 id="item2--choices-made-in-this-plan">Choices made in this plan</h2>
 <ex-markdown id="item2--choices-made-in-this-plan-text"><script type="text/markdown">
@@ -729,7 +746,7 @@ What it does:
 | U30 (people's requests) | D1 | B4a | SO2 | B4a |
 | U33, U31 (the machine client, replay, revoke and wrong-client cases included) | D1 | F10, F11, B5 | SO8; SO2; SO4 | B5; F10; F14 |
 | U17, U33, U35 (R41) | D1 | F11, F12 | SO8; SO9 | F14; F12 |
-| U34 (steps 1 and 2) | D1 | F10, JC1, PROD2 | SO10 steps 1–2 (temporary); SO4's entry negatives | JC1; PROD2 |
+| U34 (steps 1 and 2) | D1 | F10, F17, JC1, PROD2 | SO10 steps 1–2 (temporary), step 2 on F17's final build; SO4's entry negatives | F17; JC1; PROD2 |
 | U35 | D1 | F12, F14 | SO9 | F12; F14 (the end-to-end Linux login stays unverified, your call) |
 | U39 | D1 | F15, F16 | SO4; SO11 | F15; F16; JC1; PROD2 |
 | U40: R47 | DV | V1, V3 | SO4 (the lookup); SO12 steps 1–3, 6 | V1; V4; JV1 |
@@ -743,10 +760,10 @@ The rows for D2–D7 (U2, U3, U4/U5, U7/U8/U28, U10–U13, U16, U26/U36, U29, U3
 <ex-markdown id="item2--existing-tests-these-tickets-touch-text"><script type="text/markdown">
 | Existing tests | Ticket | Disposition | Proof for a removal |
 |---|---|---|---|
-| codex-router `machine_enrollment.rs` tests of the enrollment credential and the Access-client match | F10 (old path kept behind `accessEnrollment` until PROD2) | keep through step 1; remove in the PROD2 change | dead contract: R43 retires the old login at step 2; F10's machine-token tests fail on the same wrong behavior |
-| codex-router `access_rules.rs` tests deriving the machine from the Access assertion | F10 | keep through step 1; remove in the PROD2 change | dead contract (R43 step 2); SO4's "same answer whatever Access identity" fails on a build that reads Access identity |
-| codex-router `enrollment_prepare.rs` tests | F10 | remove in the PROD2 change | dead contract: `EnrollMachine` is gone from step 2 |
-| codex-router Registry `record_machine_presence` (`last_seen`) tests | F10 | remove in the PROD2 change, with `machine_enrollments` | dead contract: the table is dropped at step 2; V1's presence tests fail on a machine shown connected after a cut |
+| codex-router `machine_enrollment.rs` tests of the enrollment credential and the Access-client match | F10 keeps them; F17 | keep until F17; remove in F17, before JC1 | dead contract: R43 retires the old login at step 2; F10's machine-token tests fail on the same wrong behavior |
+| codex-router `access_rules.rs` tests deriving the machine from the Access assertion | F17 | remove in F17, before JC1 | dead contract (R43 step 2); SO4's "same answer whatever Access identity" fails on a build that reads Access identity |
+| codex-router `enrollment_prepare.rs` tests | F17 | remove in F17, before JC1 | dead contract: `EnrollMachine` is gone from step 2 |
+| codex-router Registry `record_machine_presence` (`last_seen`) tests | F17 | remove in F17, with `machine_enrollments`'s drop migration | dead contract: the table is dropped at step 2; V1's presence tests fail on a machine shown connected after a cut |
 | codex-router socket-loop tests that discard ping and pong (`native_objects.rs`) | V1 | keep: the heartbeat is an application frame, not a ping | — |
 | codex-router admin route tests (`owner_http_routes.rs`) | V1 | keep; add `WhoIsLoggedIn` cases beside them | — |
 | codex-router `keychain_data_key.rs` test that non-macOS returns `Unavailable` | F12 | repair: on Linux, absent only when no credentials directory or credential is present | — |
