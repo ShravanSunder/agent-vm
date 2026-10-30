@@ -20,27 +20,30 @@ describe('release version rendering', () => {
 		expect(() => parseReleaseVersion('^0.0.139')).toThrow('stable semantic version');
 	});
 
-	it('updates one npm package version without changing workspace dependency protocols', () => {
-		const renderedManifest = renderNpmPackageVersion(
-			`${JSON.stringify(
-				{
-					name: '@agent-vm/example',
-					version: '0.0.138',
-					dependencies: { '@agent-vm/managed-vm': 'workspace:*' },
-				},
-				null,
-				'\t',
-			)}\n`,
-			'0.0.139',
-		);
+	it.each(['@agent-vm/example', '@agent-collaboration/example'])(
+		'updates %s without changing workspace dependency protocols',
+		(packageName) => {
+			const renderedManifest = renderNpmPackageVersion(
+				`${JSON.stringify(
+					{
+						name: packageName,
+						version: '0.0.138',
+						dependencies: { '@agent-vm/managed-vm': 'workspace:*' },
+					},
+					null,
+					'\t',
+				)}\n`,
+				'0.0.139',
+			);
 
-		expect(JSON.parse(renderedManifest)).toEqual({
-			name: '@agent-vm/example',
-			version: '0.0.139',
-			dependencies: { '@agent-vm/managed-vm': 'workspace:*' },
-		});
-		expect(renderedManifest.endsWith('\n')).toBe(true);
-	});
+			expect(JSON.parse(renderedManifest)).toEqual({
+				name: packageName,
+				version: '0.0.139',
+				dependencies: { '@agent-vm/managed-vm': 'workspace:*' },
+			});
+			expect(renderedManifest.endsWith('\n')).toBe(true);
+		},
+	);
 
 	it('updates both Python project versions and the Hermes adapter SDK pin', () => {
 		const sdkProject = '[project]\nname = "agent-vm-agent-portal-sdk"\nversion = "0.0.138"\n';
@@ -53,59 +56,69 @@ describe('release version rendering', () => {
 		expect(renderedAdapter).toContain('"agent-vm-agent-portal-sdk==0.0.139"');
 	});
 
-	it('updates every publishable package manifest while leaving private packages unchanged', async () => {
-		const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-release-version-'));
-		try {
-			await Promise.all([
-				mkdir(path.join(fixtureRoot, 'packages', 'public-package'), { recursive: true }),
-				mkdir(path.join(fixtureRoot, 'packages', 'private-package'), { recursive: true }),
-				mkdir(path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk'), {
-					recursive: true,
-				}),
-				mkdir(path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter'), {
-					recursive: true,
-				}),
-			]);
-			await Promise.all([
-				writeFile(
-					path.join(fixtureRoot, 'packages', 'public-package', 'package.json'),
-					'{"name":"@agent-vm/public-package","version":"0.0.138"}\n',
-				),
-				writeFile(
-					path.join(fixtureRoot, 'packages', 'private-package', 'package.json'),
-					'{"name":"@agent-vm/private-package","version":"0.0.138","private":true}\n',
-				),
-				writeFile(
-					path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk', 'pyproject.toml'),
-					'[project]\nname = "agent-vm-agent-portal-sdk"\nversion = "0.0.138"\n',
-				),
-				writeFile(
-					path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter', 'pyproject.toml'),
-					'[project]\nname = "agent-vm-hermes-adapter"\nversion = "0.0.138"\ndependencies = ["agent-vm-agent-portal-sdk==0.0.138"]\n',
-				),
-			]);
+	it.each(['@agent-vm/public-package', '@agent-collaboration/public-package'])(
+		'updates %s and Python manifests while leaving private packages unchanged',
+		async (packageName) => {
+			const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'agent-vm-release-version-'));
+			try {
+				await Promise.all([
+					mkdir(path.join(fixtureRoot, 'packages', 'public-package'), { recursive: true }),
+					mkdir(path.join(fixtureRoot, 'packages', 'private-package'), { recursive: true }),
+					mkdir(path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk'), {
+						recursive: true,
+					}),
+					mkdir(path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter'), {
+						recursive: true,
+					}),
+				]);
+				await Promise.all([
+					writeFile(
+						path.join(fixtureRoot, 'packages', 'public-package', 'package.json'),
+						JSON.stringify({
+							name: packageName,
+							version: '0.0.138',
+							repository: {
+								url: 'git+https://github.com/ShravanSunder/agent-vm.git',
+								directory: 'packages/public-package',
+							},
+						}),
+					),
+					writeFile(
+						path.join(fixtureRoot, 'packages', 'private-package', 'package.json'),
+						'{"name":"@agent-vm/private-package","version":"0.0.138","private":true}\n',
+					),
+					writeFile(
+						path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk', 'pyproject.toml'),
+						'[project]\nname = "agent-vm-agent-portal-sdk"\nversion = "0.0.138"\n',
+					),
+					writeFile(
+						path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter', 'pyproject.toml'),
+						'[project]\nname = "agent-vm-hermes-adapter"\nversion = "0.0.138"\ndependencies = ["agent-vm-agent-portal-sdk==0.0.138"]\n',
+					),
+				]);
 
-			await updateReleaseFiles(fixtureRoot, '0.0.139');
+				await updateReleaseFiles(fixtureRoot, '0.0.139');
 
-			const [publicManifest, privateManifest, sdkProject, adapterProject] = await Promise.all([
-				readFile(path.join(fixtureRoot, 'packages', 'public-package', 'package.json'), 'utf8'),
-				readFile(path.join(fixtureRoot, 'packages', 'private-package', 'package.json'), 'utf8'),
-				readFile(
-					path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk', 'pyproject.toml'),
-					'utf8',
-				),
-				readFile(
-					path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter', 'pyproject.toml'),
-					'utf8',
-				),
-			]);
-			expect(JSON.parse(publicManifest)).toMatchObject({ version: '0.0.139' });
-			expect(JSON.parse(privateManifest)).toMatchObject({ version: '0.0.138' });
-			expect(sdkProject).toContain('version = "0.0.139"');
-			expect(adapterProject).toContain('version = "0.0.139"');
-			expect(adapterProject).toContain('agent-vm-agent-portal-sdk==0.0.139');
-		} finally {
-			await rm(fixtureRoot, { recursive: true, force: true });
-		}
-	});
+				const [publicManifest, privateManifest, sdkProject, adapterProject] = await Promise.all([
+					readFile(path.join(fixtureRoot, 'packages', 'public-package', 'package.json'), 'utf8'),
+					readFile(path.join(fixtureRoot, 'packages', 'private-package', 'package.json'), 'utf8'),
+					readFile(
+						path.join(fixtureRoot, 'python', 'agent-vm-agent-portal-sdk', 'pyproject.toml'),
+						'utf8',
+					),
+					readFile(
+						path.join(fixtureRoot, 'python', 'agent-vm-hermes-adapter', 'pyproject.toml'),
+						'utf8',
+					),
+				]);
+				expect(JSON.parse(publicManifest)).toMatchObject({ version: '0.0.139' });
+				expect(JSON.parse(privateManifest)).toMatchObject({ version: '0.0.138' });
+				expect(sdkProject).toContain('version = "0.0.139"');
+				expect(adapterProject).toContain('version = "0.0.139"');
+				expect(adapterProject).toContain('agent-vm-agent-portal-sdk==0.0.139');
+			} finally {
+				await rm(fixtureRoot, { recursive: true, force: true });
+			}
+		},
+	);
 });

@@ -6,7 +6,8 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ShravanSunder/agent-vm.git"
+		"url": "git+https://github.com/ShravanSunder/agent-vm.git",
+		"directory": "packages/hermes-gateway"
 	},
 	"files": [
 		"dist"

@@ -6,8 +6,15 @@ import { describe, expect, it } from 'vitest';
 const publishNpmTokenOpRef = 'op://agent-vm/npm-token-agent-vm-publish/credential';
 const staleNpmTokenOpRef = ['op://agent-vm', 'npm-token', 'credential'].join('/');
 
+const filteredNpmPublishCommand = 'pnpm "${NPM_PACKAGE_FILTERS[@]}" -r publish';
+const sharedArtifactsSelectionCommand = 'node scripts/release-package-selection.ts artifacts';
+
+function isManifestRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 describe('publish workflow', () => {
-	it('declares trusted-publishing repository provenance for every public Agent VM package', async () => {
+	it('declares trusted-publishing repository provenance for every public release package', async () => {
 		const packageDirectories = await fs.readdir(path.join(process.cwd(), 'packages'), {
 			withFileTypes: true,
 		});
@@ -22,36 +29,40 @@ describe('publish workflow', () => {
 						packageDirectory.name,
 						'package.json',
 					);
+					let sourceText: string;
 					try {
-						return JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
-							readonly name?: string;
-							readonly private?: boolean;
-							readonly repository?: { readonly url?: string };
-						};
+						sourceText = await fs.readFile(packageJsonPath, 'utf8');
 					} catch (error: unknown) {
-						if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+						if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
 							return undefined;
-						}
 						throw error;
 					}
+					const manifest: unknown = JSON.parse(sourceText);
+					if (!isManifestRecord(manifest))
+						throw new Error(`${packageJsonPath} must contain a JSON object`);
+					return { directoryName: packageDirectory.name, manifest };
 				}),
 		);
-
-		for (const packageJson of packageManifests) {
+		let selectedPackageCount = 0;
+		for (const packageEntry of packageManifests) {
+			if (packageEntry === undefined) continue;
+			const { directoryName, manifest } = packageEntry;
 			if (
-				packageJson === undefined ||
-				!packageJson.name?.startsWith('@agent-vm/') ||
-				packageJson.private === true
-			) {
+				typeof manifest.name !== 'string' ||
+				!(
+					manifest.name.startsWith('@agent-vm/') ||
+					manifest.name.startsWith('@agent-collaboration/')
+				) ||
+				manifest.private === true
+			)
 				continue;
-			}
-			const publicPackageJson: {
-				readonly name?: string;
-				readonly repository?: { readonly url?: string };
-			} = packageJson;
-
-			expect(publicPackageJson.repository?.url, publicPackageJson.name).toBe(expectedRepositoryUrl);
+			selectedPackageCount += 1;
+			expect(manifest.repository, manifest.name).toMatchObject({
+				url: expectedRepositoryUrl,
+				directory: `packages/${directoryName}`,
+			});
 		}
+		expect(selectedPackageCount).toBeGreaterThan(0);
 	});
 
 	it('does not define publish lifecycle scripts other than the workspace rebuild prepack', async () => {
@@ -160,6 +171,8 @@ describe('publish workflow', () => {
 			'utf8',
 		);
 
+		expect(publishScript).toContain(filteredNpmPublishCommand);
+		expect(publishScript).not.toContain('pnpm -r publish');
 		expect(publishScript).toContain('verify_managed_base_images_exist');
 		expect(publishScript).toContain('packages/agent-vm/managed-images.json');
 		expect(publishScript).toContain('Object.values(manifest.baseImages)');
@@ -171,8 +184,8 @@ describe('publish workflow', () => {
 		expect(publishScript.indexOf('[publish] verifying managed GHCR base image tags')).toBeLessThan(
 			publishScript.indexOf('[publish] verifying npm auth'),
 		);
-		expect(publishScript.indexOf('verify_managed_base_images_exist')).toBeLessThan(
-			publishScript.indexOf('pnpm -r publish'),
+		expect(publishScript.indexOf('[publish] verifying managed GHCR base image tags')).toBeLessThan(
+			publishScript.indexOf(filteredNpmPublishCommand),
 		);
 	});
 
@@ -182,14 +195,16 @@ describe('publish workflow', () => {
 			'utf8',
 		);
 
+		expect(publishScript).toContain(filteredNpmPublishCommand);
+		expect(publishScript).not.toContain('pnpm -r publish');
 		expect(publishScript).toContain('echo "[publish] building workspace once"');
 		expect(publishScript).toContain('pnpm build');
 		expect(publishScript).toContain('--config.ignore-scripts=true');
 		expect(publishScript.indexOf('pnpm build')).toBeLessThan(
-			publishScript.indexOf('pnpm -r publish'),
+			publishScript.indexOf(filteredNpmPublishCommand),
 		);
 		expect(publishScript.indexOf('--config.ignore-scripts=true')).toBeGreaterThan(
-			publishScript.indexOf('pnpm -r publish'),
+			publishScript.indexOf(filteredNpmPublishCommand),
 		);
 		expect(publishScript.indexOf('NPM_TOKEN="$(op read "$OP_REF")"')).toBeLessThan(
 			publishScript.indexOf('pnpm build'),
@@ -295,9 +310,18 @@ describe('publish workflow', () => {
 		expect(trustedPublishScript).toContain('--config.ignore-scripts=true');
 		expect(trustedPublishScript).toContain('MANAGED_BASE_IMAGE_MANIFEST');
 		expect(trustedPublishScript).toContain("['linux/amd64', 'linux/arm64']");
-		expect(trustedPublishScript).toContain('NPM_PACKAGE_NAMES_PATH=');
+		expect(trustedPublishScript).toContain('NPM_PACKAGE_ROWS_PATH=');
 		expect(trustedPublishScript).toContain('npm_package_count=');
-		expect(trustedPublishScript.match(/fs\.readdirSync\('packages'\)/gu)).toHaveLength(1);
+		expect(trustedPublishScript.split(sharedArtifactsSelectionCommand)).toHaveLength(2);
+		const metadataPreflightIndex = trustedPublishScript.indexOf(sharedArtifactsSelectionCommand);
+		expect(metadataPreflightIndex).toBeGreaterThan(-1);
+		expect(metadataPreflightIndex).toBeLessThan(
+			trustedPublishScript.indexOf('scripts/publish-python-local.sh --trusted-publishing'),
+		);
+		expect(metadataPreflightIndex).toBeLessThan(
+			trustedPublishScript.indexOf('npm publish "$package_tarball"'),
+		);
+		expect(trustedPublishScript).toContain('wc -l < "$NPM_PACKAGE_ROWS_PATH"');
 		const npmExistingVersionIndex = trustedPublishScript.indexOf(
 			'npm view "$package_name@$release_version" version',
 		);
@@ -324,15 +348,28 @@ describe('publish workflow', () => {
 		expect(publishScript).toContain(
 			'AGENT_VM_PYPI_TOKEN="$PYPI_TOKEN" scripts/publish-python-local.sh',
 		);
+		expect(publishScript).toContain(filteredNpmPublishCommand);
+		expect(publishScript).not.toContain('pnpm -r publish');
+		expect(publishScript.split(sharedArtifactsSelectionCommand)).toHaveLength(2);
+		expect(publishScript).toContain('NPM_PACKAGE_FILTERS+=(--filter "$package_name")');
 		expect(publishScript).toContain('verify_published_release');
+		const metadataPreflightIndex = publishScript.indexOf(sharedArtifactsSelectionCommand);
+		expect(metadataPreflightIndex).toBeGreaterThan(-1);
+		expect(metadataPreflightIndex).toBeLessThan(
+			publishScript.indexOf('[publish] resolving release credentials'),
+		);
+		expect(metadataPreflightIndex).toBeLessThan(
+			publishScript.indexOf('scripts/publish-python-local.sh'),
+		);
+		expect(metadataPreflightIndex).toBeLessThan(publishScript.indexOf(filteredNpmPublishCommand));
 		expect(publishScript).toContain('npm view "$package_name@$release_version" version');
 		expect(publishScript).toContain(
 			'https://pypi.org/pypi/${python_package}/${release_version}/json',
 		);
 		expect(publishScript.indexOf('scripts/publish-python-local.sh')).toBeLessThan(
-			publishScript.indexOf('pnpm -r publish'),
+			publishScript.indexOf(filteredNpmPublishCommand),
 		);
-		expect(publishScript.indexOf('pnpm -r publish')).toBeLessThan(
+		expect(publishScript.indexOf(filteredNpmPublishCommand)).toBeLessThan(
 			publishScript.lastIndexOf('verify_published_release'),
 		);
 	});
