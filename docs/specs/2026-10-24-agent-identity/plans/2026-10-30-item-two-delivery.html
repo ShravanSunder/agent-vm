@@ -114,9 +114,10 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 | F8a SO1 journey: sessions and binding | D1 | F4a, F14 |
 | F16 SO11 remote start journey | D1 | F15, F14 |
 | F12 Router secret store, Linux backend | D1, off the first-use path | your go |
-| V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10 |
-| V2 Router heartbeat and session activity reporter | DV | F4a, F11 |
+| V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10; merges after JC1 |
+| V2 Router heartbeat and session activity reporter | DV | F4a, F11; merges after JC1 |
 | V4 SO12 who-is-logged-in journey | DV | V1, V2, V3, F14 |
+| V5c people rows at central | DC | V4 |
 
 **Sign-in service** (Switchboard Lead, `agent-collaboration/switchboard`)
 
@@ -127,8 +128,8 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 | B4a issuer core | D1 | B3; F1's contract fixtures |
 | B2 sign-in Node host | D1 | B1 |
 | B5 device-code login, with one client per machine | D1 | B4a, B2; F1's contract fixtures |
-| V3 the who-is-logged-in page | DV | B4a; V1 for the real lookup |
-| V5 people in the view | DC | V4 |
+| V3 the who-is-logged-in page | DV | B4a; V1 for the real lookup; merges after JC1 |
+| V5s people's sign-in facts in the view | DC | V5c's shape (K12); V3 |
 
 **Joint and production** (the Switchboard Lead coordinates; you run the production steps)
 
@@ -162,7 +163,9 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 </script></ex-markdown>
 <h2 id="item2--goal-scope-and-non-goals">Goal, scope and non-goals</h2>
 <ex-markdown id="item2--goal-scope-and-non-goals-text"><script type="text/markdown">
-**Goal:** D1's requirements and U40 delivered and proven on their planned targets. Your production fleet moves to the new machine login (U34's step 2), and you see it live.
+**Goal:** D1's requirements, U40's R47–R49, and R50's people half, delivered and proven on their planned targets. Your production fleet moves to the new machine login (U34's step 2), and you see it live.
+
+**Carried to the steps 3–5 planner:** V42's bot half (each bot's membership workspace, credential state and last token, surviving a restart), and the token portions of U6 and U18 (at D3's F8b). Neither is reported complete here.
 
 **In scope:**
 - the sign-in service's people sign-in, issuer core and device-code machine login, with one client per machine;
@@ -282,7 +285,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 <summary><strong>B1</strong> sign-in core and storage (extended) · waits on OD4</summary>
 <ex-markdown id="ticket-b1-text"><script type="text/markdown">
 - **Covers:** R29–R33, with the device grant's `deviceCode` table (our four columns and `enrollmentId`) in the one schema module. Today's agent registration, its metadata and its `oauthClientResource` links move onto the new storage unchanged, and stay until B4b.
-- **Earns:** U22, U23, U24 and U25 in SO2 on D1.
+- **Contributes, without closing:** the storage, migrations and core cases of U22–U25 in SO2, on D1 and `better-sqlite3` under Node. U22's and U25's device-code cases close at B5. U23's both-hosts run closes at B2, once B5's device approval rule is in the core. U24's identifier readback closes at B5, with device codes.
 </script></ex-markdown>
 </details>
 <details id="ticket-b3">
@@ -446,7 +449,7 @@ unchanged; the local journeys run the sign-in service on it.
 <summary><strong>F4a</strong> Router registrar and binding (split from F4) · waits on F2a, F2b, F11</summary>
 <ex-markdown id="ticket-f4a-text"><script type="text/markdown">
 - **Covers:** R3, R7, R8, R23, R24, and E7's start time (`startedAt`, set from the organization authority's clock at first registration). Registration goes to the machine's organization authority, which looks the project up in its own Fleet object, and checks that the connection's enrollment is the active one. The session binding attributes every collaboration call to the session it came from.
-- **Earns (in SO1, with F8a):** U6/U32, U19, U18.
+- **Contributes (in SO1, with F8a):** U19 whole; U6/U32's registration and start-refusal cases; U18's isolation record and bucket. The token portions of U6 and U18 close at D3's F8b, once session tokens exist.
 </script></ex-markdown>
 </details>
 <details id="ticket-f14">
@@ -479,7 +482,7 @@ unchanged; the local journeys run the sign-in service on it.
 <summary><strong>F8a</strong> SO1 journey: sessions and binding (split from F8) · waits on F4a, F14</summary>
 <ex-markdown id="ticket-f8a-text"><script type="text/markdown">
 Real sessions on each harness path start and restore on a Router logged in by device code (F14's arrangement), register in their project's workspace, have their collaboration calls attributed through their binding, and record their isolation; a false sender is refused.
-- **Earns:** U6/U32, U19, U18 in SO1.
+- **Earns:** U19 in SO1. **Contributes:** U6/U32's registration, start-refusal and no-sign-in cases, and U18's isolation record and bucket. Their token portions (a session's token naming its workspace; isolation in the token) close at D3's F8b.
 </script></ex-markdown>
 </details>
 <details id="ticket-f16">
@@ -546,11 +549,11 @@ What it does:
 | Proof (Fleet Lead) | V4 |
 | Joint, then you | JV1, PRODV |
 
-**Proven by:** SO12 (V4); SO4's presence, activity and lookup scenarios (V1); the Router's heartbeat and reporter tests (V2); SO7 for the lookup's route; then SO12's steps 1–3 and 7–8 against the private stack at JV1. **Done when:** PRODV holds, and you see your real machines.
+**Proven by:** SO12 (V4); SO4's presence, activity and lookup scenarios on both central hosts (V1); the Router's heartbeat and reporter tests (V2); SO7 for the lookup's route; then SO12's steps 1–3 and 7–8 against the private stack at JV1. **Done when:** PRODV holds, and you see your real machines.
 </script></ex-markdown>
 <h3 id="item2--dv-tickets">Tickets</h3>
 <details id="ticket-v1">
-<summary><strong>V1</strong> presence, activity and the lookup at central (new) · waits on F1, F2a, F4a, F10</summary>
+<summary><strong>V1</strong> presence, activity and the lookup at central (new) · waits on F1, F2a, F4a, F10; merges after JC1</summary>
 <ex-markdown id="ticket-v1-text"><script type="text/markdown">
 - **Covers:** R47–R49 at central, E24, C12.
   - **The Connection object owns presence, on its own clock.**
@@ -567,7 +570,7 @@ What it does:
     - Workspace and project names from its Fleet object.
     - Never partial: any failure fails the whole lookup.
 - **Writes:** `collaboration-central-core` session runtime and `organization_authority` (`machine_activity`, `session_activity`), the admin route, and both hosts' socket loops (`collaboration-central-tokio/src/native_objects.rs`, `collaboration-central-cloudflare/src/object_shell.rs`).
-- **Earns:** SO4's presence and activity scenarios, including offset object clocks, a slow Connection object and reordered reports (U40/R48, central half); SO4's lookup scenarios (U40/R47 and R49, central half); SO7 for the lookup's route; SO6's Rust half for K12.
+- **Earns:** SO4's presence and activity scenarios on both central hosts, including offset object clocks, a slow Connection object, reordered reports and the Cloudflare alarm (U40/R48, central half); SO4's lookup scenarios (U40/R47 and R49, central half); SO7 for the lookup's route; SO6's Rust half for K12.
 - **Focused proof:**
   - **Wrong behaviors caught:**
     - presence decided by comparing timestamps from two objects;
@@ -575,14 +578,14 @@ What it does:
     - a session counted on a connection that isn't the open one;
     - a partial snapshot when one Connection object is slow;
     - a lookup that writes anything.
-  - **Layer:** `cargo test -p collaboration-central-core`, each object on its own controlled clock; then SO4 on Tokio.
+  - **Layer:** `cargo test -p collaboration-central-core`, each object on its own controlled clock; then V1's SO4 scenarios on both central hosts, Tokio and local workerd (on sunclaw), before JV1. F9 stays the later whole sweep.
   - **Oracle:** R47–R49, C12, the Program Design's timing budget (five sixths of OD14).
   - **Property:** for any arrival order of a connection's whole-state reports, the applied set equals the highest-sequence report's.
 - **Stop if:** the organization authority can't call a machine's Connection object while it has no socket, or a Cloudflare Connection object can't keep an alarm beside its hibernated socket. Either is a design correction, routed back before this ticket.
 </script></ex-markdown>
 </details>
 <details id="ticket-v2">
-<summary><strong>V2</strong> Router heartbeat and session activity reporter (new) · waits on F4a, F11</summary>
+<summary><strong>V2</strong> Router heartbeat and session activity reporter (new) · waits on F4a, F11; merges after JC1</summary>
 <ex-markdown id="ticket-v2-text"><script type="text/markdown">
 - **Covers:** R48 on the Router.
   - **Heartbeat:** sent every sixth of OD14 while attached, on the host's injected clock.
@@ -602,7 +605,7 @@ What it does:
 </script></ex-markdown>
 </details>
 <details id="ticket-v3">
-<summary><strong>V3</strong> the who-is-logged-in page (new) · waits on B4a; V1 for the real lookup (stand-in: a central client honoring C12 in tests, named unverified until SO12)</summary>
+<summary><strong>V3</strong> the who-is-logged-in page (new) · waits on B4a; V1 for the real lookup (stand-in: a central client honoring C12 in tests, named unverified until SO12); merges after JC1</summary>
 <ex-markdown id="ticket-v3-text"><script type="text/markdown">
 - **Covers:** C12's page, and R49 at the sign-in service.
   - **Where:** a page and refresh route beside the device-code approval page.
@@ -627,7 +630,7 @@ What it does:
 <summary><strong>V4</strong> SO12 who-is-logged-in journey (new, TypeScript) · waits on V1, V2, V3, F14</summary>
 <ex-markdown id="ticket-v4-text"><script type="text/markdown">
 - **Builds** `verify-codex-router` `fleet-who-is-logged-in` (SO12), on SO8's arrangement: two Routers, A and B, logged in by device code; a third in another organization; the local sign-in service with its page. A's connection runs through a relay that can drop traffic without closing. B's session is Codex and A's is Claude, so the run machine needs both provider accounts.
-- **Runs** steps 1–8 of SO12; step 9 comes with V5.
+- **Runs** steps 1–8 of SO12; step 9's people part comes with V5c and V5s.
 - **Earns:** U40's R47 (V39), R48 (V40) and R49 (V41) rows, on the local stack.
 </script></ex-markdown>
 </details>
@@ -646,7 +649,7 @@ What it does:
 <details id="ticket-prodv">
 <summary><strong>PRODV</strong> the view in production (new; you run it) · waits on JV1; PROD2; your go</summary>
 <ex-markdown id="ticket-prodv-text"><script type="text/markdown">
-- **Covers:** DV in production, in the same order: central, then the Routers' update (unless V2 shipped in PROD2's Router build), then the page. No machine logs in again.
+- **Covers:** DV in production, in the same order: central, then the Routers' update, then the page. No machine logs in again.
 - **Earns:**
   - you open the page and see your real machines and their sessions;
   - a Router you stop shows as not connected;
@@ -657,20 +660,29 @@ What it does:
 <ex-markdown id="item2--dc-stage-c-people-in-the-view-text"><script type="text/markdown">
 **You'll see:** each person admitted to your organization in the view, signed in now or not, with their last sign-in, to you only and as fresh as the rest.
 
-**Bots come later.** Their rows (membership workspace, credential state, last token) need bots (F2c) and bot tokens (B4b), which arrive with steps 3–5. Their last-token record, `bot_token_release`, is written by B4b's release gate, and joins OD4's approval then. So V42 is earned in two parts: people here, bots with steps 3–5.
+**Bots come later.** Their rows (membership workspace, credential state, last token) need bots (F2c) and bot tokens (B4b), which arrive with steps 3–5. Their last-token record, `bot_token_release`, is written by B4b's release gate, and joins OD4's approval then. So V42 is earned in two parts: people here (V5c and V5s), bots with steps 3–5. Until the bot half is observed, U40's R50 row is **partial**, never reported complete.
 </script></ex-markdown>
 <h3 id="item2--dc-tickets">Tickets</h3>
-<details id="ticket-v5">
-<summary><strong>V5</strong> people in the view (new) · waits on V4</summary>
-<ex-markdown id="ticket-v5-text"><script type="text/markdown">
-- **Covers:** R50's people half.
-  - The organization authority fills `WhoIsLoggedIn`'s `people` with each admitted person (F2a's admissions).
-  - The sign-in service adds what it owns: signed in now (an unexpired sign-in session), and the last sign-in.
-- **Writes:** `organization_authority` (the lookup's people rows); `packages/auth` (the page's join).
-- **Earns:** SO12 step 9's people part (V42, people half), and its runs on the private stack and in production with the next deploy.
+<details id="ticket-v5c">
+<summary><strong>V5c</strong> people rows at central (new) · waits on V4</summary>
+<ex-markdown id="ticket-v5c-text"><script type="text/markdown">
+- **Covers:** R50's people half at central: the organization authority fills `WhoIsLoggedIn`'s `people` with each admitted person (F2a's admissions), under the same owner guard and read.
+- **Writes:** `organization_authority` (the lookup's people rows), in `agent-collaboration/agent-collaboration`.
 - **Focused proof:**
-  - **Wrong behaviors caught:** sign-in facts copied into central; a person shown signed in after their session ended; a non-admitted person listed.
-  - **Layer:** central unit and sign-in core unit tests, then SO12.
+  - **Wrong behaviors caught:** a non-admitted or removed person listed; another organization's person listed.
+  - **Layer:** `cargo test -p collaboration-central-core`.
+  - **Oracle:** R50, C12.
+</script></ex-markdown>
+</details>
+<details id="ticket-v5s">
+<summary><strong>V5s</strong> people's sign-in facts in the view (new) · waits on V5c's shape (K12); V3</summary>
+<ex-markdown id="ticket-v5s-text"><script type="text/markdown">
+- **Covers:** R50's people half at the sign-in service. The page joins each listed person with what it owns: signed in now (an unexpired sign-in session) and the last sign-in.
+- **Writes:** `packages/auth` (the page's join), in `agent-collaboration/switchboard`.
+- **Earns, with V5c:** SO12 step 9's people part (V42's people half). The joint run is V4's journey extended to step 9's people part, run after both merge, and again on the private stack and in production with the next deploy.
+- **Focused proof:**
+  - **Wrong behaviors caught:** sign-in facts copied into central; a person shown signed in after their session ended.
+  - **Layer:** sign-in core unit tests, then SO12.
   - **Oracle:** R50, C12.
 </script></ex-markdown>
 </details>
@@ -683,13 +695,18 @@ What it does:
   - V2 extends the Router's machine connection (F11) and reads the registrar's sessions (F4a);
   - V3 needs the person token for central's admin address (B4a).
 - **Cuts in order:** JC1 → PROD2, and JC1 → JV1 → PRODV. PRODV only after PROD2 holds.
+- **DV merges after JC1.** V1, V2, V3 and V4 are built and reviewed while D1 finishes, but merge only once JC1's builds are fixed and its observations pass. So JC1 deploys D1 alone, and no hold from the view can block it (Advisor, IP1).
+- **PROD2 deploys JC1's verified builds,** by the orchestration's exact-build rule. Those predate V2's merge, so no production Router sends a heartbeat before a central that receives it.
+- **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page.
 - **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone.
 </script></ex-markdown>
 <h2 id="item2--choices-made-in-this-plan">Choices made in this plan</h2>
 <ex-markdown id="item2--choices-made-in-this-plan-text"><script type="text/markdown">
 - **The view goes live after the switch, not inside it.** JC1 and PROD2 carry D1 alone, so your step 1 isn't held up by step 2. Not chosen: putting V1–V4 into JC1, which is one cut fewer but makes the switch wait for the view.
 - **The view's tickets follow their repositories and owners:** V1 at central, V2 in the Router, V3 in the sign-in service, and V4 as the journey. Not chosen: one ticket spanning both repositories, because one PR can't span two repositories.
-- **Stage C's people go now and bots later,** because bots don't exist until steps 3–5.
+- **Stage C's people go now and bots later,** because bots don't exist until steps 3–5. R50 stays partial until then.
+- **DV merges wait for JC1** (Advisor, IP1). The alternative, pinning a D1 release candidate while DV merges, keeps more merge freedom but adds build-selection work.
+- **V5 is two tickets, V5c and V5s,** one per repository, closed together by SO12 step 9 (Advisor, IP4).
 - **The machine-client change rides in D1's existing tickets** (B5, F1, F10, F11), because it changes their contracts, not a new piece.
 </script></ex-markdown>
 <h2 id="item2--verification-design-rows-scheduled">Verification Design rows, scheduled</h2>
@@ -697,17 +714,17 @@ What it does:
 | Row | Deliverable | Ticket that earns it | Command or journey | When |
 |---|---|---|---|---|
 | U1 | D1 | F1, B4a | `cargo test -p collaboration-central-core`; sign-in unit; SO6 | in each ticket |
-| U6, U32 | D1 | F4a | SO1 | F8a |
+| U6, U32 | D1 (registration, refusals, no sign-in); D3 (the token) | F4a; F8b | SO1 | F8a (partial); F8b |
 | U9 (people, machines, sessions) | D1 | F2a, F10 | SO4 + SO1 + SO8 | F2a; F14 |
 | U14 (renewal and outage) | D1 | B5, F10 | SO8, SO2 | F14 |
 | U15 (D1's edges) | D1 | F3a | SO7 | F3a |
-| U18 | D1 | F4a | SO1 + SO4 + SO6 | F8a |
+| U18 | D1 (record and bucket); D3 (isolation in the token) | F4a; F8b | SO1 + SO4 + SO6 | F8a (partial); F8b |
 | U19 | D1 | F4a | SO1 | F8a |
 | U20 | D1 | B3, F2a | `verify-auth` bootstrap + SO4 + SO7 | F2a |
 | U21, U31 | D1 | F2a, F10, B5 | SO4; SO8; SO2 | F2a; F10; F14; B5 |
-| U22 | D1 | B1, B5 | SO2 on both databases | B1; B5 |
-| U23 | D1 | B1, B2 | SO2 on both hosts | B2 |
-| U24, U25 | D1 | B1, B5 | SO2 readback; Hegel families | B1; B5 |
+| U22 | D1 | B1 contributes; B5 closes | SO2 on both databases | B5 |
+| U23 | D1 | B1 contributes; B2 closes, with B5's rule in the core | SO2 on both hosts | the later of B2 and B5 |
+| U24, U25 | D1 | B1 contributes; B5 closes | SO2 readback; Hegel families | B5 |
 | U27 (people, machines, sessions) | D1 | F2a, F2b | SO4 | F2a; F2b |
 | U30 (people's requests) | D1 | B4a | SO2 | B4a |
 | U33, U31 (the machine client, replay, revoke and wrong-client cases included) | D1 | F10, F11, B5 | SO8; SO2; SO4 | B5; F10; F14 |
@@ -716,9 +733,9 @@ What it does:
 | U35 | D1 | F12, F14 | SO9 | F12; F14 (the end-to-end Linux login stays unverified, your call) |
 | U39 | D1 | F15, F16 | SO4; SO11 | F15; F16; JC1; PROD2 |
 | U40: R47 | DV | V1, V3 | SO4 (the lookup); SO12 steps 1–3, 6 | V1; V4; JV1 |
-| U40: R48 | DV | V1, V2 | SO4 (presence and activity); the Router tests; SO12 steps 2–5 | V1; V2; V4; JV1 |
+| U40: R48 | DV | V1, V2 | SO4 (presence and activity) on Tokio and workerd; the Router tests; SO12 steps 2–5 | V1; V2; V4; JV1 |
 | U40, U32, U21: R49 | DV | V1, V3 | SO12 steps 7–8; SO7 for the lookup's route | V4; V1; JV1 |
-| U40: R50 | DC | V5 (people); bots with steps 3–5 | SO12 step 9 | V5; the bots half later |
+| U40: R50 | DC | V5c and V5s (people); bots carried to steps 3–5 | SO12 step 9 | after V5c and V5s (partial); the bots half later |
 
 The rows for D2–D7 (U2, U3, U4/U5, U7/U8/U28, U10–U13, U16, U26/U36, U29, U37, and the rest of U9, U14, U27, U30 and U34) stay scheduled in the 2026-10-27 plan.
 </script></ex-markdown>
