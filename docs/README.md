@@ -7,6 +7,7 @@ directory is the deeper map for the Hermes-only controller and runtime.
 
 | If you want to... | Read |
 | --- | --- |
+| Know why the Switchboard and sign-in left this repository, and how agent-vm communicates today | [architecture/switchboard-split.md](architecture/switchboard-split.md) |
 | Set up a local or container Hermes deployment | [getting-started/setup.md](getting-started/setup.md) |
 | Configure household access through Cloudflare Access and Google login | [getting-started/google-onboarding.md](getting-started/google-onboarding.md) |
 | Configure a Hermes managed Gateway | [reference/configuration/system-json.md](reference/configuration/system-json.md) |

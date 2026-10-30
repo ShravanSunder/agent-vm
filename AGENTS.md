@@ -2,6 +2,8 @@
 
 Sandboxed QEMU micro-VM controller and managed Gateway packages for autonomous coding agents.
 
+> **Frozen since 2026-10-30.** The Switchboard (formerly the Tool Portal) and sign-in were copied out to [`agent-collaboration/switchboard`](https://github.com/agent-collaboration/switchboard). Work on those packages happens there, not here. agent-vm may stay broken until the owner returns to it; don't fix or redesign it without the owner. Read [docs/architecture/switchboard-split.md](docs/architecture/switchboard-split.md) first.
+
 ## Rules
 
 @.cursor/rules/ts-rules.md
