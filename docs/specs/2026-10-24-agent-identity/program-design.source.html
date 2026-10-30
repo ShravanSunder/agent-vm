@@ -105,8 +105,8 @@ The picture shows services; the components table below names each part inside th
 | Where an admin change is recorded | In the same transaction as the change, at the owner of the state it changes: the organization authority, the Fleet object or the Registry | Every record in the organization authority (it would have to own workspaces and machines too) | One owner per truth, and a change and its record still commit together | Records live in up to three places; an organization's audit view is assembled from them when read | A compliance need for one audit store |
 | Who keeps the list of organizations | The Registry: each organization and its state (`creating`, `active`), and the index of which organization each machine belongs to | The Fleet object | The Registry may call organization authorities in rank order; the Fleet object may not | The Registry gains two tables | — |
 | How one machine's replayed refresh token is kept from ending another's (R40) | **One public client per enrollment**, created by the device-code token handler at the machine's first mint; every token of that machine is issued under it. The shared Router device-login client only starts logins. | Accept the provider's teardown (one replay stops every machine the owner approved, which breaks R40). A before-hook that handles stale replays itself (the provider rereads its clock after awaited work, so any check before it can be overtaken). Machine refresh credentials kept outside the provider (a new table, a new grant, and our own rotation and lost-reply window). | The provider ends refresh families by client and person, never by reference (`token.ts:537–567`). A client per enrollment makes that key unique per machine on the refresh path, so isolation holds at the delete itself, with no timing. The revoke endpoint keys its teardown by the requesting client before checking ownership (`revoke.ts:217–225`), so it is closed to machine clients and their tokens, by facts that never change. The provider keeps its own rotation and lost-reply window. | One client row per enrollment; a client created at first mint and disabled when the enrollment ends; the Router keeps its client ID; central checks the token's client against the one its enrollment recorded. | The provider gains per-reference teardown |
-| How central learns a machine is gone (R48) | The Router sends an application **heartbeat** over its open connection every sixth of OD14 (2.5 seconds at the proposed 15). The Connection object passes each frame's receipt time, on its own clock, to its organization authority, which keeps the machine's **presence lease** running to three heartbeats (7.5 seconds) past the latest receipt time, never past it. A machine counts as connected only while its lease runs. The Connection object closes a connection it hasn't heard from for those 7.5 seconds, and a clean close ends the lease at once. | Rely on the platform to notice a dead socket. Use WebSocket ping and pong. Report only opens and closes to the organization authority. Start the lease when the organization authority processes the report (a report delayed past a live lease would buy a fresh one; Reviewer, IT1). | Today both hosts and the Router discard ping and pong without recording them, so nothing bounds when a silent drop is noticed. The arithmetic, in sixths of OD14: a cut just after a frame shows by the lease (3) plus one refresh (1) plus the page's answer deadline (1), so 12.5 seconds, leaving one sixth for the clock difference between the two objects and for rendering. A delayed report can't move the lease, because the lease is measured from when the frame arrived. With open and close reports alone, one lost close report or a central restart would leave a machine shown connected; a lease heals itself. | One small frame from the Router and one write at the organization authority every 2.5 seconds per connected machine. On Cloudflare each heartbeat wakes the Connection object and the organization authority, which costs object duration. The fleet pays. | An organization with enough machines that its authority's heartbeat writes become a load problem, or OD14 changes |
-| How a session's working or idle state reaches central (R47, R48) | The Router's **session activity reporter** maps each harness's own states to working or idle. On each change, on each new connection, and after any report that wasn't answered, it sends the machine's whole state, with a sequence. The organization authority applies only a report newer than the last it applied, and the state counts only while its connection holds the machine's lease. | Central asks the Router whenever the owner opens the view. Reports of one session's change each (two changes for different sessions, applied out of order, would lose one). | A change shows without waiting for a viewer, and an offline machine's sessions read as unknown at once instead of timing out. | One report per turn start or end, each listing every session on the machine. A mapping per harness to keep current: Codex `active` → working; the other harnesses' `running` or `requires-action` → working; Claude busy or waiting → working; anything else → idle. | Report volume becomes a load problem |
+| How central learns a machine is gone (R48) | The Router sends an application **heartbeat** over its open connection every sixth of OD14 (2.5 seconds at the proposed 15). The **Connection object owns the machine's presence** and judges it on its own clock: it closes a connection it hasn't heard from for three heartbeats (7.5 seconds), and a clean close ends it at once. At each lookup the organization authority asks each machine's Connection object, with a deadline of half a refresh interval on its own clock; the answer is in durations ("open, silent for 2 s"), never in timestamps. | Rely on the platform to notice a dead socket. Use WebSocket ping and pong. A lease at the organization authority, renewed by forwarded heartbeats: timed from processing, a late report buys a fresh lease (Reviewer, IT1); timed from the frame's arrival, it compares two objects' clocks, whose difference nothing bounds (IT5). | Today both hosts and the Router discard ping and pong without recording them, so nothing bounds when a silent drop is noticed. Every interval here is measured on one clock: silence on the Connection object's, the read deadline on the organization authority's, the refresh and answer deadline on the browser's. So no clock difference enters the budget. In sixths of OD14: a cut just after a frame shows by the silence limit (3) plus one refresh (1) plus the page's answer deadline (1), so 12.5 seconds, leaving one sixth for rendering. | One small frame from the Router every 2.5 seconds per connected machine, to its Connection object only. One read per machine per refresh while the page is open. On Cloudflare each heartbeat and each read wakes the Connection object, which costs object duration. The fleet pays. | An organization with enough machines that a read per machine per refresh becomes a load problem, or OD14 changes |
+| How a session's working or idle state reaches central (R47, R48) | The Router's **session activity reporter** maps each harness's own states to working or idle. On each change, on each new connection, and after any report that wasn't answered, it sends the machine's whole state, with a sequence. The organization authority applies only a report newer than the last it applied, and the state counts only while its connection is the one its Connection object answers open. | Central asks the Router whenever the owner opens the view. Reports of one session's change each (two changes for different sessions, applied out of order, would lose one). | A change shows without waiting for a viewer, and an offline machine's sessions read as unknown at once instead of timing out. | One report per turn start or end, each listing every session on the machine. A mapping per harness to keep current: Codex `active` → working; the other harnesses' `running` or `requires-action` → working; Claude busy or waiting → working; anything else → idle. | Report volume becomes a load problem |
 | Where the owner's view lives (R47–R50, C12) | A page served by the **sign-in service**, beside the device-code approval page. Its server reads central's owner-guarded lookup with a person token it mints for the signed-in owner. | An HTML page served by Fleet central. The step-3 admin panel (`tool-access-ui`, from #243). | Central has no page today and its admin surface is JSON; the owner is already signed in at the sign-in service; central keeps the truth and the guard. The admin panel isn't designed into any host yet (step 3). | The sign-in service gains one page and one route that calls central. | Step 3's admin panel lands; then the view may move into it |
 | How the page stays fresh (R48) | The page asks for a snapshot every sixth of OD14 (2.5 seconds). Each snapshot carries the time central took it (`asOf`). An answer that arrives more than one refresh interval after its request is discarded. A failed or discarded refresh, or none for OD14, replaces the rows with "unavailable". | Central pushes changes to the browser over a stream. | Nothing new at central faces the browser; one lookup per refresh per open view is small. The answer deadline bounds how old a shown picture can be, measured on the browser's own timer. | One lookup every 2.5 seconds while the page is open. | Many owners watch at once, or OD14 drops below about 5 seconds |
 </script></ex-markdown>
@@ -115,8 +115,8 @@ The picture shows services; the components table below names each part inside th
 ```mermaid
 flowchart TB
   REG["Fleet central · Registry - existing<br/>E1 list entry · E6 machine index entry"]
-  OA["Fleet central · Organization authority - new<br/>E1 Organization · E19 Admission<br/>E4 Bot · E8 Membership<br/>E9 Collaboration · E17 Pair<br/>E21 Enrollment · remote starts<br/>E15 Allowance · E7 Session<br/>E24 presence · E13 Isolation<br/>E14 Bucket · E12 Removal notice, outbox"]
-  CO["Fleet central · Connection object - existing<br/>one per installation<br/>E24 open connection, silence deadline"]
+  OA["Fleet central · Organization authority - new<br/>E1 Organization · E19 Admission<br/>E4 Bot · E8 Membership<br/>E9 Collaboration · E17 Pair<br/>E21 Enrollment · remote starts<br/>E15 Allowance · E7 Session<br/>E13 Isolation · E14 Bucket<br/>E12 Removal notice, outbox"]
+  CO["Fleet central · Connection object - existing<br/>one per installation<br/>E24 the connection and its presence,<br/>on its own clock"]
   FO["Fleet central · Fleet object - existing<br/>one per organization<br/>E2 Workspace · E16 Project"]
   BA["Sign-in service · Better Auth - existing<br/>E3 Person · E5 Bot credential<br/>E23 Device-code request<br/>E11, E18, E22: minted, never stored"]
   WS["Switchboard · workspace store - modified<br/>E12 Removal notice, received"]
@@ -125,7 +125,8 @@ flowchart TB
   OA -- "asks a project's workspace" --> FO
   OA -- "decides before each mint" --> BA
   OA -- "pushes notices to" --> WS
-  CO -- "reports open, heard, closed,<br/>session activity" --> OA
+  CO -- "passes session activity" --> OA
+  OA -- "asks presence at each lookup" --> CO
   BA -. "tokens name personas defined in" .-> CFG
 ```
 
@@ -143,7 +144,7 @@ flowchart TB
 | E23 Device-code login request | Better Auth (the device grant's record) | `packages/auth`: the `deviceCode` table with the grant's fields plus ours (`machineInstallationId`, `machinePeerId`, `machineLabel`, `organizationId`, and `enrollmentId`, written only after central's `Approved`); the organization and enrollment then live on as the token family's `referenceId` | Better Auth `deviceCode` model (generated); `sign-in-core/device-login/machine-login-fields.ts` (new) | the Router's device-authorization request; the owner's approval page; `DecideDeviceLogin` | persisted until redeemed or expired | Zod at the boundary |
 | E22 Machine token | The sign-in service | `packages/auth` (modified) | `identity_contract.rs`: `MachineTokenClaims` (new, the contract home; the sign-in service's Zod schema is generated from it) | JWT claims, below | derived (signed, never stored) | Rust serde, Zod derived |
 | E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId }`; `DecideDeviceLogin` carries the workspaces chosen at log-in | persisted | Rust |
-| E24 Machine connection | The Connection object owns the open connection and its silence deadline; the organization authority owns the machine's presence, which the view reads | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence reports); `organization_authority` `machine_presence` table (new: one row per installation, overwritten by each connection) | `identity_contract.rs`: `MachinePresence { installation, connectionId, attachSequence, openedAt, lastHeardAt, leaseUntil, closedAt: Option, activitySequence }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `RecordMachinePresence` (Connection object → organization authority); the lookup's `connection` variant | persisted (the latest connection per machine) | Rust tagged enum |
+| E24 Machine connection | The Connection object: the open connection, its silence deadline and its presence, judged on its own clock | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence answer); its own store keeps the open connection, its attach sequence, when it opened, when it was last heard and when the last one closed | `identity_contract.rs`: `ReadMachinePresence` and `MachinePresenceAnswer { Open { connectionId, attachSequence, openForMs, silentForMs } \| NotConnected { closedAgoMs: Option } }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `ReadMachinePresence` (organization authority → Connection object, at each lookup); the lookup's `connection` variant | persisted in the Connection object's store | Rust tagged enum |
 | E7 Fleet harness session | Organization authority | `organization_authority` session registry (new), with its start time set when the organization authority registers it; `session_activity` table (new: one row per session, replaced by each report) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new, with `startedAt`) and `SessionActivity { session, connectionId, activity: Working \| Idle, reportedAt }` (new) | `principal.session_ref` object in tokens; `session` in registration; `ReportSessionActivity` over the connection; the lookup's `state`: `working \| idle \| unknown` | persisted (with retention); an activity row counts only while its connection holds the machine's lease | existing `SessionRef` plus Rust |
 | E8 Membership | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Membership { workspace, principal, persona: PersonaRef, admission: AdmissionRef, state }` (new); `AdmissionRef` is the person's or bot's `AdmissionId`, or for a session its machine's installation, which counts while that machine has an active enrollment here | issuance decision; admin lookup | persisted | Rust tagged enum `Principal { Person, Bot, FleetHarnessSession }` |
 | E9 Collaboration | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Collaboration { workspace, collaborator: Person { personId } \| Bot { botId }, admissionId, state }` (new) | admin API; collaboration admission (a person's admits nothing) | persisted | Rust tagged enum |
@@ -163,7 +164,7 @@ Five stores, each with one owner. They share no database and no foreign key: the
 flowchart TB
   SI["Sign-in service: one database<br/>people, OAuth clients and tokens, device codes"]
   REG["Fleet central · Registry: one<br/>organizations, machine claims"]
-  OA["Fleet central · organization authority:<br/>one per organization<br/>admissions, bots, roles, machines and their presence,<br/>sessions and their activity, remote starts, removal outbox"]
+  OA["Fleet central · organization authority:<br/>one per organization<br/>admissions, bots, roles, machines,<br/>sessions and their activity, remote starts, removal outbox"]
   FO["Fleet central · Fleet object: one per organization<br/>workspaces, boards, projects, feed"]
   WS["Switchboard · workspace store: one per workspace<br/>approval uses, removal marks"]
   REG -->|"organization_id"| OA
@@ -330,7 +331,7 @@ Machines:
 ```mermaid
 erDiagram
   machine_enrollment }o..o{ machine_allowance : "same installation"
-  machine_enrollment }o..o| machine_presence : "same installation"
+  machine_enrollment }o..o| machine_activity : "same installation"
   machine_enrollment {
     text enrollment_id PK
     text installation_id
@@ -343,14 +344,10 @@ erDiagram
     text workspace_id PK
     text state
   }
-  machine_presence {
+  machine_activity {
     text installation_id PK
-    text connection_id "the latest connection"
-    integer opened_at
-    integer last_heard_at
-    integer lease_until "connected while now is before it"
+    text connection_id "the connection the applied report came on"
     integer attach_sequence "orders connections"
-    integer closed_at "final for its connection"
     integer activity_sequence "highest activity report applied"
   }
 ```
@@ -693,31 +690,31 @@ The Router may only name sessions on its own installation; central refuses any o
 
 **Start time (E7):** the organization authority sets `startedAt` from its own clock when it first registers a session. A resent registration keeps the first time.
 
-**Presence (E24, R48).** The Router sends `Heartbeat` every sixth of OD14 while its connection is attached. The Connection object passes each frame it receives, a heartbeat or any other request, to its organization authority as one presence report, carrying the time the frame arrived:
+**Presence (E24, R48).** The Router sends `Heartbeat` every sixth of OD14 while its connection is attached. The Connection object owns the machine's presence and judges it on its own clock. Nothing is forwarded on a heartbeat; the organization authority asks when it needs to know:
 
 ```rust
 #[serde(rename_all = "camelCase")]
-pub struct RecordMachinePresence {             // Connection object → organization authority
-    pub installation: InstallationId,
-    pub connection_id: ConnectionId,
-    pub attach_sequence: u64,                   // the session library's per-peer attach sequence
-    pub heard_at: UnixMillis,                   // the Connection object's clock when the frame arrived, or when it closed
-    pub event: PresenceEvent,
+pub struct ReadMachinePresence { pub installation: InstallationId } // organization authority → Connection object, at each lookup
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum MachinePresenceAnswer {
+    #[serde(rename_all = "camelCase")]
+    Open { connection_id: ConnectionId, attach_sequence: u64, open_for_ms: u64, silent_for_ms: u64 }, // durations on the Connection object's clock
+    #[serde(rename_all = "camelCase")]
+    NotConnected { closed_ago_ms: Option<u64> },  // None: no connection since its enrollment began
 }
-#[serde(tag = "event", rename_all = "camelCase")]
-pub enum PresenceEvent { Heard, Closed }        // Closed: a clean close, a token expiry, a revocation or the silence deadline
 ```
 
-- **The organization authority's rules.** The lease is measured from `heard_at`, the moment the frame arrived, so a report that arrives late can't extend it (Reviewer, IT1).
-  - A report with a higher attach sequence than the stored one replaces the machine's row: a new connection, opened at that moment.
-  - `Heard` on the stored connection, while it isn't closed, sets the last-heard time to the later of the stored and the reported `heard_at`, and the lease to three heartbeats past that.
-  - `Closed` on the stored connection ends the lease at once, and is final: a later `Heard` for that connection changes nothing.
-  - A report for an older connection changes nothing.
-- **Connected** means the machine's row has a running lease. **Last seen** is the last-heard time; for an open connection that is within one heartbeat of the lookup.
-- **The silence deadline.** The Connection object closes a connection it hasn't heard from for three heartbeats: by a receive deadline on Tokio, and by an object alarm on Cloudflare. The lease, measured from the same receipt time, ends at the same moment, whether or not the `Closed` report arrives.
-- **Two clocks, one difference.** The lease is set from the Connection object's clock and read at the organization authority's `asOf`. On Tokio they are one process clock. On Cloudflare they are two objects' host clocks, which differ only by the platform's time sync; the timing budget keeps one sixth of OD14 for that and for rendering.
-- **No order assumed.** Central handles a connection's frames as independent tasks (`collaboration-central-tokio/src/native_objects.rs:508–515` at `7af23abe`), and a forwarded call can be overtaken by a later one. So the rules hold in any arrival order: `Heard` only extends a live lease, `Closed` is final for its connection, and attach sequences order connections.
-- **Best effort.** A presence report that fails is dropped, not retried. The next heartbeat carries the same truth, and a missed close is covered by the lease running out.
+- **The Connection object's rules.**
+  - It records when each frame arrives, a heartbeat or any other request, and closes a connection it hasn't heard from for three heartbeats: by a receive deadline on Tokio, and by an object alarm on Cloudflare. A clean close, a token expiry or a revocation closes it too.
+  - It answers `Open` only for an open connection silent for less than three heartbeats. A connection past that is answered `NotConnected` even if its close hasn't run yet.
+  - It keeps its last close in its own store, so it answers after a restart too. On Tokio a central restart leaves every Connection object without a socket, so each answers `NotConnected`.
+  - The session library already keeps one attached connection per machine (`ConnectionReplaced`, above), so there is one open connection to report.
+- **The organization authority's read.** At each `WhoIsLoggedIn` it sends `ReadMachinePresence` to the Connection object of each machine with an active enrollment, in parallel, each with a deadline of half a refresh interval on its own clock.
+  - It turns durations into times by subtracting them from the moment the answer arrived. The error is at most that deadline, and no other object's clock is involved (Reviewer, IT5).
+  - **Connected** is an `Open` answer. **Last seen** is the arrival time less `silent_for_ms`, or less `closed_ago_ms` for a closed one.
+  - A Connection object that doesn't answer in time fails the whole lookup, which the page shows as unavailable, never partial.
+- **One clock per interval.** Silence is measured on the Connection object's clock, the read deadline on the organization authority's, and the refresh and answer deadline on the browser's. No interval compares two clocks, so the clock difference between hosts never enters the budget.
+- **No order assumed.** Central handles a connection's frames as independent tasks (`collaboration-central-tokio/src/native_objects.rs:508–515` at `7af23abe`). Presence doesn't depend on their order: only the latest frame's arrival matters, and it is kept where it was measured.
 
 **Session activity (E7, R47, R48).** Each report carries the machine's whole state: every registered, unended session with working or idle. The Router's session activity reporter sends one after each attach, on every transition, and when a session is registered or ends. The Connection object passes each one to its organization authority, tagged with its connection ID and attach sequence.
 - **Newest wins, by sequence, and loses nothing.** Each report carries a sequence, strictly increasing on its connection.
@@ -727,7 +724,8 @@ pub enum PresenceEvent { Heard, Closed }        // Closed: a clean close, a toke
   - A registered session the applied report doesn't name reads as unknown until a later report names it.
 - **Answered, never lost.** After a lost answer or a refusal, the reporter sends a fresh report of the current state, with a new sequence, at the next heartbeat, and keeps doing so until one is accepted or superseded.
 - **The connection must still be the machine's.** A report from a connection that isn't the machine's current one is refused.
-- **Counting.** A session's activity counts only while the connection it came on holds the machine's lease. Otherwise the session reads as unknown.
+- **Counting.** A session's activity counts only while the connection it came on is the one its Connection object answers `Open` at the lookup. Otherwise the session reads as unknown.
+- **Which connection's reports apply.** The organization authority keeps, per machine, the connection and attach sequence of the latest applied report (`machine_activity`). A report from a higher attach sequence starts a new connection's set. A report from a lower one is refused `notCurrentConnection`.
 - **Mapping each harness's states to working or idle.**
   - Codex: the native thread status. `active` means working.
   - Claude and Cursor: the Router's session event hub. `running` or `requires-action` means working.
@@ -1117,7 +1115,7 @@ Every organization command and lookup names its organization and is refused unle
 
 **Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). SD8 is still that design's open decision (the Lead's 5-second proposal); this set inherits whatever it becomes. For a change the organization authority applies, the guard holds in that transaction: the owner check reads its own state there, the confirmation must be within SD8 of it, and a confirmation is never reused for a later command. For a change another store applies, it holds when you ask (above). The guard refuses everyone else before any read or write.
 
-**Who is logged in (R47–R50, C12).** A read-only lookup under the owner guard. It changes nothing: it writes no record, starts no outbox step and renews no lease.
+**Who is logged in (R47–R50, C12).** A read-only lookup under the owner guard. It changes nothing: it writes no record and starts no outbox step; presence reads change nothing at the Connection objects.
 
 ```rust
 #[serde(rename_all = "camelCase")]
@@ -1159,10 +1157,10 @@ pub struct AdmittedPersonRow { pub person_id: PersonId }                        
 pub struct BotRow { pub bot_id: BotId, pub workspaces: Vec<WorkspaceRef>, pub client_ids: Vec<ClientId> } // stage C
 ```
 
-- **One reading, one moment.** The organization authority reads its enrollments, allowances, presence, sessions and activity in one transaction, at its own clock's `asOf`. It then asks its own Fleet object for the workspace and project names in the snapshot.
-- **Never partial.** If the Fleet object can't answer, the whole lookup fails, and the page shows unavailable.
+- **One reading, one moment.** The organization authority reads its enrollments, allowances, sessions and activity in one transaction, at its own clock's `asOf`. In parallel it asks each enrolled machine's Connection object for its presence, with a deadline of half a refresh interval. It also asks its own Fleet object for the workspace and project names in the snapshot.
+- **Never partial.** If the Fleet object or any Connection object can't answer in time, the whole lookup fails, and the page shows unavailable.
 - **The derivations.**
-  - A machine is `Connected` while its presence lease runs at `asOf`.
+  - A machine is `Connected` when its Connection object answers `Open`.
   - A revoked or expired enrollment always shows `NotConnected`, since its connection was closed and is refused.
   - A session's state is unknown unless its machine is connected and its latest activity report came on that same connection.
 - **One organization.** Only machines with an enrollment in this organization are listed, which R34 already guarantees: one authority per organization.
@@ -1237,8 +1235,8 @@ No transaction spans Better Auth and organization objects. Each removal commits 
 <ex-markdown id="program-design--components-text"><script type="text/markdown">
 | Component | Owns | Home | Consumers | Changes when |
 |---|---|---|---|---|
-| **Organization authority** (new) | E1 (including its owner and sign-in allowlist), E19, E4, E7, E8, E9, E13, E15, E17, E21; each machine's presence (E24's lease) and each session's latest activity; device-login, machine-token, machine-connection and remote-start decisions, and the remote-start records; the who-is-logged-in snapshot; the ordered marks; the configured lifetime; the removal, credential and admitted-command outboxes; the records of its own changes; admitted commands awaiting handoff; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, machine token check, the sign-in service (decisions) | membership, issuance or machine-login policy changes |
-| **Connection object** (existing, modified) | One machine's open connection (E24): the silence deadline (three heartbeats; a receive deadline on Tokio, an object alarm on Cloudflare); passing a presence report for each frame, with the frame's receipt time, and each activity report, to its organization authority | `collaboration-central-core` session runtime (`session_runtime.rs`, modified), with each host's socket loop (`collaboration-central-tokio/src/native_objects.rs`, `collaboration-central-cloudflare/src/object_shell.rs`, modified) | the organization authority (presence and activity) | the presence contract changes |
+| **Organization authority** (new) | E1 (including its owner and sign-in allowlist), E19, E4, E7, E8, E9, E13, E15, E17, E21; each session's latest activity; device-login, machine-token, machine-connection and remote-start decisions, and the remote-start records; the who-is-logged-in snapshot; the ordered marks; the configured lifetime; the removal, credential and admitted-command outboxes; the records of its own changes; admitted commands awaiting handoff; the shared-bucket view | `collaboration-central-core` organization module, hosted as one object per organization (Cloudflare Durable Object class `OrganizationObject`; Tokio: one SQLite database per organization) | session token broker, admin surface, collaboration admission, machine token check, the sign-in service (decisions) | membership, issuance or machine-login policy changes |
+| **Connection object** (existing, modified) | One machine's open connection and its presence (E24), on its own clock: the silence deadline (three heartbeats; a receive deadline on Tokio, an object alarm on Cloudflare); answering `ReadMachinePresence` in durations; passing each activity report to its organization authority | `collaboration-central-core` session runtime (`session_runtime.rs`, modified), with each host's socket loop (`collaboration-central-tokio/src/native_objects.rs`, `collaboration-central-cloudflare/src/object_shell.rs`, modified) | the organization authority (presence reads; activity) | the presence contract changes |
 | **Session token broker** (new) | Turning a Router's request into a token: decide, then mint through the fleet-session grant | `collaboration-central-core` | Router forwarder | the session grant contract changes |
 | **Admin surface** (modified) | Organization-owner commands and lookups with their guard, including `WhoIsLoggedIn`, the fleet operator's two commands under the operator check (R13, R14), and the bearer checks of central's new receivers | `central_router.rs` admin routes and `access_rules.rs` (modified; the Access branches deleted at step 2) | the owner's CLI and console | admin commands change |
 | **Machine token check** (new, central entry) | Verifying a machine token on `/v1/session` and on `RenewMachineToken` (C9): signature against the sign-in service's keys, audience, time; then `AdmitMachineConnection` through the Registry and the organization authority; the step-3 request limit | `collaboration-central-core` (new module `machine_token_check`), using the existing RS256 capability and the sign-in service's key fetch; each host's entry | the Connection object | the token contract changes, or a later issuer kind is added |
@@ -1262,7 +1260,7 @@ No transaction spans Better Auth and organization objects. Each removal commits 
 
 **Removed:** the Switchboard's agent-management route and retirement (`workspace-agent-management.ts`, `workspace-agent-retirement.ts`, `agent-retirement.ts`) and its membership records; the sign-in service's workspace links.
 
-**Allowed edges:** Router → sign-in service (device-code login and refresh); Router → Fleet central over the logged-in connection (registration, tokens, collaboration admission, renewal, heartbeats, session activity, remote starts and their outcomes); Connection object → its organization authority (presence and activity reports); the sign-in service's page → central's admin surface (`WhoIsLoggedIn`, with the signed-in owner's person token); Fleet central → a Router through its connection's delivery face (scope changes, remote start requests and outcomes); the service-request edges above; bots → issuer, Switchboard and collaboration admission; people → admin surface and the device-code approval page; the Switchboard and Fleet central → the issuer's published keys (cached).
+**Allowed edges:** Router → sign-in service (device-code login and refresh); Router → Fleet central over the logged-in connection (registration, tokens, collaboration admission, renewal, heartbeats, session activity, remote starts and their outcomes); Connection object → its organization authority (activity reports); organization authority → each of its machines' Connection objects (`ReadMachinePresence`, at each lookup); the sign-in service's page → central's admin surface (`WhoIsLoggedIn`, with the signed-in owner's person token); Fleet central → a Router through its connection's delivery face (scope changes, remote start requests and outcomes); the service-request edges above; bots → issuer, Switchboard and collaboration admission; people → admin surface and the device-code approval page; the Switchboard and Fleet central → the issuer's published keys (cached).
 
 **Forbidden edges, and how they're enforced:**
 
@@ -1281,7 +1279,7 @@ No transaction spans Better Auth and organization objects. Each removal commits 
 | A collaboration effect stored or delivered before `AdmitCollaboration` returns `Admit` | every path in the effect table calls admission before its effect; SO1 negatives on each path, including a Fleet write |
 | A bot written as a fleet harness session | bot messages carry the `Bot` origin; `send_draft` takes only a bound session or a bot from its collaboration token: runtime |
 | Workspace creation outside the admin command | the Fleet write path refuses workspace create: runtime |
-| Opening or refreshing the who-is-logged-in view changing anything (R47) | `WhoIsLoggedIn` is a read-only transaction: no record, no outbox step, no lease renewal; V39 compares state before and after: runtime |
+| Opening or refreshing the who-is-logged-in view changing anything (R47) | `WhoIsLoggedIn` is a read-only transaction: no record, no outbox step, and presence reads change nothing; V39 compares state before and after: runtime |
 | The view showing an earlier picture as current (R49) | the page replaces its rows with "unavailable" on a failed refresh, or after OD14 without a snapshot, by its own timer and independent of either clock: runtime |
 | One machine's replayed refresh token ending another machine's renewal (R40) | one public client per enrollment, so the provider's teardown key (client and owner) never spans two machines; the revoke endpoint refusing machine clients and machine clients' tokens; the two-machine replay and mixed-client revoke proofs: runtime |
 | The issuer deciding for a client ID the provider did not authenticate | the contributor reads only `input.client`; no raw request parsing for client identity; SO2 negative |
@@ -1331,7 +1329,7 @@ Renewal repeats the last three messages with the refresh credential. The enrollm
 </script></ex-markdown>
 <h2 id="program-design--how-the-owner-sees-who-is-logged-in">How the owner sees who is logged in</h2>
 <ex-markdown id="program-design--how-the-owner-sees-who-is-logged-in-text"><script type="text/markdown">
-Three loops meet at the organization authority. Each machine keeps its presence lease alive. Each machine reports what its sessions are doing. The owner's page reads one snapshot of both every 2.5 seconds. The times below assume OD14 at the proposed 15 seconds: heartbeat, refresh and the page's answer deadline each a sixth of it, and a lease of three heartbeats from the moment the last frame arrived.
+Three loops meet at the organization authority. Each machine's heartbeats keep its Connection object hearing from it. Each machine reports what its sessions are doing. Every 2.5 seconds the owner's page asks, and the organization authority reads its own state and asks each Connection object how long its machine has been silent. The times below assume OD14 at the proposed 15 seconds: heartbeat, refresh and the page's answer deadline each a sixth of it, and a silence limit of three heartbeats.
 
 ```mermaid
 sequenceDiagram
@@ -1342,18 +1340,19 @@ sequenceDiagram
   participant P as Sign-in page
   participant O as Owner's browser
   R->>CO: attach (machine token checked)
-  CO->>OA: presence: heard, new attach sequence
   R->>CO: ReportSessionActivity (whole state)
   CO->>OA: activity, tagged with this connection
   loop every 2.5 s
     R->>CO: Heartbeat
-    CO->>OA: presence: heard at T (lease = T + 7.5 s)
+    Note over CO: last heard = now (its own clock)
   end
   R->>CO: ReportSessionActivity (a turn starts: whole state)
   CO->>OA: activity: A working, others as they are
   loop every 2.5 s while the page is open
     O->>P: refresh
     P->>OA: WhoIsLoggedIn (owner's token, owner guard)
+    OA->>CO: ReadMachinePresence (deadline 1.25 s)
+    CO-->>OA: Open, silent for 1 s
     Note over OA: one read at asOf, plus names<br/>from its Fleet object
     OA-->>P: Snapshot(asOf, machines, sessions)
     P-->>O: rows, "as of"
@@ -1364,10 +1363,10 @@ sequenceDiagram
 
 | What happens | Shows by | How |
 |---|---|---|
-| A machine connects, or a session registers, ends or changes state | the next refresh and its answer: at most 5 s | each is recorded at the organization authority as it arrives |
-| A machine closes cleanly | the next refresh and its answer: at most 5 s | `Closed` ends the lease at once |
-| A machine's network is cut, or it crashes | 7.5 s lease, plus a 2.5 s refresh, plus a 2.5 s answer deadline: 12.5 s, leaving 2.5 s for the clock difference and rendering | the lease runs from the last frame's arrival, so no late report extends it; its sessions turn unknown with it |
-| Central or the organization authority can't answer, or answers late | the next refresh plus its answer deadline, at most 5 s | the page shows unavailable, never the old rows |
+| A machine connects, or a session registers, ends or changes state | the next refresh and its answer: at most 5 s | the Connection object answers `Open` at once; registrations and activity are recorded at the organization authority as they arrive |
+| A machine closes cleanly | the next refresh and its answer: at most 5 s | the Connection object answers `NotConnected` from the close on |
+| A machine's network is cut, or it crashes | 7.5 s of silence, plus a 2.5 s refresh, plus a 2.5 s answer deadline: 12.5 s, leaving 2.5 s for rendering | the Connection object, on its own clock, stops answering `Open` once the machine has been silent for three heartbeats; its sessions turn unknown with it; no clock difference enters |
+| Central, the organization authority or a Connection object can't answer, or answers late | the next refresh plus its answer deadline, at most 5 s | the page shows unavailable, never the old rows |
 
 **Who may look.** The page serves only a person signed in at the sign-in service. It mints that person's token for central's admin address, and central's owner guard decides. A member, another organization's owner, or someone signed out sees a refusal and no rows. Bots, sessions and machines have no browser session there, and their tokens carry other audiences, so central refuses them too.
 
@@ -1611,17 +1610,17 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 
 **A remote start** (organization authority), keyed by its request ID and holding its body, its deadline and, once bound, its one session: `forwarded` (admitted, delivery sent or ambiguous) → `started` (settled by the session's registration, which binds it; the target's report only confirms), `refusedByTarget` (the target's report) or `unknown` (nothing settled by the deadline plus one minute, on a wake). A refusal before delivery is recorded as `refused` with its reason. From `unknown`, a registration that arrives while the record is unbound moves it to `started` with `late`; every other state after `forwarded` is terminal. `RemoteStartStatus` returns whichever result is recorded, a central refusal included. A second session for a bound record, or a report from any machine but the target, is refused. Nothing retries.
 
-**A machine's presence** (organization authority, one row per installation; E24):
+**A machine's presence** (its Connection object; E24):
 
 | State | Entered by | Leaves to | Guard and effect |
 |---|---|---|---|
-| never connected | the enrollment is created | connected | shown `NotConnected` with no last-seen time |
-| connected | a presence report with a higher attach sequence (a new connection), or `Heard` on the stored one | not connected | the lease runs to three heartbeats past the latest frame's arrival (`heard_at`); sessions' activity from this connection counts |
-| not connected | the lease runs out, `Closed` on the stored connection, or the enrollment is revoked or expires | connected (a new connection) | shown with its last-seen time; every session on the machine reads as unknown |
+| never connected | the machine's enrollment begins | connected | answered `NotConnected` with no last close |
+| connected | a connection attaches | not connected | answered `Open` while silent for less than three heartbeats; activity from this connection counts |
+| not connected | three heartbeats of silence, a clean close, a token expiry or a revocation | connected (a new connection) | answered `NotConnected` with how long ago the last connection closed; every session on the machine reads as unknown |
 
-A report for an older attach sequence changes nothing, and a `Heard` after its connection's `Closed` changes nothing. The lease is measured from each frame's arrival on the Connection object's clock and read at the organization authority's `asOf`; the two differ only by host time sync (one clock on Tokio).
+Every interval is measured on the Connection object's own clock and reported as a duration, so no two clocks are compared.
 
-**A session's activity** (organization authority, one row per session): `working` or `idle`, each with the connection it came on. It counts only while that connection holds the machine's lease; otherwise the session reads as unknown. Each applied report replaces the machine's whole set; a report at or below the connection's highest applied sequence is `Superseded` and changes nothing. Activity is never kept for a removed or ended session.
+**A session's activity** (organization authority, one row per session): `working` or `idle`, each with the connection it came on. It counts only while that connection is the one its Connection object answers `Open`; otherwise the session reads as unknown. Each applied report replaces the machine's whole set; a report at or below the connection's highest applied sequence is `Superseded` and changes nothing. Activity is never kept for a removed or ended session.
 
 **A device-code request** (the provider's record): `pending` → `approved` (only after `Approved` from central) or `denied` → `used` when redeemed once (`consumeOne`); `expired` when its lifetime passes before redemption. Only `approved` redeems.
 
@@ -1665,12 +1664,12 @@ A report for an older attach sequence changes nothing, and a `Heard` after its c
 | The step 2 deploy breaks login | machines can't connect | Fix forward: deploy a corrected build; the old login is not restored, so no machine revoked after the switch regains access; Access still guards central, so nothing is exposed | operator |
 | A remote start's target disconnects after delivery, or the answer to the requester is lost | no outcome by the deadline plus one minute | The requester gets `unknown` and can read the outcome under the same request ID; a session the target did create is registered normally and the record reads `started`, late; nothing retries | organization authority; remote start |
 | The requesting Router restarts while it waits | its pending request ID, kept with the create | After reconnecting it asks `RemoteStartStatus` and gets the recorded outcome | remote start |
-| A machine's network is cut, or it crashes, without closing | no heartbeat renews its lease | The lease runs out three heartbeats after the last frame arrived, even if that frame's report reaches the organization authority late and the `Closed` report is lost: shown not connected, with its last-seen time, and its sessions unknown. The Connection object closes the socket at the same deadline. | organization authority; Connection object |
-| A presence report fails between the Connection object and its organization authority | the call fails | Dropped, not retried. The next heartbeat carries the same truth, and a lost `Closed` is covered by the lease running out. | Connection object |
+| A machine's network is cut, or it crashes, without closing | no frame arrives at its Connection object | After three heartbeats of silence the Connection object answers `NotConnected`, on its own clock, whether or not its close has run: shown not connected, with its last-seen time, and its sessions unknown. It closes the socket at the same deadline. | Connection object |
+| A Connection object doesn't answer `ReadMachinePresence` within its deadline | the organization authority's own clock | The whole lookup fails; the page shows unavailable, never a partial or earlier picture | organization authority; who-is-logged-in page |
 | An old activity report arrives after a newer one was applied (its answer was lost, or frames were handled out of order) | its sequence is at or below the connection's highest applied | `Superseded`, no effect; the newer report already holds every session's state | organization authority |
 | An activity report fails | the Router gets no `Accepted` | The Router sends a fresh whole-state report at the next heartbeat, until one is accepted or superseded | session activity reporter |
-| Central restarts | every connection drops | Each lease runs out on its own; each Router reconnects with a new attach sequence and sends its whole state | organization authority; Router |
-| A Router reconnects before its old connection is seen to close | a higher attach sequence | The session library closes the older connection (`ConnectionReplaced`); presence moves to the new one; the old connection's late reports change nothing | Connection object; organization authority |
+| Central restarts | every connection drops | Each Connection object answers `NotConnected` until its Router reconnects with a new attach sequence and sends its whole state | Connection object; Router |
+| A Router reconnects before its old connection is seen to close | a higher attach sequence | The session library closes the older connection (`ConnectionReplaced`); the Connection object answers for the new one; activity from the old connection is refused | Connection object; organization authority |
 | The who-is-logged-in lookup can't read the Fleet object, or central can't be reached | the lookup fails or times out | The page shows unavailable, never the earlier rows | admin surface; who-is-logged-in page |
 | A machine's retired refresh token is replayed after its reuse window | the provider's replay check | The provider ends that client's family: this machine only, since each enrollment has its own client. The machine logs in again; every other machine keeps renewing | token issuer |
 | A machine's revoked refresh token is presented at the revoke endpoint, under any client | the revoke refusal | Refused before the provider runs: no family of any client is touched | token issuer |
@@ -1953,7 +1952,7 @@ The statements above are written as SQL so the condition each one carries is vis
   - **Central first.** It accepts `Heartbeat` and `ReportSessionActivity`, keeps presence and serves `WhoIsLoggedIn`. It applies the silence deadline only to a connection that has already sent a heartbeat.
   - **Then each Router.** A Router that doesn't send heartbeats yet is never closed for silence; until it updates, it shows as not connected in the view, which errs toward showing less.
   - **Then the page.** It is added at the sign-in service beside the device-code approval page.
-  - **Nothing to migrate.** Presence and activity are new tables, filled by the first heartbeat and activity report.
+  - **Nothing to migrate.** Presence is new state in each Connection object's store, and activity a new table, filled by the first heartbeat and activity report.
 
 **The three steps (U34, R43).** For the Switchboard and the sign-in service there is no migration of the old Switchboard membership records: the test deployments are the only consumers, so their cutover is a hard replacement. One window is deliberate (OD11): from the first joint cut until the second, the sign-in service keeps today's agent path (registration, resource links, workspace policy, release checks) beside the new issuer, so the Switchboard keeps working on today's agent tokens until the second cut replaces them. Fleet central serves your production fleet, so it follows the three steps:
 
@@ -2015,7 +2014,7 @@ Step 2 fixes forward; there is no revert to the old login. Restoring it could gi
 | U35 | R44: every Router obligation on macOS and Linux | E6 | Router | all Router contracts | the `KeychainAccess` adapters: Keychain, systemd credential | none: a platform matrix | a missing platform capability falls back to memory, never weakens | the Router suites and login on each platform |
 | U39, U6 | R46: a session starts a helper on another machine of its organization, for a project in its own workspace, in a directory on that machine; one start, one session; a deadline; started, refused or unknown; never queued | E6, E7, E15, E16 | organization authority; remote start (both Routers) | `RequestRemoteStart`; `StartRequestedSession`; `ReportRemoteStart`; `RemoteStartAnswer`; `RemoteStartStatus`; `ListWorkspaceMachines`; `started_by: remoteSession` | `RemoteStartAdmission`; `RemoteStartResult`; the remote-start record keyed by request ID, with its body, deadline and bound session | forwarded → started, refusedByTarget or unknown; unknown → started (late) | each refusal creates nothing; a changed body under a used ID is refused; a lost answer is unknown, never refused; a second session for one start is refused | central integration with two Routers: a start on another machine with different directories, each refusal, two concurrent starts with reversed outcomes, a duplicate delivery, a lost answer read back by status, a stale instruction past its deadline, a requester restart |
 | U40 | R47: the owner's who-is-logged-in view lists every enrolled, revoked or expired machine with its approval, allowances, connection and last seen, and each active session with harness, project, workspace, isolation, start time and state; opening it changes nothing | E6, E7, E13, E15, E16, E21, E24 | organization authority (snapshot); admin surface; who-is-logged-in page | `WhoIsLoggedIn`; the page's refresh route | `WhoIsLoggedInResult` (`MachineRow`, `ConnectionView`, `SessionRow`) in `identity_contract.rs` | presence (never connected, connected, not connected); session activity | the Fleet object unreadable → whole lookup fails → unavailable | central integration with two machines, one connected and one not, and a revoked machine; state compared before and after opening the view |
-| U40 | R48: each change shows within OD14; an unclean drop shows not connected with its last-seen time; a disconnected machine's sessions show unknown | E7, E24 | Connection object; organization authority; session activity reporter; the page | `Heartbeat`; `RecordMachinePresence`; `ReportSessionActivity` (the whole state, sequenced); refresh every sixth of OD14, with an answer deadline of one interval | `MachinePresence` (with `heard_at`); `SessionActivity`; `SessionActivityEntry` | the presence lease (three heartbeats from the last frame's arrival); activity counted only on the lease-holding connection | a lost presence report → the next heartbeat; a late presence report → no extension; a lost `Closed` → the lease runs out; an unanswered or refused activity report → a fresh whole-state report; central restart → leases run out, Routers reconnect | a controlled clock across the lease and the refresh: a connect, a clean close, a cut connection, a session starting and stopping, all within OD14; a session on a cut machine reads unknown; a held `Heard` released after the cut with `Closed` lost, still not connected at the bound |
+| U40 | R48: each change shows within OD14; an unclean drop shows not connected with its last-seen time; a disconnected machine's sessions show unknown | E7, E24 | Connection object (presence, on its own clock); organization authority; session activity reporter; the page | `Heartbeat`; `ReadMachinePresence` at each lookup, with a deadline of half a refresh; `ReportSessionActivity` (the whole state, sequenced); refresh every sixth of OD14, with an answer deadline of one interval | `MachinePresenceAnswer` (durations); `SessionActivity`; `SessionActivityEntry` | presence in each Connection object (three heartbeats of silence); activity counted only on the connection answered `Open` | a crash → `NotConnected` after three heartbeats of silence; a Connection object that doesn't answer → unavailable; an unanswered or refused activity report → a fresh whole-state report; central restart → `NotConnected` until reconnect | a controlled clock at each object: a connect, a clean close, a cut connection, a session starting and stopping, all within OD14; a session on a cut machine reads unknown; the Connection object's and the organization authority's clocks offset by several seconds, with the same result |
 | U40, U32, U21 | R49: only the organization's admin; only its own machines and sessions; unavailable, never a stale picture; no operator shown | E1, E6, E7, E24 | owner guard; who-is-logged-in page | `WhoIsLoggedIn` under the owner guard; the page's freshness timer | `OwnerRefusal`; no operator field in any row | none: a read | anyone else → refused, nothing revealed; failure or OD14 without a snapshot → unavailable | admin route and page: owner, member, other organization's owner, bot, session and machine tokens; central stopped while the page is open |
 | U40 | R50 (stage C): each admitted person's sign-in state and last sign-in; each bot's workspaces, credential state and last token | E3, E4, E5, E8, E19 | organization authority (who is admitted, bot memberships); sign-in service (sign-in and credential facts) | `WhoIsLoggedIn` `people` and `bots`; the page joins the sign-in facts | `AdmittedPersonRow`, `BotRow`; Better Auth `session` and `oauthClient`; `bot_token_release` (stage C, written by the release gate) | each credential's last release, overwritten | as R49; a release whose record can't be written isn't released | stage C: a person signing in and out, a bot credential retired, and a bot obtaining tokens at two controlled times, its last token advancing and surviving a sign-in restart, each shown within OD14 |
 | U37 | R45: one Switchboard deployment per organization | E1, E2, E11 | caller check; configuration loading | `portal.organizationId` | Switchboard configuration schema | none: deployment configuration | another organization's token or workspace → refused or fails to load | Switchboard host e2e with two deployments |
@@ -2043,7 +2042,7 @@ Step 2 fixes forward; there is no revert to the old login. Restoring it could gi
 - **Collaboration needs central:** every collaboration effect waits for central's admission, so collaboration stops while central is unreachable (fail closed, as for tokens).
 - **Remote starts are not queued.** A start to a disconnected machine is refused, and a start whose outcome is lost ends as `unknown`. Queuing would need replay rules for a start, which R46 rules out.
 - **Better Auth mapping:** session tokens use a fleet-session extension grant; bot tokens use the existing gate and claim hook, with a bot extension grant as the stated fallback; machine tokens use the provider's device grant, extended, with our own device-code endpoints as the fallback. None is proven until the plan's first sign-in slice runs against the locked 1.7.11.
-- **OD14 is open.** The design is written at the proposed 15 seconds: heartbeat, refresh and the page's answer deadline each a sixth of it (2.5 seconds), and a lease of three heartbeats (7.5 seconds) from the last frame's arrival, so a 12.5-second worst case for a cut connection. Any other bound scales them all together. Below about 5 seconds the refresh load calls for a push stream instead.
+- **OD14 is open.** The design is written at the proposed 15 seconds: heartbeat, refresh and the page's answer deadline each a sixth of it (2.5 seconds), and a silence limit of three heartbeats (7.5 seconds) judged by the Connection object on its own clock, so a 12.5-second worst case for a cut connection. Any other bound scales them all together. Below about 5 seconds the refresh load calls for a push stream instead.
 - **Stage C (R50) follows B+.** Its rows are in the lookup's shape from the start, empty until stage C fills them, so the page and the contract don't change shape twice.
 - **Each machine has its own public client.** The provider ends refresh families by client and person (`token.ts:537–567`), so a client per enrollment is what keeps one machine's replayed token from ending another's renewal. The shared Router device-login client only starts device logins. The first sign-in slice proves that `issueTokens` issues under the machine client and that the provider then refreshes it; if not, the fallback is our own device endpoints.
 - **Codex's working or idle state comes from the app-server's thread status.** The session activity reporter needs a change notification from it, or else it reads the loaded threads at each heartbeat. The plan's first Router slice confirms which.
