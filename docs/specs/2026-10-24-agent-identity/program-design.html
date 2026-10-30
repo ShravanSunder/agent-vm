@@ -143,7 +143,7 @@ flowchart TB
 | E23 Device-code login request | Better Auth (the device grant's record) | `packages/auth`: the `deviceCode` table with the grant's fields plus ours (`machineInstallationId`, `machinePeerId`, `machineLabel`, `organizationId`, and `enrollmentId`, written only after central's `Approved`); the organization and enrollment then live on as the token family's `referenceId` | Better Auth `deviceCode` model (generated); `sign-in-core/device-login/machine-login-fields.ts` (new) | the Router's device-authorization request; the owner's approval page; `DecideDeviceLogin` | persisted until redeemed or expired | Zod at the boundary |
 | E22 Machine token | The sign-in service | `packages/auth` (modified) | `identity_contract.rs`: `MachineTokenClaims` (new, the contract home; the sign-in service's Zod schema is generated from it) | JWT claims, below | derived (signed, never stored) | Rust serde, Zod derived |
 | E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId }`; `DecideDeviceLogin` carries the workspaces chosen at log-in | persisted | Rust |
-| E24 Machine connection | The Connection object owns the open connection and its silence deadline; the organization authority owns the machine's presence, which the view reads | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence reports); `organization_authority` `machine_presence` table (new: one row per installation, overwritten by each connection) | `identity_contract.rs`: `MachinePresence { installation, connectionId, openedAt, lastHeardAt, leaseUntil, closedAt: Option }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `RecordMachinePresence` (Connection object → organization authority); the lookup's `connection` variant | persisted (the latest connection per machine) | Rust tagged enum |
+| E24 Machine connection | The Connection object owns the open connection and its silence deadline; the organization authority owns the machine's presence, which the view reads | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence reports); `organization_authority` `machine_presence` table (new: one row per installation, overwritten by each connection) | `identity_contract.rs`: `MachinePresence { installation, connectionId, attachSequence, openedAt, lastHeardAt, leaseUntil, closedAt: Option, activitySequence }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `RecordMachinePresence` (Connection object → organization authority); the lookup's `connection` variant | persisted (the latest connection per machine) | Rust tagged enum |
 | E7 Fleet harness session | Organization authority | `organization_authority` session registry (new), with its start time set when the organization authority registers it; `session_activity` table (new: one row per session, replaced by each report) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new, with `startedAt`) and `SessionActivity { session, connectionId, activity: Working \| Idle, reportedAt }` (new) | `principal.session_ref` object in tokens; `session` in registration; `ReportSessionActivity` over the connection; the lookup's `state`: `working \| idle \| unknown` | persisted (with retention); an activity row counts only while its connection holds the machine's lease | existing `SessionRef` plus Rust |
 | E8 Membership | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Membership { workspace, principal, persona: PersonaRef, admission: AdmissionRef, state }` (new); `AdmissionRef` is the person's or bot's `AdmissionId`, or for a session its machine's installation, which counts while that machine has an active enrollment here | issuance decision; admin lookup | persisted | Rust tagged enum `Principal { Person, Bot, FleetHarnessSession }` |
 | E9 Collaboration | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `Collaboration { workspace, collaborator: Person { personId } \| Bot { botId }, admissionId, state }` (new) | admin API; collaboration admission (a person's admits nothing) | persisted | Rust tagged enum |
@@ -349,7 +349,9 @@ erDiagram
     integer opened_at
     integer last_heard_at
     integer lease_until "connected while now is before it"
-    integer closed_at "set by a clean close"
+    integer attach_sequence "orders connections"
+    integer closed_at "final for its connection"
+    integer activity_sequence "highest activity report applied"
   }
 ```
 
@@ -666,7 +668,11 @@ pub struct EndFleetSession { pub organization_id: OrganizationId, pub session: S
 pub struct Heartbeat {}                         // every fifth of OD14; no answer
 
 #[serde(rename_all = "camelCase")]
-pub struct ReportSessionActivity { pub organization_id: OrganizationId, pub report: ActivityReport }
+pub struct ReportSessionActivity {
+    pub organization_id: OrganizationId,
+    pub sequence: u64,                          // strictly increasing on this connection, assigned by the reporter
+    pub report: ActivityReport,
+}
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ActivityReport {
     Snapshot { sessions: Vec<SessionActivityEntry> }, // first on each connection: every session the registrar holds as registered and not ended
@@ -675,7 +681,11 @@ pub enum ActivityReport {
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivityEntry { pub session: SessionRef, pub activity: Activity } // working | idle
 #[serde(tag = "result", rename_all = "camelCase")]
-pub enum ReportSessionActivityResult { Accepted, Refused { reason: ActivityRefusal } } // notCurrentConnection; unavailable is the usual failure mapping
+pub enum ReportSessionActivityResult {
+    Accepted,
+    Superseded,                                 // a report with this or a higher sequence was already applied; no effect
+    Refused { reason: ActivityRefusal },        // notCurrentConnection; unavailable is the usual failure mapping
+}
 ```
 
 The Router may only name sessions on its own installation; central refuses any other. These are new typed operations on the connection's session protocol (`/v1/session`), each with its request, its answer and its failure mapping (unavailable, refused, malformed). The machine, its organization and its enrollment come from the logged-in machine the connection is bound to (`AdmittedMachine`), never from a field of the body.
@@ -704,16 +714,18 @@ pub enum PresenceEvent { Heard, Closed }        // Closed: a clean close, a toke
 
 - **The organization authority's rules.** It stamps each report with its own clock, so one clock decides every lease.
   - A report with a higher attach sequence than the stored one replaces the machine's row: a new connection, opened at that moment.
-  - `Heard` on the stored connection sets the last-heard time and extends the lease to three heartbeats past it.
-  - `Closed` on the stored connection ends the lease at once.
+  - `Heard` on the stored connection, while it isn't closed, sets the last-heard time and extends the lease to three heartbeats past it.
+  - `Closed` on the stored connection ends the lease at once, and is final: a later `Heard` for that connection changes nothing.
   - A report for an older connection changes nothing.
 - **Connected** means the machine's row has a running lease. **Last seen** is the last-heard time; for an open connection that is within one heartbeat of the lookup.
 - **The silence deadline.** The Connection object closes a connection it hasn't heard from for three heartbeats: by a receive deadline on Tokio, and by an object alarm on Cloudflare. Either way, the lease has already run out by then.
-- **One at a time, best effort.** The Connection object sends its presence reports one at a time, in the order its frames arrive. A report that fails is dropped, not retried. The next heartbeat carries the same truth, and a missed close is covered by the lease running out.
+- **No order assumed.** Central handles a connection's frames as independent tasks (`collaboration-central-tokio/src/native_objects.rs:508–515` at `7af23abe`), and a forwarded call can be overtaken by a later one. So the rules hold in any arrival order: `Heard` only extends a live lease, `Closed` is final for its connection, and attach sequences order connections.
+- **Best effort.** A presence report that fails is dropped, not retried. The next heartbeat carries the same truth, and a missed close is covered by the lease running out.
 
-**Session activity (E7, R47, R48).** The Router's session activity reporter sends `Snapshot` as its first report after each attach, and `Change` on each transition after that. The Connection object passes each one to its organization authority, tagged with its connection ID.
+**Session activity (E7, R47, R48).** The Router's session activity reporter sends `Snapshot` as its first report after each attach, and `Change` on each transition after that. The Connection object passes each one to its organization authority, tagged with its connection ID and attach sequence.
+- **Newest wins, by sequence.** Each report carries a sequence, strictly increasing on its connection. The organization authority keeps the highest sequence it has applied for the machine's current connection, in the same transaction as the activity it writes. It answers a report at or below that sequence `Superseded`, with no effect. So an old `Change` whose answer was lost, arriving after a newer `Snapshot` was accepted, cannot undo it (Advisor, LV4).
 - **Snapshot.** It replaces the activity of every session the snapshot names. A registered session it omits reads as unknown until a later report names it.
-- **Answered, never lost.** Each report is answered. On anything but `Accepted`, the reporter sends a fresh `Snapshot` of the current states at the next heartbeat, and keeps doing so until one is accepted. It never resends a stale `Change`.
+- **Answered, never lost.** Each report is answered. After a lost answer or a refusal, the reporter sends a fresh `Snapshot` of the current states, with a new sequence, at the next heartbeat, and keeps doing so until one is accepted. `Superseded` needs nothing. It never resends a stale `Change`.
 - **Change.** It replaces one session's activity.
 - **The connection must still be the machine's.** A report from a connection that isn't the machine's current one is refused.
 - **Counting.** A session's activity counts only while the connection it came on holds the machine's lease. Otherwise the session reads as unknown.
@@ -1605,9 +1617,9 @@ An ambiguous creation stays prepared until the registrar learns the outcome; it 
 | connected | a presence report with a higher attach sequence (a new connection), or `Heard` on the stored one | not connected | the lease runs to three heartbeats past the last report; sessions' activity from this connection counts |
 | not connected | the lease runs out, `Closed` on the stored connection, or the enrollment is revoked or expires | connected (a new connection) | shown with its last-seen time; every session on the machine reads as unknown |
 
-A report for an older attach sequence changes nothing. Reports are stamped by the organization authority's own clock, and the lease is read at the lookup's `asOf`, so no two clocks are compared.
+A report for an older attach sequence changes nothing, and a `Heard` after its connection's `Closed` changes nothing. Reports are stamped by the organization authority's own clock, and the lease is read at the lookup's `asOf`, so no two clocks are compared.
 
-**A session's activity** (organization authority, one row per session): `working` or `idle`, each with the connection it came on. It counts only while that connection holds the machine's lease; otherwise the session reads as unknown. A `Snapshot` replaces every session it names; a `Change` replaces one. Activity is never kept for a removed or ended session.
+**A session's activity** (organization authority, one row per session): `working` or `idle`, each with the connection it came on. It counts only while that connection holds the machine's lease; otherwise the session reads as unknown. A `Snapshot` replaces every session it names; a `Change` replaces one; a report at or below the connection's highest applied sequence is `Superseded` and changes nothing. Activity is never kept for a removed or ended session.
 
 **A device-code request** (the provider's record): `pending` → `approved` (only after `Approved` from central) or `denied` → `used` when redeemed once (`consumeOne`); `expired` when its lifetime passes before redemption. Only `approved` redeems.
 
@@ -1653,6 +1665,7 @@ A report for an older attach sequence changes nothing. Reports are stamped by th
 | The requesting Router restarts while it waits | its pending request ID, kept with the create | After reconnecting it asks `RemoteStartStatus` and gets the recorded outcome | remote start |
 | A machine's network is cut, or it crashes, without closing | no heartbeat renews its lease | The lease runs out three heartbeats after the last one: shown not connected, with its last-seen time, and its sessions unknown. The Connection object closes the socket at the same deadline. | organization authority; Connection object |
 | A presence report fails between the Connection object and its organization authority | the call fails | Dropped, not retried. The next heartbeat carries the same truth, and a lost `Closed` is covered by the lease running out. | Connection object |
+| An old activity report arrives after a newer one was applied (its answer was lost, or frames were handled out of order) | its sequence is at or below the connection's highest applied | `Superseded`, no effect; the newer state stands | organization authority |
 | An activity report fails | the Router gets no `Accepted` | The Router sends a fresh `Snapshot` of the current states at the next heartbeat, until one is accepted | session activity reporter |
 | Central restarts | every connection drops | Each lease runs out on its own; each Router reconnects with a new attach sequence and sends a fresh snapshot | organization authority; Router |
 | A Router reconnects before its old connection is seen to close | a higher attach sequence | The session library closes the older connection (`ConnectionReplaced`); presence moves to the new one; the old connection's late reports change nothing | Connection object; organization authority |
