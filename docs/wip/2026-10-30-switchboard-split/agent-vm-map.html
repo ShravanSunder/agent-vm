@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How agent-vm fits together</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"></ex-nav>
+<ex-document id="content">
+
+<h1>How agent-vm fits together</h1>
+
+<p>agent-vm runs as two halves joined by one private channel:</p>
+<ul>
+<li><strong>The host side.</strong> The controller creates and retires every VM and holds the leases. It also keeps the lasting tool-control state: exact-call approvals, and Google consent and tokens.</li>
+<li><strong>The gateway VM.</strong> Hermes, the agent framework, sends each tool call over a private socket to the Node gateway runtime, which hosts the Tool Portal and MCP Portal. The runtime applies policy, calls remote MCP servers itself, and runs commands on Tool VMs directly over SSH.</li>
+<li><strong>The channel between them.</strong> The controller opens a control session to the gateway runtime. The runtime uses it to ask for approvals, leases and credentialed commands.</li>
+</ul>
+<p>Tool control therefore already spans both halves. Nothing in agent-vm talks to codex-router or Fleet today.</p>
+
+<p>In code, agent-vm is one repository of 17 packages, and the controller package imports all 16 of the others. #262 adds six packages under the <code>agent-collaboration</code> name, still inside this repository. Ten agent-vm packages import those new packages, and two of the new packages import agent-vm back.</p>
+
+<ex-callout id="read-first" title="This page draws what exists. It proposes nothing." tone="note" icon="book-open">
+<p>Everything here is read from the source at agent-vm master <code>38569fca</code>, #262 <code>2dfea38e</code>, #263 <code>0ff6a6af</code> and codex-router <code>f465808f</code>. The repository split is still under discussion, and nothing here decides it. Three limits:</p>
+<ul>
+<li>No running deployment was observed. Each path is what the source predicts.</li>
+<li>The step from a chat message into a Hermes session happens inside the external Hermes image, which wasn't inspected.</li>
+<li>The sign-in drawn here is #263's older, organization-wide version. #262 sits on top of it with a newer, workspace-scoped sign-in, and whether that one fits #262's Worker hasn't been checked.</li>
+</ul>
+<p>The runtime research is the 🦉 Advisor's, from its <a href="file:///Users/shravansunder/code/projects/agent-vm.design-portal-remediation/tmp/practices-research/2026-10-30-agent-vm-comms-map/report.md">source map</a>. I checked its decisive anchors. The package graph is mine, read from the manifests.</p>
+</ex-callout>
+
+<h2 id="runtime">Who talks to whom while it runs</h2>
+
+<ex-mermaid id="runtime-map" label="agent-vm at runtime: host, gateway VM, Tool VMs and the outside" data-width="canvas"><script type="text/plain">
+flowchart LR
+  subgraph EXT["Outside"]
+    channel["Chat channel"]
+    browser["Owner's browser"]
+    remote["Remote MCP servers"]
+    google["Google"]
+  end
+  subgraph GW["Gateway VM"]
+    hermes["Hermes<br/>Python agent framework"]
+    runtime["Gateway runtime<br/>Node: Tool Portal, MCP Portal"]
+  end
+  subgraph HOST["Host machine"]
+    controller["Controller<br/>VMs, leases, approvals,<br/>OAuth custody"]
+    broker["OAuth broker and pages<br/>SQLite, encrypted tokens"]
+    hostexec["Host commands<br/>configured CLIs, workspace Git"]
+  end
+  subgraph VMS["Other VMs"]
+    toolvm["Leased Tool VM<br/>the agent's workspace"]
+    credvm["Credentialed command VM<br/>Google CLIs"]
+  end
+  channel -.->|"messages; inside the<br/>Hermes image, not inspected"| hermes
+  hermes -->|"private socket<br/>JSON-RPC tool calls"| runtime
+  controller <-->|"control session: host dials,<br/>guest asks for leases,<br/>approvals, actions"| runtime
+  runtime -->|"strict SSH<br/>commands, files"| toolvm
+  runtime -->|"MCP over HTTP or SSE,<br/>or stdio inside the VM"| remote
+  controller -->|"creates, leases, retires<br/>through Gondolin"| toolvm
+  controller -->|"creates, runs commands"| credvm
+  controller -->|"runs"| hostexec
+  controller -->|"in process"| broker
+  browser -->|"consent pages<br/>behind Cloudflare Access"| broker
+  broker -->|"token exchange, refresh"| google
+  credvm -->|"API calls; host swaps<br/>in the real token"| google
+  class channel,browser,remote,google slot6
+  class hermes,runtime slot3
+  class controller,broker,hostexec slot1
+  class toolvm,credvm slot2
+</script></ex-mermaid>
+
+<p>Four things change how to read this:</p>
+<ul>
+<li><strong>The controller opens the channel, not the gateway.</strong> It fetches a signed readiness response from the gateway runtime, then opens a Socket.IO session over the VM's private ingress, checked by an Ed25519 signature and a one-use nonce. Once it's open, the guest makes requests on it: leases, approvals, OAuth actions, controller-run commands. The controller's loopback HTTP API is for operators (health, admin), not for tool calls.</li>
+<li><strong>Two kinds of command VM.</strong> A leased Tool VM holds the agent's workspace. The gateway runtime reaches it directly over SSH with a key and host pin the controller hands out. A credentialed command VM is different: the controller runs it, it gets credentials by host mediation or a read-only credential file, and it runs one command at a time.</li>
+<li><strong>Gondolin is a library, not a service.</strong> The controller calls the Gondolin adapter in its own process to create, start and stop VMs.</li>
+<li><strong>Secrets stay on the host.</strong> They come from 1Password, the environment or config. A VM sees a placeholder, and the host swaps in the real value on the way out, only for allowed hosts. Git credentials never enter a VM.</li>
+</ul>
+
+<details>
+<summary>How a gateway starts, and where it can fail to</summary>
+<ex-mermaid id="gateway-start" label="Starting a gateway VM" data-width="canvas"><script type="text/plain">
+sequenceDiagram
+  participant CLI as Operator CLI
+  participant C as Controller
+  participant VM as Gateway VM image
+  participant R as Gateway runtime
+  participant H as Hermes
+  CLI->>C: start: load config, check the prepared image
+  C->>C: take the ownership lock, clean up old VMs
+  C->>VM: create the VM through Gondolin, with boot inputs
+  VM->>R: start the Node runtime
+  VM->>H: start Hermes beside it
+  H->>R: connect over the private socket, handshake
+  C->>R: signed readiness, then open the control session
+  R-->>C: hello and readiness
+  C->>C: admit the gateway and publish its routes
+</script></ex-mermaid>
+<p>A missing or stale image stops startup, and so does an old VM that can't be safely cleaned up. The image starts both processes with no restart loop; the controller decides recovery for the whole VM. A controller restart cleans up the old VMs it recorded rather than adopting them.</p>
+</details>
+
+<h2 id="tool-kinds">The four tool kinds, call by call</h2>
+
+<p>The four tool kinds don't map one-to-one onto agent-vm's backends:</p>
+<ul>
+<li>A workspace tool is a remote MCP call from inside the gateway.</li>
+<li>A computer tool is a command on a local Tool VM. agent-vm has no registered-computer path through a Tunnel.</li>
+<li>A per-user Google tool is a command-line tool run by the controller in a credentialed VM, not an MCP call.</li>
+<li>A collaboration tool lives only on a Router host; agent-vm has no way to reach it.</li>
+</ul>
+
+<ex-tabs label="The four tool kinds" data-width="canvas">
+<section id="kind-workspace" label="Workspace" icon="globe">
+<ex-mermaid id="path-workspace" label="Workspace tool: a remote MCP call"><script type="text/plain">
+sequenceDiagram
+  participant H as Hermes (agent)
+  participant R as Gateway runtime (Tool Portal)
+  participant C as Controller
+  participant U as Remote MCP server
+  H->>R: tool call over the private socket
+  R->>R: resolve profile, capability and policy
+  alt denied
+    R-->>H: refused before any upstream call
+  else approval required
+    R->>C: approval challenge on the control session
+    C-->>R: decision from the controller's ledger
+  end
+  R->>U: MCP over HTTP or SSE, or stdio inside the VM, with configured credentials
+  U-->>R: result
+  R-->>H: normalized result
+</script></ex-mermaid>
+<p>The MCP connection runs inside the gateway VM. "stdio" means a child process in that VM, not on the host or another computer.</p>
+<p><strong>Unverified:</strong> on master, the source predicts that a tool allowed only after approval is still refused after the approval. The bridge passes on only an operation id, and the layer below insists on approval again. #262's managed backend carries the approval through. Nobody has reproduced this.</p>
+</section>
+<section id="kind-computer" label="Computer" icon="cpu">
+<ex-mermaid id="path-computer" label="Computer tool: a command on a leased Tool VM"><script type="text/plain">
+sequenceDiagram
+  participant H as Hermes (agent)
+  participant R as Gateway runtime (Tool Portal)
+  participant C as Controller
+  participant T as Leased Tool VM
+  H->>R: tool call over the private socket
+  R->>R: policy picks a configured command and checks its arguments
+  R->>C: acquire a Tool VM on the control session
+  C->>C: create or reuse a lease from trusted zone and agent config
+  C-->>R: SSH binding: key and host pin for this generation
+  opt approval required
+    R->>C: arm the reserved exact-call approval
+  end
+  R->>T: strict SSH: run the command in the workspace
+  T-->>R: exit code and output
+  R-->>H: result; an uncertain run is reported as ambiguous
+</script></ex-mermaid>
+<p>This is the <code>tool_vm</code> target, and the gateway runs it directly. The other two command targets are run by the controller: <code>controller_host</code> runs on the host itself, and the ephemeral managed VM target runs in a credentialed command VM. Nothing in agent-vm reaches a registered computer through a Tunnel.</p>
+</section>
+<section id="kind-per-user" label="Per-user" icon="user">
+<ex-mermaid id="path-per-user" label="Per-user tool: a Google account through the controller"><script type="text/plain">
+sequenceDiagram
+  participant O as Owner's browser
+  participant B as OAuth broker (host)
+  participant G as Google
+  participant H as Hermes (agent)
+  participant R as Gateway runtime
+  participant C as Controller
+  participant V as Credentialed command VM
+  Note over O,G: Once: consent
+  O->>B: consent pages, behind Cloudflare Access
+  O->>G: sign in, choose permissions
+  G-->>B: code, then token exchange
+  B->>B: store the encrypted grant for account, agent, app
+  Note over H,V: Each call
+  H->>R: tool call naming the Google account
+  R->>C: controller action on the control session
+  C->>C: check consent, scopes, then deny, ask or allow
+  opt policy says ask
+    C->>C: exact-call approval
+  end
+  C->>V: create or reuse the VM, run the command-line tool
+  V->>G: API call; the host swaps in the real token
+  V-->>C: output and files
+  C-->>R: result
+  R-->>H: result
+</script></ex-mermaid>
+<p>Consent, the account's deny/ask/allow policy and the one-call approval each have their own owner, and missing consent stops a call even when an approval exists. Disconnecting removes this agent's local grant. It doesn't revoke the account at Google.</p>
+</section>
+<section id="kind-collaboration" label="Collaboration" icon="users">
+<ex-mermaid id="path-collaboration" label="Collaboration tool: only on a Router host"><script type="text/plain">
+sequenceDiagram
+  participant A as Agent on a Router host
+  participant M as Router collaboration MCP
+  participant L as Collaboration app (Rust)
+  participant F as Fleet central
+  A->>M: MCP over loopback HTTP or the private socket
+  M->>L: in process
+  L-->>A: boards, threads, messages, sessions
+  Note over L,F: The Router host keeps its own outbound session to Fleet central
+  L->>F: board and fleet sync over that session
+</script></ex-mermaid>
+<p>No agent-vm path reaches this. No agent-vm source names a Router, Fleet, or the collaboration MCP. The Router listens only on loopback and a private socket, so an agent in a gateway VM can't call it today.</p>
+</section>
+</ex-tabs>
+
+<h2 id="tool-control">Where tool control lives today</h2>
+
+<p>From the code, the controller does two kinds of work. VM work: creating, leasing and retiring VMs, handing out SSH bindings, mounting workspaces, running credentialed command VMs and host Git. Tool control: exact-call approvals, Google consent and tokens, account policy, and rechecking every controller-run action. The gateway runtime mostly does tool control, but it also runs commands on Tool VMs over SSH and keeps the run artifacts.</p>
+
+<div class="ex-table-scroll" data-width="canvas">
+<table>
+<thead><tr><th>Control</th><th>Decided by</th><th>Kept in</th><th>Lasts</th></tr></thead>
+<tbody>
+<tr><td>Profile and capability policy</td><td>Gateway runtime; the controller rechecks controller-run actions</td><td>Protected config the controller writes for the gateway</td><td>Per config revision</td></tr>
+<tr><td>Exact-call approval</td><td>Controller</td><td>Controller's crash-durable record store on the host</td><td>Durable: pending, approved or denied, reserved, armed</td></tr>
+<tr><td>The person's approval decision</td><td>The configured approver, arriving on the control session</td><td>Same controller store</td><td>Until the challenge expires</td></tr>
+<tr><td>Google consent</td><td>The owner, in the browser</td><td>OAuth broker's SQLite catalog, tokens encrypted</td><td>Durable</td></tr>
+<tr><td>Google account deny, ask or allow</td><td>Controller</td><td>Compiled defaults plus encrypted per-account overrides</td><td>Durable</td></tr>
+<tr><td>Credentials</td><td>Host only</td><td>1Password, environment or config; VMs get placeholders or a read-only credential file</td><td>Resolved at run time</td></tr>
+<tr><td>Old standalone MCP Portal approvals</td><td>That separate process</td><td>Process memory</td><td>Until it restarts</td></tr>
+<tr><td>Audit</td><td>Several owners</td><td>Approval records, OAuth events, Portal diagnostics, health evidence, OTLP telemetry</td><td>No single audit store</td></tr>
+<tr><td>#262 Node host protected operations</td><td>Node host</td><td>Process memory</td><td>Until it closes</td></tr>
+<tr><td>#262 Worker admission and one-use approvals</td><td>Worker</td><td>Workspace Durable Object</td><td>Durable</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>"Approval UI" here means the OAuth consent pages. Exact-call approval decisions don't go through them; they arrive on the control session.</p>
+
+<h2 id="branches">What #262 and #263 add at runtime</h2>
+
+<p>#262 doesn't change what runs inside the gateway VM. The image still boots <code>gateway-runtime</code>, which now uses the extracted libraries and its own managed adapter. The new hosts are separate programs:</p>
+
+<ex-mermaid id="branch-hosts" label="The new hosts on #262 and sign-in on #263" data-width="canvas"><script type="text/plain">
+flowchart TB
+  subgraph NODE["Node host, PR 262"]
+    ncl["MCP client"]
+    nh["Node host<br/>shared engine, state in memory"]
+    nup["Remote MCP servers"]
+    ncl -->|"HTTP with bearer, or stdio"| nh
+    nh -->|"HTTP, SSE or stdio"| nup
+  end
+  subgraph WORKER["Worker host, PR 262"]
+    wcl["MCP caller"]
+    wk["Worker<br/>/workspaces/W/mcp"]
+    wdo["Workspace Durable Object<br/>membership, one-use approvals"]
+    wup["Remote MCP servers"]
+    wcl -->|"MCP over HTTP, signed proof"| wk
+    wk -->|"admission, replay"| wdo
+    wk -->|"HTTP or SSE, no stdio"| wup
+  end
+  subgraph SIGNIN["Sign-in as of PR 263, older and organization-wide"]
+    own["Owner's browser or CLI"]
+    si["Sign-in Worker<br/>Better Auth"]
+    d1["D1<br/>people, sessions, agents"]
+    agent["Registered agent"]
+    th["Tool host, PR 263 copy<br/>organization Durable Object"]
+    own -->|"Google or GitHub sign-in;<br/>the CLI uses PKCE"| si
+    si --> d1
+    own -->|"person token: manage agents"| th
+    th -->|"service binding"| si
+    agent -->|"client credentials"| si
+    agent -->|"short-lived JWT"| th
+    th -->|"JWKS keys"| si
+  end
+</script></ex-mermaid>
+
+<ex-callout id="auth-mismatch" title="The sign-in drawn here is #263's older version" tone="risk" icon="key">
+<p>#263 sits below #262 in the stack. #262's head already contains all of #263 plus 59 more commits, including a newer sign-in that issues workspace-scoped agent tokens (<code>packages/auth</code>: 44 files changed, among them workspace agent issuance and a workspace resource store).</p>
+<p>The drawing shows #263's organization-wide version because that's what the research traced. #262's Worker admits a caller by the workspace in the URL, a signed audience, and workspace membership. Whether #262's own sign-in and its Worker fit together at the top of the stack hasn't been checked.</p>
+</ex-callout>
+
+<p>Neither new host calls Fleet. Sign-in calls nothing outside Cloudflare except Google and GitHub for social sign-in.</p>
+
+<details>
+<summary>Every runtime connection: transport, who starts it, and how it's checked</summary>
+<div class="ex-table-scroll" data-width="canvas">
+<table>
+<thead><tr><th>Connection</th><th>Transport, and who starts it</th><th>Checked by</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>Operator CLI → controller</td><td>Loopback HTTP JSON; the operator</td><td>Per-operation admin check; no universal bearer</td><td>today</td></tr>
+<tr><td>Controller → Gondolin</td><td>In-process library calls; the controller</td><td>Selected images and mounts</td><td>today</td></tr>
+<tr><td>Controller → gateway boot inputs</td><td>Memory mounts at VM creation; the controller</td><td>Role-specific protected inputs</td><td>today</td></tr>
+<tr><td>Image init → gateway runtime and Hermes</td><td>Starts both processes; the image</td><td>Separate environment files for each</td><td>today</td></tr>
+<tr><td>Hermes → gateway runtime</td><td>Private socket, framed JSON-RPC; Hermes connects</td><td>Private directory, exact epochs, cohort and agent handshake</td><td>today</td></tr>
+<tr><td>Controller ↔ gateway runtime</td><td>Signed readiness HTTP, then Socket.IO; the controller dials; the guest then makes requests on it</td><td>Ed25519 signature, one-use nonce, exact session, boot and zone identity</td><td>today</td></tr>
+<tr><td>Controller → Tool VM</td><td>Gondolin create and start; the controller</td><td>Trusted agent and profile, selected roots and image</td><td>today</td></tr>
+<tr><td>Controller → gateway runtime: SSH binding</td><td>Control result; the controller publishes</td><td>Current-generation key and host pin</td><td>today</td></tr>
+<tr><td>Gateway runtime → Tool VM</td><td>Strict SSH; the runtime</td><td>Controller-issued identity, exact host key, current binding</td><td>today</td></tr>
+<tr><td>Controller → workspace mounts</td><td>Owned directories mounted into the Tool VM; the controller</td><td>Canonical owned roots; extra mounts refused</td><td>today</td></tr>
+<tr><td>Controller → credentialed command VM</td><td>Gondolin create and exec; the controller</td><td>Current call and credential checks</td><td>today</td></tr>
+<tr><td>Controller → host commands and Git</td><td>Subprocess; the controller</td><td>Configured operations only; Git credential stays on the host</td><td>today</td></tr>
+<tr><td>Gateway runtime → remote MCP</td><td>HTTP, SSE, or stdio child in the VM; the runtime</td><td>Configured header or environment credentials</td><td>today</td></tr>
+<tr><td>Tool VM code → Portal</td><td>Helper socket, then stdin and stdout over the SSH session; per invocation</td><td>A trusted bridge supplies the caller context</td><td>today</td></tr>
+<tr><td>Tool runner → artifacts → agent</td><td>Gateway-local store, read back over the private socket</td><td>Matching principal, operation, epoch, expiry and range</td><td>today</td></tr>
+<tr><td>Credentialed command files → Tool VM</td><td>Read-only directory the controller publishes</td><td>Published only after a known outcome</td><td>today</td></tr>
+<tr><td>Gateway runtime → approval ledger</td><td>Control session: challenge, reserve, arm</td><td>Registered intent and stable-principal checks</td><td>today</td></tr>
+<tr><td>Controller → OAuth broker</td><td>In process, plus SQLite</td><td>Host-resolved encryption key and client binding</td><td>today</td></tr>
+<tr><td>Owner's browser → OAuth pages</td><td>HTTP behind Cloudflare Access; the person</td><td>Access identity, configured owner and agents, cookie, origin and CSRF</td><td>today</td></tr>
+<tr><td>Broker ↔ Google</td><td>Browser redirects; host HTTPS token and refresh</td><td>PKCE, state, scopes, bound person</td><td>today</td></tr>
+<tr><td>Controller → secret sources</td><td>1Password SDK or CLI, environment, config</td><td>Configured source and selected names</td><td>today</td></tr>
+<tr><td>VM outbound HTTP → host mediation</td><td>Gondolin HTTP hooks; the VM</td><td>Allowed hosts; placeholder swapped for the real value</td><td>today</td></tr>
+<tr><td>Gateway and controller → telemetry</td><td>OTLP HTTP; the guest's goes through a constrained host hook</td><td>Collector path and type guards</td><td>today</td></tr>
+<tr><td>External client → old standalone MCP Portal</td><td>HTTP MCP at <code>/agents/:agentId/mcp</code>; a separate process</td><td>Agent bearer, profile policy, its own approval tokens</td><td>today, not in managed mode</td></tr>
+<tr><td>MCP client → Node host</td><td>HTTP MCP or stdio</td><td>Configured bearer plus Host and Origin, or a fixed stdio identity</td><td>#262 only</td></tr>
+<tr><td>Node host → upstream</td><td>HTTP, SSE or stdio child</td><td>Host-resolved credentials</td><td>#262 only</td></tr>
+<tr><td>MCP caller → Worker → Durable Object</td><td>MCP over HTTP, then Durable Object calls</td><td>Signed audience and claims, workspace membership, one-use replay</td><td>#262 only</td></tr>
+<tr><td>Worker → upstream</td><td>HTTP or SSE, owned by the request</td><td>Environment-bound credentials</td><td>#262 only</td></tr>
+<tr><td>Browser or CLI → sign-in</td><td>Social sign-in; the CLI uses a local PKCE callback</td><td>Allowlisted verified person</td><td>#263 only</td></tr>
+<tr><td>Owner CLI → tool host → sign-in</td><td>Person bearer, then the <code>SIGN_IN</code> service binding</td><td>JWT and repeated live owner checks</td><td>#263 only</td></tr>
+<tr><td>Registered agent → token → tool host</td><td>Client credentials, then a JWT</td><td>Completed registration, signature, audience, listing</td><td>#263 only; not shown to fit #262</td></tr>
+<tr><td>Router caller → collaboration MCP</td><td>Loopback HTTP or private Unix socket</td><td>Host and Origin guards, or the owner-only socket</td><td>codex-router</td></tr>
+<tr><td>Router host → Fleet central</td><td>Outbound WebSocket upgrade; the Router</td><td>Access service credential plus a machine bearer</td><td>codex-router</td></tr>
+<tr><td>agent-vm → Router or Fleet</td><td>None found</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each row's file and line at both ends is in the Advisor's <a href="file:///Users/shravansunder/code/projects/agent-vm.design-portal-remediation/tmp/practices-research/2026-10-30-agent-vm-comms-map/report.md">source map</a>, section 7.</p>
+</details>
+
+<h2 id="packages">Which package imports which</h2>
+
+<p>At master there are 17 packages and 49 import edges between them. No package depends on itself through another; the package graph has no cycles. To make it drawable, I grouped the 16 non-controller packages into five families by what each package's own description says. That grouping is mine, not the code's.</p>
+
+<ex-mermaid id="family-map" label="Package families at master and how many imports cross between them" data-width="canvas"><script type="text/plain">
+flowchart TB
+  controller["Controller<br/>agent-vm: CLI and HTTP server"]
+  gateway["Gateway · 5 packages<br/>runtime, lifecycle, Hermes,<br/>two control contracts"]
+  tools["Tools · 4 packages<br/>Tool Portal, MCP Portal,<br/>agent SDK, execution contracts"]
+  oauth["OAuth · 3 packages<br/>broker, approval pages, contracts"]
+  vms["VMs · 2 packages<br/>managed VM, Gondolin adapter"]
+  shared["Shared · 2 packages<br/>config, secrets"]
+  controller -->|"5 imports"| gateway
+  controller -->|"4"| tools
+  controller -->|"3"| oauth
+  controller -->|"2"| vms
+  controller -->|"2"| shared
+  gateway -->|"5"| tools
+  gateway -->|"2"| oauth
+  gateway -->|"3"| shared
+  gateway -->|"1"| vms
+  tools -->|"1, back"| gateway
+  tools -->|"3"| oauth
+  tools -->|"3"| shared
+  oauth -->|"1"| shared
+  shared -->|"1, back"| oauth
+  vms -->|"1"| shared
+  class controller slot1
+  class gateway slot2
+  class tools slot3
+  class oauth slot4
+  class vms slot5
+  class shared slot6
+</script></ex-mermaid>
+
+<p>Each arrow counts the imports from one family into another. Two pairs point both ways, marked "back". Neither is a package cycle. But if those families became separate repositories, the two repositories in each pair would depend on each other.</p>
+
+<h3 id="family-loops">The two pairs that point both ways</h3>
+
+<ex-mermaid id="family-loops-drawing" label="The two family pairs that import each other at master" data-width="canvas"><script type="text/plain">
+flowchart LR
+  subgraph G1["Gateway"]
+    gr["gateway-runtime"]
+    gcc["gateway-control-contracts<br/>trust and approval types"]
+  end
+  subgraph T1["Tools"]
+    tp["tool-portal"]
+  end
+  gr --> tp
+  gr --> gcc
+  tp -->|"back"| gcc
+  subgraph S1["Shared"]
+    cc["config-contracts"]
+  end
+  subgraph O1["OAuth"]
+    ob["oauth-broker"]
+    obc["oauth-broker-contracts<br/>Google account types"]
+  end
+  ob --> cc
+  ob --> obc
+  cc -->|"back"| obc
+</script></ex-mermaid>
+
+<ul>
+<li><strong>Gateway and Tools.</strong> <code>gateway-runtime</code> runs the Tool Portal, so it imports <code>tool-portal</code>. But the Tool Portal's own trust and approval vocabulary lives in <code>gateway-control-contracts</code>: the trusted invocation context and principal, dispatch authority, approval reservations, and the approval id and fingerprint derivation (<code>packages/tool-portal/src/tool-portal-service.ts:38-49</code>). So tool control is defined in a gateway package.</li>
+<li><strong>OAuth and Shared.</strong> <code>config-contracts</code> imports the Google command set, OAuth account id, Google policy defaults and catalog family id from <code>oauth-broker-contracts</code> (for example <code>packages/config-contracts/src/oauth-config.ts:1</code>). <code>oauth-broker</code> in turn imports its config schema from <code>config-contracts</code>.</li>
+</ul>
+
+<details>
+<summary>Every import edge at master, the controller's 16 left out</summary>
+<ex-mermaid id="all-edges-master" label="Every package import at master except the controller's" data-width="canvas"><script type="text/plain">
+flowchart LR
+  subgraph GW2["Gateway"]
+    hermes["hermes-gateway"]
+    lifecycle["gateway-lifecycle"]
+    gruntime["gateway-runtime"]
+    gcc2["gateway-control-contracts"]
+    cpc["control-protocol-contracts"]
+  end
+  subgraph TL["Tools"]
+    tportal["tool-portal"]
+    mportal["mcp-portal"]
+    cec["controller-execution-contracts"]
+    sdk["agent-portal-sdk"]
+  end
+  subgraph OA["OAuth"]
+    obroker["oauth-broker"]
+    approval["oauth-approval-ui"]
+    obc2["oauth-broker-contracts"]
+  end
+  subgraph VM["VMs"]
+    gondolin["gondolin-vm-adapter"]
+    managed["managed-vm"]
+  end
+  subgraph SH["Shared"]
+    config["config-contracts"]
+    secrets["secret-management"]
+  end
+  hermes --> lifecycle
+  lifecycle --> managed
+  lifecycle --> secrets
+  gruntime --> tportal
+  gruntime --> mportal
+  gruntime --> cec
+  gruntime --> sdk
+  gruntime --> gcc2
+  gruntime --> cpc
+  gruntime --> config
+  gruntime --> obc2
+  gcc2 --> cpc
+  gcc2 --> sdk
+  gcc2 --> config
+  gcc2 --> obc2
+  tportal --> gcc2
+  tportal --> mportal
+  tportal --> cec
+  tportal --> sdk
+  tportal --> config
+  tportal --> obc2
+  mportal --> sdk
+  mportal --> config
+  mportal --> secrets
+  cec --> sdk
+  cec --> obc2
+  sdk --> obc2
+  obroker --> config
+  obroker --> obc2
+  approval --> obc2
+  gondolin --> managed
+  gondolin --> secrets
+  config --> obc2
+</script></ex-mermaid>
+<p>That's 33 edges. With the controller's 16, that makes the 49. Four packages import nothing from the workspace: <code>managed-vm</code>, <code>control-protocol-contracts</code>, <code>oauth-broker-contracts</code> and <code>secret-management</code>.</p>
+</details>
+
+<h3 id="what-262-adds">What #262 adds</h3>
+
+<p>#262 adds six packages named <code>@agent-collaboration/…</code>. They still live in this repository's <code>packages/</code> folder; only the name says where they're meant to go. Their own graph points one way:</p>
+<ul>
+<li>the hosts depend on the engine, and the engine depends on <code>tool-access</code>;</li>
+<li>sign-in (<code>auth</code>) depends on <code>tool-access</code> too.</li>
+</ul>
+<p>But they have edges both ways with agent-vm.</p>
+
+<ex-mermaid id="pr262-edges" label="Imports between the new agent-collaboration packages and agent-vm on #262" data-width="canvas"><script type="text/plain">
+flowchart TB
+  subgraph NEW["New on PR 262: @agent-collaboration, still in this repository"]
+    hcf["tool-host-cloudflare<br/>Worker host"]
+    hnode["tool-host-node<br/>Node host"]
+    hcore["tool-host-core<br/>hosted MCP proxy"]
+    engine["tool-engine<br/>dispatch"]
+    access["tool-access<br/>contracts and access checks"]
+    auth["auth<br/>sign-in"]
+  end
+  subgraph OLD["agent-vm packages"]
+    sdk3["agent-portal-sdk<br/>agent-facing SDK"]
+    obc3["oauth-broker-contracts<br/>Google account types"]
+    others["9 other agent-vm packages"]
+  end
+  hcf --> hcore
+  hcf --> engine
+  hcf --> access
+  hcf -.->|"dev only"| hnode
+  hcore --> engine
+  hcore --> access
+  hnode --> engine
+  hnode --> access
+  engine --> access
+  auth --> access
+  hnode ==>|"back: generated-tool SDK"| sdk3
+  access ==>|"back: Google account types"| obc3
+  sdk3 --> access
+  others -->|"9 import"| access
+  others -->|"2 import"| engine
+  others -->|"5 import"| hnode
+  class hcf,hnode,hcore,engine,access slot3
+  class auth slot1
+  class sdk3,obc3,others slot2
+</script></ex-mermaid>
+
+<p>The two thick arrows are the problem for a clean split. <code>tool-host-node</code> imports agent-vm's <code>agent-portal-sdk</code>, and <code>tool-access</code> imports agent-vm's <code>oauth-broker-contracts</code>. Ten agent-vm packages, <code>agent-portal-sdk</code> among them, import <code>tool-access</code>. Moved out as they are, the two repositories would each depend on the other.</p>
+
+<p>From the code, both back-edges land on packages whose job is tool control, even though they carry the agent-vm name:</p>
+<ul>
+<li><code>agent-portal-sdk</code> is the SDK that agents' generated tool bindings import.</li>
+<li><code>oauth-broker-contracts</code> holds the per-user Google account types.</li>
+</ul>
+<p>That's an observation about what the packages do, not a decision about where they go.</p>
+
+<div class="ex-table-scroll" data-width="canvas">
+<table>
+<thead><tr><th>Import</th><th>What crosses it</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td><code>tool-host-node</code> → <code>agent-portal-sdk</code></td><td>The generated-tools SDK that compiled code-mode bindings import, and the artifact read-resource parser</td><td><code>tool-host-node/src/catalog-typescript/catalog-typescript-compiler.ts:10</code>, <code>standalone-tool-portal/standalone-mcp-server.ts:10</code></td></tr>
+<tr><td><code>tool-access</code> → <code>oauth-broker-contracts</code></td><td>Google account and command types: account and service ids, the Google invocation policy result, the Google display schema, the compiled Google command set</td><td><code>tool-access/src/contracts/access-assessment.ts:7</code>, <code>authorization/access-assessor.ts:1</code></td></tr>
+<tr><td><code>auth</code> → <code>tool-access</code></td><td>Identity contracts: <code>PersonProof</code>, the person-token verifier, the workspace resource identifier and metadata, the Tool Portal origin normalizer</td><td><code>auth/src/native-owner-cli/owner-cli-login.ts:7</code>, <code>sign-in-core/agent-clients/workspace-resource.ts:1</code></td></tr>
+<tr><td><code>config-contracts</code> → <code>tool-host-node</code></td><td>The standalone Tool Portal config schema and its validator. A config package importing a host package.</td><td><code>config-contracts/src/tool-portal-config.ts:19-23</code></td></tr>
+<tr><td><code>gateway-lifecycle</code> → <code>tool-access</code></td><td>Nothing. It's declared in the manifest, but no source file imports it.</td><td><code>gateway-lifecycle/package.json:39</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<details>
+<summary>Every package, its family, and its imports at master and on #262</summary>
+<div class="ex-table-scroll" data-width="canvas">
+<table>
+<thead><tr><th>Package</th><th>Family (my grouping)</th><th>Its own description</th><th>Imports at master</th><th>Adds on #262</th></tr></thead>
+<tbody>
+<tr><td><code>agent-vm</code></td><td>Controller</td><td>Controller CLI and HTTP server for sandboxed VM coding agents</td><td>all 16 others</td><td><code>tool-access</code>, <code>tool-engine</code>, <code>tool-host-node</code></td></tr>
+<tr><td><code>gateway-runtime</code></td><td>Gateway</td><td>Gateway-local Tool Portal service, private UDS, and managed runtime backends</td><td><code>tool-portal</code>, <code>mcp-portal</code>, <code>agent-portal-sdk</code>, <code>controller-execution-contracts</code>, <code>gateway-control-contracts</code>, <code>control-protocol-contracts</code>, <code>config-contracts</code>, <code>oauth-broker-contracts</code></td><td><code>tool-access</code>, <code>tool-engine</code>, <code>tool-host-node</code></td></tr>
+<tr><td><code>gateway-lifecycle</code></td><td>Gateway</td><td>Shared gateway lifecycle contracts, workload intent, and cross-gateway policies</td><td><code>managed-vm</code>, <code>secret-management</code></td><td><code>tool-access</code> (declared, unused)</td></tr>
+<tr><td><code>hermes-gateway</code></td><td>Gateway</td><td>Managed Hermes Gateway lifecycle and image contracts</td><td><code>gateway-lifecycle</code></td><td>none</td></tr>
+<tr><td><code>gateway-control-contracts</code></td><td>Gateway</td><td>Gateway control domain contracts for agent-vm Socket.IO sessions</td><td><code>agent-portal-sdk</code>, <code>config-contracts</code>, <code>control-protocol-contracts</code>, <code>oauth-broker-contracts</code></td><td><code>tool-access</code></td></tr>
+<tr><td><code>control-protocol-contracts</code></td><td>Gateway</td><td>Shared Zod contracts for agent-vm Socket.IO control sessions</td><td>none</td><td>none</td></tr>
+<tr><td><code>tool-portal</code></td><td>Tools</td><td>Cross-backend capability service and explicitly configured standalone projections</td><td><code>agent-portal-sdk</code>, <code>config-contracts</code>, <code>controller-execution-contracts</code>, <code>gateway-control-contracts</code>, <code>mcp-portal</code>, <code>oauth-broker-contracts</code></td><td><code>tool-access</code>, <code>tool-host-node</code></td></tr>
+<tr><td><code>mcp-portal</code></td><td>Tools</td><td>Agent-scoped MCP Portal server and TypeScript helpers for composable upstream MCP tools</td><td><code>agent-portal-sdk</code>, <code>config-contracts</code>, <code>secret-management</code></td><td><code>tool-access</code>, <code>tool-host-node</code></td></tr>
+<tr><td><code>agent-portal-sdk</code></td><td>Tools</td><td>Portal-neutral Zod contracts and helpers for agent-facing capability surfaces</td><td><code>oauth-broker-contracts</code></td><td><code>tool-access</code></td></tr>
+<tr><td><code>controller-execution-contracts</code></td><td>Tools</td><td>Zod contracts for controller-owned portal execution boundaries</td><td><code>agent-portal-sdk</code>, <code>oauth-broker-contracts</code></td><td><code>tool-access</code></td></tr>
+<tr><td><code>oauth-broker</code></td><td>OAuth</td><td>Controller-host OAuth broker, encrypted catalog, and provider adapters</td><td><code>config-contracts</code>, <code>oauth-broker-contracts</code></td><td><code>tool-access</code></td></tr>
+<tr><td><code>oauth-approval-ui</code></td><td>OAuth</td><td>Server-rendered OAuth approval pages and bounded browser islands</td><td><code>oauth-broker-contracts</code></td><td>none</td></tr>
+<tr><td><code>oauth-broker-contracts</code></td><td>OAuth</td><td>Portable OAuth broker schemas and TypeScript contracts</td><td>none</td><td>none; byte-identical to master</td></tr>
+<tr><td><code>managed-vm</code></td><td>VMs</td><td>Backend-neutral managed VM contracts and ownership semantics for agent-vm</td><td>none</td><td>none</td></tr>
+<tr><td><code>gondolin-vm-adapter</code></td><td>VMs</td><td>Gondolin implementation of the backend-neutral managed-vm contracts</td><td><code>managed-vm</code>, <code>secret-management</code></td><td>none</td></tr>
+<tr><td><code>config-contracts</code></td><td>Shared</td><td>Shared agent-vm JSONC config schemas and TypeScript contracts</td><td><code>oauth-broker-contracts</code></td><td><code>tool-access</code>, <code>tool-host-node</code></td></tr>
+<tr><td><code>secret-management</code></td><td>Shared</td><td>Shared secret reference contracts and resolvers for agent-vm packages</td><td>none</td><td>none</td></tr>
+<tr><td><code>tool-access</code></td><td>new on #262</td><td>Portable Tool Portal contracts and effect-free access assessment</td><td>—</td><td><code>oauth-broker-contracts</code></td></tr>
+<tr><td><code>tool-engine</code></td><td>new on #262</td><td>Portable capability dispatch over resource-owned backends and approval ports</td><td>—</td><td><code>tool-access</code></td></tr>
+<tr><td><code>tool-host-core</code></td><td>new on #262</td><td>Runtime-neutral hosted MCP proxy with injected authority, analytics and host ports</td><td>—</td><td><code>tool-access</code>, <code>tool-engine</code></td></tr>
+<tr><td><code>tool-host-cloudflare</code></td><td>new on #262</td><td>Workspace-scoped Tool Portal host for Cloudflare Workers</td><td>—</td><td><code>tool-access</code>, <code>tool-engine</code>, <code>tool-host-core</code>, <code>tool-host-node</code> (dev)</td></tr>
+<tr><td><code>tool-host-node</code></td><td>new on #262</td><td>Node host adapters for Tool Portal</td><td>—</td><td><code>tool-access</code>, <code>tool-engine</code>, <code>agent-portal-sdk</code></td></tr>
+<tr><td><code>auth</code></td><td>new on #262</td><td>Audience-bound person and agent sign-in with a portable core and Cloudflare adapter</td><td>—</td><td><code>tool-access</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Read from each <code>package.json</code> at each revision; only <code>workspace:</code> dependencies are counted.</p>
+</details>
+
+</ex-document>
+</body>
+</html>
