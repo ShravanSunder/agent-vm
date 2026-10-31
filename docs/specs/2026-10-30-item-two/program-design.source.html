@@ -1807,6 +1807,7 @@ There's nothing to migrate: presence is new state in each Connection object, and
 - **OD16, the flood limits:** Turnstile is decided. The counting layers are built as recommended: Better Auth's limiter set explicitly, plus the rate-limit binding in the Worker. The numbers are each one setting.
 - **OD18, decided (31 October):** step-up with a passkey or app code, first machine exempt, self-serve recovery with two factors (R53, R54).
 - **OD19, decided (31 October):** Google and GitHub; never Facebook; never Apple relay addresses.
+- **OD20, open:** the first second factor is the authenticator app (it issues the recovery codes) until you choose otherwise; the alternatives are passkey-or-app with our own recovery codes, or two passkeys for passkey-only people.
 - **OD17, where telemetry goes:** Cloudflare keeps its own records either way. Export starts when you name a destination; until then the export check on the private stack waits.
 - **SD8, inherited:** the owner guard's freshness bound is the people sign-in design's open decision. This design follows whatever it becomes.
 
