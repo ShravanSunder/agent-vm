@@ -19,10 +19,10 @@
 </ex-presentation>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
 <a href="../../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../index.html">Identity design</a>
-<a href="../../2026-10-30-item-two/index.html">Item two</a>
+<a href="../../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../index.html">Item two</a>
 <a href="2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
 <a href="../../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
 <a href="../../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
 <a href="../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
@@ -30,7 +30,7 @@
 <a href="../../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-delivery-plan" revision="2026-10-30.1">
-<p id="set-pages"><a href="../index.html">Identity design</a>: <a href="../requirements.html">Requirements</a> · <a href="../specification.html">Specification</a> · <a href="../program-design.html">Program Design</a> · <a href="../verification-design.html">Verification Design</a> · <a href="../alternatives.html">Alternatives</a> · <strong>Item two delivery plan</strong></p>
+<p id="set-pages"><a href="../index.html">Item two</a>: <a href="../requirements.html">Requirements</a> · <a href="../specification.html">Specification</a> · <a href="../program-design.html">Program Design</a> · <a href="../verification-design.html">Verification Design</a> · <strong>Delivery plan</strong></p>
 <h1 id="item2--item-two-delivery-plan">Item two delivery plan</h1>
 <h2 id="item2--result">Result</h2>
 <ex-markdown id="item2--result-text"><script type="text/markdown">
@@ -69,7 +69,7 @@ SO11 (F16): two Routers on a local Fleet central, one starting a helper on the o
 |---|---|---|---|
 | **D1 Machines log in, and start sessions on each other** | You sign in, and approve your Mac and Sunclaw by device code. A session on your Mac starts a helper on Sunclaw, and sessions on the two keep messaging each other on the new login. Then production switches: central accepts only machines logged in this way (still behind Access). | sign-in; Fleet central; Router | your go; OD4; the Fleet release F0 |
 | **DV See who is logged in** | You open a page beside the device-code approval page. It shows each machine you've logged in (approval, workspaces, connected or not, last seen) and each session on it (harness, project, workspace, start time, and working, idle or unknown). A machine whose network is cut shows as not connected within 15 seconds. Anyone else is refused; if central can't answer, the page says unavailable. | Fleet central; Router; sign-in | D1's F1, F2a, F4a, F10, F11, B4a; OD14 (built at the proposed 15 s) |
-| **DC Stage C: people** | The view also shows each person admitted to your organization: signed in now or not, and their last sign-in. | sign-in; Fleet central | DV |
+| **DC Stage C: people** | The view also shows each person admitted to your organization: their name, signed in now or not, and their last sign-in. | sign-in; Fleet central | DV |
 </script></ex-markdown>
 <h2 id="item2--how-the-deliverables-connect">How the deliverables connect</h2>
 <ex-markdown id="item2--how-the-deliverables-connect-text"><script type="text/markdown">
@@ -199,15 +199,15 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 <h2 id="item2--basis-and-review-history">Basis and review history</h2>
 <ex-markdown id="item2--basis-and-review-history-text"><script type="text/markdown">
 - **Originating planner:** `plan-implementation`
-- **Governing planning basis:** reviewed four-document design, in agent-vm `design/portal-remediation` at `d5fa0887`:
-  - [Requirements](../requirements.md)
-  - [Specification](../specification.md)
+- **Governing planning basis:** item two's own four-document design, in agent-vm `design/portal-remediation` at `e5a5da0a`:
+  - [Requirements](../requirements.html)
+  - [Specification](../specification.html)
   - [Program Design](../program-design.html)
-  - [Verification Design](../verification-design.md)
+  - [Verification Design](../verification-design.html)
 - **Review results:**
-  - The four-document review of item two: `tmp/reviews/2026-10-30-item-two-design/findings.md`. Reviewer `01a179b3`: `needs-revision` at `1d4424c3` (IT1–IT4), then IT5 at `36c2cf95`, then `ready` at `d5fa0887` with every finding closed.
-  - The Advisor's login validation: `tmp/practices-research/2026-10-30-advisor-login-validation/report.md`, with LV1–LV4 closed in the design.
-  - The earlier review history of the D1 design is in the 2026-10-27 plan's basis.
+  - Item two's standalone four-document review: `tmp/reviews/2026-10-30-item-two-standalone/findings.md`, by Reviewer `01a179b3`. `needs-revision` at `b1a16702` (ST1), then `ready` at `e5a5da0a`.
+  - The Advisor's cross-reference against the wider identity design: `tmp/practices-research/2026-10-30-item-two-cross-reference/report.md`. XR1–XR7 were found and closed at `c2fde5b4`.
+  - The design it was extracted from, the identity set, was reviewed `ready` at `d5fa0887` (`tmp/reviews/2026-10-30-item-two-design/findings.md`). The Advisor's login validation (LV1–LV4) is in `tmp/practices-research/2026-10-30-advisor-login-validation/report.md`.
 - **Applicability anchors:**
   - codex-router `agent-collaboration/agent-collaboration` `origin/main` `7af23abe` (D1's older anchors were read at `f465808f`; each ticket re-reads its own at start);
   - fleet-sync-session `b9da4b5` (0.4.0);
@@ -217,7 +217,7 @@ The check that a consumer parses the **real** producer's output runs in whicheve
   - Requested terminal: `plan-only`. Nothing is built until you say go.
   - Delivery grouping: `deliverables`, by your direction: deliverables as vertical slices (27 October), and steps 1 then 2 (30 October).
   - PR topology: `separate-prs`. Each ticket is one PR in its own repository.
-- **Planned at:** agent-vm `design/portal-remediation` `d5fa0887`.
+- **Planned at:** agent-vm `design/portal-remediation` `e5a5da0a`.
 </script></ex-markdown>
 <h2 id="item2--current-evidence">Current evidence</h2>
 <ex-markdown id="item2--current-evidence-text"><script type="text/markdown">
@@ -319,14 +319,14 @@ unchanged; the local journeys run the sign-in service on it.
 <ex-markdown id="ticket-b5-text"><script type="text/markdown">
 - **Covers:** R42, R40 (issuer side), R31 (single use):
   - the Router device-login client, which only starts device logins and polls;
-  - **one public machine client per enrollment**, created by our device-code token handler at the first mint (after `redeemDeviceCode`, before `issueTokens`), metadata `{ kind: machineEnrollment, organizationId, enrollmentId }`, allowed only refresh and central's machine address; `machine_client_id` in the token response;
+  - **one public machine client per enrollment**, its `client_id` equal to the enrollment ID, created by our device-code token handler at the first mint (after `redeemDeviceCode`, before `issueTokens`) through `createMachineClient`; metadata `{ kind: machineEnrollment, organizationId, enrollmentId }`; allowed only refresh and central's machine address; `machine_client_id` in the token response;
   - the **revoke refusal**: a before-hook on the revoke endpoint refusing any request from a machine or device-login client, and any request presenting a machine client's refresh token;
   - the grant object with the machine fields;
   - owner before-hooks on verify, approve and deny;
   - the approve hook sending `DecideDeviceLogin` and storing `enrollmentId` on the code;
   - our device-code token handler, redeeming with `redeemDeviceCode` and minting under the machine client with `referenceId` = `<organizationId>:<enrollmentId>`;
   - the contributor deciding device-code and refresh mints from `input.referenceId` only, sending the machine client's ID in `DecideMachineToken`, and handling `wrong-client`;
-  - the `DisableMachineClient` receiver (K11's consumer) on F3a's service edge;
+  - the `DisableMachineClient` receiver (K11's consumer) on F3a's service edge, through `disableMachineClient`, with its three results;
   - OD6's 10-minute lifetime;
   - the dispatch row and refused combinations;
   - K10 (machine tokens from the real issuer).
@@ -369,7 +369,7 @@ unchanged; the local journeys run the sign-in service on it.
 <details id="ticket-f2a">
 <summary><strong>F2a</strong> organization authority core (split from F2) · waits on F1</summary>
 <ex-markdown id="ticket-f2a-text"><script type="text/markdown">
-- **Covers:** R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, built and enabled at PROD2), R14 (lookups for people, machines and sessions), R34 (organization-scoped rows; cross-organization references answer as unknown), R35 for people; organizations and their owner; machine allowances; the ordered marks. Runs the real-output check for K5 and K6 against B3's issuer if it merges after B3.
+- **Covers:** R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, built and enabled at PROD2), R14 (lookups for people, sessions, workspaces' allowed machines and machines), R34 (organization-scoped rows; cross-organization references answer as unknown), R35; organizations and their owner; machine allowances. Runs the real-output check for K5 and K6 against B3's issuer if it merges after B3.
 - **Earns (its SO4 scenarios):** U21's command and guard cases; U27's central half for people, machines and sessions.
 - **Focused proof:**
   - **Wrong behaviors caught:** an admin command applied without the current owner; a reference to another organization answering differently from a missing one.
@@ -676,7 +676,7 @@ What it does:
 </details>
 <h2 id="item2--dc-stage-c-people-in-the-view">DC Stage C: people in the view</h2>
 <ex-markdown id="item2--dc-stage-c-people-in-the-view-text"><script type="text/markdown">
-**You'll see:** each person admitted to your organization in the view, signed in now or not, with their last sign-in, to you only and as fresh as the rest.
+**You'll see:** each person admitted to your organization in the view, with their name, signed in now or not, and their last sign-in, to you only and as fresh as the rest.
 
 **Bots come later.** Their rows (membership workspace, credential state, last token) need bots (F2c) and bot tokens (B4b), which arrive with steps 3–5. Their last-token record, `bot_token_release`, is written by B4b's release gate, and joins OD4's approval then. So V42 is earned in two parts: people here (V5c and V5s), bots with steps 3–5. Until the bot half is observed, U40's R50 row is **partial**, never reported complete.
 </script></ex-markdown>
@@ -695,7 +695,7 @@ What it does:
 <details id="ticket-v5s">
 <summary><strong>V5s</strong> people's sign-in facts in the view (new) · waits on V5c's shape (K12); V3</summary>
 <ex-markdown id="ticket-v5s-text"><script type="text/markdown">
-- **Covers:** R50's people half at the sign-in service. The page joins each listed person with what it owns: signed in now (an unexpired sign-in session) and the last sign-in.
+- **Covers:** R50's people half at the sign-in service. The page joins each listed person with what it owns: their name, signed in now (an unexpired sign-in session), and the last sign-in.
 - **Writes:** `packages/auth` (the page's join), in `agent-collaboration/switchboard`.
 - **Earns, with V5c:** SO12 step 9's people part (V42's people half). The joint run is V4's journey extended to step 9's people part, run after both merge, and again on the private stack and in production with the next deploy.
 - **Focused proof:**
