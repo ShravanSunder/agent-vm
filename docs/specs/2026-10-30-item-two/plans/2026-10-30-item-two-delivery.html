@@ -42,7 +42,7 @@ And, from your review of the design (30 October): "split the login as one delvie
 
 Five deliverables carry it. Each works end to end before the next goes live:
 1. **D1 Login, end to end.** Your sign-in, the organization core, machine login by device code, sessions registered through their machine, and flood limits at sign-in. It goes live at your production switch (PROD2), where central accepts only logged-in machines.
-2. **DT Logs and traces.** Cloudflare's Workers Logs and traces on both Workers, exported over OpenTelemetry, and the same from the Node and Tokio hosts. Live right after the switch (PRODT).
+2. **DT Logs and traces.** Cloudflare's Workers Logs on both Workers and traces on Fleet central, exported over OpenTelemetry, and the same from the Node and Tokio hosts. Live right after the switch (PRODT).
 3. **DV Who is logged in** (B+). Live after that (PRODV), with no machine logging in again.
 4. **DR Starting a session on another machine.** Live after the view (PRODR).
 5. **DC People in the view** (stage C). Its bot rows need bots, which come with steps 3–5, so they're planned there.
@@ -70,7 +70,7 @@ SO8 (F14): two Routers log in by device code to a local Fleet central, and their
 | Deliverable | What you'll see working | Workstreams | Waits on |
 |---|---|---|---|
 | **D1 Login, end to end** | You sign in, and approve your Mac and Sunclaw by device code. Their sessions register through their machine, and sessions on the two keep messaging each other on the new login. A revoked machine stops. Hammering the sign-in page or code entry from one address is refused and changes nothing. Then production switches: central accepts only machines logged in this way (still behind Access). | sign-in; Fleet central; Router | your go; OD4; the Fleet release F0 |
-| **DT Logs and traces** | Every login, refusal, connection and registration leaves a record with its reason, in Cloudflare's Workers Logs and traces and in your OpenTelemetry tool, with nothing secret in it. | sign-in; Fleet central | D1's B2, B5, F10; OD17 only for the export check |
+| **DT Logs and traces** | Every login, refusal, connection and registration leaves a record with its reason, in Cloudflare's Workers Logs (with central's traces) and in your OpenTelemetry tool, with nothing secret in it. | sign-in; Fleet central | D1's B2, B5, F10; OD17 only for the export check |
 | **DV See who is logged in** | You open a page beside the device-code approval page. It shows each machine you've logged in (approval, workspaces, connected or not, last seen) and each session on it (harness, project, workspace, start time, and working, idle or unknown). A machine whose network is cut shows as not connected within 15 seconds. Anyone else is refused; if central can't answer, the page says unavailable. | Fleet central; Router; sign-in | D1's F1, F2a, F4a, F10, F11, B4a; OD14 (built at the proposed 15 s) |
 | **DR Start a session on another machine** | A session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw. Each start gives started, refused (nothing created) or unknown (read the outcome later). An offline machine is refused, never queued. | Fleet central; Router | D1's F2a, F4a, F10, F11, F14 |
 | **DC Stage C: people** | The view also shows each person admitted to your organization: their name, signed in now or not, and their last sign-in. | sign-in; Fleet central | DV |
@@ -127,12 +127,12 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 | F17 remove today's machine login | D1 | F10, F14 |
 | T2 Fleet central's telemetry on both hosts | DT | F10; merges after JC1 |
 | T3 SO13 telemetry journey | DT | T1, T2, F14 |
-| V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10; merges after JC1 |
-| V2 Router heartbeat and session activity reporter | DV | F4a, F11; merges after JC1 |
+| V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10; merges after JT1 |
+| V2 Router heartbeat and session activity reporter | DV | F4a, F11; merges after JT1 |
 | V4 SO12 who-is-logged-in journey | DV | V1, V2, V3, F14 |
-| F15 starting a session on another machine | DR | F2a, F4a, F10, F11; merges after JC1 |
+| F15 starting a session on another machine | DR | F2a, F4a, F10, F11, V1, V2; merges after JV1 |
 | F16 SO11 remote start journey | DR | F15, F14 |
-| V5c people rows at central | DC | V4 |
+| V5c people rows at central | DC | V4; merges after JR1 |
 
 **Sign-in service** (Switchboard Lead, `agent-collaboration/switchboard`)
 
@@ -145,8 +145,8 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 | B5 device-code login, with one client per machine | D1 | B4a, B2; F1's contract fixtures |
 | B6 flood limits at sign-in | D1 | B5 |
 | T1 the sign-in service's telemetry on both hosts | DT | B2, B5; merges after JC1 |
-| V3 the who-is-logged-in page | DV | B4a; V1 for the real lookup; merges after JC1 |
-| V5s people's sign-in facts in the view | DC | V5c's shape (K12); V3 |
+| V3 the who-is-logged-in page | DV | B4a; V1 for the real lookup; merges after JT1 |
+| V5s people's sign-in facts in the view | DC | V5c's shape (K12); V3; merges after JR1 |
 
 **Joint and production** (the Switchboard Lead coordinates; you run the production steps)
 
@@ -204,7 +204,7 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 - agent-vm, which is frozen;
 - sessions inside VMs, and any VM proof;
 - any new check gate. No Linux CI job is added (your call, 27 October);
-- dashboards, alerts, Logpush, and Turnstile on the sign-in pages.
+- dashboards, alerts and Logpush.
 </script></ex-markdown>
 <h2 id="item2--waiting-on-you">Waiting on you</h2>
 <ex-markdown id="item2--waiting-on-you-text"><script type="text/markdown">
@@ -377,17 +377,18 @@ unchanged; the local journeys run the sign-in service on it.
 <summary><strong>B6</strong> flood limits at sign-in (new) · waits on B5</summary>
 <ex-markdown id="ticket-b6-text"><script type="text/markdown">
 - **Covers:** R52 and R42's limit, as the Program Design's [flood limits](../program-design.html#program-design--flood-limits-at-sign-in-r42-r52) draw them:
-  - `sign-in-core/request-limits`: each route's class and its limits, one setting each (OD16's proposed numbers);
-  - the `requestLimiter` capability, asked before Better Auth runs; `limited` answers 429 with `Retry-After` and touches nothing;
+  - `sign-in-core/request-limits`: one inventory of every route the service serves (its own pages, Better Auth's routes, `/callback/*`, `/passkey/*`, the OAuth token endpoint), each route's class and its limits, one setting each (OD16's proposed numbers);
+  - the `requestLimiter` capability, asked at the service's entry before any route is dispatched; `limited` answers 429 with `Retry-After` and touches nothing; IPv6 normalized to its /64 before keying;
   - Better Auth's `rateLimit` set explicitly: on whatever `NODE_ENV` says, `customRules` from the classes, memory storage, and `advanced.ipAddress.ipAddressHeaders` listing only `x-sign-in-client-address`;
   - each host setting that header from its trusted source after removing any incoming copy: `cf-connecting-ip` on Cloudflare; the socket's peer, or a configured trusted proxy, on Node;
-  - the Cloudflare host's two rate-limit bindings, `SIGN_IN_ATTEMPTS` and `AUTH_REQUESTS`, in the Worker config; the Node host's limiter allowing everything, because Better Auth's count is exact there;
-  - **Turnstile:** Better Auth's `captcha` plugin with provider `cloudflare-turnstile` on `/sign-in/social` and `/passkey/verify-authentication`, the widget on the sign-in page sending `x-captcha-response`, `allowedHostnames` and `expectedAction` set, the secret key a Worker secret, and `siteVerifyURLOverride` pointed at a local stand-in in tests;
+  - the Cloudflare host's two rate-limit bindings, `SIGN_IN_ATTEMPTS` and `AUTH_REQUESTS`, in the Worker config; the Node host's limiter counting in process, because the service's own pages never reach Better Auth's limiter;
+  - confirming at 1.7.11 that the device-code redemption on the OAuth token endpoint keeps the grant's `slow_down`;
+  - **Turnstile:** Better Auth's `captcha` plugin with provider `cloudflare-turnstile` on `/sign-in/social` and `/passkey/generate-authenticate-options` (before the challenge is stored), the widget on the sign-in page sending `x-captcha-response` on those requests itself, `allowedHostnames` and `expectedAction` set, the secret key a Worker secret, and `siteVerifyURLOverride` pointed at a local stand-in in tests;
   - a `limited` or `captcha-refused` observation for each refused request.
 - **Writes:** `packages/auth` `sign-in-core/request-limits/`, `better-auth-provider`, `cloudflare-host`, `node-host`, the sign-in page, `wrangler.example.jsonc`.
 - **Earns:** SO2's flood cases on both hosts (U42).
 - **Focused proof:**
-  - **Wrong behaviors caught:** the limiter off outside `NODE_ENV=production`; a forged `x-forwarded-for` escaping the count; a limited request creating a device code or a session; one address's flood refusing another; a sign-in passing without a verified Turnstile token, or when siteverify doesn't answer.
+  - **Wrong behaviors caught:** the limiter off outside `NODE_ENV=production`; a service page or callback left uncounted on Node; a forged `x-forwarded-for` escaping the count; one /64 getting many budgets; a limited request creating a device code or a session; one address's flood refusing another; a sign-in start or passkey challenge passing without a verified Turnstile token, or when siteverify doesn't answer.
   - **Layer:** sign-in core unit tests with a recording limiter; then the real provider on local workerd (Miniflare's binding) and on the Node host, under controlled system time (integration).
   - **Oracle:** R52, R42, V44.
 - **Stop if:** Better Auth 1.7.11 ignores `rateLimit.enabled: true` outside production, or can't take its address from the one header. Then the core's limiter carries every class on both hosts, with the Node host counting in process. The same rows decide it.
@@ -400,8 +401,8 @@ unchanged; the local journeys run the sign-in service on it.
   - the machine-login shapes: `MachineTokenClaims` and a `MachinePrincipal` kept outside the actor `Principal`, `DecideDeviceLogin`, `DeviceLoginDecision`, `DecideMachineToken`, `MachineTokenDecision` (with `decided_at`), `AdmitMachineConnection`, `MachineConnectionAdmission`, `MachineEnrollment` (reserved, approved, enrolled, revoked, expired), `AdmissionId`/`AdmissionRef`;
   - the remote-start shapes: `RequestRemoteStart`, `RemoteLaunch`, `RemoteStartAdmission`, `StartRequestedSession`, `ReportRemoteStart`, `RemoteStartAnswer`, `RemoteStartResult`, `RemoteStartStatus`, `ListWorkspaceMachines`, and the `remoteSession` starter;
   - the machine client: `client_id` in `DecideMachineToken` and `AdmitMachineConnection`, `wrongClient` in both answers, `machineClientId` on `MachineEnrollment`, and `DisableMachineClient` (K11);
-  - the view's shapes (K12): `Heartbeat`, `ReportSessionActivity` with `sequence`, `SessionActivityEntry` and its result (`Accepted`, `Superseded`, `Refused`), `ReadMachinePresence` and `MachinePresenceAnswer`, `WhoIsLoggedIn` and its result rows.
-- **Writes:** the new `fleet-identity-protocol` crate (the shapes on the machine's connection, which the Router's crates and central's core both depend on; `serde` and `chrono` only), `collaboration-central-core/src/identity_contract.rs` (central-only shapes), generated schema.
+  - the view's shapes (K12): `Heartbeat` with its closed `MachineCapability` list (empty until DR), `ReportSessionActivity` with `sequence`, `SessionActivityEntry` and its result (`Accepted`, `Superseded`, `Refused`), `ReadMachinePresence` and `MachinePresenceAnswer`, `WhoIsLoggedIn` and its result rows.
+- **Writes:** the new `fleet-identity-protocol` crate (the shapes on the machine's connection, which the Router's crates and central's core both depend on; `serde`, `chrono` and `message-board`, whose `SessionRef` it carries, with the Router's conversion from its `collaboration-protocol` `SessionRef` and round-trip tests; stop and return if they can't convert without loss), `collaboration-central-core/src/identity_contract.rs` (central-only shapes), generated schema.
 - **Earns:** SO6's Rust half; U1's focused parse cases.
 - **Focused proof:**
   - **Wrong behaviors caught:** a closed variant serialized under a different tag than the Program Design names; `machine` parsing as an actor.
@@ -562,7 +563,7 @@ Real sessions on each harness path start and restore on a Router logged in by de
 </details>
 <h2 id="item2--dt-logs-and-traces">DT Logs and traces</h2>
 <ex-markdown id="item2--dt-logs-and-traces-text"><script type="text/markdown">
-**You'll see:** every login, refusal, connection, registration and outbox step in Cloudflare's Workers Logs and traces for both Workers, and in your OpenTelemetry tool once you name it (OD17). Each record says what happened, why, and to which organization, machine, connection or session. No token, code, secret, cookie or email is ever in one. Locally, the Node, Tokio and Router hosts send the same records to the shared OpenTelemetry stack.
+**You'll see:** every login, refusal, connection, registration and outbox step in Cloudflare's Workers Logs for both Workers (with central's traces), and in your OpenTelemetry tool once you name it (OD17). Each record says what happened, why, and to which organization, machine, connection or session. No token, code, secret, cookie or email is ever in one. Locally, the Node, Tokio and Router hosts send the same records to the shared OpenTelemetry stack.
 
 **How it works** (the Program Design's [telemetry](../program-design.html#program-design--telemetry-logs-and-traces-r51)): the records are D1's own, written through the cores' observation seams as each ticket builds its decisions. DT turns on what Cloudflare gives and adds the exporters.
 
@@ -581,7 +582,7 @@ Real sessions on each harness path start and restore on a Router logged in by de
 <ex-markdown id="ticket-t1-text"><script type="text/markdown">
 - **Covers:** R51 at the sign-in service:
   - `SignInObservation` complete for every decision and refusal (D1's tickets add each as they build it; T1 checks none is missing);
-  - the Cloudflare host writing each as one JSON `console.log` line, and the Worker config's `observability`: logs and traces on, `head_sampling_rate: 1`, `invocation_logs` off, the destination names from the private ops config;
+  - the Cloudflare host writing each as one JSON `console.log` line, and the Worker config's `observability`: logs on, `head_sampling_rate: 1`, automatic traces and `invocation_logs` off (they record full URLs, and OAuth callbacks carry codes), the destination names from the private ops config;
   - the Node host exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` with the OpenTelemetry JS SDK (a new dependency, for that host only), and to its own output with none set;
   - Better Auth's logger reduced to its level and a fixed event name;
   - codes never in a URL: the approval page's code form posts, and the grant's verify is called inside the core.
@@ -620,7 +621,7 @@ SO13: SO8's and SO2's runs (and SO12's once V4 exists) export to a local OTLP co
 <summary><strong>JT1</strong> logs and traces on the private stack (new) · waits on T1–T3 merged, with their local runs passing; JC1; OD17 for the export check only</summary>
 <ex-markdown id="ticket-jt1-text"><script type="text/markdown">
 - **Covers:** DT on the private stack: the account-level destinations, created through Cloudflare's API with the `cf` CLI; both Workers deployed with `observability` on; central and sign-in builds carrying T1 and T2.
-- **Earns:** SO13's JT1 check: after a login and a refusal on the private stack, their records read back from Workers Logs through Cloudflare's API, and at your destination once you name it (OD17). Until then the export leg is named unverified.
+- **Earns:** SO13's JT1 check: a login, a refusal and a Google sign-in with canary values in their URLs; every record Cloudflare keeps for both Workers read back through Cloudflare's API and searched for the canaries and the run's secrets; then at your destination once you name it (OD17). Until then the export leg is named unverified. Also the intermediate combination: telemetry central and sign-in serving D1's Routers unchanged.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
 </details>
@@ -659,7 +660,7 @@ What it does:
 </script></ex-markdown>
 <h3 id="item2--dv-tickets">Tickets</h3>
 <details id="ticket-v1">
-<summary><strong>V1</strong> presence, activity and the lookup at central (new) · waits on F1, F2a, F4a, F10; merges after JC1</summary>
+<summary><strong>V1</strong> presence, activity and the lookup at central (new) · waits on F1, F2a, F4a, F10; merges after JT1</summary>
 <ex-markdown id="ticket-v1-text"><script type="text/markdown">
 - **Covers:** R47–R49 at central, E24, C12.
   - **The Connection object owns presence, on its own clock.**
@@ -691,7 +692,7 @@ What it does:
 </script></ex-markdown>
 </details>
 <details id="ticket-v2">
-<summary><strong>V2</strong> Router heartbeat and session activity reporter (new) · waits on F4a, F11; merges after JC1</summary>
+<summary><strong>V2</strong> Router heartbeat and session activity reporter (new) · waits on F4a, F11; merges after JT1</summary>
 <ex-markdown id="ticket-v2-text"><script type="text/markdown">
 - **Covers:** R48 on the Router.
   - **Heartbeat:** sent every sixth of OD14 while attached, on the host's injected clock.
@@ -711,7 +712,7 @@ What it does:
 </script></ex-markdown>
 </details>
 <details id="ticket-v3">
-<summary><strong>V3</strong> the who-is-logged-in page (new) · waits on B4a; V1 for the real lookup (stand-in: a central client honoring C12 in tests, named unverified until SO12); merges after JC1</summary>
+<summary><strong>V3</strong> the who-is-logged-in page (new) · waits on B4a; V1 for the real lookup (stand-in: a central client honoring C12 in tests, named unverified until SO12); merges after JT1</summary>
 <ex-markdown id="ticket-v3-text"><script type="text/markdown">
 - **Covers:** C12's page, and R49 at the sign-in service.
   - **Where:** a page and refresh route beside the device-code approval page.
@@ -748,7 +749,7 @@ What it does:
   2. Then the test Routers.
   3. Then the sign-in service's page.
 - K12 goes live whole.
-- **Earns:** SO12's steps 1–3 and 7–8 against the private stack.
+- **Earns:** SO12's steps 1–3 and 7–8 against the private stack, and the intermediate combination: the view's central serving Routers without V2, which are never closed for silence and show as not connected until they update.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
 </details>
@@ -781,7 +782,7 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 </script></ex-markdown>
 <h3 id="item2--dr-tickets">Tickets</h3>
 <details id="ticket-f15">
-<summary><strong>F15</strong> starting a session on another machine (new) · waits on F2a, F4a, F10, F11; merges after JC1</summary>
+<summary><strong>F15</strong> starting a session on another machine (new) · waits on F2a, F4a, F10, F11, and V1/V2's heartbeat; merges after JV1</summary>
 <ex-markdown id="ticket-f15-text"><script type="text/markdown">
 - **Covers:** R46, R8's extension, C11:
   - the organization authority's admission of `RequestRemoteStart`, its remote-start records (body, deadline, bound session; `forwarded`, `started`, `refusedByTarget`, `refused`, `unknown`, late `started`), and the lapse to `unknown` on a wake;
@@ -789,7 +790,7 @@ It goes live after the view: central first, then the Routers. Until a machine ru
   - accepting a `remoteSession` starter only for its own forwarded record, and binding one session to it;
   - `RemoteStartStatus` (the original requester only) and `ListWorkspaceMachines`;
   - the Router's create path sending `RequestRemoteStart` for another machine, with the same-Router check kept for local creates, and reporting `unknown`, never a refusal, once the request may have reached central;
-  - central sending a start only to a target whose Router has reported, in `ReportSchemaSupport`, that it can take one, and answering "refused by the target" otherwise;
+  - each Connection object keeping the capabilities from its Router's latest heartbeat, and delivering `StartRequestedSession` only when they include `RemoteStart`; any other target answers "refused by the target" with no frame sent; the Router's heartbeat declaring `RemoteStart` once it has the handler;
   - the target's handler: the deadline check, the request ID as its create's operation ID, the working directory checked on the target before creating, then the session registrar.
 - **Writes:** `organization_authority` (`remote_start` table), `fleet-identity-protocol` (the connection's new frames), `collaboration-client` `conversation_client.rs`, `collaboration-service` (new `remote_session_start`).
 - **Earns:** its SO4 scenarios (U39's central half).
@@ -805,7 +806,7 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 <ex-markdown id="ticket-f16-text"><script type="text/markdown">
 `verify-codex-router` `fleet-remote-start`: two Routers under isolated debug Hosts with different directories, a local Fleet central, a third Router in another organization; B creates a real Codex conversation (a provider account on the run machine, as SO1).
 - **Messaging:** A's session and B's helper exchange a message and a reply, each recorded with its sending session (SO11 step 10).
-- **The older Router:** a start to a target whose Router hasn't reported it can take one is refused by the target, and nothing is created (SO11 step 11).
+- **The older Router:** a genuine pre-DR Router stays attached with its ordinary heartbeat; a start to it is refused by the target, no new frame reaches it, nothing is created and its messaging keeps working; after it updates, the same start succeeds (SO11 step 11).
 - **The old connection:** after a re-login, a remote start on the old connection is refused, against a positive control on the new one (SO8 step 3's remote-start case).
 - **Earns:** U39. The same journey runs at JR1 and at PRODR.
 </script></ex-markdown>
@@ -813,8 +814,8 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 <details id="ticket-jr1">
 <summary><strong>JR1</strong> remote start on the private stack (new) · waits on F15, F16 merged, with their local runs passing; JV1</summary>
 <ex-markdown id="ticket-jr1-text"><script type="text/markdown">
-- **Covers:** DR on the private stack: central with F15 first, then the test Routers.
-- **Earns:** SO11 against the private stack, including the older-Router refusal before the Routers update.
+- **Covers:** DR on the private stack: central with F15 first, then the test Routers. The remote-start leg of SO8 step 3 and SO4's old-connection scenario (refused on the old connection, succeeding on the new) runs here too.
+- **Earns:** SO11 against the private stack, including step 11 with a genuine pre-DR Router attached before the Routers update.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
 </details>
@@ -865,10 +866,10 @@ It goes live after the view: central first, then the Routers. Until a machine ru
   - DR: F15 needs registration and machine login (F2a, F4a, F10, F11), and F16 runs on SO8's arrangement (F14).
 - **Records ride in D1's tickets;** DT adds only Cloudflare's settings and the exporters.
 - **Cuts in order:** JC1 → PROD2, then JT1 → PRODT, JV1 → PRODV and JR1 → PRODR, each after the one before.
-- **Everything after D1 merges after JC1** (T1, T2, V1–V3, F15). They're built and reviewed while D1 finishes, so JC1 deploys D1 alone, and nothing later can hold it up (Advisor, IP1).
-- **PROD2 deploys JC1's verified builds,** by the orchestration's exact-build rule. Those predate V2's merge, so no production Router sends a heartbeat before a central that receives it.
-- **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page. At JR1 and PRODR, central with F15 goes first, and starts only targets whose Router reported it can take one.
-- **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From F17 merging until PROD2, production central isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone.
+- **Each later deliverable merges after the previous private cut fixes its builds** (Advisor, IP1 and RC1): T1 and T2 after JC1, V1–V3 after JT1, F15 after JV1, V5c and V5s after JR1. Each is built and reviewed in its branch meanwhile. So every private cut deploys exactly its own deliverable on top of the previous cut's recorded builds, and every production step promotes its private cut's recorded builds, unchanged.
+- **Each production step deploys its private cut's verified builds,** by the orchestration's exact-build rule: PROD2 JC1's, PRODT JT1's, PRODV JV1's, PRODR JR1's. Those predate V2's merge, so no production Router sends a heartbeat before a central that receives it.
+- **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page. At JR1 and PRODR, central with F15 goes first, and delivers a start only to a connection whose heartbeat declared `RemoteStart`.
+- **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From F17 merging until PROD2, production central isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone. The merge order above keeps these holds from blocking the next cut.
 </script></ex-markdown>
 <h2 id="item2--choices-made-in-this-plan">Choices made in this plan</h2>
 <ex-markdown id="item2--choices-made-in-this-plan-text"><script type="text/markdown">
@@ -883,6 +884,8 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 - **Records ride in D1's tickets; DT only exports.** Adding records afterwards would mean revisiting every D1 decision.
 - **Remote start comes after the view,** because you named the view as step 2. It depends only on D1, so it builds in parallel, and it can go live before the view if you want it sooner.
 - **Flood limits are their own ticket (B6) in D1,** after the device grant they limit.
+- **Later deliverables wait to merge, rather than picking stage builds from `main`** (Advisor, RC1). It costs merge freedom; the alternative, choosing an exact candidate per cut with its exclusions, costs build-selection work at every cut.
+- **Remote start is gated by a declared capability in the heartbeat** (Advisor, RC2). Not chosen: updating every Router before central, which would hold central's deploy on every machine.
 </script></ex-markdown>
 <h2 id="item2--verification-design-rows-scheduled">Verification Design rows, scheduled</h2>
 <ex-markdown id="item2--verification-design-rows-scheduled-text"><script type="text/markdown">
@@ -958,7 +961,7 @@ The rows for D2–D7 (U2, U3, U4/U5, U7/U8/U28, U10–U13, U16, U26/U36, U29, U3
 - **Production counterparts:** each cut's inventory names every caller, so no cut assumes only test callers.
 - **Telemetry export:** until you name a destination (OD17), JT1's export leg is unverified. Cloudflare's own records are proven.
 - **The binding counts per location, approximately.** SO2 proves the limits on local workerd; how deployed Cloudflare shares a count across a location stays unverified.
-- **Remote start's older-Router gate** depends on each Router's schema-support report; SO11 step 11 checks it.
+- **Remote start's older-Router gate** is the `RemoteStart` capability in each Router's heartbeat, not its schema-support report (board-schema versions only; an old Router drops its connection on a frame it can't decode). SO11 step 11 checks it with a genuine pre-DR Router.
 </script></ex-markdown>
 <h2 id="item2--stop-and-replan">Stop and replan</h2>
 <ex-markdown id="item2--stop-and-replan-text"><script type="text/markdown">

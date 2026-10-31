@@ -67,7 +67,7 @@
 <ex-presentation id="path-telemetry" title="Logs, traces and flood limits" description="What Cloudflare gives turned on and exported over OpenTelemetry; floods kept off the login.">
   <ex-step to="requirements.html#requirements--needs" icon="users">The needs: see what happened (U41), and login can't be flooded (U42).</ex-step>
   <ex-step to="specification.html#specification--telemetry-and-flood-limits" icon="book-open">The rules: a record for every decision, nothing secret in one; limits per trusted address, and Turnstile (R51, R52).</ex-step>
-  <ex-step to="program-design.html#program-design--telemetry-logs-and-traces-r51" icon="path">Telemetry: Workers Logs and traces, OTLP from every host.</ex-step>
+  <ex-step to="program-design.html#program-design--telemetry-logs-and-traces-r51" icon="path">Telemetry: Workers Logs, central's traces, OTLP from every host.</ex-step>
   <ex-step to="program-design.html#program-design--flood-limits-at-sign-in-r42-r52" icon="shield-check">Flood limits: Better Auth's limits, the rate-limit binding, and Turnstile.</ex-step>
   <ex-step to="program-design.html#program-design--clients-without-a-secret-and-google-and-github" icon="key">Clients without a secret, PKCE, and Google and GitHub.</ex-step>
   <ex-step to="verification-design.html#verification-design--shared-observations" icon="test-tube">How it's proven: SO13, and SO2's flood cases.</ex-step>
@@ -129,7 +129,7 @@ Each opens the exact sections in order. Start one from the walkthrough button.
 <ex-markdown id="item-two-built-on-text"><script type="text/markdown">
 | Part | Language | Storage | Runtime | Logs and traces |
 |---|---|---|---|---|
-| **Sign-in service** (`agent-collaboration/switchboard`, `packages/auth`) | TypeScript | SQLite through **Drizzle** only: D1 on Cloudflare, `better-sqlite3` on Node. **Better Auth** reaches it through its Drizzle adapter; migrations come from `drizzle-kit`. | One **runtime-free** `sign-in-core`. Storage, time, IDs, crypto and outbound calls come only through `SignInPlatform`, which each host supplies. | Workers Logs and traces on Cloudflare; OTLP on Node |
+| **Sign-in service** (`agent-collaboration/switchboard`, `packages/auth`) | TypeScript | SQLite through **Drizzle** only: D1 on Cloudflare, `better-sqlite3` on Node. **Better Auth** reaches it through its Drizzle adapter; migrations come from `drizzle-kit`. | One **runtime-free** `sign-in-core`. Storage, time, IDs, crypto and outbound calls come only through `SignInPlatform`, which each host supplies. | Workers Logs on Cloudflare (no automatic traces: its URLs carry sign-in codes); OTLP on Node |
 | **Fleet central** (`agent-collaboration/agent-collaboration`) | Rust | its existing `sqlx-core` stores with checked-in SQL (Drizzle is TypeScript-only) | One runtime-free `collaboration-central-core` on an injected clock and IDs; the Tokio and Cloudflare hosts add only their mechanics. | Workers Logs and traces on Cloudflare; OTLP on Tokio |
 | **Router** (same repository) | Rust | its existing stores | Machine login, the heartbeat and the activity reporter on the host's injected clock. | OTLP, as today |
 | **Switchboard** | TypeScript | unchanged by item two | unchanged by item two | unchanged |
