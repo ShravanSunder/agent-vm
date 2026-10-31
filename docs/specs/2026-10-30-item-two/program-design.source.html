@@ -574,7 +574,7 @@ pub enum IsolationKind { Host, ProcessSandbox, Container, Vm }   // closed: host
 pub enum MachineEnvironment { Physical, CloudVm } // closed: physical | cloudVm
 #[serde(rename_all = "camelCase")]
 pub struct LaunchContext {
-    pub working_directory: AbsolutePath,        // absolute, at most 4,096 UTF-8 bytes, no NUL (as ProviderWorkingDirectory)
+    pub working_directory: AbsolutePath,        // a byte rule, never std::path: starts with '/', at most 4,096 UTF-8 bytes, no NUL (the Router's schema pattern ^/[^\u0000]*$). Path::is_absolute is false for every path on wasm32, where central runs
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<RepositoryLocator>,  // the remote's URL as the launcher read it, at most 2,048 bytes; absent outside a repository
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -684,7 +684,7 @@ pub struct RequestRemoteStart {
 #[serde(rename_all = "camelCase")]
 pub struct RemoteLaunch {
     pub harness: HarnessKind,                   // codex | claude | cursor
-    pub working_directory: AbsolutePath,        // a path on the target; the target checks it exists before creating
+    pub working_directory: AbsolutePath,        // the same byte rule; a path on the target, which checks it exists before creating
     pub requested_policy: RemoteLaunchPolicy,   // the create's existing requested policy, carried across machines
 }
 // The same wire shape as the Router's ProviderRequestedPolicy { access: RouterAccess } (provider_conversation_contract.rs:244, access_contract.rs:7),
