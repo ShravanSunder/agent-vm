@@ -111,20 +111,78 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 </script></ex-markdown>
 <h2 id="item2--how-the-build-runs-in-parallel">How the build runs in parallel</h2>
 <ex-markdown id="item2--how-the-build-runs-in-parallel-text"><script type="text/markdown">
-**Two lanes run side by side from the start,** one per repository, each with its own Lead: the sign-in service (Switchboard Lead) and Fleet central with the Router (Fleet Lead). Inside each lane, every ticket whose "waits on" is met starts at once. The later deliverables (logs and traces, the view, remote start) are **built and reviewed in their branches while login finishes**. They only *merge* in order, after each private-stack cut.
+**Two lanes run side by side from the start,** one per repository, each with its own Lead: the sign-in service (Switchboard Lead) and Fleet central with the Router (Fleet Lead). Inside each lane, a ticket starts as soon as its "waits on" is met and a slot is free (at most four per lane at once). The later deliverables (logs and traces, the view, remote start) are **built and reviewed in their branches while login finishes**. They only *merge* in order, after each private-stack cut.
 
 | Wave | Sign-in lane | Fleet central and Router lane | Built ahead, in branches | Starts when |
 |---|---|---|---|---|
-| **1** | B1 storage and core | F1 contracts and the shared crate · F12 Linux secret store | — | your go; the Fleet release F0 |
+| **1** | B0 latest oxc, then B1 storage and core packages | F1 contracts and the shared crate · F12 Linux secret store | — | your go; the Fleet release F0 |
 | **2** | B2 Node host · B3 design fixes | F2a organization core · F11 Router machine login | — | B1; F1 |
 | **3** | B4a issuer core | F2b Fleet data per organization · F3a receivers | — | B3 and F1's fixtures; F2a |
 | **4** | B5 device-code login | F10 enrollment and token check · F4a registrar and binding | V3 the view's page | B4a and B2; F2a, F3a, F2b, F11 |
 | **5** | B6 flood limits · B7 second factors | F14 SO8 login journey | T1, T2 telemetry · V1 presence and lookup · V2 heartbeat | B5; F10, F11, F4a and B5 |
-| **6** | — | F8a SO1 journey · F17 remove the old login | T3, V4 journeys · F15 remote start | F14; V1 and V2 |
+| **6** | — | F8a SO1 journey · F17 remove the old login | T3, V4 journeys · F15 remote start (queued until a Fleet slot frees: five are eligible, four run) | F14; V1 and V2 |
 | **7** | — | — | F16 remote-start journey | F15 |
 | **then** | JC1 private stack → PROD2 your switch (login goes live) | | each later deliverable merges after the previous cut, then goes live | |
 
+```mermaid
+flowchart TB
+  subgraph W1["Wave 1 · your go"]
+    direction LR
+    W1S["Sign-in lane<br/>B0 latest oxc<br/>B1 sign-in core packages"]
+    W1F["Fleet lane<br/>F1 contracts, shared crate<br/>F12 Linux secret store"]
+    W1S ~~~ W1F
+  end
+  subgraph W2["Wave 2"]
+    direction LR
+    W2S["Sign-in lane<br/>B2 Node host<br/>B3 design fixes"]
+    W2F["Fleet lane<br/>F2a organization core<br/>F11 Router login"]
+    W2S ~~~ W2F
+  end
+  subgraph W3["Wave 3"]
+    direction LR
+    W3S["Sign-in lane<br/>B4a issuer core"]
+    W3F["Fleet lane<br/>F2b Fleet data<br/>F3a receivers"]
+    W3S ~~~ W3F
+  end
+  subgraph W4["Wave 4"]
+    direction LR
+    W4S["Sign-in lane<br/>B5 device-code login"]
+    W4F["Fleet lane<br/>F10 enrollment, token check<br/>F4a registrar"]
+    W4B["In branches<br/>V3 view page"]
+    W4S ~~~ W4F ~~~ W4B
+  end
+  subgraph W5["Wave 5"]
+    direction LR
+    W5S["Sign-in lane<br/>B6 flood limits<br/>B7 second factors"]
+    W5F["Fleet lane<br/>F14 login journey"]
+    W5B["In branches<br/>T1, T2 telemetry<br/>V1, V2 presence"]
+    W5S ~~~ W5F ~~~ W5B
+  end
+  subgraph W6["Wave 6"]
+    direction LR
+    W6F["Fleet lane<br/>F8a sessions journey<br/>F17 remove old login"]
+    W6B["In branches<br/>T3, V4 journeys<br/>F15 remote start"]
+    W6F ~~~ W6B
+  end
+  subgraph W7["Wave 7"]
+    direction LR
+    W7B["In branches<br/>F16 remote-start journey"]
+  end
+  CUT["JC1 private stack, then PROD2 your switch: login goes live"]
+  W1 --> W2 --> W3 --> W4 --> W5 --> W6 --> W7
+  W6 --> CUT
+```
+
+Each row is one wave. Inside a row, everything runs at once: the sign-in lane beside the Fleet lane, with the later deliverables in their branches. Login goes live after wave 6; wave 7 only finishes remote start's journey. "Branches" are the later deliverables, built and reviewed now and merged after their cut.
+
 **The critical path** runs F1 → F2a → F3a → F10 → F14 → F17 → JC1, with the sign-in chain B1 → B3 → B4a → B5 meeting it at F14. That's six waves to the switch; everything else fits around it.
+
+**Standards every agent follows** (yours, 31 October: "everything uses latest oxc and my standards and good discriminated unions; make sure all agents load my skills"):
+- **Every agent's brief lists its required reads,** and the Lead checks them before work starts: its role skill, the domain skill for its language (`domain-typescript` or `domain-rust`), and the principles those call for.
+- **Types say what's valid:** discriminated unions (closed variants) for every state and result, branded IDs, UUIDv7 only, Zod at every TypeScript boundary, and tagged `serde` enums in Rust. No `any`, and no throws across a boundary: results are values.
+- **Latest oxc:** TypeScript is linted and formatted with oxlint and oxfmt at their latest releases. Ticket B0 brings the Switchboard repository from oxlint `^1.63.0` and oxfmt `^0.48.0` to 1.90.0 and 0.75.0 first. Rust keeps the repository's `rustfmt` and `clippy` gates.
+- **Runtime stays out of logic:** cores depend on no runtime; hosts inject storage (Drizzle), clock, IDs and calls.
+- **Tests:** no wall clock (controlled clocks only), Hegel property tests where a rule covers many cases, and verification scripts in TypeScript.
 
 **Who builds it** (my call, recorded in the trace; tell me if you want it different):
 - **One Sol Implementer per ticket in flight,** each in its own Agent Studio worktree of its repository. Sol at high to xhigh effort for the cross-repository and design-heavy tickets (F1, F2a, F10, B4a, B5, B7, F15); Sol at medium for the bounded ones.
@@ -165,7 +223,8 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| B1 sign-in core and storage | D1 | OD4 |
+| B0 oxlint and oxfmt to the latest release | D1 | your go |
+| B1 sign-in core and storage | D1 | B0; OD4 |
 | B3 design-thread fixes | D1 | B1 |
 | B4a issuer core | D1 | B3; F1's contract fixtures |
 | B2 sign-in Node host | D1 | B1 |
@@ -195,7 +254,7 @@ There is no move ticket: the Switchboard and sign-in already stand alone in `age
 <ex-markdown id="item2--how-a-contract-s-real-output-is-checked-text"><script type="text/markdown">
 Every cross-repository contract has one home, which publishes the shape its consumer builds and tests against from the start.
 - **In codex-router:** F1 generates the schemas and structural fixtures for the Rust-owned contracts (K3, K8, K9, K11, K12): the shapes on the machine's connection in the new `fleet-identity-protocol` crate, and central-only shapes in `collaboration-central-core/src/identity_contract.rs`.
-- **In the switchboard repository:** K5, K6, K7 and K10 live in `packages/auth` and `tool-access/contracts`.
+- **In the switchboard repository:** K5, K6, K7 and K10 live in `sign-in-core` and `tool-access/contracts`.
 
 The check that a consumer parses the **real** producer's output runs in whichever of the producer's and the consumer's tickets merges second, and must pass before the contract's cut. So no ticket waits on another's runtime output.
 
@@ -338,10 +397,19 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 **Done when:** PROD2 holds, with every machine on the new login.
 </script></ex-markdown>
 <h3 id="item2--d1-tickets">Tickets</h3>
+<details id="ticket-b0">
+<summary><strong>B0</strong> oxlint and oxfmt to the latest release (new) · waits on your go</summary>
+<ex-markdown id="ticket-b0-text"><script type="text/markdown">
+- **Covers:** your standard that everything uses the latest oxc. In the Switchboard repository, oxlint goes from `^1.63.0` to 1.90.0 and oxfmt from `^0.48.0` to 0.75.0, with the existing `.oxlintrc.json` and `.oxfmtrc.json`. Every new finding is fixed in the code, never silenced, and the repository's `pnpm check` passes.
+- **Writes:** `package.json`, the lockfile, and the code the new rules flag.
+- **Not:** no new check step and no rule turned off.
+- **Proof:** `pnpm check` green before and after; the formatter's diff is mechanical.
+</script></ex-markdown>
+</details>
 <details id="ticket-b1">
 <summary><strong>B1</strong> sign-in core and storage (extended) · waits on OD4</summary>
 <ex-markdown id="ticket-b1-text"><script type="text/markdown">
-- **Covers:** R29–R33, with the device grant's `deviceCode` table (our four columns and `enrollmentId`) in the one schema module. Today's agent registration, its metadata and its `oauthClientResource` links move onto the new storage unchanged, and stay until B4b.
+- **Covers:** R29–R33, first splitting `packages/auth` into `sign-in-core` (runtime-free: no Cloudflare or Node types, no SQLite driver in its dependencies or tsconfig), `sign-in-platform-web`, `sign-in-host-cloudflare`, `sign-in-owner-cli` and `sign-in-test-support` (B2 adds `sign-in-host-node`), like Fleet central's crates and the Switchboard's `tool-host-*` packages; with the device grant's `deviceCode` table (our four columns and `enrollmentId`) in the one schema module. Today's agent registration, its metadata and its `oauthClientResource` links move onto the new storage unchanged, and stay until B4b.
 - **Contributes, without closing:** the storage, migrations and core cases of U22–U25 in SO2, on D1 and `better-sqlite3` under Node. U22's and U25's device-code cases close at B5. U23's both-hosts run closes at B2, once B5's device approval rule is in the core. U24's identifier readback closes at B5, with device codes.
 </script></ex-markdown>
 </details>
@@ -366,7 +434,7 @@ unchanged; produces K5 and K6, and runs their real-output check against F2a's gu
 <details id="ticket-b2">
 <summary><strong>B2</strong> sign-in Node host</summary>
 <ex-markdown id="ticket-b2-text"><script type="text/markdown">
-unchanged; the local journeys run the sign-in service on it.
+the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Drizzle, OTLP through `@logtape/otel`; the local journeys run the sign-in service on it.
 </script></ex-markdown>
 </details>
 <details id="ticket-b5">
@@ -386,7 +454,7 @@ unchanged; the local journeys run the sign-in service on it.
   - the machine clients' refresh lifetime of 30 days, a fresh one with each refresh (R40's idle expiry; SO2 confirms the rolling lifetime at 1.7.11);
   - the dispatch row and refused combinations;
   - K10 (machine tokens from the real issuer).
-- **Writes:** `packages/auth` `sign-in-core/device-login/`, the provider configuration, the dispatch.
+- **Writes:** `sign-in-core` (`src/device-login/`, `src/better-auth/`, the dispatch).
 - **Earns:**
   - SO2's device-code cases on D1 and `better-sqlite3`, including non-owner verify and deny, two machines under one owner kept apart across rotation and restart, **the two-machine replay and the mixed-client revoke**, the recorded-client refusal, and the held-grant window;
   - U22's redemption race;
@@ -417,7 +485,7 @@ unchanged; the local journeys run the sign-in service on it.
   - confirming at 1.7.11 that the device-code redemption on the OAuth token endpoint keeps the grant's `slow_down`;
   - **Turnstile:** Better Auth's `captcha` plugin with provider `cloudflare-turnstile` on `/sign-in/social` and `/passkey/generate-authenticate-options` (before the challenge is stored), the widget on the sign-in page sending `x-captcha-response` on those requests itself, `allowedHostnames` and `expectedAction` set, the secret key a Worker secret, and `siteVerifyURLOverride` pointed at a local stand-in in tests;
   - a `limited` or `captcha-refused` observation for each refused request.
-- **Writes:** `packages/auth` `sign-in-core/request-limits/`, `better-auth-provider`, `cloudflare-host`, `node-host`, the sign-in page, `wrangler.example.jsonc`.
+- **Writes:** `sign-in-core` (`src/request-limits/`, `src/better-auth/`, the sign-in page), `sign-in-host-cloudflare`, `sign-in-host-node`, `wrangler.example.jsonc`.
 - **Earns:** SO2's flood cases on both hosts (U42).
 - **Focused proof:**
   - **Wrong behaviors caught:** the limiter off outside `NODE_ENV=production`; a service page or callback left uncounted on Node; a forged `x-forwarded-for` escaping the count; one /64 getting many budgets; a limited request creating a device code or a session; one address's flood refusing another; a sign-in start passing without a verified Turnstile token, or when siteverify doesn't answer.
@@ -437,7 +505,7 @@ unchanged; the local journeys run the sign-in service on it.
   - passkey confirmation only on top of the provider session (the plugin's own session revoked), and the deny hook's own 15-minute check;
   - `approver_second_factor_at` in `DecideDeviceLogin` (K8);
   - the page's prompts on `secondFactorRequired`; the code checks in `SIGN_IN_ATTEMPTS`.
-- **Writes:** `packages/auth` `sign-in-core/second-factors/`, `better-auth-provider`, the pages.
+- **Writes:** `sign-in-core` (`src/second-factors/`, `src/better-auth/`, the pages).
 - **Earns:** SO2's second-factor cases (U44); U43's token-claim half.
 - **Focused proof:**
   - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey sign-in without user verification creating a session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor; two concurrent removals leaving no factor; an unverified app counted as a factor.
@@ -638,10 +706,10 @@ Real sessions on each harness path start and restore on a Router logged in by de
 - **Covers:** R51 at the sign-in service:
   - `SignInObservation` complete for every decision and refusal (D1's tickets add each as they build it; T1 checks none is missing);
   - the Cloudflare host writing each as one JSON `console.log` line, and the Worker config's `observability`: logs on, `head_sampling_rate: 1`, automatic traces and `invocation_logs` off (they record full URLs, and OAuth callbacks carry codes), the destination names from the private ops config;
-  - the Node host exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` with the OpenTelemetry JS SDK (a new dependency, for that host only), and to its own output with none set;
+  - the Node host exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` through `@logtape/logtape` and `@logtape/otel`, as `tool-host-node` does, and to its own output with none set;
   - Better Auth's logger reduced to its level and a fixed event name;
   - codes never in a URL: the approval page's code form posts, and the grant's verify is called inside the core.
-- **Writes:** `packages/auth` `sign-in-core/contracts`, `cloudflare-host`, `node-host`, `better-auth-provider`, `wrangler.example.jsonc`.
+- **Writes:** `sign-in-core` (`src/contracts/`, `src/better-auth/`), `sign-in-host-cloudflare` (with its Worker config), `sign-in-host-node`.
 - **Earns:** SO13's sign-in records, with T3.
 - **Focused proof:**
   - **Wrong behaviors caught:** a record carrying a string from a request; an exporter that delays an answer; a code in a page URL.
@@ -776,7 +844,7 @@ What it does:
   - **Freshness:** an answer arriving more than one refresh interval after its request is discarded. A failure, or OD14 without a snapshot, shows unavailable.
   - **Refusals:** a refusal shows nothing.
   - **The token stays on the server.**
-- **Writes:** `packages/auth`: a new who-is-logged-in module in the runtime-free `sign-in-core`, reaching its clock and central client only through `SignInPlatform` (R30); each host only mounts its route; and the page.
+- **Writes:** `sign-in-core`: a new who-is-logged-in module, reaching its clock and central client only through `SignInPlatform` (R30); each host only mounts its route; and the page.
 - **Earns:** SO12's page side, with V4.
 - **Focused proof:**
   - **Wrong behaviors caught:**
@@ -903,7 +971,7 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 <summary><strong>V5s</strong> people's sign-in facts in the view (new) · waits on V5c's shape (K12); V3</summary>
 <ex-markdown id="ticket-v5s-text"><script type="text/markdown">
 - **Covers:** R50's people half at the sign-in service. The page joins each listed person with what it owns: their name, signed in now (an unexpired sign-in session), and the last sign-in.
-- **Writes:** `packages/auth` (the page's join), in `agent-collaboration/switchboard`.
+- **Writes:** `sign-in-core` (the page's join), in `agent-collaboration/switchboard`.
 - **Earns, with V5c:** SO12 step 9's people part (V42's people half). The joint run is V4's journey extended to step 9's people part, run after both merge, and again on the private stack and in production with the next deploy.
 - **Focused proof:**
   - **Wrong behaviors caught:** sign-in facts copied into central; a person shown signed in after their session ended.

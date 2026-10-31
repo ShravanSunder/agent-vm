@@ -139,7 +139,7 @@ Every row is your direction, or a decision already recorded in the people sign-i
 |---|---|---|---|
 | U16 | One versioned contract between services, on **any host**. Cloudflare is one runtime; the same design runs elsewhere. | The product runs on Cloudflare or elsewhere without a second design. | "maqke sure clodufalre is one runtiem and we decokuple yes? same design" |
 | U22 | The sign-in service stores everything in **SQLite through Drizzle**: D1 on Cloudflare, `better-sqlite3` on Node. Better Auth uses its Drizzle adapter, and `drizzle-kit` generates the checked-in migrations. Never Kysely, SQL strings or `node:sqlite`. You approve the schema and migrations before code uses them. | Sign-in was built on hand-written SQL and Kysely, which you didn't choose. | "obviously fuckkgin drizzle eveyrwhere"; "we kuse drizzle and sqlite"; "i will nto allow you to yolo zqlite migraiton crap" |
-| U23 | The sign-in service has **one runtime-free core** holding every rule. Each runtime is a host that injects storage, clock, IDs, crypto and outbound calls, the way codex-router's Fleet central does. | One design on any host. | "it shoudl be runtime seperated like fuckign codex router"; "you inject stukff not pkul out engines" |
+| U23 | The sign-in service has **one runtime-free core** holding every rule. Each runtime is a host that injects storage, clock, IDs, crypto and outbound calls, the way codex-router's Fleet central does. | One design on any host. | "it shoudl be runtime seperated like fuckign codex router"; "you inject stukff not pkul out engines"; "lets maek sure teh runtime (cloudfare, local node) vs logic is seggrated liek fleet (tokio vs clodufalre wokrer rs)" |
 | U24 | **Types say what is valid:** discriminated unions for states and results. Only **UUIDv7** is ever used as a UUID. | One identifier format, and types that can't hold an invalid state. | "type safeyt and good tyeps and descrimatn union"; "we ony use uuidv7" |
 | U25 | Tests **never use wall-clock time**, include **Hegel** property tests, and are TypeScript. | Time and ordering are proven deterministically. | "i dont allow wall clock time ever in tests"; "use hegal" |
 </script></ex-markdown>
@@ -168,7 +168,7 @@ Every row is your direction, or a decision already recorded in the people sign-i
 
 **What may change:**
 - Fleet central and the Router (`agent-collaboration/agent-collaboration`);
-- the sign-in service (`agent-collaboration/switchboard`, `packages/auth`).
+- the sign-in service (`agent-collaboration/switchboard`): today's `packages/auth`, split into a runtime-free core package and one package per host, like Fleet central's crates and the Switchboard's `tool-host-*` packages.
 
 agent-vm is frozen and changes for neither. The Switchboard isn't changed by item two.
 
