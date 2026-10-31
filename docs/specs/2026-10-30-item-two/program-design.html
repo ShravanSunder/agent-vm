@@ -1605,7 +1605,7 @@ flowchart TB
 | Part | Design |
 |---|---|
 | Database type the core accepts | `BaseSQLiteDatabase<'sync' \| 'async', unknown, typeof signInSchema>`: both drivers satisfy it without a cast. Every query builder is awaited, which works for both. |
-| Atomic sections | The core builds a fixed list of Drizzle statements, and the host's `runAtomically(statements)` executes them as one unit: `db.batch` on D1, an immediate `better-sqlite3` transaction on Node. No statement depends on reading an earlier one's result in code. A decision that needs a condition puts it in the statement (`where exists`, `on conflict`, `returning`). |
+| Atomic sections | The core builds a fixed list of Drizzle statements, and the host's `runAtomically(statements)` executes them as one unit: `db.batch` on D1, an immediate `better-sqlite3` transaction on Node, calling each statement's public `.all()`. Every statement ends in `.returning()`, and the returned rows come back unknown for the store to parse with Zod. No statement depends on reading an earlier one's result in code. A decision that needs a condition puts it in the statement (`where exists`, `on conflict`, `returning`). |
 | Schema | One module, `sign-in-core/storage/sign-in-schema.ts`. Better Auth's tables are generated as Drizzle `sqlite-core` by Better Auth's CLI for the pinned 1.7.11, then reviewed: no SQL time default stays. Our three tables are:
 - `sign_in_audit`;
 - `organization_admission_claim`: `attempt_id` (UUIDv7, primary key), `person_id`, `organization_id`, `claimed_at_ms`, indexed on `person_id`. Each sign-in attempt holds its own claim, so no attempt can release another attempt's claim.
@@ -1621,20 +1621,25 @@ flowchart TB
 ```ts
 // sign-in-core/storage/models/sign-in-store.ts
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
-import type { BatchItem, BatchResponse } from 'drizzle-orm/batch';
+import type { BatchItem } from 'drizzle-orm/batch';
 
 export type SignInDatabase = BaseSQLiteDatabase<'sync' | 'async', unknown, typeof signInSchema>;
 
-// A fixed group of Drizzle statements built only by the store. No statement depends on code reading an earlier result.
-export type AtomicStatementGroup = readonly [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
+// One statement the store built with the Drizzle query builder, always ending in .returning(), so its public
+// .all() runs it: synchronously on better-sqlite3, as a promise on D1. BatchItem alone carries no execution method.
+export type AtomicStatement = BatchItem<'sqlite'> & { all(): unknown };
+// A fixed group built only by the store. No statement depends on code reading an earlier result.
+export type AtomicStatementGroup = readonly [AtomicStatement, ...AtomicStatement[]];
 
-export type AtomicRunOutcome<TGroup extends AtomicStatementGroup> =
-	| { readonly kind: 'committed'; readonly results: BatchResponse<TGroup> }
+export type AtomicRunOutcome =
+	| { readonly kind: 'committed'; readonly rows: readonly (readonly unknown[])[] } // one returned-rows array per statement, in order
 	| { readonly kind: 'failed'; readonly reason: 'database-error' }; // nothing in the group took effect
 
-// Supplied by the host: D1 → db.batch(group); Node → one better-sqlite3 transaction with behavior 'immediate'
-// running each statement in order. The host executes and reports; it never inspects or reorders a statement.
-export type AtomicRunner = <TGroup extends AtomicStatementGroup>(group: TGroup) => Promise<AtomicRunOutcome<TGroup>>;
+// Supplied by the host. D1: db.batch(group). Node: one better-sqlite3 transaction with behavior 'immediate',
+// calling each statement's public .all() in order. The host executes and reports; it never inspects or reorders
+// a statement. Rows come back unknown: the store parses each with its Zod row schema, because the driver's
+// declared result type has validated nothing. No cast, no private method, no raw SQL.
+export type AtomicRunner = (group: AtomicStatementGroup) => Promise<AtomicRunOutcome>;
 
 export type SignInStoreFailure = {
 	readonly kind: 'store-unavailable';
