@@ -69,13 +69,13 @@ Priority: `U1`, `U2`, `U4`, `U6`, `U7` and `U9` first (private apps). `U3` (publ
 | Id | Decision | Decided by | Basis |
 | --- | --- | --- | --- |
 | `SD1` | Who may change an organization's allowlist: its owner only | owner, 2026-10-20 | "owenres can allow people to log in or allow auth related stuff thats it" (`U9`) |
+| `SD2` | Private now: people sign in only by invitation, per organization; open sign-up for organizations comes later, not now | owner, 2026-10-31 | "this is per org, you invite people per org ... right now its just my org, later we will extend to be open to sign up for org, but we dont need it now" |
 | `SD9` | Who may register, link, unlink and retire an agent's sign-in: the organization's owner only | owner, 2026-10-20 | the same statement: registering an agent's sign-in is "auth related stuff", which only owners do; an organization has no managers (`U9`) |
 
 ## Open decisions
 
 | Id | Decision | Who | Default until decided |
 | --- | --- | --- | --- |
-| `SD2` | Whether public deployments are built now or after private | owner | private first |
 | `SD3` | How long ordinary (non-privileged) use may keep working after someone is removed: the token lifetime bound | owner, with D5 | at most the token lifetime |
 | `SD4` | Where the service lives | owner, decided | `@agent-collaboration/auth` (F-67), built in agent-vm's workspace and moved to `agent-fleet-tools` with the Switchboard packages (F-58) |
 | `SD5` | How people who already own OAuth account grants under their Cloudflare Access identity move to their new identity | owner | they keep working through today's controller until moved; no automatic mapping |
