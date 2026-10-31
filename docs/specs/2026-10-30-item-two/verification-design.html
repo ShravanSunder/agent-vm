@@ -137,11 +137,12 @@ Several rows use the same observation. Each is described once here. The SO numbe
 - **What it drives:**
   1. `fleet login --organization O1`, which the CLI hands to the Router host, approved by O1's owner through the sign-in service's approval endpoint, choosing workspace W; then an O1 member and O2's owner open, approve and deny fresh codes;
   2. connect, then advance central's clock past the token's grant expiry: central closes the connection, and the Router refreshes and reconnects on its own;
-  3. log the same installation in again while the old connection stays open: the old connection is refused for a registration and a remote start and closed, against both succeeding on the new connection; and the new one keeps the session references, the allowance for W and the board relationships;
+  3. log the same installation in again while the old connection stays open: the old connection is refused for a registration (and, once DR is built, a remote start) and closed, against each succeeding on the new connection; and the new one keeps the session references, the allowance for W and the board relationships;
   4. revoke the login: the next refresh and connection are refused, and the machine's sessions are removed;
   5. log in again after the revocation: a new enrollment, no session or allowance restored until the owner chooses workspaces on the approval page;
   6. log in by device code an installation already claimed by O2: refused, and both owners read back unchanged;
-  7. a Router host started with no encrypted store: it logs in and says the credential is kept in memory; after the host restarts, it asks for a new device code before connecting, and once the owner approves it is the same machine, with its sessions and the allowance for W.
+  7. a Router host started with no encrypted store: it logs in and says the credential is kept in memory; after the host restarts, it asks for a new device code before connecting, and once the owner approves it is the same machine, with its sessions and the allowance for W;
+  8. after both Routers log in by device code, a session on each sends the other a message and gets a reply: today's messaging between machines, on the new login, each message recorded with its sending session.
 - **What it reads:** what the Router reports; central's lookups (enrollment state, what authorized it, allowances); the Registry's claims; connection admission and refusal classes; the Router's encrypted store holding exactly one credential of the new login after a device-code login with a store, and nothing on disk in memory-only keeping.
 
 **SO9: Router platforms** (needed, lasting). SO8 and SO1's Router-side cases on two targets:
@@ -173,7 +174,8 @@ The lasting part of these negatives, the entry's refusals, runs locally in SO4. 
   7. the same start delivered twice before B reports, and B's Router restarted around its create;
   8. the answer to A dropped after B created the session, then A asking for the outcome with the same request ID; and separately, B's report dropped after its registration succeeded, with the clock past the lapse;
   9. a start instruction held until past its deadline, then released to B;
-  10. after both log in by device code, A's session sends B's helper a message and the helper replies: today's messaging between machines, on the new login.
+  10. after both log in by device code, A's session sends B's helper a message and the helper replies;
+  11. a start to a target whose Router hasn't reported, in its schema-support report, that it can take one: refused by the target, and nothing created on it.
 - **What it reads:** B's sessions and their recorded starters and directories; central's remote-start records; each refusal's class; that nothing was created on B for a refused or late instruction; that each start yields at most one session; the outcome A reads after its restart and after the dropped answer (`unknown`, then `started`), and `started` after the dropped report.
 
 **SO12: who is logged in** (needed, lasting). A new `verify-codex-router` journey `fleet-who-is-logged-in`, on SO8's arrangement: two normal Routers, A and B, logged into organization O1 of a local Fleet central by device code; a third in O2; the local sign-in service with its page. Clocks are controlled at central and at the sign-in service. A's connection runs through a local relay that the journey can switch to drop traffic without closing the socket, which is how a cut network looks to central.
