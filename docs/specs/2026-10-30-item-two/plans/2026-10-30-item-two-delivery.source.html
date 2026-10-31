@@ -415,7 +415,23 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 <summary><strong>B1</strong> sign-in core and storage (extended) · waits on B0; OD4 (approved 31 October)</summary>
 <ex-markdown id="ticket-b1-text"><script type="text/markdown">
 - **Covers:** R29–R33, first splitting `packages/auth` into `sign-in-core` (runtime-free: no Cloudflare or Node types, no SQLite driver in its dependencies or tsconfig), `sign-in-platform-web`, `sign-in-host-cloudflare`, `sign-in-owner-cli` and `sign-in-test-support` (B2 adds `sign-in-host-node`), like Fleet central's crates and the Switchboard's `tool-host-*` packages; with the device grant's `deviceCode` table (our four columns and `enrollmentId`) in the one schema module. Today's agent registration, its metadata and its `oauthClientResource` links move onto the new storage unchanged, and stay until B4b.
-- **Keeps the existing architecture audit on the moved code:** `scripts/audit-portal-architecture.ts` (run as `test:portal-architecture`) inspects only `packages/auth/src/sign-in-core/` today, and its package list knows only `auth`. B1 points its package and source selection at `packages/sign-in-core/src/`, keeping every rule, the Better Auth boundary at `src/better-auth/`, the Node, Worker, driver and host restrictions, and its passing and failing fixtures. No command or step changes. This repairs an existing check, which you approve; the PR names it.
+- **Keeps the existing architecture audit on the moved code:** `scripts/audit-portal-architecture.ts` (run as `test:portal-architecture`) inspects only `packages/auth/src/sign-in-core/` today, and its package list knows only `auth`. B1 points its package and source selection at `packages/sign-in-core/src/`, keeping every rule, the Better Auth boundary at `src/better-auth/`, the Node, Worker, driver and host restrictions, and its passing and failing fixtures. No command or step changes. Also in the same existing checks:
+  - the core's forbidden imports gain the SQLite drivers (`better-sqlite3`, `drizzle-orm/d1`, `drizzle-orm/better-sqlite3`, `node:sqlite`), which no rule catches today;
+  - `isForbiddenAuthCoreImport` and `isForbiddenToolAccessImport` name the new packages instead of `@agent-collaboration/auth`;
+  - the plain-Node probe in `verify-portal-package-exports.ts` moves from `@agent-collaboration/auth/core` to the logic entry `@agent-collaboration/sign-in-core`, its rules unchanged (`better-auth` stays banned there), because `src/better-auth/` is the separate subpath `@agent-collaboration/sign-in-core/better-auth`;
+  - `verify-auth-package-closure.ts` is repointed and stays runnable.
+  These repair and extend existing checks, which you approve; the PR lists each.
+- **Keeps SO2's journey runnable:** the paired Verifier updates `.agents/skills/verify-auth/` to the new paths in B1's PR, touching only that folder.
+- **Proof:**
+  - SO2's storage cases on D1 and on `better-sqlite3`, from the same checked-in migrations. On D1 (workerd) the database is built by `wrangler d1 migrations apply --local`; on Node, by Drizzle's migrator.
+  - Better Auth's built adapter reads `drizzle` on each.
+  - `drizzle-kit generate` produces no new migration.
+  - `pnpm check` is green, and the retargeted audit fails for a runtime or driver import placed in a real core file.
+- **Stop if:**
+  - a table differs from the drawn ones;
+  - Better Auth 1.7.11's Drizzle adapter can't serve a drawn table;
+  - the logic would have to import `src/better-auth/`;
+  - the split forces a check change this card doesn't name.
 - **Contributes, without closing:** the storage, migrations and core cases of U22–U25 in SO2, on D1 and `better-sqlite3` under Node. U22's and U25's device-code cases close at B5. U23's both-hosts run closes at B2, once B5's device approval rule is in the core. U24's identifier readback closes at B5, with device codes.
 </script></ex-markdown>
 </details>
