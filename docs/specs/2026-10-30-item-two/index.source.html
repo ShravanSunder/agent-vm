@@ -55,6 +55,7 @@
   <ex-step to="specification.html#specification--the-sign-in-service-storage-hosts-and-tests" icon="database">Drizzle only, one runtime-free core, UUIDv7, no wall clock in tests (R29–R33).</ex-step>
   <ex-step to="program-design.html#program-design--the-sign-in-service-storage-core-and-hosts" icon="stack">The core, its capabilities, its store, and the tables for your approval (OD4).</ex-step>
   <ex-step to="program-design.html#program-design--how-the-issuer-tells-token-kinds-apart" icon="key">How the issuer tells token kinds apart, and keeps today's agent path.</ex-step>
+  <ex-step to="program-design.html#program-design--second-factors-step-up-and-recovery-r53-r54" icon="shield-check">Step-up: a passkey or app code for your changes, and self-serve recovery.</ex-step>
 </ex-presentation>
 <ex-presentation id="path-code" title="The parts in code" description="Repositories, packages, folders, and where each core meets its hosts.">
   <ex-step to="program-design.html#program-design--the-parts-in-code" icon="stack">The two repositories and their packages, and what depends on what.</ex-step>
@@ -90,7 +91,7 @@
 <h1 id="item-two">Item two</h1>
 <ex-callout id="item-two-answer" tone="tldr" title="Item two in two sentences">
 <ex-markdown id="item-two-answer-text"><script type="text/markdown">
-**Step 1:** Fleet central accepts only machines you logged in by device code. Your sessions are registered and attributed, and floods of login attempts are refused. Production switches to this login behind Cloudflare Access. **Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
+**Step 1:** Fleet central accepts only machines you logged in by device code. Your sessions are registered and attributed. Your changes need a second factor (a passkey or app code), people recover a lost one themselves, and floods of login attempts are refused. Production switches to this login behind Cloudflare Access. **Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
 
 **Built as five deliverables, in order:** login end to end; logs and traces; who is logged in; starting a session on another machine; people in the view. Each works end to end before the next goes live.
 </script></ex-markdown>

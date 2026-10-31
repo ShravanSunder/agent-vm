@@ -22,7 +22,7 @@
 <ex-callout id="requirements--answer" tone="tldr" title="What item two is for">
 <ex-markdown id="requirements--answer-text"><script type="text/markdown">
 Item two is your **steps 1 and 2**, plus logs and traces. It's built as five deliverables, in this order. Each works end to end before the next goes live:
-1. **Login.** Fleet central talks only to things that proved who they are. You sign in. Every machine logs in by a device code you approve. Sessions on those machines are registered through their machine and attributed. Floods of sign-in and code attempts are slowed and change nothing. Production switches to this login, still behind Cloudflare Access.
+1. **Login.** Fleet central talks only to things that proved who they are. You sign in. Every machine logs in by a device code you approve. Sessions on those machines are registered through their machine and attributed. Your changes (inviting people, approving machines and the rest) need a second factor too: a passkey or an authenticator-app code (step-up), and people recover a lost one themselves. Floods of sign-in and code attempts are slowed and change nothing. Production switches to this login, still behind Cloudflare Access.
 2. **Logs and traces.** What Cloudflare gives (Workers Logs, and traces on Fleet central) is turned on and exported over OpenTelemetry, and the Node and Tokio hosts export the same. Nothing secret is ever logged.
 3. **Who is logged in.** You open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
 4. **Starting a session on another machine.** A session on one machine starts a helper on another.
@@ -119,6 +119,13 @@ Every row is your direction, or a decision already recorded in the people sign-i
 |---|---|---|---|
 | U40 | **You can see, live, who is logged in and what each is working on.** First (B+): every machine, whether it's connected now and when it was last seen, and each session on it with what it's working on and whether a turn is running. Then (C): the people signed in, and later bots. The view only shows; it changes no access. | Today you can look up one identity at a time. You want one view of what's present and what it's doing. | "in ui i can see who is logged in and what"; "c, but we can do this in stages. we can do b plus then c as follow up"; "i mean authencated and live to know" |
 
+**Proving who you are**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U43 | **Step-up sign-in.** People sign in with Google or GitHub. Every change only the owner can make (inviting or removing people, approving or revoking machines, and the rest) also needs a **second factor**: a passkey, with fingerprint, face or PIN, or an authenticator-app code (TOTP), from the last 15 minutes. The organization's very first machine can be approved without it. Looking (the lookups, who is logged in) needs no second factor. | Someone holding your Google or GitHub account alone can't change your organization. | "i want step up signin"; "once they sign in, more people and more stuff they have to use a passkey ... Or they have to use two factors: one passkey or TOTP and one sign in"; on the first machine, "easy to make it so first enroll is allowed, thens econd mahcine onwards" |
+| U44 | **Self-serve recovery, with two factors.** A person who loses a passkey or phone replaces it themselves with two factors: their Google or GitHub sign-in plus another second factor or a recovery code. Google or GitHub alone never can. Nobody resets anyone else's in item two; you can already remove a member. | No one should have to reset people's credentials; recovery mustn't be weaker than sign-in. | "for sign-in recovery they need two factors too"; "I don't want the ability to have to reset people's passwords. That should be automatic. Right, self serve"; "the admin can reset their credentials or remove them later" |
+
 **Seeing what happened, and keeping floods out**
 
 | ID | Need | Why it matters | Your words |
@@ -154,6 +161,7 @@ Every row is your direction, or a decision already recorded in the people sign-i
 - the device-code machine login, its short-lived tokens and renewal, and a secret store on Linux, or memory only;
 - starting a session on another machine;
 - the switch to the new login;
+- a second factor (passkey or app code) for the owner's changes, and self-serve recovery with recovery codes;
 - explicit limits on sign-in, code-entry, approval and login requests (R42 asks for them; nothing sets them today);
 - telemetry: Cloudflare's Workers Logs and traces are off for both Workers, central's Tokio host logs without exporting, and the sign-in service logs nothing;
 - the live who-is-logged-in view.
@@ -177,7 +185,11 @@ agent-vm is frozen and changes for neither. The Switchboard isn't changed by ite
   - any agent-vm work;
   - proof inside a VM, or a new Linux CI job;
   - the view changing any access, or showing who sits at a machine.
-- **Later, if needed:** dashboards, alerts and metrics beyond what the platform gives; Logpush.
+- **Later, if needed:**
+  - dashboards, alerts and metrics beyond what the platform gives; Logpush;
+  - the owner resetting a member's second factors (removing a member already ends their access);
+  - signing in with Apple or Cloudflare. Apple only with the person's real email, never a "Hide My Email" relay address.
+- **Not at all:** Facebook sign-in, because its emails aren't verified.
 
 **Evidence that it works:**
 - You approve a machine's code, and it logs in to your organization; anyone else's approval is refused.
@@ -189,6 +201,7 @@ agent-vm is frozen and changes for neither. The Switchboard isn't changed by ite
 - With Access still in front, the old enrollment credential is refused.
 - No new machine token or connection while Fleet central is down.
 - Repeated code entries or sign-ins from one address are refused with nothing changed, while another address still gets through.
+- Inviting someone, or approving your second machine, without a passkey or app code in the last 15 minutes is refused; with one it works. Someone who lost their passkey replaces it with their Google sign-in plus a recovery code; Google alone can't.
 - A login, a refusal and a connection each show in the OpenTelemetry tool with their reason, and no token, code or secret from the run appears in any record.
 - You open the view and see each machine and its sessions. A cut machine shows as not connected within the bound. Nobody else can open it.
 </script></ex-markdown>
@@ -206,11 +219,12 @@ What it costs: a bounded period where the new login runs beside today's behavior
 <ex-markdown id="requirements--open-decisions-text"><script type="text/markdown">
 | ID | Decision | Recommendation | What waits on it |
 |---|---|---|---|
-| OD4 | The sign-in service's tables and migrations: Better Auth 1.7.11's tables as its CLI generates them for the Drizzle adapter (no SQL time default; IDs from the injected generator), plus `session.organizationId`, `sign_in_audit`, `organization_admission_claim`, `admitted_person_guard` and the device-code columns, as drawn in the [Program Design](program-design.html#program-design--the-sign-in-service-storage-core-and-hosts). | Approve the drawn tables now. The generated SQL comes to you before the first code uses it. | the first sign-in ticket, B1 |
+| OD4 | The sign-in service's tables and migrations: Better Auth 1.7.11's tables as its CLI generates them for the Drizzle adapter (no SQL time default; IDs from the injected generator), plus `session.organizationId` and the session's second-factor time and method, Better Auth's two-factor table (each person's app-code secret and recovery codes), `sign_in_audit`, `organization_admission_claim`, `admitted_person_guard` and the device-code columns, as drawn in the [Program Design](program-design.html#program-design--the-sign-in-service-storage-core-and-hosts). | Approve the drawn tables now. The generated SQL comes to you before the first code uses it. | the first sign-in ticket, B1 |
 | OD14 | How fresh the view must be: how soon a machine connecting or dropping, or a session starting or stopping, must show. | 15 seconds. It's one setting, and every interval scales from it. | nothing; built at 15 |
 | OD2 | The default lifetime of a machine token (configurable, at most 60 minutes). | 5 minutes. It's one setting. | nothing; built at 5 |
 | OD16 | How login floods are limited. **Turnstile is decided** (you, 30 October: integrate it through Better Auth's captcha plugin; you have the account). Still open: the counting layers, from least to most machinery: Better Auth's built-in limits alone; plus Cloudflare's rate-limit binding in the sign-in Worker; plus a WAF rate-limiting rule on the zone; Better Auth's limits stored in D1 (a new table). | **Better Auth's built-in limits, set explicitly, plus the rate-limit binding in the Worker, plus Turnstile.** No table, no zone rule, and the same code on Node, where Better Auth's in-process count is exact. See the [Program Design](program-design.html#program-design--flood-limits-at-sign-in-r42-r52). | nothing; built this way in the login deliverable |
-| OD18 | How people sign in after their first sign-in. You said: "all future logins shouuld use login and passkey after initial setup of tfa". Two readings, least machinery first: **(a)** after the first Google or GitHub sign-in, each person must add a passkey, and from then on signs in with the passkey alone, with fingerprint, face or PIN required (Better Auth's passkey plugin only prefers that check by default, so it's required at registration and checked at every sign-in); **(b)** every sign-in is Google or GitHub *and then* a passkey check. Better Auth's two-factor plugin doesn't cover Google or GitHub sign-ins (it matches only email, username and phone sign-in), so (b)'s second step is ours to build. Today the people sign-in design accepts any of the three (U1), and SD7 is open. | **(a).** It's Better Auth's passkey plugin plus three small rules, and with the check required it's two factors that can't be phished. Recovery is part of the choice: if a person loses every passkey, you remove their passkeys and they sign in once more with Google or GitHub to add one. | the passkey rule in the login deliverable; the rest of sign-in can start |
+| OD18 | How people sign in after their first sign-in. | **Decided (you, 31 October): step-up.** Sign in with Google or GitHub; your changes need a passkey or an app code from the last 15 minutes; the first machine is exempt; recovery is self-serve with two factors (U43, U44). | nothing |
+| OD19 | Which providers people sign in with. | **Decided (you, 31 October):** Google and GitHub; never Facebook (unverified emails); never Apple's relay addresses. Apple and Cloudflare can be added later. | nothing |
 | OD17 | Where logs and traces go: Cloudflare's own Workers Logs and traces only, or also an OTLP destination you name (a hosted tool such as Grafana Cloud or Honeycomb, or your own collector). | Keep Cloudflare's own on, and name one OTLP destination when you pick a tool. Locally, the shared OpenTelemetry stack. | only the export check on the private stack (JT1); everything else is built |
 
 **Inherited, not asked again:** admin actions check that your sign-in is still current, within the people sign-in design's freshness bound **SD8**, which that design still has open.

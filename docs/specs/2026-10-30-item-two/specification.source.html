@@ -62,6 +62,7 @@ flowchart TB
 | P9 | A session on another machine can only be started from that machine, by SSH. | Fleet code: the client refuses a creator on another Router (`conversation_client.rs:312–326`); between machines the fleet carries only messages, notifications, cancels and wakes. |
 | P10 | You can't see what happened. Neither Worker turns on Cloudflare's Workers Logs or traces. Central's Tokio host writes its few records to its own output and exports nothing. The sign-in service records nothing. Only the Router exports over OpenTelemetry. | Central's `cloudflare.config.ts` and sign-in's `wrangler.example.jsonc` have no `observability`; `collaboration-central-tokio/src/native_logging.rs`; `codex-router-cli/src/telemetry.rs` (OTLP). |
 | P11 | Nothing limits login floods. R42 asks for code attempts to be limited, but the sign-in service sets no limit: Better Auth's own limiter is on only when `NODE_ENV` is `production`, counts in each Worker isolate's memory, and takes the client address from `x-forwarded-for`, a header a client can set. | `packages/auth/src` has no `rateLimit`; Better Auth 1.7.8 `create-context.mjs:170–175`, `@better-auth/core` `env-impl.mjs:30–32`. |
+| P12 | Nothing protects your changes beyond the provider sign-in. Anyone holding your Google or GitHub account could invite people and approve machines. | The people sign-in design accepts Google, GitHub or a passkey, any one alone (its U1). |
 </script></ex-markdown>
 <h2 id="specification--outcomes">Outcomes</h2>
 <ex-markdown id="specification--outcomes-text"><script type="text/markdown">
@@ -76,6 +77,7 @@ flowchart TB
 | O9 | A session starts a helper on another machine of its organization, through Fleet central. | R46 holds. |
 | O10 | Every item-two service's logs and traces reach an OpenTelemetry tool, with nothing secret in them. | R51 holds on each host. |
 | O11 | A flood of login attempts is slowed and changes nothing. | R42's limit and R52 hold on each host. |
+| O12 | Every change to your organization needs a second factor, and people recover a lost one themselves with two. | R53 and R54 hold. |
 </script></ex-markdown>
 <h2 id="specification--entities">Entities</h2>
 <ex-markdown id="specification--entities-text"><script type="text/markdown">
@@ -93,6 +95,7 @@ The things item two talks about. Each has one rule for when two of them are the 
 | E23 | **Device-code login request** | Its device code, which the machine keeps and never shows. The short user code is what you check. | Asks to log one E6 into one E1, under a label the machine supplies. Approved or denied by that E1's owner. | Works at most once. Expires after 10 minutes. Approving it logs in only that installation, only into that organization. | pending, approved, denied, expired, used |
 | E22 | **Machine token** | Its token ID. | Identifies one E6 and its E21, and names its E1 and its issuer, the sign-in service. | Short-lived (R40). Accepted only by Fleet central. Minted only for an enrolled E21. Naming its issuer lets another kind of issuer be added later. | valid, expired, rejected |
 | E24 | **Machine connection** | One authenticated session between one E6's Router and Fleet central, from when it opens to when it closes. A reconnect is a new connection. | Belongs to one E6, and to the E21 whose login opened it. | Opened only with that machine's valid login: before the switch, Cloudflare Access plus its enrollment credential; after it, a machine token (R40). Counts only while its E21 is the machine's active one. Carries no person. | open, closed. **Last seen** is the latest moment central heard from an open connection, or its close. |
+| E25 | **Second factor** | One passkey or one authenticator-app (TOTP) registration of one E3, by its ID. A person's recovery codes are issued with their first one and act as a second factor once each. | Belongs to one E3; a person has 0..n. | A passkey counts only with user verification (fingerprint, face or PIN). Added, replaced or removed only as R54 allows. | active, removed |
 | E15 | **Machine allowance** | The pair of one E6 and one E2. | Belongs to one E6 and one E2 of the same E1. | Only the owner grants or withdraws it. | active, withdrawn |
 | E7 | **Fleet harness session** | Its session reference: its machine's installation, its harness endpoint (Codex, Claude or Cursor) and its conversation ID. A new conversation is a new session. | Runs on exactly one E6. Started for exactly one E16 in its machine's E1. Holds exactly one E8, in that project's workspace. Has exactly one E13. | Holds no secret and never logs in; accepted only as vouched for by its machine. Its machine has an active E15 for its workspace. Once removed or ended, nothing is decided for it again. Started by whoever operates its machine, or by another session of its workspace (R8, R46); no person is recorded as its starter. Its start time is when its Router registered it. | active, removed, ended. While active, its machine reports it as **working** (a turn in progress, including one waiting on an approval or a question) or **idle** (no turn in progress, loaded or not). It is **unknown** while its machine has no open E24. |
 | E8 | **Membership** (of a session) | The pair of one workspace and one session. | Belongs to one E2 and one E7, in one E1. | A session has exactly one, in its project's workspace (R7). It requires its machine's active enrollment in that organization. Memberships of people and bots come in step 3. | active, removed |
@@ -174,7 +177,7 @@ Each obligation is a rule a wrong build would break. "MUST" is required; "MAY" i
 <ex-markdown id="specification--administration-text"><script type="text/markdown">
 | ID | Obligation | Over | Traces to |
 |---|---|---|---|
-| R13 | Only the admin MAY: allow people to sign in to an organization or end their admission; create workspaces; allow or withdraw a machine's allowance; approve or deny a device-code login; revoke a machine's enrollment; remove a session; set the token lifetime; and read the lookups (R14) and the who-is-logged-in view (R49).<br>Creating an organization and naming its first owner act across organizations, so only the fleet's operator MAY do them.<br>The admin is the active owner of the organization the action belongs to, signed in to that organization and current there, confirmed at the time of the action as the people sign-in design's R9, R19 and R20 require (its freshness bound SD8). One exception: creating a workspace is confirmed when you ask, and the admitted, empty workspace is still created if ownership changes before the fleet applies it.<br>Each admin change MUST be recorded, as the people sign-in design's R12 requires, in the same step as the change; a change whose record can't be written MUST NOT happen.<br>Anyone else MUST be refused with nothing changed and nothing revealed: another member, another organization's owner, an owner whose own entry was removed, a session no longer current, a bot or a session; and, for creating an organization, any owner who isn't the fleet's operator. | E1, E2, E6, E7, E15, E19, E21, E23 | U21, U20, U31 |
+| R13 | Only the admin MAY: allow people to sign in to an organization or end their admission; create workspaces; allow or withdraw a machine's allowance; approve or deny a device-code login; revoke a machine's enrollment; remove a session; set the token lifetime; and read the lookups (R14) and the who-is-logged-in view (R49).<br>Creating an organization and naming its first owner act across organizations, so only the fleet's operator MAY do them.<br>The admin is the active owner of the organization the action belongs to, signed in to that organization and current there, confirmed at the time of the action as the people sign-in design's R9, R19 and R20 require (its freshness bound SD8). Each change also needs R53's second factor. One exception: creating a workspace is confirmed when you ask, and the admitted, empty workspace is still created if ownership changes before the fleet applies it.<br>Each admin change MUST be recorded, as the people sign-in design's R12 requires, in the same step as the change; a change whose record can't be written MUST NOT happen.<br>Anyone else MUST be refused with nothing changed and nothing revealed: another member, another organization's owner, an owner whose own entry was removed, a session no longer current, a bot or a session; and, for creating an organization, any owner who isn't the fleet's operator. | E1, E2, E6, E7, E15, E19, E21, E23 | U21, U20, U31 |
 | R14 | For a person, the system MUST answer their organizations. For a session: its machine, project, workspace and isolation record. For a workspace: the machines allowed to serve it. For a machine: its organization, its enrollment's state and what authorized it, its allowed workspaces, and its shared bucket. | E1, E3, E6, E7, E13, E14, E15, E21 | U9, O3 |
 </script></ex-markdown>
 <h3 id="specification--machine-login">Machine login</h3>
@@ -212,6 +215,13 @@ Each obligation is a rule a wrong build would break. "MUST" is required; "MAY" i
 | R25 | While Fleet central's truth can't be consulted, no new decision MUST be made: no device-code approval, no new machine token, no new machine connection or renewal, no registration, no remote start. A machine token already decided MAY still be minted within 60 seconds of its decision, and nothing after. Nothing MAY be extended on stale information. | E21, E22, E24 | U14 |
 | R26 | Every interaction between Fleet central, the sign-in service and the Routers MUST use one versioned contract whose meaning doesn't depend on the host. Each service MUST behave the same on Cloudflare and on a non-Cloudflare host. | all | U16, O5 |
 | R27 | Every request between Fleet central and the sign-in service (C7) MUST be authenticated as coming from that edge's one expected caller, for that one operation, to the receiving service. A request from another caller, for another operation or another receiving service, with an expired credential, or naming an organization its caller may not act for, MUST be refused and change nothing. Repeating an accepted request MUST have no further effect beyond what C7 states. | all | U15, U16 |
+</script></ex-markdown>
+<h3 id="specification--second-factors-step-up-and-recovery">Second factors: step-up and recovery</h3>
+<ex-markdown id="specification--second-factors-step-up-and-recovery-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R53 | **Step-up.** Each change R13 reserves for the admin MUST be refused with nothing changed unless the admin's sign-in includes a second factor (E25) confirmed no more than 15 minutes (one setting) before the change. Those changes are: allowing or ending a person's admission, creating a workspace, changing a machine's allowances, approving or denying a device-code login, revoking an enrollment, removing a session and setting the token lifetime. The refusal MUST say that a second factor is needed.<br>One exception: approving a device-code login into an organization that has never had an enrollment MAY rely on the provider sign-in alone.<br>Reading (the lookups and the who-is-logged-in view) needs no second factor. A passkey confirms only with user verification. | E1, E3, E21, E25 | U43, U21 |
+| R54 | **Second factors and self-serve recovery.** A person MAY add their first second factor from a provider sign-in. That first setup MUST also issue their recovery codes, shown once, each usable once.<br>When the person already has a second factor, adding, replacing or removing one, or issuing new recovery codes, MUST need two factors: their sign-in plus a second factor or a recovery code confirmed in the same 15 minutes. A provider sign-in alone MUST NOT add, replace or remove a second factor once one exists.<br>No one MAY reset another person's second factors in item two; removing a member ends their access (R13). Each use of a recovery code, and each change to a person's second factors, MUST be recorded (R51). Checking a code MUST be limited in rate (R52). | E3, E25 | U44 |
 </script></ex-markdown>
 <h3 id="specification--telemetry-and-flood-limits">Telemetry and flood limits</h3>
 <ex-markdown id="specification--telemetry-and-flood-limits-text"><script type="text/markdown">
@@ -329,6 +339,16 @@ Your live, read-only view of your organization (R47–R50). Only you open it (R4
 | | unavailable | Shown instead of rows while Fleet central's truth can't be consulted (R49) |
 | | refused | Anyone but the admin gets a refusal that reveals nothing (R49) |
 </script></ex-markdown>
+<h3 id="specification--c13-second-factor-confirmation">C13 Second-factor confirmation</h3>
+<ex-markdown id="specification--c13-second-factor-confirmation-text"><script type="text/markdown">
+| Part | What it says |
+|---|---|
+| a person token | `second_factor_at`: when the session last confirmed a second factor (absent if never), and `amr`: how (`otp` for an app or recovery code; `hwk` or `swk` with `user` for a passkey; `mfa` when a second factor is present) |
+| Fleet central's refusal | `secondFactorRequired { withinSeconds }`: the change needs a second factor confirmed within that many seconds; nothing changed |
+| what you see | no second factor yet: "This needs a second factor. Add a passkey or an authenticator app now." Has one: "Confirm it's you with your passkey or app code." |
+| recovery | your Google or GitHub sign-in, then "Use a recovery code or your app code", then add the new passkey or app |
+</script></ex-markdown>
+
 <h2 id="specification--failure-and-partial-outcomes">Failure and partial outcomes</h2>
 <ex-markdown id="specification--failure-and-partial-outcomes-text"><script type="text/markdown">
 What you see when something goes wrong.
@@ -354,6 +374,9 @@ What you see when something goes wrong.
 | You open the view while central's truth can't be consulted | It says unavailable and shows no earlier picture as current (R49). |
 | Someone other than you opens the view | Refused, with nothing revealed (R49). |
 | One address floods sign-in, code entry or the device grant | Its requests are refused with 429 or `slow_down` and change nothing; everyone else still signs in (R52). A flood spread across many addresses is slowed only by Cloudflare's own DDoS protection and per-address limits. |
+| You make a change without a second factor in the last 15 minutes | Refused with nothing changed; the page asks you to confirm with your passkey or app code, then the change goes through (R53). |
+| Someone signs in with only your Google or GitHub account | They can look, but every change is refused, and they can't add or replace a second factor without one of yours or a recovery code (R53, R54). |
+| A person loses every second factor and every recovery code | They can still sign in and look, but can't make changes or add a factor. Nothing in item two resets it; the owner can remove a member. If it's you, keep your recovery codes safe: the reset comes later. |
 | The OpenTelemetry destination is down or missing | Answers are unchanged. On Cloudflare, Workers Logs (and central's traces) still keep the records; on Node and Tokio, the host's own output does (R51). |
 </script></ex-markdown>
 <h2 id="specification--what-item-two-does-not-do">What item two does not do</h2>
@@ -372,6 +395,7 @@ What you see when something goes wrong.
 - No automatic VM login, and no VM-specific proof.
 - The view changes no access, and never shows who operates a machine.
 - No dashboards, alerts or Logpush, and no metrics beyond what the platform gives.
+- No one resetting another person's second factors (later). No Apple, Cloudflare or Facebook sign-in; Facebook never, and if Apple comes, never a relay address.
 - No limit on Fleet central's own entry beyond Access until step 3.
 </script></ex-markdown>
 <h2 id="specification--proof-obligations">Proof obligations</h2>
@@ -412,6 +436,8 @@ For each obligation: what passes, and the wrong build it catches. The [Verificat
 | V42 | R50 | Stage C: each admitted person shows as signed in or not, with their last sign-in, within V40's freshness and V41's visibility. (Bots' rows are proven when bots exist.) | A person is missing or shown wrongly, or is shown to someone other than the owner. |
 | V43 | R51 | After a login, a refusal, a connection, a registration and a view refresh, the OTLP collector holds one record for each, naming its kind, outcome and identifiers. No token, refresh credential, code, secret, cookie or email from the run appears anywhere in what was exported. With the collector stopped, every answer is the same. Deployed, both Workers keep Workers Logs, central keeps traces, and the sign-in Worker's traces and invocation logs are off. A harmless canary placed in the sign-in Worker's request URLs appears in no record Cloudflare keeps, and no credential carried in a header appears in any record Cloudflare keeps for central. | A decision leaves no record, a record carries a secret, the two hosts of one service leave different records, a stopped collector changes an answer, a sign-in URL's contents reach a record Cloudflare keeps, or a header credential reaches one of central's. |
 | V44 | R52, R42 | From one address, past each route's limit (on Cloudflare, past it within Cloudflare's stated approximation), requests are refused with 429 or `slow_down`, and the device codes, sessions and tokens are unchanged. The service's own pages are limited too, on both hosts. A second address still gets through. A spoofed `x-forwarded-for` doesn't change the count on Cloudflare. After the window passes, the first address gets through again, with no rows stored. A sign-in start or passkey challenge request without a Turnstile token, with one Turnstile rejects, or when its check can't be reached, is refused with nothing created and no challenge stored; with a good token it proceeds. | A flood is answered, a limited request creates or consumes something, a forged header escapes the limit, one address's flood refuses another, the limit stores rows, or a sign-in passes without a verified Turnstile check. |
+| V45 | R53, C13 | Each R13 change by the owner with a second factor confirmed within 15 minutes succeeds; without one, or after the window on a controlled clock, it's refused with `secondFactorRequired` and nothing changed. Approving the organization's first machine succeeds with the provider sign-in alone; the second doesn't. Lookups and the view need none. A passkey without user verification confirms nothing. | A change goes through on Google alone, the window isn't enforced, the first-machine exception covers a second machine, or reads demand a second factor. |
+| V46 | R54 | A person adds a first passkey or app from a provider sign-in and gets recovery codes once. With one already, a provider sign-in alone can't add, replace or remove a factor or get new codes; with a recovery code (spent after) or another second factor it can. Each use and change is recorded. Rapid code guesses are limited. | Google alone replaces a passkey, a recovery code works twice, or another person resets someone's factors. |
 </script></ex-markdown>
 <h2 id="specification--coverage">Coverage</h2>
 <ex-markdown id="specification--coverage-text"><script type="text/markdown">
@@ -447,6 +473,8 @@ Every need traced to its entities, problems, outcomes, obligations, contracts an
 | U40 | E3, E6, E7, E13, E15, E19, E21, E24 | P8 | O8 | R47–R50 | C12 | V39–V42 |
 | U41 | all | P10 | O10 | R51 | — | V43 |
 | U42 | E23 | P11 | O11 | R42, R52 | C8 | V34, V44 |
+| U43 | E1, E3, E21, E25 | P12 | O12 | R53, R13 | C13 | V45 |
+| U44 | E3, E25 | P12 | O12 | R54 | C13 | V46 |
 </script></ex-markdown>
 </ex-document>
 <ex-comments for="content"></ex-comments>
