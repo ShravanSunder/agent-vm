@@ -95,7 +95,7 @@ flowchart TB
 ```
 
 - **The sign-in service is split like Fleet central and the Switchboard:** one runtime-free core package and one package per host, the same shape as Fleet's core crate with its Tokio and Cloudflare crates, and the Switchboard's `tool-host-core`, `tool-host-cloudflare` and `tool-host-node`. The core package's dependencies hold no Cloudflare or Node types and no SQLite driver, and its tsconfig loads neither runtime's types. Two existing checks hold that line, with no new gate. The type check the repository already runs can't see Node or Cloudflare types from the core. The repository's architecture audit (`scripts/audit-portal-architecture.ts`, run as `test:portal-architecture`) refuses runtime imports in the core's source. Today it inspects only `packages/auth/src/sign-in-core/`, so B1 points it at `packages/sign-in-core/src/`, with `src/better-auth/` as the Better Auth boundary module, keeping every rule and fixture. That repairs an existing check, which the owner approves. Better Auth's configuration lives in the core, because Better Auth itself runs on web APIs. The web-platform adapters get their own package, and each host package only wires a database, its capabilities and its entry.
-- **The shapes on the machine's connection get one small crate,** `fleet-identity-protocol`: registration, heartbeat, activity, renewal, remote start and isolation. It depends only on `serde`, `chrono` and `message-board`, and carries `message-board`'s `SessionRef`: the same camelCase wire shape as the Router's `collaboration-protocol` `SessionRef`, and already in central core's WebAssembly build. The Router converts between the two at its registrar, with round-trip tests; if they can't convert without loss, that's a design return before F1. The crate is needed because no Router crate depends on central's core. Central's core compiles to WebAssembly, so it can't depend on `collaboration-contracts` either, which brings `tokio`, `nix` and the Router's storage. Shapes only central uses (organization commands, lookups, C7 requests, `MachineTokenClaims`) stay in `collaboration-central-core/src/identity_contract.rs`.
+- **The shapes on the machine's connection get one small crate,** `fleet-identity-protocol`: registration, heartbeat, activity, renewal, remote start and isolation. It depends only on `serde`, `chrono`, `schemars` and `message-board`. `schemars` derives its JSON Schema the way `collaboration-protocol` does, and `message-board` already depends on it, WebAssembly build included, so it adds no crate to either graph. The crate and carries `message-board`'s `SessionRef`: the same camelCase wire shape as the Router's `collaboration-protocol` `SessionRef`, and already in central core's WebAssembly build. The Router converts between the two at its registrar, with round-trip tests; if they can't convert without loss, that's a design return before F1. The crate is needed because no Router crate depends on central's core. Central's core compiles to WebAssembly, so it can't depend on `collaboration-contracts` either, which brings `tokio`, `nix` and the Router's storage. Shapes only central uses (organization commands, lookups, C7 requests, `MachineTokenClaims`) stay in `collaboration-central-core/src/identity_contract.rs`.
 - **The Switchboard's `tool-*` packages aren't touched.** Folders are fixed here; exact file names are the plan's.
 </script></ex-markdown>
 <h3 id="program-design--the-sign-in-package-folder-by-folder">The sign-in packages, folder by folder</h3>
@@ -260,7 +260,7 @@ flowchart TB
 | E24 Machine connection | The Connection object: the open connection, its silence deadline and its presence, judged on its own clock | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence answer); its own store keeps the open connection, its attach sequence, when it opened, when it was last heard and when the last one closed | `identity_contract.rs`: `ReadMachinePresence` and `MachinePresenceAnswer { Open { connectionId, attachSequence, openForMs, silentForMs } \| NotConnected { closedAgoMs: Option } }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `ReadMachinePresence` (organization authority → Connection object, at each lookup); the lookup's `connection` variant | persisted in the Connection object's store | Rust tagged enum |
 | E7 Fleet harness session | Organization authority | `organization_authority` session registry (new), with its start time set when the organization authority registers it; `session_activity` table (new: one row per session, replaced by each report) | on the wire, `message-board`'s `SessionRef` (existing; the Router converts from its `endpoint_identity.rs` `SessionRef`) plus `identity_contract.rs` `FleetSessionRecord` (new, with `startedAt`) and, in `fleet-identity-protocol`, `SessionActivity { session, connectionId, activity: Working \| Idle, reportedAt }` (new) | `principal.session_ref` object in tokens; `session` in registration; `ReportSessionActivity` over the connection; the lookup's `state`: `working \| idle \| unknown` | persisted (with retention); an activity row counts only while its connection holds the machine's lease | existing `SessionRef` plus Rust |
 | E8 Membership (of a session) | Organization authority | `organization_authority` session registry (new): a session's membership is its registration | `identity_contract.rs`: `FleetSessionRecord` names its workspace; it counts while its machine has an active enrollment here | registration; admin lookup | persisted | Rust; people's and bots' memberships come in step 3 |
-| E13 Isolation record | Organization authority | session registry (new) | `fleet-identity-protocol`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design; the Router asserts them at registration) | registration; the token's `principal` | persisted | Rust tagged enum |
+| E13 Isolation record | Organization authority | session registry (new) | `fleet-identity-protocol`: `AgentIsolation`, `MachineEnvironment`, `LaunchContext` (new; defined under [requests over the machine's connection](#program-design--requests-over-the-machine-s-connection); the Router asserts them at registration; who launched it is `RegisterFleetSession.started_by`) | registration; the token's `principal` | persisted | Rust tagged enum |
 | E14 Shared bucket | Organization authority (a derived query) | `organization_authority` (new) | `identity_contract.rs` lookup result (new) | admin lookup | derived | Rust |
 </script></ex-markdown>
 
@@ -546,7 +546,7 @@ pub struct RegisterFleetSession {
     pub project_id: ProjectId,
     pub started_by: StartedBy,                  // tagged: routerOperator | session { session } (the binding the start came on); recorded for display (R8)
     pub isolation: AgentIsolation,
-    pub launch_context: LaunchContext,          // launcher-asserted, recorded for display: working directory, repository, commit, model, launched by
+    pub launch_context: LaunchContext,          // launcher-asserted, recorded for display; who launched it is started_by, not a second field
     pub machine_environment: MachineEnvironment,
 }
 #[serde(tag = "result", rename_all = "camelCase")]
@@ -554,6 +554,27 @@ pub enum RegisterFleetSessionResult {
     #[serde(rename_all = "camelCase")]
     Registered { organization_id: OrganizationId, workspace_id: WorkspaceId },
     Refused { reason: SessionRefusal }, // projectUnknown | machineNotAllowed | alreadyEnded
+}
+
+// The isolation record (E13): asserted by what launched the session, recorded at launch, never changed, never enforced (R23).
+#[serde(rename_all = "camelCase")]
+pub struct AgentIsolation {
+    pub kind: IsolationKind,
+    pub instance_id: IsolationInstanceId,       // UUIDv7 the launcher mints at launch, whatever the kind
+}
+#[serde(rename_all = "camelCase")]
+pub enum IsolationKind { Host, ProcessSandbox, Container, Vm }   // closed: host | processSandbox | container | vm
+#[serde(rename_all = "camelCase")]
+pub enum MachineEnvironment { Physical, CloudVm } // closed: physical | cloudVm
+#[serde(rename_all = "camelCase")]
+pub struct LaunchContext {
+    pub working_directory: AbsolutePath,        // absolute, at most 4,096 UTF-8 bytes, no NUL (as ProviderWorkingDirectory)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<RepositoryLocator>,  // the remote's URL as the launcher read it, at most 2,048 bytes; absent outside a repository
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<CommitId>,               // 40 or 64 lowercase hex characters; absent when unknown
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelName>,               // the harness's model as configured at launch, at most 256 bytes; absent when unknown
 }
 
 #[serde(rename_all = "camelCase")]
@@ -658,8 +679,15 @@ pub struct RequestRemoteStart {
 pub struct RemoteLaunch {
     pub harness: HarnessKind,                   // codex | claude | cursor
     pub working_directory: AbsolutePath,        // a path on the target; the target checks it exists before creating
-    pub execution_policy: ExecutionPolicy,      // the existing create input, unchanged (provider_conversation_contract.rs:441–451)
+    pub requested_policy: RemoteLaunchPolicy,   // the create's existing requested policy, carried across machines
 }
+// The same wire shape as the Router's ProviderRequestedPolicy { access: RouterAccess } (provider_conversation_contract.rs:244, access_contract.rs:7),
+// which this crate can't depend on. The Router owns what each access means; it converts both ways with exhaustive matches,
+// so a new RouterAccess variant fails to compile until this shape gains it, and round-trip tests pin the wire.
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemoteLaunchPolicy { pub access: RemoteLaunchAccess }
+#[serde(rename_all = "kebab-case")]
+pub enum RemoteLaunchAccess { WriteRestricted, WorkspaceWrite } // write-restricted | workspace-write
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RemoteStartAdmission {
     #[serde(rename_all = "camelCase")]
@@ -1480,7 +1508,7 @@ flowchart TB
 | Cloudflare | Both Workers' deploy config turns on `observability` `logs` (`enabled`, `head_sampling_rate: 1`); central's also turns on `traces` (`enabled`, `head_sampling_rate: 1`); the sign-in Worker sets `traces.enabled: false` and `invocation_logs: false`. Each lists the deployment's OTLP destinations. Destinations are account-level: created once through Cloudflare's API with the `cf` CLI, their names kept in the private ops config. `persist` stays on, so Cloudflare keeps the records if export fails. Sign-in writes each record as one JSON `console.log` line. Central writes through `tracing` with a JSON layer to the console, as workers-rs's tracing example does. On central, Workers traces add a span for each request, Durable Object call and outbound fetch, with no code. |
 | Node and Tokio | Tokio follows the Router's `telemetry.rs`: `tracing` with the OpenTelemetry bridge, exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT`. The Node host uses `@logtape/logtape` with `@logtape/otel`, as the Switchboard's `tool-host-node` already does, against the same variable. That's a log sink, so the Node host sends logs and no traces; R51's records are those logs. With no endpoint set, records go to the host's own output only. |
 | Joining records | Records join on their organization, enrollment, installation, connection and session IDs. Joining one request's traces across services is later. |
-| Failure | Export never sits on a request's path: Cloudflare exports after the invocation, and the OTLP exporters batch in the background and drop when full. A destination that's down changes no answer. |
+| Failure | Export never sits on a request's path: Cloudflare exports after the invocation; Tokio's OTLP exporter batches in the background and drops when full; the Node host's `@logtape/otel` sink hands each record to its default `SimpleLogRecordProcessor`, which exports it without the request awaiting it. A destination that's down changes no answer. |
 | Volume and cost | Every record and trace is kept at item two's volume (one owner, a few machines). Sampling is one setting per Worker. From 1 December 2026, records Cloudflare keeps alongside export count toward Workers Observability usage. |
 </script></ex-markdown>
 
