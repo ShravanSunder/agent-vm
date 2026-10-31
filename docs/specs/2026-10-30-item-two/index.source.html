@@ -65,6 +65,14 @@
   <ex-step to="program-design.html#program-design--fleet-central-one-core-two-hosts" icon="stack">Fleet central: one core, two hosts.</ex-step>
   <ex-step to="program-design.html#program-design--the-sign-in-service-storage-core-and-hosts" icon="database">The sign-in service: one core, two hosts, on Drizzle.</ex-step>
 </ex-presentation>
+<ex-presentation id="path-runtime" title="Cores and hosts: keeping logic free of the runtime" description="Every rule lives in one runtime-free core; each runtime is a thin host that injects storage, time, IDs, crypto and calls.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">Your needs: one design on any host (U16), and one runtime-free core with everything injected (U23).</ex-step>
+  <ex-step to="specification.html#specification--the-sign-in-service-storage-hosts-and-tests" icon="book-open">The rules: every sign-in rule in one core; storage, time, IDs, crypto and outbound calls only through capabilities the host supplies (R30); one contract on every host (R26).</ex-step>
+  <ex-step to="program-design.html#program-design--the-parts-in-code" icon="stack">The parts in code: each core, its hosts, and what depends on what. Nothing depends on a host.</ex-step>
+  <ex-step to="program-design.html#program-design--fleet-central-one-core-two-hosts" icon="stack">Fleet central: one core, a Cloudflare host and a Tokio host, through CentralPlatform.</ex-step>
+  <ex-step to="program-design.html#program-design--the-sign-in-service-storage-core-and-hosts" icon="database">The sign-in service: one core, a Cloudflare host and a Node host, through SignInPlatform, on Drizzle.</ex-step>
+  <ex-step to="program-design.html#program-design--telemetry-logs-and-traces-r51" icon="path">Even telemetry and rate limits are host capabilities: the core says what happened; each host decides where it goes.</ex-step>
+</ex-presentation>
 <ex-presentation id="path-telemetry" title="Logs, traces and flood limits" description="What Cloudflare gives turned on and exported over OpenTelemetry; floods kept off the login.">
   <ex-step to="requirements.html#requirements--needs" icon="users">The needs: see what happened (U41), and login can't be flooded (U42).</ex-step>
   <ex-step to="specification.html#specification--telemetry-and-flood-limits" icon="book-open">The rules: a record for every decision, nothing secret in one; limits per trusted address, and Turnstile (R51, R52).</ex-step>
@@ -118,6 +126,7 @@ Each opens the exact sections in order. Start one from the walkthrough button.
 |---|---|
 | **Item two in one pass** | The picture, your needs, the boundary, the entities, the structure, the parts in code, the steps to production, the five deliverables, and what's yours to decide |
 | **The parts in code** | The repositories, packages and folders, and where each core meets its hosts |
+| **Cores and hosts** | How every rule stays free of the runtime, and what each host injects |
 | **Logs, traces and flood limits** | Telemetry from Cloudflare and every host; rate limits, Turnstile, and how clients without a secret are protected |
 | **A machine logs in** | The device-code login, renewal, each machine's own client, and revocation |
 | **Central accepts only logged-in machines** | Your step 1: the switch, behind Access, and what stays as today until steps 3–5 |

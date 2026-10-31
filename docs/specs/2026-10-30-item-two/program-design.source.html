@@ -1426,6 +1426,15 @@ flowchart TD
   T --> R["The page retries the change:<br/>the guard passes, and it happens"]
 ```
 
+**Which factor can be first, and which second** (you agreed, 31 October):
+
+| | First (signs you in) | Second (confirms a change, or recovers) |
+|---|---|---|
+| Google or GitHub | yes | no, it's always the first step when used |
+| Passkey (fingerprint, face or PIN) | yes, and then it counts as both | yes, on top of Google or GitHub |
+| App code (TOTP) | no | yes |
+| Recovery code | no | yes, once each |
+
 | Part | Design |
 |---|---|
 | Second factors | Better Auth's passkey plugin, with `authenticatorSelection.userVerification: "required"` at registration. **Passkey sign-in (OD21)** uses the plugin's own endpoints. Its `authentication.afterVerification` hook runs after the signature check and before the session is created (pinned `@better-auth/passkey` `index.mjs:487`); ours refuses an assertion without user verification, so no session exists. An after-hook stamps the new session's `secondFactorAt` with method `passkey`, so a passkey sign-in counts as both factors. B7 proves the hook at 1.7.11; until it does, passkey sign-in stays off and people sign in with Google or GitHub. Better Auth's two-factor plugin, with `allowPasswordless: true` (people have no password), for authenticator-app codes (TOTP) and its backup codes as the recovery codes. Its `verify-totp` and `verify-backup-code` run on an already signed-in session (`verify-two-factor.mjs`). The plugin's own sign-in verifies with `requireUserVerification: false` (pinned source), which is why the hook is needed. `trustDevice` is never offered: it would skip codes for 30 days. The plugin's account lockout (on by default; app codes and backup codes share one counter) stays on. |
