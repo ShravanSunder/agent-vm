@@ -356,6 +356,7 @@ unchanged; the local journeys run the sign-in service on it.
   - the contributor deciding device-code and refresh mints from `input.referenceId` only, sending the machine client's ID in `DecideMachineToken`, and handling `wrong-client`;
   - the `DisableMachineClient` receiver (K11's consumer) on F3a's service edge, through `disableMachineClient`, with its three results;
   - OD6's 10-minute lifetime;
+  - the machine clients' refresh lifetime of 30 days, a fresh one with each refresh (R40's idle expiry; SO2 confirms the rolling lifetime at 1.7.11);
   - the dispatch row and refused combinations;
   - K10 (machine tokens from the real issuer).
 - **Writes:** `packages/auth` `sign-in-core/device-login/`, the provider configuration, the dispatch.
@@ -405,13 +406,14 @@ unchanged; the local journeys run the sign-in service on it.
   - Better Auth's passkey plugin with user verification required (registration option and the after-verification hook) and its two-factor plugin with `allowPasswordless`, app codes and backup codes as recovery codes;
   - the session's `secondFactorAt` and `secondFactorMethod`, stamped by after-hooks; `second_factor_at` and `amr` in every person token (K6);
   - the first second factor as the authenticator app (its setup issues the recovery codes), a passkey after it; `trustDevice` never offered; the plugin's lockout kept on;
-  - the before-hooks guarding adds, replacements, removals and new codes;
+  - the before-hooks guarding adds, replacements, removals and new codes, with `user.secondFactorSetAt` as the durable fence, the app replaced in one action, the last factor never removable, and `/two-factor/get-totp-uri` refused;
+  - passkey confirmation only on top of the provider session (the plugin's own session revoked), and the deny hook's own 15-minute check;
   - `approver_second_factor_at` in `DecideDeviceLogin` (K8);
   - the page's prompts on `secondFactorRequired`; the code checks in `SIGN_IN_ATTEMPTS`.
 - **Writes:** `packages/auth` `sign-in-core/second-factors/`, `better-auth-provider`, the pages.
 - **Earns:** SO2's second-factor cases (U44); U43's token-claim half.
 - **Focused proof:**
-  - **Wrong behaviors caught:** Google alone adding or replacing a factor; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation.
+  - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey alone starting a usable session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor.
   - **Layer:** sign-in core unit tests with a controlled clock; the real plugins on both hosts (integration).
   - **Oracle:** R53, R54, C13.
 - **Stop if:** at 1.7.11 the after-verification hook can't refuse an unverified passkey assertion, or `verify-totp` won't run on a signed-in session. Then the confirmation runs through our own core route with the plugin's stored secret; the same rows decide it.
@@ -479,6 +481,8 @@ unchanged; the local journeys run the sign-in service on it.
   - `DisableMachineClient` from the revocation and supersession outbox (K11's producer);
   - `RevokeMachineEnrollment` as one organization-authority transaction: allowances withdrawn, the machine's sessions removed, its connection closed. D5's F5 adds the removal notices to the Switchboard on top of this same transaction;
   - the token check for the sign-in service's machine tokens, refusing any other issuer;
+  - R40's idle expiry: each `Grant` time recorded, `Refuse { idleExpired }` after 30 days without one (one setting), the enrollment shown expired; SO4's idle-expiry scenario on a controlled clock, across a restart;
+  - R53 at central: `DeviceLoginRefusal::SecondFactorRequired` unless `approver_second_factor_at` is within the window or the organization has never had an enrollment;
   - `RenewMachineToken`, and closing expired and superseded connections;
   - the single-valued `machineLogin` setting, until F17 removes the `accessEnrollment` branch;
 - **Writes:** `organization_authority`, the Registry object, new `machine_token_check`, `central_router.rs` `/v1/session`, both hosts' entries.
@@ -525,7 +529,7 @@ unchanged; the local journeys run the sign-in service on it.
 <ex-markdown id="ticket-f14-text"><script type="text/markdown">
 `verify-codex-router` `fleet-machine-login`, with registered sessions (F4a), including a Router host started with no encrypted store and restarted, and one with a damaged store. The old connection left open after a re-login is checked with a registration, refused and the connection closed, against a positive control on the new connection; the remote-start case joins in F16, and the session-token case once F3b exists (D3).
 - **Messaging across machines:** after both Routers log in by device code, a session on each exchanges a message and a reply, each recorded with its sending session (SO8 step 8). The same step runs at JC1 and at PROD2.
-- **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, U14's renewal case, revocation removing sessions, and today's messaging between machines kept on the new login (U34).
+- **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, R40's idle expiry end to end (SO8 step 9), U14's renewal case, revocation removing sessions, and today's messaging between machines kept on the new login (U34).
 </script></ex-markdown>
 </details>
 <details id="ticket-f8a">

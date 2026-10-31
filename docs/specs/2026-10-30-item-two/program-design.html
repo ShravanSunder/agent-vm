@@ -758,7 +758,7 @@ pub struct DecideDeviceLogin {
 pub enum DeviceLoginDecision {
     #[serde(rename_all = "camelCase")]
     Approved { enrollment_id: EnrollmentId },
-    Refused { reason: DeviceLoginRefusal },    // notOwner | machineInAnotherOrganization | unknownWorkspace
+    Refused { reason: DeviceLoginRefusal },    // notOwner | machineInAnotherOrganization | unknownWorkspace | secondFactorRequired { within_seconds } (R53)
 }
 
 // Sign-in → Fleet central, from the extension claim contributor, before each device-code or refresh mint.
@@ -841,7 +841,7 @@ The fallback for the first mint is our own device endpoints minting through `iss
 
 **Renewal.** A machine refreshes at the sign-in service before `grant_expires_at`, as above. Fleet central decides whether it is admitted: on each new connection and each `RenewMachineToken`, the organization authority reads the enrollment live.
 
-**Idle expiry (30 days, one setting).** The organization authority records the time of each `Grant` it gives an enrollment, and answers `Refuse { reason: idleExpired }` once 30 days have passed since the last one; the enrollment shows as expired. The sign-in service sets the machine clients' refresh lifetime (`refreshTokenExpiresIn`, Better Auth's default) to the same 30 days. Each refresh issues a new refresh token with a fresh lifetime, which B5 confirms at 1.7.11. So a running machine, renewing every few minutes, never expires; one switched off for more than 30 days asks for your approval again. Central's own rule decides it, so the two lifetimes drifting apart can't keep a machine in.
+**Idle expiry (30 days, one setting; R40).** The organization authority records the time of each `Grant` it gives an enrollment, and answers `Refuse { reason: idleExpired }` once 30 days have passed since the last one; the enrollment shows as expired. The sign-in service sets the machine clients' refresh lifetime (`refreshTokenExpiresIn`, Better Auth's default) to the same 30 days. Each refresh issues a new refresh token with a fresh lifetime, which B5 confirms at 1.7.11. So a running machine, renewing every few minutes, never expires; one switched off for more than 30 days asks for your approval again. Central's own rule decides it, so the two lifetimes drifting apart can't keep a machine in.
 
 **The open connection, and supersession.**
 - **Renewing:** an open connection carries its token's expiry and its enrollment ID. Before the token expires, the Router sends a fresh one over the connection (`RenewMachineToken { token }` on `/v1/session`), checked like a new connection. The Connection object closes a connection whose token has expired.
@@ -957,7 +957,7 @@ pub struct WhoIsLoggedIn { pub organization_id: OrganizationId }
 pub enum WhoIsLoggedInResult {
     #[serde(rename_all = "camelCase")]
     Snapshot { as_of: UnixMillis, machines: Vec<MachineRow>, people: Vec<AdmittedPersonRow> },
-    Refused { reason: OwnerRefusal },               // reveals nothing (R49)
+    Refused { reason: OwnerRefusal },               // reveals nothing (R49); a lookup never answers secondFactorRequired
 }                                                    // no answer at all, or an error, means unavailable
 #[serde(rename_all = "camelCase")]
 pub struct MachineRow {
@@ -1427,14 +1427,14 @@ flowchart TD
 | Part | Design |
 |---|---|
 | Second factors | Better Auth's passkey plugin, with `authenticatorSelection.userVerification: "required"` at registration, and an `authentication.afterVerification` hook refusing an assertion without user verification (proven against 1.7.11 in B7). Better Auth's two-factor plugin, with `allowPasswordless: true` (people have no password), for authenticator-app codes (TOTP) and its backup codes as the recovery codes. Its `verify-totp` and `verify-backup-code` run on an already signed-in session (`verify-two-factor.mjs`). Better Auth's docs describe `userVerification` as governing sign-in too, but the pinned source applies it at registration and verifies sign-in with `requireUserVerification: false`, so the hook stays either way. `trustDevice` is never offered: it would skip codes for 30 days. The plugin's account lockout (on by default; app codes and backup codes share one counter) stays on. |
-| Confirming | After-hooks on `/two-factor/verify-totp` and `/two-factor/verify-backup-code` stamp the session's `secondFactorAt` and `secondFactorMethod` from `platform.clock`. A passkey confirmation is a passkey sign-in: its new session is stamped the same way. The issuer copies them into each person token as `second_factor_at` and `amr` (C13). |
-| Fleet central | The owner guard checks `now − second_factor_at ≤ 15 minutes` (one setting) for every R13 change, and otherwise answers `secondFactorRequired { withinSeconds }`. Reads don't check it. `DecideDeviceLogin` carries `approver_second_factor_at`; the organization authority accepts it missing only when the organization has never had an enrollment (the first-machine exception). |
-| Adding and replacing | The first second factor is the authenticator app, because Better Auth issues backup codes only once two-factor is on (`backup-codes/index.mjs:278`, `TWO_FACTOR_NOT_ENABLED`); enabling it returns the app's QR code and the recovery codes, shown once. A passkey is added after. Before-hooks on passkey registration, update and delete, and on two-factor enable, disable and new backup codes: allowed when the person has no second factor yet; otherwise only from a session confirmed in the last 15 minutes. Replacing the app is disable then enable (Better Auth refuses a second enable), both behind the same hooks. |
+| Confirming | Always on top of the person's provider session. After-hooks on `/two-factor/verify-totp` and `/two-factor/verify-backup-code` stamp that session's `secondFactorAt` and `secondFactorMethod` from `platform.clock`. A passkey confirms through the passkey verify with the provider session present. A before-hook refuses it when there is no provider session for the same person. The `authentication.afterVerification` hook stamps the provider session, and an after-hook revokes the separate session the plugin creates, so a passkey never starts a session by itself. B7 proves this at 1.7.11; if the plugin can't be bent this way, the core's own confirm route verifies the passkey with the plugin's stored key. The issuer copies the time and method into each person token as `second_factor_at` and `amr` (C13). |
+| Fleet central | The owner guard checks `now − second_factor_at ≤ 15 minutes` (one setting) for every R13 change, and otherwise refuses with `OwnerRefusal::SecondFactorRequired { within_seconds }`: every owner command's refusal is `OwnerRefusal`, either `NotOwner` (reveals nothing) or `SecondFactorRequired`. Reads don't check it. Denying a device code never reaches central, so the sign-in service's deny before-hook applies the same 15-minute rule to the session itself. `DecideDeviceLogin` carries `approver_second_factor_at`; the organization authority accepts it missing only when the organization has never had an enrollment (the first-machine exception). |
+| Adding and replacing | The first second factor is the authenticator app, because Better Auth issues backup codes only once two-factor is on (`backup-codes/index.mjs:278`, `TWO_FACTOR_NOT_ENABLED`); enabling it returns the app's QR code and the recovery codes, shown once. A passkey is added after. Before-hooks on passkey registration, update and delete, and on two-factor enable, disable and new backup codes: allowed when the person has no second factor yet; otherwise only from a session confirmed in the last 15 minutes. Replacing the app is one action of the core's: disable then enable, back to back, in a confirmed session (Better Auth refuses a second enable). Raw disable is refused unless a passkey remains, and the last passkey can't be deleted while no app is on: nobody is left with no factor. A durable `user.secondFactorSetAt`, written at the first setup and never cleared, is what "has ever had a second factor" reads. A provider-only session that arrives in the gap between disable and enable is still refused. `/two-factor/get-totp-uri` is refused always: enable already returns the app's QR code once, and the secret is never shown again. |
 | Recovery | Google or GitHub sign-in, then a recovery code (or the app code) confirms the session, then the person adds a new passkey or app and removes the lost one. Google or GitHub alone fails at the before-hooks. Each recovery-code use and factor change leaves a record (R51) and an audit entry. |
-| Rate | `/two-factor/verify-*` count in the `SIGN_IN_ATTEMPTS` class (R52), on top of Better Auth's own limits. |
+| Rate | `/two-factor/verify-*` count in the `SIGN_IN_ATTEMPTS` class (R52). Better Auth's account lockout counts only sign-in challenges, not these checks on a signed-in session, so R52's limit is what bounds guessing here. |
 | Providers | Google and GitHub only. Facebook is never configured (its emails come back unverified). Apple, if added later, refuses relay addresses (`privaterelay.appleid.com`). |
 | Not in item two | Anyone resetting another person's second factors; the owner removes a member instead (R13). An owner who loses every factor and every code can still sign in and look, but can't change anything until that reset exists: keep the recovery codes safe. |
-| Storage | Better Auth's two-factor table (each person's app secret, encrypted, and recovery codes) and `user.twoFactorEnabled`; two `session` columns, `secondFactorAt` and `secondFactorMethod`. All in OD4. |
+| Storage | Better Auth's two-factor table (each person's app secret, encrypted, and recovery codes) and `user.twoFactorEnabled`; `user.secondFactorSetAt`; two `session` columns, `secondFactorAt` and `secondFactorMethod`. All in OD4. |
 </script></ex-markdown>
 
 <h2 id="program-design--telemetry-logs-and-traces-r51">Telemetry: logs and traces (R51)</h2>
@@ -1656,11 +1656,12 @@ export type StandingAnswer =
 export type DeviceLoginAnswer =
 	| { readonly kind: 'approved'; readonly enrollmentId: EnrollmentId }
 	| { readonly kind: 'refused'; readonly reason: 'not-owner' | 'machine-in-another-organization' | 'unknown-workspace' }
+	| { readonly kind: 'second-factor-required'; readonly withinSeconds: number } // R53: the page asks for a passkey or app code, then retries
 	| CentralUnknown; // the approval is refused; the code stays pending until it expires
 
 export type MachineTokenAnswer =
 	| { readonly kind: 'grant'; readonly installationId: InstallationId; readonly enrollmentId: EnrollmentId; readonly decidedAt: UnixSeconds; readonly grantExpiresAt: UnixSeconds } // the issuer mints only within 60 s of decidedAt (the redemption window)
-	| { readonly kind: 'refuse'; readonly reason: 'enrollment-not-active' | 'superseded' | 'wrong-client' }
+	| { readonly kind: 'refuse'; readonly reason: 'enrollment-not-active' | 'superseded' | 'wrong-client' | 'idle-expired' }
 	| CentralUnknown; // nothing is minted
 
 export interface CentralClient {
@@ -1705,6 +1706,7 @@ The statements above are written as SQL so the condition each one carries is vis
 | Better Auth tables | as generated | as generated; every SQL time default (`unixepoch`) removed, so time comes only from the clocks | R33; no wall clock in storage |
 | `session` (add columns) | `organizationId` text not null · `secondFactorAt` integer null · `secondFactorMethod` text null (`passkey`, `app`, `recoveryCode`) | — | a session records its organization (people sign-in R19) and its last second factor (R53) |
 | `twoFactor` and `user.twoFactorEnabled` (generated by the two-factor plugin) | as generated: each person's encrypted app secret and recovery codes | as generated | step-up and self-serve recovery (R53, R54) |
+| `user` (add a column) | `secondFactorSetAt` integer null: set at the first-ever setup, never cleared | — | "has ever had a second factor" (R54) |
 | `sign_in_audit` | `id` text primary key (UUIDv7) · `organization_id` text not null · `request_id` text not null · `kind` text not null · `actor` text not null · `outcome` text null · `recorded_at_ms` integer not null | unique (`request_id`, `kind`) for the intent; index on `organization_id` | intent, then outcome (people sign-in R12) |
 | `organization_admission_claim` | `attempt_id` text primary key (UUIDv7) · `person_id` text not null · `organization_id` text not null · `claimed_at_ms` integer not null | index on `person_id` | one pending claim per sign-in attempt (R31, SEC-02) |
 | `admitted_person_guard` | `person_id` text not null · `organization_id` text not null · `admitted_at_ms` integer not null | primary key (`person_id`, `organization_id`) | D1 never deletes a Person central admitted (R31) |
