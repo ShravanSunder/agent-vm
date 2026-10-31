@@ -876,13 +876,13 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 - **The view goes live after the switch, not inside it.** JC1 and PROD2 carry D1 alone, so your step 1 isn't held up by step 2. Not chosen: putting V1–V4 into JC1, which is one cut fewer but makes the switch wait for the view.
 - **The view's tickets follow their repositories and owners:** V1 at central, V2 in the Router, V3 in the sign-in service, and V4 as the journey. Not chosen: one ticket spanning both repositories, because one PR can't span two repositories.
 - **Stage C's people go now and bots later,** because bots don't exist until steps 3–5. R50 stays partial until then.
-- **DV merges wait for JC1** (Advisor, IP1). The alternative, pinning a D1 release candidate while DV merges, keeps more merge freedom but adds build-selection work.
+- **DV merges wait for JT1** (Advisor, IP1 and RC1). The alternative, pinning a release candidate while DV merges, keeps more merge freedom but adds build-selection work.
 - **V5 is two tickets, V5c and V5s,** one per repository, closed together by SO12 step 9 (Advisor, IP4).
 - **The machine-client change rides in D1's existing tickets** (B5, F1, F10, F11), because it changes their contracts, not a new piece.
 - **Login goes live alone (your direction, 30 October).** D1 is login end to end; logs and traces, the view and remote start follow as their own deliverables. Not chosen: remote start inside D1, as the plan had it, which made the switch wait for it.
 - **Logs and traces come right after the switch,** so the view and remote start go live with their records visible. Not chosen: telemetry last.
 - **Records ride in D1's tickets; DT only exports.** Adding records afterwards would mean revisiting every D1 decision.
-- **Remote start comes after the view,** because you named the view as step 2. It depends only on D1, so it builds in parallel, and it can go live before the view if you want it sooner.
+- **Remote start comes after the view,** because you named the view as step 2. It builds in parallel, but it needs the view's heartbeat (V1, V2) to carry its `RemoteStart` capability, so it goes live after the view.
 - **Flood limits are their own ticket (B6) in D1,** after the device grant they limit.
 - **Later deliverables wait to merge, rather than picking stage builds from `main`** (Advisor, RC1). It costs merge freedom; the alternative, choosing an exact candidate per cut with its exclusions, costs build-selection work at every cut.
 - **Remote start is gated by a declared capability in the heartbeat** (Advisor, RC2). Not chosen: updating every Router before central, which would hold central's deploy on every machine.
