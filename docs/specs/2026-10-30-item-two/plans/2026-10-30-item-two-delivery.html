@@ -404,7 +404,8 @@ unchanged; the local journeys run the sign-in service on it.
 - **Covers:** R53's sign-in half and R54, as the Program Design's [second factors](../program-design.html#program-design--second-factors-step-up-and-recovery-r53-r54) draw them:
   - Better Auth's passkey plugin with user verification required (registration option and the after-verification hook) and its two-factor plugin with `allowPasswordless`, app codes and backup codes as recovery codes;
   - the session's `secondFactorAt` and `secondFactorMethod`, stamped by after-hooks; `second_factor_at` and `amr` in every person token (K6);
-  - the before-hooks guarding adds, replacements, removals and new codes; recovery codes issued at the first setup;
+  - the first second factor as the authenticator app (its setup issues the recovery codes), a passkey after it; `trustDevice` never offered; the plugin's lockout kept on;
+  - the before-hooks guarding adds, replacements, removals and new codes;
   - `approver_second_factor_at` in `DecideDeviceLogin` (K8);
   - the page's prompts on `secondFactorRequired`; the code checks in `SIGN_IN_ATTEMPTS`.
 - **Writes:** `packages/auth` `sign-in-core/second-factors/`, `better-auth-provider`, the pages.
