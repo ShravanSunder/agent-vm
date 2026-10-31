@@ -1419,7 +1419,7 @@ flowchart TD
   C -- "no: secondFactorRequired" --> P["The page asks: passkey or app code<br/>(or: add one now, if you have none)"]
   P --> F["The sign-in service confirms it<br/>and stamps your session's time"]
   F --> T["A fresh person token carries second_factor_at"]
-  T --> C
+  T --> R["The page retries the change:<br/>the guard passes, and it happens"]
 ```
 
 | Part | Design |
