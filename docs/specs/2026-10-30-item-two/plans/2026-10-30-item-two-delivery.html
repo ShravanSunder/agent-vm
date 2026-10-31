@@ -82,7 +82,7 @@ SO8 (F14): two Routers log in by device code to a local Fleet central, and their
 flowchart TB
   subgraph S1["1 · D1 Login"]
     direction LR
-    D1["build D1<br/>after your go, OD4, Fleet release F0"] --> JC1["JC1 private stack"] --> PROD2["PROD2 your switch"]
+    D1["build D1<br/>after your go and F0 (v0.1.118)"] --> JC1["JC1 private stack"] --> PROD2["PROD2 your switch"]
   end
   subgraph S2["2 · DT Logs and traces"]
     direction LR
@@ -115,7 +115,7 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 
 | Wave | Sign-in lane | Fleet central and Router lane | Built ahead, in branches | Starts when |
 |---|---|---|---|---|
-| **1** | B0 latest oxc, then B1 storage and core packages | F1 contracts and the shared crate · F12 Linux secret store | — | your go; the Fleet release F0 |
+| **1** | B0 latest oxc, then B1 storage and core packages | F1 contracts and the shared crate · F12 Linux secret store | — | your go; F0 (v0.1.118, published) |
 | **2** | B2 Node host · B3 design fixes | F2a organization core · F11 Router machine login | — | B1; F1 |
 | **3** | B4a issuer core | F2b Fleet data per organization · F3a receivers | — | B3 and F1's fixtures; F2a |
 | **4** | B5 device-code login | F10 enrollment and token check · F4a registrar and binding | V3 the view's page | B4a and B2; F2a, F3a, F2b, F11 |
@@ -199,7 +199,7 @@ Each row is one wave. Inside a row, everything runs at once: the sign-in lane be
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| F1 identity contracts, and the `fleet-identity-protocol` crate | D1, DV, DR | F0; your go |
+| F1 identity contracts, and the `fleet-identity-protocol` crate | D1, DV, DR | F0 (v0.1.118); your go |
 | F2a organization authority core | D1 | F1 |
 | F2b Fleet data per organization | D1 | F2a |
 | F3a central receivers and service caller | D1 | F2a |
@@ -305,6 +305,7 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 | OD18, how people sign in after their first sign-in | nothing: decided, step-up (31 October) | — |
 | OD19, which providers | nothing: decided, Google and GitHub; never Facebook or Apple relay addresses | — |
 | OD17, where logs and traces go | nothing: decided, no export yet; you turn it on later (31 October) | — |
+| Cloudflare CLI login (`cf auth login`, interactive) | the private-stack cut JC1 and everything after it; not waves 1–6. Both `cf` profiles report not logged in (31 October) | run `! cf auth login` before JC1 |
 | Running PROD2, PRODT, PRODV and PRODR | the production steps | at PROD2 you run the new Router build and log every machine in again; at the later steps nothing logs in again. Nothing in production changes before you say go |
 </script></ex-markdown>
 <h2 id="item2--basis-and-review-history">Basis and review history</h2>
@@ -328,6 +329,7 @@ The check that a consumer parses the **real** producer's output runs in whicheve
   - Requested terminal: `plan-only`. Nothing is built until you say go.
   - Delivery grouping: `deliverables`, by your direction: deliverables as vertical slices (27 October); steps 1 then 2 (30 October); login first as its own deliverable, then logs and the UI, in sequence (30 October).
   - PR topology: `separate-prs`. Each ticket is one PR in its own repository.
+- **F0, the Fleet release F1 builds on:** codex-router **v0.1.118**, which resolves exactly to the plan's anchor `7af23abe` (GitHub `main` matches). Production central's serving build is read back in JC1's cut inventory, once `cf` is logged in (Advisor, 31 October).
 - **Planned at:** agent-vm `design/portal-remediation` `e5a5da0a`; re-cut on 30 October into five deliverables at your direction, with the design's additions for telemetry (U41, R51), flood limits (U42, R52) and the package layout. That revision is reviewed `ready` at `a5dc4873` (`tmp/reviews/2026-10-30-item-two-standalone/findings.md`, ST2 and ST6 closed), with the Advisor's RC1–RC6 closed as design corrections (`tmp/practices-research/2026-10-31-item-two-recut-check/report.md`).
 </script></ex-markdown>
 <h2 id="item2--current-evidence">Current evidence</h2>
@@ -489,7 +491,7 @@ the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Driz
 - **Earns:** SO2's flood cases on both hosts (U42).
 - **Focused proof:**
   - **Wrong behaviors caught:** the limiter off outside `NODE_ENV=production`; a service page or callback left uncounted on Node; a forged `x-forwarded-for` escaping the count; one /64 getting many budgets; a limited request creating a device code or a session; one address's flood refusing another; a sign-in start passing without a verified Turnstile token, or when siteverify doesn't answer.
-  - **Layer:** sign-in core unit tests with a recording limiter; then the real provider on local workerd (Miniflare's binding) and on the Node host, under controlled system time (integration).
+  - **Layer:** sign-in core unit tests with a recording limiter; then the real provider on local workerd (Miniflare's binding) and on the Node host, under controlled system time (integration). Miniflare's binding keeps its own workerd clock, which the test clock can't move. So locally the binding proves "limited", the window reset is proven through the core's limiter on a controlled clock, and the binding's reset is checked once at JC1.
   - **Oracle:** R52, R42, V44.
 - **Stop if:** Better Auth 1.7.11 ignores `rateLimit.enabled: true` outside production, or can't take its address from the one header. Then the core's limiter carries every class on both hosts, with the Node host counting in process. The same rows decide it.
 </script></ex-markdown>
@@ -509,13 +511,13 @@ the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Driz
 - **Earns:** SO2's second-factor cases (U44); U43's token-claim half.
 - **Focused proof:**
   - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey sign-in without user verification creating a session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor; two concurrent removals leaving no factor; an unverified app counted as a factor.
-  - **Layer:** sign-in core unit tests with a controlled clock; the real plugins on both hosts (integration).
+  - **Layer:** sign-in core unit tests with a controlled clock; the real plugins on both hosts (integration). Passkey tests run on a `localhost` origin, because WebAuthn refuses an IP address as the site, and today's harness issues from `127.0.0.1`. They use a virtual authenticator (Chrome DevTools' WebAuthn) that can answer with and without user verification. The first app enrollment's verify rotates the session cookie in its own response; the stamp follows the session in that response.
   - **Oracle:** R53, R54, C13.
 - **Stop if:** at 1.7.11 `verify-totp` or `verify-backup-code` won't run on a signed-in session without replacing its cookie: then those confirmations also go through the core's route, with the plugin's stored secret. Or the after-verification hook can't refuse an unverified passkey sign-in before the session exists: then passkey sign-in stays off (Google or GitHub only), and you're told. The same rows decide it.
 </script></ex-markdown>
 </details>
 <details id="ticket-f1">
-<summary><strong>F1</strong> identity contracts (extended) · waits on F0; design approval</summary>
+<summary><strong>F1</strong> identity contracts (extended) · waits on F0 (codex-router v0.1.118); your go</summary>
 <ex-markdown id="ticket-f1-text"><script type="text/markdown">
 - **Covers:** R26, plus every shape the deliverables need, and each contract's schema and structural fixtures (not real output; see "How a contract's real output is checked"):
   - the machine-login shapes: `MachineTokenClaims` and a `MachinePrincipal` kept outside the actor `Principal`, `DecideDeviceLogin`, `DeviceLoginDecision`, `DecideMachineToken`, `MachineTokenDecision` (with `decided_at`), `AdmitMachineConnection`, `MachineConnectionAdmission`, `MachineEnrollment` (reserved, approved, enrolled, revoked, expired), `AdmissionId`/`AdmissionRef`;
@@ -620,8 +622,9 @@ the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Driz
 </script></ex-markdown>
 </details>
 <details id="ticket-f14">
-<summary><strong>F14</strong> SO8 machine login journey (new, TypeScript) · waits on F10, F11, F4a, B5</summary>
+<summary><strong>F14</strong> SO8 machine login journey (new, TypeScript) · waits on F10, F11, F4a, B5; B7 for the second machine's approval</summary>
 <ex-markdown id="ticket-f14-text"><script type="text/markdown">
+**The second machine's approval** needs a fresh second factor (R53), so that step runs through B7's real confirmation. F14 is written alongside B7, and that step stays named unverified until B7 merges.
 `verify-codex-router` `fleet-machine-login`, with registered sessions (F4a), including a Router host started with no encrypted store and restarted, and one with a damaged store. The old connection left open after a re-login is checked with a registration, refused and the connection closed, against a positive control on the new connection; the remote-start case joins in F16, and the session-token case once F3b exists (D3).
 - **Messaging across machines:** after both Routers log in by device code, a session on each exchanges a message and a reply, each recorded with its sending session (SO8 step 8). The same step runs at JC1 and at PROD2.
 - **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, R40's idle expiry end to end (SO8 step 9), U14's renewal case, revocation removing sessions, and today's messaging between machines kept on the new login (U34).
@@ -663,10 +666,10 @@ Real sessions on each harness path start and restore on a Router logged in by de
 </script></ex-markdown>
 </details>
 <details id="ticket-jc1">
-<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B1, B2, B3, B4a, B5, B6, F1, F2a, F2b, F3a, F4a, F10, F11, F17, and the proof tickets F14 and F8a, with their local runs passing</summary>
+<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B0, B1, B2, B3, B4a, B5, B6, B7, F1, F2a, F2b, F3a, F4a, F10, F11, F17, and the proof tickets F14 and F8a, with their local runs passing</summary>
 <ex-markdown id="ticket-jc1-text"><script type="text/markdown">
 - **Before it:** the cut inventory: every serving component instance (sign-in Worker and Node host, Fleet central, the Switchboard Worker and Node host, which this cut leaves untouched), every caller cohort (test Routers, test bot), each audience and the Fleet central each sign-in service asks.
-- **Covers:** D1 live together on the private stack: the sign-in service with B1–B6 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
+- **Covers:** D1 live together on the private stack: the sign-in service with B0–B7 (second factors included, with K6's and K8's real-output checks) and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
 - **Earns:** SO8 against the private stack, its messaging step included; JP4 (your admin command through the sign-in service); SO10 step 2 on the private stack; U34's step-2 row; and the **legacy-path control**: a legacy agent client gets a fresh token from the new issuer and makes one allowed Switchboard call at the unchanged Switchboard, on the Worker and the Node host, while a forbidden call is still refused. The control reruns at every deploy until JC2.
 - **Turnstile:** the private stack's widget is created through Cloudflare's API with the `cf` CLI, and one real sign-in passes Turnstile's real siteverify.
 - **Real browser sign-in:** the private-stack sign-ins (Google, then a passkey and an app code) use your test Google account, driven by a Codex agent with computer use and Brave browser control. That's your grant of 31 October; the address is in the agent's brief, not in this plan.
