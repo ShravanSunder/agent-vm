@@ -14,7 +14,9 @@
   <ex-step to="requirements.html#requirements--goal-boundary" icon="book-open">What's in item two, what isn't, and the evidence that it works.</ex-step>
   <ex-step to="specification.html#specification--entities" icon="folder">The things item two talks about, and how they relate.</ex-step>
   <ex-step to="program-design.html#program-design--the-structure-in-one-picture" icon="stack">How it's built: three services, one truth.</ex-step>
+  <ex-step to="program-design.html#program-design--the-parts-in-code" icon="folder">The parts in code: repositories, packages and folders.</ex-step>
   <ex-step to="program-design.html#program-design--changes-and-cutover" icon="rocket">What changes, and the steps to production.</ex-step>
+  <ex-step to="plans/2026-10-30-item-two-delivery.html#item2--the-deliverables-at-a-glance" icon="rocket">The five deliverables, in order.</ex-step>
   <ex-step to="requirements.html#requirements--open-decisions" icon="users">What's still yours to decide.</ex-step>
 </ex-presentation>
 <ex-presentation id="path-machine-login" title="A machine logs in" description="A device code you approve, renewal with no one acting, its own client, and revocation.">
@@ -54,6 +56,22 @@
   <ex-step to="program-design.html#program-design--the-sign-in-service-storage-core-and-hosts" icon="stack">The core, its capabilities, its store, and the tables for your approval (OD4).</ex-step>
   <ex-step to="program-design.html#program-design--how-the-issuer-tells-token-kinds-apart" icon="key">How the issuer tells token kinds apart, and keeps today's agent path.</ex-step>
 </ex-presentation>
+<ex-presentation id="path-code" title="The parts in code" description="Repositories, packages, folders, and where each core meets its hosts.">
+  <ex-step to="program-design.html#program-design--the-parts-in-code" icon="stack">The two repositories and their packages, and what depends on what.</ex-step>
+  <ex-step to="program-design.html#program-design--the-sign-in-package-folder-by-folder" icon="folder">The sign-in package, folder by folder.</ex-step>
+  <ex-step to="program-design.html#program-design--fleet-central-s-crates" icon="folder">Fleet central's crates.</ex-step>
+  <ex-step to="program-design.html#program-design--the-router-s-crates" icon="folder">The Router's crates.</ex-step>
+  <ex-step to="program-design.html#program-design--fleet-central-one-core-two-hosts" icon="stack">Fleet central: one core, two hosts.</ex-step>
+  <ex-step to="program-design.html#program-design--the-sign-in-service-storage-core-and-hosts" icon="database">The sign-in service: one core, two hosts, on Drizzle.</ex-step>
+</ex-presentation>
+<ex-presentation id="path-telemetry" title="Logs, traces and flood limits" description="What Cloudflare gives turned on and exported over OpenTelemetry; floods kept off the login.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">The needs: see what happened (U41), and login can't be flooded (U42).</ex-step>
+  <ex-step to="specification.html#specification--telemetry-and-flood-limits" icon="book-open">The rules: a record for every decision, nothing secret in one; limits per trusted address, and Turnstile (R51, R52).</ex-step>
+  <ex-step to="program-design.html#program-design--telemetry-logs-and-traces-r51" icon="path">Telemetry: Workers Logs and traces, OTLP from every host.</ex-step>
+  <ex-step to="program-design.html#program-design--flood-limits-at-sign-in-r42-r52" icon="shield-check">Flood limits: Better Auth's limits, the rate-limit binding, and Turnstile.</ex-step>
+  <ex-step to="program-design.html#program-design--clients-without-a-secret-and-google-and-github" icon="key">Clients without a secret, PKCE, and Google and GitHub.</ex-step>
+  <ex-step to="verification-design.html#verification-design--shared-observations" icon="test-tube">How it's proven: SO13, and SO2's flood cases.</ex-step>
+</ex-presentation>
 <ex-presentation id="path-proof" title="How item two is proven" description="Each need's proof, the journeys to build, and what stays unverified.">
   <ex-step to="verification-design.html#verification-design--proven-by" icon="test-tube">One line per need: what will be done and seen.</ex-step>
   <ex-step to="verification-design.html#verification-design--shared-observations" icon="test-tube">The shared journeys and suites.</ex-step>
@@ -61,36 +79,33 @@
   <ex-step to="verification-design.html#verification-design--journeys-to-build-or-extend" icon="rocket">The journeys to build.</ex-step>
 </ex-presentation>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
-<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="index.html">Item two</a>
-<a href="plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
-<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
-<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
-<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+<a href="index.html">Overview</a>
+<a href="requirements.html">Requirements</a>
+<a href="specification.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-design" revision="2026-10-30.1">
 <h1 id="item-two">Item two</h1>
 <ex-callout id="item-two-answer" tone="tldr" title="Item two in two sentences">
 <ex-markdown id="item-two-answer-text"><script type="text/markdown">
-**Step 1:** Fleet central accepts only machines you logged in by device code. Your sessions are registered and attributed, and one machine can start a helper session on another. Production switches to this login behind Cloudflare Access.
+**Step 1:** Fleet central accepts only machines you logged in by device code. Your sessions are registered and attributed, and floods of login attempts are refused. Production switches to this login behind Cloudflare Access. **Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
 
-**Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
+**Built as five deliverables, in order:** login end to end; logs and traces; who is logged in; starting a session on another machine; people in the view. Each works end to end before the next goes live.
 </script></ex-markdown>
 </ex-callout>
-<h2 id="item-two-documents">The design, in four documents</h2>
+<h2 id="item-two-documents">The design and the plan</h2>
 <ex-markdown id="item-two-documents-text"><script type="text/markdown">
 | Document | It answers |
 |---|---|
-| [Requirements](requirements.html) | Who needs what, and why, in your words. What's in item two and what isn't. What's still yours to decide. |
-| [Specification](specification.html) | What must be true: the entities, the rules, what each party sees, what happens when things fail, and how each rule is proven. |
-| [Program Design](program-design.html) | How it's built: who owns what, where it's stored, the shapes at each boundary, the flows end to end, failures, and trust. |
-| [Verification Design](verification-design.html) | How each need will be shown to hold, and the journeys to build. |
+| [Requirements](requirements.html) | Your needs, what's in and out of item two, what stays as today after the switch, and what's yours to decide |
+| [Specification](specification.html) | What must be true, and how each rule is proven |
+| [Program Design](program-design.html) | How it's built, end to end: the parts in code, the flows, telemetry and flood limits |
+| [Verification Design](verification-design.html) | How each need will be shown to hold |
+| [Delivery plan](plans/2026-10-30-item-two-delivery.html) | The build tickets, in order, and when each piece goes live |
 
-The [item two delivery plan](plans/2026-10-30-item-two-delivery.html) turns this design into tickets, in order.
+These six pages are all of item two. The menu at the top links only to them.
 
 IDs (U, R, E, C, V, SO) match the wider identity design, so the plan and the later steps line up. A gap in the numbering is either steps 3–5's or an ID the wider design retired.
 </script></ex-markdown>
@@ -100,7 +115,9 @@ Each opens the exact sections in order. Start one from the walkthrough button.
 
 | Walkthrough | What it covers |
 |---|---|
-| **Item two in one pass** | The picture, your needs, the boundary, the entities, the structure, the steps to production, and what's yours to decide |
+| **Item two in one pass** | The picture, your needs, the boundary, the entities, the structure, the parts in code, the steps to production, the five deliverables, and what's yours to decide |
+| **The parts in code** | The repositories, packages and folders, and where each core meets its hosts |
+| **Logs, traces and flood limits** | Telemetry from Cloudflare and every host; rate limits, Turnstile, and how clients without a secret are protected |
 | **A machine logs in** | The device-code login, renewal, each machine's own client, and revocation |
 | **Central accepts only logged-in machines** | Your step 1: the switch, behind Access, and what stays as today until steps 3–5 |
 | **Sessions** | Registration, attribution, and starting a helper on another machine |
@@ -110,12 +127,12 @@ Each opens the exact sections in order. Start one from the walkthrough button.
 </script></ex-markdown>
 <h2 id="item-two-built-on">What each part is built on</h2>
 <ex-markdown id="item-two-built-on-text"><script type="text/markdown">
-| Part | Language | Storage | Runtime |
-|---|---|---|---|
-| **Sign-in service** (`agent-collaboration/switchboard`, `packages/auth`) | TypeScript | SQLite through **Drizzle** only: D1 on Cloudflare, `better-sqlite3` on Node. **Better Auth** reaches it through its Drizzle adapter; migrations come from `drizzle-kit`. | One **runtime-free** `sign-in-core`. Storage, time, IDs, crypto and outbound calls come only through `SignInPlatform`, which each host supplies. |
-| **Fleet central** (`agent-collaboration/agent-collaboration`) | Rust | its existing `sqlx-core` stores with checked-in SQL (Drizzle is TypeScript-only) | One runtime-free `collaboration-central-core` on an injected clock and IDs; the Tokio and Cloudflare hosts add only their mechanics. |
-| **Router** (same repository) | Rust | its existing stores | Machine login, the heartbeat and the activity reporter on the host's injected clock. |
-| **Switchboard** | TypeScript | unchanged by item two | unchanged by item two |
+| Part | Language | Storage | Runtime | Logs and traces |
+|---|---|---|---|---|
+| **Sign-in service** (`agent-collaboration/switchboard`, `packages/auth`) | TypeScript | SQLite through **Drizzle** only: D1 on Cloudflare, `better-sqlite3` on Node. **Better Auth** reaches it through its Drizzle adapter; migrations come from `drizzle-kit`. | One **runtime-free** `sign-in-core`. Storage, time, IDs, crypto and outbound calls come only through `SignInPlatform`, which each host supplies. | Workers Logs and traces on Cloudflare; OTLP on Node |
+| **Fleet central** (`agent-collaboration/agent-collaboration`) | Rust | its existing `sqlx-core` stores with checked-in SQL (Drizzle is TypeScript-only) | One runtime-free `collaboration-central-core` on an injected clock and IDs; the Tokio and Cloudflare hosts add only their mechanics. | Workers Logs and traces on Cloudflare; OTLP on Tokio |
+| **Router** (same repository) | Rust | its existing stores | Machine login, the heartbeat and the activity reporter on the host's injected clock. | OTLP, as today |
+| **Switchboard** | TypeScript | unchanged by item two | unchanged by item two | unchanged |
 </script></ex-markdown>
 </ex-document>
 <ex-comments for="content"></ex-comments>

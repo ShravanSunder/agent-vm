@@ -8,26 +8,24 @@
 <body>
 <ex-presentation id="path-item-two" title="Item two, step by step" description="What you'll see working, in what order, and the tickets inside each step.">
   <ex-step to="item2--result" icon="rocket">The answer: what item two delivers, and what it waits on.</ex-step>
-  <ex-step to="item2--the-deliverables-at-a-glance" icon="rocket">The three deliverables and what you'll see working in each.</ex-step>
+  <ex-step to="item2--the-deliverables-at-a-glance" icon="rocket">The five deliverables and what you'll see working in each.</ex-step>
   <ex-step to="item2--how-the-deliverables-connect" icon="path">How they depend on each other, and when each goes live.</ex-step>
   <ex-step to="item2--tickets-by-workstream" icon="stack">Every ticket, by workstream and repository.</ex-step>
-  <ex-step to="item2--d1-machines-log-in-and-start-sessions-on-each-other" icon="path">D1: your sign-in, machine login, and starting a session on another machine; live at your switch.</ex-step>
-  <ex-step to="item2--dv-see-who-is-logged-in" icon="users">DV: see who is logged in and what each is working on; live right after the switch.</ex-step>
+  <ex-step to="item2--d1-login-end-to-end" icon="key">D1: login, end to end: your sign-in, machine login, sessions and flood limits; live at your switch.</ex-step>
+  <ex-step to="item2--dt-logs-and-traces" icon="path">DT: logs and traces, from Cloudflare and every host; live right after the switch.</ex-step>
+  <ex-step to="item2--dv-see-who-is-logged-in" icon="users">DV: see who is logged in and what each is working on; live after logs and traces.</ex-step>
+  <ex-step to="item2--dr-start-a-session-on-another-machine" icon="plug">DR: a session starts a helper on another machine; live after the view.</ex-step>
   <ex-step to="item2--dc-stage-c-people-in-the-view" icon="users">DC: stage C, people in the view; bots come with steps 3–5.</ex-step>
   <ex-step to="item2--verification-design-rows-scheduled" icon="shield-check">Which ticket earns each proof row.</ex-step>
   <ex-step to="item2--waiting-on-you" icon="users">What waits on you.</ex-step>
 </ex-presentation>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
-<a href="../../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="../index.html">Item two</a>
-<a href="2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
-<a href="../../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
-<a href="../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
-<a href="../../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
-<a href="../../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+<a href="../index.html">Overview</a>
+<a href="../requirements.html">Requirements</a>
+<a href="../specification.html">Specification</a>
+<a href="../program-design.html">Program Design</a>
+<a href="../verification-design.html">Verification Design</a>
+<a href="2026-10-30-item-two-delivery.html">Delivery plan</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-delivery-plan" revision="2026-10-30.1">
 <p id="set-pages"><a href="../index.html">Item two</a>: <a href="../requirements.html">Requirements</a> · <a href="../specification.html">Specification</a> · <a href="../program-design.html">Program Design</a> · <a href="../verification-design.html">Verification Design</a> · <strong>Delivery plan</strong></p>
@@ -40,18 +38,22 @@
 - "whole of d1";
 - the view staged "b plus then c as follow up", and "authenticated and live".
 
-Three deliverables carry it:
-- **D1** brings your sign-in, the organization core, machine login by device code and starting a session on another machine. It goes live at your production switch (PROD2), where central accepts only logged-in machines.
-- **DV** is the live, owner-only who-is-logged-in view (B+). It goes live right after the switch (PRODV), with no machine logging in again.
-- **DC** adds people to the view (stage C). Its bot rows need bots, which come with steps 3–5, so they're planned there.
+And, from your review of the design (30 October): "split the login as one delvierible end to end workign. and log and ui other stuff and seqeucne them"; "allow otel logign etc cloudflare gives us"; and flood protection for login.
 
-The design is reviewed: the four documents at `d5fa0887` came back `ready` from the Reviewer after five corrections, and the Advisor's four login and ordering findings are closed in the design. Nothing is built until you say go.
+Five deliverables carry it. Each works end to end before the next goes live:
+1. **D1 Login, end to end.** Your sign-in, the organization core, machine login by device code, sessions registered through their machine, and flood limits at sign-in. It goes live at your production switch (PROD2), where central accepts only logged-in machines.
+2. **DT Logs and traces.** Cloudflare's Workers Logs and traces on both Workers, exported over OpenTelemetry, and the same from the Node and Tokio hosts. Live right after the switch (PRODT).
+3. **DV Who is logged in** (B+). Live after that (PRODV), with no machine logging in again.
+4. **DR Starting a session on another machine.** Live after the view (PRODR).
+5. **DC People in the view** (stage C). Its bot rows need bots, which come with steps 3–5, so they're planned there.
+
+The design came back `ready` at `e5a5da0a`. This re-cut, and the design's additions for telemetry, flood limits and the package layout, go back to the same Reviewer before you say go. Nothing is built until then.
 
 This plan **replaces the 2026-10-27 plan for D1**. That plan still records D2–D7 until steps 3–5 are planned.
 </script></ex-markdown>
 <ex-callout id="item2--first-to-watch" tone="note" title="The first points you can watch it work">
 <ex-markdown id="item2--first-to-watch-text"><script type="text/markdown">
-SO11 (F16): two Routers on a local Fleet central, one starting a helper on the other. SO12 (V4): the who-is-logged-in page against two local Routers, one of them cut off. Both run before anything touches the private stack.
+SO8 (F14): two Routers log in by device code to a local Fleet central, and their sessions message each other. SO13 (T3): every record of those runs, in a local OpenTelemetry collector. SO12 (V4): the who-is-logged-in page against two local Routers, one of them cut off. SO11 (F16): one Router starting a helper on the other. All run before anything touches the private stack.
 </script></ex-markdown>
 </ex-callout>
 <h2 id="item2--how-to-read-this-plan">How to read this plan</h2>
@@ -61,41 +63,50 @@ SO11 (F16): two Routers on a local Fleet central, one starting a helper on the o
   - **Fleet central and the Router** are in `agent-collaboration/agent-collaboration` (the codex-router checkout).
   - **The sign-in service** is in `agent-collaboration/switchboard`, with the Switchboard.
 - **A ticket** (F15, V1 and so on) is one pull request in its repository. Its card says what it covers, what proves it and what it waits on.
-- **Proven** means a deliverable's tickets have merged and its own proofs pass. **Live** means deployed: first on the private stack (JC1, JV1), then in production when you say go (PROD2, PRODV).
+- **Proven** means a deliverable's tickets have merged and its own proofs pass. **Live** means deployed: first on the private stack (JC1, JT1, JV1, JR1), then in production when you say go (PROD2, PRODT, PRODV, PRODR).
 </script></ex-markdown>
 <h2 id="item2--the-deliverables-at-a-glance">The deliverables at a glance</h2>
 <ex-markdown id="item2--the-deliverables-at-a-glance-text"><script type="text/markdown">
 | Deliverable | What you'll see working | Workstreams | Waits on |
 |---|---|---|---|
-| **D1 Machines log in, and start sessions on each other** | You sign in, and approve your Mac and Sunclaw by device code. A session on your Mac starts a helper on Sunclaw, and sessions on the two keep messaging each other on the new login. Then production switches: central accepts only machines logged in this way (still behind Access). | sign-in; Fleet central; Router | your go; OD4; the Fleet release F0 |
+| **D1 Login, end to end** | You sign in, and approve your Mac and Sunclaw by device code. Their sessions register through their machine, and sessions on the two keep messaging each other on the new login. A revoked machine stops. Hammering the sign-in page or code entry from one address is refused and changes nothing. Then production switches: central accepts only machines logged in this way (still behind Access). | sign-in; Fleet central; Router | your go; OD4; the Fleet release F0 |
+| **DT Logs and traces** | Every login, refusal, connection and registration leaves a record with its reason, in Cloudflare's Workers Logs and traces and in your OpenTelemetry tool, with nothing secret in it. | sign-in; Fleet central | D1's B2, B5, F10; OD17 only for the export check |
 | **DV See who is logged in** | You open a page beside the device-code approval page. It shows each machine you've logged in (approval, workspaces, connected or not, last seen) and each session on it (harness, project, workspace, start time, and working, idle or unknown). A machine whose network is cut shows as not connected within 15 seconds. Anyone else is refused; if central can't answer, the page says unavailable. | Fleet central; Router; sign-in | D1's F1, F2a, F4a, F10, F11, B4a; OD14 (built at the proposed 15 s) |
+| **DR Start a session on another machine** | A session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw. Each start gives started, refused (nothing created) or unknown (read the outcome later). An offline machine is refused, never queued. | Fleet central; Router | D1's F2a, F4a, F10, F11, F14 |
 | **DC Stage C: people** | The view also shows each person admitted to your organization: their name, signed in now or not, and their last sign-in. | sign-in; Fleet central | DV |
 </script></ex-markdown>
 <h2 id="item2--how-the-deliverables-connect">How the deliverables connect</h2>
 <ex-markdown id="item2--how-the-deliverables-connect-text"><script type="text/markdown">
 ```mermaid
 flowchart TB
-  PRE["Before: your go, OD4,<br/>Fleet release F0"]
-  D1["D1 Machines log in,<br/>start sessions on each other"]
-  JC1["JC1 private stack"]
-  PROD2["PROD2 your switch"]
-  DV["DV See who is logged in (B+)"]
-  JV1["JV1 private stack"]
-  PRODV["PRODV the view in production"]
-  DC["DC Stage C: people"]
-  LATER["Bots in the view:<br/>with steps 3–5"]
-  PRE --> D1
-  D1 --> JC1 --> PROD2
-  D1 -->|"F1, F2a, F4a, F10, F11, B4a"| DV
-  DV --> JV1
-  JC1 --> JV1
-  JV1 --> PRODV
-  PROD2 --> PRODV
-  DV --> DC
-  DC -.-> LATER
+  subgraph S1["1 · D1 Login"]
+    direction LR
+    D1["build D1<br/>after your go, OD4, Fleet release F0"] --> JC1["JC1 private stack"] --> PROD2["PROD2 your switch"]
+  end
+  subgraph S2["2 · DT Logs and traces"]
+    direction LR
+    DT["build DT"] --> JT1["JT1 private stack"] --> PRODT["PRODT production"]
+  end
+  subgraph S3["3 · DV Who is logged in"]
+    direction LR
+    DV["build DV"] --> JV1["JV1 private stack"] --> PRODV["PRODV production"]
+  end
+  subgraph S4["4 · DR Remote start"]
+    direction LR
+    DR["build DR"] --> JR1["JR1 private stack"] --> PRODR["PRODR production"]
+  end
+  subgraph S5["5 · DC People"]
+    direction LR
+    DC["build DC"] --> NEXT["with the next deploy"]
+  end
+  S1 --> S2 --> S3 --> S4 --> S5
 ```
 
-D1 comes first: the view lists logged-in machines, so it needs machine login, the organization core and session registration. DV's tickets start as soon as the D1 tickets they read are merged, so most of DV is built while the rest of D1 finishes. DV goes live after the switch, as its own small step: central first, then the Routers, then the page. No machine logs in again.
+Each lane is one deliverable, top to bottom in the order it goes live. A lane's build starts as soon as the D1 tickets it reads are merged (the "Waits on" column below), so DT, DV and DR are built while D1 finishes; only going live is in sequence. Bots in the view come with steps 3–5.
+
+**D1 goes live alone,** so your switch waits on nothing else. The rest go live one at a time after it, each as its own small step, and none makes a machine log in again.
+
+**D1's tickets already record their decisions** through the cores' observation seams as they build them. DT turns on Cloudflare's logs and traces and adds the exporters.
 </script></ex-markdown>
 <h2 id="item2--tickets-by-workstream">Tickets by workstream</h2>
 <ex-markdown id="item2--tickets-by-workstream-text"><script type="text/markdown">
@@ -103,22 +114,24 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| F1 identity contracts | D1, DV | F0; your go |
+| F1 identity contracts, and the `fleet-identity-protocol` crate | D1, DV, DR | F0; your go |
 | F2a organization authority core | D1 | F1 |
 | F2b Fleet data per organization | D1 | F2a |
 | F3a central receivers and service caller | D1 | F2a |
 | F10 machine enrollment, the token check, the machine client, revocation | D1 | F2a, F3a |
 | F11 Router machine login | D1 | F1; B5 for the real flow |
 | F4a Router registrar and binding | D1 | F2a, F2b, F11 |
-| F14 SO8 machine login journey | D1 | F10, F11, F4a, B5, F15 |
-| F15 starting a session on another machine | D1 | F2a, F4a, F10, F11 |
+| F14 SO8 machine login journey, with messaging between machines | D1 | F10, F11, F4a, B5 |
 | F8a SO1 journey: sessions and binding | D1 | F4a, F14 |
-| F16 SO11 remote start journey | D1 | F15, F14 |
 | F12 Router secret store, Linux backend | D1, off the first-use path | your go |
 | F17 remove today's machine login | D1 | F10, F14 |
+| T2 Fleet central's telemetry on both hosts | DT | F10; merges after JC1 |
+| T3 SO13 telemetry journey | DT | T1, T2, F14 |
 | V1 presence, activity and the lookup at central | DV | F1, F2a, F4a, F10; merges after JC1 |
 | V2 Router heartbeat and session activity reporter | DV | F4a, F11; merges after JC1 |
 | V4 SO12 who-is-logged-in journey | DV | V1, V2, V3, F14 |
+| F15 starting a session on another machine | DR | F2a, F4a, F10, F11; merges after JC1 |
+| F16 SO11 remote start journey | DR | F15, F14 |
 | V5c people rows at central | DC | V4 |
 
 **Sign-in service** (Switchboard Lead, `agent-collaboration/switchboard`)
@@ -130,6 +143,8 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 | B4a issuer core | D1 | B3; F1's contract fixtures |
 | B2 sign-in Node host | D1 | B1 |
 | B5 device-code login, with one client per machine | D1 | B4a, B2; F1's contract fixtures |
+| B6 flood limits at sign-in | D1 | B5 |
+| T1 the sign-in service's telemetry on both hosts | DT | B2, B5; merges after JC1 |
 | V3 the who-is-logged-in page | DV | B4a; V1 for the real lookup; merges after JC1 |
 | V5s people's sign-in facts in the view | DC | V5c's shape (K12); V3 |
 
@@ -137,17 +152,21 @@ D1 comes first: the view lists logged-in machines, so it needs machine login, th
 
 | Ticket | Deliverable | Waits on |
 |---|---|---|
-| JC1 first joint cut, private stack | D1 | D1's tickets merged, F17 included, F12 aside |
+| JC1 first joint cut, private stack | D1 | D1's tickets merged, B6 and F17 included, F12 aside |
 | PROD2 production step 2: the switch | D1 | JC1; your go |
-| JV1 the view on the private stack | DV | V1–V4 merged; JC1 |
-| PRODV the view in production | DV | JV1; PROD2; your go |
+| JT1 logs and traces on the private stack | DT | T1–T3 merged; JC1; OD17 for the export check only |
+| PRODT logs and traces in production | DT | JT1; PROD2; your go |
+| JV1 the view on the private stack | DV | V1–V4 merged; JT1 |
+| PRODV the view in production | DV | JV1; PRODT; your go |
+| JR1 remote start on the private stack | DR | F15, F16 merged; JV1 |
+| PRODR remote start in production | DR | JR1; PRODV; your go |
 
-There is no move ticket: the Switchboard and sign-in already stand alone in `agent-collaboration/switchboard` (M0, merged as `8f6be960`). M0b, the admin panel from #243, is PR #2, waiting on your merge; nothing here needs it.
+There is no move ticket: the Switchboard and sign-in already stand alone in `agent-collaboration/switchboard` (M0, merged as `8f6be960`). M0b, the admin panel from #243, is merged; nothing here needs it.
 </script></ex-markdown>
 <h2 id="item2--how-a-contract-s-real-output-is-checked">How a contract's real output is checked</h2>
 <ex-markdown id="item2--how-a-contract-s-real-output-is-checked-text"><script type="text/markdown">
 Every cross-repository contract has one home, which publishes the shape its consumer builds and tests against from the start.
-- **In codex-router:** F1 generates the schemas and structural fixtures for the Rust-owned contracts (K3, K8, K9, K11, K12), in `collaboration-central-core/src/identity_contract.rs`.
+- **In codex-router:** F1 generates the schemas and structural fixtures for the Rust-owned contracts (K3, K8, K9, K11, K12): the shapes on the machine's connection in the new `fleet-identity-protocol` crate, and central-only shapes in `collaboration-central-core/src/identity_contract.rs`.
 - **In the switchboard repository:** K5, K6, K7 and K10 live in `packages/auth` and `tool-access/contracts`.
 
 The check that a consumer parses the **real** producer's output runs in whichever of the producer's and the consumer's tickets merges second, and must pass before the contract's cut. So no ticket waits on another's runtime output.
@@ -165,16 +184,17 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 </script></ex-markdown>
 <h2 id="item2--goal-scope-and-non-goals">Goal, scope and non-goals</h2>
 <ex-markdown id="item2--goal-scope-and-non-goals-text"><script type="text/markdown">
-**Goal:** D1's requirements, U40's R47–R49, and R50's people half, delivered and proven on their planned targets. Your production fleet moves to the new machine login (U34's step 2), and you see it live.
+**Goal:** D1's requirements (U42's flood limits included), U41's logs and traces, U40's R47–R49, U39's remote start and R50's people half, delivered and proven on their planned targets. Your production fleet moves to the new machine login (U34's step 2), and you see it live.
 
 **Carried to the steps 3–5 planner:** V42's bot half (each bot's membership workspace, credential state and last token, surviving a restart), and the token portions of U6 and U18 (at D3's F8b). Neither is reported complete here.
 
 **In scope:**
-- the sign-in service's people sign-in, issuer core and device-code machine login, with one client per machine;
+- the sign-in service's people sign-in, issuer core and device-code machine login, with one client per machine, and its flood limits;
+- logs and traces from both Workers and every host;
 - Fleet central's organization core, machine enrollment and token check, session registration and remote start;
 - the Router's machine login, registrar and binding, heartbeat and session activity reporter;
 - the who-is-logged-in view, B+ and stage C's people rows;
-- the private-stack cuts JC1 and JV1, and the production steps PROD2 and PRODV.
+- the private-stack cuts JC1, JT1, JV1 and JR1, and the production steps PROD2, PRODT, PRODV and PRODR.
 
 **Not in scope:**
 - D2–D7 of the 2026-10-27 plan: organizations' bots, roles and the filtered view, Switchboard tokens, collaboration admission, removal notices, and removing Cloudflare Access. These are steps 3–5, planned with their own design.
@@ -183,7 +203,8 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 - the Fleet release F0;
 - agent-vm, which is frozen;
 - sessions inside VMs, and any VM proof;
-- any new check gate. No Linux CI job is added (your call, 27 October).
+- any new check gate. No Linux CI job is added (your call, 27 October);
+- dashboards, alerts, Logpush, and Turnstile on the sign-in pages.
 </script></ex-markdown>
 <h2 id="item2--waiting-on-you">Waiting on you</h2>
 <ex-markdown id="item2--waiting-on-you-text"><script type="text/markdown">
@@ -193,8 +214,10 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 | OD4, the sign-in tables (with `deviceCode` and its `enrollmentId`) | B1 | approve the drawn tables and generated SQL together |
 | OD14, the view's freshness bound | nothing: DV is built at the proposed 15 seconds, and every interval scales from that one setting | 15 seconds |
 | OD2, the default token lifetime | nothing: 5 minutes is built and is one setting | 5 minutes |
-| Merging M0b (switchboard PR #2) | nothing in this plan | merge |
-| Running PROD2 and PRODV | the production steps | at PROD2 you run the new Router build and log every machine in again; at PRODV nothing logs in again. Nothing in production changes before you say go |
+| OD16, how login floods are limited | nothing: Turnstile is decided (you, 30 October), and the counting layers are built as recommended in B6 | Better Auth's limits, set explicitly, plus Cloudflare's rate-limit binding in the Worker |
+| OD18, how people sign in after their first sign-in | only the passkey rule, inside D1; the rest of sign-in starts without it | (a): add a passkey after the first Google or GitHub sign-in, then sign in with the passkey alone |
+| OD17, where logs and traces go | only JT1's export check | name one OTLP destination when you pick a tool; Cloudflare keeps its own records either way |
+| Running PROD2, PRODT, PRODV and PRODR | the production steps | at PROD2 you run the new Router build and log every machine in again; at the later steps nothing logs in again. Nothing in production changes before you say go |
 </script></ex-markdown>
 <h2 id="item2--basis-and-review-history">Basis and review history</h2>
 <ex-markdown id="item2--basis-and-review-history-text"><script type="text/markdown">
@@ -215,9 +238,9 @@ The check that a consumer parses the **real** producer's output runs in whicheve
   - Better Auth 1.7.11 (`52ab801c`).
 - **Delivery context:**
   - Requested terminal: `plan-only`. Nothing is built until you say go.
-  - Delivery grouping: `deliverables`, by your direction: deliverables as vertical slices (27 October), and steps 1 then 2 (30 October).
+  - Delivery grouping: `deliverables`, by your direction: deliverables as vertical slices (27 October); steps 1 then 2 (30 October); login first as its own deliverable, then logs and the UI, in sequence (30 October).
   - PR topology: `separate-prs`. Each ticket is one PR in its own repository.
-- **Planned at:** agent-vm `design/portal-remediation` `e5a5da0a`.
+- **Planned at:** agent-vm `design/portal-remediation` `e5a5da0a`; re-cut on 30 October into five deliverables at your direction, with the design's additions for telemetry (U41, R51), flood limits (U42, R52) and the package layout. That revision's review is pending.
 </script></ex-markdown>
 <h2 id="item2--current-evidence">Current evidence</h2>
 <ex-markdown id="item2--current-evidence-text"><script type="text/markdown">
@@ -253,15 +276,14 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 
 "Earns" names the Verification Design rows whose passing condition the ticket first meets, and the command or journey that observes it. A ticket's focused proofs are its own, and never stand in for a row. Proof-layer names come from each repository: the vitest projects (`unit`, `integration`, `e2e-host`), and codex-router's `cargo test -p <crate>` plus `verify-codex-router` journeys.
 </script></ex-markdown>
-<h2 id="item2--d1-machines-log-in-and-start-sessions-on-each-other">D1 Machines log in, and start sessions on each other</h2>
-<ex-markdown id="item2--d1-machines-log-in-and-start-sessions-on-each-other-text"><script type="text/markdown">
+<h2 id="item2--d1-login-end-to-end">D1 Login, end to end</h2>
+<ex-markdown id="item2--d1-login-end-to-end-text"><script type="text/markdown">
 **You'll see:**
 - you log your Mac and Sunclaw in by device code, approving each on the sign-in page;
-- a session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw, in a directory on Sunclaw;
-- sessions on the two machines message each other as they do today, over the new login;
-- each start gives you started, refused (nothing created) or unknown (read the outcome later); one start never makes two sessions, and an offline machine is refused, never queued;
+- the sessions on each register through their machine, and sessions on the two machines message each other as they do today, over the new login;
 - revoking a machine stops it and removes its sessions;
-- one machine's replayed or revoked refresh token never stops another's renewal.
+- one machine's replayed or revoked refresh token never stops another's renewal;
+- a flood of sign-ins, code entries or device-code requests from one address is refused with nothing changed, while you still get in.
 
 Then production switches (PROD2): central accepts only machines logged in this way, still behind Access.
 
@@ -269,16 +291,18 @@ Then production switches (PROD2): central accepts only machines logged in this w
 |---|---|---|
 | Your sign-in and the organization core | you approve each machine as the organization's owner, and Fleet central holds the organization, its machines and their workspaces | B1, B3, B4a · F1, F2a, F2b, F3a |
 | Machine login | Fleet central must know which organization a machine belongs to and that its login is current; each machine has its own client | B2, B5 · F10, F11, F14, F17 |
-| Session registration | Fleet central must know the requesting session is a member of the workspace | F4a, F8a |
-| The feature | the start itself, through Fleet central over both machines' connections | F15, F16 |
+| Session registration | Fleet central must know each session and the machine that vouches for it | F4a, F8a |
+| Flood limits | the sign-in service is public, and R42 asks for code entry to be limited | B6 |
 | Going live | the private stack first, then production | JC1, PROD2 |
+
+**Records as they're built.** Each D1 ticket that adds a decision or a refusal adds its observation through the core's existing seam: central's `observe`, sign-in's `log`. They go to each host's own output until DT exports them.
 
 D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret store) isn't on that path, because a Linux machine without it keeps its login in memory. It can land any time.
 
 **Proven by:**
-- SO8 (F14), SO11 (F16), and SO1's session and binding cases (F8a);
-- D1's SO4 scenarios, SO2's people sign-in and device-code cases, SO7 for D1's edges, and SO9 on macOS;
-- at JC1, SO8, SO11 and JP4 against the private stack, the legacy-path control, and SO10 step 2.
+- SO8 (F14), with its messaging step, and SO1's session and binding cases (F8a);
+- D1's SO4 scenarios, SO2's people sign-in, device-code and flood cases, SO7 for D1's edges, and SO9 on macOS;
+- at JC1, SO8 and JP4 against the private stack, the legacy-path control, and SO10 step 2.
 
 **Done when:** PROD2 holds, with every machine on the new login.
 </script></ex-markdown>
@@ -349,6 +373,26 @@ unchanged; the local journeys run the sign-in service on it.
 - **Stop if:** at 1.7.11 the token handler can't be registered for the device-code grant type, `issueTokens` won't issue under a client other than the one that polled, or `referenceId` raises a consent requirement for a machine client. Then take the fallback, our own device endpoints through `issueTokens` with the same reference and client, proven by the same rows.
 </script></ex-markdown>
 </details>
+<details id="ticket-b6">
+<summary><strong>B6</strong> flood limits at sign-in (new) · waits on B5</summary>
+<ex-markdown id="ticket-b6-text"><script type="text/markdown">
+- **Covers:** R52 and R42's limit, as the Program Design's [flood limits](../program-design.html#program-design--flood-limits-at-sign-in-r42-r52) draw them:
+  - `sign-in-core/request-limits`: each route's class and its limits, one setting each (OD16's proposed numbers);
+  - the `requestLimiter` capability, asked before Better Auth runs; `limited` answers 429 with `Retry-After` and touches nothing;
+  - Better Auth's `rateLimit` set explicitly: on whatever `NODE_ENV` says, `customRules` from the classes, memory storage, and `advanced.ipAddress.ipAddressHeaders` listing only `x-sign-in-client-address`;
+  - each host setting that header from its trusted source after removing any incoming copy: `cf-connecting-ip` on Cloudflare; the socket's peer, or a configured trusted proxy, on Node;
+  - the Cloudflare host's two rate-limit bindings, `SIGN_IN_ATTEMPTS` and `AUTH_REQUESTS`, in the Worker config; the Node host's limiter allowing everything, because Better Auth's count is exact there;
+  - **Turnstile:** Better Auth's `captcha` plugin with provider `cloudflare-turnstile` on `/sign-in/social` and `/passkey/verify-authentication`, the widget on the sign-in page sending `x-captcha-response`, `allowedHostnames` and `expectedAction` set, the secret key a Worker secret, and `siteVerifyURLOverride` pointed at a local stand-in in tests;
+  - a `limited` or `captcha-refused` observation for each refused request.
+- **Writes:** `packages/auth` `sign-in-core/request-limits/`, `better-auth-provider`, `cloudflare-host`, `node-host`, the sign-in page, `wrangler.example.jsonc`.
+- **Earns:** SO2's flood cases on both hosts (U42).
+- **Focused proof:**
+  - **Wrong behaviors caught:** the limiter off outside `NODE_ENV=production`; a forged `x-forwarded-for` escaping the count; a limited request creating a device code or a session; one address's flood refusing another; a sign-in passing without a verified Turnstile token, or when siteverify doesn't answer.
+  - **Layer:** sign-in core unit tests with a recording limiter; then the real provider on local workerd (Miniflare's binding) and on the Node host, under controlled system time (integration).
+  - **Oracle:** R52, R42, V44.
+- **Stop if:** Better Auth 1.7.11 ignores `rateLimit.enabled: true` outside production, or can't take its address from the one header. Then the core's limiter carries every class on both hosts, with the Node host counting in process. The same rows decide it.
+</script></ex-markdown>
+</details>
 <details id="ticket-f1">
 <summary><strong>F1</strong> identity contracts (extended) · waits on F0; design approval</summary>
 <ex-markdown id="ticket-f1-text"><script type="text/markdown">
@@ -357,11 +401,11 @@ unchanged; the local journeys run the sign-in service on it.
   - the remote-start shapes: `RequestRemoteStart`, `RemoteLaunch`, `RemoteStartAdmission`, `StartRequestedSession`, `ReportRemoteStart`, `RemoteStartAnswer`, `RemoteStartResult`, `RemoteStartStatus`, `ListWorkspaceMachines`, and the `remoteSession` starter;
   - the machine client: `client_id` in `DecideMachineToken` and `AdmitMachineConnection`, `wrongClient` in both answers, `machineClientId` on `MachineEnrollment`, and `DisableMachineClient` (K11);
   - the view's shapes (K12): `Heartbeat`, `ReportSessionActivity` with `sequence`, `SessionActivityEntry` and its result (`Accepted`, `Superseded`, `Refused`), `ReadMachinePresence` and `MachinePresenceAnswer`, `WhoIsLoggedIn` and its result rows.
-- **Writes:** `collaboration-central-core/src/identity_contract.rs`, generated schema.
+- **Writes:** the new `fleet-identity-protocol` crate (the shapes on the machine's connection, which the Router's crates and central's core both depend on; `serde` and `chrono` only), `collaboration-central-core/src/identity_contract.rs` (central-only shapes), generated schema.
 - **Earns:** SO6's Rust half; U1's focused parse cases.
 - **Focused proof:**
   - **Wrong behaviors caught:** a closed variant serialized under a different tag than the Program Design names; `machine` parsing as an actor.
-  - **Layer:** `cargo test -p collaboration-central-core` round trips.
+  - **Layer:** `cargo test -p fleet-identity-protocol` and `cargo test -p collaboration-central-core` round trips, including a `wasm32` build of the new crate.
   - **Oracle:** the Program Design's shapes.
 </script></ex-markdown>
 </details>
@@ -453,29 +497,11 @@ unchanged; the local journeys run the sign-in service on it.
 </script></ex-markdown>
 </details>
 <details id="ticket-f14">
-<summary><strong>F14</strong> SO8 machine login journey (new, TypeScript) · waits on F10, F11, F4a, B5, and F15 for the remote-start control</summary>
+<summary><strong>F14</strong> SO8 machine login journey (new, TypeScript) · waits on F10, F11, F4a, B5</summary>
 <ex-markdown id="ticket-f14-text"><script type="text/markdown">
-`verify-codex-router` `fleet-machine-login`, with registered sessions (F4a), including a Router host started with no encrypted store and restarted, and one with a damaged store. At D1, the old connection left open after a re-login is checked with a registration and a remote start, each refused and the connection closed, against a positive control on the new connection; the session-token case is added once F3b exists (D3).
-- **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, U14's renewal case, and revocation removing sessions.
-</script></ex-markdown>
-</details>
-<details id="ticket-f15">
-<summary><strong>F15</strong> starting a session on another machine (new) · waits on F2a, F4a, F10, F11</summary>
-<ex-markdown id="ticket-f15-text"><script type="text/markdown">
-- **Covers:** R46, R8's extension, C11:
-  - the organization authority's admission of `RequestRemoteStart`, its remote-start records (body, deadline, bound session; `forwarded`, `started`, `refusedByTarget`, `refused`, `unknown`, late `started`), and the lapse to `unknown` on a wake;
-  - delivering `StartRequestedSession` through the target connection's delivery face, and `RemoteStartAnswer` back through the requester's, both keyed by the request ID;
-  - accepting a `remoteSession` starter only for its own forwarded record, and binding one session to it;
-  - `RemoteStartStatus` (the original requester only) and `ListWorkspaceMachines`;
-  - the Router's create path sending `RequestRemoteStart` for another machine, with the same-Router check kept for local creates, and reporting `unknown`, never a refusal, once the request may have reached central;
-  - the target's handler: the deadline check, the request ID as its create's operation ID, the working directory checked on the target before creating, then the session registrar.
-- **Writes:** `organization_authority` (`remote_start` table), the connection protocol's new frames, `collaboration-client` `conversation_client.rs`, `collaboration-service` (new `remote_session_start`).
-- **Earns:** its SO4 scenarios (U39's central half).
-- **Focused proof:**
-  - **Wrong behaviors caught:** a start delivered to a machine without an allowance for W; a refusal that reveals another organization's machine; two sessions from one start; an answer reaching the wrong start; a lost answer reported as refused; a lapsed start redelivered; a `remoteSession` starter accepted without a forwarded record.
-  - **Layer:** `cargo test -p collaboration-central-core remote_start` with a controlled clock, and `cargo test -p collaboration-client` for the create path.
-  - **Oracle:** R46, C11's result table.
-- **Stop if:** the delivery face can't carry a request to the Router and its outcome back without a protocol version change. That is a design correction, routed back before this ticket.
+`verify-codex-router` `fleet-machine-login`, with registered sessions (F4a), including a Router host started with no encrypted store and restarted, and one with a damaged store. The old connection left open after a re-login is checked with a registration, refused and the connection closed, against a positive control on the new connection; the remote-start case joins in F16, and the session-token case once F3b exists (D3).
+- **Messaging across machines:** after both Routers log in by device code, a session on each exchanges a message and a reply, each recorded with its sending session (SO8 step 8). The same step runs at JC1 and at PROD2.
+- **Earns:** U33/U31 (consumer side), U17/U33/U35 on macOS, U14's renewal case, revocation removing sessions, and today's messaging between machines kept on the new login (U34).
 </script></ex-markdown>
 </details>
 <details id="ticket-f8a">
@@ -483,14 +509,6 @@ unchanged; the local journeys run the sign-in service on it.
 <ex-markdown id="ticket-f8a-text"><script type="text/markdown">
 Real sessions on each harness path start and restore on a Router logged in by device code (F14's arrangement), register in their project's workspace, have their collaboration calls attributed through their binding, and record their isolation; a false sender is refused.
 - **Earns:** U19 in SO1. **Contributes:** U6/U32's registration, start-refusal and no-sign-in cases, and U18's isolation record and bucket. Their token portions (a session's token naming its workspace; isolation in the token) close at D3's F8b.
-</script></ex-markdown>
-</details>
-<details id="ticket-f16">
-<summary><strong>F16</strong> SO11 remote start journey (new, TypeScript) · waits on F15, F14</summary>
-<ex-markdown id="ticket-f16-text"><script type="text/markdown">
-`verify-codex-router` `fleet-remote-start`: two Routers under isolated debug Hosts with different directories, a local Fleet central, a third Router in another organization; B creates a real Codex conversation (a provider account on the run machine, as SO1).
-- **Messaging across machines:** after both Routers log in by device code, A's session and B's helper exchange a message and a reply, each recorded with its sending session (SO11 step 10). The same step runs at JC1 and at PROD2.
-- **Earns:** U39; today's messaging between machines kept on the new login (U34).
 </script></ex-markdown>
 </details>
 <details id="ticket-f12">
@@ -522,11 +540,12 @@ Real sessions on each harness path start and restore on a Router logged in by de
 </script></ex-markdown>
 </details>
 <details id="ticket-jc1">
-<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B1, B2, B3, B4a, B5, F1, F2a, F2b, F3a, F4a, F10, F11, F15, F17, and the proof tickets F14, F8a and F16, with their local runs passing</summary>
+<summary><strong>JC1</strong> first joint cut, private stack · waits on D1's tickets merged: B1, B2, B3, B4a, B5, B6, F1, F2a, F2b, F3a, F4a, F10, F11, F17, and the proof tickets F14 and F8a, with their local runs passing</summary>
 <ex-markdown id="ticket-jc1-text"><script type="text/markdown">
 - **Before it:** the cut inventory: every serving component instance (sign-in Worker and Node host, Fleet central, the Switchboard Worker and Node host, which this cut leaves untouched), every caller cohort (test Routers, test bot), each audience and the Fleet central each sign-in service asks.
-- **Covers:** D1 live together on the private stack: the sign-in service with B1–B5 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11, F15 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
-- **Earns:** SO8 and SO11 against the private stack; JP4 (your admin command through the sign-in service); SO10 step 2 on the private stack; U34's step-2 row; and the **legacy-path control**: a legacy agent client gets a fresh token from the new issuer and makes one allowed Switchboard call at the unchanged Switchboard, on the Worker and the Node host, while a forbidden call is still refused. The control reruns at every deploy until JC2.
+- **Covers:** D1 live together on the private stack: the sign-in service with B1–B6 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
+- **Earns:** SO8 against the private stack, its messaging step included; JP4 (your admin command through the sign-in service); SO10 step 2 on the private stack; U34's step-2 row; and the **legacy-path control**: a legacy agent client gets a fresh token from the new issuer and makes one allowed Switchboard call at the unchanged Switchboard, on the Worker and the Node host, while a forbidden call is still refused. The control reruns at every deploy until JC2.
+- **Turnstile:** the private stack's widget is created through Cloudflare's API with the `cf` CLI, and one real sign-in passes Turnstile's real siteverify.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
 </details>
@@ -537,8 +556,79 @@ Real sessions on each harness path start and restore on a Router logged in by de
 - **Covers:** R43 step 2 in production:
   - Fleet central and the sign-in service promote JC1's recorded builds, unchanged: today's login is already gone from the code (F17), the `machine_enrollments` drop migration runs at this deploy, the first organization is created for you adopting today's Fleet storage (F2b), and operator commands go through the sign-in service;
   - you run the new Router build and log every machine in again by device code.
-- **Earns:** U34's production line, and starting a session on another machine on your real machines: each machine connects with machine tokens; the old credential is refused (one spot check); your sessions, allowances and board relationships are still attached; a session on your Mac and one on Sunclaw exchange a message and a reply; a session on your Mac starts a helper on Sunclaw.
+- **Earns:** U34's production line on your real machines: each machine connects with machine tokens; the old credential is refused (one spot check); your sessions, allowances and board relationships are still attached; a session on your Mac and one on Sunclaw exchange a message and a reply.
 - **If it breaks:** fix forward. There is no revert to the old login, because a machine revoked after the switch could regain access through it. Access still guards central meanwhile.
+</script></ex-markdown>
+</details>
+<h2 id="item2--dt-logs-and-traces">DT Logs and traces</h2>
+<ex-markdown id="item2--dt-logs-and-traces-text"><script type="text/markdown">
+**You'll see:** every login, refusal, connection, registration and outbox step in Cloudflare's Workers Logs and traces for both Workers, and in your OpenTelemetry tool once you name it (OD17). Each record says what happened, why, and to which organization, machine, connection or session. No token, code, secret, cookie or email is ever in one. Locally, the Node, Tokio and Router hosts send the same records to the shared OpenTelemetry stack.
+
+**How it works** (the Program Design's [telemetry](../program-design.html#program-design--telemetry-logs-and-traces-r51)): the records are D1's own, written through the cores' observation seams as each ticket builds its decisions. DT turns on what Cloudflare gives and adds the exporters.
+
+| Workstream | Tickets |
+|---|---|
+| Sign-in (Switchboard Lead) | T1 |
+| Fleet central (Fleet Lead) | T2 |
+| Proof (Fleet Lead) | T3 |
+| Joint, then you | JT1, PRODT |
+
+**Proven by:** SO13 (T3); then JT1 on the private stack. **Done when:** PRODT holds, and you can read a real login's records.
+</script></ex-markdown>
+<h3 id="item2--dt-tickets">Tickets</h3>
+<details id="ticket-t1">
+<summary><strong>T1</strong> the sign-in service's telemetry on both hosts (new) · waits on B2, B5; merges after JC1</summary>
+<ex-markdown id="ticket-t1-text"><script type="text/markdown">
+- **Covers:** R51 at the sign-in service:
+  - `SignInObservation` complete for every decision and refusal (D1's tickets add each as they build it; T1 checks none is missing);
+  - the Cloudflare host writing each as one JSON `console.log` line, and the Worker config's `observability`: logs and traces on, `head_sampling_rate: 1`, `invocation_logs` off, the destination names from the private ops config;
+  - the Node host exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` with the OpenTelemetry JS SDK (a new dependency, for that host only), and to its own output with none set;
+  - Better Auth's logger reduced to its level and a fixed event name;
+  - codes never in a URL: the approval page's code form posts, and the grant's verify is called inside the core.
+- **Writes:** `packages/auth` `sign-in-core/contracts`, `cloudflare-host`, `node-host`, `better-auth-provider`, `wrangler.example.jsonc`.
+- **Earns:** SO13's sign-in records, with T3.
+- **Focused proof:**
+  - **Wrong behaviors caught:** a record carrying a string from a request; an exporter that delays an answer; a code in a page URL.
+  - **Layer:** unit tests with a recording `log`; the Node host against a local collector, under controlled time.
+  - **Oracle:** R51, V43.
+</script></ex-markdown>
+</details>
+<details id="ticket-t2">
+<summary><strong>T2</strong> Fleet central's telemetry on both hosts (new) · waits on F10; merges after JC1</summary>
+<ex-markdown id="ticket-t2-text"><script type="text/markdown">
+- **Covers:** R51 at Fleet central:
+  - `CentralObservation`'s variants checked complete for every item-two decision and refusal;
+  - the Cloudflare host writing each through `tracing` with a JSON layer to the console, as workers-rs's tracing example does, and `observability` in `cloudflare.config.ts`: logs and traces on, the destination names from the private ops config;
+  - the Tokio host exporting logs and traces over OTLP/HTTP the way the Router's `telemetry.rs` does, beside `native_logging.rs`.
+- **Writes:** `collaboration-central-cloudflare/src/platform.rs`, `cloudflare.config.ts`; a telemetry module in `collaboration-central-tokio`; `collaboration-central-core/src/access_observation.rs`.
+- **Earns:** SO13's central records, with T3.
+- **Focused proof:**
+  - **Wrong behaviors caught:** a variant with a free-text field; a record one host writes and the other doesn't; export on a request's path.
+  - **Layer:** `cargo test -p collaboration-central-core` (the observation shapes), `cargo test -p collaboration-central-tokio` against a local collector.
+  - **Oracle:** R51.
+- **Stop if:** the `cf` CLI's config can't express `observability`. Then it's set through Cloudflare's API at deploy: a deploy-step change, not a design one.
+</script></ex-markdown>
+</details>
+<details id="ticket-t3">
+<summary><strong>T3</strong> SO13 telemetry journey (new, TypeScript) · waits on T1, T2, F14</summary>
+<ex-markdown id="ticket-t3-text"><script type="text/markdown">
+SO13: SO8's and SO2's runs (and SO12's once V4 exists) export to a local OTLP collector the journey starts. It checks one record per decision, the secret search over every exported byte, the same answers with the collector stopped, and the Workers' deploy configs.
+- **Earns:** U41 locally.
+</script></ex-markdown>
+</details>
+<details id="ticket-jt1">
+<summary><strong>JT1</strong> logs and traces on the private stack (new) · waits on T1–T3 merged, with their local runs passing; JC1; OD17 for the export check only</summary>
+<ex-markdown id="ticket-jt1-text"><script type="text/markdown">
+- **Covers:** DT on the private stack: the account-level destinations, created through Cloudflare's API with the `cf` CLI; both Workers deployed with `observability` on; central and sign-in builds carrying T1 and T2.
+- **Earns:** SO13's JT1 check: after a login and a refusal on the private stack, their records read back from Workers Logs through Cloudflare's API, and at your destination once you name it (OD17). Until then the export leg is named unverified.
+- **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
+</script></ex-markdown>
+</details>
+<details id="ticket-prodt">
+<summary><strong>PRODT</strong> logs and traces in production (new; you run it) · waits on JT1; PROD2; your go</summary>
+<ex-markdown id="ticket-prodt-text"><script type="text/markdown">
+- **Covers:** DT in production: both Workers with `observability` on, and the production destinations once named. No answer changes, and no machine logs in again.
+- **Earns:** you read your next real login's records.
 </script></ex-markdown>
 </details>
 <h2 id="item2--dv-see-who-is-logged-in">DV See who is logged in</h2>
@@ -651,7 +741,7 @@ What it does:
 </script></ex-markdown>
 </details>
 <details id="ticket-jv1">
-<summary><strong>JV1</strong> the view on the private stack (new) · waits on V1–V4 merged, with their local runs passing; JC1</summary>
+<summary><strong>JV1</strong> the view on the private stack (new) · waits on V1–V4 merged, with their local runs passing; JT1</summary>
 <ex-markdown id="ticket-jv1-text"><script type="text/markdown">
 - **Covers:** DV live on the private stack, in the Program Design's order.
   1. Central first: it accepts `Heartbeat` and `ReportSessionActivity` and serves `WhoIsLoggedIn`.
@@ -663,13 +753,76 @@ What it does:
 </script></ex-markdown>
 </details>
 <details id="ticket-prodv">
-<summary><strong>PRODV</strong> the view in production (new; you run it) · waits on JV1; PROD2; your go</summary>
+<summary><strong>PRODV</strong> the view in production (new; you run it) · waits on JV1; PRODT; your go</summary>
 <ex-markdown id="ticket-prodv-text"><script type="text/markdown">
 - **Covers:** DV in production, in the same order: central, then the Routers' update, then the page. No machine logs in again.
 - **Earns:**
   - you open the page and see your real machines and their sessions;
   - a Router you stop shows as not connected;
   - another account is refused.
+</script></ex-markdown>
+</details>
+<h2 id="item2--dr-start-a-session-on-another-machine">DR Start a session on another machine</h2>
+<ex-markdown id="item2--dr-start-a-session-on-another-machine-text"><script type="text/markdown">
+**You'll see:**
+- a session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw, in a directory on Sunclaw;
+- each start gives you started, refused (nothing created) or unknown (read the outcome later); one start never makes two sessions, and an offline machine is refused, never queued;
+- the helper and its starter message each other.
+
+It goes live after the view: central first, then the Routers. Until a machine runs the new Router, a start to it is refused by the target and creates nothing.
+
+| Workstream | Tickets |
+|---|---|
+| Fleet central and the Router (Fleet Lead) | F15 |
+| Proof (Fleet Lead) | F16 |
+| Joint, then you | JR1, PRODR |
+
+**Proven by:** SO11 (F16) and F15's SO4 scenarios; then SO11 against the private stack at JR1. **Done when:** PRODR holds, and a session on your Mac starts a helper on Sunclaw.
+</script></ex-markdown>
+<h3 id="item2--dr-tickets">Tickets</h3>
+<details id="ticket-f15">
+<summary><strong>F15</strong> starting a session on another machine (new) · waits on F2a, F4a, F10, F11; merges after JC1</summary>
+<ex-markdown id="ticket-f15-text"><script type="text/markdown">
+- **Covers:** R46, R8's extension, C11:
+  - the organization authority's admission of `RequestRemoteStart`, its remote-start records (body, deadline, bound session; `forwarded`, `started`, `refusedByTarget`, `refused`, `unknown`, late `started`), and the lapse to `unknown` on a wake;
+  - delivering `StartRequestedSession` through the target connection's delivery face, and `RemoteStartAnswer` back through the requester's, both keyed by the request ID;
+  - accepting a `remoteSession` starter only for its own forwarded record, and binding one session to it;
+  - `RemoteStartStatus` (the original requester only) and `ListWorkspaceMachines`;
+  - the Router's create path sending `RequestRemoteStart` for another machine, with the same-Router check kept for local creates, and reporting `unknown`, never a refusal, once the request may have reached central;
+  - central sending a start only to a target whose Router has reported, in `ReportSchemaSupport`, that it can take one, and answering "refused by the target" otherwise;
+  - the target's handler: the deadline check, the request ID as its create's operation ID, the working directory checked on the target before creating, then the session registrar.
+- **Writes:** `organization_authority` (`remote_start` table), `fleet-identity-protocol` (the connection's new frames), `collaboration-client` `conversation_client.rs`, `collaboration-service` (new `remote_session_start`).
+- **Earns:** its SO4 scenarios (U39's central half).
+- **Focused proof:**
+  - **Wrong behaviors caught:** a start delivered to a machine without an allowance for W; a refusal that reveals another organization's machine; two sessions from one start; an answer reaching the wrong start; a lost answer reported as refused; a lapsed start redelivered; a `remoteSession` starter accepted without a forwarded record.
+  - **Layer:** `cargo test -p collaboration-central-core remote_start` with a controlled clock, and `cargo test -p collaboration-client` for the create path.
+  - **Oracle:** R46, C11's result table.
+- **Stop if:** the delivery face can't carry a request to the Router and its outcome back without a protocol version change. That is a design correction, routed back before this ticket.
+</script></ex-markdown>
+</details>
+<details id="ticket-f16">
+<summary><strong>F16</strong> SO11 remote start journey (new, TypeScript) · waits on F15, F14</summary>
+<ex-markdown id="ticket-f16-text"><script type="text/markdown">
+`verify-codex-router` `fleet-remote-start`: two Routers under isolated debug Hosts with different directories, a local Fleet central, a third Router in another organization; B creates a real Codex conversation (a provider account on the run machine, as SO1).
+- **Messaging:** A's session and B's helper exchange a message and a reply, each recorded with its sending session (SO11 step 10).
+- **The older Router:** a start to a target whose Router hasn't reported it can take one is refused by the target, and nothing is created (SO11 step 11).
+- **The old connection:** after a re-login, a remote start on the old connection is refused, against a positive control on the new one (SO8 step 3's remote-start case).
+- **Earns:** U39. The same journey runs at JR1 and at PRODR.
+</script></ex-markdown>
+</details>
+<details id="ticket-jr1">
+<summary><strong>JR1</strong> remote start on the private stack (new) · waits on F15, F16 merged, with their local runs passing; JV1</summary>
+<ex-markdown id="ticket-jr1-text"><script type="text/markdown">
+- **Covers:** DR on the private stack: central with F15 first, then the test Routers.
+- **Earns:** SO11 against the private stack, including the older-Router refusal before the Routers update.
+- **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
+</script></ex-markdown>
+</details>
+<details id="ticket-prodr">
+<summary><strong>PRODR</strong> remote start in production (new; you run it) · waits on JR1; PRODV; your go</summary>
+<ex-markdown id="ticket-prodr-text"><script type="text/markdown">
+- **Covers:** DR in production: central, then your Routers' update. No machine logs in again.
+- **Earns:** a session on your Mac starts a helper on Sunclaw, and they message each other.
 </script></ex-markdown>
 </details>
 <h2 id="item2--dc-stage-c-people-in-the-view">DC Stage C: people in the view</h2>
@@ -705,15 +858,16 @@ What it does:
 <h2 id="item2--dependency-edges-that-matter">Dependency edges that matter</h2>
 <ex-markdown id="item2--dependency-edges-that-matter-text"><script type="text/markdown">
 - **Contracts:** each contract's home publishes its shape before every consumer: F1 for the Rust-owned ones, including K11 and K12. Each real-output check runs in the later of its producer's and consumer's tickets.
-- **Inside D1:** storage before registration (F2b before F4a), machine login before sessions (F11 before F4a), and registration before remote start (F4a and F11 before F15).
-- **D1 before the view:**
-  - V1 reads enrollments (F10), the session registry and its start times (F4a), and the owner guard (F2a);
-  - V2 extends the Router's machine connection (F11) and reads the registrar's sessions (F4a);
-  - V3 needs the person token for central's admin address (B4a).
-- **Cuts in order:** JC1 → PROD2, and JC1 → JV1 → PRODV. PRODV only after PROD2 holds.
-- **DV merges after JC1.** V1, V2, V3 and V4 are built and reviewed while D1 finishes, but merge only once JC1's builds are fixed and its observations pass. So JC1 deploys D1 alone, and no hold from the view can block it (Advisor, IP1).
+- **Inside D1:** storage before registration (F2b before F4a), machine login before sessions (F11 before F4a), and the device grant before its limits (B5 before B6).
+- **D1 before the rest:**
+  - DT: T1 needs the Node host and the device grant (B2, B5); T2 needs central's machine-login observations (F10);
+  - DV: V1 reads enrollments (F10), the session registry and its start times (F4a), and the owner guard (F2a); V2 extends the Router's machine connection (F11) and reads the registrar's sessions (F4a); V3 needs the person token for central's admin address (B4a);
+  - DR: F15 needs registration and machine login (F2a, F4a, F10, F11), and F16 runs on SO8's arrangement (F14).
+- **Records ride in D1's tickets;** DT adds only Cloudflare's settings and the exporters.
+- **Cuts in order:** JC1 → PROD2, then JT1 → PRODT, JV1 → PRODV and JR1 → PRODR, each after the one before.
+- **Everything after D1 merges after JC1** (T1, T2, V1–V3, F15). They're built and reviewed while D1 finishes, so JC1 deploys D1 alone, and nothing later can hold it up (Advisor, IP1).
 - **PROD2 deploys JC1's verified builds,** by the orchestration's exact-build rule. Those predate V2's merge, so no production Router sends a heartbeat before a central that receives it.
-- **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page.
+- **Receiver before sender:** at JV1 and PRODV, central with V1 serves before any Router with V2 runs, then the page. At JR1 and PRODR, central with F15 goes first, and starts only targets whose Router reported it can take one.
 - **The deploy holds:** from B4a or B5 merging until JC1, the sign-in Worker isn't deployed from `main`. From F17 merging until PROD2, production central isn't deployed from `main`. From V1 or V3 merging until JV1, neither central nor the sign-in Worker deploys the view's half alone.
 </script></ex-markdown>
 <h2 id="item2--choices-made-in-this-plan">Choices made in this plan</h2>
@@ -724,6 +878,11 @@ What it does:
 - **DV merges wait for JC1** (Advisor, IP1). The alternative, pinning a D1 release candidate while DV merges, keeps more merge freedom but adds build-selection work.
 - **V5 is two tickets, V5c and V5s,** one per repository, closed together by SO12 step 9 (Advisor, IP4).
 - **The machine-client change rides in D1's existing tickets** (B5, F1, F10, F11), because it changes their contracts, not a new piece.
+- **Login goes live alone (your direction, 30 October).** D1 is login end to end; logs and traces, the view and remote start follow as their own deliverables. Not chosen: remote start inside D1, as the plan had it, which made the switch wait for it.
+- **Logs and traces come right after the switch,** so the view and remote start go live with their records visible. Not chosen: telemetry last.
+- **Records ride in D1's tickets; DT only exports.** Adding records afterwards would mean revisiting every D1 decision.
+- **Remote start comes after the view,** because you named the view as step 2. It depends only on D1, so it builds in parallel, and it can go live before the view if you want it sooner.
+- **Flood limits are their own ticket (B6) in D1,** after the device grant they limit.
 </script></ex-markdown>
 <h2 id="item2--verification-design-rows-scheduled">Verification Design rows, scheduled</h2>
 <ex-markdown id="item2--verification-design-rows-scheduled-text"><script type="text/markdown">
@@ -745,9 +904,11 @@ What it does:
 | U30 (people's requests) | D1 | B4a | SO2 | B4a |
 | U33, U31 (the machine client, replay, revoke and wrong-client cases included) | D1 | F10, F11, B5 | SO8; SO2; SO4 | B5; F10; F14 |
 | U17, U33, U35 (R41) | D1 | F11, F12 | SO8; SO9 | F14; F12 |
-| U34 (steps 1 and 2) | D1 | F10, F17, JC1, PROD2 | SO10 steps 1–2 (temporary), step 2 on F17's final build; SO4's entry negatives | F17; JC1; PROD2 |
+| U34 (steps 1 and 2) | D1 | F10, F14, F17, JC1, PROD2 | SO10 steps 1–2 (temporary), step 2 on F17's final build; SO4's entry negatives; SO8's messaging step | F17; F14; JC1; PROD2 |
 | U35 | D1 | F12, F14 | SO9 | F12; F14 (the end-to-end Linux login stays unverified, your call) |
-| U39 | D1 | F15, F16 | SO4; SO11 | F15; F16; JC1; PROD2 |
+| U39 | DR | F15, F16 | SO4; SO11 | F15; F16; JR1; PRODR |
+| U41 | DT | T1, T2, T3 | SO13; JT1 | T3; JT1 (its export leg once OD17 is named) |
+| U42 | D1 | B6 | SO2's flood cases on both hosts | B6 |
 | U40: R47 | DV | V1, V3 | SO4 (the lookup); SO12 steps 1–3, 6 | V1; V4; JV1 |
 | U40: R48 | DV | V1, V2 | SO4 (presence and activity) on Tokio and workerd; the Router tests; SO12 steps 2–5 | V1; V2; V4; JV1 |
 | U40, U32, U21: R49 | DV | V1, V3 | SO12 steps 7–8; SO7 for the lookup's route | V4; V1; JV1 |
@@ -774,10 +935,14 @@ The rows for D2–D7 (U2, U3, U4/U5, U7/U8/U28, U10–U13, U16, U26/U36, U29, U3
 <ex-markdown id="item2--integration-gates-text"><script type="text/markdown">
 - **F10 with B5:** a real issuer's machine token, under its own machine client, first meets central's check in the later of the two tickets. The real path is SO8 in F14.
 - **F11 with F10 and B5:** SO8 is the first run of the whole device-code login across processes.
-- **F15 with two Routers:** SO11 is the first remote start across processes.
+- **B6 with B5:** SO2's flood cases are the first time the limits meet the real device grant, on both hosts.
+- **T1 and T2 with T3:** SO13 is the first time every host's records are read together and searched for secrets.
+- **F15 with two Routers (DR):** SO11 is the first remote start across processes.
 - **V2 with V1, and V3 with V1:** SO12 (V4) is the first time real Routers' heartbeats and reports meet central's presence and ordering, and the first time the page reads a real lookup.
 - **JC1:** D1's contracts go live together; the legacy-path control proves the Switchboard still works.
+- **JT1:** the first records read back from Cloudflare.
 - **JV1:** the view goes live in the Program Design's order.
+- **JR1:** remote start goes live, central before the Routers.
 </script></ex-markdown>
 <h2 id="item2--risks-and-false-greens">Risks and false greens</h2>
 <ex-markdown id="item2--risks-and-false-greens-text"><script type="text/markdown">
@@ -791,12 +956,17 @@ The rows for D2–D7 (U2, U3, U4/U5, U7/U8/U28, U10–U13, U16, U26/U36, U29, U3
 - **Linux:** the store and memory-only tests run on Linux, but the end-to-end login with the Router as a systemd service runs nowhere. A Mac pass plus those tests must not be reported as all of U35.
 - **SO10 is temporary.** Its lasting regression lives in SO4's entry negatives.
 - **Production counterparts:** each cut's inventory names every caller, so no cut assumes only test callers.
+- **Telemetry export:** until you name a destination (OD17), JT1's export leg is unverified. Cloudflare's own records are proven.
+- **The binding counts per location, approximately.** SO2 proves the limits on local workerd; how deployed Cloudflare shares a count across a location stays unverified.
+- **Remote start's older-Router gate** depends on each Router's schema-support report; SO11 step 11 checks it.
 </script></ex-markdown>
 <h2 id="item2--stop-and-replan">Stop and replan</h2>
 <ex-markdown id="item2--stop-and-replan-text"><script type="text/markdown">
 - **OD14 lands on another value:** every interval scales from it, so no replan is needed. Below about 5 seconds, the refresh load calls for a push stream, which is a design change.
 - **Better Auth:** if the device-code token handler can't be registered, `issueTokens` won't issue under the machine client, or `referenceId` raises a consent requirement, take the fallback endpoints. The same rows apply.
 - **Remote start:** if the delivery face can't carry a start and its outcome without a protocol version change, that's a design correction, routed back before F15.
+- **Flood limits:** if Better Auth 1.7.11 can't be forced on outside production, or can't read the one header, the core's limiter carries every class on both hosts (B6's stop). The same rows apply.
+- **Telemetry config:** if the `cf` CLI's config can't express `observability`, it's set through Cloudflare's API at deploy (T2's stop).
 - **Presence:** if the organization authority can't call a socketless Connection object, or Cloudflare can't keep the alarm, that's a design correction, routed back before V1.
 - **Steps 3–5:** their design and plan will replace the 2026-10-27 plan's D2–D7 and schedule stage C's bot rows.
 </script></ex-markdown>

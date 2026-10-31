@@ -9,25 +9,24 @@
 </head>
 <body>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
-<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="index.html">Item two</a>
-<a href="plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
-<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
-<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
-<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+<a href="index.html">Overview</a>
+<a href="requirements.html">Requirements</a>
+<a href="specification.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-requirements" revision="2026-10-30.1">
-<p id="set-pages"><a href="index.html">Item two</a>: <strong>Requirements</strong> · <a href="specification.html">Specification</a> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a></p>
+<p id="set-pages"><a href="index.html">Item two</a>: <strong>Requirements</strong> · <a href="specification.html">Specification</a> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a> · <a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a></p>
 <h1 id="requirements--item-two-requirements">Item two: Requirements</h1>
 <ex-callout id="requirements--answer" tone="tldr" title="What item two is for">
 <ex-markdown id="requirements--answer-text"><script type="text/markdown">
-Item two is your **steps 1 and 2**.
-- **Step 1:** Fleet central talks only to things that proved who they are. You sign in. Every machine logs in by a device code you approve. Sessions on those machines are registered and attributed, and a session can start a helper on another machine. Production switches to this login, still behind Cloudflare Access.
-- **Step 2:** you open a page and see, live, which machines are logged in and connected, and what each session on them is doing. Later the same page adds the people in your organization.
+Item two is your **steps 1 and 2**, plus logs and traces. It's built as five deliverables, in this order. Each works end to end before the next goes live:
+1. **Login.** Fleet central talks only to things that proved who they are. You sign in. Every machine logs in by a device code you approve. Sessions on those machines are registered through their machine and attributed. Floods of sign-in and code attempts are slowed and change nothing. Production switches to this login, still behind Cloudflare Access.
+2. **Logs and traces.** What Cloudflare gives (Workers Logs and traces) is turned on and exported over OpenTelemetry, and the Node and Tokio hosts export the same. Nothing secret is ever logged.
+3. **Who is logged in.** You open a page and see, live, which machines are logged in and connected, and what each session on them is doing.
+4. **Starting a session on another machine.** A session on one machine starts a helper on another.
+5. **People in the view.** The same page adds the people in your organization.
 
 This page says **who needs what, and why**. The [Specification](specification.html) says what must be true, the [Program Design](program-design.html) how it's built, and the [Verification Design](verification-design.html) how each part is proven.
 
@@ -120,6 +119,13 @@ Every row is your direction, or a decision already recorded in the people sign-i
 |---|---|---|---|
 | U40 | **You can see, live, who is logged in and what each is working on.** First (B+): every machine, whether it's connected now and when it was last seen, and each session on it with what it's working on and whether a turn is running. Then (C): the people signed in, and later bots. The view only shows; it changes no access. | Today you can look up one identity at a time. You want one view of what's present and what it's doing. | "in ui i can see who is logged in and what"; "c, but we can do this in stages. we can do b plus then c as follow up"; "i mean authencated and live to know" |
 
+**Seeing what happened, and keeping floods out**
+
+| ID | Need | Why it matters | Your words |
+|---|---|---|---|
+| U41 | **You can see what happened.** Logs and traces from every item-two service reach an OpenTelemetry tool. On Cloudflare that's what Cloudflare gives: Workers Logs and traces, exported over OTLP. The Node and Tokio hosts export the same over OTLP. Every login, refusal and connection leaves a record with its reason. No token, code or secret is ever in one. | When a login or a connection fails, you need to see why without reading code or adding logging after the fact. | "we shoudl also allow otel logign etc cloudflare gives us" |
+| U42 | **Login can't be flooded.** Repeated sign-in, code-entry, approval and login requests from one address are slowed and change nothing, on every host, using what Better Auth and Cloudflare already give: Better Auth's rate limits, Cloudflare's rate-limit binding, and a **Cloudflare Turnstile** check on people's sign-in, through Better Auth's captcha plugin. | The sign-in service is public: people sign in there and machines' codes are entered there. A flood could guess codes or fill storage. | "flood protection to login? isthere helpers or in clodkuflare sdk or otehrs to help with this? or bettehr authy?"; "is rate limits tehre?"; "cloduflare tursntile shodul be itnergrated we have accoutn" |
+
 **How it's built**
 
 | ID | Need | Why it matters | Your words |
@@ -132,7 +138,7 @@ Every row is your direction, or a decision already recorded in the people sign-i
 </script></ex-markdown>
 <h2 id="requirements--goal-boundary">Goal boundary</h2>
 <ex-markdown id="requirements--goal-boundary-text"><script type="text/markdown">
-**Goal:** Fleet central accepts only authenticated machines, people and services. Sessions are registered and attributed and can start helpers across machines. Production runs on the new machine login behind Access. You see, live, who is logged in.
+**Goal:** Fleet central accepts only authenticated machines, people and services. Sessions are registered and attributed and can start helpers across machines. Production runs on the new machine login behind Access, with floods of login attempts slowed. Every service's logs and traces reach an OpenTelemetry tool. You see, live, who is logged in.
 
 **What exists to build on:**
 - Fleet central's machine enrollment, owner administration and Cloudflare Access gate, until the switch;
@@ -148,6 +154,8 @@ Every row is your direction, or a decision already recorded in the people sign-i
 - the device-code machine login, its short-lived tokens and renewal, and a secret store on Linux, or memory only;
 - starting a session on another machine;
 - the switch to the new login;
+- explicit limits on sign-in, code-entry, approval and login requests (R42 asks for them; nothing sets them today);
+- telemetry: Cloudflare's Workers Logs and traces are off for both Workers, central's Tokio host logs without exporting, and the sign-in service logs nothing;
 - the live who-is-logged-in view.
 
 **What may change:**
@@ -169,6 +177,7 @@ agent-vm is frozen and changes for neither. The Switchboard isn't changed by ite
   - any agent-vm work;
   - proof inside a VM, or a new Linux CI job;
   - the view changing any access, or showing who sits at a machine.
+- **Later, if needed:** dashboards, alerts and metrics beyond what the platform gives; Logpush.
 
 **Evidence that it works:**
 - You approve a machine's code, and it logs in to your organization; anyone else's approval is refused.
@@ -179,6 +188,8 @@ agent-vm is frozen and changes for neither. The Switchboard isn't changed by ite
 - Sessions on two machines still message each other on the new login.
 - With Access still in front, the old enrollment credential is refused.
 - No new machine token or connection while Fleet central is down.
+- Repeated code entries or sign-ins from one address are refused with nothing changed, while another address still gets through.
+- A login, a refusal and a connection each show in the OpenTelemetry tool with their reason, and no token, code or secret from the run appears in any record.
 - You open the view and see each machine and its sessions. A cut machine shows as not connected within the bound. Nobody else can open it.
 </script></ex-markdown>
 <h2 id="requirements--after-the-switch">What stays as today after the switch</h2>
@@ -198,6 +209,9 @@ What it costs: a bounded period where the new login runs beside today's behavior
 | OD4 | The sign-in service's tables and migrations: Better Auth 1.7.11's tables as its CLI generates them for the Drizzle adapter (no SQL time default; IDs from the injected generator), plus `session.organizationId`, `sign_in_audit`, `organization_admission_claim`, `admitted_person_guard` and the device-code columns, as drawn in the [Program Design](program-design.html#program-design--the-sign-in-service-storage-core-and-hosts). | Approve the drawn tables now. The generated SQL comes to you before the first code uses it. | the first sign-in ticket, B1 |
 | OD14 | How fresh the view must be: how soon a machine connecting or dropping, or a session starting or stopping, must show. | 15 seconds. It's one setting, and every interval scales from it. | nothing; built at 15 |
 | OD2 | The default lifetime of a machine token (configurable, at most 60 minutes). | 5 minutes. It's one setting. | nothing; built at 5 |
+| OD16 | How login floods are limited. **Turnstile is decided** (you, 30 October: integrate it through Better Auth's captcha plugin; you have the account). Still open: the counting layers, from least to most machinery: Better Auth's built-in limits alone; plus Cloudflare's rate-limit binding in the sign-in Worker; plus a WAF rate-limiting rule on the zone; Better Auth's limits stored in D1 (a new table). | **Better Auth's built-in limits, set explicitly, plus the rate-limit binding in the Worker, plus Turnstile.** No table, no zone rule, and the same code on Node, where Better Auth's in-process count is exact. See the [Program Design](program-design.html#program-design--flood-limits-at-sign-in-r42-r52). | nothing; built this way in the login deliverable |
+| OD18 | How people sign in after their first sign-in. You said: "all future logins shouuld use login and passkey after initial setup of tfa". Two readings, least machinery first: **(a)** after the first Google or GitHub sign-in, each person must add a passkey, and from then on signs in with the passkey alone (a passkey is already two factors: the device, and your fingerprint, face or PIN); **(b)** every sign-in is Google or GitHub *and then* a passkey check. Better Auth's two-factor plugin doesn't cover Google or GitHub sign-ins (it matches only email, username and phone sign-in), so (b)'s second step is ours to build. Today the people sign-in design accepts any of the three (U1), and SD7 is open. | **(a).** It's Better Auth's passkey plugin plus two small rules, and it's phishing-resistant on its own. If a person loses every passkey, you remove their passkeys and they start again from Google or GitHub. | the passkey rule in the login deliverable; the rest of sign-in can start |
+| OD17 | Where logs and traces go: Cloudflare's own Workers Logs and traces only, or also an OTLP destination you name (a hosted tool such as Grafana Cloud or Honeycomb, or your own collector). | Keep Cloudflare's own on, and name one OTLP destination when you pick a tool. Locally, the shared OpenTelemetry stack. | only the export check on the private stack (JT1); everything else is built |
 
 **Inherited, not asked again:** admin actions check that your sign-in is still current, within the people sign-in design's freshness bound **SD8**, which that design still has open.
 </script></ex-markdown>

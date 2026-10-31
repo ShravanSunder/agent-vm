@@ -9,19 +9,15 @@
 </head>
 <body>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
-<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="index.html">Item two</a>
-<a href="plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
-<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
-<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
-<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+<a href="index.html">Overview</a>
+<a href="requirements.html">Requirements</a>
+<a href="specification.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-program-design" revision="2026-10-30.1">
-<p id="set-pages"><a href="index.html">Item two</a>: <a href="requirements.html">Requirements</a> · <a href="specification.html">Specification</a> · <strong>Program Design</strong> · <a href="verification-design.html">Verification Design</a></p>
+<p id="set-pages"><a href="index.html">Item two</a>: <a href="requirements.html">Requirements</a> · <a href="specification.html">Specification</a> · <strong>Program Design</strong> · <a href="verification-design.html">Verification Design</a> · <a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a></p>
 <h1 id="program-design--item-two-program-design">Item two: Program Design</h1>
 <ex-callout id="program-design--answer" tone="tldr" title="How item two is built">
 <ex-markdown id="program-design--answer-text"><script type="text/markdown">
@@ -31,10 +27,12 @@
 - **Each Router logs its machine in, vouches for its sessions,** sends a heartbeat, and reports what its sessions are doing.
 
 **How to read this page:**
-1. **[The structure in one picture](#program-design--the-structure-in-one-picture)**, then **[the choices, and why](#program-design--the-choices-and-why)**.
-2. **Where each thing is stored**, and the exact shapes at each boundary.
-3. **The three flows end to end:** a machine logs in, a session starts a helper, you see who is logged in.
-4. **What happens when things fail**, and what each part trusts.
+1. **[The structure in one picture](#program-design--the-structure-in-one-picture)**, then **[the parts in code](#program-design--the-parts-in-code)**: repositories, packages and folders.
+2. **[The choices, and why](#program-design--the-choices-and-why)**.
+3. **Where each thing is stored**, and the exact shapes at each boundary.
+4. **The three flows end to end:** a machine logs in, a session starts a helper, you see who is logged in.
+5. **What happens when things fail**, and what each part trusts.
+6. **[Telemetry](#program-design--telemetry-logs-and-traces-r51)** and **[flood limits](#program-design--flood-limits-at-sign-in-r42-r52)**.
 
 Every rule it realizes is in the [Specification](specification.html).
 </script></ex-markdown>
@@ -58,6 +56,118 @@ flowchart TB
 - **The sign-in service** proves people, runs the device-code login, and mints every token, each only after central's decision.
 - **The Router** logs its machine in, registers and binds its sessions, sends heartbeats, reports activity, and carries remote starts.
 - **No component calls Fleet central to check a token it already holds,** and central holds no secret of the sign-in service's.
+</script></ex-markdown>
+
+<h2 id="program-design--the-parts-in-code">The parts in code</h2>
+<ex-markdown id="program-design--the-parts-in-code-text"><script type="text/markdown">
+Two repositories hold every part. Each service is one **runtime-free core** and a thin **host** per runtime. The core holds every rule. The host supplies storage, time, IDs, crypto, outbound calls, telemetry and limits. Arrows point from a part to what it depends on, and nothing depends on a host.
+
+**The sign-in service** (`agent-collaboration/switchboard`, `packages/auth`):
+
+```mermaid
+flowchart TB
+  CFH["cloudflare-host<br/>D1 · records as JSON lines · rate-limit binding"]
+  NH["node-host (new)<br/>better-sqlite3 · OTLP export"]
+  PA["platform-adapters (new)<br/>clock · UUIDv7 · crypto · central client"]
+  CORE["runtime-free core<br/>sign-in-core: every sign-in rule, the Drizzle store, the pages<br/>better-auth-provider: Better Auth 1.7.11 over the core"]
+  CFH --> PA
+  NH --> PA
+  CFH --> CORE
+  NH --> CORE
+  PA -->|"implements its capabilities"| CORE
+```
+
+**Fleet central and the Router** (`agent-collaboration/agent-collaboration`):
+
+```mermaid
+flowchart TB
+  CCF["collaboration-central-<br/>cloudflare<br/>Durable Objects · alarms<br/>Workers Logs"]
+  CTK["collaboration-central-<br/>tokio<br/>SQLite per organization<br/>OTLP"]
+  RHOST["codex-router-host<br/>codex-router-cli<br/>machine login · heartbeat<br/>OTLP"]
+  CCORE["collaboration-central-core<br/>organization authority<br/>token check · presence<br/>remote starts · the view's lookup"]
+  RSVC["collaboration-service, -mcp,<br/>-client, acp-client-runtime<br/>registrar · binding<br/>activity · remote start"]
+  SEC["codex-router-<br/>secret-store<br/>Linux backend (new)"]
+  PROTO["fleet-identity-protocol (new)<br/>every shape on the machine's connection"]
+  CCF --> CCORE
+  CTK --> CCORE
+  RHOST --> RSVC
+  RHOST --> SEC
+  CCORE --> PROTO
+  RSVC --> PROTO
+```
+
+- **The sign-in core is two folders,** `sign-in-core` and `better-auth-provider`, both runtime-free. Better Auth is configured over the core's store, IDs and hooks, and the core's rules call it, so the two change together and neither imports a host.
+- **The shapes on the machine's connection get one small crate,** `fleet-identity-protocol`: registration, heartbeat, activity, renewal, remote start and isolation, with only `serde` and `chrono`. It's needed because no Router crate depends on central's core. Central's core compiles to WebAssembly, so it can't depend on `collaboration-contracts` either, which brings `tokio`, `nix` and the Router's storage. Shapes only central uses (organization commands, lookups, C7 requests, `MachineTokenClaims`) stay in `collaboration-central-core/src/identity_contract.rs`.
+- **The Switchboard's `tool-*` packages aren't touched.** Folders are fixed here; exact file names are the plan's.
+</script></ex-markdown>
+<h3 id="program-design--the-sign-in-package-folder-by-folder">The sign-in package, folder by folder</h3>
+<ex-tree id="program-design--sign-in-folders" title="packages/auth" icon="folder"><script type="text/markdown">
+- `drizzle/`: the migrations `drizzle-kit` generates, checked in (new; replaces `migrations/`)
+- `src/`
+  - `sign-in-core/`: runtime-free; every sign-in rule (R30)
+    - `contracts/`: `SignInPlatform`, the central client, closed results, `SignInObservation` (modified)
+    - `storage/`: `sign-in-schema.ts`, `SignInStore` and the one Drizzle mapping (new)
+    - `device-login/`: the grant's machine fields, one client per enrollment, the revoke refusal (new)
+    - `admission/`: people's admission and standing, asked of central (new)
+    - `receivers/`: `DisableMachineClient` and the other C7 receivers (new)
+    - `response-release/`: the token-kind dispatch and the final checks before a token leaves (modified)
+    - `pages/`: the device-code approval page and the who-is-logged-in page (new)
+    - `request-limits/`: each route's class and its limits (new; R52)
+    - `agent-clients/`: today's agent path, kept until step 3 (unchanged)
+    - `security-audit/`: the audit (modified)
+  - `better-auth-provider/`: Better Auth over the core: the Drizzle adapter, `generateId`, the device grant and its hooks, `rateLimit` (modified; runtime-free)
+  - `platform-adapters/`: clock, UUIDv7, crypto and the central client on web-platform APIs, used by both hosts (new)
+  - `cloudflare-host/`: the Worker: D1, records as JSON lines, the rate-limit binding (modified)
+  - `node-host/`: an HTTP listener, `better-sqlite3`, OTLP export (new)
+  - `d1-persistence/`: removed; its SQL becomes `sign-in-core/storage`
+  - `native-owner-cli/`: unchanged
+  - `test-fixtures/`: the test host, a controlled clock, a central stand-in (modified)
+</script></ex-tree>
+<h3 id="program-design--fleet-central-s-crates">Fleet central's crates</h3>
+<ex-tree id="program-design--central-folders" title="agent-collaboration: Fleet central" icon="folder"><script type="text/markdown">
+- `fleet-identity-protocol/` (new crate): the shapes on the machine's connection
+- `collaboration-central-core/src/`
+  - `organization_authority/` (new): commands and their guard, admissions, enrollments, allowances, the session registry, `machine_activity`, remote starts, the outboxes, `WhoIsLoggedIn`
+  - `machine_token_check` (new): machine tokens at the entry and on renewal (C9)
+  - `identity_contract.rs` (new): central-only shapes: commands, lookups, C7 requests, `MachineTokenClaims`
+  - `session_runtime.rs` (modified): presence in each Connection object
+  - the Registry's modules (modified): the organization list and the machine index
+  - `central_router.rs`, `access_rules.rs` (modified): the admin surface and central's receivers
+  - `platform_capabilities.rs`, `access_observation.rs` (modified): the service caller, the new observations
+- `collaboration-central-cloudflare/` (modified): the `OrganizationObject` class; presence alarms in `object_shell.rs`; records as JSON lines in `platform.rs`; `observability` in `cloudflare.config.ts`
+- `collaboration-central-tokio/` (modified): SQLite per organization; the receive deadline in `native_objects.rs`; an OTLP exporter beside `native_logging.rs`
+- `collaboration-central-conformance/` (modified): SO4's new scenarios on both hosts
+</script></ex-tree>
+<h3 id="program-design--the-router-s-crates">The Router's crates</h3>
+<ex-tree id="program-design--router-folders" title="agent-collaboration: the Router" icon="folder"><script type="text/markdown">
+- `codex-router-cli/`: the `fleet login` command (modified); `telemetry.rs` already exports OTLP (unchanged)
+- `codex-router-host/`: `fleet_machine_login` (new): the device code, renewal, where the refresh credential lives; the heartbeat in `collaboration_runtime/board_composition/machine_session.rs` (modified)
+- `collaboration-service/`: `fleet_session_registrar`, `fleet_session_activity`, `remote_session_start` (new)
+- `collaboration-mcp/`: each call's session binding (modified)
+- `collaboration-client/`: a create that names another machine (modified)
+- `acp-client-runtime/`: each session's own MCP list (modified)
+- `codex-router-secret-store/`: `systemd_credential_data_key.rs` (new, Linux)
+</script></ex-tree>
+<h3 id="program-design--fleet-central-one-core-two-hosts">Fleet central: one core, two hosts</h3>
+<ex-markdown id="program-design--fleet-central-one-core-two-hosts-text"><script type="text/markdown">
+```mermaid
+flowchart TB
+  subgraph CORE["collaboration-central-core (runtime-free)"]
+    RULES["organization authority · machine token check<br/>Registry · Connection presence · admin surface"]
+    CAPS["CentralPlatform: object calls · time · UUIDv7 ids · wakes<br/>key fetch · RS256 · service caller (new) · observe"]
+    RULES --> CAPS
+  end
+  subgraph CF["Cloudflare host"]
+    DO["one Durable Object per organization authority,<br/>Connection, Registry and Fleet object<br/>SQLite storage · alarms · records to Workers Logs"]
+  end
+  subgraph TK["Tokio host"]
+    SQ["SQLite per organization · receive deadlines<br/>records through tracing to OTLP"]
+  end
+  DO -->|"supplies"| CAPS
+  SQ -->|"supplies"| CAPS
+```
+
+The sign-in service has the same shape, drawn in [its storage, core and hosts](#program-design--the-sign-in-service-storage-core-and-hosts).
 </script></ex-markdown>
 
 <h2 id="program-design--what-exists-today">What exists today</h2>
@@ -106,7 +216,7 @@ Every place a real choice existed, what was chosen, what wasn't, and why. "Reope
 | How services prove who's calling | Short-lived **service tokens** from the issuer, each naming one receiving service and one operation, over TLS | Signing each request body (HTTP message signatures) | Reuses the issuer, its keys and client authentication; TLS already protects the body in transit | Each receiver pins issuer, client and scope per operation | A request must stay verifiable after leaving TLS (then sign bodies) |
 | How a machine proves itself | A short-lived **machine token from the sign-in service**, on every connection, after the owner approves the machine's device code | Keep the Access service token and enrollment credential (two long-lived secrets tied to the owner's Access; you: move off Access); per-machine key files (you: no); VM creators and platforms as issuers (you: later, 2026-10-27) | One login model for every machine; the token names its issuer, so another issuer kind is added later beside it | A machine keeps one refresh credential, or, without a store, is approved again after each restart | Machines must log in without the owner approving each one (then U31's later step adds an issuer kind) |
 | Who owns a machine's enrollment | **The machine's organization authority**, with the Registry keeping only an index from installation and peer to organization, written once | Keep enrollments in the Registry with an organization column | A revocation and its grant fence are one transaction, so the revocation fan-out disappears; the owner's approval is read where it lives | Each new log-in touches the Registry once, then the organization authority | A machine must move between organizations (Fleet Q-B11) |
-| How the device-code login is built | Better Auth's OAuth device grant, extended with the machine's fields, and the existing extension claim contributor asking Fleet central before each machine token | Our own device-code endpoints minting through `issueTokens` (the fallback, the surface the fleet-session grant uses) | Single use, guess limits, polling and refresh come from the library; the decision stays with Fleet central | The machine token's `sub` is the approving owner's account (the provider owns `sub`), so consumers read only `principal`; deleting that account ends the machine's renewals | The extension can't add fields or the contributor can't refuse a device-code mint at 1.7.11 (then the fallback) |
+| How the device-code login is built | Better Auth's OAuth device grant, extended with the machine's fields, and the existing extension claim contributor asking Fleet central before each machine token | Our own device-code endpoints minting through `issueTokens` (the fallback, the surface the fleet-session grant uses) | Single use, polling (`slow_down`) and refresh come from the library, and its rate limiter, set explicitly, limits guesses ([flood limits](#program-design--flood-limits-at-sign-in-r42-r52)); the decision stays with Fleet central | The machine token's `sub` is the approving owner's account (the provider owns `sub`), so consumers read only `principal`; deleting that account ends the machine's renewals | The extension can't add fields or the contributor can't refuse a device-code mint at 1.7.11 (then the fallback) |
 | Linux secret store | The store's data key comes from a **systemd encrypted credential** read through the existing `KeychainAccess` seam. It is created once, at install, by `systemd-creds encrypt` run as root, and delivered to the Router service with `LoadCredentialEncrypted=`. The Linux adapter only reads it. Without it, and on any machine without the Keychain or systemd, the Router keeps the refresh credential only in memory (OD9). The login runs inside the Router host, where the key, or the memory, is. | A data-key file beside the store; the desktop Secret Service (needs a desktop session) | Works for a Router run as a systemd service, inside a VM guest with systemd too; the data key never changes, so a read-only credential is enough | Protection: with a TPM2, a copied disk can't decrypt; with only the host key, root on that host can. Neither protects from processes running as the Router's own user, the same as the macOS Keychain (the shared bucket). A machine without either keeps its refresh credential in memory and is approved again after each restart (OD9). | Restarts without systemd become frequent enough that re-approving costs too much |
 | How separate organizations' Fleet data is kept | **One Fleet object per organization**. The first organization adopts today's storage through a fixed mapping on both hosts: the Cloudflare object named `fleet`, and the Tokio singleton key. | One Fleet object with an organization column on every row | Separation by address: a machine reaches only its organization's object, so a forgotten filter can't leak; workspace names stay unique per organization; no rows rewritten | A storage cutover all the same: the address type, every caller, restart and wake recovery, each connection's feed, and refusing the old address all change; one more object per organization | — |
 | How the cutover flips | One deploy-time setting, `machineLogin`, with exactly one value per deployment: today's login before step 2, machine tokens from step 2. Step 2 fixes forward; there is no revert to the old login. | Accept either login during a transition; keep the old login restorable as a revert | You ruled out "either". Restoring the old login after step 2 could readmit a machine revoked after the switch | Step 2 needs every machine logged in again; a broken step 2 leaves machines offline, still behind Access, until a fix lands | — |
@@ -150,9 +260,9 @@ flowchart TB
 | E22 Machine token | The sign-in service | `packages/auth` (modified) | `identity_contract.rs`: `MachineTokenClaims` (new, the contract home; the sign-in service's Zod schema is generated from it) | JWT claims, below | derived (signed, never stored) | Rust serde, Zod derived |
 | E15 Machine allowance | Organization authority | `organization_authority` (new) | `identity_contract.rs`: `MachineAllowance` (new) | admin API `{ installationId, workspaceId }`; `DecideDeviceLogin` carries the workspaces chosen at log-in | persisted | Rust |
 | E24 Machine connection | The Connection object: the open connection, its silence deadline and its presence, judged on its own clock | Connection object (existing, `ObjectAddress::Connection(installation)`; modified: heartbeat, silence deadline, presence answer); its own store keeps the open connection, its attach sequence, when it opened, when it was last heard and when the last one closed | `identity_contract.rs`: `ReadMachinePresence` and `MachinePresenceAnswer { Open { connectionId, attachSequence, openForMs, silentForMs } \| NotConnected { closedAgoMs: Option } }` (new); `ConnectionId` (existing, `fleet_sync_protocol`) | `Heartbeat` on `/v1/session`; `ReadMachinePresence` (organization authority → Connection object, at each lookup); the lookup's `connection` variant | persisted in the Connection object's store | Rust tagged enum |
-| E7 Fleet harness session | Organization authority | `organization_authority` session registry (new), with its start time set when the organization authority registers it; `session_activity` table (new: one row per session, replaced by each report) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new, with `startedAt`) and `SessionActivity { session, connectionId, activity: Working \| Idle, reportedAt }` (new) | `principal.session_ref` object in tokens; `session` in registration; `ReportSessionActivity` over the connection; the lookup's `state`: `working \| idle \| unknown` | persisted (with retention); an activity row counts only while its connection holds the machine's lease | existing `SessionRef` plus Rust |
+| E7 Fleet harness session | Organization authority | `organization_authority` session registry (new), with its start time set when the organization authority registers it; `session_activity` table (new: one row per session, replaced by each report) | `endpoint_identity.rs` `SessionRef` (existing) plus `identity_contract.rs` `FleetSessionRecord` (new, with `startedAt`) and, in `fleet-identity-protocol`, `SessionActivity { session, connectionId, activity: Working \| Idle, reportedAt }` (new) | `principal.session_ref` object in tokens; `session` in registration; `ReportSessionActivity` over the connection; the lookup's `state`: `working \| idle \| unknown` | persisted (with retention); an activity row counts only while its connection holds the machine's lease | existing `SessionRef` plus Rust |
 | E8 Membership (of a session) | Organization authority | `organization_authority` session registry (new): a session's membership is its registration | `identity_contract.rs`: `FleetSessionRecord` names its workspace; it counts while its machine has an active enrollment here | registration; admin lookup | persisted | Rust; people's and bots' memberships come in step 3 |
-| E13 Isolation record | Organization authority | session registry (new) | `identity_contract.rs`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design) | registration; the token's `principal` | persisted | Rust tagged enum |
+| E13 Isolation record | Organization authority | session registry (new) | `fleet-identity-protocol`: `AgentIsolation`, `MachineEnvironment` (new; from the Fleet attestation design; the Router asserts them at registration) | registration; the token's `principal` | persisted | Rust tagged enum |
 | E14 Shared bucket | Organization authority (a derived query) | `organization_authority` (new) | `identity_contract.rs` lookup result (new) | admin lookup | derived | Rust |
 </script></ex-markdown>
 
@@ -429,6 +539,8 @@ pub struct DeviceCodeMachineClaims {
 
 <h3 id="program-design--requests-over-the-machine-s-connection">Requests over the machine's connection (Router → Fleet central)</h3>
 <ex-markdown id="program-design--requests-over-the-machine-s-connection-text"><script type="text/markdown">
+Home: `fleet-identity-protocol` (new crate), which both the Router's crates and central's core depend on ([the parts in code](#program-design--the-parts-in-code)).
+
 ```rust
 #[serde(rename_all = "camelCase")]
 pub struct RegisterFleetSession {
@@ -947,6 +1059,8 @@ Every issuance runs one closed dispatch on the **authenticated** client's regist
 | **Token issuer** (existing, modified) | The token-kind dispatch, keeping today's agent path until step 3; machine claim stamping; the extended device-code grant, its owner hooks on verify, approve and deny, and its own token handler minting with the enrollment as `referenceId`; one public machine client per enrollment, created at its first mint and disabled when the enrollment ends; the revoke refusal for machine clients and their tokens; service tokens; person session confirmation; asking central for person admission | `packages/auth` | Routers (login and renewal), Fleet central, people | claims or grants change |
 | **Who-is-logged-in page** (new, sign-in service) | The owner's view (C12): serving the page and its refresh route to the signed-in person, minting their person token for central's admin address, calling `WhoIsLoggedIn` every sixth of OD14; discarding an answer that arrives more than one refresh interval after its request; showing "unavailable" on any failure or after OD14 without a snapshot; at stage C, adding each person's name and sign-in facts from its own store | `packages/auth` (new route beside the device-code approval page) | the owner's browser | C12 changes |
 | **Service caller** (new, central host capability) | Sending C7 requests outside storage transactions (live ones inline, durable ones from outbox steps); signing with central's client key | each central host: Workers and Tokio | outbox steps | a C7 edge changes |
+| **Telemetry** (new, each host) | Turning each core's observations into records and sending them: Workers Logs and traces on Cloudflare, OTLP on Node and Tokio; never on a request's path (R51) | sign-in: `cloudflare-host`, `node-host`; central: `collaboration-central-cloudflare/src/platform.rs`, an OTLP exporter in `collaboration-central-tokio`; Router: `codex-router-cli/src/telemetry.rs` (unchanged) | you, through your OpenTelemetry tool | a record or a destination changes |
+| **Request limits** (new, sign-in) | Each route's class and its limits; the `requestLimiter` capability; Better Auth's `rateLimit`; the Turnstile check on people's sign-in (R42, R52) | `sign-in-core/request-limits`; `better-auth-provider`; each sign-in host's limiter | every sign-in route | a route or a limit changes |
 
 
 **Allowed edges:**
@@ -1264,16 +1378,111 @@ The Router is trusted for every session on its machine. Sessions on one machine 
 - **The owner's person token stays on the server.** The sign-in service's server holds it to call central, and the browser never receives it.
 </script></ex-markdown>
 
+<h3 id="program-design--clients-without-a-secret-and-google-and-github">Clients without a secret, and Google and GitHub</h3>
+<ex-markdown id="program-design--clients-without-a-secret-and-google-and-github-text"><script type="text/markdown">
+Every client that can't keep a secret is protected by its grant, and none can use the authorization code grant without PKCE.
+
+| Client | Holds a secret? | How it's protected |
+|---|---|---|
+| Google and GitHub sign-in | The sign-in service is Google's and GitHub's client. It holds their client secrets on the server only. | Authorization code with PKCE: Better Auth refuses to start a Google sign-in without a code verifier (`google.mjs:63`) and sends one to GitHub (`github.mjs:24`). `state` is checked on return, the redirect address is fixed at the provider, and Turnstile comes before the start. |
+| The owner CLI | No: public and native (`token_endpoint_auth_method: none`) | Authorization code with PKCE (S256). Its client is created with PKCE required, and the bootstrap refuses to run otherwise (`owner-client-bootstrap.ts`). |
+| The Router's device-login client | No: public | The device grant, which has no redirect and so no PKCE. Instead: a code only the organization's owner can approve, single use within 10 minutes, `slow_down` on fast polling, and the flood limits. The client itself is issued no token. |
+| Each machine's own client | No: public, one per enrollment | Refresh only, never an authorization code. Refresh tokens rotate, a replay ends only that machine's family (R40), and the revoke endpoint refuses it. |
+| Today's agent clients (until step 3) | Yes: `client_secret_basic` | unchanged |
+| Service tokens (C7) | Yes: each service's own client key | unchanged |
+</script></ex-markdown>
+
 <h2 id="program-design--other-qualities">Other qualities</h2>
 <ex-markdown id="program-design--other-qualities-text"><script type="text/markdown">
 | Quality | How it's met |
 |---|---|
-| Privacy | Machine tokens carry the machine, its enrollment and its organization, and nothing secret. The view shows no one at a machine's keyboard. |
+| Privacy | Machine tokens carry the machine, its enrollment and its organization, and nothing secret. The view shows no one at a machine's keyboard. No telemetry record carries a token, code, secret, cookie or email (R51). |
 | Reliability | Fail closed on every decision while central's truth can't be consulted. Outboxes with acknowledgment and backoff for connection closes and client disabling. |
 | Performance | One decision per machine-token mint. One small heartbeat per connected machine every sixth of OD14. One read per enrolled machine per refresh while the view is open. |
-| Observability | Lookups and the view show machines, what authorized them, their sessions and their shared buckets. Each refusal logs a bounded reason class. |
+| Observability | Every decision and refusal leaves a record with its kind, outcome, reason class and IDs, kept by Cloudflare and exported over OpenTelemetry ([telemetry](#program-design--telemetry-logs-and-traces-r51)). Lookups and the view show machines, what authorized them, their sessions and their shared buckets. |
 | Platform | One contract, any host. Central runs on a Durable Object per organization or on Tokio with SQLite per organization. The sign-in service runs on Cloudflare and on Node. The Router runs on macOS (Keychain) and Linux (systemd credential, or memory only), including Linux inside a VM, with the same login on each (R44). |
 | Isolation | Recorded and shown, never enforced. |
+</script></ex-markdown>
+
+<h2 id="program-design--telemetry-logs-and-traces-r51">Telemetry: logs and traces (R51)</h2>
+<ex-markdown id="program-design--telemetry-logs-and-traces-r51-text"><script type="text/markdown">
+**Each core says what happened as a closed observation. Each host turns it into a record and sends it where its runtime sends telemetry:** Workers Logs and traces on Cloudflare, exported over OTLP; an OTLP exporter on Node and Tokio. Both seams exist today: central's platform already has `observe(CentralObservation)` (`platform_capabilities.rs:66`), written by `console_log!` on Cloudflare and `tracing` on Tokio, and the Router already exports over OTLP (`codex-router-cli/src/telemetry.rs`).
+
+```mermaid
+flowchart TB
+  SC["sign-in core<br/>log(SignInObservation)"]
+  CC["central core<br/>observe(CentralObservation)"]
+  RT["Router<br/>tracing, as today"]
+  CFH["Cloudflare hosts<br/>one JSON line per record"]
+  NTH["Node and Tokio hosts<br/>an OTLP exporter"]
+  WL["Workers Logs and traces<br/>kept by Cloudflare"]
+  OT["your OTLP destination (OD17)"]
+  LOCAL["the shared local OpenTelemetry stack<br/>in development"]
+  SC --> CFH
+  CC --> CFH
+  SC --> NTH
+  CC --> NTH
+  CFH --> WL
+  WL -->|"export"| OT
+  NTH --> OT
+  RT --> OT
+  NTH -.-> LOCAL
+  RT -.-> LOCAL
+```
+
+| Part | Design |
+|---|---|
+| Records | `CentralObservation` (today only `AccessCheck`) gains a variant for each machine-token check, device-login and machine-token decision, connection admission, registration, presence change, activity report (accepted, superseded or refused), remote start, `WhoIsLoggedIn`, and outbox step. `SignInObservation` has one for each sign-in admission, token-kind dispatch outcome, device-code start, verify, approve, deny and redemption, limited request, machine client created or disabled, revoke refusal, and page refresh. The Router records machine login, renewal, heartbeat failures, registration and activity reports through its existing `tracing`. Every record carries its kind, outcome, bounded reason class and IDs. |
+| No secrets, by type | An observation's fields are enums and branded IDs only, never a string taken from a request. A free-text field can't be added without a type change that review sees. Hosts write only these fields. Better Auth's logger gets a function that records only its level and a fixed event name (`provider-error`, `provider-warning`) and drops its message, because those messages can carry request data. |
+| Codes never travel in a URL | The Router shows the address and the code separately, never `verification_uri_complete`. The approval page takes the code in a form post and calls the grant's verify inside the core. The sign-in Worker also turns `invocation_logs` off, because a URL still carries whatever a caller types; central keeps them on. |
+| Cloudflare | Both Workers' deploy config turns on `observability`: `logs` (`enabled`, `head_sampling_rate: 1`) and `traces` (`enabled`, `head_sampling_rate: 1`), each listing the deployment's OTLP destinations. Destinations are account-level: created once through Cloudflare's API with the `cf` CLI, their names kept in the private ops config. `persist` stays on, so Cloudflare keeps the records if export fails. Sign-in writes each record as one JSON `console.log` line. Central writes through `tracing` with a JSON layer to the console, as workers-rs's tracing example does. Workers traces add a span for each request, Durable Object call and outbound fetch, with no code. |
+| Node and Tokio | Tokio follows the Router's `telemetry.rs`: `tracing` with the OpenTelemetry bridge, exporting logs and traces over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT`. The Node host uses the OpenTelemetry JS SDK's log and trace exporters, a new dependency for that host only, against the same variable. With no endpoint set, records go to the host's own output only. |
+| Joining records | Records join on their organization, enrollment, installation, connection and session IDs. Joining one request's traces across services is later. |
+| Failure | Export never sits on a request's path: Cloudflare exports after the invocation, and the OTLP exporters batch in the background and drop when full. A destination that's down changes no answer. |
+| Volume and cost | Every record and trace is kept at item two's volume (one owner, a few machines). Sampling is one setting per Worker. From 1 December 2026, records Cloudflare keeps alongside export count toward Workers Observability usage. |
+</script></ex-markdown>
+
+<h2 id="program-design--flood-limits-at-sign-in-r42-r52">Flood limits at sign-in (R42, R52)</h2>
+<ex-markdown id="program-design--flood-limits-at-sign-in-r42-r52-text"><script type="text/markdown">
+**Two counting layers and one human check, all from what the sign-in service already uses, none storing a row.** Better Auth's limiter, set explicitly, counts each address in the process. On Cloudflare, in front of it, the Workers rate-limit binding counts each address across every instance in one Cloudflare location. People's sign-ins also pass a Cloudflare Turnstile check, through Better Auth's captcha plugin (you decided this, 30 October). Code entry and approval already need your signed-in session, so their limits guard against a stolen session. Today neither is set: Better Auth's limiter is on only when `NODE_ENV` is `production`, counts per Worker isolate, and trusts `x-forwarded-for` (P11).
+
+```mermaid
+flowchart LR
+  REQ["a request to the sign-in service"]
+  HOST["host: sets the client address<br/>from its trusted source"]
+  LIM["core: requestLimiter.allow<br/>(route class, address)"]
+  BA["Better Auth rateLimit (its own count),<br/>then captcha: Turnstile on people's sign-in"]
+  RULE["the sign-in rules"]
+  NO["429, or slow_down for polling<br/>nothing changed"]
+  REQ --> HOST --> LIM
+  LIM -->|"allowed"| BA
+  LIM -->|"limited"| NO
+  BA -->|"allowed"| RULE
+  BA -->|"limited"| NO
+```
+
+| Route class | Routes | Better Auth's rule | Cloudflare binding |
+|---|---|---|---|
+| Sign-in attempts | people's sign-in and sign-up, and the provider callbacks | 3 per 10 s (its default for sign-in, kept) | `SIGN_IN_ATTEMPTS`: 10 per 60 s |
+| Code entry | the approval page's code form, which calls the grant's verify | 5 per 60 s | `SIGN_IN_ATTEMPTS` |
+| Approve and deny | `/device/approve`, `/device/deny` | 10 per 60 s | `SIGN_IN_ATTEMPTS` |
+| Device-code requests | `/device/code` | 5 per 60 s | `SIGN_IN_ATTEMPTS` |
+| Device-token polls | `/device/token` | the grant's own `slow_down` when polled faster than its 5-second interval (`routes.mjs:302–305`) | `AUTH_REQUESTS` |
+| Token and refresh | the token endpoint | 30 per 60 s | `AUTH_REQUESTS` |
+| Everything else | every other route | 100 per 10 s (its default) | `AUTH_REQUESTS`: 300 per 60 s |
+
+The numbers are proposed (OD16); each is one setting.
+
+| Part | Design |
+|---|---|
+| Where the rule lives | `sign-in-core/request-limits` maps each route to its class and each class to its limits. Better Auth gets them as `rateLimit.customRules`, with `rateLimit.enabled: true` whatever `NODE_ENV` says, and `storage: 'memory'`. The core asks `requestLimiter.allow` before Better Auth runs. `limited` returns 429 with `Retry-After` and touches nothing. Each limited request leaves a record (R51). |
+| The client address | Each host removes any incoming copy of one internal header, `x-sign-in-client-address`, and sets it from its trusted source: `cf-connecting-ip` on Cloudflare, and on Node the socket's peer, or a configured trusted proxy's header. Better Auth's `advanced.ipAddress.ipAddressHeaders` lists only that header, so both layers count the same address. IPv6 counts per /64, Better Auth's default. |
+| Cloudflare host | `requestLimiter` is two Workers rate-limit bindings in the Worker config (`ratelimits`, periods of 10 or 60 seconds), keyed `<class>:<address>`. Their counts are shared by every isolate in a location. Better Auth's in-memory count adds a tighter check per isolate. |
+| Node host | `requestLimiter` allows everything: Better Auth's in-memory count is exact in one process. |
+| Turnstile | Better Auth's `captcha` plugin with provider `cloudflare-turnstile`, on `/sign-in/social` (starting a Google or GitHub sign-in) and `/passkey/verify-authentication`. The sign-in page loads Turnstile's widget and sends its token as `x-captcha-response`. The plugin calls Turnstile's siteverify itself, as Better Auth already calls Google and GitHub, passing the same client address, checking `allowedHostnames` and `expectedAction`, giving up after 10 seconds and refusing then (`captcha/constants.mjs`). The site key is configuration; the secret key is a Worker secret in the private ops config; the widget is created through Cloudflare's API with the `cf` CLI. Tests point `siteVerifyURLOverride` at a local stand-in, so nothing reaches Cloudflare. Machines' endpoints never ask: a Router can't solve one. |
+| Bigger floods | Cloudflare's automatic DDoS protection sits in front of every proxied hostname. A flood spread across many addresses is slowed per address, and its sign-ins each need a Turnstile token. |
+| What it costs | A count resets when an isolate or process restarts. The binding's count is per location and approximate, so a few requests past a limit can pass. No row is stored, so OD4 gains no table. |
+| What else was weighed (OD16) | Better Auth alone (weak on Workers, where each isolate counts on its own); a WAF rate-limiting rule (Cloudflare only, one rule with a 10-second period on the Free plan, set on the zone rather than in the product); Better Auth counting in D1 (a new table, and a D1 write per counted request, so a flood costs writes). |
 </script></ex-markdown>
 
 <h2 id="program-design--the-sign-in-service-storage-core-and-hosts">The sign-in service: storage, core and hosts (R29–R33)</h2>
@@ -1294,7 +1503,7 @@ flowchart TB
   subgraph CORE["sign-in core (runtime-free): packages/auth/src/sign-in-core"]
     RULES["dispatch · final checks · receivers · admission requests · device-code approval · audit"]
     STORE["SignInStore: typed operations + the one Drizzle mapping<br/>schema: Better Auth tables + sign_in_audit + organization_admission_claim + admitted_person_guard"]
-    CAPS["SignInPlatform: clock · UUIDv7 ids · crypto · central client · atomic runner · log"]
+    CAPS["SignInPlatform: clock · UUIDv7 ids · crypto · central client<br/>atomic runner · log · request limiter"]
     RULES --> STORE
     RULES --> CAPS
     STORE --> CAPS
@@ -1322,7 +1531,7 @@ flowchart TB
 - `admitted_person_guard`: `person_id`, `organization_id`, `admitted_at_ms`; primary key on both IDs. It records that central admitted this Person to this organization, so D1 never deletes them. It decides nothing about admission; central's organization authority stays the one owner of that. `allowed_email` and `deployment_owner` leave the sign-in service, because admission moved to Fleet central (R5). |
 | Migrations | Generated by `drizzle-kit` (dialect `sqlite`) into `packages/auth/drizzle/`. On D1, wrangler's D1 migration apply is the one mechanism, with `migrations_dir` set to that folder. Drizzle's D1 migrator reads the filesystem and cannot run inside a Worker, so "before it serves a request" is a deploy step: `wrangler d1 migrations apply` runs and succeeds before `wrangler deploy` of the build that needs it, and the deploy stops if it fails (I7). On Node, the `better-sqlite3` migrator runs at startup. The old `0001`/`0002` files are replaced, not migrated: nothing is deployed and there are no users (people sign-in Program Design, "What's built"). The owner approves the schema before code (U22). |
 | Better Auth | `database: drizzleAdapter(db, { provider: 'sqlite', schema: signInSchema, transaction: false })`. Model IDs come from `advanced.database.generateId`, wired to `platform.ids.nextId()` (UUIDv7). Not the built-in `"uuid"` strategy: Better Auth's own derived IDs under it come out as version 5. Under a function generator, a key Better Auth derives for a single-use check is a base64url digest, not a UUID. The client-assertion record keyed by the `jti` digest is the `private_key_jwt` replay gate (`client-assertion.ts:406–425`, `get-id-field.ts:43–44` at 1.7.11), and it stays derived. Better Auth keeps generating its own secrets (session tokens, client secrets, PKCE) and reading its own clock for its own expiries. That is the library's boundary; the design does not patch it. |
-| Capabilities | `SignInPlatform { clock, ids, crypto, centralClient, runAtomically, log }`, every one required. `crypto` signs the service tokens the sign-in service self-signs for central (C7). `centralClient` sends `PersonAdmissionRequest`, `DecideDeviceLogin` and `DecideMachineToken` and returns closed results, including `unavailable`. |
+| Capabilities | `SignInPlatform { clock, ids, crypto, centralClient, runAtomically, log, requestLimiter }`, every one required. `log` takes only a closed `SignInObservation` ([telemetry](#program-design--telemetry-logs-and-traces-r51)); `requestLimiter` answers each request's route class and client address ([flood limits](#program-design--flood-limits-at-sign-in-r42-r52)). `crypto` signs the service tokens the sign-in service self-signs for central (C7). `centralClient` sends `PersonAdmissionRequest`, `DecideDeviceLogin` and `DecideMachineToken` and returns closed results, including `unavailable`. |
 | Hosts | **Cloudflare:** the Worker builds the D1 database, its `SignInPlatform` from sign-in's own web-platform adapters, and a `fetch`-based central client. **Node (new):** an HTTP listener, a `better-sqlite3` file under the host's state directory, and the same sign-in adapters. The adapters live in `packages/auth`, not shared with the Switchboard: the two products' capability contracts differ (sign-in signs service tokens; the Switchboard verifies), and sharing would make `packages/auth` depend on the Switchboard's packages. Both use the one pinned `jose` and `uuid`. Neither host holds a sign-in rule. |
 | Test hooks | `beforeFinalCheck` and `observeManagement` are removed from production code. Tests hold a flow at an injected capability instead, such as a central client stand-in that waits on the test's signal, in the test host. |
 
@@ -1432,7 +1641,8 @@ export interface SignInPlatform {
 	readonly crypto: SignInCrypto; // signServiceToken, randomSecret, hashClientSecret (the provider's stored-secret format)
 	readonly centralClient: CentralClient;
 	readonly runAtomically: AtomicRunner;
-	readonly log: SignInLog;
+	readonly log: SignInLog; // record(observation: SignInObservation): void; never throws, never waits
+	readonly requestLimiter: RequestLimiter; // allow({ routeClass, clientAddress }) → { kind: 'allowed' } | { kind: 'limited'; retryAfterSeconds }
 }
 ```
 
@@ -1475,26 +1685,32 @@ The statements above are written as SQL so the condition each one carries is vis
 <h2 id="program-design--changes-and-cutover">Changes and cutover</h2>
 <ex-markdown id="program-design--changes-and-cutover-text"><script type="text/markdown">
 **What changes:**
-- **Sign-in service:** the core and storage on Drizzle (R29–R33); people's admission asked of central; the token-kind dispatch, keeping today's agent path until step 3; service tokens; the Router device-login client, one machine client per enrollment, the extended device grant, its approval hook and the revoke refusal; the `DisableMachineClient` receiver; the who-is-logged-in page.
-- **Fleet central:** the Registry's organization list and machine index; one organization authority and one Fleet object per organization; the admin commands, the owner guard and lookups; central's new receivers and its service caller; the machine token check; machine enrollment, revocation and supersession; session registration; remote starts; presence in each Connection object; session activity; `WhoIsLoggedIn`.
+- **Sign-in service:** the core and storage on Drizzle (R29–R33); request limits (R52); telemetry on both hosts (R51); people's admission asked of central; the token-kind dispatch, keeping today's agent path until step 3; service tokens; the Router device-login client, one machine client per enrollment, the extended device grant, its approval hook and the revoke refusal; the `DisableMachineClient` receiver; the who-is-logged-in page.
+- **Fleet central:** the Registry's organization list and machine index; one organization authority and one Fleet object per organization; the admin commands, the owner guard and lookups; central's new receivers and its service caller; the machine token check; machine enrollment, revocation and supersession; session registration; remote starts; presence in each Connection object; session activity; `WhoIsLoggedIn`; telemetry on both hosts; the `fleet-identity-protocol` crate.
 - **Router:** machine login and renewal; the Linux secret store; the session registrar and binding; the heartbeat; the activity reporter; remote start.
 
 **The steps (R43).**
 
 | Step | Fleet central in production | Machines | Proven before the next step |
 |---|---|---|---|
-| 1. Build | Today's login, unchanged (`machineLogin = accessEnrollment`), Access in front, no organizations yet. The new login is built and run only on test deployments. | unchanged | the machine login, the organization core, registration, remote start and the step-2 checks, on a test deployment behind a test Access application |
+| 1. Build | Today's login, unchanged (`machineLogin = accessEnrollment`), Access in front, no organizations yet. The new login is built and run only on test deployments. | unchanged | the machine login, the organization core, registration, the flood limits and the step-2 checks, on a test deployment behind a test Access application |
 | 2. Switch, behind Access | `machineLogin = machineTokens`. The old login's code is removed and the `machine_enrollments` table is dropped in the same deploy. Your organization is created, adopting today's Fleet storage. Operator commands go through the sign-in service. | Each runs the new Router build and logs in again by device code. It keeps its installation and peer IDs, so its sessions, allowances and board relationships stay attached. The old enrollment credential is deleted once it has logged in. | — |
 
 - **Step 2 fixes forward,** with no revert to the old login. Restoring it could give access back to a machine revoked after the switch, because the old table knows nothing of revocations under the new login. While a fix lands, machines are offline and Access still guards central.
 - **The test deployment exercises exactly what production gets.** The old login's code is removed before the test cut, so production's switch promotes the builds the test cut proved.
 
-**The view goes live after the switch,** in this order:
+**After the switch, each later deliverable goes live as its own small step,** in the plan's order: logs and traces, the view, remote start, then people in the view. None makes a machine log in again.
+
+**Logs and traces go live** with each service's next deploy. The Workers' `observability` setting and the hosts' exporters change no answer.
+
+**The view goes live** in this order:
 1. **Central first.** It accepts `Heartbeat` and `ReportSessionActivity`, and serves `WhoIsLoggedIn`. It applies the silence deadline only to a connection that has already sent a heartbeat.
 2. **Then each Router.** A Router that doesn't send heartbeats yet is never closed for silence; until it updates, it shows as not connected, which errs toward showing less.
 3. **Then the page,** at the sign-in service.
 
 There's nothing to migrate: presence is new state in each Connection object, and activity is a new table.
+
+**Remote start goes live** central first, then each Router. Central sends a start only to a target whose Router has reported, in its schema-support report (`ReportSchemaSupport`, `registry_session_calls.rs`), that it can take one. Any other target answers "refused by the target", and nothing is created.
 
 **Today's agent path stays.** From the switch until step 3, the sign-in service keeps the Switchboard's agent path (registration, resource links, workspace policy, release checks), so the Switchboard works unchanged.
 </script></ex-markdown>
@@ -1532,6 +1748,8 @@ There's nothing to migrate: presence is new state in each Connection object, and
 | U34, U31 | R43: three steps; never both logins | E6, E21, E22 | central deploy setting | `machineLogin` (one value per deployment) | central's deploy configuration | the step the deployment is at | step 2 failure → fix forward under Access; the old login is not restored | each step's checks on a test deployment behind and without Access; a machine revoked after step 2 never regains access |
 | U35 | R44: every Router obligation on macOS and Linux | E6 | Router | all Router contracts | the `KeychainAccess` adapters: Keychain, systemd credential | none: a platform matrix | a missing platform capability falls back to memory, never weakens | the Router suites and login on each platform |
 | U39, U6 | R46: a session starts a helper on another machine of its organization, for a project in its own workspace, in a directory on that machine; one start, one session; a deadline; started, refused or unknown; never queued | E6, E7, E15, E16 | organization authority; remote start (both Routers) | `RequestRemoteStart`; `StartRequestedSession`; `ReportRemoteStart`; `RemoteStartAnswer`; `RemoteStartStatus`; `ListWorkspaceMachines`; `started_by: remoteSession` | `RemoteStartAdmission`; `RemoteStartResult`; the remote-start record keyed by request ID, with its body, deadline and bound session | forwarded → started, refusedByTarget or unknown; unknown → started (late) | each refusal creates nothing; a changed body under a used ID is refused; a lost answer is unknown, never refused; a second session for one start is refused | central integration with two Routers: a start on another machine with different directories, each refusal, two concurrent starts with reversed outcomes, a duplicate delivery, a lost answer read back by status, a stale instruction past its deadline, a requester restart |
+| U41 | R51: a record for every decision and refusal; no secrets; Workers Logs and traces on Cloudflare, OTLP elsewhere; telemetry never changes an answer | all | each host's telemetry | `CentralObservation`; `SignInPlatform.log` | `access_observation.rs` (modified); `sign-in-core/contracts` | none | a destination down → the same answers, and Cloudflare still keeps the records | SO13: exported records against each decision, a secret search over every export, a stopped collector |
+| U42, U31 | R52 and R42's limit: every sign-in route limited per trusted address; a limited request changes nothing | E23 | sign-in request limits | `SignInPlatform.requestLimiter`; Better Auth `rateLimit` | `sign-in-core/request-limits` | counts in memory and in the binding, no rows | limited → 429 or `slow_down`, nothing changed | SO2's flood cases on both hosts |
 | U40 | R47: the owner's who-is-logged-in view lists every enrolled, revoked or expired machine with its approval, allowances, connection and last seen, and each active session with harness, project, workspace, isolation, start time and state; opening it changes nothing | E6, E7, E13, E15, E16, E21, E24 | organization authority (snapshot); admin surface; who-is-logged-in page | `WhoIsLoggedIn`; the page's refresh route | `WhoIsLoggedInResult` (`MachineRow`, `ConnectionView`, `SessionRow`) in `identity_contract.rs` | presence (never connected, connected, not connected); session activity | the Fleet object unreadable → whole lookup fails → unavailable | central integration with two machines, one connected and one not, and a revoked machine; state compared before and after opening the view |
 | U40 | R48: each change shows within OD14; an unclean drop shows not connected with its last-seen time; a disconnected machine's sessions show unknown | E7, E24 | Connection object (presence, on its own clock); organization authority; session activity reporter; the page | `Heartbeat`; `ReadMachinePresence` at each lookup, with a deadline of half a refresh; `ReportSessionActivity` (the whole state, sequenced); refresh every sixth of OD14, with an answer deadline of one interval | `MachinePresenceAnswer` (durations); `SessionActivity`; `SessionActivityEntry` | presence in each Connection object (three heartbeats of silence); activity counted only on the connection answered `Open` | a crash → `NotConnected` after three heartbeats of silence; a Connection object that doesn't answer → unavailable; an unanswered or refused activity report → a fresh whole-state report; central restart → `NotConnected` until reconnect | a controlled clock at each object: a connect, a clean close, a cut connection, a session starting and stopping, all within OD14; a session on a cut machine reads unknown; the Connection object's and the organization authority's clocks offset by several seconds, with the same result |
 | U40, U32, U21 | R49: only the organization's admin; only its own machines and sessions; unavailable, never a stale picture; no operator shown | E1, E6, E7, E24 | owner guard; who-is-logged-in page | `WhoIsLoggedIn` under the owner guard; the page's freshness timer | `OwnerRefusal`; no operator field in any row | none: a read | anyone else → refused, nothing revealed; failure or OD14 without a snapshot → unavailable | admin route and page: owner, member, other organization's owner, bot, session and machine tokens; central stopped while the page is open |
@@ -1546,6 +1764,9 @@ There's nothing to migrate: presence is new state in each Connection object, and
 - **OD4, the sign-in tables:** drawn in "The sign-in service: storage, core and hosts" above, for your approval with their generated SQL.
 - **OD14, the view's freshness bound:** built at the proposed 15 seconds. Heartbeat, refresh and the page's answer deadline are each a sixth of it (2.5 seconds), and the silence limit is three heartbeats. A cut connection shows within 12.5 seconds. Another value scales them all; below about 5 seconds, a push stream would be needed instead of refreshes.
 - **OD2, the machine token's default lifetime:** built at 5 minutes, one setting.
+- **OD16, the flood limits:** Turnstile is decided. The counting layers are built as recommended: Better Auth's limiter set explicitly, plus the rate-limit binding in the Worker. The numbers are each one setting.
+- **OD18, sign-in after the first time:** recommended: after the first Google or GitHub sign-in, each person adds a passkey, and from then on signs in with the passkey alone. Built once you choose; the rest of sign-in doesn't wait.
+- **OD17, where telemetry goes:** Cloudflare keeps its own records either way. Export starts when you name a destination; until then the export check on the private stack waits.
 - **SD8, inherited:** the owner guard's freshness bound is the people sign-in design's open decision. This design follows whatever it becomes.
 
 **Design notes:**

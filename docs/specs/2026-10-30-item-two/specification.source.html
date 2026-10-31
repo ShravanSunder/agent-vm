@@ -9,19 +9,15 @@
 </head>
 <body>
 <ex-nav for="content"><nav slot="pages" aria-label="Pages">
-<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
-<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
-<a href="index.html">Item two</a>
-<a href="plans/2026-10-30-item-two-delivery.html">Item two delivery plan</a>
-<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
-<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
-<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
-<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
-<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
-<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+<a href="index.html">Overview</a>
+<a href="requirements.html">Requirements</a>
+<a href="specification.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a>
 </nav></ex-nav>
 <ex-document id="content" document-id="item-two-specification" revision="2026-10-30.1">
-<p id="set-pages"><a href="index.html">Item two</a>: <a href="requirements.html">Requirements</a> · <strong>Specification</strong> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a></p>
+<p id="set-pages"><a href="index.html">Item two</a>: <a href="requirements.html">Requirements</a> · <strong>Specification</strong> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a> · <a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a></p>
 <h1 id="specification--item-two-specification">Item two: Specification</h1>
 <ex-callout id="specification--answer" tone="tldr" title="What this page is">
 <ex-markdown id="specification--answer-text"><script type="text/markdown">
@@ -64,6 +60,8 @@ flowchart TB
 | P7 | A machine proves itself with two long-lived secrets tied to your own Cloudflare Access: an Access service token, and an enrollment credential whose expiry must match it. Enrolling needs the fleet operator's token. The Router's production secret store exists only on macOS. | Fleet code: `enrollment_prepare.rs`, `machine_enrollment.rs` (the Access client must match), `access_rules.rs`, `keychain_data_key.rs` (non-macOS store unavailable). |
 | P8 | You can't see which machines are connected or what their sessions are doing. Central keeps no list of sessions, has no heartbeat, and its admin routes return JSON only. | Fleet code at `7af23abe`: `native_objects.rs` discards ping and pong; the Registry's `last_seen` changes only on a new attachment; `central_router.rs` admin routes. |
 | P9 | A session on another machine can only be started from that machine, by SSH. | Fleet code: the client refuses a creator on another Router (`conversation_client.rs:312–326`); between machines the fleet carries only messages, notifications, cancels and wakes. |
+| P10 | You can't see what happened. Neither Worker turns on Cloudflare's Workers Logs or traces. Central's Tokio host writes its few records to its own output and exports nothing. The sign-in service records nothing. Only the Router exports over OpenTelemetry. | Central's `cloudflare.config.ts` and sign-in's `wrangler.example.jsonc` have no `observability`; `collaboration-central-tokio/src/native_logging.rs`; `codex-router-cli/src/telemetry.rs` (OTLP). |
+| P11 | Nothing limits login floods. R42 asks for code attempts to be limited, but the sign-in service sets no limit: Better Auth's own limiter is on only when `NODE_ENV` is `production`, counts in each Worker isolate's memory, and takes the client address from `x-forwarded-for`, a header a client can set. | `packages/auth/src` has no `rateLimit`; Better Auth 1.7.8 `create-context.mjs:170–175`, `@better-auth/core` `env-impl.mjs:30–32`. |
 </script></ex-markdown>
 <h2 id="specification--outcomes">Outcomes</h2>
 <ex-markdown id="specification--outcomes-text"><script type="text/markdown">
@@ -76,6 +74,8 @@ flowchart TB
 | O7 | Every machine logs in by a device code you approve and renews itself with short-lived tokens; production switches behind Access. | R39–R43 hold at steps 1 and 2. |
 | O8 | You see, live, who is logged in and what each is working on. | The view shows each machine and session with its current state, within OD14's bound, to you only (R47–R50). |
 | O9 | A session starts a helper on another machine of its organization, through Fleet central. | R46 holds. |
+| O10 | Every item-two service's logs and traces reach an OpenTelemetry tool, with nothing secret in them. | R51 holds on each host. |
+| O11 | A flood of login attempts is slowed and changes nothing. | R42's limit and R52 hold on each host. |
 </script></ex-markdown>
 <h2 id="specification--entities">Entities</h2>
 <ex-markdown id="specification--entities-text"><script type="text/markdown">
@@ -213,6 +213,13 @@ Each obligation is a rule a wrong build would break. "MUST" is required; "MAY" i
 | R26 | Every interaction between Fleet central, the sign-in service and the Routers MUST use one versioned contract whose meaning doesn't depend on the host. Each service MUST behave the same on Cloudflare and on a non-Cloudflare host. | all | U16, O5 |
 | R27 | Every request between Fleet central and the sign-in service (C7) MUST be authenticated as coming from that edge's one expected caller, for that one operation, to the receiving service. A request from another caller, for another operation or another receiving service, with an expired credential, or naming an organization its caller may not act for, MUST be refused and change nothing. Repeating an accepted request MUST have no further effect beyond what C7 states. | all | U15, U16 |
 </script></ex-markdown>
+<h3 id="specification--telemetry-and-flood-limits">Telemetry and flood limits</h3>
+<ex-markdown id="specification--telemetry-and-flood-limits-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R51 | **Telemetry.** Fleet central, the sign-in service and the Router MUST each leave one structured record for every decision and every refusal on the login, connection, registration, presence, activity, remote-start and view paths, and for each outbox step. A record MUST name its kind, its outcome with a bounded reason class, and the identifiers involved (organization, enrollment, installation, connection, session, client), and nothing else from the request.<br>No record, trace attribute or span name MAY contain a token, refresh credential, device code, user code, client secret, cookie, authorization header, private key or email address.<br>On Cloudflare, both Workers MUST turn on Workers Logs and Workers traces and MUST export both over OTLP to the destinations the deployment names (OD17). On Node and Tokio, the same records MUST be exported over OTLP to the endpoint the deployment configures, and with none configured they are written to the host's own output only. Each service MUST leave the same records on each of its hosts.<br>A telemetry failure (a destination down, missing or slow) MUST NOT change or delay any answer. | all | U41, U16 |
+| R52 | **Flood limits.** The sign-in service MUST limit, per client address, people's sign-ins, device-code requests, code entries, approvals and denials, device-token polls and token refreshes, as well as every other sign-in route at a looser limit. A limited request MUST be refused (HTTP 429, or the device grant's `slow_down` for polling) and MUST change nothing: no device code, session, token or row is created or consumed.<br>A person's sign-in (starting a Google or GitHub sign-in, and a passkey sign-in) MUST also pass a Cloudflare Turnstile check that the sign-in service verifies before anything is created. A missing, failed or unverifiable check MUST be refused with nothing changed. Machines' endpoints never ask for one.<br>The client address MUST come from the host's trusted source (`cf-connecting-ip` on Cloudflare; the socket's peer, or a configured trusted proxy's header, on Node), never a header the client controls. On Cloudflare the count MUST be shared by every instance of the Worker in one Cloudflare location; on Node it is the process's own count. A limit MUST NOT refuse another address, and its counts MUST expire on their own with no stored rows. | E23 | U42, U31, U33 |
+</script></ex-markdown>
 <h3 id="specification--the-sign-in-service-storage-hosts-and-tests">The sign-in service: storage, hosts and tests</h3>
 <ex-markdown id="specification--the-sign-in-service-storage-hosts-and-tests-text"><script type="text/markdown">
 | ID | Obligation | Over | Traces to |
@@ -294,7 +301,7 @@ What you and the machine see:
 | refused: machine not allowed | The target is unknown, in another organization, not enrolled, or has no allowance for W. One answer for all four, so nothing about another organization is revealed. |
 | refused: machine not connected | The target has no open connection |
 | refused: identifier reused | The identifier was already used with different content |
-| refused by the target | The working directory is missing there, the target's own start check refused it (R8), the deadline passed, or the provider's create failed |
+| refused by the target | The working directory is missing there, the target's own start check refused it (R8), the deadline passed, the provider's create failed, or the target's Router hasn't yet reported that it can take a remote start |
 | refused: unavailable | The request never reached Fleet central, or its truth couldn't be consulted (R25); nothing was created |
 | unknown | The request may have reached Fleet central or the target, and no outcome arrived by the deadline plus one minute. The requester reads the outcome later under the same identifier; nothing is retried. |
 
@@ -346,6 +353,8 @@ What you see when something goes wrong.
 | A machine crashes or loses its network without closing its connection | Within the bound, the view shows it not connected, with its last-seen time, and its sessions as unknown (R48). |
 | You open the view while central's truth can't be consulted | It says unavailable and shows no earlier picture as current (R49). |
 | Someone other than you opens the view | Refused, with nothing revealed (R49). |
+| One address floods sign-in, code entry or the device grant | Its requests are refused with 429 or `slow_down` and change nothing; everyone else still signs in (R52). A flood spread across many addresses is slowed only by Cloudflare's own DDoS protection and per-address limits. |
+| The OpenTelemetry destination is down or missing | Answers are unchanged. On Cloudflare, Workers Logs and traces still keep the records; on Node and Tokio, the host's own output does (R51). |
 </script></ex-markdown>
 <h2 id="specification--what-item-two-does-not-do">What item two does not do</h2>
 <ex-markdown id="specification--what-item-two-does-not-do-text"><script type="text/markdown">
@@ -362,6 +371,8 @@ What you see when something goes wrong.
 - No accepting the old and new machine login at the same time.
 - No automatic VM login, and no VM-specific proof.
 - The view changes no access, and never shows who operates a machine.
+- No dashboards, alerts or Logpush, and no metrics beyond what the platform gives.
+- No limit on Fleet central's own entry beyond Access until step 3.
 </script></ex-markdown>
 <h2 id="specification--proof-obligations">Proof obligations</h2>
 <ex-markdown id="specification--proof-obligations-text"><script type="text/markdown">
@@ -399,6 +410,8 @@ For each obligation: what passes, and the wrong build it catches. The [Verificat
 | V40 | R48 | Each of these shows within the bound: a machine connecting; a machine whose network is cut without a clean close (not connected, with its last-seen time); a session starting and stopping. A session whose machine has no open connection shows as unknown. | A change shows later than the bound, a cut-off machine stays connected, or a session shows working or idle while its machine isn't connected. |
 | V41 | R49 | Only the organization's owner opens the view. Another organization's owner, a member, a bot, a session and a machine are each refused with nothing revealed. The view shows nothing from another organization. While central's truth can't be consulted it says unavailable and shows no earlier picture as current. It shows no one at a machine's keyboard. | Someone else sees it, another organization's machine appears, or an earlier picture shows as current. |
 | V42 | R50 | Stage C: each admitted person shows as signed in or not, with their last sign-in, within V40's freshness and V41's visibility. (Bots' rows are proven when bots exist.) | A person is missing or shown wrongly, or is shown to someone other than the owner. |
+| V43 | R51 | After a login, a refusal, a connection, a registration and a view refresh, the OTLP collector holds one record for each, naming its kind, outcome and identifiers. No token, refresh credential, code, secret, cookie or email from the run appears anywhere in what was exported. With the collector stopped, every answer is the same. Both Workers' deployed configuration turns on Workers Logs and traces with the named destinations. | A decision leaves no record, a record carries a secret, the two hosts of one service leave different records, or a stopped collector changes an answer. |
+| V44 | R52, R42 | From one address, past each route's limit, requests are refused with 429 or `slow_down`, and the device codes, sessions and tokens are unchanged. A second address still gets through. A spoofed `x-forwarded-for` doesn't change the count on Cloudflare. After the window passes, the first address gets through again, with no rows stored. A person's sign-in without a Turnstile token, with one Turnstile rejects, or when its check can't be reached, is refused with nothing created; with a good token it proceeds. | A flood is answered, a limited request creates or consumes something, a forged header escapes the limit, one address's flood refuses another, the limit stores rows, or a sign-in passes without a verified Turnstile check. |
 </script></ex-markdown>
 <h2 id="specification--coverage">Coverage</h2>
 <ex-markdown id="specification--coverage-text"><script type="text/markdown">
@@ -432,6 +445,8 @@ Every need traced to its entities, problems, outcomes, obligations, contracts an
 | U35 | E6 | P7 | O5 | R41, R44 | — | V33, V36 |
 | U39 | E6, E7, E15, E16 | P9 | O9 | R8, R46 | C11 | V38 |
 | U40 | E3, E6, E7, E13, E15, E19, E21, E24 | P8 | O8 | R47–R50 | C12 | V39–V42 |
+| U41 | all | P10 | O10 | R51 | — | V43 |
+| U42 | E23 | P11 | O11 | R42, R52 | C8 | V34, V44 |
 </script></ex-markdown>
 </ex-document>
 <ex-comments for="content"></ex-comments>
