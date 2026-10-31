@@ -421,7 +421,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
   - the plain-Node probe in `verify-portal-package-exports.ts` moves from `@agent-collaboration/auth/core` to the logic entry `@agent-collaboration/sign-in-core`, its rules unchanged (`better-auth` stays banned there), because `src/better-auth/` is the separate subpath `@agent-collaboration/sign-in-core/better-auth`;
   - `verify-auth-package-closure.ts` is repointed and stays runnable.
   These repair and extend existing checks, which you approve; the PR lists each.
-- **Keeps today's admission path, and its two tables, until B4a:** `allowed_email`, `deployment_owner` and the store that decides admission and the current owner from them (`person-admission-store`, its provider hooks, `seedOwnerEntry` and the release fence) move into the new packages unchanged. B1's migration adds every drawn table and change but drops neither old table. There is no central client in B1, no stand-in authority and no shim, so `main` signs people in after every merge. The generated SQL still comes to you before the first commit that uses it.
+- **Keeps today's admission path, and its tables, until they move:** `allowed_email`, `deployment_owner`, today's `sign_in_audit` (its own columns, with its six writers) and the store that decides admission and the current owner from them (`person-admission-store`, its provider hooks, `seedOwnerEntry` and the release fence) move into the new packages unchanged. B1's migration adds every drawn table and change, except the new shape of `sign_in_audit`, and drops none of the kept tables. There is no central client in B1, no stand-in authority and no shim, so `main` signs people in after every merge. The generated SQL still comes to you before the first commit that uses it.
 - **Also repoints the test setup's build prerequisites:** `scripts/test-workspace-global-setup.ts` requires `packages/auth/dist/...` entries; they point at the new packages' builds. That's a mechanical path change, with no command, step, fixture or assertion changed, and the PR lists it.
 - **Keeps SO2's journey runnable:** the paired Verifier updates `.agents/skills/verify-auth/` to the new paths in B1's PR, touching only that folder.
 - **Proof:**
@@ -430,7 +430,7 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
   - `drizzle-kit generate` produces no new migration.
   - `pnpm check` is green, and the retargeted audit fails for a runtime or driver import placed in a real core file.
 - **Stop if:**
-  - a table differs from the drawn ones, apart from the two old tables B4a drops;
+  - a table differs from the drawn ones, apart from the kept tables (`allowed_email`, `deployment_owner`, today's `sign_in_audit`);
   - Better Auth 1.7.11's Drizzle adapter can't serve a drawn table;
   - the logic would have to import `src/better-auth/`;
   - the split forces a check change this card doesn't name.
@@ -444,7 +444,7 @@ unchanged; produces K5 and K6, and runs their real-output check against F2a's gu
 </script></ex-markdown>
 </details>
 <details id="ticket-b4a">
-<summary><strong>B4a</strong> issuer core (split from B4) · waits on B3; F1's contract fixtures</summary>
+<summary><strong>B4a</strong> issuer core (split from B4) · waits on B3; F1's contract fixtures; the Lead settling which ticket migrates `sign_in_audit`</summary>
 <ex-markdown id="ticket-b4a-text"><script type="text/markdown">
 - **Covers:** R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; people do get their admin and operator tokens), people sign-in asking central for admission (K3's person half), person confirmation, and with it the cut of today's local admission: `person-admission-store`'s decisions move to central, and B4a's migration drops `allowed_email` and `deployment_owner`. Its generated SQL comes to you before the first commit that uses it; the closed token-kind dispatch and its refused combinations; one-operation service tokens (K7).
 - **Keeps today's agent path until B4b:** the agent client-credentials row, the provider configuration's registration metadata, resource links and workspace policy, and the post-mint release checks. So the Switchboard keeps working, unchanged, between the cuts.
