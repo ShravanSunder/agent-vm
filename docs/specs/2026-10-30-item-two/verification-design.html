@@ -159,7 +159,7 @@ No VM is a target: proving the Router inside a VM is out of scope.
 - **Step 1:** today's login works unchanged.
 - **Step 2:** a Router logs in again and connects with machine tokens. Each of these is refused even with a valid Access token: the old enrollment credential, and a missing, invalid, expired or other-organization machine token. An admin and an operator command succeed with no Access identity. Changing the Access identity changes no answer. Two Routers that logged in again exchange a message and a reply between their sessions.
 
-The lasting part of these negatives, the entry's refusals and its request limit, runs locally in SO4.
+The lasting part of these negatives, the entry's refusals, runs locally in SO4. The request limit that replaces Access comes with step 3.
 
 **SO11: starting a session on another machine** (needed, lasting). A new `verify-codex-router` journey `fleet-remote-start`.
 

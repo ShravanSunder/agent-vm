@@ -413,7 +413,6 @@ unchanged; the local journeys run the sign-in service on it.
   - the token check for the sign-in service's machine tokens, refusing any other issuer;
   - `RenewMachineToken`, and closing expired and superseded connections;
   - the single-valued `machineLogin` setting, until F17 removes the `accessEnrollment` branch;
-  - the entry's request limit.
 - **Writes:** `organization_authority`, the Registry object, new `machine_token_check`, `central_router.rs` `/v1/session`, both hosts' entries.
 - **Earns (its SO4 scenarios):** U31, U33's central half, and revocation's local effects; SO7 for the decision edges.
 - **Focused proof:**
