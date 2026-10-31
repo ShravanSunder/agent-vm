@@ -188,6 +188,10 @@ Each row is one wave. Inside a row, the lanes run at once: the sign-in lane besi
   - the sign-in service: local workerd with D1, and Node with `better-sqlite3`.
   
   A compile-only WebAssembly step doesn't count: the WebAssembly build has to run, because behavior differs there. On WebAssembly, `Path::is_absolute` is false for every path.
+  
+  **For a ticket with no integration path of its own yet:**
+  - **F1:** its focused serde, schema and conversion tests run natively. At F1's declared commit, the Fleet Verifier compiles every committed fixture and negative literal to `wasm32-unknown-unknown` and runs them under node (V8, as workerd), then compares the results with native. That's a temporary probe; no product file changes and no new test tool comes in. The lasting check lands in the first central tickets that parse these shapes (F2a, F3a, F10): their `*_scope_workerd` scenarios run on both hosts and include a multibyte `AbsolutePath` and a body with an unknown field.
+  - **B1:** the D1 storage leg runs inside a test Worker on workerd, not in the Node test process through Miniflare's D1 proxy. The `better-sqlite3` leg runs in Node. B1 claims nothing on Node beyond the store; B2's receipt reruns every B1 integration suite on `sign-in-host-node` as a gate.
 
 **Who builds it** (my call, recorded in the trace; tell me if you want it different):
 - **One Sol Implementer per ticket in flight,** each in its own Agent Studio worktree of its repository. Sol at high to xhigh effort for the cross-repository and design-heavy tickets (F1, F2a, F10, B4a, B5, B7, F15); Sol at medium for the bounded ones.
