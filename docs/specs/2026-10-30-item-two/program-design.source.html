@@ -1686,7 +1686,10 @@ export interface SignInStore {
 }
 
 export function createSignInStore(props: {
-	readonly database: SignInDatabase;
+	// A database for each read. Cloudflare opens Drizzle over a new D1 'first-primary' session on every call, as today's
+	// stores call withSession('first-primary') for every primary read, owner and final-release checks included. Node
+	// returns its one better-sqlite3 database. The core never names a D1 session; the host owns that policy.
+	readonly openDatabase: () => SignInDatabase;
 	readonly platform: Pick<SignInPlatform, 'clock' | 'ids' | 'crypto' | 'runAtomically' | 'log'>;
 }): SignInStore;
 ```
@@ -1735,7 +1738,7 @@ export interface SignInPlatform {
 }
 ```
 
-`PersonId`, `OrganizationId`, `EnrollmentId`, `MachineClientId` and `Uuid7` are branded strings; `EpochMilliseconds` is the branded number shared with the Switchboard's capability contract. Rows are parsed with Zod when read, and a row that does not parse is `store-unavailable` (`row-unparseable`), never "no row". The C experiment's awaited sync-or-async store and its batch on D1 and immediate transaction on `better-sqlite3` are the evidence that both hosts can supply `SignInDatabase` and `AtomicRunner` without a cast (`c-drizzle-drivers/report.md`); the product port above is this design's, not the experiment's.
+`PersonId`, `OrganizationId`, `EnrollmentId`, `MachineClientId` and `Uuid7` are branded strings; `EpochMilliseconds` is the branded number shared with the Switchboard's capability contract. Rows are parsed with Zod when read, and a row that does not parse is `store-unavailable` (`row-unparseable`), never "no row". **Fresh reads stay as fresh as today:** every read, and each repeated owner or release check, opens its own database view through `openDatabase`, so no check reuses an earlier session's view. A single session per request would only promise that later reads are no older than the first, which is weaker than today's fence. The C experiment's awaited sync-or-async store and its batch on D1 and immediate transaction on `better-sqlite3` are the evidence that both hosts can supply `SignInDatabase` and `AtomicRunner` without a cast (`c-drizzle-drivers/report.md`); the product port above is this design's, not the experiment's.
 
 **The decisions that write more than one row (R31):**
 
