@@ -406,14 +406,14 @@ unchanged; the local journeys run the sign-in service on it.
   - Better Auth's passkey plugin for registration and storage only (user verification required; its sign-in endpoints refused), the core's own passkey confirm route (SimpleWebAuthn with `requireUserVerification: true`, single-use challenge in the `verification` table, same session stamped), and the two-factor plugin with `allowPasswordless`, app codes and backup codes as recovery codes;
   - the session's `secondFactorAt` and `secondFactorMethod`, stamped by after-hooks; `second_factor_at` and `amr` in every person token (K6);
   - the first second factor as the authenticator app (its setup issues the recovery codes), a passkey after it; `trustDevice` never offered; the plugin's lockout kept on;
-  - the before-hooks guarding adds, replacements, removals and new codes, with `user.secondFactorSetAt` as the durable fence, the app swapped only while a passkey remains (an app-only person adds a passkey first), the last factor never removable, and `/two-factor/get-totp-uri` refused;
+  - the before-hooks guarding adds, replacements, removals and new codes, with `user.secondFactorSetAt` as the durable fence, the app swapped only while a passkey remains (an app-only person adds a passkey first), and the two removals as the core's conditional statements (R31) with the plugin's own disable and delete endpoints refused, the last factor never removable, and `/two-factor/get-totp-uri` refused;
   - passkey confirmation only on top of the provider session (the plugin's own session revoked), and the deny hook's own 15-minute check;
   - `approver_second_factor_at` in `DecideDeviceLogin` (K8);
   - the page's prompts on `secondFactorRequired`; the code checks in `SIGN_IN_ATTEMPTS`.
 - **Writes:** `packages/auth` `sign-in-core/second-factors/`, `better-auth-provider`, the pages.
 - **Earns:** SO2's second-factor cases (U44); U43's token-claim half.
 - **Focused proof:**
-  - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey alone starting a usable session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor.
+  - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey alone starting a usable session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor; two concurrent removals leaving no factor.
   - **Layer:** sign-in core unit tests with a controlled clock; the real plugins on both hosts (integration).
   - **Oracle:** R53, R54, C13.
 - **Stop if:** at 1.7.11 `verify-totp` or `verify-backup-code` won't run on a signed-in session without replacing its cookie. Then those confirmations also go through the core's route, with the plugin's stored secret; the same rows decide it.
