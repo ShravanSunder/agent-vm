@@ -182,7 +182,7 @@ Each row is one wave. Inside a row, the lanes run at once: the sign-in lane besi
 - **Types say what's valid:** discriminated unions (closed variants) for every state and result, branded IDs, UUIDv7 only, Zod at every TypeScript boundary, and tagged `serde` enums in Rust. No `any`, and no throws across a boundary: results are values.
 - **Latest oxc:** TypeScript is linted and formatted with oxlint and oxfmt at their latest releases. Ticket B0 brings the Switchboard repository from oxlint `^1.63.0` and oxfmt `^0.48.0` to 1.90.0 and 0.75.0 first. Rust keeps the repository's `rustfmt` and `clippy` gates.
 - **Runtime stays out of logic:** cores depend on no runtime; hosts inject storage (Drizzle), clock, IDs and calls.
-- **Tests:** no wall clock (controlled clocks only), Hegel property tests where a rule covers many cases, and verification scripts in TypeScript.
+- **Tests:** no wall clock (controlled clocks only), property tests where a rule covers many cases, with each repository's own library (Hegel in the Switchboard, `proptest` in codex-router), and verification scripts in TypeScript.
 
 **Who builds it** (my call, recorded in the trace; tell me if you want it different):
 - **One Sol Implementer per ticket in flight,** each in its own Agent Studio worktree of its repository. Sol at high to xhigh effort for the cross-repository and design-heavy tickets (F1, F2a, F10, B4a, B5, B7, F15); Sol at medium for the bounded ones.
@@ -268,6 +268,9 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 | K10 (machine tokens as minted, under each machine's client) | B5 | F10 | the later of B5 and F10 | JC1 |
 | K11 (disabling a machine's client) | F10 | B5 | the later of F10 and B5 | JC1 |
 | K12 (`WhoIsLoggedIn` and its rows) | V1 | V3 | the later of V1 and V3 | JV1 |
+
+**How a Rust contract reaches the Switchboard:** each consuming ticket copies the producer's generated schemas and fixtures from a pinned codex-router commit into `sign-in-core`'s `src/contracts/generated/`, with that commit and the generating test's name recorded beside the copy. The consumer's Zod schemas parse those fixtures, keyed by shape name, so two shapes with the same fields can't be swapped. A copy can go stale; the real-output check in the later-merging ticket is what catches it.
+**What F1's fixtures are:** serializer output from Rust values, written by a test and checked in, with a freshness test on the existing pattern (`collaboration-mcp`'s `inspect_snapshot_tests.rs`). Every fixture validates against its generated schema, and the hand-written negative literals (wrong tag, wrong casing, unknown field) are refused by both serde and the schema.
 </script></ex-markdown>
 <h2 id="item2--goal-scope-and-non-goals">Goal, scope and non-goals</h2>
 <ex-markdown id="item2--goal-scope-and-non-goals-text"><script type="text/markdown">

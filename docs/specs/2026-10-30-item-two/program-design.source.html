@@ -514,8 +514,11 @@ erDiagram
 <h3 id="program-design--encoding-rules-for-every-boundary-below">Encoding rules for every boundary below</h3>
 <ex-markdown id="program-design--encoding-rules-for-every-boundary-below-text"><script type="text/markdown">
 - **Versions:** every route is under `/v1/`. A breaking change is a new path prefix; contract types carry no version field.
-- **Casing:** JWT claims are `snake_case`; HTTP JSON bodies are `camelCase` (the Fleet's serde convention). Rust types say `rename_all` on structs and enums alike.
-- **Numbers:** times are Unix seconds; durations are milliseconds.
+- **Casing:** JWT claims are `snake_case`; HTTP JSON bodies are `camelCase` (the Fleet's serde convention). Rust types say `rename_all` on structs and enums alike, and a tagged enum also says `rename_all_fields`, so the fields inside its variants follow it too.
+- **Tags:** every tagged enum names its key. Answers use `result`; every refusal reason, the starter and the machine's kinds use `kind`, as message-board's refusals do (`#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]`). A reason is always an object: `{"result":"refused","reason":{"kind":"notOwner"}}` and `{"kind":"secondFactorRequired","withinSeconds":900}`. Presence and the view's rows use `state`, and the person-admission request uses `operation`, as drawn.
+- **Unknown fields:** every body refuses them (`deny_unknown_fields`). JWT claims are the exception: they carry Better Auth's registered claims, and the token check (C9) reads those. A receiver deploys before its senders send a new optional field.
+- **Absent values:** an `Option` is omitted when it's `None`, never `null` (`#[serde(default, skip_serializing_if = "Option::is_none")]`); its schema marks it not required.
+- **Numbers:** times are Unix seconds, except the who-is-logged-in view's (K12: `asOf`, `since`, `lastHeardAt`, `lastSeenAt`, `startedAt`), which are Unix milliseconds, typed `UnixMillis`, because the view compares them with its millisecond durations. Durations are milliseconds. The `u64` counters (`sequence`, `attachSequence`) stay below 2^53, one per report or attach; their schemas say so, so a JavaScript reader reads them exactly.
 - **Clock model:** any two service clocks differ by at most D = 60 seconds. No receiver adds leeway to `grant_expires_at`; checks of `exp`, `iat` and service-token lifetimes allow D. Retention (below) is computed from D, so a clock difference can refuse a token early but never let a covered one pass after its notice is dropped.
 </script></ex-markdown>
 
@@ -527,8 +530,8 @@ Home: `identity_contract.rs`. Every machine token has `aud` = Fleet central's ma
 // Minted by the sign-in service for a device-code machine. Better Auth owns iss, sub (the approving owner's
 // account: consumers ignore it), aud, exp (the 60-minute maximum), iat, jti, client_id (the enrollment's own machine client).
 #[serde(rename_all = "snake_case")]
-pub struct DeviceCodeMachineClaims {
-    pub principal: MachinePrincipal,        // { kind: "machine", installation_id, enrollment_id }
+pub struct MachineTokenClaims {                // no deny_unknown_fields: the registered claims ride beside these
+    pub principal: MachinePrincipal,        // { kind: "machine", installation_id, enrollment_id }: used only in these claims, so snake_case
     pub organization_id: OrganizationId,
     pub grant_expires_at: UnixSeconds,      // decided_at + the organization's lifetime (≤ 3600)
 }
@@ -546,7 +549,7 @@ Home: `fleet-identity-protocol` (new crate), which both the Router's crates and 
 pub struct RegisterFleetSession {
     pub session: SessionRef,                    // bound by the Router, never declared by the agent
     pub project_id: ProjectId,
-    pub started_by: StartedBy,                  // tagged: routerOperator | session { session } (the binding the start came on); recorded for display (R8)
+    pub started_by: StartedBy,                  // tag "kind": routerOperator | session { session } (the binding the start came on) | remoteSession { session, requestId }; recorded for display (R8)
     pub isolation: AgentIsolation,
     pub launch_context: LaunchContext,          // launcher-asserted, recorded for display; who launched it is started_by, not a second field
     pub machine_environment: MachineEnvironment,
@@ -1798,7 +1801,7 @@ There's nothing to migrate: presence is new state in each Connection object, and
 <ex-markdown id="program-design--requirement-trace-text"><script type="text/markdown">
 | U | R | E | Owner | Interface | Shape and home | State | Failure | Proof |
 |---|---|---|---|---|---|---|---|---|
-| U1 | R1: three kinds of actor; machines and services are not actors | E3, E6, E7 | organization authority; issuer | `Principal`; `MachinePrincipal` kept separate | `identity_contract.rs`; claims schema | none: parse rule | an unknown kind rejected at parse; a machine or service token refused where an actor is expected | contract: principal parse and refuse; machine and service tokens each under their own schema |
+| U1 | R1: three kinds of actor; machines and services are not actors | E3, E6, E7 | organization authority; issuer | `Principal`; `MachinePrincipal` kept separate | `MachinePrincipal` in `identity_contract.rs`; the agent `Principal` stays in the Switchboard (`agent-portal-sdk` `trusted-context-contracts.ts`), so the Rust side proves the machine's own parse and refusals, and SO6 proves it never parses as a `Principal` | none: parse rule | an unknown kind rejected at parse; a machine or service token refused where an actor is expected | contract: principal parse and refuse; machine and service tokens each under their own schema |
 | U3, U17 | R2: a session only as vouched by its logged-in machine | E6, E7, E21 | organization authority | `RegisterFleetSession` over the logged-in connection | `identity_contract.rs` | session active; enrollment enrolled | revoked, expired or superseded enrollment → refused | Fleet integration: enrolled vs revoked, expired, superseded |
 | U19, U18 | R3: attribution to the bound session; binding is a capability | E7 | session binding | per-session binding; mismatch refusal | `SenderMismatch` error (new) | binding lifecycle | mismatch, stale or foreign binding refused | real harness runs; binding lifecycle cases |
 | U20 | R5: people sign-in as designed, with admission moved to central | E1, E3 | issuer; organization authority | `AdmitSignIn` (provider sign-in only) and `Standing` (passkey, token, confirmation); the people sign-in design's interfaces | `PersonAdmissionRequest`; audit in the organization authority | entry and owner bindings | admission unavailable → refuse; unwritable record → no binding | that design's proof re-run through central; SO7 |
