@@ -354,7 +354,6 @@ unchanged; the local journeys run the sign-in service on it.
 <ex-markdown id="ticket-f1-text"><script type="text/markdown">
 - **Covers:** R26, plus every shape the deliverables need, and each contract's schema and structural fixtures (not real output; see "How a contract's real output is checked"):
   - the machine-login shapes: `MachineTokenClaims` and a `MachinePrincipal` kept outside the actor `Principal`, `DecideDeviceLogin`, `DeviceLoginDecision`, `DecideMachineToken`, `MachineTokenDecision` (with `decided_at`), `AdmitMachineConnection`, `MachineConnectionAdmission`, `MachineEnrollment` (reserved, approved, enrolled, revoked, expired), `AdmissionId`/`AdmissionRef`;
-  - the view frames `Withheld` and `ScopeChanged`;
   - the remote-start shapes: `RequestRemoteStart`, `RemoteLaunch`, `RemoteStartAdmission`, `StartRequestedSession`, `ReportRemoteStart`, `RemoteStartAnswer`, `RemoteStartResult`, `RemoteStartStatus`, `ListWorkspaceMachines`, and the `remoteSession` starter;
   - the machine client: `client_id` in `DecideMachineToken` and `AdmitMachineConnection`, `wrongClient` in both answers, `machineClientId` on `MachineEnrollment`, and `DisableMachineClient` (K11);
   - the view's shapes (K12): `Heartbeat`, `ReportSessionActivity` with `sequence`, `SessionActivityEntry` and its result (`Accepted`, `Superseded`, `Refused`), `ReadMachinePresence` and `MachinePresenceAnswer`, `WhoIsLoggedIn` and its result rows.
