@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Switchboard remediation plan</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-presentation id="path-remediation" title="The remediation, ticket by ticket" description="What you'll see working, the order, what waits on you, and each ticket's proof.">
+  <ex-step to="plan--result" icon="rocket">The result, and what you'll see working.</ex-step>
+  <ex-step to="plan--how-the-tickets-connect" icon="path">The order: the move first, then the core, the store and the Node host.</ex-step>
+  <ex-step to="plan--waiting-on-you" icon="users">What waits on you, and which ticket each answer unblocks.</ex-step>
+  <ex-step to="plan--tickets" icon="stack">Every ticket, with what it covers, what proves it and what it waits on.</ex-step>
+  <ex-step to="plan--how-it-meets-the-identity-work" icon="plug">Where it meets the identity work.</ex-step>
+  <ex-step to="plan--risks-and-false-greens" icon="bug">What could pass for the wrong reason.</ex-step>
+</ex-presentation>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../../2026-10-30-item-two/index.html">Item two</a>
+<a href="../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../index.html">Switchboard remediation</a>
+<a href="2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="switchboard-remediation-plan" revision="2026-10-28.1">
+<p id="set-pages"><a href="../index.html">Switchboard remediation</a>: <a href="../requirements.html">Requirements</a> · <a href="../specification.html">Specification</a> · <a href="../program-design.html">Program Design</a> · <a href="../verification-design.html">Verification Design</a> · <strong>Plan</strong></p>
+<h1 id="plan--switchboard-remediation-plan">Switchboard remediation plan</h1>
+<ex-markdown id="plan--intro-text"><script type="text/markdown">
+How the Switchboard code gets fixed so it follows your rules: one core, Drizzle on SQLite behind core-owned typed stores, UUIDv7 only, no wall clock in tests, one version of each dependency, your gates as approved, and the known defects fixed. Governed by the [Switchboard remediation](../index.html) design; the cross-repository order is the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.html). Plan only; nothing is built.
+</script></ex-markdown>
+<ex-callout id="plan--since-2026-10-30" tone="risk" title="Since 30 October, some lines below are out of date">
+<ex-markdown id="plan--since-2026-10-30-text"><script type="text/markdown">
+- **M1 is done, as M0.** The code was copied from agent-vm at `2dfea38e` into `agent-collaboration/switchboard` (merged as `8f6be960`). A1–A8 are built there.
+- **agent-vm is frozen,** so A4b (the SDK transport and Python journey in agent-vm) is dropped. A8 no longer waits on it.
+- This plan's other tickets are unchanged until it is replanned.
+</script></ex-markdown>
+</ex-callout>
+<h2 id="plan--result">Result</h2>
+<ex-markdown id="plan--result-text"><script type="text/markdown">
+- **Planning result:** `ready`, plan-only. The Reviewer's readiness check of the remediation design closed on 28 October with no review defect left. What remains are your decisions RD1, RD3–RD7, OD-R1 and OD-R4, listed under "Waiting on you". The Advisor's review of this plan is folded in.
+- **What you'll see working:** Switchboard on its new store, deployable alone, in its own `agent-collaboration` repository.
+  - The same scripted session gives the same answers on Cloudflare and on Node, apart from each host's own limits.
+  - Used approvals stay used across a restart and a redeploy.
+  - A 12 MiB request completes on the private Worker and on Node.
+  - The six known defects each have a test that failed before and passes after.
+  - The build has one version of each dependency, and your gates plus the one approved type-check guard.
+- **Ten tickets, one pull request each:** M1 moves the code; A1–A8 fix it in `agent-collaboration`; A4b is the one agent-vm pull request, for what stays there. One workstream: Switchboard, owned by the Switchboard Lead.
+- **One SDK generation is delivered for Switchboard's repository.** agent-vm's old `tool-portal` and `mcp-portal` packages keep the old SDK until #255's parked work (OD-R4); that part stays open, outside this delivery.
+</script></ex-markdown>
+<h2 id="plan--how-the-tickets-connect">How the tickets connect</h2>
+<ex-markdown id="plan--how-the-tickets-connect-text"><script type="text/markdown">
+```mermaid
+flowchart TB
+  APPROVE["Design approval; OD-R1"] --> M1["M1 move to<br/>agent-collaboration"]
+  M1 --> A1["A1 platform capabilities"]
+  M1 --> A4["A4 defects"]
+  A1 --> A2["A2 workspace store v1<br/>(RD1, RD6)"]
+  A2 --> A3["A3 Node host on the core"]
+  A3 --> A5["A5 deterministic tests<br/>and journeys (RD4)"]
+  A3 --> A6["A6 clean build<br/>(RD3, RD5)"]
+  A3 --> A7["A7 large requests<br/>(RD7, RD6)"]
+  A4 --> A8["A8 Switchboard cutover"]
+  A5 --> A8
+  A6 --> A8
+  A7 --> A8
+  A6 --> A4b["A4b agent-vm side<br/>(SDK transport, Python journey)"]
+  A4b --> A8
+  A8 --> P1a["identity P1a<br/>Switchboard token check (D3)"]
+```
+
+M1 comes first so nothing is written twice: every ticket below is built in the new repository. A1 gives the core its injected capabilities before the store uses them. The store (A2) and the Node host on the core (A3) come next, because the proofs, the clean build and large requests all run against them. A4 fixes defects in code A1–A3 don't touch, so it starts right after M1. A8 takes the remediation live on the private Worker and a Node host, and the identity work's Switchboard token check (P1a) starts after it.
+</script></ex-markdown>
+<h2 id="plan--tickets-at-a-glance">Tickets at a glance</h2>
+<ex-markdown id="plan--tickets-at-a-glance-text"><script type="text/markdown">
+| Ticket | Covers | Waits on |
+|---|---|---|
+| M1 move to agent-collaboration | OD13 | design approval; OD-R1 |
+| A1 platform capabilities | R3, R10 (capability contracts), R11, R12 | M1 |
+| A2 workspace store v1 | R4–R8, R10 (store results) | A1; RD1; RD6 |
+| A3 Node host on the core | R1, R2, R24 | A2 |
+| A4 defects | R20–R23 | M1 |
+| A4b agent-vm side | R25; R16's agent-vm half | A6 |
+| A5 deterministic tests and journeys | R13, R14, R15; the `verify-tool-portal` journeys; runs O1–O3 | A3; RD4 |
+| A6 clean build | R16, R18, R19; R17 in part | A3; RD3; RD5 |
+| A7 large requests | R26 | A3; RD6; RD7; the #33 evidence |
+| A8 Switchboard cutover | R9; the remediation live on the private Worker and a Node host | A4, A4b, A5, A6, A7 |
+</script></ex-markdown>
+<h2 id="plan--waiting-on-you">Waiting on you</h2>
+<ex-markdown id="plan--waiting-on-you-text"><script type="text/markdown">
+| Decision | Unblocks | Recommendation (from the design) |
+|---|---|---|
+| Design and plan approval | M1, and so everything | — |
+| OD-R1: what happens to #262 and #263 | M1's starting commit | revert #262's gate changes, then merge |
+| OD-R4: the parked agent-vm work (#255) | agent-vm's half of R17: deleting the old `@agent-vm/mcp-portal` and `@agent-vm/tool-portal`, and `gateway-runtime`'s 1.x SDK | as in the delivery orchestration |
+| RD1: the store schema and migrations | A2 | approve the drawn tables and generated SQL together |
+| RD6: where the Node host keeps its store and spill files | A2, A7 | a required `stateDirectory`; spill files outside it, enabled only on a separate allocation |
+| RD3: the old MCP SDK as a test-only fixture | A6 (R17) | allow it in one test-fixture module only |
+| RD4: a hang guard in end-to-end tests | A5 | allow it only as a guard that can fail a run, never pass one |
+| RD5: the 26 scripts #262 added | A6 | remove them |
+| RD7: large requests with no Switchboard cap | A7 | option A as drawn in the design, with the one streaming JSON parser this plan names: `@streamparser/json` 0.0.26 (MIT, no dependencies, runs on Node and Workers) |
+</script></ex-markdown>
+<h2 id="plan--tickets">Tickets</h2>
+<details id="ticket-m1">
+<summary><strong>M1</strong> move Switchboard and sign-in to agent-collaboration (new) · waits on design approval; OD-R1</summary>
+<ex-markdown id="ticket-m1-text"><script type="text/markdown">
+The same ticket as M1 in the [identity delivery plan](../../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html#ticket-m1); it starts both plans.
+- **Covers:** OD13. `auth`, `tool-access`, `tool-engine`, `tool-host-core`, `tool-host-cloudflare` and `tool-host-node` move from agent-vm with their history and the `@agent-collaboration` publishing. They use `@agent-vm/oauth-broker-contracts` and `@agent-vm/agent-portal-sdk` as published packages.
+- **Starts from:** wherever OD-R1 lands #262 and #263, with agent-vm's root gate files back at `38569fca` and #262's 26 scripts removed (RD5), so they aren't copied.
+- **Records:** the transferred checks (their commands and vitest projects) as the baseline A6 compares against.
+- **Pins:** the published `@agent-vm/agent-portal-sdk` and `@agent-vm/oauth-broker-contracts` versions, checking that their runtime dependencies use only the 2026-07-28 SDK.
+- **Gates:** the moved packages' existing checks, unchanged. Adding or changing a gate is your call.
+- **Proven by:** those checks and tests pass in the new repository.
+</script></ex-markdown>
+</details>
+<details id="ticket-a1">
+<summary><strong>A1</strong> platform capabilities · waits on M1</summary>
+<ex-markdown id="ticket-a1-text"><script type="text/markdown">
+- **Covers:** R3, the clock, identifiers, crypto and timers as capabilities the host injects, with no fallback to a platform global; R10, the closed unions in the capability contracts; R11, the type-check guard (a `tsconfig.portable.json` per core package, run by the existing `typecheck` step); R12, every identifier the Switchboard mints is UUIDv7 from the injected source.
+- **Writes:** the core's capability contracts ("Platform capabilities: the one list" in the design) and the guard configuration.
+- **Proven by:** O6, the guard passes and a deliberately forbidden import (including every Drizzle driver subpath) and an unhandled variant each fail it; U6's recording capabilities, where every digest, signature and verification goes through injected crypto and a fixed-capability run gives the same bytes twice; U8's scan finds no `randomUUID`.
+- **Earns:** U6, U7 (guard and capability unions), U8's source half.
+- **Gates:** the repository's checks, unit and integration; review.
+</script></ex-markdown>
+</details>
+<details id="ticket-a2">
+<summary><strong>A2</strong> workspace store v1 · waits on A1; RD1; RD6</summary>
+<ex-markdown id="ticket-a2-text"><script type="text/markdown">
+- **Covers:** R4, one store implementation on Durable Object SQLite and on `better-sqlite3`; R5, no key-value storage call, `node:sqlite`, Kysely or SQL text outside the query builder; R6, generated migrations, every earlier version upgrades, and nothing is served before migration; R7 and R8, approval uses and removal marks survive a restart and have exactly one first use under contention; R10, the store's result unions.
+- **Writes:** the workspace store: its operations and results, the tables you approve under RD1, the atomic decisions, and where the database lives and how it is migrated ("The workspace store" in the design).
+- **Proven by:** the store suite on both databases with the same results and no host query, the upgrade cases (version 1), and O5's source scan. The Hegel store properties (O4) and R7's and R8's journey runs (O2 restart, O3 contention) come in A5, once they exist.
+- **Earns:** U2, U3; U4 through RD1.
+- **Gates:** as A1, plus the host end-to-end suites on sunclaw.
+</script></ex-markdown>
+</details>
+<details id="ticket-a3">
+<summary><strong>A3</strong> Node host on the core · waits on A2</summary>
+<ex-markdown id="ticket-a3-text"><script type="text/markdown">
+- **Covers:** R1, every rule runs in the core and the Node host only injects; R2, every Node-only behaviour the Switchboard design lists keeps working through the core; R24, one canonical encoder that sorts keys by code-unit order, with the Node copy deleted.
+- **Writes:** the Node host's adapters onto the core ("How a call works now" in the design); the canonical encoder.
+- **Proven by:** R24's focused case; R2's Node behaviours through the core in the core suite. R1's two-host comparison (O1) runs in A5.
+- **Gates:** as A2.
+</script></ex-markdown>
+</details>
+<details id="ticket-a4">
+<summary><strong>A4</strong> defects · waits on M1</summary>
+<ex-markdown id="ticket-a4-text"><script type="text/markdown">
+- **Covers:** R20, the Google command schema chosen by the configured kind; R21, one call's failure stays its own; R22, the advertised schema is the one the handler parses; R23, origins checked when the configuration loads.
+- **Writes:** the owners named in the design's "The defects and their owners" table.
+- **Proven by:** each defect's focused test fails on `2dfea38e` and passes on the delivered commit.
+- **Earns:** U13 for these four; R25 is in A4b, R24 in A3 and R26 in A7.
+- **Gates:** as A1.
+</script></ex-markdown>
+</details>
+<details id="ticket-a4b">
+<summary><strong>A4b</strong> agent-vm side: SDK transport fix and Python journey · waits on A6</summary>
+<ex-markdown id="ticket-a4b-text"><script type="text/markdown">
+- **Covers:** R25, the Switchboard SDK's TypeScript transport forwards every callback argument. The file is `packages/agent-portal-sdk/src/tool-portal-mcp-client/node-tool-portal-mcp-transport.ts`; `agent-portal-sdk` stays in agent-vm and is published, so this is one small agent-vm pull request.
+- **Also covers:** R16's agent-vm half. Once A6's TypeScript host test carries the wire and protocol assertions, `python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py` keeps only calls to the Python SDK's public API.
+- **Done when:** the fixed `@agent-vm/agent-portal-sdk` is published and the moved packages take that version, not only when the source test passes.
+- **Proven by:** the focused test (the wrapped client receives the second argument) fails on `2dfea38e` and passes on the delivered commit; the Python scan finds no Switchboard protocol assertions left.
+- **Earns:** U13 for R25; U11 with A6.
+- **Gates:** agent-vm's existing checks; review.
+</script></ex-markdown>
+</details>
+<details id="ticket-a5">
+<summary><strong>A5</strong> deterministic tests and journeys · waits on A3; RD4</summary>
+<ex-markdown id="ticket-a5-text"><script type="text/markdown">
+- **Covers:** R13, no test reads the wall clock; R14, no clock substitution or test entry in a production bundle; R15, the five Hegel property families, run in Node against the real store on both databases and against the canonical encoder.
+- **Builds:** the `verify-tool-portal` journeys the design needs before any observation depends on them: `conformance`, `restart` and `contention` (lasting), and `cutover` (temporary, used in A8).
+- **Runs:** O1, the two-host conformance session with its limit scenarios (R1, R2), parsing every identifier the Switchboard mints (U8's run-time half); O2, restart and redeploy (R7); O3, contention, expiry and subject keys (R8).
+- **Where:** the deployed runs use a clean private proof deployment with its own Worker, storage and credentials, never the existing private Worker. That one keeps its old approvals for A8's cutover (O7).
+- **Carried past A8 (store version 2):** removal marks arrive with store version 2 in the identity work. So R7's and R8's removal cases, R15's removal family, R6's version-2 upgrade and R9's second change are proven in the identity plan's P1a and P1b and at JC2, not here. They stay open through A8.
+- **Proven by:** the test-file and bundle scans; the property families catching their mutants; O1's transcripts equal apart from limits; O2's used approvals refused as used, or `ambiguous` if armed; O3's exactly one first use.
+- **Earns:** U9, U15; U1 and U5's journey halves.
+- **Gates:** as A2.
+</script></ex-markdown>
+</details>
+<details id="ticket-a6">
+<summary><strong>A6</strong> clean build · waits on A3; RD3; RD5</summary>
+<ex-markdown id="ticket-a6-text"><script type="text/markdown">
+- **Covers, in `agent-collaboration`:** R16, no Python verification script; R18, one esbuild, jose and vitest, and no alpha Miniflare; R19, the checks M1 brought over plus the approved guard; R17's half there, one MCP SDK generation in its product code, with the fixture exception per RD3.
+- **R16 here:** the wire and protocol assertions of agent-vm's `python/agent-vm-agent-portal-sdk/tests/mcp_node_host_journey.py` move into a TypeScript host test in this repository; A4b then trims the Python file.
+- **Not here:** agent-vm's half of R17 (deleting the old `@agent-vm/mcp-portal` and `@agent-vm/tool-portal`, and `gateway-runtime`'s 1.x SDK) stays with #255's parked agent-vm work and is decided by OD-R4. It stays open and named, not dropped. agent-vm's own gate files return to `38569fca` before M1 (see M1).
+- **Proven by:** O5's scans of the `agent-collaboration` lockfile and imports, and the gate comparison (the guard is the only difference from the moved packages' commands).
+- **Earns:** U10, U11, U12.
+- **Gates:** as A1.
+</script></ex-markdown>
+</details>
+<details id="ticket-a7">
+<summary><strong>A7</strong> large requests · waits on A3; RD6; RD7; the #33 evidence</summary>
+<ex-markdown id="ticket-a7-text"><script type="text/markdown">
+- **First:** one correlated observation on the private test Worker for a request just over 4 MiB (raw response with CF-Ray, plus the invocation outcome from `wrangler tail`), to decide where today's 502 comes from.
+- **Covers:** R26. The core reads the request body as a stream and parses it incrementally, with no clone and no retained raw text, using `@streamparser/json` 0.0.26 fed from the body's web stream (RD7 names one parser for your approval; no wrapper package). Node spills a large body to a private temporary file outside durable state, as RD6 and RD7 decide. No Switchboard size refusal remains.
+- **Builds:** the `large-request` journey (lasting).
+- **Parser conditions:** the request keeps its complete root as `parsedBody`. Nothing is dispatched, and reading doesn't stop, before the body ends, even if the parser reports the root earlier. One JSON document per request. Errors and aborts propagate. The tokenizer's buffer settings and memory cost are checked, not assumed.
+- **Proven by:** 3, 5 and 12 MiB calls (a real 12 MiB argument, not whitespace padding) complete on the clean proof deployment and on Node with the same result as a small one. The decoded object matches today's accepted JSON under chunk splits. A complete valid request followed by invalid data in a later chunk gets a protocol error and zero upstream effects. With spilling on, the spill file is private, outside durable state and gone after every outcome. Deployed row 15's checks are run again after this ticket, on the clean proof deployment.
+- **Earns:** U14.
+- **Gates:** as A2, plus the deployed check.
+</script></ex-markdown>
+</details>
+<details id="ticket-a8">
+<summary><strong>A8</strong> Switchboard cutover · waits on A4, A5, A6, A7</summary>
+<ex-markdown id="ticket-a8-text"><script type="text/markdown">
+- **Covers:** R9's first change, no approval used before the storage change is accepted after it, on any host; the complete remediation goes live on the existing private test Worker and a Node host. R9's second change is store version 2 at JC2.
+- **Proven by:** O7, the `cutover` journey: approvals used on the old build, the remediation deployed with keys rotated, the kept tokens refused and a fresh approval giving exactly one effect. Deployed row 15's checks run again.
+- **Then:** the identity plan's P1a (Switchboard token check) starts, and the identity work's second cut brings store version 2.
+- **Gates:** the temporary deployed cutover check on the private Worker and a Node host.
+</script></ex-markdown>
+</details>
+<h2 id="plan--how-it-meets-the-identity-work">How it meets the identity work</h2>
+<ex-markdown id="plan--how-it-meets-the-identity-work-text"><script type="text/markdown">
+- **M1 is shared.** It starts this plan and the identity plan's sign-in tickets.
+- **A8 comes before P1a.** The identity plan's Switchboard token check (P1a, in D3) builds on the remediated store.
+- **Store version 2 is the identity work's.** It drops the membership tables and re-keys approvals at the second joint cut (JC2), proven by `cutover` again. This plan delivers store version 1.
+- **Between the identity switch and the second cut,** the Switchboard keeps today's agent tokens (OD11).
+</script></ex-markdown>
+<h2 id="plan--risks-and-false-greens">Risks and false greens</h2>
+<ex-markdown id="plan--risks-and-false-greens-text"><script type="text/markdown">
+- **Two hosts wrong the same way:** O1 compares transcripts, so it can't catch a rule both hosts break. The focused tests (A4) and the property families (A5) check outcomes against the design, not against each other.
+- **A store proven on one database:** the store suite and the Hegel families run on both Durable Object SQLite and `better-sqlite3`; a run on one only doesn't count.
+- **A storage change before A8:** deploying the new store to the existing private Worker in A5 or A7 would change its storage before A8 rotates keys. They use a clean proof deployment instead.
+- **A restart that isn't one:** O2 stops and starts the process on the same `stateDirectory`, and redeploys the Worker. Reusing an in-process store would pass falsely.
+- **Large requests proven small:** U14 needs the 12 MiB call on the deployed Worker, not only locally.
+- **Gates drifting:** A6's gate diff must show only the guard. Any other change is your call, not the plan's.
+</script></ex-markdown>
+<h2 id="plan--stop-and-replan">Stop and replan</h2>
+<ex-markdown id="plan--stop-and-replan-text"><script type="text/markdown">
+- An RD answer that differs from the recommendation changes its ticket. A different RD1 schema, for example, reshapes A2.
+- OD-R1 chooses M1's starting commit. "Hold and fix on the branch" changes what M1 copies, not the order.
+- A Reviewer finding in the readiness recheck goes back to the remediation design first; this plan follows it.
+</script></ex-markdown>
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

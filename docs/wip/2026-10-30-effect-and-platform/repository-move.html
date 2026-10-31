@@ -1,0 +1,71 @@
+<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Moving Switchboard out — my evidence report</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+<style>:root[data-theme="dark"]{--surface-page:#1c2026;--surface-content:#1c2026}</style>
+</head><body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Effect and the platform</a>
+<a href="repository-move.html">Moving Switchboard out</a>
+</nav></ex-nav>
+<ex-document id="content">
+<h1 id="move-assessment">Moving Switchboard out of Agent VM</h1>
+<p>My evidence report for you · 30 October 2026</p>
+<p><strong>I would extract the Switchboard and sign-in packages directly from their branch, then deal with the small shared-package release separately.</strong> Merging the whole stack into Agent VM first also imports a much larger managed-runtime switch. Moving the product out does not, by itself, justify importing that switch.</p>
+<p>This is a source-level recommendation. A separate SDK compatibility build and release check are still needed. No merge, test, publication or deployment was performed.</p>
+
+<h2 id="the-existing-shared-packages">What the new repository still needs</h2>
+<p>The six packages moving are <code>auth</code>, <code>tool-access</code>, <code>tool-engine</code>, <code>tool-host-core</code>, <code>tool-host-cloudflare</code> and <code>tool-host-node</code>. Two shared packages remain in Agent VM.</p>
+<div class="ex-table-scroll" data-width="canvas"><table>
+<thead><tr><th>Shared package</th><th>What I found</th><th>What that means</th></tr></thead>
+<tbody>
+<tr><td><code>oauth-broker-contracts</code></td><td>The entire source tree is identical on master and the collapsed stack.</td><td>No source port is needed. The new repository needs a matching published artifact.</td></tr>
+<tr><td><code>agent-portal-sdk</code></td><td>The used production API names already exist on master, but the stack changes the concrete MCP client's protocol behavior and moves schema ownership into <code>tool-access</code>.</td><td>API availability alone is insufficient. The modern client and its new dependency must be reviewed and published deliberately.</td></tr>
+</tbody></table></div>
+<p>The current four Agent VM consumers appear able to retain their implementation while the shared SDK changes land separately. That is not proof that every old SDK client can talk to every old server: the new client is modern-only, and its cancellation behavior changes.</p>
+
+<h2 id="the-options">The options and their real cost</h2>
+<ex-compare label="Ways to separate the repository" view="tabs" data-width="reading">
+<section id="extract-directly" label="Extract directly" icon="package">
+<section data-compare-row="change"><p><strong>What changes</strong></p><p>Take the six-package closure from the frozen branch. Keep Agent VM's existing controller, gateway and portal implementation. Port only the necessary shared SDK changes and their release inputs.</p></section>
+<section data-compare-row="gain"><p><strong>What we gain</strong></p><p>A smaller Agent VM change and a clearer separation between moving Switchboard and adopting its managed-runtime rewrite.</p></section>
+<section data-compare-row="cost"><p><strong>What we pay</strong></p><p>Focused extraction review, SDK compatibility validation and ordered package publication. Those are real tasks; moving directories alone is insufficient.</p></section>
+<section data-compare-row="running"><p><strong>What runs meanwhile</strong></p><p>Existing installed Agent VM deployments can keep their current artifacts. The new Switchboard can be built and deployed separately when its gates are satisfied.</p></section>
+</section>
+<section id="merge-then-extract" label="Merge first" icon="git-branch">
+<section data-compare-row="change"><p><strong>What changes</strong></p><p>Merge the collapsed stack into Agent VM, then extract the packages and replace their workspace dependency pins with published versions.</p></section>
+<section data-compare-row="gain"><p><strong>What we gain</strong></p><p>The stack closes in one merge before extraction.</p></section>
+<section data-compare-row="cost"><p><strong>What we pay</strong></p><p>The four main retained packages already change in 151 files. Ten retained package manifests depend on packages that move out. Agent VM inherits the integration and distribution work.</p></section>
+<section data-compare-row="running"><p><strong>What runs meanwhile</strong></p><p>Already installed deployments can stay pinned. A new build from merged-and-extracted master needs the switched implementation's published dependencies.</p></section>
+</section>
+<section id="use-old-sdk" label="Keep the old SDK" icon="code">
+<section data-compare-row="change"><p><strong>What changes</strong></p><p>Use master's shared packages unchanged and publish them for the new repository.</p></section>
+<section data-compare-row="gain"><p><strong>What we gain</strong></p><p>The smallest immediate shared-source edit.</p></section>
+<section data-compare-row="cost"><p><strong>What we pay</strong></p><p>The passive helpers exist, but the old concrete client does not establish the intended modern MCP behavior or the current Node client's proof expectations. This is not demonstrated as equivalent delivery.</p></section>
+<section data-compare-row="running"><p><strong>What runs meanwhile</strong></p><p>Old Agent VM behavior remains; the new repository's complete SDK/client closure is unresolved.</p></section>
+</section>
+</ex-compare>
+
+<h2 id="the-publication-order">Publication is different from deployment</h2>
+<p>The new repository must be able to install its dependencies. With the stack's shared-schema layout, their publication order is:</p>
+<ol><li>Unchanged OAuth broker contracts.</li><li><code>tool-access</code>, including the shared schemas and refinement registry.</li><li>The selected <code>agent-portal-sdk</code>, which now depends on access.</li><li>The Node host and the rest of the moved product packages, in their dependency order.</li></ol>
+<ex-callout title="The current hold needs a clearer boundary" tone="risk" icon="package"><p>“Publish nothing until A8” conflicts with M1 needing those published cross-repository inputs. Publishing a library so another repository can build is different from deploying or running a changed service. That distinction needs an explicit decision; no temporary linking or extra bootstrap mechanism is proposed here.</p></ex-callout>
+
+<h2 id="what-sign-in-includes">The sign-in branch is not just one folder</h2>
+<p>I checked the authored first-parent history rather than attributing the entire branch's inherited code to sign-in. Its work changes auth, person-proof contracts, management/retirement integration, Worker integration and proof tooling.</p>
+<p>In the scoped authored non-merge history, it does not change the retained Agent VM, gateway-runtime, tool-portal or mcp-portal implementations. The branch snapshot also contains an inherited hosting base. Extracting only <code>packages/auth</code> would omit its integration; merging the entire snapshot would bring more than auth.</p>
+
+<h2 id="evidence-and-limits">Evidence and limits</h2>
+<p>Compared master <code>38569fca</code>, Switchboard <code>2dfea38e</code>, sign-in <code>0ff6a6af</code> and design <code>de2e5115</code>. Read package manifests, caller imports, the complete shared-package diff, protocol-pin and schema-preservation test source, and sign-in's first-parent history.</p>
+<p>No compile, compatibility test, installed-package check, registry-availability check or deployment was run. My conclusion is that direct extraction is the smaller source arrangement, with SDK release and publication prerequisites still open.</p>
+<details><summary>Open the full technical evidence</summary><ul>
+<li><a href="../../../tmp/practices-research/2026-10-30-od-r1-after-od13/report.md">Detailed source report</a>.</li>
+<li><a href="../../../tmp/practices-research/2026-10-30-od-r1-after-od13/sources/manifests.json">Versioned package manifests</a>.</li>
+<li><a href="../../../tmp/practices-research/2026-10-30-od-r1-after-od13/sources/retained-agent-vm-changed-paths.txt">Retained Agent VM changed paths</a>.</li>
+<li><a href="../../../tmp/practices-research/2026-10-30-od-r1-after-od13/sources/s1-first-parent-history.json">Sign-in history and attribution</a>.</li>
+</ul></details>
+</ex-document>
+
+<script type="application/json" data-ex-search-index="">[{"kind":"page","title":"What I would build, and where Effect helps","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#my-assessment"},{"kind":"heading","title":"Where the parts belong","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#where-the-parts-belong"},{"kind":"heading","title":"How the services connect","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#how-the-services-connect"},{"kind":"heading","title":"The useful example: several tools running at once","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#the-useful-example"},{"kind":"heading","title":"What changes with Effect","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#what-changes-with-effect"},{"kind":"heading","title":"Cloudflare and Node: same rules, different hosts","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#cloudflare-and-node"},{"kind":"heading","title":"Auth and the Rust-to-TypeScript boundary","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#auth-and-rust"},{"kind":"heading","title":"Agent VM and the older MCP Portal","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#agent-vm-and-mcp"},{"kind":"heading","title":"My recommendation","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#what-i-would-evaluate"},{"kind":"heading","title":"What my research actually established","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#research-coverage"},{"kind":"page","title":"Moving Switchboard out of Agent VM","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#move-assessment"},{"kind":"heading","title":"What the new repository still needs","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-existing-shared-packages"},{"kind":"heading","title":"The options and their real cost","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-options"},{"kind":"heading","title":"Publication is different from deployment","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-publication-order"},{"kind":"heading","title":"The sign-in branch is not just one folder","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#what-sign-in-includes"},{"kind":"heading","title":"Evidence and limits","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#evidence-and-limits"}]</script></body></html>

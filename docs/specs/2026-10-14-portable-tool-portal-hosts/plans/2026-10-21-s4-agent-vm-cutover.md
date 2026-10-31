@@ -1,5 +1,7 @@
 # S4: switch agent-vm to the new Tool Portal packages
 
+> **Status (2026-10-28): stopped; record.** S4a, S4b, S4c1 and S4d were built into the #262 stack (S4d is #246's base). S4c2 (#255, managed distribution) is parked by the owner and isn't in the stack. The steps not yet built, including switching agent-vm onto these packages and deleting `@agent-vm/tool-portal` and `@agent-vm/mcp-portal`, are not planned now: agent-vm is out of scope (owner, 2026-10-27), and Switchboard moves to its own `agent-collaboration` repository (OD13). The remaining Switchboard work is in the [Switchboard remediation plan](../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html).
+
 Move the managed private connection onto the shared rules and dispatcher, finish
 the Python MCP client move, update the shipped images and tooling, then delete
 `@agent-vm/tool-portal` and `@agent-vm/mcp-portal`. The private protocol, managed

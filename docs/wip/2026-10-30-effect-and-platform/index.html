@@ -1,0 +1,120 @@
+<!DOCTYPE html><html lang="en" data-theme="dark"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Effect v4, Rust and the agent platform — my assessment</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+<style>:root[data-theme="dark"]{--surface-page:#1c2026;--surface-content:#1c2026}</style>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Effect and the platform</a>
+<a href="repository-move.html">Moving Switchboard out</a>
+</nav></ex-nav>
+<ex-document id="content">
+<h1 id="my-assessment">What I would build, and where Effect helps</h1>
+<p>My assessment for you · 30 October 2026</p>
+<p><strong>Rust for Fleet and the daemon on each machine. TypeScript for Switchboard, sign-in and the web UI.</strong> Effect is a possible way to organize the TypeScript work: it can help manage concurrent calls, cancellation, connections and cleanup consistently.</p>
+<p>The useful question is whether Effect removes enough handwritten coordination to make that code easier to maintain. I found a credible fit, but I have not built and measured competing implementations. <strong>Adoption remains unchosen.</strong></p>
+
+<h2 id="where-the-parts-belong">Where the parts belong</h2>
+<p>This is the split I would choose for a rebuild with the same goals. It keeps the decisions that belong together in the same service.</p>
+<div class="ex-table-scroll" data-width="canvas"><table>
+<thead><tr><th>Part</th><th>Language</th><th>Its job</th><th>Why I would choose it</th></tr></thead>
+<tbody>
+<tr><td>Fleet central</td><td>Rust</td><td>Organizations, workspace membership, machines, sessions, grants and coordination.</td><td>One durable authority for the related state transitions and delivery rules.</td></tr>
+<tr><td>Machine daemon / Router</td><td>Rust</td><td>Long-lived connections, local credentials, process supervision and session launching.</td><td>Keep machine resource ownership and process lifecycles together.</td></tr>
+<tr><td>VM/process supervisor</td><td>Rust for a clean rebuild</td><td>Start, observe and retire host resources.</td><td>A useful native boundary. With today's TypeScript Gondolin SDK, retain its adapter until an equivalent alternative is justified.</td></tr>
+<tr><td>Switchboard / Tool Portal / MCP gateway</td><td>TypeScript</td><td>Discover tools, enforce tool access and approvals, dispatch calls and stream results.</td><td>One shared implementation for Cloudflare and Node, close to the SDKs and integrations.</td></tr>
+<tr><td>Sign-in and token issuer</td><td>TypeScript</td><td>Better Auth, account connections, device login and token issuance.</td><td>Keep the authentication library and its hooks together.</td></tr>
+<tr><td>Web UI and approval screens</td><td>TypeScript</td><td>Present information and authenticated user actions.</td><td>Direct fit with the browser and UI ecosystem.</td></tr>
+<tr><td>Agents and individual tools</td><td>Their existing language</td><td>Run the actual agent or tool.</td><td>Keep Python agents in Python and native tools in their own language; connect through explicit contracts.</td></tr>
+</tbody></table></div>
+<p><strong>The price of this split:</strong> we maintain two language toolchains and test the contracts between them. I would pay that cost at these service boundaries rather than split a single tool call across extra services merely to put more code in Rust.</p>
+
+<h2 id="how-the-services-connect">How the services connect</h2>
+<p>Effect would live inside the TypeScript services. Signed tokens, JSON messages and acknowledgements still cross the network. Fleet keeps the authoritative decisions; Switchboard does not gain a Fleet lookup on every tool call.</p>
+<ex-board cols="2" data-width="canvas">
+<ex-region id="machine" title="Machine daemon · Rust" tone="planned" icon="terminal"><p>Connects the machine, registers sessions and carries tool requests.</p></ex-region>
+<ex-region id="fleet" title="Fleet central · Rust" tone="planned" icon="database"><p>Decides membership, grants and machine/session coordination.</p></ex-region>
+<ex-region id="sign-in" title="Sign-in · TypeScript" tone="planned" icon="key"><p>Authenticates people and clients; issues tokens under Fleet's decisions.</p></ex-region>
+<ex-region id="switchboard" title="Switchboard · TypeScript" tone="planned" icon="plug"><p>Checks tokens and approvals, then calls upstream tools. Stores approval use and removal marks.</p></ex-region>
+<ex-arrow from="machine" to="fleet" label="sessions and coordination"></ex-arrow>
+<ex-arrow from="machine" to="sign-in" label="login and renewal"></ex-arrow>
+<ex-arrow from="sign-in" to="fleet" label="request decisions"></ex-arrow>
+<ex-arrow from="machine" to="switchboard" label="token and tool call"></ex-arrow>
+<ex-arrow from="fleet" to="switchboard" label="removal notices"></ex-arrow>
+</ex-board>
+<p>This is a map of the intended responsibilities, not a capture of a running system. Bots also use the sign-in and tool services. The complete identity design carries their separate rules.</p>
+
+<h2 id="the-useful-example">The useful example: several tools running at once</h2>
+<p>An agent asks Switchboard to run five tools. One tool fails, another takes too long, and the agent disconnects while results are still streaming. Our implementation must handle each of these events without confusing what happened.</p>
+<ol>
+<li><strong>Read the whole valid request.</strong> A valid-looking beginning followed by malformed data must run nothing.</li>
+<li><strong>Check access and approvals.</strong> Record the one-use decision atomically before dispatch.</li>
+<li><strong>Run the calls under the existing limits.</strong> One assessment failure must not incorrectly fail its siblings.</li>
+<li><strong>Carry cancellation to the upstream adapter.</strong> A request to stop is different from proof that an external action never happened.</li>
+<li><strong>Keep connections alive through the result stream.</strong> Close readers, clients and temporary files when the response finishes, fails or is cancelled.</li>
+</ol>
+<p>Today we must express this coordination ourselves. Effect supplies a common execution model for lifetimes, child work and errors. <strong>That is its strongest potential contribution here.</strong> It is useful only if it simplifies these paths while preserving their behavior.</p>
+
+<h2 id="what-changes-with-effect">What changes with Effect</h2>
+<ex-compare label="Two ways to implement the same correct request lifecycle" data-width="canvas">
+<section id="plain-promises" label="Plain TypeScript" icon="code">
+<section data-compare-row="construction"><p><strong>Dependency wiring</strong></p><p>Pass the required database, clock, crypto and transport interfaces into the core.</p></section>
+<section data-compare-row="lifetime"><p><strong>Connections and cleanup</strong></p><p>Use carefully placed <code>try/finally</code>, abort listeners and response-body completion handlers.</p></section>
+<section data-compare-row="failures"><p><strong>Failures and concurrent work</strong></p><p>Keep closed result unions and explicitly settle each call before combining results.</p></section>
+<section data-compare-row="cost"><p><strong>What we pay</strong></p><p>Less new machinery to learn, but more lifecycle coordination code for us to keep consistent.</p></section>
+</section>
+<section id="effect-internals" label="Effect inside the core" icon="gear">
+<section data-compare-row="construction"><p><strong>Dependency wiring</strong></p><p><code>Context</code> and <code>Layer</code> can supply those same interfaces. The public contracts can remain unchanged.</p></section>
+<section data-compare-row="lifetime"><p><strong>Connections and cleanup</strong></p><p>Scopes and child fibers can give related resources one owner and compose ordinary interruption and cleanup.</p></section>
+<section data-compare-row="failures"><p><strong>Failures and concurrent work</strong></p><p>Typed error channels and full outcomes can make local failure handling explicit. Our domain outcomes still need deliberate mapping.</p></section>
+<section data-compare-row="cost"><p><strong>What we pay</strong></p><p>A runtime, new conventions, integration adapters and bundle/startup cost. We must measure whether it removes more code than it adds.</p></section>
+</section>
+</ex-compare>
+<p>The comparison must be between two implementations of the <strong>same corrected design</strong>. Fixing today's missing injection, volatile state or batch-failure defect cannot be counted as a benefit that only Effect provides.</p>
+
+<h2 id="cloudflare-and-node">Cloudflare and Node: same rules, different hosts</h2>
+<p>The core can use Effect while Cloudflare and Node supply their own platform operations. The database logic stays with its owner: Drizzle on Durable Object SQLite for Cloudflare and on <code>better-sqlite3</code> for Node.</p>
+<p>A store decision must remain one complete synchronous transaction. Effect can wrap that operation; yielding between its individual SQL statements would change the transaction boundary. Effect also cannot turn a database transaction and an external tool action into one atomic operation.</p>
+<ex-callout title="A scope is not crash recovery" tone="risk" icon="cloud"><p>Ordinary completion and cancellation can run cleanup. An isolate or process can disappear before any finalizer runs. Durable approval records, removal marks and restart cleanup remain necessary.</p></ex-callout>
+<details><summary>Cloudflare lifetime and clock hazards</summary>
+<p>Effect's own source warns that shared fibers can inherit a request's asynchronous context and that request-owned scheduler timers can disappear. Shared pending work therefore needs a deliberate owner. A different scheduler is not a durability guarantee.</p>
+<p>The built-in Effect clock has live defaults. Supplying our clock explicitly is still necessary, and the current TypeScript guard cannot detect ambient time hidden inside a dependency. The full Effect clock also expects monotonic time that our present clock interface does not supply. A minimal integration can keep calling our existing clock and timer ports.</p>
+</details>
+
+<h2 id="auth-and-rust">Auth and the Rust-to-TypeScript boundary</h2>
+<p>Rust Fleet still answers the authority questions: does this machine belong here, is this session active, and may this grant be issued? The TypeScript issuer authenticates the caller, asks those questions over the existing authenticated protocol, and validates the answer before issuing anything.</p>
+<p>Effect can help the TypeScript code distinguish <strong>approved</strong>, <strong>refused</strong> and <strong>the answer is unknown</strong>. It does not decide which operation may be retried.</p>
+<ex-callout title="A lost reply does not mean nothing happened" tone="risk" icon="lock"><p>If Fleet may have admitted a sign-in but the reply is lost, the durable claim protecting that attempt must remain. Automatic cleanup that deletes it would be wrong. Similarly, after a tool approval is armed, cancellation cannot release it and authorize another attempt.</p></ex-callout>
+<p>Keep the existing JSON and token contracts with one schema owner and real producer/consumer checks. Using Effect does not require an Effect-specific RPC protocol, a replacement Rust coordination system, or a second authentication library.</p>
+<details><summary>Why request identity must not become a shared service</summary><p>A shared runtime can hold infrastructure with an appropriate lifetime. A person's identity, session, sign-in attempt and mutable cleanup records belong to that invocation. Caching them in a singleton service could let concurrent requests share the wrong authority or cleanup set.</p></details>
+
+<h2 id="agent-vm-and-mcp">Agent VM and the older MCP Portal</h2>
+<p>There are also possible future uses in Agent VM's TypeScript code: acquiring a Tool VM operation group, connecting SSH, carrying cancellation, checking approval and retiring the group. The controller would still own authority and lease decisions.</p>
+<p>The older MCP Portal owns longer-lived HTTP sessions and upstream clients. Those resources need session or service lifetimes; closing them after one HTTP request would be wrong. Its upstream stdio connections are distinct from an inbound stdio server.</p>
+<p><strong>A TypeScript library does not change the remote side.</strong> Closing an SSH connection is not proof that a remote process terminated. Effect does not directly change Rust Fleet, Python agents, Hermes or VM isolation. These paths are future options, separate from the current Switchboard delivery.</p>
+
+<h2 id="what-i-would-evaluate">My recommendation</h2>
+<p><strong>Evaluate one complete Switchboard request lifecycle, while keeping the service boundaries and existing libraries.</strong> Keep Rust Fleet, Better Auth, Zod, Drizzle and the pinned MCP SDK. Use the experiment to judge whether Effect removes repeated coordination code and makes failure behavior easier to inspect.</p>
+<p>Both versions must preserve cancellation, streamed-response lifetime, the unknown sign-in claim, atomic storage and the existing approval outcomes. Then compare maintained code, emitted Worker size and startup cost. An increase is a tradeoff to show you, not a result to hide.</p>
+<p>The capability interfaces can remain plain TypeScript, so choosing Effect does not need to hold up defining them. A fair comparison does need a conforming Promise baseline built first. The old fixtures are reusable ingredients, not a ready experiment. <strong>No comparison was built or run.</strong></p>
+
+<h2 id="research-coverage">What my research actually established</h2>
+<p>I inventoried 379 namespace exports, read 24 packaged agent guides and the versioned generated <code>LLMS.md</code>, and inspected migration/release documentation and companion package manifests. I then checked the relevant source paths for request lifetimes, cancellation, databases, auth hooks and MCP adapters.</p>
+<p>That supports a feature map and a technical fit assessment. It does not demonstrate a smaller implementation, better performance or deployed compatibility. The public documentation site was not fully scraped; exact-version official package and repository sources were retained instead.</p>
+<details><summary>The wider Effect feature set and source evidence</summary>
+<p>The catalogue also covers streams, channels, schedules, caches, pools, queues, testing, schemas, HTTP, RPC, MCP, SQL, persistence, workflows, clustering, observability, CLI, AI and UI reactivity. Each has its own maturity and adoption cost. The catalogue is an inventory, not a recommendation to use all of them.</p>
+<ul>
+<li><a href="../../../tmp/practices-research/2026-10-28-effect-v4/features/feature-catalog.md">Full feature-family catalogue</a> and <a href="../../../tmp/practices-research/2026-10-28-effect-v4/features/sources-manifest.md">source coverage and failed routes</a>.</li>
+<li><a href="../../../tmp/practices-research/2026-10-28-effect-v4/system-fit.md">Detailed system fit</a>, with links to the Cloudflare, auth and MCP investigations.</li>
+<li><a href="../../../tmp/practices-research/2026-10-28-effect-v4/comparison-feasibility.md">Existing fixtures and comparison readiness gaps</a>.</li>
+<li><a href="https://developers.cloudflare.com/workers/languages/rust/">Cloudflare's Rust deployment model</a>; <a href="https://modelcontextprotocol.io/docs/2026-07-28/sdk">official MCP SDKs</a>; <a href="https://better-auth.com/docs/introduction">Better Auth's TypeScript framework</a>.</li>
+</ul>
+<p>Evidence snapshot: Effect <code>4.0.7</code>; design <code>de2e5115</code>; Switchboard <code>2dfea38e</code>; sign-in <code>0ff6a6af</code>; legacy Agent VM <code>38569fca</code>. My rebuild recommendations are judgments based on that evidence, not approved changes.</p>
+</details>
+<p>The separate <a href="repository-move.html">repository-move report</a> covers the package extraction findings.</p>
+</ex-document>
+
+<script type="application/json" data-ex-search-index="">[{"kind":"page","title":"What I would build, and where Effect helps","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#my-assessment"},{"kind":"heading","title":"Where the parts belong","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#where-the-parts-belong"},{"kind":"heading","title":"How the services connect","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#how-the-services-connect"},{"kind":"heading","title":"The useful example: several tools running at once","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#the-useful-example"},{"kind":"heading","title":"What changes with Effect","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#what-changes-with-effect"},{"kind":"heading","title":"Cloudflare and Node: same rules, different hosts","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#cloudflare-and-node"},{"kind":"heading","title":"Auth and the Rust-to-TypeScript boundary","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#auth-and-rust"},{"kind":"heading","title":"Agent VM and the older MCP Portal","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#agent-vm-and-mcp"},{"kind":"heading","title":"My recommendation","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#what-i-would-evaluate"},{"kind":"heading","title":"What my research actually established","pageTitle":"What I would build, and where Effect helps","ancestors":[],"href":"index.html#research-coverage"},{"kind":"page","title":"Moving Switchboard out of Agent VM","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#move-assessment"},{"kind":"heading","title":"What the new repository still needs","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-existing-shared-packages"},{"kind":"heading","title":"The options and their real cost","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-options"},{"kind":"heading","title":"Publication is different from deployment","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#the-publication-order"},{"kind":"heading","title":"The sign-in branch is not just one folder","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#what-sign-in-includes"},{"kind":"heading","title":"Evidence and limits","pageTitle":"Moving Switchboard out of Agent VM","ancestors":[],"href":"repository-move.html#evidence-and-limits"}]</script></body></html>

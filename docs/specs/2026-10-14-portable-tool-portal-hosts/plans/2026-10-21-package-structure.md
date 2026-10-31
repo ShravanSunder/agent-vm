@@ -1,5 +1,7 @@
 # Package structure: folders by job, across every Tool Portal PR
 
+> **Status (2026-10-28): record.** This plan shaped the #262 stack (PRs #238–#246). Its remaining steps are not continued. The [Switchboard remediation plan](../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html) now governs this code, which moves to its own `agent-collaboration` repository first (OD13). The Tool Portal is now called Switchboard (OD12).
+
 The owner asked why the new packages keep things in one giant folder, and why
 the PRs don't follow the repository's rules. They don't. This plan fixes the
 structure of every Tool Portal PR (#238, #240, #241, #243, #244, #245, #246)

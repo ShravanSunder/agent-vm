@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet Framework: who owns what</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../2026-10-30-item-two/index.html">Item two</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content">
+
+<h1 id="top">Fleet Framework: who owns what</h1>
+
+<ex-callout tone="tldr" title="The split in four lines">
+- **agent-collaboration** owns who is in the fleet and how they talk: the registry, channels, mailboxes, the inbox classifier and the workspace chief.
+- **agent-vm's Tool Portal and MCP Portal** own what members can *do* with tools: the tool buckets, each workspace's and each agent's subset, registration config, and which calls need approval. They use agent-vm's controller for credentials and approval decisions.
+- **The AgentStudio daemon** owns a person's *console into a VM*: one Host per isolation unit, Gateways, sessions, terminals, worktrees, and the apps you use. Coding agents run in its terminals; persistent bots run on their own agent servers. No product owns VM provisioning yet (Q-B6).
+- **People** set the rules: you add managers; managers (per workspace) configure their agents' tools; both workspace owners agree before a channel crosses between workspaces. Every security and permission change is logged.
+</ex-callout>
+
+<ex-callout tone="risk" title="Where to push back">
+**The product split itself is a proposal (🟡), not your decision.** The Advisors drew it from your answers. Your decisions say *what* must happen (F-rows); they rarely say *which product* does it.
+
+Marks:
+- ✅ you decided it (F-n or D-n points to your words in the [parent doc](2026-10-18-fleet-framework.md));
+- 🟡 proposed by the Advisors;
+- ❓ open, with its number in [open-questions.md](open-questions.md).
+
+The fastest check is [Unsettled ownership](#unsettled): nine things that still have two candidate owners, or none.
+</ex-callout>
+
+<h2 id="map">The map</h2>
+
+Each box is one owner. Each arrow is something one side does to the other. The detail for every box is in the sections below.
+
+<ex-flow cols="3" data-width="canvas">
+<ex-card id="map-people" tone="decision" icon="users" title="People">You add managers. Managers, per workspace, set agents' tools. Both workspace owners agree before a channel crosses workspaces.</ex-card>
+<ex-card id="map-bot" tone="note" icon="robot" title="An agent or bot">Coding agents (Codex, Claude Code) are known by their session, in their machine's workspace. Bots with memory (Hermes, Grok bot, Dot) are registered into workspaces. Each tool call names a workspace.</ex-card>
+<ex-card id="map-outside" tone="note" icon="globe" title="Outside our control">The harness and its memory, the bot's own VM, model providers.</ex-card>
+<ex-card id="map-av" tone="note" icon="plug" title="Tool Portal and MCP Portal (agent-vm)">Tool buckets and subsets, registration config, approval rules. Credentials and approval decisions come from agent-vm's controller.</ex-card>
+<ex-card id="map-ac" tone="note" icon="chat-circle" title="agent-collaboration">Registry and membership, channels, mailboxes, inbox classifier, workspace chief.</ex-card>
+<ex-card id="map-as" tone="note" icon="terminal" title="AgentStudio daemon">Hosts, sessions, terminals, worktrees, the apps you use. Hooks are a second channel in.</ex-card>
+<ex-arrow from="map-people" to="map-ac" label="agree on channels"></ex-arrow>
+<ex-arrow from="map-people" to="map-av" label="set tools"></ex-arrow>
+<ex-arrow from="map-bot" to="map-ac" label="messages"></ex-arrow>
+<ex-arrow from="map-bot" to="map-av" label="MCP tool calls"></ex-arrow>
+<ex-arrow from="map-bot" to="map-outside" label="runs in"></ex-arrow>
+<ex-arrow from="map-ac" to="map-as" label="a channel"></ex-arrow>
+</ex-flow>
+
+<h2 id="products">What each product owns</h2>
+
+<ex-grid cols="3" data-width="canvas">
+<ex-card id="owner-agent-collaboration" tone="note" title="agent-collaboration" icon="chat-circle" tag="who is in it, how they talk">
+- **Fleet registry**: people, workspaces, members, personas, agents, bots 🟡
+- **Channels with permissions**: all agent messaging goes through them ✅ F-13
+- **Cross-workspace channels** need both workspace owners ✅ F-14
+- **A mailbox per member**; delivered if the sender may send ✅ F-21
+- **Inbox classifier**, configured by sender level ✅ F-16, F-25
+- **Workspace chief**: each workspace's inbox system ✅ F-16
+- **A channel into AgentStudio**, alongside hooks ✅ F-31
+- **Revocation drops undelivered messages** ✅ F-26 (how: ❓ Q-D13)
+- **Session attestation**: the Router vouches for a *calling* session once it can bind the connection to that session (❓ Q-E1). Seeing a session doesn't prove who is calling, and today a message's sender is only declared 🟡
+- Already exists in the Router today: board Workspace (E1), Project (E3), actor (E10), role appointment (E11). How they map to fleet nouns: ❓ Q-B8, Q-C9
+</ex-card>
+<ex-card id="owner-agent-vm" tone="note" title="Tool Portal and MCP Portal (agent-vm)" icon="plug" tag="what members can do with tools">
+- **MCP tools** for registered agents and bots ✅ F-11
+- **Four tool buckets**: useful cloud services, cloud integrations, computer tools, and a fourth ❓ Q-C11 ✅ F-24
+- **Workspace subset, then each agent's subset**, plus agent-collaboration defaults ✅ F-24
+- **Groups and defaults**, built on today's presets and collections 🟡 Q-C13
+- **Registration config** in the Tool VM configuration; managers edit it ✅ F-12, F-23
+- **Team-account grants** by managers, without each account owner's consent ✅ F-27
+- **Credentials and the OAuth broker**: owned by agent-vm's controller today, used by the portals (`docs/architecture/overview.md:122`) 🟡
+- **Tool modes**: auto, approved, requires approval, blocked ✅ D-9. Portal policy says which calls need approval; agent-vm's controller makes the approval decision (`mcp-portal.md:35`)
+- **A bot in several workspaces** *sees* the union of their tools, but each call names a workspace and is allowed only if that workspace allows the tool. It's a mistake check and attribution, not a wall: the bot can name any workspace it belongs to ✅ F-32
+- The 🦁 agent-vm Lead holds tool-policy configuration; its store, API and issuer are not chosen 🟡
+- The scope is specifically the Tool Portal and MCP Portal, not all of agent-vm ✅ F-36
+</ex-card>
+<ex-card id="owner-daemon" tone="note" title="AgentStudio daemon" icon="terminal" tag="a person's console into a VM">
+- **A person's console into a VM**: run coding agents there, fix Hermes. It doesn't launch agents ✅ F-37
+- **Hosts and Gateways** as running instances (E23, E24); the fleet owns their service identities 🟡
+- **Execution sessions, terminal attachments, connections** (E1–E5) 🟡
+- **Repositories, worktrees, provider conversations** (E7–E9) 🟡
+- **Annotations, client views, subscriptions, transfers, read markers** (E12–E16, E19–E22, E26) 🟡
+- **Agent binding** (E10) points at the fleet's agent, never redefines it 🟡
+- **Receives agent-to-person messages** through channels: hooks today, agent-collaboration too ✅ F-31
+- **The apps you use** as the inbox for every interaction kind ❓ Q-F6
+- **One boundary per host or VM**: a computer with a host and two VMs is three boundaries; nothing is derived from hardware ✅ F-34
+- Four nouns are held back until settled: identity (E6, E17), authorization (E18), messages to people (E11), the word "workspace" (E25). See [below](#unsettled)
+</ex-card>
+</ex-grid>
+
+<h3 id="inside-portals">Inside the Tool Portal and MCP Portal</h3>
+
+The 🦁 agent-vm Lead's Program Design (`docs/specs/2026-10-14-portable-tool-portal-hosts/program-design.md`, package table) separates three kinds of code. Only the left column exists as code; the middle one is a proposal.
+
+<ex-grid cols="3" data-width="canvas">
+<ex-card id="portals-runtime" tone="note" icon="plug" title="Portal runtime" tag="exists; changes proposed">
+- **Tool Portal**: resolves capabilities, plans authorized calls, calls backends (Tool VM runner, MCP, controller actions)
+- **MCP Portal**: proposed to become an **MCP Gateway** (what agents connect to) plus **MCP connectors** (outbound MCP sessions) 🟡
+- No listener, credential database or VM provisioning of its own 🟡
+</ex-card>
+<ex-card id="portals-shared" tone="planned" icon="package" title="Shared modules" tag="proposed, not built">
+- **tool-access**: shared contracts; **authorization** (workspace and agent subsets, the named-workspace check) and **approval rules** as separate entry points 🟡
+- **credential-broker**: choosing and holding credentials, account policy (team vs personal, F-35) 🟡
+- Usable without either portal runtime. No identity enrollment storage, no listeners, no durable approval records 🟡
+</ex-card>
+<ex-card id="portals-controller" tone="note" icon="lock" title="agent-vm controller today" tag="exists; stays behind ports">
+- **OAuth broker** and **secret management** (1Password, environment)
+- **Managed persistence and approval authority**: the controller decides managed approvals (`mcp-portal.md:35`)
+- The shared modules reach these through ports; extraction doesn't change who owns them 🟡
+</ex-card>
+</ex-grid>
+
+Identity comes in through verifier and registry contracts (agent-collaboration's job); there is no portal-owned identity database 🟡.
+
+<ex-card id="owner-outside" tone="note" title="Outside our control" icon="globe" tag="we depend on it, we don't own it">
+- **The harness and its memory**: we register an agent *in* a harness, not the harness ✅ F-23. Memory is out of scope; assume memory per bot, and files are memory ✅ F-18
+- **Client, agent loop and execution are separate layers**. Sharing an execution environment shares data, never the agent loop ✅ F-6
+- **A registered bot's VM**: it runs in its own VM, which we don't control ✅ F-11
+- **Cloud agents** are a different tool, not a local session ✅ F-7
+- **Model providers** see context; that's fine ✅ F-20. **Vendors** are talked to or used as tools ✅ F-19
+</ex-card>
+
+<h2 id="people">What each person controls</h2>
+
+| Who | Controls | Status |
+|---|---|---|
+| **You, the fleet owner** | the fleet; adding managers; your one chief of staff | ✅ F-8, F-16, F-23 |
+| **Workspace owners** | agreeing, both of them, before a channel crosses workspaces | ✅ F-14 · ❓ how many owners, and transfer (Q-B1) |
+| **Managers** | per workspace; set each agent's tools, or limit it to communication; grant workspace accounts such as a team email | ✅ F-23, F-27, F-29 · ❓ can managers add managers, change membership (Q-C12) |
+| **Members** (people, agents, bots) | a mailbox each; send and receive where a channel allows | ✅ F-21 |
+| **Registrant** | a registered bot is treated as its registrant, for now: they're responsible for it. It never acts *as* them: it's credited as itself and uses only its own access | ✅ F-15, with F-30 and F-35 |
+| **An account's owner** | today, only the owner grants their account (agent-vm code); team accounts can now be granted by managers | ✅ F-27, F-35: team accounts only; a person's personal account never goes to a shared agent |
+| **Nobody silently** | every security and permission change goes into an audit log | ✅ F-28 · ❓ who keeps the log (Q-F7) |
+| **An acting agent** | is credited as the agent, on behalf of whoever the channel identifies | ✅ F-30, F-35: a label only; the agent uses its own access · pass-through later |
+| **Who may watch a bot's terminal** | only the owner, managers or members, in the SwiftUI app; never outsiders | ✅ F-33 |
+
+<h2 id="membership">Membership</h2>
+
+**Membership is the record that someone belongs to a workspace.** It's the fleet registry's job (agent-collaboration 🟡). A member is a person, an agent or a bot ✅ F-4.
+
+Membership is what turns everything else on:
+
+| Membership gives | Decision |
+|---|---|
+| a mailbox, and sending and receiving where a channel allows | ✅ F-21 |
+| that workspace's tools, through its subset and the agent's own subset | ✅ F-24 |
+| a workspace it can name on a tool call | ✅ F-32 |
+| a view of its bots' terminals, for people who are members | ✅ F-33 |
+
+A bot gets membership by being registered into the workspace ✅ F-10. A coding agent started on a machine is a member of that machine's workspace ✅ F-38, F-39 (what it acts for: ❓ Q-C14). Removing it drops its undelivered messages ✅ F-26. A bot can be a member of several workspaces, and none of them is its home ✅ F-5.
+
+<h2 id="unsettled">Unsettled ownership</h2>
+
+Each row is one thing with two candidate owners, or none yet. Until it is settled, two specs could each claim it.
+
+| Thing | Candidates | Question | Who decides |
+|---|---|---|---|
+| **Identity**: principals, enrollment, credentials | fleet (agent-collaboration) vs daemon E6 and E17 | Q-C3 | framework + all three products |
+| **Authorization of Host resources** (sessions, terminals, worktrees) | fleet grants vs daemon E18 | Q-B3 | you |
+| **Notices and asks to people** | fleet interaction kinds vs daemon E11 | Q-D5; scope settled by F-31 | framework + daemon |
+| **The word "workspace"** | fleet workspace vs daemon E25 vs Router E1 | Q-B2, Q-B8 | you (naming); framework + agent-collaboration (mapping) |
+| **The word "role"** | persona (F-2) vs Router E11 appointment | Q-C9 | framework + agent-collaboration |
+| **The word "capability"** | fleet bundle vs agent-vm E3 (one tool) | Q-C2 | agent-vm |
+| **Mailbox** | a member's mailbox vs today's per-machine transport mailbox | Q-D14 | framework + agent-collaboration |
+| **Audit log** | each action owner writes its own, or one shared log | Q-F7 | framework + each product |
+| **Provisioning workspace VMs** | no owner yet; more pressing now that each new boundary needs its own host or VM (F-34) | Q-B6 | you |
+
+<h2 id="sources">Sources</h2>
+
+- Your decisions F-1 to F-40: [parent doc](2026-10-18-fleet-framework.md). Open questions: [open-questions.md](open-questions.md).
+- The handoff map (proposed) is in the parent doc, "Who builds what".
+- The daemon noun map: Daemon Advisor, concept thread post 8458. The daemon spec is `agentstudio.feat-daemon/docs/specs/2026-10-15-agentstudio-daemon/`.
+- agent-vm compatibility flags: the 🦁 agent-vm Lead, work thread post 8460. Router mappings: Router/board Advisor, concept thread post 8470. Revocation details: post 8489. Daemon review: post 8494.
+- Today's agent-vm account admission: `google-permission-policy-service.ts:146-156`. Tool backend kinds: `tool-portal-config.ts:105`.
+
+</ex-document>
+</body>
+</html>

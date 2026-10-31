@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Item two: Specification</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Overview</a>
+<a href="requirements.html">Requirements</a>
+<a href="specification.html">Specification</a>
+<a href="program-design.html">Program Design</a>
+<a href="verification-design.html">Verification Design</a>
+<a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="item-two-specification" revision="2026-10-30.1">
+<p id="set-pages"><a href="index.html">Item two</a>: <a href="requirements.html">Requirements</a> · <strong>Specification</strong> · <a href="program-design.html">Program Design</a> · <a href="verification-design.html">Verification Design</a> · <a href="plans/2026-10-30-item-two-delivery.html">Delivery plan</a></p>
+<h1 id="specification--item-two-specification">Item two: Specification</h1>
+<ex-callout id="specification--answer" tone="tldr" title="What this page is">
+<ex-markdown id="specification--answer-text"><script type="text/markdown">
+**What must be observably true** when item two is done, written so a wrong build can be told apart from a right one. It defines:
+- **the things** item two talks about (entities, E);
+- **the rules** over them (obligations, R);
+- **what each party sees** at each boundary (contracts, C);
+- **how each rule is shown to hold** (proof obligations, V).
+
+Why each rule exists is in the [Requirements](requirements.html); how it's built is in the [Program Design](program-design.html).
+
+**Read it in this order:** the problem, the entities, then the obligations by topic. The contracts are the exact fields and answers, and the failures say what you see when something goes wrong.
+</script></ex-markdown>
+</ex-callout>
+<h2 id="specification--who-uses-this">Who uses this, and where they see it</h2>
+<ex-markdown id="specification--who-uses-this-text"><script type="text/markdown">
+```mermaid
+flowchart TB
+  O["You, the owner"]
+  PP["A person you allow to sign in"]
+  RM["A fleet machine: its Router"]
+  FS["A session<br/>on a logged-in machine"]
+  SYS[("Item two, seen as one system:<br/>sign-in, Fleet central, the Routers")]
+  O -->|"sign in; approve machines; administer"| SYS
+  O -->|"who is logged in: a live, read-only view"| SYS
+  PP -->|"sign in"| SYS
+  RM -->|"logs in by device code; connects; renews"| SYS
+  RM -->|"runs and vouches for"| FS
+  FS -->|"registers; collaboration calls; starts helpers"| SYS
+```
+</script></ex-markdown>
+<h2 id="specification--problem-today">Problem today</h2>
+<ex-markdown id="specification--problem-today-text"><script type="text/markdown">
+| ID | Problem | Where it shows |
+|---|---|---|
+| P1 | Fleet central can't name an agent. It knows only a machine or "the owner", and a collaboration call's sender is whatever the call claims. | Fleet code: `AccessCaller {Machine, Owner}`. Live runs on Codex, Claude and Cursor stored a session claiming to be another as that other session. |
+| P3 | Nothing records which workspace a session belongs to. It's guessed from its working directory. | Fleet code: the context lookup from the working directory. |
+| P5 | Sessions on one open machine can read each other's work, and nothing shows it. | Same OS user on your machines. |
+| P6 | Fleet central has no organizations. Its workspaces, machines and records carry none. | Fleet code: `core_migrations/0003_fleet_records.sql`, `registry_migrations/0001_machine_enrollments.sql`. |
+| P7 | A machine proves itself with two long-lived secrets tied to your own Cloudflare Access: an Access service token, and an enrollment credential whose expiry must match it. Enrolling needs the fleet operator's token. The Router's production secret store exists only on macOS. | Fleet code: `enrollment_prepare.rs`, `machine_enrollment.rs` (the Access client must match), `access_rules.rs`, `keychain_data_key.rs` (non-macOS store unavailable). |
+| P8 | You can't see which machines are connected or what their sessions are doing. Central keeps no list of sessions, has no heartbeat, and its admin routes return JSON only. | Fleet code at `7af23abe`: `native_objects.rs` discards ping and pong; the Registry's `last_seen` changes only on a new attachment; `central_router.rs` admin routes. |
+| P9 | A session on another machine can only be started from that machine, by SSH. | Fleet code: the client refuses a creator on another Router (`conversation_client.rs:312–326`); between machines the fleet carries only messages, notifications, cancels and wakes. |
+| P10 | You can't see what happened. Neither Worker turns on Cloudflare's Workers Logs or traces. Central's Tokio host writes its few records to its own output and exports nothing. The sign-in service records nothing. Only the Router exports over OpenTelemetry. | Central's `cloudflare.config.ts` and sign-in's `wrangler.example.jsonc` have no `observability`; `collaboration-central-tokio/src/native_logging.rs`; `codex-router-cli/src/telemetry.rs` (OTLP). |
+| P11 | Nothing limits login floods. R42 asks for code attempts to be limited, but the sign-in service sets no limit: Better Auth's own limiter is on only when `NODE_ENV` is `production`, counts in each Worker isolate's memory, and takes the client address from `x-forwarded-for`, a header a client can set. | `packages/auth/src` has no `rateLimit`; Better Auth 1.7.8 `create-context.mjs:170–175`, `@better-auth/core` `env-impl.mjs:30–32`. |
+| P12 | Nothing protects your changes beyond the provider sign-in. Anyone holding your Google or GitHub account could invite people and approve machines. | The people sign-in design accepts Google, GitHub or a passkey, any one alone (its U1). |
+</script></ex-markdown>
+<h2 id="specification--outcomes">Outcomes</h2>
+<ex-markdown id="specification--outcomes-text"><script type="text/markdown">
+| ID | Outcome | Success condition |
+|---|---|---|
+| O1 | Every actor is one of three kinds, attributed correctly; a machine is never taken for an actor. | A false sender is refused; every record names a kind and an ID. |
+| O3 | You can see each person's organizations, each machine's organization and what authorized it, and each session's machine, project and isolation. | The lookups answer (R14). |
+| O5 | The same behavior on Cloudflare and on any other host, and every Router behavior on macOS and Linux. | The same obligations pass on each. |
+| O6 | Organizations share one Fleet central yet stay apart, and the organization comes first. | Every request that would cross organizations is refused (R34, R35). |
+| O7 | Every machine logs in by a device code you approve and renews itself with short-lived tokens; production switches behind Access. | R39–R43 hold at steps 1 and 2. |
+| O8 | You see, live, who is logged in and what each is working on. | The view shows each machine and session with its current state, within OD14's bound, to you only (R47–R50). |
+| O9 | A session starts a helper on another machine of its organization, through Fleet central. | R46 holds. |
+| O10 | Every item-two service's logs and traces reach an OpenTelemetry tool, with nothing secret in them. | R51 holds on each host. |
+| O11 | A flood of login attempts is slowed and changes nothing. | R42's limit and R52 hold on each host. |
+| O12 | Every change to your organization needs a second factor, and people recover a lost one themselves with two. | R53 and R54 hold. |
+</script></ex-markdown>
+<h2 id="specification--entities">Entities</h2>
+<ex-markdown id="specification--entities-text"><script type="text/markdown">
+The things item two talks about. Each has one rule for when two of them are the same, its relationships, what must always hold, and the states you can see. The [Program Design](program-design.html#program-design--where-each-entity-lives) says where each one is stored and what it looks like on the wire.
+
+| ID | Term | Identity rule | Relationships | Invariants | States you can see |
+|---|---|---|---|---|---|
+| E1 | **Organization** | Its organization ID. | One Fleet central serves 0..n. Has 0..n E2, E6 and E19. Has one owner. | Nothing is shared or sent between two organizations (R34). | active |
+| E2 | **Workspace** | Its workspace ID: the fleet's existing UUIDv7, kept as is. | Belongs to exactly one E1. Has 0..n E16 and E15. | Its ID never changes. | active, archived |
+| E16 | **Project** | Its project ID: the fleet's existing project. | Belongs to exactly one E2, through its board. Has 0..n E7 started for it. | Never moves to another workspace without its sessions ending. | active, retired |
+| E3 | **Person** | Their sign-in account. | Has 0..n E19, at most one per E1. | Never a session or a machine. Never holds a tool token (R38). | as in the people sign-in design |
+| E19 | **Organization admission** (of a person) | The pair of one E1 and one person: their allowlist entry in that organization, bound to them, with current standing. Admitting them again after it ended is a new admission. | Belongs to one E1 and one E3. | At most one per person per organization. | active, ended |
+| E6 | **Fleet machine** | Its installation ID, kept in the Router's own saved state. Replacing the Router program keeps it; a fresh installation state is a new machine. | Belongs to exactly one E1, through its E21. Has 0..n E21, at most one active. Runs 0..n E7. Has 0..n E15 and E24. | Holds no private key (R24). | logged in, revoked, expired (from its E21) |
+| E21 | **Machine enrollment** | Its enrollment ID: one authorization of one E6 into one E1. Each log-in or re-log-in of the same installation is a new enrollment. | Belongs to one E6 and one E1. Authorized by that E1's owner approving one E23. | At most one active per E6, and all of an E6's enrollments name one E1. Records what authorized it. Its machine holds one refresh credential, in an encrypted store or only in memory (R41). It expires when no machine token has been decided for it for 30 days (one setting); you approve the machine again after that. | enrolled, revoked, expired |
+| E23 | **Device-code login request** | Its device code, which the machine keeps and never shows. The short user code is what you check. | Asks to log one E6 into one E1, under a label the machine supplies. Approved or denied by that E1's owner. | Works at most once. Expires after 10 minutes. Approving it logs in only that installation, only into that organization. | pending, approved, denied, expired, used |
+| E22 | **Machine token** | Its token ID. | Identifies one E6 and its E21, and names its E1 and its issuer, the sign-in service. | Short-lived (R40). Accepted only by Fleet central. Minted only for an enrolled E21. Naming its issuer lets another kind of issuer be added later. | valid, expired, rejected |
+| E24 | **Machine connection** | One authenticated session between one E6's Router and Fleet central, from when it opens to when it closes. A reconnect is a new connection. | Belongs to one E6, and to the E21 whose login opened it. | Opened only with that machine's valid login: before the switch, Cloudflare Access plus its enrollment credential; after it, a machine token (R40). Counts only while its E21 is the machine's active one. Carries no person. | open, closed. **Last seen** is the latest moment central heard from an open connection, or its close. |
+| E25 | **Second factor** | One passkey or one authenticator-app (TOTP) registration of one E3, by its ID. A person's recovery codes are issued with their first one and act as a second factor once each. | Belongs to one E3; a person has 0..n. | A passkey counts only with user verification (fingerprint, face or PIN). Added, replaced or removed only as R54 allows. | active, removed |
+| E15 | **Machine allowance** | The pair of one E6 and one E2. | Belongs to one E6 and one E2 of the same E1. | Only the owner grants or withdraws it. | active, withdrawn |
+| E7 | **Fleet harness session** | Its session reference: its machine's installation, its harness endpoint (Codex, Claude or Cursor) and its conversation ID. A new conversation is a new session. | Runs on exactly one E6. Started for exactly one E16 in its machine's E1. Holds exactly one E8, in that project's workspace. Has exactly one E13. | Holds no secret and never logs in; accepted only as vouched for by its machine. Its machine has an active E15 for its workspace. Once removed or ended, nothing is decided for it again. Started by whoever operates its machine, or by another session of its workspace (R8, R46); no person is recorded as its starter. Its start time is when its Router registered it. | active, removed, ended. While active, its machine reports it as **working** (a turn in progress, including one waiting on an approval or a question) or **idle** (no turn in progress, loaded or not). It is **unknown** while its machine has no open E24. |
+| E8 | **Membership** (of a session) | The pair of one workspace and one session. | Belongs to one E2 and one E7, in one E1. | A session has exactly one, in its project's workspace (R7). It requires its machine's active enrollment in that organization. Memberships of people and bots come in step 3. | active, removed |
+| E13 | **Isolation record** | Its session. | Belongs to exactly one E7. Names its E6, its machine environment (physical or cloud VM), its isolation kind (`Host`, `ProcessSandbox`, `Container` or `Vm`), an instance ID minted at launch, and its launch context (working directory, repository, commit, model, who launched it). | Asserted by what launched the session; nothing proves it. Recorded at launch and never changed. | recorded |
+| E14 | **Shared bucket** | One fleet machine, derived. | For one E6: the E2s that have had sessions with isolation kind `Host` on it. | Derived from E7 and E13. Shown, never enforced. | as derived |
+
+**Your organization**
+
+```mermaid
+flowchart TB
+  E1["E1 Organization<br/>its ID · active"]
+  E2["E2 Workspace<br/>fleet's existing ID · active, archived"]
+  E16["E16 Project<br/>fleet's existing ID · active, retired"]
+  E19["E19 Admission of a person<br/>organization + person · active, ended"]
+  E3["E3 Person<br/>sign-in account"]
+  E1 -- "1 contains 0..n" --> E2
+  E2 -- "1 contains 0..n" --> E16
+  E1 -- "1 admits 0..n" --> E19
+  E3 -- "0..1 per organization" --> E19
+```
+
+**Machines, sessions and presence**
+
+```mermaid
+flowchart TB
+  E1["E1 Organization"]
+  E23["E23 Device-code request<br/>pending, approved, denied, expired, used"]
+  E21["E21 Machine enrollment<br/>enrolled, revoked, expired"]
+  E22["E22 Machine token<br/>valid, expired, rejected"]
+  E6["E6 Fleet machine<br/>installation ID"]
+  E24["E24 Machine connection<br/>open, closed"]
+  E15["E15 Machine allowance<br/>active, withdrawn"]
+  E7["E7 Session<br/>active, removed, ended;<br/>working, idle, unknown"]
+  E8["E8 Membership<br/>in its project's workspace"]
+  E13["E13 Isolation record"]
+  E14["E14 Shared bucket<br/>derived"]
+  E23 -- "approved: creates 1" --> E21
+  E21 -- "into 1" --> E1
+  E21 -- "logs in 1; at most 1 active" --> E6
+  E22 -- "names 1" --> E21
+  E24 -- "of 1, opened by its login" --> E6
+  E6 -- "allowed to serve 0..n" --> E15
+  E6 -- "runs 0..n" --> E7
+  E7 -- "exactly 1" --> E8
+  E7 -- "exactly 1" --> E13
+  E6 -. "derived" .-> E14
+```
+</script></ex-markdown>
+<h2 id="specification--obligations">Obligations</h2>
+<ex-markdown id="specification--obligations-intro-text"><script type="text/markdown">
+Each obligation is a rule a wrong build would break. "MUST" is required; "MAY" is allowed. The last column links each to its entities and its need in the [Requirements](requirements.html#requirements--needs).
+</script></ex-markdown>
+<h3 id="specification--identity-and-proof">Identity and proof</h3>
+<ex-markdown id="specification--identity-and-proof-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R1 | Every actor the system records as acting MUST be exactly one of: person (E3), bot or fleet harness session (E7). A fleet machine (E6) and the services' own credentials are infrastructure, not actors: a machine token names a machine and a service token names no actor, each under its own audience, and neither is ever accepted as an actor. | E3, E6, E7 | U1, P1, O1 |
+| R2 | A session MUST be accepted only as vouched for by the logged-in machine it runs on. The session presents no secret. A machine whose enrollment is revoked or expired vouches for nothing. | E6, E7, E21 | U3, U17, P1, O1 |
+| R3 | A collaboration call from a session MUST be recorded as coming from the session whose binding it arrived on. If it names a different session as its sender, it MUST be refused and nothing recorded. The binding is a capability held in the machine's own harness configuration, not a secret the session proves: on one machine user, a process that obtains another session's binding can act as that session. That is the shared-bucket limit (E14), accepted for now. | E7 | U19, U18, P1, O1 |
+| R5 | Person sign-in and organizations MUST behave as the people sign-in design states (its R1–R4, R9, R12, R14, R19 and R20), with each person's admission to an organization decided at Fleet central. One change since: a passkey sign-in must verify the person (fingerprint, face or PIN), and then counts as both factors (R53). | E1, E3, E19 | U20, U26 |
+</script></ex-markdown>
+<h3 id="specification--organizations">Organizations</h3>
+<ex-markdown id="specification--organizations-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R34 | Every workspace and fleet machine MUST belong to exactly one organization. A session belongs to its machine's organization, and its project MUST be in that organization. A person MAY be admitted to several. No machine allowance, session registration, remote start, message or token MAY span two organizations; a request that would MUST be refused with nothing changed and nothing about the other organization revealed. **Until step 3**, a machine still reads every workspace of its own organization (see [Requirements: what stays as today](requirements.html#requirements--after-the-switch)); it never reads another organization's. | E1, E2, E6, E7, E15 | U27, P6, O6 |
+| R35 | A session MUST NOT become a member of workspace W unless its machine has an active enrollment in W's organization at that moment. A person's admission is their allowlist entry in that organization, bound to them, with current standing (people sign-in R19). Otherwise the request MUST be refused with nothing changed. | E8, E19, E21 | U26, U27, O6 |
+| R38 | A person MUST never receive a tool token (a workspace or collaboration token), whatever they ask for. People do receive their own sign-in, admin and operator tokens. | E3 | U30 |
+</script></ex-markdown>
+<h3 id="specification--sessions">Sessions</h3>
+<ex-markdown id="specification--sessions-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R7 | A session MUST be a member of exactly one workspace: the workspace of the project it was started for. It is recorded at start and never changes. A conversation registered for one project MUST NOT be registered again for another; repeating its original registration has no further effect. Its repository or working directory MUST NOT decide its workspace. | E7, E8, E16 | U6, P3 |
+| R8 | Starting a session for a project in W MUST be refused if its machine has no active allowance for W. The start MUST name its project; a project taken from the working directory MUST be refused. Starting needs no sign-in: whoever can operate a logged-in machine may start sessions for the workspaces it serves, and the start is recorded as coming from that machine, not a person. A session MAY start a helper only for a project in its own workspace: on its own machine, or on another machine of its organization as R46 says. A conversation MUST NOT be prompted until its registration succeeds; one whose registration is refused, or whose outcome is unknown, admits no effect, and nothing replays or deletes it automatically. | E6, E7, E15 | U6, U32 |
+| R46 | A session MAY ask to start a helper on another machine of its organization, for a project in its own workspace W. A member session of W MAY list the machines allowed to serve W, with each one's label. The start MUST be admitted only when, at the time of the request: the requesting session is active and a member of W (identified as R3 says); the project is in W; and the target machine is connected (has an open E24), has an active enrollment in the same organization, and has an active allowance for W. Otherwise it MUST be refused with nothing created, revealing nothing about a machine of another organization.<br>The start names the working directory and execution settings to use on the target. The target MUST refuse, creating nothing, when that directory doesn't exist there, and MUST also apply R8.<br>Each start carries its own identifier: repeating it with the same content MUST return the first answer, repeating it with different content MUST be refused, and one start MUST create at most one session. Each admitted start has a deadline fixed at admission, after which the target MUST begin nothing. The new session MUST record the requesting session as its starter.<br>The answer MUST be exactly one of: **started** (with the new session), **refused** (nothing was created), or **unknown** (the request may have reached central or the target, and no outcome arrived). An unknown start that later completes MUST be visible to the requester under the same identifier. A start that can't reach its target MUST be refused, not queued, and nothing replays it. | E6, E7, E15, E16 | U39, U6 |
+</script></ex-markdown>
+<h3 id="specification--administration">Administration</h3>
+<ex-markdown id="specification--administration-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R13 | Only the admin MAY: allow people to sign in to an organization or end their admission; create workspaces; allow or withdraw a machine's allowance; approve or deny a device-code login; revoke a machine's enrollment; remove a session; set the token lifetime; and read the lookups (R14) and the who-is-logged-in view (R49).<br>Creating an organization and naming its first owner act across organizations, so only the fleet's operator MAY do them.<br>The admin is the active owner of the organization the action belongs to, signed in to that organization and current there, confirmed at the time of the action as the people sign-in design's R9, R19 and R20 require (its freshness bound SD8). Each change also needs R53's second factor. One exception: creating a workspace is confirmed when you ask, and the admitted, empty workspace is still created if ownership changes before the fleet applies it.<br>Each admin change MUST be recorded, as the people sign-in design's R12 requires, in the same step as the change; a change whose record can't be written MUST NOT happen.<br>Anyone else MUST be refused with nothing changed and nothing revealed: another member, another organization's owner, an owner whose own entry was removed, a session no longer current, a bot or a session; and, for creating an organization, any owner who isn't the fleet's operator. | E1, E2, E6, E7, E15, E19, E21, E23 | U21, U20, U31 |
+| R14 | For a person, the system MUST answer their standing in the organization asked about (admitted with a role, awaiting the owner, or not admitted), never another organization (R34). For a session: its machine, project, workspace and isolation record. For a workspace: the machines allowed to serve it. For a machine: its organization, its enrollment's state and what authorized it, its allowed workspaces, and its shared bucket. | E1, E3, E6, E7, E13, E14, E15, E21 | U9, O3 |
+</script></ex-markdown>
+<h3 id="specification--machine-login">Machine login</h3>
+<ex-markdown id="specification--machine-login-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R39 | A fleet machine MUST be logged in (enrolled) into exactly one organization, and only by that organization's active owner approving a device-code request from that machine (R42). Every enrollment MUST record what authorized it. Anyone else MUST be refused with nothing changed: a person who isn't that organization's owner, a bot or a session. | E6, E21, E23 | U31, U33, O7 |
+| R40 | After the switch, Fleet central MUST accept a machine's connection only with a valid machine token: issued by the sign-in service, naming that machine's installation, its organization and its active enrollment, and unexpired. Central MUST take the machine's identity, organization, enrollment state and expiry only from that token and the enrollment it names.<br>A machine token's lifetime is configurable, at most 60 minutes (OD2: 10 minutes).<br>A machine with an active enrollment MUST be able to get a fresh machine token before its current one expires without anyone acting, for as long as its Router runs. **One machine's replayed or revoked refresh token MUST NOT stop another machine's renewal.**<br>Once its enrollment is revoked or expired, the sign-in service MUST mint it no machine token, and central MUST refuse its next connection and renewal.<br>A connection MUST count only while its enrollment is the machine's active one: once a newer log-in supersedes it, every grant and effect it asks for MUST be refused.<br>Logging an active installation in again MUST keep its identity: its sessions, its allowances and its board relationships stay attached. Logging it in after its enrollment was revoked restores nothing: its sessions stay removed, and you grant its allowances again.<br>An enrollment granted no machine token for 30 days (one setting) MUST expire: refused, shown as expired, and approved again by you. Renewing keeps it alive, and a restart of central or the sign-in service changes neither clock. | E6, E21, E22 | U33, U34, O7 |
+| R41 | A machine logged in by device code MUST hold at most one long-lived credential of the new login: its refresh credential. The Router MUST keep it in an encrypted secret store when the machine has one available (the macOS Keychain; on Linux, a systemd encrypted credential provided to the Router's service), and only in memory when it has none, so that after the Router restarts you approve the machine again.<br>A store that exists but can't be used (access denied, an invalid key, damaged or half-migrated contents) MUST be reported as an error, never treated as absent, and its contents MUST NOT be overwritten.<br>The choice MUST hold for the Router's lifetime and be reported at login. Plaintext on disk is allowed only in debug builds. No private key MAY be created on a machine for this (R24). | E6, E21 | U17, U33, U35, P7 |
+| R42 | When a machine asks to log in by device code, it MUST show a short user code and a web address. The approval page MUST show the machine's label, the organization it will join and the code, and MUST let only that organization's active owner approve or deny it.<br>A code MUST work at most once and MUST expire no later than its configured lifetime (10 minutes). Attempts to enter codes MUST be limited in rate. A denied, expired or already-used code MUST log nothing in.<br>Approving a code MUST log in only the installation that made that request, only into that organization. It MUST NOT log in any other installation, and MUST NOT give the approving person's own sign-in to the machine. | E6, E21, E23 | U33, U31 |
+| R43 | The switch MUST happen in steps, and at no time MAY Fleet central accept both the old and the new machine login.<br>**Step 1:** while the new login is built, today's login (Cloudflare Access plus the enrollment credential) MUST keep working unchanged.<br>**Step 2, with Cloudflare Access still in front:** central MUST accept a machine only through R40. The old enrollment credential MUST be refused even with a valid Access token, and so MUST a missing, invalid, expired or other-organization machine token. Your admin actions MUST be authorized through the sign-in service (R13), not through Access identity. Every machine logs in again (R40 keeps its identity).<br>Step 3, removing Access, comes after steps 3–5's rules hold. | E6, E21, E22 | U34, U31, O7 |
+| R19 | When you revoke a machine's enrollment, from the moment central records it: central MUST admit no new connection or renewal on any token for it; the sign-in service MUST mint it no machine token; its allowances MUST be withdrawn; its sessions MUST be removed; and its open connection MUST be closed. Logging it in again afterwards restores none of them (R40). Notices to the Switchboard come with step 3. | E6, E7, E15, E21 | U31, U33 |
+</script></ex-markdown>
+<h3 id="specification--machines-and-exposure">Machines and exposure</h3>
+<ex-markdown id="specification--machines-and-exposure-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R23 | Each session MUST record its isolation record at start, as asserted by what launched it. For each machine, the system MUST show which workspaces have had sessions with isolation kind `Host` on it (its shared bucket). Nothing MUST be refused on the basis of the isolation record. | E7, E13, E14 | U18, P5, O3 |
+| R24 | No fleet machine MAY need a private key of its own to prove itself, and none MAY be created on a machine for that. A machine proves itself only through the machine login of R39–R42. | E6 | U17, U33 |
+| R44 | Every obligation here that a Router takes part in MUST hold with the Router on macOS and on Linux. A Router inside a VM is a Linux machine; nothing VM-specific is required or proven. | E6 | U35, O5 |
+</script></ex-markdown>
+<h3 id="specification--who-is-logged-in">Who is logged in</h3>
+<ex-markdown id="specification--who-is-logged-in-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R47 | You MUST be able to open a who-is-logged-in view of your organization.<br>For every fleet machine with an enrollment in it, the view MUST show:<br>- its label and installation;<br>- its enrollment state: enrolled, revoked or expired;<br>- who approved its log-in, and when;<br>- the workspaces it may serve;<br>- whether it has an open connection now (E24), and when it was last seen.<br>For each active session on such a machine, it MUST show:<br>- its harness: Codex, Claude or Cursor;<br>- its project and workspace;<br>- its isolation kind;<br>- when it started;<br>- whether it is working, idle or unknown (E7).<br>A revoked or expired machine MUST stay listed, shown as revoked or expired and not connected. Opening or refreshing the view MUST change nothing. | E6, E7, E13, E15, E16, E21, E24 | U40, O8 |
+| R48 | Each of these MUST show in the view within the freshness bound (OD14: 30 seconds) of when it happens, while Fleet central can be reached:<br>- a machine connection opening or closing;<br>- a session starting, stopping, ending or being removed.<br>A machine whose connection ends without closing cleanly (a crash, or lost network) MUST show as not connected within the same bound, with its last-seen time. While a session's machine has no open connection, the session MUST show as unknown, never as working or idle. | E7, E24 | U40, O8 |
+| R49 | Only the organization's admin (R13) MAY open the view. It MUST show only that organization's machines, sessions, workspaces and projects. Anyone else MUST be refused with nothing revealed: another organization's owner, a member, a bot, a session or a machine. While Fleet central's truth can't be consulted, the view MUST say it is unavailable, and MUST NOT show an earlier picture as current. It MUST NOT show who operates a machine. | E1, E6, E7, E24 | U40, U32, U21 |
+| R50 | **Stage C, after R47–R49.** The view MUST also show the organization's people: for each admitted person, their name, whether they are signed in now, and when they last signed in. **Bots** join the view when bots exist (step 5): each bot's membership workspace, whether its credentials are active, and when it last obtained a token. R48's freshness and R49's visibility apply to these rows too. | E3, E19 | U40 |
+</script></ex-markdown>
+<h3 id="specification--hosts-outages-and-service-requests">Hosts, outages and service requests</h3>
+<ex-markdown id="specification--hosts-outages-and-service-requests-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R25 | While Fleet central's truth can't be consulted, no new decision MUST be made: no device-code approval, no new machine token, no new machine connection or renewal, no registration, no remote start. A machine token already decided MAY still be minted within 60 seconds of its decision, and nothing after. Nothing MAY be extended on stale information. | E21, E22, E24 | U14 |
+| R26 | Every interaction between Fleet central, the sign-in service and the Routers MUST use one versioned contract whose meaning doesn't depend on the host. Each service MUST behave the same on Cloudflare and on a non-Cloudflare host. | all | U16, O5 |
+| R27 | Every request between Fleet central and the sign-in service (C7) MUST be authenticated as coming from that edge's one expected caller, for that one operation, to the receiving service. A request from another caller, for another operation or another receiving service, with an expired credential, or naming an organization its caller may not act for, MUST be refused and change nothing. Repeating an accepted request MUST have no further effect beyond what C7 states. | all | U15, U16 |
+</script></ex-markdown>
+<h3 id="specification--second-factors-step-up-and-recovery">Second factors: step-up and recovery</h3>
+<ex-markdown id="specification--second-factors-step-up-and-recovery-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R53 | **Step-up.** Each change R13 reserves for the admin MUST be refused with nothing changed unless the admin's sign-in includes a second factor (E25) confirmed no more than 15 minutes (one setting) before the change. Those changes are: allowing or ending a person's admission, creating a workspace, changing a machine's allowances, approving or denying a device-code login, revoking an enrollment, removing a session and setting the token lifetime. The refusal MUST say that a second factor is needed.<br>One exception: approving a device-code login into an organization that has never had an enrollment MAY rely on the provider sign-in alone.<br>A second factor confirms on top of the same person's provider sign-in. A passkey sign-in with user verification counts as both factors, so its new session is confirmed from that moment (OD21); a passkey assertion without user verification MUST NOT sign in or confirm anything.<br>Reading (the lookups and the who-is-logged-in view) needs no second factor. A passkey confirms only with user verification. | E1, E3, E21, E25 | U43, U21 |
+| R54 | **Second factors and self-serve recovery.** A person MAY add their first-ever second factor from a provider sign-in. That first one MUST be an authenticator app, and its setup MUST issue their recovery codes, shown once, each usable once. A passkey MAY be added after it. No sign-in or confirmation MAY be skipped because a device was "trusted" earlier.<br>Once a person has ever had a second factor, adding, replacing or removing one, or issuing new recovery codes, MUST need two factors: their sign-in plus a second factor or a recovery code confirmed in the same 15 minutes. This holds even if they have none at that moment. A provider sign-in alone MUST NOT add, replace or remove a second factor once one has existed. A person MUST NOT be left with none, even if a step fails part-way: their last factor can't be removed, and the authenticator app is replaced only while another factor (a passkey) remains, so a person with only the app adds a passkey first. The app's secret MUST never be shown again after its setup.<br>No one MAY reset another person's second factors in item two; removing a member ends their access (R13). Each use of a recovery code, and each change to a person's second factors, MUST be recorded (R51). Checking a code MUST be limited in rate (R52). | E3, E25 | U44 |
+</script></ex-markdown>
+<h3 id="specification--telemetry-and-flood-limits">Telemetry and flood limits</h3>
+<ex-markdown id="specification--telemetry-and-flood-limits-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R51 | **Telemetry.** Fleet central, the sign-in service and the Router MUST each leave one structured record for every decision and every refusal on the login, connection, registration, presence, activity, remote-start and view paths, and for each outbox step. A record MUST name its kind, its outcome with a bounded reason class, and the identifiers involved (organization, enrollment, installation, connection, session, client), and nothing else from the request.<br>No record, trace attribute or span name MAY contain a token, refresh credential, device code, user code, client secret, cookie, authorization header, private key or email address.<br>On Cloudflare, both Workers MUST turn on Workers Logs, Fleet central MUST also turn on Workers traces, and each MUST export what it keeps over OTLP to the destinations the deployment names (OD17). The sign-in Worker's automatic traces and invocation logs MUST stay off, because they record each request's full URL, and OAuth callbacks carry the provider's one-time code in theirs. Fleet central MAY keep its automatic records because nothing it receives carries a secret in its URL (machine, service and Access credentials travel in headers), but none of them MAY contain the value of a credential-bearing header (`Authorization`, cookies, Cloudflare Access credentials). A secret a caller deliberately places in a URL to central is outside this guarantee. On Node and Tokio, the same records MUST be exported over OTLP to the endpoint the deployment configures, and with none configured they are written to the host's own output only. Each service MUST leave the same records on each of its hosts.<br>A telemetry failure (a destination down, missing or slow) MUST NOT change or delay any answer. | all | U41, U16 |
+| R52 | **Flood limits.** The sign-in service MUST limit, per client address, people's sign-ins, device-code requests, code entries, approvals and denials, device-token polls and token refreshes, as well as every other sign-in route at a looser limit. A limited request MUST be refused (HTTP 429, or the device grant's `slow_down` for polling) and MUST change nothing: no device code, session, token or row is created or consumed.<br>A person's sign-in MUST also pass a Cloudflare Turnstile check, verified by the sign-in service, before anything is created for it: when starting a Google or GitHub sign-in, and when asking for a passkey sign-in's challenge. A missing, failed or unverifiable check MUST be refused with nothing changed. Machines' endpoints never ask for one.<br>The client address MUST come from the host's trusted source (`cf-connecting-ip` on Cloudflare; the socket's peer, or a configured trusted proxy's header, on Node), never a header the client controls. The limit MUST apply to every route the service serves, its own pages included, on both hosts. On Cloudflare the count MUST be shared by every instance of the Worker in one Cloudflare location, approximately, as Cloudflare's count is; on Node it is the process's own count. An IPv6 address MUST be counted by its /64. A limit MUST NOT refuse another address, and its counts MUST expire on their own with no stored rows. | E23 | U42, U31, U33 |
+</script></ex-markdown>
+<h3 id="specification--the-sign-in-service-storage-hosts-and-tests">The sign-in service: storage, hosts and tests</h3>
+<ex-markdown id="specification--the-sign-in-service-storage-hosts-and-tests-text"><script type="text/markdown">
+| ID | Obligation | Over | Traces to |
+|---|---|---|---|
+| R29 | All the sign-in service's persistent state MUST be in SQLite through Drizzle: D1 through Drizzle on Cloudflare, a `better-sqlite3` file through Drizzle on Node. Better Auth MUST reach it through its Drizzle adapter. Its schema MUST change only through migrations `drizzle-kit` generates and the repository checks in, and each database MUST apply them through exactly one mechanism before it serves a request.<br>No Kysely or `node:sqlite` MAY appear in its code or tests, and no code MAY execute SQL text. Queries use the Drizzle query builder, which MAY include its `sql` template for an expression inside a builder call with bound parameters, but never `sql.raw(`, `db.run\|all\|get\|values(sql…)`, or a driver's own `.prepare(` or `.exec(`.<br>**Your gate (OD4):** you approve the schema and its migrations before code uses them. | E3, E23 | U22 |
+| R30 | Every sign-in rule (the token-kind dispatch, the final checks before a token is released, the person admission request to central, the device-code approval, the service-request receivers, the audit, the who-is-logged-in page) MUST live in one runtime-free core. The core MUST reach storage, time, identifiers, cryptography and outbound requests only through capabilities its host supplies, and each capability is required. The Cloudflare host and the Node host MUST each supply them and add no sign-in rule. As with Fleet central's core crate and its Tokio and Cloudflare hosts, the core MUST be its own package that depends on neither runtime: no Cloudflare or Node types and no SQLite driver. Each host MUST be its own package that depends on the core, never the reverse. | E3, E23 | U23, U16 |
+| R31 | Each decision that writes more than one row MUST hold without an interactive transaction, because D1 has none: it MUST be either one conditional statement, or a fixed batch whose later statements stay correct when an earlier conditional statement changes no row. A decision MUST NOT read a row in code and then write on the strength of that read. In particular:<br>- cleaning up a refused first sign-in MUST NEVER delete a person whom another sign-in still has pending, or whom central has admitted to any organization;<br>- a sign-in attempt MUST release only its own pending claim;<br>- an unknown answer from central MUST NOT be treated as a refusal;<br>- a repeated or concurrent claim for the same person and organization MUST succeed without error;<br>- a device code MUST be consumed at most once, however many concurrent polls redeem it. | E3, E23 | U22, U16, U33 |
+| R32 | No UUID other than version 7 MAY be minted or stored by the sign-in service. Every identifier it mints as a UUID, and every model identifier Better Auth gets from its configured generator, MUST be a UUIDv7.<br>Two kinds of value aren't UUIDs and keep their own form. Secret material (client secrets, session tokens, PKCE verifiers, signing keys, device codes and user codes) MUST stay random secret bytes or codes. A key Better Auth derives from presented data to make something single-use (the client-assertion record keyed by a digest of the assertion's `jti`) MUST stay derived, because a fresh identifier would remove the replay protection. | E3, E23 | U24 |
+| R33 | No sign-in test, test helper or test harness MAY read the real clock or wait on real time. Tests wait only on events (a process's exit, a readiness message, a returned promise), and every timer runs on a controlled clock or mocked timers. Time-dependent behavior, including the expiries Better Auth computes itself, MUST be exercised with a controlled clock, and no production build MAY be changed to make that possible. The tests MUST include Hegel property tests of at least: the token-kind dispatch over every client kind, grant and resource; the claim-and-cleanup ordering of R31; the device code's single use under concurrent redemption; and the token claims' parse round trip. | E22, E23 | U25 |
+</script></ex-markdown>
+<h2 id="specification--observable-contracts">Observable contracts</h2>
+<ex-markdown id="specification--observable-contracts-intro-text"><script type="text/markdown">
+What each party sees at each boundary: the exact fields, and every answer it can get.
+</script></ex-markdown>
+<h3 id="specification--c4-lookups-admin">C4 Lookups (admin)</h3>
+<ex-markdown id="specification--c4-lookups-admin-text"><script type="text/markdown">
+As in R14, visible only to the admin (R13). A machine's lookup names what authorized its enrollment: who approved its device code, and when. A person's lookup answers only their standing in the organization asked about; a person in no organization, or only in another one, reads the same as one who doesn't exist.
+</script></ex-markdown>
+<h3 id="specification--c7-service-requests">C7 Service requests</h3>
+<ex-markdown id="specification--c7-service-requests-text"><script type="text/markdown">
+| Caller → receiver | Operation | What a repeat does |
+|---|---|---|
+| Sign-in service → Fleet central | Admit a Google or GitHub sign-in to an organization: may bind the allowed, unbound entry for the provider-verified email (and the owner binding), with its record | A repeat adds no binding. |
+| Sign-in service → Fleet central | Read a person's standing in an organization, for a passkey sign-in, a person token or a session confirmation | Reads again. Writes nothing. |
+| Fleet central → sign-in service | Confirm that a person's session is current, for an admin action (people sign-in R9) | Confirms again. Nothing changes. |
+| Sign-in service → Fleet central | Decide a device-code approval: the approver is that organization's active owner, and the request names one installation and that organization; on yes, create that installation's enrollment, recording your approval | A repeat for the same request changes nothing more; a used code is refused. |
+| Sign-in service → Fleet central | Decide whether to issue a fresh machine token for a machine's enrollment, under that machine's own client | Decides again; nothing else changes. Refused for a revoked or expired enrollment, or another machine's client. |
+| Fleet central → sign-in service | Disable a machine's client when its enrollment is revoked or superseded | Disabled, or already disabled. A client that isn't that enrollment's is refused, and nothing changes. |
+
+Each request is authenticated as R27 states. A credential is accepted only by the receiving service it names and only for the operation it names. Whoever holds an unexpired credential can make that one kind of request within its scope, so each receiver also checks that the body is well formed and within that scope.
+</script></ex-markdown>
+<h3 id="specification--c8-machine-login-by-device-code">C8 Machine login by device code</h3>
+<ex-markdown id="specification--c8-machine-login-by-device-code-text"><script type="text/markdown">
+What you and the machine see:
+1. The Router's login asks for the organization, shows a **short user code** and a **web address**, and waits.
+2. On any device you open the address, sign in, and see the machine's label, the organization it will join and the code. You check that the code matches the one the Router shows, choose the workspaces it may serve, and approve or deny.
+3. On approval the Router reports that it's logged in to that organization, connects with machine tokens, and renews them by itself. On denial, expiry or a code already used, it reports that and logs nothing in.
+
+| Outcome | When |
+|---|---|
+| logged in | The organization's active owner approved this request before it expired, and it hadn't been used |
+| refused: not the owner | Anyone other than that organization's active owner tries to view, approve or deny it; the code stays for the owner |
+| denied | The owner denied it |
+| expired | Its 10-minute lifetime passed before approval |
+| already used | The code was approved or redeemed before |
+| unavailable | Fleet central's truth couldn't be consulted; nothing is logged in |
+</script></ex-markdown>
+<h3 id="specification--c9-machine-token">C9 Machine token</h3>
+<ex-markdown id="specification--c9-machine-token-text"><script type="text/markdown">
+| Field | Meaning |
+|---|---|
+| issuer | The sign-in service |
+| audience | Fleet central's machine address |
+| machine | The installation ID (E6) |
+| enrollment, organization | E21 and E1 |
+| client | The enrollment's own machine client |
+| issued at, expires at | Within R40's bounds |
+
+**Accepted by Fleet central:** the signature verifies against the sign-in service's published keys; the enrollment is active and names this installation and organization; the token is under the enrollment's own client; it is unexpired.
+
+**Refused:** any other token, and, after the switch, any connection without a machine token, including one presenting only the old enrollment credential.
+</script></ex-markdown>
+<h3 id="specification--c11-starting-a-session-on-another-machine">C11 Starting a session on another machine</h3>
+<ex-markdown id="specification--c11-starting-a-session-on-another-machine-text"><script type="text/markdown">
+| Field | Meaning |
+|---|---|
+| start identifier | Chosen by the requesting machine. The same identifier with the same content returns the first answer; with different content it is refused. |
+| requesting session | E7, as its binding names it (R3) |
+| target machine | The installation ID of a machine allowed to serve W |
+| project | E16 in the requesting session's workspace W |
+| on the target | The harness to start (Codex, Claude or Cursor), the working directory on the target, and the execution settings a local start takes |
+| deadline | Fixed by Fleet central at admission, from the start's timeout within central's maximum; the target begins nothing after it |
+
+| Result | When |
+|---|---|
+| started | The checks of R46 and the target's R8 passed; carries the new session's reference, and whether it completed after the start was reported unknown |
+| refused: not a member | The requesting session isn't active, or isn't a member of W |
+| refused: project not in W | The project is unknown or in another workspace |
+| refused: machine not allowed | The target is unknown, in another organization, not enrolled, or has no allowance for W. One answer for all four, so nothing about another organization is revealed. |
+| refused: machine not connected | The target has no open connection |
+| refused: identifier reused | The identifier was already used with different content |
+| refused by the target | The working directory is missing there, the target's own start check refused it (R8), the deadline passed, the provider's create failed, or the target's Router hasn't declared in its heartbeat that it can take a remote start (nothing is sent to it) |
+| refused: unavailable | The request never reached Fleet central, or its truth couldn't be consulted (R25); nothing was created |
+| unknown | The request may have reached Fleet central or the target, and no outcome arrived by the deadline plus one minute. The requester reads the outcome later under the same identifier; nothing is retried. |
+
+Asking later, under the same identifier, returns whichever of these results Fleet central recorded. A session the target registered counts as started from that moment, even if the target's own report is lost.
+</script></ex-markdown>
+<h3 id="specification--c12-who-is-logged-in">C12 Who is logged in</h3>
+<ex-markdown id="specification--c12-who-is-logged-in-text"><script type="text/markdown">
+Your live, read-only view of your organization (R47–R50). Only you open it (R49).
+
+| Row | Field | Meaning |
+|---|---|---|
+| Machine | label, installation | The label the machine gave when it logged in, and its installation ID |
+| | enrollment state | enrolled, revoked or expired (E21) |
+| | approved by, approved at | Who approved its device code, and when (R39) |
+| | may serve | The workspaces it has an active allowance for (E15) |
+| | connection | connected now, or not connected (E24) |
+| | last seen | The latest moment central heard from it |
+| Session, under its machine | harness | Codex, Claude or Cursor |
+| | project, workspace | What it was started for (R7) |
+| | isolation kind | From its isolation record (E13) |
+| | started at | When its Router registered it (E7) |
+| | state | working (a turn in progress, including one waiting on an approval or a question), idle, or unknown when its machine has no open connection. Removed and ended sessions aren't listed. |
+| Person (stage C) | name, signed in now, last signed in | From the sign-in service (R50) |
+| The view | as of | When the picture was taken |
+| | unavailable | Shown instead of rows while Fleet central's truth can't be consulted (R49) |
+| | refused | Anyone but the admin gets a refusal that reveals nothing (R49) |
+</script></ex-markdown>
+<h3 id="specification--c13-second-factor-confirmation">C13 Second-factor confirmation</h3>
+<ex-markdown id="specification--c13-second-factor-confirmation-text"><script type="text/markdown">
+| Part | What it says |
+|---|---|
+| a person token | `second_factor_at`: when the session last confirmed a second factor (absent if never), and `amr`: how (`otp` for an app or recovery code; `hwk` or `swk` with `user` for a passkey; `mfa` when a second factor is present) |
+| Fleet central's refusal | `secondFactorRequired { withinSeconds }`, in every owner command's refusal and in the device-login decision: the change needs a second factor confirmed within that many seconds; nothing changed. Denying a device code is checked by the same rule at the sign-in service, which doesn't ask central for a denial. |
+| what you see | no second factor yet: "This needs a second factor. Add a passkey or an authenticator app now." Has one: "Confirm it's you with your passkey or app code." |
+| recovery | your Google or GitHub sign-in, then "Use a recovery code or your app code", then add the new passkey or app |
+</script></ex-markdown>
+
+<h2 id="specification--failure-and-partial-outcomes">Failure and partial outcomes</h2>
+<ex-markdown id="specification--failure-and-partial-outcomes-text"><script type="text/markdown">
+What you see when something goes wrong.
+
+| Situation | What you see |
+|---|---|
+| Fleet central's truth is unavailable | No approval, machine token, connection, renewal, registration or remote start is decided. A machine token already decided may still mint within its 60 seconds. Existing machine tokens keep working until they expire; then connections are refused. The view says unavailable. |
+| A machine without an encrypted store restarts | Its refresh credential is gone. It shows a new device code and stays offline until you approve it. It's the same machine, with its sessions and allowances (R40, R41). |
+| A machine's encrypted store exists but can't be used | Access denied, or the key or contents are invalid or half-migrated. The Router reports an error and doesn't log in; it neither falls back to memory nor overwrites the store (R41). |
+| One machine's old refresh token is replayed, or presented to be revoked | That machine's login ends and it logs in again. Every other machine keeps renewing (R40). |
+| A device code is denied, expires or is reused | Nothing is logged in; the Router says why. |
+| Someone other than you tries to view, approve or deny a device code | Refused with nothing changed; the code stays for you. |
+| A machine logs in again while its old connection is still open | The old connection's enrollment is superseded: it's refused for every grant and effect, and closed. The machine's sessions and allowances carry over. |
+| You revoke a machine | No new connection, renewal or machine token for it. Its allowances are withdrawn, its sessions removed and its connection closed. Logging it in again restores none of them. |
+| A machine's refresh credential leaks | Whoever holds it is that machine until you revoke its enrollment. |
+| The step 2 switch breaks login | Machines are offline until a fix is deployed. The old login isn't brought back, because a machine revoked after the switch would regain access through it. Cloudflare Access still guards central, so nothing is exposed. |
+| A Router restarts while a session is being started or registered | The conversation is registered once. Until registration completes, its binding admits nothing. A conversation created before a refused or lost registration may remain, idle: it gets no prompt and acts as nothing. |
+| A remote start's answer is lost, or its target disconnects or doesn't answer | Once the request may have reached central, the requester gets unknown, never refused, and nothing replays the start. It reads the outcome later. If the target did create the session, it's registered as R7 says, the start reads as started, and no second session is created. |
+| A request would cross organizations | Refused with nothing changed and nothing about the other organization revealed. |
+| A machine is compromised, or a process on it reads another session's binding | Every session on it can be impersonated, and its isolation records can't be trusted, until you revoke the machine. |
+| A session reads another workspace's files on a shared machine | Not prevented. The shared bucket shows it's possible; only `Vm` would prevent it. |
+| A machine crashes or loses its network without closing its connection | Within the bound, the view shows it not connected, with its last-seen time, and its sessions as unknown (R48). |
+| You open the view while central's truth can't be consulted | It says unavailable and shows no earlier picture as current (R49). |
+| Someone other than you opens the view | Refused, with nothing revealed (R49). |
+| One address floods sign-in, code entry or the device grant | Its requests are refused with 429 or `slow_down` and change nothing; everyone else still signs in (R52). A flood spread across many addresses is slowed only by Cloudflare's own DDoS protection and per-address limits. |
+| You make a change without a second factor in the last 15 minutes | Refused with nothing changed; the page asks you to confirm with your passkey or app code, then the change goes through (R53). |
+| Someone signs in with only your Google or GitHub account | They can look, but every change is refused, and they can't add or replace a second factor without one of yours or a recovery code (R53, R54). |
+| A person loses every second factor and every recovery code | They can still sign in and look, but can't make changes or add a factor. Nothing in item two resets it; the owner can remove a member. If it's you, keep your recovery codes safe: the reset comes later. |
+| The OpenTelemetry destination is down or missing | Answers are unchanged. On Cloudflare, Workers Logs (and central's traces) still keep the records; on Node and Tokio, the host's own output does (R51). |
+</script></ex-markdown>
+<h2 id="specification--what-item-two-does-not-do">What item two does not do</h2>
+<ex-markdown id="specification--what-item-two-does-not-do-text"><script type="text/markdown">
+- No bots, and no workspace roles for people.
+- No workspace pairs.
+- No filtered view: until step 3, a machine still reads every workspace of its own organization.
+- No Switchboard tokens for sessions or bots; the Switchboard keeps today's agent tokens until step 3.
+- No collaboration checks per workspace (step 4).
+- No removal notices to the Switchboard (step 3).
+- No removing Cloudflare Access.
+- No new keys on machines, and no hardware proof of a machine or of isolation.
+- No separation between sessions on one machine user: a session's binding is a capability, not a secret it proves.
+- No control over who operates a logged-in machine.
+- No accepting the old and new machine login at the same time.
+- No automatic VM login, and no VM-specific proof.
+- The view changes no access, and never shows who operates a machine.
+- No dashboards, alerts or Logpush, and no metrics beyond what the platform gives.
+- No one resetting another person's second factors (later). No Apple, Cloudflare or Facebook sign-in; Facebook never, and if Apple comes, never a relay address.
+- No limit on Fleet central's own entry beyond Access until step 3.
+</script></ex-markdown>
+<h2 id="specification--proof-obligations">Proof obligations</h2>
+<ex-markdown id="specification--proof-obligations-text"><script type="text/markdown">
+For each obligation: what passes, and the wrong build it catches. The [Verification Design](verification-design.html) says how each will be observed.
+
+| ID | For | Passes when | A wrong build fails because |
+|---|---|---|---|
+| V1 | R1 | Every recorded actor carries exactly one kind. A machine token and a service token each parse only under their own schema and audience, and are refused wherever an actor is expected. | A record has no kind, or two; or a machine or service token is accepted as an actor. |
+| V2 | R2, R24 | A session registers only through its logged-in machine. A machine with a revoked or expired enrollment registers nothing. No machine private key exists. | A session registers through a machine that isn't logged in, or a machine key appears. |
+| V3 | R3 | Real Codex, Claude and Cursor sessions naming another session are refused, and own-session calls are recorded as their own. A wrong, expired, cross-installation or reused binding is refused. | A false sender is stored, or a stale binding is accepted. |
+| V6 | R7, R8 | A started session is a member of its project's workspace, whatever its repository. A start on a machine with no allowance for that workspace, or without a project, is refused, and a conversation whose registration is refused is never prompted and admits nothing. The start is recorded as from the machine; a helper lands only in its starter's workspace. A conversation registered for one project is refused for another; resending its original registration changes nothing; a Router restart mid-registration leaves one registration and no effect before it completes. | The workspace follows the repository or directory, a conversation refused at registration is prompted or acts, a helper lands in another workspace, or one conversation holds two registrations. |
+| V9 | R13, C4 | Your admin actions apply with their records: allowing a sign-in, creating a workspace, allowing a machine, approving a device code, revoking an enrollment. A member who isn't the owner, another organization's owner, a removed owner, a stale session, a bot and a session are each refused with nothing changed and nothing revealed. Only the fleet's operator creates an organization. A change whose record can't be written doesn't happen. | An unauthorized action applies, reveals something, or applies without its record. |
+| V10 | R14, C4 | Lookups answer correctly for a person, a session, a workspace (its allowed machines) and a machine (organization, enrollment state, what authorized it, allowed workspaces, shared bucket). | An answer is missing or wrong. |
+| V13 | R25 | With central's truth unavailable, no approval, machine token, connection, renewal, registration or remote start is decided; a token already decided mints only within its window. | A decision is made during the outage, or a mint completes after its window. |
+| V14 | R19 | After a revocation, the machine gets no new connection, renewal or machine token, its allowances and sessions are gone, and its connection is closed. Logging it in again restores none. | A revoked machine connects, renews, or keeps a session or allowance. |
+| V17 | R23 | A session's isolation record, with its instance ID and machine environment, is in its record, and each machine's shared bucket is shown. Nothing is refused for isolation. | It's missing, or isolation blocks something. |
+| V18 | R26 | The same obligations pass with each service on Cloudflare and on a non-Cloudflare host. | Behavior differs by host. |
+| V19 | R27, C7 | Each C7 request from its expected caller, for its operation, to its receiver is accepted, including with a newly rotated key during its overlap. The wrong caller, operation or receiver, a body naming an organization the caller may not act for, a malformed body, an expired credential and a withdrawn or unknown key are each refused with nothing changed. A repeat has only the effect C7 states. | A request is accepted from the wrong caller, for another operation or out-of-scope organization, or with a withdrawn key; or a repeat changes more than C7 allows. |
+| V21 | R29 | The sign-in service runs on D1 and on a `better-sqlite3` file through Drizzle and Better Auth's Drizzle adapter. A database built from the checked-in migrations serves every case. A scan finds no Kysely, `node:sqlite`, `sql.raw(`, `db.run\|all\|get\|values(sql`, or a driver's own `.prepare(` or `.exec(`. Your approval (OD4) is recorded before the first commit using the schema. | SQL text runs outside the query builder, Kysely remains, a database serves before its migrations run, or code that uses the schema predates your approval. |
+| V22 | R30 | The same sign-in suite passes on the Cloudflare host and the Node host, and a core run with recording capabilities shows every time, identifier, crypto and outbound use went through them. | A rule lives in one host, or the core reaches a platform global. |
+| V23 | R31 | Many concurrent first sign-ins and cleanups for the same person never delete one who is pending or admitted, in either order and across a restart. With an answer unknown, no guard exists and the pending claim alone keeps the person. A repeated claim succeeds. Each multi-row decision gives the same result on D1 and `better-sqlite3`. Concurrent redemptions of one approved device code yield exactly one machine login. | An admitted or pending person is deleted, an attempt releases another's claim, an unknown answer releases a claim, a repeated claim errors, a decision holds on one database only, or a device code logs in twice. |
+| V24 | R32 | Every UUID-shaped identifier stored during the sign-in suite is version 7. Client-assertion records carry the derived `jti` digest key, and a replayed assertion is refused. No secret, device code or user code is a UUID. | A version-4 or version-5 UUID anywhere; a client-assertion record with a fresh random key; a UUID used as a secret or code. |
+| V25 | R33 | A scan of the sign-in tests, their helpers and their harness finds no real-clock read, no real-time wait, and no real timer: no hang-guard timeout and no wall-clock log timestamp. Every wait is on an event. Expiries are crossed by moving a controlled clock; the four Hegel families exist and run. | A test depends on real time, or an expiry is only tested by waiting. |
+| V26 | R34 | An allowance, registration, remote start, message or token that would span two organizations is each refused with nothing changed and nothing revealed. A person admitted to two organizations acts in each separately. A machine never reads another organization's workspaces. | Anything crosses organizations. |
+| V27 | R35 | A session whose machine isn't enrolled in W's organization isn't made a member of W. | A session gets a membership without its machine's enrollment. |
+| V30 | R38 | A person's request for a workspace or collaboration token is refused. | A person gets a tool token. |
+| V31 | R39 | Your device-code approval logs a machine into your organization and records the approval. Anyone else's approval is refused. | A machine logs in without its organization's owner, or the record lacks what authorized it. |
+| V32 | R40 | After the switch, a connection with a valid machine token is accepted and one without is refused. A machine renews before expiry with no one acting, running past its first token's expiry. After revocation or expiry, renewal and the next connection are refused. A connection on a superseded enrollment gets no grant and no effect. Logging an active installation in again keeps its sessions, allowances and board relationships; logging it in after revocation restores nothing. Two machines you approved stay distinct through first token, refresh and restart, and one's replayed or revoked refresh token never stops the other's renewal. A token under another machine's client is refused. Central's decisions don't change when the Access identity changes. | An expired, revoked or foreign machine token is accepted; a superseded connection still acts; a machine stops at its first token's expiry; re-login changes the installation or revives what revocation removed; one machine's refresh yields or ends another's; or a decision depends on Access identity. |
+| V33 | R41 | A device-code machine holds exactly one refresh credential: in an encrypted store where it has one, and only in memory where it has none, where a restarted Router shows a new device code. A store that exists but is denied or damaged is reported and left untouched. Production builds write no plaintext. No private key is created. | A machine holds more long-lived secrets, the in-memory credential reaches disk, a bad store is treated as absent or overwritten, plaintext appears in production, or a key is created. |
+| V34 | R42, C8 | The Router shows a code and an address. The approval page shows the label, organization and code. Only the owner can view, approve or deny it, and someone else opening it leaves it for the owner. A code works once and expires at its lifetime. Rapid code attempts are limited. A denied, expired or used code logs nothing in. Approving logs in only the requesting installation, into only that organization, and gives the machine nothing of your sign-in. | A code works twice or after expiry, someone else approves, an approval logs in another installation, or the machine gets your sign-in. |
+| V35 | R43 | Step 1: today's login works unchanged. Step 2, with Access in front: the old enrollment credential is refused even with a valid Access token; a missing, invalid, expired or other-organization machine token is refused even with a valid Access token; admin actions are authorized through the sign-in service; every machine logs in again. At no point are both logins accepted. | Both logins are accepted at once, the old credential works at step 2, or a decision depends on Access identity. |
+| V36 | R44 | Every Router-involving obligation passes with the Router on macOS and on Linux. | Behavior differs between the two, or one can't run it. |
+| V38 | R46, C11 | A session on machine A starts a helper on machine B, which serves its workspace W, in a working directory on B that differs from A's. The helper runs on B, is a member of W, and names A's session as its starter. A member session lists the machines allowed to serve W. A start for another workspace's project, on a machine without an allowance for W, on another organization's machine, by an ended session, to a disconnected machine, or naming a directory missing on B is refused and creates nothing, revealing nothing about the other organization's machine. Two starts at once reach their own answers. A duplicate delivery or a restart around B's create yields one session. With the answer to A lost after B created the session, A gets unknown, then reads started under the same identifier, and no second session exists. A start past its deadline is begun nowhere. | A helper is created in a refused case, two sessions come from one start, an answer reaches the wrong start, a lost answer is reported as refused, the starter is recorded as anyone else, or a refused start is queued and replayed. |
+| V39 | R47, C12 | Two logged-in machines, one connected and one not, each have sessions. Your view lists both machines with their enrollment state, approver and approval time, allowed workspaces, connection and last-seen time, and each active session with its harness, project, workspace, isolation kind, start time and state. A revoked machine is listed as revoked and not connected. Opening the view changes nothing. | A machine or session is missing, a field is wrong, a revoked machine shows as connected, or opening the view changes state. |
+| V40 | R48 | Each of these shows within the bound: a machine connecting; a machine whose network is cut without a clean close (not connected, with its last-seen time); a session starting and stopping. A session whose machine has no open connection shows as unknown. | A change shows later than the bound, a cut-off machine stays connected, or a session shows working or idle while its machine isn't connected. |
+| V41 | R49 | Only the organization's owner opens the view. Another organization's owner, a member, a bot, a session and a machine are each refused with nothing revealed. The view shows nothing from another organization. While central's truth can't be consulted it says unavailable and shows no earlier picture as current. It shows no one at a machine's keyboard. | Someone else sees it, another organization's machine appears, or an earlier picture shows as current. |
+| V42 | R50 | Stage C: each admitted person shows as signed in or not, with their last sign-in, within V40's freshness and V41's visibility. (Bots' rows are proven when bots exist.) | A person is missing or shown wrongly, or is shown to someone other than the owner. |
+| V43 | R51 | After a login, a refusal, a connection, a registration and a view refresh, the OTLP collector holds one record for each, naming its kind, outcome and identifiers. No token, refresh credential, code, secret, cookie or email from the run appears anywhere in what was exported. With the collector stopped, every answer is the same. Deployed, both Workers keep Workers Logs, central keeps traces, and the sign-in Worker's traces and invocation logs are off. A harmless canary placed in the sign-in Worker's request URLs appears in no record Cloudflare keeps, and no credential carried in a header appears in any record Cloudflare keeps for central. | A decision leaves no record, a record carries a secret, the two hosts of one service leave different records, a stopped collector changes an answer, a sign-in URL's contents reach a record Cloudflare keeps, or a header credential reaches one of central's. |
+| V44 | R52, R42 | From one address, past each route's limit (on Cloudflare, past it within Cloudflare's stated approximation), requests are refused with 429 or `slow_down`, and the device codes, sessions and tokens are unchanged. The service's own pages are limited too, on both hosts. A second address still gets through. A spoofed `x-forwarded-for` doesn't change the count on Cloudflare. After the window passes, the first address gets through again, with no rows stored. A sign-in start or passkey sign-in challenge without a Turnstile token, with one Turnstile rejects, or when its check can't be reached, is refused with nothing created and no challenge stored; with a good token it proceeds. | A flood is answered, a limited request creates or consumes something, a forged header escapes the limit, one address's flood refuses another, the limit stores rows, or a sign-in passes without a verified Turnstile check. |
+| V45 | R53, C13 | Each R13 change by the owner with a second factor confirmed within 15 minutes succeeds; without one, or after the window on a controlled clock, it's refused with `secondFactorRequired` and nothing changed. Approving the organization's first machine succeeds with the provider sign-in alone; the second doesn't. Denying a code needs it too. Lookups and the view need none. A passkey sign-in with user verification is confirmed from the start; one without it signs in nothing and confirms nothing. | A change goes through on Google alone, the window isn't enforced, the first-machine exception covers a second machine, or reads demand a second factor. |
+| V46 | R54 | A person sets up an authenticator app from a provider sign-in and gets recovery codes once, then adds a passkey. Once one has existed, a provider sign-in alone can't add, replace or remove a factor or get new codes, even in the moment between removing and adding, and can't read the app's secret; with a recovery code (spent after) or another second factor it can. The last factor can't be removed. Each use and change is recorded. Rapid code guesses are limited. | Google alone replaces a passkey, a recovery code works twice, or another person resets someone's factors. |
+</script></ex-markdown>
+<h2 id="specification--coverage">Coverage</h2>
+<ex-markdown id="specification--coverage-text"><script type="text/markdown">
+Every need traced to its entities, problems, outcomes, obligations, contracts and proofs.
+
+| U | E | P | O | R | C | V |
+|---|---|---|---|---|---|---|
+| U1 | E3, E7 | P1 | O1 | R1 | — | V1 |
+| U3 | E6, E7 | P1 | O1 | R2 | — | V2 |
+| U6 | E6, E7, E15, E16 | P3 | — | R7, R8 | — | V6 |
+| U9 | E1, E2, E3, E6, E7, E13, E14, E15, E21 | P3 | O3 | R14 | C4 | V10 |
+| U14 | E21, E22, E24 | — | — | R25 | — | V13 |
+| U15 | all | — | — | R27 | C7 | V19 |
+| U16 | all | — | O5 | R26, R27 | C7 | V18, V19 |
+| U17 | E6, E21 | P7 | — | R2, R24, R41 | — | V2, V33 |
+| U18 | E13, E14 | P5 | O3 | R3, R23 | C4 | V17 |
+| U19 | E7 | P1 | O1 | R3 | — | V3 |
+| U20 | E1, E3, E19 | — | — | R5, R13 | C7 | V9, V19; the people sign-in design's own proof |
+| U21 | E2, E6, E15, E19, E21 | — | — | R13 | C4 | V9 |
+| U22 | E3, E23 | — | O5 | R29, R31 | — | V21, V23 |
+| U23 | E3, E23 | — | O5 | R30 | C7 | V22 |
+| U24 | E3, E23 | — | — | R32 | — | V24 |
+| U25 | E22, E23 | — | — | R33 | — | V25 |
+| U26 | E8, E19 | P6 | O6 | R5, R35 | — | V27 |
+| U27 | E1, E2, E6, E15 | P6 | O6 | R34 | — | V26 |
+| U30 | E3 | — | — | R38 | — | V30 |
+| U31 | E6, E21, E23 | P7 | O7 | R13, R19, R39, R42 | C8 | V9, V14, V31, V34 |
+| U32 | E6, E7 | — | — | R8 | — | V6 |
+| U33 | E21, E22, E23 | P7 | O7 | R19, R39–R42 | C7, C8, C9 | V14, V31–V34 |
+| U34 | E21, E22 | P7 | O7 | R40, R43 | C9 | V32, V35 |
+| U35 | E6 | P7 | O5 | R41, R44 | — | V33, V36 |
+| U39 | E6, E7, E15, E16 | P9 | O9 | R8, R46 | C11 | V38 |
+| U40 | E3, E6, E7, E13, E15, E19, E21, E24 | P8 | O8 | R47–R50 | C12 | V39–V42 |
+| U41 | all | P10 | O10 | R51 | — | V43 |
+| U42 | E23 | P11 | O11 | R42, R52 | C8 | V34, V44 |
+| U43 | E1, E3, E21, E25 | P12 | O12 | R53, R13 | C13 | V45 |
+| U44 | E3, E25 | P12 | O12 | R54 | C13 | V46 |
+</script></ex-markdown>
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

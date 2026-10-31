@@ -1,6 +1,6 @@
 # People sign-in: Verification Design
 
-[Requirements](requirements.md) · [Specification](2026-10-20-people-sign-in.md) · [Program Design](program-design.md)
+[Requirements](requirements.md) · [Specification](2026-10-20-people-sign-in.md) · [Program Design](program-design.html)
 
 This is the plan for showing that people's sign-in does what the [Specification](2026-10-20-people-sign-in.md) requires. **Nothing here has been run or observed.** Every target property below describes a build that does not exist yet.
 
@@ -21,28 +21,30 @@ The `verify-auth` skill exists with two journeys, `bootstrap` and `agent`, on th
 | --- | --- | --- | --- |
 | `U1` | Sign in with Google, GitHub or a passkey, and nothing else | On the test deployment, sign in with each provider and with a passkey, and land on the same person each time. A well-formed attempt through any other method creates nothing. A second provider with the same email is refused until it is linked on purpose. The stored logins hold no Google or GitHub tokens. | real people's devices and browsers beyond the one used |
 | `U2` | Only people an organization's owner approved get into that organization | A freshly registered organization admits only its owner first. An unlisted account is turned away and nothing is stored. After the owner removes someone, their passkey, their old browser session, their tokens and their pending Accept in that organization all fail. That includes requests caught halfway when the removal lands, and sessions left behind when cleaning them up fails. | how long the hosted database takes to make a deleted session visible everywhere (only the local runtime holds steps in order) |
-| `U3` | Public apps let anyone register | Register on the public deployment, then show its proof being refused by the private deployment's Tool Portal. | runs when the public deployment is built. Building private first is the Lead's proposal, waiting on the owner (`SD2`) |
-| `U4` | Each service gets proof that works only for itself | The console's proof is refused by Tool Portal, and Tool Portal's is accepted. A proof with two audiences, or one that doesn't stand for a person, is refused. | the real console (a scripted stand-in calls instead) |
+| `U3` | Public apps let anyone register | Register on the public deployment, then show its proof being refused by the private deployment's Switchboard. | runs when the public deployment is built. Building private first is the Lead's proposal, waiting on the owner (`SD2`) |
+| `U4` | Each service gets proof that works only for itself | The console's proof is refused by Switchboard, and Switchboard's is accepted. A proof with two audiences, or one that doesn't stand for a person, is refused. | the real console (a scripted stand-in calls instead) |
 | `U5` | Runs on the owner's Cloudflare with its own database, no vendor | Read the deployment settings and the deployed Worker's own record: the owner's account, a database of its own, and no sign-in vendor in the code. | Workers Free CPU fit (`SD6`), measured separately |
 | `U6` | Machines and VMs never use people's sign-in | The VM test lanes run with no sign-in service present. No machine is registered as a sign-in client, and no machine package depends on the sign-in package. | VPN and Router traffic through Cloudflare, which live outside this repository |
-| `U7` | Every change to who may sign in, or how, is recorded, with no secrets | Make each kind of change, then read the audit table: one record per change, with who, what and when. A change whose record can't be written doesn't happen. Search the table and the Worker's logs for the real codes, tokens and cookies seen during the run; none appear. | how long records are kept (Tool Portal D6) |
+| `U7` | Every change to who may sign in, or how, is recorded, with no secrets | Make each kind of change, then read the audit table: one record per change, with who, what and when. A change whose record can't be written doesn't happen. Search the table and the Worker's logs for the real codes, tokens and cookies seen during the run; none appear. | how long records are kept (Switchboard D6) |
 | `U9` | You sign in to an organization; only its owner administers it; organizations are kept apart | Two organizations share one deployment and one person. Removing her from one leaves her other organization's session, tokens and decisions working, and a proof for one is refused for the other. Each owner, a member and an agent try every owner action on each organization: only the right owner succeeds. One organization's admission state is made unreachable: only that organization stops. | hosted Durable Object placement and latency (only `T1` hosts them, without held steps) |
-| `U8` | Agents sign in as themselves, one workspace at a time | Add a test agent to two workspaces of one organization. Read back that it can only use its own sign-in, that the other grant is refused, and that it gets no token for another organization's workspace. Call each workspace with that workspace's own real token; the other workspace and a person check refuse it. Remove it from one workspace: on the same running instances its old call there and a new token for that workspace both fail, while a new token for the other workspace still works. Retire it, and every token request and call fails. Both operations are also tried failing halfway and with a request caught in flight. | the real console (the person verifier stands in); each host's credential storage; creating and closing workspaces (not in this work) |
+| `U8` | Agents sign in as themselves, one workspace at a time | Central provisions a test bot's credential for its one workspace. Read back that it can only use client credentials, that the other grant is refused, and that it gets no token for another workspace or organization. Call its workspace with its real token; another workspace and a person check refuse it. Disable it, or turn its workspace off, and no new token is released, also with a request caught in flight. Its membership and removal are proven by the agent identity design (SO1–SO4). | the real console (the person verifier stands in); each host's credential storage; central's real C7 caller until the joint cut |
 
 ## Targets
 
 | Id | What | Used for |
 | --- | --- | --- |
-| `T1` | The private test deployment: the `@agent-collaboration/auth` Worker at the delivered commit, deployed to the owner's Cloudflare test account with its own D1 (read replication off) and its organization admission namespace, `mode: "private"`, the test OAuth apps, and `organizations` registering O1 and O2 with the two owner test accounts | every journey |
+| `T1` | The private test deployment: the `@agent-collaboration/auth` Worker at the delivered commit, deployed to the owner's Cloudflare test account with its own D1 (read replication off), `mode: "private"`, asking Fleet central's organization authority for every admission decision (agent identity: central's per-organization object; a central stand-in honoring the K3 contract until the joint cut, named as unverified), the test OAuth apps, and `organizations` registering O1 and O2 with the two owner test accounts | every journey |
 | `T2` | The public test deployment: the same commit, `mode: "public"`, its own Worker and D1 | `U3`, when built |
-| `T3` | The same Worker build on a local Workers runtime with a local D1 and the organization admission objects, the same two organizations | held interleavings, forced audit-write and session-cleanup failures, an unreachable organization object. Not hosted proof: it keeps Better Auth, the hooks, the request handler, the objects and the database statements real, but not D1's replication or hosted object placement. A proof-only readback of each organization object's entries, owner binding and records exists only in the test composition |
-| `T4` | Tool Portal at the slice that delivers `decide`, using the production person-proof verifier configured to trust `T1` | decisions, audiences, freshness |
-| `T5` | Tool Portal's Worker (`tool-host-cloudflare`) serving organization O1's workspaces W1 and W2 and organization O2's workspace W3, each with its own Durable Object, and its agent-management handler, using the production agent verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account, bound to the sign-in Worker's agent-client route | agent calls, removal, held interleavings |
+| `T3` | The same Worker build on a local Workers runtime with a local D1, the same two organizations, and a central client stand-in that honors the K3 contract and can hold or fail an answer | held interleavings, forced audit-write and session-cleanup failures, an unreachable organization object. Not hosted proof: it keeps Better Auth, the hooks, the request handler and the database statements real, but not D1's replication or central's real organization authority, which agent identity SO1 and SO4 prove. The stand-in's recorded entries, owner binding and records are read back only in the test composition |
+| `T4` | Switchboard at the slice that delivers `decide`, using the production person-proof verifier configured to trust `T1` | decisions, audiences, freshness |
+| `T5` | Switchboard's Worker (`tool-host-cloudflare`) serving organization O1's workspaces W1 and W2 and organization O2's workspace W3, each with its own Durable Object, with the token-only caller check (agent identity), using the production verifier configured to trust `T1` (or `T3`), on local workerd and on the owner's test account. It has no agent-management route. | bot calls, removal through marks, held interleavings |
 | client | A scripted stand-in for the console: a registered client that runs authorization code with S256 PKCE | asking for proofs. It stands in until the console exists, and it is never counted as console proof |
 
 ## Shared observations
 
 Each observation is described once; the rows below say which obligations it decides.
+
+**"O1's object" below means O1's organization authority in Fleet central** (agent identity: central's per-organization object owns admission, the owner binding and their records). On `T1` it is reached through central's real K3 calls after the joint cut. Before the cut, and on `T3`, it is reached through the central stand-in that honors K3, and its entries and records are read back from the stand-in in the test composition only. Nothing in the sign-in Worker holds them.
 
 **H. Owner bootstrap** (`verify-auth` `bootstrap`, existing on `T3` and changed by this revision to name the organization; needed on `T1`; lasting). Starts from a freshly deployed `T1` with an empty D1 and no organization object yet.
 - **Steps:**
@@ -81,14 +83,14 @@ Each observation is described once; the rows below say which obligations it deci
 
 **C. Proofs across services** (`verify-auth` `proof-audience`, needed, lasting). The stand-in client obtains four tokens from Person A's session on `T1`:
 - one for the console's resource;
-- one for Tool Portal's;
-- one for Tool Portal's that also asks for `openid`;
+- one for Switchboard's;
+- one for Switchboard's that also asks for `openid`;
 - one that names both resources.
 
-Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** the verifier's result kind and reason, and Tool Portal's response. When `T2` exists, a `T2` token goes to `T4` too.
+Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** the verifier's result kind and reason, and Switchboard's response. When `T2` exists, a `T2` token goes to `T4` too.
 
 **D. Removal and sign-out** (`verify-auth` `removal`, needed, lasting). On `T1` and `T4`, in organization O1.
-- **Setup:** Person A holds a Google browser session and a second browser's passkey session, both signed in to O1. A also holds a Tool Portal token naming O1, taken before removal, and a pending proposal in `T4`. A copy of each session cookie is kept.
+- **Setup:** Person A holds a Google browser session and a second browser's passkey session, both signed in to O1. A also holds a Switchboard token naming O1, taken before removal, and a pending proposal in `T4`. A copy of each session cookie is kept.
 - **Act:** O1's owner removes A through O1's admin surface.
 - **Attempt:**
   - a passkey sign-in;
@@ -107,7 +109,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Sign-out branch:** Person B signs out. Then request a new token with B's old cookie, and introspect B's earlier token.
 - **Owner branch:** the owner removes their own entry. Their next admin call is refused (`owner-not-admitted`).
 - **Cleanup-failure branch** (on `T3`): the D1 session delete after a removal is made to fail. Each kept cookie's attempt above is still refused, because every use reads O1's object; the owner sees the cleanup reported incomplete, and a retry deletes the rows.
-- **Two-entry branch:** Person C has two allowlisted addresses, both bound to them: C signed in with Google on one and linked GitHub on the other. The owner removes one address. C's passkey sign-in, a new token and an Accept are all refused. Re-adding that address restores C.
+- **Linked-address branch:** Person C signed in with Google on one allowlisted address, then linked a GitHub login whose verified email is a second allowlisted address. Linking never binds (Program Design), so only the first entry is bound to C. The owner removes the first address. C's passkey sign-in, a new token and an Accept are all refused, even though the linked address is still allowed. Re-adding the first address restores C. A build where linking binds the second entry fails (C stays admitted).
 
 **E. Held interleavings** (automated integration on `T3`, no journey). The test's composition can hold a request at a named step while a removal commits in the organization's object, or a sign-out commits in D1, on another request. Each case is a separate run, in O1:
 1. A passkey sign-in held after its session insert, before the final check. **Expect:** refused; no session row for A.
@@ -123,13 +125,14 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 11. Case 9(b) with the cleanup batch made to fail. **Expect:** the `user` and `account` rows remain, unbound. The failure is recorded, and a later sign-in with that login is refused while its entry stays removed.
 12. Case 9(c): the first sign-in's check binds the entry, then the removal commits before the final check. **Expect:** refused. The `user`, `account` and binding remain as a removed Person, with no session. Re-adding the address reactivates that same Person id.
 13. Request A, signing in to O1, is refused at its final check and held before its cleanup batch. Request B signs in to O2 with the same provider account (allowed there) and is admitted: its claim commits, O2's object binds it. Then A's cleanup runs. **Expect:** B's Person id, `account` row, claim, O2 binding and session all survive; A's cleanup deletes nothing; A ends "not allowed".
+13a. The same organization (SEC-02): request A for O1 creates the Person and its claim. A's `AdmitSignIn` refusal is held at the central client stand-in. The owner allows the entry, and request B for the same Person and O1 is admitted. Then A's refusal is released and A runs its claim release and cleanup. This is repeated with B's answer made unknown (stand-in times out), and with a restart before A resumes. **Expect, by branch:** with B admitted, the Person, their `account`, the `admitted_person_guard` row and O1's binding all survive. With B unknown, no guard is written (only a definite admit writes one): B's claim stays, including after a later `Standing` read answers not admitted, the Person and their `account` survive, the cleanup deletes nothing, and any binding central actually made is kept. In every branch A releases only its own claim. **Wrong builds that fail:** a claim keyed by Person and organization that A deletes (A's cleanup then deletes the admitted Person); a build that releases B's claim on an unknown answer, or later on a `Standing` read.
 14. The reverse order: A's cleanup commits first, then B's claim insert runs against the deleted user. **Expect:** the claim insert finds no user, O2's object is never asked to bind, B is refused with no binding anywhere pointing at a missing user, and B's retry creates a fresh Person.
 15. O1's object made unreachable for one request (in the test composition): a sign-in to O1, a token for an O1 session, an introspection of an O1 token and an O1 admin call. **Expect:** each refused, never accepted; the same requests in O2 succeed.
 16. A Person token request for an O1 session where the test composition makes the token's `organization_id` name O2 (a resource custom claim, and separately a forged consent reference). **Expect:** the final check refuses (`invalid_grant`); no token naming O2 is released.
 
 **Read:** each response, D1's `session`, claim, OAuth code and token rows, and the organization objects through the proof-only readback. A build whose only checks run before the effect fails cases 1, 4, 5 and 7. A build that binds in a user-creation hook, or keeps a refused first sign-in's rows, fails case 9's readback. A cleanup that deletes by request alone, or without the claim guard, fails case 13 or 14. A build that treats an unanswered object call as admitted fails case 15. A final check that skips the organization comparison fails case 16.
 
-**F. Decision freshness** (Tool Portal integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
+**F. Decision freshness** (Switchboard integration at the `decide` slice, no journey). Run on `T4`'s `decide` with the production verifier calling `T3`, under a controlled clock:
 1. the live check passes, then the apply is held past `SD8`;
 2. the same, with a removal landing in between;
 3. an apply within `SD8` with no removal.
@@ -154,69 +157,58 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 **I. Audit coverage** (`verify-auth` `audit`, needed, lasting; plus forced failures on `T3`).
 - **On `T1`:**
-  - make each change kind `R12` lists: add and remove an allowlist entry; re-add; register, update and retire a client and a relying service; link an agent client to a workspace and unlink it; add and remove a passkey; link and unlink a login. The owner binding comes from H.
+  - make each change kind `R12` lists: add and remove an allowlist entry; re-add; register, update and retire a client and a relying service; provision and disable a bot credential, and turn a workspace resource on and off (each through central's C7 call); add and remove a passkey; link and unlink a login. The owner binding comes from H.
   - Export `sign_in_audit` and tail the Worker's logs for the run. Search both for every code, access token, session cookie, passkey credential id and public key captured during A–D and I.
 - **On `T3`:**
-  - make the before-change audit write fail during a passkey registration, a link and an agent-client registration; no `passkey`, `account` or E9 row may appear;
-  - make the agent client's resource-link write, then its outcome write, fail during registration; no credential is returned, no membership is written, the registration reads as incomplete, and the owner's retry completes it;
+  - make the before-change audit write fail during a passkey registration, a link and a bot-credential provision; no `passkey`, `account` or E9 row may appear;
+  - make a bot-credential provision's outcome write fail; the provision answers failure with no secret returned, and recovery is disable and provision anew, never a retry that reveals a secret;
   - make the outcome write fail after a change; the before-change record must still be there;
   - make an allowlist change's object transaction fail; neither the change nor its record may land;
   - every D1 record that belongs to an organization names it, and the owner's audit list for O1 shows none of O2's records.
 
 **K. Two organizations** (`verify-auth` `organizations`, needed, lasting, on `T1` with `T4`; plus the unreachable-object case on `T3`). Spec C5. Setup: O1 owned by Olive, O2 owned by Bob, both bound through H; both list Alice's address.
 - **Steps:**
-  1. Alice signs in to O1 and takes a Tool Portal token; she asks `T4` for a decision in O1, then for one in O2, with that token.
+  1. Alice signs in to O1 and takes a Switchboard token; she asks `T4` for a decision in O1, then for one in O2, with that token.
   2. Alice signs in to O2 in the same browser, with the same Google login, and takes a token.
-  3. Bob tries to list O1's allowlist, read O1's records, add an address to O1 and add an agent to an O1 workspace; Olive tries the same on O2; Alice tries both.
+  3. Bob tries to list O1's allowlist, read O1's records, and add an address to O1; Olive tries the same on O2; Alice tries both.
   4. Olive removes Alice from O1. Alice tries O1 again (passkey sign-in, a new token from her O1 cookie, an Accept in O1), then uses her O2 session and O2 token (a new token, an Accept in O2).
-- **Read:** each response; the `sub` and `organization_id` of each token; the session rows and their `organizationId`; each object's entries and records; `T4`'s decisions.
+- **Read:** each response; the `sub` and `organization_id` of each token; the session rows and their `organizationId`; each organization's entries and records through the owner's reads at central (or, before the joint cut, the central stand-in's recorded entries); `T4`'s decisions.
 - **Expect:** step 1's token names O1 and works only for O1's decision; step 2 reaches the same Person id with a new session naming O2; every step 3 attempt is refused with nothing changed or listed; after step 4, every O1 attempt is refused and every O2 attempt works.
 - **Wrong builds that fail it:** a session without an organization (step 1's O2 decision is accepted); a deployment-wide allowlist (step 4's O2 attempts fail, or a list leaks); an owner check that ignores the organization (Bob changes O1); a proof without `organization_id` checked against the action (step 1's O2 decision applies).
 
-**J. Agent sign-in, workspaces and removal** (`verify-auth` `agent`, needed, lasting, on `T1` with `T5`; plus held cases on `T3` with `T5` local). Reads the Program Design's [Adding, removing and retiring an agent](./program-design.md#adding-removing-and-retiring-an-agent-r17-r18). Setup: organization O1 with workspaces W1 and W2, and organization O2 with workspace W3, all served by `T5`.
-- **Register and link:** through `T5`'s agent-management handler, add a test agent to W1, then to W2. The second add returns no credential. Read straight from D1:
-  - the E9 row: `grant_types` exactly `["client_credentials"]`, `client_credentials_scopes` exactly `["tool-portal:agent"]`, metadata `{ kind: "agent", organizationId: O1 }`, and absent from the deployed `cachedTrustedClients`;
-  - exactly two `oauthClientResource` links, to W1's and W2's resources;
-  - each workspace resource: identifier its MCP address, metadata `{ kind: "workspace", organizationId: O1, workspaceId }`, `allowedScopes` `["tool-portal:agent"]`, null `customClaims`;
-  - the before-change and outcome records for the client, each resource and each link.
-- **Forbidden grant:** start an authorization-code request with the agent's client id, as the stand-in client would. **Expect:** refused, with no code issued.
-- **Use:** get a token for W1; its `aud` is W1's address, `organization_id` O1 and `workspace_id` W1. Call one tool on W1. **Expect:** it runs once, against W1's tools. Then:
-  - present the W1 token at W2's address: `wrong-audience`;
-  - request a token for W3 (O2's workspace), and for an O1 workspace the agent was never added to: `invalid_target` each;
-  - present the W1 token to the person verifier, which is what the console will run: `wrong-audience`, because the audience check comes first (G isolates `not-a-person`);
-  - present Person A's Tool Portal token to `T5`'s agent check at W1: `wrong-audience` (G isolates `not-an-agent`);
-  - ask for a W1 token from Person A's session with the ordinary stand-in client, which isn't linked to W1: `invalid_target`;
-  - with a person code client that the test composition links to W1 and allows `tool-portal:agent`, so the library's link and scope checks pass, ask for a W1 token from Person A's session: refused `invalid_target` by the issuance checks, with no token in the response.
-- **Refused management** (through `T5`'s handler and the real service binding): an add with no person token, with the agent's own E10, with a revoked session, by a member of O1 who isn't its owner, by O2's owner signed in to O2, and by O1's owner presenting an O1 token for an O2 operation; and an add of O1's agent to W3, O2's workspace. **Expect:** each refused, and D1 shows no new resource, client or link, and no membership is written.
-- **Remove from W1, warm:** keep the W1 token (`tok-w1-old`). Remove the agent from W1 through the handler. Then, on the **same** `T5` instance that served the earlier call and on the sign-in Worker that issued the token:
-  - call W1 with `tok-w1-old`: refused, not a member;
-  - request a new W1 token: `invalid_target`;
-  - once the removal reads complete, request a **new** W2 token and call W2 with it: it runs once;
-  - read the handler's status ("removal complete"), W1's object (agent removed), W2's object (still a member), D1 (W1 link gone, W2 link present, E9 enabled) and the `client-link-changed` records naming the acting Person.
-- **Retire, warm:** keep the W2 token (`tok-w2-old`). Retire the agent:
-  - call W2 with `tok-w2-old`: refused;
-  - request a new W2 token: `invalid_client`;
-  - read the status ("retirement complete"), the disabled E9 row and its records.
-- **Between the writes** (on `T3` with `T5` local; the test composition makes the agent-client route fail once): remove one agent from W1, and separately retire a second agent. **Expect:** status "pending" each time; a call on the affected workspace with any token is refused; a new token request for it still succeeds, which is the named gap. Retry. **Expect:** status "complete"; then the unlinked workspace's token request gets `invalid_target`, and the retired agent's gets `invalid_client`.
-- **Held races and conflicting claims** (on `T3`, with the hold seam from E):
-  1. a W1 token request held **after Better Auth has signed the token** (past the credential check and `customAccessTokenClaims`), immediately before the handler's final D1 check; the W1 unlink commits while it is held, then it is released. **Expect:** `invalid_target`, and no token in the response.
-  2. the same hold, with the client's disable committing instead. **Expect:** `invalid_client`, no token.
-  3. a W1 token issued before removal, used after the membership is removed and before the unlink. **Expect:** refused, not a member.
-  4. a resource custom claim on `T3` that sets `organization_id` to O2 on W1's resource, then a W1 token request by O1's agent. **Expect:** `invalid_client`; no token naming O2 is released.
-  5. a resource custom claim on `T3` that sets `workspace_id` to W2 on W1's resource, then a W1 token request. **Expect:** `invalid_client`.
-  6. a link from O1's agent to W3's resource written straight into D1 by the test composition, then a W3 token request. **Expect:** refused, with no token released (the early check catches this one).
-  7. a W1 token request by O1's agent, held after Better Auth has signed it with `organization_id` O1 and `workspace_id` W1, which match the client and W1's resource at signing. While it's held, the test composition changes W1's resource metadata to name O2. Released. **Expect:** `invalid_client`, no token. Only the final check's comparison of the resource's organization with the client's catches this.
+**J. Bot sign-in at the issuer** (`verify-auth` `agent`, the journey identity SO2 updates, lasting, on `T1` and held cases on `T3`). The agent identity design superseded this observation's old system. Fleet central now owns bots, their one membership, provisioning and removal. The issuer no longer links clients to workspaces (`enforcePerClientResources: false`), and the Switchboard has no agent-management route. So J keeps only what the issuer itself must prove; bot lifecycle, the single membership and removal are proven by identity SO1–SO4 and SO7. Setup: organization O1 with workspaces W1 and W2, and organization O2 with workspace W3. Each workspace's resource row is provisioned by central's `SetWorkspaceResource`. One test bot in O1 is a member of W1 only, decided by central.
+- **Provision:** central's `ProvisionBotCredential` (C7, its own audience and scope) creates the bot's credential. Read straight from D1:
+  - the E9 row: `grant_types` exactly `["client_credentials"]`, `client_credentials_scopes` exactly `["tool-portal:agent"]`, metadata `{ botId, organizationId: O1 }`, and absent from the deployed `cachedTrustedClients`;
+  - no `oauthClientResource` row for it;
+  - each workspace resource: identifier its MCP address, metadata `{ kind: "workspace", organizationId, workspaceId }`, enabled.
 
-**Read:** each response; the E9, link, resource and audit rows; each workspace object's agent row; the handler's status. Wrong builds that fail it:
+  A repeat provision answers `AlreadyProvisioned` with no secret. A provision whose reply is lost is recovered by disabling that credential and provisioning a new one, never by re-reading a secret.
+- **Forbidden grant:** start an authorization-code request with the bot's client id, as the stand-in client would. **Expect:** refused, with no code issued.
+- **Use:** get a token for W1. Its `aud` is W1's address, `organization_id` O1 and `workspace_id` W1, and central's decision was asked inside the claim hook. Call one tool on W1. **Expect:** it runs once, against W1's tools. Then:
+  - present the W1 token at W2's address: `wrong-audience`;
+  - request a token for W2: central's decision refuses, because the bot is not a member there, and no token is released;
+  - request a token for W3 (O2's workspace): refused, with no token;
+  - present the W1 token to the person verifier: `wrong-audience` (G isolates `not-a-person`);
+  - present Person A's Switchboard token to `T5`'s caller check at W1: `wrong-audience` (G isolates `not-an-agent`);
+  - ask for a W1 token from Person A's session, including with a person code client the test composition configures for W1 and `tool-portal:agent`: refused by the closed token-kind dispatch, with no token in the response.
+- **Disable and resource off:** central's `DisableBotCredential` (its own audience), then a new W1 token request: `invalid_client`. Separately, `SetWorkspaceResource { enabled: false }` for W1, then a new W1 token request from a member bot: refused, with no token. An already-issued token's refusal at the Switchboard after removal is identity SO3's, through removal marks.
+- **Held races and conflicting claims** (on `T3`, with the hold seam from E):
+  1. a W1 token request held **after Better Auth has signed the token**, immediately before the handler's final check. Central's removal of the bot from W1 is decided while it is held, then it is released. **Expect:** the token may be released, because central decided once before signing and the final check reads no live membership (agent identity, "How a bot gets its tokens"). Its `grant_revision` is below the removal's, so once the removal notice is recorded, a call with it at W1 is refused (agent identity SO3). A build whose Switchboard accepts it after the notice fails.
+  2. the same hold, with the credential's disable committing instead. **Expect:** `invalid_client`, no token.
+  3. a resource custom claim on `T3` that sets `organization_id` to O2 on W1's resource, then a W1 token request by O1's bot. **Expect:** `invalid_client`; no token naming O2 is released.
+  4. a resource custom claim on `T3` that sets `workspace_id` to W2 on W1's resource, then a W1 token request. **Expect:** `invalid_client`.
+  5. a W1 token request by O1's bot, held after Better Auth has signed it with `organization_id` O1 and `workspace_id` W1, which match the client and W1's resource at signing. While it's held, the test composition changes W1's resource metadata to name O2. Released. **Expect:** `invalid_client`, no token. Only the final check's comparison of the resource's organization with the client's catches this.
+
+**Read:** each response; the E9, resource and audit rows. Wrong builds that fail it:
 - a client registered with authorization code as well fails the readback and the forbidden-grant attempt;
-- a Worker that caches membership fails the warm W1 call;
-- a client listed in the trusted cache fails the warm token request;
-- an unlink that removes every link, or a removal that disables the client instead of unlinking, fails the new W2 token;
-- a build with only the early checks fails held cases 1 and 2;
-- a final check that skips the signed-claim comparisons fails held cases 4 and 5, and one that skips the resource-organization comparison fails held case 7;
-- a route that calls the library without the installed session fails every add (the library refuses it), and one that skips the person, owner or organization check fails a refused-management case;
-- a person guard that relies on `allowedScopes` alone fails the linked person code client case;
-- a handler that reports "complete" after one write fails the between-writes case.
+- a client listed in the trusted cache fails the readback;
+- a build that still writes per-client resource links, or issues from them, fails the readback and the W2 request (no link to stop it, so only central's decision may);
+- a provision that returns a secret on repeat fails the repeat;
+- a build with only the early checks fails held case 2; a Switchboard that ignores the removal mark fails held case 1;
+- a final check that skips the signed-claim comparisons fails held cases 3 and 4, and one that skips the resource-organization comparison fails held case 5;
+- a person guard that relies on `allowedScopes` alone fails the configured person code client case.
+
+**Superseded and removed from this design's proof:** adding one agent to two workspaces, the Switchboard's agent-management handler and its service binding, per-workspace link rows, the "between the writes" two-owner sequence, and a retry that recovers a lost secret. A build that keeps any of them is wrong under the agent identity design, and must not be made to pass by restoring them.
 
 ## Rows
 
@@ -309,7 +301,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 - **Reference:** Spec C1 step 5; `R6`; `R7`.
 - **Target and journey:** `T1` and `T4`; `proof-audience`, lasting.
 - **Passes when:**
-  - the console token is refused with `wrong-audience`, and Tool Portal's token verifies;
+  - the console token is refused with `wrong-audience`, and Switchboard's token verifies;
   - the `openid` token and the two-resource token, both with an array `aud`, are refused with `wrong-audience`;
   - in G, a token without `sid` is refused as `not-a-person`, one without `organization_id` as `no-organization`, and each other bad token gives its own reason; every issued person token names its session's organization;
   - no person-facing client lists `client_credentials`; only agent clients do, with no other grant.
@@ -366,7 +358,7 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - the search finds none of the captured values;
   - on `T3`:
     - a failed before-change write leaves no `passkey`, `account` or E9 row;
-    - a failed resource-link or outcome write during agent-client registration returns no credential and writes no membership, until a retry completes it;
+    - a failed outcome write during a bot-credential provision returns no secret, and recovery is disable and provision anew;
     - a failed outcome write leaves the before-change record;
     - a failed allowlist transaction leaves neither the change nor its record;
     - O1's owner sees none of O2's records.
@@ -377,17 +369,17 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
   - a change written outside its batch;
   - a log line with a token.
 - **Reuses:** none.
-- **Unverified:** retention and readers of the record (Tool Portal D6).
+- **Unverified:** retention and readers of the record (Switchboard D6).
 
 ### `U9` — you sign in to an organization; only its owner administers it; organizations are kept apart
 
 - **Obligations:** `R19`, `R20`; with `R3`, `R4`, `R6`, `R12`, `R14` per organization · proof obligations `V13`, `V14` · seams: trace rows R19, R20.
-- **Proven by:** observation K on the deployed service and Tool Portal, observation E's cases 13–16 held on the local runtime, H's step 5, J's refused-management cases, and G's object rules. Two organizations share one person: removing her from one leaves the other working, a proof for one is refused for the other, and each owner can administer only their own.
+- **Proven by:** observation K on the deployed service and Switchboard, observation E's cases 13–16 held on the local runtime, H's step 5, and G's verifier rules (organization admission rules are central's, proven by agent identity SO4); bot management is central's, refused per organization in agent identity SO4. Two organizations share one person: removing her from one leaves the other working, a proof for one is refused for the other, and each owner can administer only their own.
 - **Reference:** Spec C5; `R19`; `R20`; `SD1` and `SD9` as decided in Requirements.
 - **Target and journey:** `T1` with `T4`, and `T3` for E and the unreachable object. Journey `verify-auth` `organizations`, needed, lasting: it must sign in to a named organization, read session rows and each organization's entries and records through the owner's reads, drive `T4` decisions in both organizations, and drive owner actions as each actor.
 - **Passes when:**
   - K's expectations hold: each token names its session's organization and works only there; the same Person reaches both organizations through separate sessions; after removal from O1, every O1 attempt fails and every O2 attempt works;
-  - every owner action by anyone other than that organization's admitted owner is refused, with nothing changed or listed (K step 3, H step 5, J's refused management);
+  - every owner action by anyone other than that organization's admitted owner is refused, with nothing changed or listed (K step 3, H step 5);
   - E case 15: with O1's object unreachable, O1's sign-in, token, live check and admin are refused while O2's succeed; case 16: a token naming the wrong organization is never released.
 
   Wrong builds that fail it:
@@ -400,44 +392,38 @@ Each token goes to `T4`'s control API `explain` and to the verifier. **Read:** t
 
 ### `U8` — agents sign in as themselves, one workspace at a time
 
-- **Obligations:** `R15`, `R16`, `R17`, `R18` · proof obligations `V11`, `V12` · seam: trace row R15–R18.
-- **Proven by:** observations J and G: add a test agent to two workspaces of one organization, read back how it's registered and linked, try the grant it must not have and a workspace of another organization, call each workspace with its own real token, remove it from one workspace and show the other still works with a new token, retire it, and repeat both operations failing halfway and with requests held in flight.
-- **Reference:** Spec C4; `R15`–`R18`; Program Design [Adding, removing and retiring an agent](./program-design.md#adding-removing-and-retiring-an-agent-r17-r18).
-- **Target and journey:** `T1` with `T5`, and `T3` with `T5` local for the held and between-writes cases. Journey `verify-auth` `agent`, needed, lasting: it must drive `T5`'s agent-management handler and the sign-in token endpoint, and read D1, each workspace's object and the handler's status.
+- **Obligations:** `R15`, `R16`, and what the agent identity design keeps of `R17`, `R18` at the issuer · proof obligations `V11`, `V12` · seam: trace row R15–R18, as superseded by the agent identity Program Design ("What the agent identity design changed", above in the Program Design).
+- **Proven by:** observation J and G at the issuer: provision a bot credential through central, read back how it is registered, try the grant it must not have, get a token for its one workspace and use it once, see the other workspaces refused, disable it, turn its workspace's resource off, and hold token requests in flight at the final check. The bot's single membership, its removal and the refusal of an already-issued token are proven by agent identity SO1–SO4 and SO7.
+- **Reference:** Spec C4; `R15`–`R16`; agent identity R6 (one membership), R17–R22 (removal across owners) and C7 (service requests).
+- **Target and journey:** `T1`, and `T3` for the held cases. Journey `verify-auth` `agent`, the one identity SO2 updates, lasting: it must drive central's provisioning and resource calls (central's real C7 caller after JC1; until then a stand-in, named as unverified), the sign-in token endpoint and the Switchboard's caller check, and read D1.
 - **Passes when:**
-  - the E9 row has only `client_credentials`, only `tool-portal:agent`, agent metadata, and is not trusted-cached; an authorization-code request with its id is refused;
-  - the agent's links are exactly the workspaces it was added to, each workspace resource carries its organization and workspace, and no token is issued for another organization's workspace or for one it wasn't added to;
-  - `T5` accepts the W1 token at W1 only and W2 refuses it; the person verifier and the agent check each refuse the other kind's real token (`wrong-audience`), and G's fixtures give `not-a-person` and `not-an-agent`;
-  - no person token is released for a workspace, including through a linked person code client;
-  - every refused management request leaves no resource, client, link or membership change;
-  - after removal from W1, on the same warm instances, the old W1 token's call is refused, a new W1 token request gets `invalid_target`, and a **new** W2 token works once with E9 still enabled;
-  - after retirement, the old W2 token's call is refused and a new token request gets `invalid_client`;
-  - between the writes, calls are refused and status is pending; after retry, status is complete and the token requests are refused;
+  - the E9 row has only `client_credentials`, only `tool-portal:agent`, metadata `{ botId, organizationId }`, no resource link, and is not trusted-cached; an authorization-code request with its id is refused;
+  - a repeat provision returns no secret, and a lost reply is recovered by disable and provision anew;
+  - the W1 token works at W1 only; W2 refuses it, and central refuses a W2 or W3 token; the person verifier and the caller check each refuse the other kind's real token (`wrong-audience`), and G's fixtures give `not-a-person` and `not-an-agent`;
+  - no person token is released for a workspace, including through a configured person code client;
+  - after disable, a token request gets `invalid_client`; after the resource is turned off, no token is released for it;
   - every held and conflicting-claim case ends refused, with no token released.
 
   Wrong builds that fail it:
   - a client registered with authorization code as well as client credentials (readback, forbidden grant);
   - a verifier that accepts a token without checking `sid` or `workspace_id` (G);
-  - a Worker that caches membership (warm call);
-  - an agent client in the trusted-client cache (warm token request);
-  - an unlink-all, or a removal that disables the client (the new W2 token);
-  - a handler that reports complete after one write (between writes);
-  - a final check deleted, leaving only the early checks (held cases 1 and 2);
-  - a final check that skips the signed-claim comparisons (held cases 4 and 5) or the resource-organization comparison (held case 7);
-  - a route without the installed session, the person and owner check, or the organization check (refused management, and every add);
-  - a person guard that relies on `allowedScopes` alone (the linked person code client);
-  - an agent client without its first resource link (readback, and its own token request fails `invalid_target`).
+  - per-client resource links still written or used for issuance (readback, the W2 request);
+  - an agent client in the trusted-client cache (readback);
+  - a repeat provision that returns a secret;
+  - a final check deleted, leaving only the early checks (held case 2), or a Switchboard that accepts a pre-removal token after the notice (held case 1);
+  - a final check that skips the signed-claim comparisons (held cases 3 and 4) or the resource-organization comparison (held case 5);
+  - a person guard that relies on `allowedScopes` alone.
 - **Reuses:** none yet.
-- **Unverified:** the real console, which doesn't exist yet: the person verifier stands in for it, and the console's own check is outside this design. Also the agent's host storing its credential, which each host proves with its own wiring; D1's hosted replication timing (only `T3` holds steps in order); creating and closing workspaces, which aren't in this work; The owner and allowlist checks of the management route now read the organization's object (U9 decides who may act).
+- **Unverified:** the real console, which doesn't exist yet (the person verifier stands in for it); central's real C7 caller until JC1 (a stand-in issues the provisioning and resource calls before then); the agent's host storing its credential, which each host proves with its own wiring; D1's hosted replication timing (only `T3` holds steps in order).
 
 ## What the plan must add
 
 - **Journeys, all lasting:** `verify-auth` with `bootstrap` and `agent` (existing on `T3`, changed to sign in to a named organization), and `provider-sign-in`, `passkey`, `proof-audience`, `removal`, `audit` and `organizations` (needed), as scripts in the project's scripts location.
 - **Automated tests, no journey:**
   - E: held interleavings on `T3`, using a hold seam in the test composition only;
-  - J's held races and between-writes case, on `T3` with `T5` local, using the same hold seam and a one-time failure of the agent-client route in the test composition only;
-  - F: decision freshness at Tool Portal's `decide`;
-  - G: verifier rules and the organization object's rules, against real Durable Object storage;
+  - J's held races, on `T3`, using the same hold seam;
+  - F: decision freshness at Switchboard's `decide`;
+  - G: verifier rules; the organization admission rules G used to hold now belong to Fleet central and are proven by agent identity SO4 on both central hosts;
   - a proof-only readback of each organization object's entries, owner binding and records, in the test composition only, never in the production entry;
   - the forced audit-write failures in I.
 - **Owner access, before any of it runs:** the Cloudflare test account, the Google and GitHub test OAuth apps, and the five test identities.

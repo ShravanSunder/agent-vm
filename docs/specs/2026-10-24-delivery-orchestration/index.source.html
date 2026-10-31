@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delivery orchestration</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../2026-10-30-item-two/index.html">Item two</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="index.html">Delivery orchestration</a>
+<a href="../2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+
+<ex-presentation id="path-first" title="What runs first" description="Which work starts on approval, and what waits on what.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">Your rules: design before build, the Fleet release first (U1, U3).</ex-step>
+  <ex-step to="program-design.html#program-design--the-order-in-one-picture" icon="path">The order in one picture, ending at the DONE barrier.</ex-step>
+  <ex-step to="program-design.html#program-design--workstreams" icon="stack">The workstreams and when each starts.</ex-step>
+  <ex-step to="program-design.html#program-design--slices-and-dependency-points" icon="package">Every slice, the design rows it realizes, and what it waits on.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u2-one-complete-order-readable" icon="test-tube">How the order is checked complete: no slice can stay unmerged.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-cut" title="Why the token change can't break calls again" description="How the issuer and the Switchboard change together, and what happens if a deploy fails.">
+  <ex-step to="requirements.html#requirements--what-went-wrong-without-one" icon="bug">What broke the identity build.</ex-step>
+  <ex-step to="specification.html#specification--obligations" icon="book-open">R4: contracts go live whole.</ex-step>
+  <ex-step to="program-design.html#program-design--slices-and-dependency-points" icon="lock">Why B4 and P1 meet only at JC1, the deploy hold before it, and how JC1 cuts over: stop, settle, deploy, prove with a cohort, resume; repair forward on failure.</ex-step>
+  <ex-step to="program-design.html#program-design--cross-repository-contracts" icon="plug">The contracts that cross the repositories, each with one home.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u4-no-half-shipped-contract" icon="test-tube">How the cut is proven, including a rehearsed failed deploy.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-proof" title="The real joint proof" description="What JP1–JP4 run, on what, and what completes delivery.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">Your rule: prove the real path (U6).</ex-step>
+  <ex-step to="program-design.html#program-design--joint-proofs-the-real-path" icon="path">The four joint proofs.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u6-the-real-joint-path" icon="test-tube">How each is observed on the private stack.</ex-step>
+</ex-presentation>
+
+<ex-document id="content" document-id="delivery-orchestration-design" revision="2026-10-28.1">
+
+<h1>Delivery orchestration</h1>
+
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name. Its code, and the sign-in service's, moves to its own <code>agent-collaboration</code> repository first (OD13, slice M1).</p>
+
+The order of work across agent-vm and codex-router for the Switchboard remediation, the sign-in revision and agent identity. agent-vm's remediation and sign-in work start as soon as you approve the designs; codex-router ships its release first, then its identity work. The two sides meet at one joint cut, JC1, where every changed cross-repository contract goes live together after its joint proofs pass. Delivery is complete only at DONE, after bot messaging, both central hosts and the sign-in Node host are also proven. It is a design; nothing in it is built or observed yet.
+
+<ex-callout id="waiting" title="Decisions that wait on you" tone="question" icon="users">
+
+Answer them all on the [decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html), so one Copy or Export carries every answer:
+
+- **OD-R1:** what happens to #262 and #263. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r1-choice) · [the options](program-design.html#program-design--what-happens-to-262-and-263).
+- **OD-R2:** whether the earlier codex-router identity slices still stand. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r2-choice).
+- **OD-R3:** how a contract's generated artifact crosses the repositories. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r3-choice) · [the options](program-design.html#program-design--cross-repository-contracts).
+- **OD-R4:** the parked work this touches (#255). [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r4-choice) · [see it](program-design.html#program-design--parked-work-this-touches).
+
+</ex-callout>
+
+<h2 id="where">Where each answer lives</h2>
+
+- **What you asked for, in your words, and what's still open:** [Requirements](requirements.html)
+- **The nouns, and what the order must satisfy:** [Specification](specification.html)
+- **The order, slices, contracts, cut and proofs:** [Program Design](program-design.html)
+- **How each need will be proven:** [Verification Design](verification-design.html)
+
+The designs this orders: [Switchboard remediation](../2026-10-24-tool-portal-remediation/index.html), [agent identity](../2026-10-24-agent-identity/index.html) and [people sign-in](../2026-10-20-people-sign-in/requirements.html). To be walked through, press **W** or use the path button.
+
+<h2 id="documents">The documents</h2>
+
+<p id="documents-lead">Each document has its own page. Program Design is HTML, one section per heading; the other documents are their Markdown sources.</p>
+
+<ul id="documents-list">
+<li><a href="requirements.html"><strong>Requirements</strong></a>: What went wrong without an orchestration design, who is affected, nine needs in your words, the goal boundary, and the open decisions.</li>
+<li><a href="specification.html"><strong>Specification</strong></a>: The entities (workstream, slice, dependency point, contract, joint cut, joint proof, gate) and obligations R1–R9. Failure cases covered: a slice missing or left unmerged, a dependency on later work, a half-shipped contract, a hand-written copy of a shape, and a gate with two owners.</li>
+<li><a href="program-design.html"><strong>Program Design</strong></a>: The order in one picture, workstreams, every slice with its design rows, the contracts K1–K7, the joint cut JC1 with its deploy hold and failure handling (a failed deploy part-way, a failed proof), the joint proofs, gate owners, #262 and #263, and parked work.</li>
+<li><a href="verification-design.html"><strong>Verification Design</strong></a>: One line per need, a row per need naming the wrong order or cut it must catch, and the journeys still to build. Planned, not observed.</li>
+</ul>
+
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

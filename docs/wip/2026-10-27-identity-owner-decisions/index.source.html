@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Identity decisions</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="index.html">Identity decisions</a>
+<a href="../../specs/2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../../specs/2026-10-30-item-two/index.html">Item two</a>
+<a href="../../specs/2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../../specs/2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/index.html">Switchboard remediation</a>
+<a href="../../specs/2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../../specs/2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+<ex-document id="content" document-id="identity-owner-decisions" revision="2026-10-28.1">
+
+<h1>Identity decisions</h1>
+
+<p id="intro" data-comment-label="What this page is">Nothing on this page is waiting for an answer. Your answer on the window between your switch and the second cut (28 October) is recorded first, then your earlier answers.</p>
+
+<h2 id="window">What runs between your switch and the second cut: decided</h2>
+
+<p id="window-decided" data-comment-label="The window">You said yes to today's behavior inside your organization (OD11). Remote start goes live at your switch. Until the second cut, every logged-in machine still sees every workspace, collaboration calls carry their real session but aren't checked per workspace, and the Switchboard keeps today's tokens. Cloudflare Access stays in front until every rule holds, then comes off last.</p>
+
+<ex-mermaid id="window-picture" label="The window"><script type="text/plain">
+flowchart TB
+  S["Your switch:<br/>remote start and messaging<br/>on the new login"] --> W["The window:<br/>today's behavior<br/>inside your organization"]
+  W --> C["Second cut: roles, what machines see,<br/>Switchboard tools and removal live"]
+  C --> A["Cloudflare Access off"]
+</script></ex-mermaid>
+
+<p id="earlier" data-comment-label="Earlier answers">Your earlier answers are recorded below and are in the design documents. Your four questions are answered further down.</p>
+
+<h2 id="question">Device-code login only, for now: decided</h2>
+
+<p id="question-proposal" data-comment-label="Decided">You called VM creators scope creep, so this build logs machines in by device code only. VM creators come later as one more kind of issuer. A machine without systemd logs in by device code and keeps its login in memory, as you suggested; after it restarts, you approve it again.</p>
+
+<p id="remote-start" data-comment-label="Remote start">Added on your ask: a session can start a helper on another machine of its organization that serves its workspace, through Fleet central, without anyone logging in to that machine (U39). The <a href="../../specs/2026-10-24-agent-identity/index.html">identity page</a> walks through it.</p>
+
+<h2 id="decided">What you decided</h2>
+
+<table id="decided-table">
+<thead><tr><th>Decision</th><th>Your answer</th><th>What happens</th></tr></thead>
+<tbody>
+<tr><td>Fleet data per organization (OD8)</td><td>One Fleet object per organization</td><td>Your existing Fleet data becomes the first organization's.</td></tr>
+<tr><td>VM proof (OD10)</td><td>Out of scope</td><td>No VM run is planned or proven.</td></tr>
+<tr><td>Linux CI job</td><td>No</td><td>No new gate. codex-router's existing CI already runs every Rust test on Linux, so the Linux secret store is still tested. Logging in a real Linux machine end to end stays unverified.</td></tr>
+<tr><td>Leaving an organization (OD5)</td><td>Roles end with it</td><td>Sessions aren't affected.</td></tr>
+<tr><td>Device code lifetime (OD6)</td><td>10 minutes, single use</td><td>One setting.</td></tr>
+<tr><td>Room record (OD7)</td><td>Keep</td><td>Nothing is refused because of it.</td></tr>
+</tbody>
+</table>
+
+<h2 id="answers">Your questions, answered</h2>
+
+<p id="answers-lead" data-comment-label="About these">Nothing to pick here. These stay as designed unless you tell me otherwise.</p>
+
+<h3 id="fix-forward">"What do you mean step 2 breaks login?"</h3>
+
+<p id="fix-forward-answer" data-comment-label="Fix forward">It isn't expected to. Step 2 is the switch where Fleet central accepts only the new login and each machine logs in again. It's rehearsed on test deployments first. "Fixes forward" only says what happens if a bug gets through anyway: we fix it and deploy, rather than switching back to the old login.</p>
+
+<ex-mermaid id="fix-forward-picture" label="If a bug shows up after step 2"><script type="text/plain">
+flowchart TB
+  B["Bug found<br/>after step 2"] --> FF["Fix forward<br/>(the design)"]
+  B --> RB["Roll back to<br/>the old login"]
+  FF --> FF1["Offline until<br/>the fix deploys;<br/>Access still guards"]
+  RB --> RB1["The old table never<br/>saw later revocations"]
+  RB1 --> RB2["A machine you<br/>revoked gets back in"]
+</script></ex-mermaid>
+
+<h3 id="token-note">"Token family carries organization and enrollment": what it means</h3>
+
+<p id="token-note-answer" data-comment-label="The note">A machine keeps itself logged in by trading a refresh token for new tokens at the sign-in service. The refresh token on its own only says who approved it, and that's you for every machine. So it can't tell your machines apart or stop just one. We put a short note on it, "org X, approval Y", which Better Auth copies onto each new refresh token. Every trade checks that approval:</p>
+
+<ex-mermaid id="token-note-picture" label="Every renewal checks your approval"><script type="text/plain">
+flowchart TB
+  R["Router trades its refresh token<br/>note: org X, approval Y"] --> S["Sign-in service asks org X:<br/>is approval Y still current?"]
+  S -->|"yes"| T["New tokens,<br/>same note"]
+  S -->|"revoked or<br/>replaced"| X["Refused"]
+</script></ex-mermaid>
+
+<h3 id="filtered">"Machines see only their workspaces, with gaps marked": what it means</h3>
+
+<p id="filtered-answer" data-comment-label="Your rule">This is your rule (U29): a machine knows only the workspaces it serves or may talk to. Today every Router receives the whole Fleet. With the filter:</p>
+
+<ex-mermaid id="filtered-picture" label="One organization, three workspaces: what machine M1 receives"><script type="text/plain">
+flowchart TB
+  P["Personal<br/>(M1 serves it)"] -->|"everything"| M["Machine M1<br/>learns nothing<br/>about Client"]
+  OSS["OSS<br/>(Personal may<br/>talk to it)"] -->|"name only"| M
+</script></ex-mermaid>
+
+<p id="filtered-gaps" data-comment-label="Gaps marked">"Gaps marked": Fleet numbers every change 1, 2, 3…, and a missing number counts as lost data. So a change M1 mustn't see still arrives, as just its number:</p>
+
+<table id="filtered-table">
+<thead><tr><th>Number</th><th>What Fleet stores</th><th>What M1 receives</th></tr></thead>
+<tbody>
+<tr><td>6</td><td>Task added in Personal</td><td>Task added in Personal</td></tr>
+<tr><td>7</td><td>Project added in Client</td><td>7: withheld</td></tr>
+<tr><td>8</td><td>OSS renamed</td><td>OSS renamed (name only)</td></tr>
+</tbody>
+</table>
+
+<h3 id="ticked">The two you ticked without a comment</h3>
+
+<p id="claim-answer" data-comment-label="Claim after approval"><strong>A machine is claimed for an organization only after you approve it.</strong> A machine belongs to one organization for good. If that were recorded when it merely asked to log in, a login you denied would still lock it into that organization.</p>
+
+<p id="old-connection-answer" data-comment-label="Old connection closes"><strong>Logging a machine in again cuts off its old connection.</strong> If you log a machine in again, perhaps because its old login leaked, the old login stops working at once. Its sessions and workspaces carry over, because they belong to the machine.</p>
+
+<h2 id="next">Next</h2>
+
+<p id="next-steps" data-comment-label="Next">Everything is in the four design documents. The Sol reviewer checks the changes, and the plan comes back to you for approval.</p>
+
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>

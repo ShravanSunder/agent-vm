@@ -1,5 +1,7 @@
 # Build the sign-in service
 
+> **Superseded (2026-10-24).** This plan was built from (S1, PR #263) and is a record only. The remaining sign-in work is planned from the revised [agent identity](../../2026-10-24-agent-identity/program-design.html) and [people sign-in](../program-design.html) designs and ordered by the [delivery orchestration](../../2026-10-24-delivery-orchestration/program-design.html) design. In particular, its promise that a failed agent registration can be retried to obtain a usable credential no longer holds: a lost one-time secret is never recovered, and the credential is retired and provisioned anew through Fleet central.
+
 One `@agent-collaboration/auth` Worker per deployment runs Better Auth on D1. The first delivery registers an agent through the Gateway's owner-only management handler, obtains a real E10, and runs a Gateway tool with it. Sign-in owns the credential; the Gateway owns tool admission. The controller keeps Cloudflare Access.
 
 **Status: accepted by the Lead for S1, with the Decision A ruling below (2026-10-21).** S1 still needs the owner's permission for the new package's tsconfig before it starts. S2–S6 keep their named preconditions (F-56 UI view, the real `decide` target, OAuth test apps and identities). S7 stays gated on the owner's D1–D3.
@@ -20,7 +22,7 @@ planned at: docs/tool-portal-design / 4859221c29ccf87b553b55da7d0363432761e66b
 source target: tool-host-core/runtime-neutral-hosting / 14cd48921e4d27f8e6cc6f7090b30cf42d5e5272
 ```
 
-The governing basis is the four distinct documents: [Requirements](../requirements.md), [Specification](../2026-10-20-people-sign-in.md), [Program Design](../program-design.md), and [Verification Design](../verification-design.md). Their last change is `df2d967685fb77e21e7097b3f84d319a35abc6f9`; `git diff df2d9676 HEAD` over that folder is empty.
+The governing basis is the four distinct documents: [Requirements](../requirements.md), [Specification](../2026-10-20-people-sign-in.md), [Program Design](../program-design.html), and [Verification Design](../verification-design.md). Their last change is `df2d967685fb77e21e7097b3f84d319a35abc6f9`; `git diff df2d9676 HEAD` over that folder is empty.
 
 Independent correction checks are board messages `01a15c2d-0000-7000-8000-000000000001` at `d526f9e4` and `01a15c2f-0000-7000-8000-000000000001` at `df2d9676`. The latter closes the resource-link, post-signing race and organization-equality findings; no findings remain in that review. The Lead's trace checkpoints dated 2026-10-21 ~02:30Z and ~02:40Z record its source verification and closure; those entries were read. This is design-review evidence, not implementation proof.
 

@@ -1,5 +1,7 @@
 # Join the Worker lineage to the accepted S4 stack
 
+> **Status (2026-10-28): done; record.** The join was accepted at #246 `a5ff0ba6` on 22 October. The [Switchboard remediation plan](../../2026-10-24-tool-portal-remediation/plans/2026-10-28-switchboard-remediation-delivery.html) now governs this code, which moves to its own `agent-collaboration` repository first (OD13).
+
 **Status: accepted by the Lead (2026-10-22).** Ready for implementation. Phase 1
 research (a dry run of every merge, done in a scratch clone with no pushes) is
 the evidence:

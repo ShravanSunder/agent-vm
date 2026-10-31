@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Switchboard remediation</title>
+<link rel="stylesheet" href="https://demistify.getagentstudio.dev/v1/theme.css">
+<script type="module" src="https://demistify.getagentstudio.dev/v1/runtime.js"></script>
+</head>
+<body>
+<ex-nav for="content"><nav slot="pages" aria-label="Pages">
+<a href="../../wip/2026-10-27-identity-owner-decisions/index.html">Identity decisions</a>
+<a href="../2026-10-24-agent-identity/index.html">Identity design</a>
+<a href="../2026-10-30-item-two/index.html">Item two</a>
+<a href="../2026-10-24-agent-identity/plans/2026-10-27-agent-identity-delivery.html">Identity delivery plan (D2–D7)</a>
+<a href="../2026-10-24-delivery-orchestration/index.html">Delivery orchestration</a>
+<a href="index.html">Switchboard remediation</a>
+<a href="plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>
+<a href="../../wip/2026-10-24-remediation-owner-decisions/index.html">Switchboard decisions</a>
+<a href="../2026-10-20-people-sign-in/requirements.html">People sign-in</a>
+</nav></ex-nav>
+
+<ex-presentation id="path-restart" title="A used approval after a restart" description="Why an approval stays used when a host restarts, and how that is proven.">
+  <ex-step to="requirements.html#requirements--what-this-work-changes-from-the-switchboard-design" icon="users">The change: approval state survives a restart on every host.</ex-step>
+  <ex-step to="specification.html#specification--storage-drizzle-on-sqlite" icon="book-open">What must hold: R7 (what survives) and R8 (one first use on every driver).</ex-step>
+  <ex-step to="program-design.html#program-design--the-tables-for-the-owner-s-approval-rd1" icon="database">The tables that hold it, for your approval.</ex-step>
+  <ex-step to="program-design.html#program-design--how-each-decision-stays-atomic" icon="lock">How each decision stays atomic on the Durable Object and on Node.</ex-step>
+  <ex-step to="program-design.html#program-design--approval-use-lifecycle" icon="path">The approval's states, including after a restart.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u5-nothing-that-must-survive-is-lost-on-restart" icon="test-tube">How it will be proven: restart, redeploy, contention, cutover.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-core" title="One core, two hosts" description="What the core owns, what each host supplies, and how drift is caught.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">Your rule: runtime separated by injection, Fleet style (U1, U2, U6).</ex-step>
+  <ex-step to="specification.html#specification--one-core-one-core-injected" icon="book-open">What must hold: every rule in the core; the Node host runs it.</ex-step>
+  <ex-step to="program-design.html#program-design--the-structure-in-one-picture" icon="stack">The structure in one picture.</ex-step>
+  <ex-step to="program-design.html#program-design--platform-capabilities-the-one-list" icon="plug">The one list of what a host supplies.</ex-step>
+  <ex-step to="program-design.html#program-design--the-type-check-guard" icon="shield-check">The type-check guard that stops the core reaching for a runtime.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u1-one-core-every-runtime-only-injects" icon="test-tube">How it will be proven: the same session on both hosts.</ex-step>
+</ex-presentation>
+
+<ex-presentation id="path-large" title="Large requests (#33)" description="Why oversize calls got a 502, and how they are streamed instead of capped.">
+  <ex-step to="requirements.html#requirements--needs" icon="users">Your rule: stream or spill, no cap (U14).</ex-step>
+  <ex-step to="specification.html#specification--known-defects-findings-and-deployed-failures-fixed" icon="book-open">What must hold: R26.</ex-step>
+  <ex-step to="program-design.html#program-design--large-requests-r26" icon="path">The evidence, the design, and the first observation to take.</ex-step>
+  <ex-step to="requirements.html#requirements--open-owner-decisions" icon="users">The tradeoff you decide: RD7, platform memory as the bound or a much larger bounded-memory design.</ex-step>
+  <ex-step to="verification-design.html#verification-design--u14-large-requests-streamed-not-capped" icon="test-tube">How it will be proven.</ex-step>
+</ex-presentation>
+
+<ex-document id="content" document-id="tool-portal-remediation-design" revision="2026-10-28.1">
+
+<h1>Switchboard remediation</h1>
+
+<p id="name-note">Switchboard was called the Tool Portal until 28 October; its code packages keep their <code>tool-*</code> names for now, and older documents use the old name. Its code moves to its own <code>agent-collaboration</code> repository before this work starts (OD13, the plan's M1). The plan: <a href="plans/2026-10-28-switchboard-remediation-delivery.html">Switchboard remediation plan</a>.</p>
+
+The Switchboard code in PR #262 works, but it was built on choices you never made. This design fixes that code so it follows your rules: one core that every runtime injects into, storage in SQLite through Drizzle, strong types and UUIDv7, deterministic tests with Hegel, your check gates unchanged, one version of each dependency, and the known defects fixed. It is a design; nothing in it is built or observed yet.
+
+<ex-callout id="waiting" title="Seven decisions wait on you" tone="question" icon="users">
+
+Answer them all on the [decision page](../../wip/2026-10-24-remediation-owner-decisions/index.html), so one Copy or Export carries every answer:
+
+- **RD1:** the store's tables and migrations, and `drizzle-kit`. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd1-choice) · [the tables](program-design.html#program-design--the-tables-for-the-owner-s-approval-rd1).
+- **RD2 and RD5:** what happens to #262, and its 26 added scripts. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#od-r1-choice) (decided together as OD-R1).
+- **RD3:** the old MCP SDK in one test fixture only. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd3-choice).
+- **RD4:** an end-to-end hang guard. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd4-choice).
+- **RD6:** where the Node host spills large requests. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd6-choice).
+- **RD7:** how large requests are bounded. [Answer](../../wip/2026-10-24-remediation-owner-decisions/index.html#rd7-choice).
+
+</ex-callout>
+
+<h2 id="where">Where each answer lives</h2>
+
+- **What you asked for, in your words, and what's still open:** [Requirements](requirements.html)
+- **The nouns, and what must be true:** [Specification](specification.html)
+- **How the parts are built and who owns what:** [Program Design](program-design.html)
+- **How each need will be proven:** [Verification Design](verification-design.html)
+
+To be walked through any of these, press **W** or use the path button. The paths are: a used approval after a restart, one core with two hosts, and large requests.
+
+<h2 id="parts">The six parts</h2>
+
+- **One core, injected:** [needs](requirements.html#requirements--needs) · [obligations R1–R3](specification.html#specification--one-core-one-core-injected) · [platform capabilities](program-design.html#program-design--platform-capabilities-the-one-list) · [proof](verification-design.html#verification-design--u1-one-core-every-runtime-only-injects)
+- **Drizzle on SQLite:** [obligations R4–R9](specification.html#specification--storage-drizzle-on-sqlite) · [the workspace store](program-design.html#program-design--the-workspace-store) · [proof](verification-design.html#verification-design--u5-nothing-that-must-survive-is-lost-on-restart)
+- **Types that say what is valid:** [obligations R10–R12](specification.html#specification--type-safety-types-that-say-what-is-valid) · [operations and results](program-design.html#program-design--operations-and-results) · [proof](verification-design.html#verification-design--u7-type-safety-discriminated-unions-the-type-check-guard)
+- **Deterministic tests:** [obligations R13–R16](specification.html#specification--deterministic-tests-tests-that-never-read-the-clock) · [proof](verification-design.html#verification-design--u9-no-wall-clock-in-tests)
+- **Clean build, your gates:** [obligations R17–R19](specification.html#specification--build-hygiene-clean-build-owner-s-gates) · [clean build and gates](program-design.html#program-design--clean-build-and-gates) · [proof](verification-design.html#verification-design--u10-gates-as-approved)
+- **Known defects fixed:** [obligations R20–R26](specification.html#specification--known-defects-findings-and-deployed-failures-fixed) · [the defects and their owners](program-design.html#program-design--the-defects-and-their-owners) · [proof](verification-design.html#verification-design--u13-known-defects-fixed)
+
+<h2 id="documents">The documents</h2>
+
+<p id="documents-lead">Each document has its own page. Program Design and the plan are HTML, one section per heading; the other documents are their Markdown sources.</p>
+
+<ul id="documents-list">
+<li><a href="requirements.html"><strong>Requirements</strong></a>: What #262 got wrong, the six parts, fifteen needs with your words as evidence, the one change of outcome from the Switchboard design, the goal boundary, and seven open decisions.</li>
+<li><a href="specification.html"><strong>Specification</strong></a>: The entities and their map, and obligations R1–R26. Failure cases covered: a host restart or redeploy, concurrent first use across copies and connections, a late or lower removal notice, a migration that fails or runs twice, the storage cutover, a missing capability, an unhandled variant, and a request over the old size budget.</li>
+<li><a href="program-design.html"><strong>Program Design</strong></a>: The structure, today's code with anchors, the choices and their tradeoffs, where each thing lives, the capability list, the store's tables for your approval, the type-check guard, three call paths, the approval lifecycle, and failure handling: a database error, a failed migration, a restart after arming, two copies or two processes at once, a late removal notice, unreachable signing keys, an unparseable row, and large requests.</li>
+<li><a href="verification-design.html"><strong>Verification Design</strong></a>: One line per need, seven shared observations, a row per need naming the wrong build it must catch, and the journeys still to build. Planned, not observed.</li>
+<li><a href="plans/2026-10-28-switchboard-remediation-delivery.html"><strong>Plan</strong></a>: M1, then A1–A8 and the agent-vm side (A4b), each ticket with what it covers, what proves it and what it waits on.</li>
+</ul>
+
+</ex-document>
+<ex-comments for="content"></ex-comments>
+</body>
+</html>
