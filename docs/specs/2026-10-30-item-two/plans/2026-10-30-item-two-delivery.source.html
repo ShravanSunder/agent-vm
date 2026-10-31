@@ -10,6 +10,7 @@
   <ex-step to="item2--result" icon="rocket">The answer: what item two delivers, and what it waits on.</ex-step>
   <ex-step to="item2--the-deliverables-at-a-glance" icon="rocket">The five deliverables and what you'll see working in each.</ex-step>
   <ex-step to="item2--how-the-deliverables-connect" icon="path">How they depend on each other, and when each goes live.</ex-step>
+  <ex-step to="item2--how-the-build-runs-in-parallel" icon="git-branch">How the build runs in parallel: waves, lanes and who builds it.</ex-step>
   <ex-step to="item2--tickets-by-workstream" icon="stack">Every ticket, by workstream and repository.</ex-step>
   <ex-step to="item2--d1-login-end-to-end" icon="key">D1: login, end to end: your sign-in, machine login, sessions and flood limits; live at your switch.</ex-step>
   <ex-step to="item2--dt-logs-and-traces" icon="path">DT: logs and traces, from Cloudflare and every host; live right after the switch.</ex-step>
@@ -71,7 +72,7 @@ SO8 (F14): two Routers log in by device code to a local Fleet central, and their
 |---|---|---|---|
 | **D1 Login, end to end** | You sign in, and approve your Mac and Sunclaw by device code. Their sessions register through their machine, and sessions on the two keep messaging each other on the new login. A revoked machine stops. Hammering the sign-in page or code entry from one address is refused and changes nothing. Then production switches: central accepts only machines logged in this way (still behind Access). | sign-in; Fleet central; Router | your go; OD4; the Fleet release F0 |
 | **DT Logs and traces** | Every login, refusal, connection and registration leaves a record with its reason, in Cloudflare's Workers Logs (with central's traces) and in your OpenTelemetry tool, with nothing secret in it. | sign-in; Fleet central | D1's B2, B5, F10; OD17 only for the export check |
-| **DV See who is logged in** | You open a page beside the device-code approval page. It shows each machine you've logged in (approval, workspaces, connected or not, last seen) and each session on it (harness, project, workspace, start time, and working, idle or unknown). A machine whose network is cut shows as not connected within 15 seconds. Anyone else is refused; if central can't answer, the page says unavailable. | Fleet central; Router; sign-in | D1's F1, F2a, F4a, F10, F11, B4a; OD14 (built at the proposed 15 s) |
+| **DV See who is logged in** | You open a page beside the device-code approval page. It shows each machine you've logged in (approval, workspaces, connected or not, last seen) and each session on it (harness, project, workspace, start time, and working, idle or unknown). A machine whose network is cut shows as not connected within 30 seconds. Anyone else is refused; if central can't answer, the page says unavailable. | Fleet central; Router; sign-in | D1's F1, F2a, F4a, F10, F11, B4a; OD14 (decided: 30 s) |
 | **DR Start a session on another machine** | A session on your Mac lists the machines that serve its workspace and starts a helper on Sunclaw. Each start gives started, refused (nothing created) or unknown (read the outcome later). An offline machine is refused, never queued. | Fleet central; Router | D1's F2a, F4a, F10, F11, F14 |
 | **DC Stage C: people** | The view also shows each person admitted to your organization: their name, signed in now or not, and their last sign-in. | sign-in; Fleet central | DV |
 </script></ex-markdown>
@@ -107,6 +108,32 @@ Each lane is one deliverable, top to bottom in the order it goes live. A lane's 
 **D1 goes live alone,** so your switch waits on nothing else. The rest go live one at a time after it, each as its own small step, and none makes a machine log in again.
 
 **D1's tickets already record their decisions** through the cores' observation seams as they build them. DT turns on Cloudflare's logs and traces and adds the exporters.
+</script></ex-markdown>
+<h2 id="item2--how-the-build-runs-in-parallel">How the build runs in parallel</h2>
+<ex-markdown id="item2--how-the-build-runs-in-parallel-text"><script type="text/markdown">
+**Two lanes run side by side from the start,** one per repository, each with its own Lead: the sign-in service (Switchboard Lead) and Fleet central with the Router (Fleet Lead). Inside each lane, every ticket whose "waits on" is met starts at once. The later deliverables (logs and traces, the view, remote start) are **built and reviewed in their branches while login finishes**. They only *merge* in order, after each private-stack cut.
+
+| Wave | Sign-in lane | Fleet central and Router lane | Built ahead, in branches | Starts when |
+|---|---|---|---|---|
+| **1** | B1 storage and core | F1 contracts and the shared crate · F12 Linux secret store | — | your go; the Fleet release F0 |
+| **2** | B2 Node host · B3 design fixes | F2a organization core · F11 Router machine login | — | B1; F1 |
+| **3** | B4a issuer core | F2b Fleet data per organization · F3a receivers | — | B3 and F1's fixtures; F2a |
+| **4** | B5 device-code login | F10 enrollment and token check · F4a registrar and binding | V3 the view's page | B4a and B2; F2a, F3a, F2b, F11 |
+| **5** | B6 flood limits · B7 second factors | F14 SO8 login journey | T1, T2 telemetry · V1 presence and lookup · V2 heartbeat | B5; F10, F11, F4a and B5 |
+| **6** | — | F8a SO1 journey · F17 remove the old login | T3, V4 journeys · F15 remote start | F14; V1 and V2 |
+| **7** | — | — | F16 remote-start journey | F15 |
+| **then** | JC1 private stack → PROD2 your switch (login goes live) | | each later deliverable merges after the previous cut, then goes live | |
+
+**The critical path** runs F1 → F2a → F3a → F10 → F14 → F17 → JC1, with the sign-in chain B1 → B3 → B4a → B5 meeting it at F14. That's six waves to the switch; everything else fits around it.
+
+**Who builds it** (my call, recorded in the trace; tell me if you want it different):
+- **One Sol Implementer per ticket in flight,** each in its own Agent Studio worktree of its repository. Sol at high to xhigh effort for the cross-repository and design-heavy tickets (F1, F2a, F10, B4a, B5, B7, F15); Sol at medium for the bounded ones.
+- **At most four Implementers per lane at once,** so each Lead can check every handback against its evidence before accepting it. Peak is wave 5: seven tickets across both lanes and the branches.
+- **A paired Verifier per workstream** checks proof against the real target, from a different model family than its Implementer where one is available.
+- **One Reviewer per deliverable** before its private-stack cut: the retained Sol xhigh Reviewer.
+- **Heavy runs** (workerd, whole suites, journeys) go to sunclaw, never your Mac.
+
+**What can't run in parallel, on purpose:** each contract's home publishes its shape before its consumers build against it (F1 for central's shapes, B4a and B5 for the sign-in service's). The later deliverables merge only after the previous cut, so each cut ships exactly one deliverable.
 </script></ex-markdown>
 <h2 id="item2--tickets-by-workstream">Tickets by workstream</h2>
 <ex-markdown id="item2--tickets-by-workstream-text"><script type="text/markdown">
@@ -212,13 +239,13 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 | Decision | Holds | Recommendation |
 |---|---|---|
 | Your go to build item two | everything | — |
-| OD4, the sign-in tables (with `deviceCode` and its `enrollmentId`, the session's second-factor columns, and the two-factor table) | B1 | approve the drawn tables and generated SQL together |
-| OD14, the view's freshness bound | nothing: DV is built at the proposed 15 seconds, and every interval scales from that one setting | 15 seconds |
-| OD2, the default token lifetime | nothing: 5 minutes is built and is one setting | 5 minutes |
+| OD4, the sign-in tables (with `deviceCode` and its `enrollmentId`, the session's second-factor columns, and the two-factor table) | B1 | **approved (31 October)**; the generated SQL still comes to you before code uses it |
+| OD14, the view's freshness bound | nothing: decided, 30 seconds (31 October) | — |
+| OD2, the default token lifetime | nothing: decided, 10 minutes (31 October) | — |
 | OD16, how login floods are limited | nothing: Turnstile is decided (you, 30 October), and the counting layers are built as recommended in B6 | Better Auth's limits, set explicitly, plus Cloudflare's rate-limit binding in the Worker |
 | OD18, how people sign in after their first sign-in | nothing: decided, step-up (31 October) | — |
 | OD19, which providers | nothing: decided, Google and GitHub; never Facebook or Apple relay addresses | — |
-| OD17, where logs and traces go | only JT1's export check | name one OTLP destination when you pick a tool; Cloudflare keeps its own records either way |
+| OD17, where logs and traces go | nothing: decided, no export yet; you turn it on later (31 October) | — |
 | Running PROD2, PRODT, PRODV and PRODR | the production steps | at PROD2 you run the new Router build and log every machine in again; at the later steps nothing logs in again. Nothing in production changes before you say go |
 </script></ex-markdown>
 <h2 id="item2--basis-and-review-history">Basis and review history</h2>
@@ -574,6 +601,7 @@ Real sessions on each harness path start and restore on a Router logged in by de
 - **Covers:** D1 live together on the private stack: the sign-in service with B1–B6 and Fleet central with F1, F2a, F2b, F3a, F4a, F10, F11 and F17 (today's login already removed, and the `machine_enrollments` drop migration run), behind the test Access application. These are the builds PROD2 promotes; their build IDs are recorded here. The test Routers log in by device code. Every contract D1 changes goes live whole: K3's person half, K5–K11.
 - **Earns:** SO8 against the private stack, its messaging step included; JP4 (your admin command through the sign-in service); SO10 step 2 on the private stack; U34's step-2 row; and the **legacy-path control**: a legacy agent client gets a fresh token from the new issuer and makes one allowed Switchboard call at the unchanged Switchboard, on the Worker and the Node host, while a forbidden call is still refused. The control reruns at every deploy until JC2.
 - **Turnstile:** the private stack's widget is created through Cloudflare's API with the `cf` CLI, and one real sign-in passes Turnstile's real siteverify.
+- **Real browser sign-in:** the private-stack sign-ins (Google, then a passkey and an app code) use your test Google account, driven by a Codex agent with computer use and Brave browser control. That's your grant of 31 October; the address is in the agent's brief, not in this plan.
 - **Follows** the orchestration's cutover procedure: freeze, deploy, read back builds, prove, resume.
 </script></ex-markdown>
 </details>
@@ -661,12 +689,12 @@ SO13: SO8's and SO2's runs (and SO12's once V4 exists) export to a local OTLP co
 </details>
 <h2 id="item2--dv-see-who-is-logged-in">DV See who is logged in</h2>
 <ex-markdown id="item2--dv-see-who-is-logged-in-text"><script type="text/markdown">
-**You'll see:** a page beside the device-code approval page, refreshing every 2.5 seconds.
+**You'll see:** a page beside the device-code approval page, refreshing every 5 seconds.
 - **Each machine** you've logged in: its label and installation; enrolled, revoked or expired; who approved it and when; the workspaces it may serve; connected or not; and when it was last seen.
 - **Each active session** on a machine: its harness, project and workspace, its isolation kind, when it started, and working, idle, or unknown while its machine isn't connected.
 
 What it does:
-- **A cut machine shows within 15 seconds.** A machine whose network is cut shows as not connected, with its sessions unknown, within 12.5 seconds at the proposed 15-second bound.
+- **A cut machine shows within 30 seconds.** A machine whose network is cut shows as not connected, with its sessions unknown, within 25 seconds at the decided 30-second bound.
 - **Only you.** Anyone else gets a refusal that shows nothing.
 - **Never stale.** If central can't answer, the page says unavailable rather than showing old rows.
 
