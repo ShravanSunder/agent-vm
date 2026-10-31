@@ -770,7 +770,7 @@ pub struct DecideMachineToken { pub organization_id: OrganizationId, pub enrollm
 pub enum MachineTokenDecision {
     #[serde(rename_all = "camelCase")]
     Grant { installation: InstallationId, enrollment_id: EnrollmentId, decided_at: UnixSeconds, grant_expires_at: UnixSeconds },
-    Refuse { reason: MachineTokenRefusal },    // enrollmentNotActive | superseded | wrongClient
+    Refuse { reason: MachineTokenRefusal },    // enrollmentNotActive | superseded | wrongClient | idleExpired (30 days without a Grant)
 }
 
 // Fleet central's connection entry → Registry → organization authority, for every new connection and renewal.
@@ -840,6 +840,8 @@ The plan's first sign-in slice proves this against 1.7.11, in particular:
 The fallback for the first mint is our own device endpoints minting through `issueTokens` with the same reference and client.
 
 **Renewal.** A machine refreshes at the sign-in service before `grant_expires_at`, as above. Fleet central decides whether it is admitted: on each new connection and each `RenewMachineToken`, the organization authority reads the enrollment live.
+
+**Idle expiry (30 days, one setting).** The organization authority records the time of each `Grant` it gives an enrollment, and answers `Refuse { reason: idleExpired }` once 30 days have passed since the last one; the enrollment shows as expired. The sign-in service sets the machine clients' refresh lifetime (`refreshTokenExpiresIn`, Better Auth's default) to the same 30 days. Each refresh issues a new refresh token with a fresh lifetime, which B5 confirms at 1.7.11. So a running machine, renewing every few minutes, never expires; one switched off for more than 30 days asks for your approval again. Central's own rule decides it, so the two lifetimes drifting apart can't keep a machine in.
 
 **The open connection, and supersession.**
 - **Renewing:** an open connection carries its token's expiry and its enrollment ID. Before the token expires, the Router sends a fresh one over the connection (`RenewMachineToken { token }` on `/v1/session`), checked like a new connection. The Connection object closes a connection whose token has expired.
