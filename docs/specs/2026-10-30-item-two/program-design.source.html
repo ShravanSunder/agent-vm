@@ -524,7 +524,7 @@ erDiagram
   - each Zod consumer adds a UTF-8 byte check (`new TextEncoder().encode(value).length <= limit`).
   
   The tests include multibyte boundaries. For `ModelName`, 128 `é` (256 bytes) is accepted and 256 `é` (512 bytes) is refused, by serde and by the schema alike.
-- **Numbers:** times are Unix seconds, except the who-is-logged-in view's (K12: `asOf`, `since`, `lastHeardAt`, `lastSeenAt`, `startedAt`), which are Unix milliseconds, typed `UnixMillis`, because the view compares them with its millisecond durations. Durations are milliseconds. The `u64` counters (`sequence`, `attachSequence`) stay below 2^53, one per report or attach; their schemas say so, so a JavaScript reader reads them exactly.
+- **Numbers:** times are Unix seconds, except the who-is-logged-in view's (K12: `asOf`, `since`, `lastHeardAt`, `lastSeenAt`, `startedAt`, `approvedAt`) and the admin lookups' (`startedAt`, `approvedAt`), which are Unix milliseconds, typed `UnixMillis`, because the view compares them with its millisecond durations. Durations are milliseconds. The `u64` counters (`sequence`, `attachSequence`) stay below 2^53, one per report or attach; their schemas say so, so a JavaScript reader reads them exactly.
 - **Clock model:** any two service clocks differ by at most D = 60 seconds. No receiver adds leeway to `grant_expires_at`; checks of `exp`, `iat` and service-token lifetimes allow D. Retention (below) is computed from D, so a clock difference can refuse a token early but never let a covered one pass after its notice is dropped.
 </script></ex-markdown>
 
@@ -1036,7 +1036,7 @@ pub struct AdmittedPersonRow { pub person_id: PersonId }                        
 - **One organization.** Only machines with an enrollment in this organization are listed, which R34 already guarantees: one authority per organization.
 - **Stage C** fills `people`. Until then it's empty. The sign-in service adds the facts it owns: each person's name, whether they are signed in now, and when they last signed in. Bots join the lookup, as a new field, when bots exist.
 
-**The four admin lookups (R14).** Read-only and under the owner guard, like `WhoIsLoggedIn`: they write no record, start no outbox step, and never answer `secondFactorRequired`, because reads are exempt. Each answers only inside the organization it names. R14 asks for "a person's organizations", but an organization's owner may not learn of another organization (R34). So the person lookup answers that person's standing in this organization only; a person's full list of organizations is theirs alone, at sign-in. A subject that doesn't exist and a subject in another organization both answer the same `unknown {}`, so nothing is revealed. Home: `identity_contract.rs`, beside the K12 shapes, whose `WorkspaceRef`, `ProjectRef` and `MachineLabel` they reuse.
+**The four admin lookups (R14).** Read-only and under the owner guard, like `WhoIsLoggedIn`: they write no record, start no outbox step, and never answer `secondFactorRequired`, because reads are exempt. Each answers only inside the organization it names. R14 asks for "a person's organizations", but an organization's owner may not learn of another organization (R34). So the person lookup answers that person's standing in this organization only (R14 says so). A subject that doesn't exist and a subject in another organization both answer the same `unknown {}`, so nothing is revealed. Home: `identity_contract.rs`, beside the K12 shapes, whose `WorkspaceRef`, `ProjectRef` and `MachineLabel` they reuse.
 
 ```rust
 #[serde(tag = "subject", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
@@ -1082,6 +1082,7 @@ pub enum MachineLookupResult {
         organization_id: OrganizationId,              // always the one asked about (R34)
         label: MachineLabel,
         enrollment: MachineEnrollment,                // its latest: state, what authorized it, its machine client
+        approved_at: UnixMillis,                      // when that enrollment's device code was approved: the same recorded fact as K12's EnrollmentView.approvedAt (C4)
         allowed_workspaces: Vec<WorkspaceRef>,        // active allowances
         shared_bucket: Vec<WorkspaceRef>,             // E14: workspaces that have had a Host-isolated session on it; shown, never enforced
     },

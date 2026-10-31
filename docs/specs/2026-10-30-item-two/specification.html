@@ -176,7 +176,7 @@ Each obligation is a rule a wrong build would break. "MUST" is required; "MAY" i
 | ID | Obligation | Over | Traces to |
 |---|---|---|---|
 | R13 | Only the admin MAY: allow people to sign in to an organization or end their admission; create workspaces; allow or withdraw a machine's allowance; approve or deny a device-code login; revoke a machine's enrollment; remove a session; set the token lifetime; and read the lookups (R14) and the who-is-logged-in view (R49).<br>Creating an organization and naming its first owner act across organizations, so only the fleet's operator MAY do them.<br>The admin is the active owner of the organization the action belongs to, signed in to that organization and current there, confirmed at the time of the action as the people sign-in design's R9, R19 and R20 require (its freshness bound SD8). Each change also needs R53's second factor. One exception: creating a workspace is confirmed when you ask, and the admitted, empty workspace is still created if ownership changes before the fleet applies it.<br>Each admin change MUST be recorded, as the people sign-in design's R12 requires, in the same step as the change; a change whose record can't be written MUST NOT happen.<br>Anyone else MUST be refused with nothing changed and nothing revealed: another member, another organization's owner, an owner whose own entry was removed, a session no longer current, a bot or a session; and, for creating an organization, any owner who isn't the fleet's operator. | E1, E2, E6, E7, E15, E19, E21, E23 | U21, U20, U31 |
-| R14 | For a person, the system MUST answer their organizations. For a session: its machine, project, workspace and isolation record. For a workspace: the machines allowed to serve it. For a machine: its organization, its enrollment's state and what authorized it, its allowed workspaces, and its shared bucket. | E1, E3, E6, E7, E13, E14, E15, E21 | U9, O3 |
+| R14 | For a person, the system MUST answer their standing in the organization asked about (admitted with a role, awaiting the owner, or not admitted), never another organization (R34). For a session: its machine, project, workspace and isolation record. For a workspace: the machines allowed to serve it. For a machine: its organization, its enrollment's state and what authorized it, its allowed workspaces, and its shared bucket. | E1, E3, E6, E7, E13, E14, E15, E21 | U9, O3 |
 </script></ex-markdown>
 <h3 id="specification--machine-login">Machine login</h3>
 <ex-markdown id="specification--machine-login-text"><script type="text/markdown">
@@ -244,7 +244,7 @@ What each party sees at each boundary: the exact fields, and every answer it can
 </script></ex-markdown>
 <h3 id="specification--c4-lookups-admin">C4 Lookups (admin)</h3>
 <ex-markdown id="specification--c4-lookups-admin-text"><script type="text/markdown">
-As in R14, visible only to the admin (R13). A machine's lookup names what authorized its enrollment: who approved its device code, and when.
+As in R14, visible only to the admin (R13). A machine's lookup names what authorized its enrollment: who approved its device code, and when. A person's lookup answers only their standing in the organization asked about; a person in no organization, or only in another one, reads the same as one who doesn't exist.
 </script></ex-markdown>
 <h3 id="specification--c7-service-requests">C7 Service requests</h3>
 <ex-markdown id="specification--c7-service-requests-text"><script type="text/markdown">
