@@ -270,7 +270,7 @@ The check that a consumer parses the **real** producer's output runs in whicheve
 | Contract | Real producer | Consumer | Real check runs in | Live at |
 |---|---|---|---|---|
 | K3 person half (admission, standing) | F3a | B4a | the later of F3a and B4a | JC1 |
-| K5, K6 (session confirmation, person token) | B3 | F2a | the later of B3 and F2a | JC1 |
+| K5, K6 (session confirmation, person token) | B3 (the shapes), B4a (the real producer, once `session.organizationId` exists) | F2a | the later of B4a and F2a | JC1 |
 | K7 (service tokens) | B4a | F3a | the later of B4a and F3a | JC1 |
 | K8 (device-login and machine-token decisions, with the client ID) | F10 | B5 | the later of F10 and B5 | JC1 |
 | K9 (machine token claims) | F1 (schema) and B5 (minted) | F10 | as K10 | JC1 |
@@ -450,13 +450,13 @@ D1's first use is from your Mac to Sunclaw, both macOS. F12 (the Linux secret st
 <details id="ticket-b3">
 <summary><strong>B3</strong> design-thread fixes</summary>
 <ex-markdown id="ticket-b3-text"><script type="text/markdown">
-unchanged; produces K5 and K6, and runs their real-output check against F2a's guard if it merges after F2a.
+unchanged; produces K5 and K6's shapes and structural fixtures. Their real producer completes in B4a, which stores the session's organization and current standing that the confirmation and the person token carry, so the real-output check runs in the later of B4a and F2a.
 </script></ex-markdown>
 </details>
 <details id="ticket-b4a">
-<summary><strong>B4a</strong> issuer core (split from B4) · waits on B3; F1's contract fixtures; the Lead settling which ticket migrates `sign_in_audit`</summary>
+<summary><strong>B4a</strong> issuer core (split from B4) · waits on B3; F1's contract fixtures; the Lead's `sign_in_audit` writer mapping in the Program Design</summary>
 <ex-markdown id="ticket-b4a-text"><script type="text/markdown">
-- **Covers:** R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; people do get their admin and operator tokens), people sign-in asking central for admission (K3's person half), person confirmation, and with it the cut of today's local admission: `person-admission-store`'s decisions move to central, and B4a's migration drops `allowed_email` and `deployment_owner`. Its generated SQL comes to you before the first commit that uses it; the closed token-kind dispatch and its refused combinations; one-operation service tokens (K7).
+- **Covers:** R26, R27 (issuer side), R38 (no workspace, collaboration or machine token for a person; people do get their admin and operator tokens), people sign-in asking central for admission (K3's person half), person confirmation and the person token as real producers (K5, K6: the session now stores its organization), and with it the cut of today's local admission: `person-admission-store`'s decisions move to central, and B4a's migration drops `allowed_email` and `deployment_owner`. Its generated SQL comes to you before the first commit that uses it. B4a also owns `sign_in_audit`'s move to its drawn shape: the migration, all six writers remapped (the agent-path writers that live on until B4b included), and readback proof that each writer's records are preserved and that a failed write changes nothing. The Lead writes each writer's mapping into the Program Design before B4a starts; the closed token-kind dispatch and its refused combinations; one-operation service tokens (K7).
 - **Keeps today's agent path until B4b:** the agent client-credentials row, the provider configuration's registration metadata, resource links and workspace policy, and the post-mint release checks. So the Switchboard keeps working, unchanged, between the cuts.
 - **Earns:** SO2's people sign-in through central's admission and a person's tool-token request refused; SO7's issuer side for D1's edges.
 - **Focused proof:**
@@ -1056,7 +1056,7 @@ It goes live after the view: central first, then the Routers. Until a machine ru
 | U15 (D1's edges) | D1 | F3a | SO7 | F3a |
 | U18 | D1 (record and bucket); D3 (isolation in the token) | F4a; F8b | SO1 + SO4 + SO6 | F8a (partial); F8b |
 | U19 | D1 | F4a | SO1 | F8a |
-| U20 | D1 | B3, F2a | `verify-auth` bootstrap + SO4 + SO7 | F2a |
+| U20 | D1 | B3, B4a, F2a | `verify-auth` bootstrap + SO4 + SO7 | the later of B4a and F2a |
 | U21, U31 | D1 | F2a, F10, B5 | SO4; SO8; SO2 | F2a; F10; F14; B5 |
 | U22 | D1 | B1 contributes; B5 closes | SO2 on both databases | B5 |
 | U23 | D1 | B1 contributes; B2 closes, with B5's rule in the core | SO2 on both hosts | the later of B2 and B5 |
