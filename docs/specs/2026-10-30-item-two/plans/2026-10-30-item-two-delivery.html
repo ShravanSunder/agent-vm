@@ -413,7 +413,7 @@ unchanged; the local journeys run the sign-in service on it.
 - **Writes:** `packages/auth` `sign-in-core/second-factors/`, `better-auth-provider`, the pages.
 - **Earns:** SO2's second-factor cases (U44); U43's token-claim half.
 - **Focused proof:**
-  - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey sign-in without user verification creating a session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor; two concurrent removals leaving no factor.
+  - **Wrong behaviors caught:** Google alone adding or replacing a factor (also in the replacement gap); reading the app secret again; a passkey sign-in without user verification creating a session; a recovery code working twice; a passkey without user verification confirming; a token missing `second_factor_at` after a confirmation; a denial without a fresh second factor; two concurrent removals leaving no factor; an unverified app counted as a factor.
   - **Layer:** sign-in core unit tests with a controlled clock; the real plugins on both hosts (integration).
   - **Oracle:** R53, R54, C13.
 - **Stop if:** at 1.7.11 `verify-totp` or `verify-backup-code` won't run on a signed-in session without replacing its cookie: then those confirmations also go through the core's route, with the plugin's stored secret. Or the after-verification hook can't refuse an unverified passkey sign-in before the session exists: then passkey sign-in stays off (Google or GitHub only), and you're told. The same rows decide it.
