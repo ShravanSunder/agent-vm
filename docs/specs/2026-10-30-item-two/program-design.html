@@ -328,7 +328,6 @@ erDiagram
     text session_ref PK
     text project_id
     text workspace_id
-    text persona
     text started_by "machine, session or remote session"
     integer started_at "when it was registered"
     text state "active, removed, ended"
@@ -434,7 +433,6 @@ pub struct RegisterFleetSession {
     pub session: SessionRef,                    // bound by the Router, never declared by the agent
     pub project_id: ProjectId,
     pub started_by: StartedBy,                  // tagged: routerOperator | session { session } (the binding the start came on); recorded for display (R8)
-    pub requested_persona: Option<PersonaName>, // None means the session default
     pub isolation: AgentIsolation,
     pub launch_context: LaunchContext,          // launcher-asserted, recorded for display: working directory, repository, commit, model, launched by
     pub machine_environment: MachineEnvironment,
@@ -442,7 +440,7 @@ pub struct RegisterFleetSession {
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RegisterFleetSessionResult {
     #[serde(rename_all = "camelCase")]
-    Registered { organization_id: OrganizationId, workspace_id: WorkspaceId, persona: PersonaRef },
+    Registered { organization_id: OrganizationId, workspace_id: WorkspaceId },
     Refused { reason: SessionRefusal }, // projectUnknown | machineNotAllowed | alreadyEnded
 }
 
@@ -470,13 +468,13 @@ pub enum ReportSessionActivityResult {
 
 The Router may only name sessions on its own installation; central refuses any other. These are new typed operations on the connection's session protocol (`/v1/session`), each with its request, its answer and its failure mapping (unavailable, refused, malformed). The machine, its organization and its enrollment come from the logged-in machine the connection is bound to (`AdmittedMachine`), never from a field of the body.
 
-**Routing and one registration per conversation (R7):** central sends `RegisterFleetSession` to the organization authority of the connection's machine (`AdmittedMachine.organizationId`), which asks its own Fleet object for the project's workspace; a project that organization doesn't hold is `projectUnknown`. The Router's session registrar is the one owner of which project a conversation was started for: it records the conversation and its project durably before the first request, and adds the organization, workspace and persona from `Registered` when they arrive; registers each conversation once, resends the identical request after an ambiguous reply or a restart, and refuses to register a recorded conversation for another project. The organization authority treats a repeat of the same `SessionRef` and project as `Registered` again, and refuses a different project. Later requests carry the organization and workspace from `Registered`, and the organization authority refuses a session it doesn't hold. A machine belongs to one organization, so its sessions can only ever be registered there.
+**Routing and one registration per conversation (R7):** central sends `RegisterFleetSession` to the organization authority of the connection's machine (`AdmittedMachine.organizationId`), which asks its own Fleet object for the project's workspace; a project that organization doesn't hold is `projectUnknown`. The Router's session registrar is the one owner of which project a conversation was started for: it records the conversation and its project durably before the first request, and adds the organization and workspace from `Registered` when they arrive; registers each conversation once, resends the identical request after an ambiguous reply or a restart, and refuses to register a recorded conversation for another project. The organization authority treats a repeat of the same `SessionRef` and project as `Registered` again, and refuses a different project. Later requests carry the organization and workspace from `Registered`, and the organization authority refuses a session it doesn't hold. A machine belongs to one organization, so its sessions can only ever be registered there.
 
 **Bindings at start and restore:** before a create, the registrar mints a binding and hands it over with the create command: for Codex, in the native `StartThread` or `ForkThread` config wherever it is built (today the client bridge's creation, `session_creation.rs:313–330`, for helper starts, and the native preparation for delivery), and the same address again at `thread/resume`; for Claude and Cursor, the session's own MCP list on the ACP create, load or resume request. Today's create and restore commands carry no session context, so they gain the binding. The binding becomes active only for the conversation the provider returns, once `Registered` arrives; a pending, failed or ambiguous creation activates nothing, so its binding admits no effect. Before a restore, it looks up the session's persisted binding and lifecycle state and reuses that binding and address; a retired or abandoned binding is never restored. The registrar persists the registration's immutable input, the binding ID and address, and the result. A provider that doesn't advertise HTTP MCP support can't carry a binding, so its start is refused rather than run without one. The address must not move: the Router refuses to register sessions while its configured listener port is zero, or when its configured origin differs from the one recorded with a registration. The listener itself is already fixed by configuration (`127.0.0.1:8788` in production, `host_command/mod.rs:374–391`).
 
 **Order and late outcomes:** the Router checks the start first (it names its project; a session starts sessions only in its own workspace, R8); then the provider creates the conversation; then the Router registers it, and sends its first prompt only after `Registered`. Starting needs no sign-in: the machine's workspaces were chosen when it was enrolled. Refused by the Router's check: nothing is created. Created, then registration refused (for example, an allowance withdrawn in between): the conversation exists, its binding never activates, and it is never prompted. A lost create reply: the binding stays prepared until the registrar learns the outcome. Nothing replays a create or deletes a conversation automatically; such a conversation is idle and acts as no member. Resending the identical registration returns the original `Registered`.
 
-**Personas.** A start may name a persona, and registration answers with the session's persona. They're recorded now and used from step 3, when sessions get Switchboard tokens.
+**Personas** aren't part of item two. Step 3 adds them to registration and remote starts, as new optional fields, when sessions get Switchboard tokens.
 
 **Start time (E7):** the organization authority sets `startedAt` from its own clock when it first registers a session. A resent registration keeps the first time.
 
@@ -545,7 +543,6 @@ pub struct RemoteLaunch {
     pub harness: HarnessKind,                   // codex | claude | cursor
     pub working_directory: AbsolutePath,        // a path on the target; the target checks it exists before creating
     pub execution_policy: ExecutionPolicy,      // the existing create input, unchanged (provider_conversation_contract.rs:441–451)
-    pub requested_persona: Option<PersonaName>, // narrower only (R9); tool access, not the sandbox
 }
 #[serde(tag = "result", rename_all = "camelCase")]
 pub enum RemoteStartAdmission {
