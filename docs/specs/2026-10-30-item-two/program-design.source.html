@@ -1758,7 +1758,7 @@ The statements above are written as SQL so the condition each one carries is vis
 | `deviceCode` (generated with the device grant) | as generated, plus `machineInstallationId` text not null · `machinePeerId` text not null · `machineLabel` text not null · `organizationId` text not null · `enrollmentId` text null (set only after central's `Approved`) | as generated; the code and user code stay random secrets (R32) | the machine login request (E23, R42); carries the enrollment to the first mint |
 | `oauthClient` (as generated) | one public client per machine enrollment: `client_id` = the enrollment ID; `metadata` `{ kind: machineEnrollment, organizationId, enrollmentId }` | as generated; the existing unique `client_id` makes one client per enrollment | keeps each machine's refresh family apart (R40) |
 | `oauthRefreshToken` (as generated) | its existing `referenceId` holds the machine reference `<organizationId>:<enrollmentId>` for each machine client's tokens | — | binds a machine's whole token family to its enrollment (R40) |
-| removed | `allowed_email`, `deployment_owner` | — | admission moved to Fleet central (R5) |
+| removed | `allowed_email`, `deployment_owner` | — | admission moved to Fleet central (R5). Dropped by B4a's migration, in the same change that moves people's admission and standing to central; until then today's local admission path keeps using them, so every merge leaves sign-in working |
 
 `drizzle-kit` generates the migration from the one schema module. The old `0001`/`0002` files are replaced, not migrated, because nothing is deployed.
 
