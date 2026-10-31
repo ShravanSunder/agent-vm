@@ -983,7 +983,7 @@ Every organization command and lookup names its organization and is refused unle
 | A device-code approval | not an admin command: the owner approves on the sign-in service's page, which sends `DecideDeviceLogin` (C7). The sign-in service vouches that the approver's session is current, as it does when it sends `Standing`. The organization authority checks that the approver is the current owner in the transaction that creates the enrollment, with its record. | — |
 | `RemoveSession` | organizationId, session | — (its notice comes with step 3) |
 | `SetTokenLifetime` | organizationId, seconds (60..=3600): machine tokens now; workspace and collaboration tokens from step 3 | — |
-| Lookups: `IdentityLookup`, `WorkspaceLookup` (its allowed machines), `MachineLookup`, `CommandStatus`, `WhoIsLoggedIn` (below) | organizationId plus the subject | — (open: the first four's result shapes are drawn here before F2a starts; `WhoIsLoggedIn`'s are below) |
+| Lookups: `IdentityLookup`, `WorkspaceLookup` (its allowed machines), `MachineLookup`, `CommandStatus`, `WhoIsLoggedIn` (below) | organizationId plus the subject | — (shapes below, under "The four admin lookups"; `WhoIsLoggedIn`'s under "Who is logged in") |
 
 **Owner guard (R13):** the caller presents a person access token whose audience is central's admin address. Central checks that the token's organization is the command's organization and that the person is that organization's current owner in its organization authority. It then confirms with the sign-in service that the person's session is current and the person active there, using the people sign-in design's privileged-decision confirmation (its R9, bound SD8). SD8 is still that design's open decision (the Lead's 5-second proposal); this set inherits whatever it becomes. For a change the organization authority applies, the guard holds in that transaction: the owner check reads its own state there, the confirmation must be within SD8 of it, and a confirmation is never reused for a later command. For a change another store applies, it holds when you ask (above). The guard refuses everyone else before any read or write.
 
@@ -1035,6 +1035,70 @@ pub struct AdmittedPersonRow { pub person_id: PersonId }                        
   - A session's state is unknown unless its machine is connected and its latest activity report came on that same connection.
 - **One organization.** Only machines with an enrollment in this organization are listed, which R34 already guarantees: one authority per organization.
 - **Stage C** fills `people`. Until then it's empty. The sign-in service adds the facts it owns: each person's name, whether they are signed in now, and when they last signed in. Bots join the lookup, as a new field, when bots exist.
+
+**The four admin lookups (R14).** Read-only and under the owner guard, like `WhoIsLoggedIn`: they write no record, start no outbox step, and never answer `secondFactorRequired`, because reads are exempt. Each answers only inside the organization it names. R14 asks for "a person's organizations", but an organization's owner may not learn of another organization (R34). So the person lookup answers that person's standing in this organization only; a person's full list of organizations is theirs alone, at sign-in. A subject that doesn't exist and a subject in another organization both answer the same `unknown {}`, so nothing is revealed. Home: `identity_contract.rs`, beside the K12 shapes, whose `WorkspaceRef`, `ProjectRef` and `MachineLabel` they reuse.
+
+```rust
+#[serde(tag = "subject", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum IdentityLookup {
+    Person { organization_id: OrganizationId, person_id: PersonId },
+    Session { organization_id: OrganizationId, session: SessionRef },
+}
+#[serde(tag = "result", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum IdentityLookupResult {
+    Person { person_id: PersonId, standing: OrganizationStanding },   // admitted { role } | awaitingOwner | notAdmitted, here only
+    Session {
+        session: SessionRef,
+        machine: InstallationId,
+        project: ProjectRef,
+        workspace: WorkspaceRef,
+        isolation: AgentIsolation,                    // E13, as registered
+        machine_environment: MachineEnvironment,
+        launch_context: LaunchContext,
+        started_by: StartedBy,
+        started_at: UnixMillis,
+    },
+    Unknown {},                                       // no such subject here, or it belongs to another organization
+    Refused { reason: OwnerRefusal },
+}
+
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceLookup { pub organization_id: OrganizationId, pub workspace_id: WorkspaceId }
+#[serde(tag = "result", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum WorkspaceLookupResult {
+    Workspace { workspace: WorkspaceRef, allowed_machines: Vec<AllowedMachineRow> }, // active allowances only
+    Unknown {},
+    Refused { reason: OwnerRefusal },
+}
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AllowedMachineRow { pub installation: InstallationId, pub label: MachineLabel }
+
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MachineLookup { pub organization_id: OrganizationId, pub installation: InstallationId }
+#[serde(tag = "result", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum MachineLookupResult {
+    Machine {
+        installation: InstallationId,
+        organization_id: OrganizationId,              // always the one asked about (R34)
+        label: MachineLabel,
+        enrollment: MachineEnrollment,                // its latest: state, what authorized it, its machine client
+        allowed_workspaces: Vec<WorkspaceRef>,        // active allowances
+        shared_bucket: Vec<WorkspaceRef>,             // E14: workspaces that have had a Host-isolated session on it; shown, never enforced
+    },
+    Unknown {},
+    Refused { reason: OwnerRefusal },
+}
+
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommandStatus { pub organization_id: OrganizationId, pub command_id: CommandId } // CommandId: UUIDv7, from Admitted { commandId }
+#[serde(tag = "result", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum CommandStatusResult {
+    Pending {},                                       // admitted; the other store hasn't applied it yet (it retries until it does)
+    Applied {},
+    Unknown {},
+    Refused { reason: OwnerRefusal },
+}
+```
 
 **Fleet operator authority:** creating an organization and naming its owner are fleet-wide, so no organization's owner may do them. Until step 2 they stay with Fleet central's existing operator caller (`AccessCaller::Owner`, `access_contract.rs:31–36`). From step 2 the operator is the person named in central's deploy configuration (`fleetOperator`: a person ID at the sign-in service). The operator presents a person token for central's operator address, issued to the sign-in app's pinned client, and central confirms that session as the owner guard does. Access identity proves nothing from step 2. In your own deployment you hold both authorities; they stay separate so that a customer's organization owner never becomes a fleet operator.
 

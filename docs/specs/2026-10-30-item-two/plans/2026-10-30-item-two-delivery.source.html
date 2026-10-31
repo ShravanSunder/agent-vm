@@ -552,7 +552,7 @@ the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Driz
 <summary><strong>F1</strong> identity contracts (extended) · waits on F0 (codex-router v0.1.118); your go</summary>
 <ex-markdown id="ticket-f1-text"><script type="text/markdown">
 - **Covers:** R26, plus every shape the deliverables need, and each contract's schema and structural fixtures (not real output; see "How a contract's real output is checked"):
-  - the machine-login shapes: `MachineTokenClaims` and a `MachinePrincipal` kept outside the actor `Principal`, `DecideDeviceLogin`, `DeviceLoginDecision`, `DecideMachineToken`, `MachineTokenDecision` (with `decided_at`), `AdmitMachineConnection`, `MachineConnectionAdmission`, `MachineEnrollment` (tagged `state`: enrolled, revoked, expired; the internal reserved and approved stay in central's own row type, F2a's), `AdmissionId`/`AdmissionRef`; the request shapes of the four admin lookups (their results come before F2a);
+  - the machine-login shapes: `MachineTokenClaims` and a `MachinePrincipal` kept outside the actor `Principal`, `DecideDeviceLogin`, `DeviceLoginDecision`, `DecideMachineToken`, `MachineTokenDecision` (with `decided_at`), `AdmitMachineConnection`, `MachineConnectionAdmission`, `MachineEnrollment` (tagged `state`: enrolled, revoked, expired; the internal reserved and approved stay in central's own row type, F2a's), `AdmissionId`/`AdmissionRef`; the four admin lookups and their results (`IdentityLookup`, `WorkspaceLookup`, `MachineLookup`, `CommandStatus`);
   - the remote-start shapes: `RequestRemoteStart`, `RemoteLaunch`, `RemoteStartAdmission`, `StartRequestedSession`, `ReportRemoteStart`, `RemoteStartAnswer`, `RemoteStartResult`, `RemoteStartStatus`, `ListWorkspaceMachines`, and the `remoteSession` starter;
   - the machine client: `client_id` in `DecideMachineToken` and `AdmitMachineConnection`, `wrongClient` in both answers, `machineClientId` on `MachineEnrollment`, and `DisableMachineClient` (K11);
   - the view's shapes (K12): `Heartbeat` with its closed `MachineCapability` list (empty until DR), `ReportSessionActivity` with `sequence`, `SessionActivityEntry` and its result (`Accepted`, `Superseded`, `Refused`), `ReadMachinePresence` and `MachinePresenceAnswer`, `WhoIsLoggedIn` and its result rows.
@@ -565,7 +565,7 @@ the `sign-in-host-node` package: an HTTP listener, `better-sqlite3` through Driz
 </script></ex-markdown>
 </details>
 <details id="ticket-f2a">
-<summary><strong>F2a</strong> organization authority core (split from F2) · waits on F1; the Program Design drawing the four admin lookups' results</summary>
+<summary><strong>F2a</strong> organization authority core (split from F2) · waits on F1</summary>
 <ex-markdown id="ticket-f2a-text"><script type="text/markdown">
 - **Covers:** R5 (people's admission at central), R7 (the session registry), R13 (admin commands and the owner guard; the operator check through the sign-in service, built and enabled at PROD2), R14 (lookups for people, sessions, workspaces' allowed machines and machines), R34 (organization-scoped rows; cross-organization references answer as unknown), R35; organizations and their owner; machine allowances. Runs the real-output check for K5 and K6 against B3's issuer if it merges after B3.
 - **Earns (its SO4 scenarios):** U21's command and guard cases; U27's central half for people, machines and sessions.
