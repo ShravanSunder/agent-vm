@@ -182,7 +182,12 @@ Each row is one wave. Inside a row, the lanes run at once: the sign-in lane besi
 - **Types say what's valid:** discriminated unions (closed variants) for every state and result, branded IDs, UUIDv7 only, Zod at every TypeScript boundary, and tagged `serde` enums in Rust. No `any`, and no throws across a boundary: results are values.
 - **Latest oxc:** TypeScript is linted and formatted with oxlint and oxfmt at their latest releases. Ticket B0 brings the Switchboard repository from oxlint `^1.63.0` and oxfmt `^0.48.0` to 1.90.0 and 0.75.0 first. Rust keeps the repository's `rustfmt` and `clippy` gates.
 - **Runtime stays out of logic:** cores depend on no runtime; hosts inject storage (Drizzle), clock, IDs and calls.
-- **Tests:** no wall clock (controlled clocks only), property tests where a rule covers many cases, with each repository's own library (Hegel in the Switchboard, `proptest` in codex-router), and verification scripts in TypeScript.
+- **Tests:** no real clock anywhere in tests, helpers or harness: waits are on events, and timers are mocked or run on the controlled clock. Property tests where a rule covers many cases, with each repository's own library (Hegel in the Switchboard, `proptest` in codex-router). Verification scripts are in TypeScript.
+- **Both hosts, every integration check (owner, 31 October):** every integration verification runs on both builds of the service it touches, never one standing in for the other:
+  - Fleet central: the WebAssembly build on local workerd, and the native Tokio host;
+  - the sign-in service: local workerd with D1, and Node with `better-sqlite3`.
+  
+  A compile-only WebAssembly step doesn't count: the WebAssembly build has to run, because behavior differs there. On WebAssembly, `Path::is_absolute` is false for every path.
 
 **Who builds it** (my call, recorded in the trace; tell me if you want it different):
 - **One Sol Implementer per ticket in flight,** each in its own Agent Studio worktree of its repository. Sol at high to xhigh effort for the cross-repository and design-heavy tickets (F1, F2a, F10, B4a, B5, B7, F15); Sol at medium for the bounded ones.
